@@ -4327,3 +4327,216 @@ def test_the_pile_queue_names_no_leading_factor_on_a_row_behind_the_asked_line()
         assert len(behind) == 1
         assert all(line["leading_factor"] for line in ahead)
         assert behind[0]["leading_factor"] is None
+
+
+# --------------------------------------------------------------------------- #
+# the board's proposal and the confirm's recheck read ONE projection (13.5, 13.7)
+#
+# Live, 19 August 2026, SO403765 line 8 (CB2807-DIY, 43 owed, BRW-BB drawing on BRW): the
+# board proposed "Reserve 4 at BRW, Buy 39" with a pool sub-table reading "on hand 7, claimed
+# ahead 3 (1 line), left 4", and confirming exactly that returned 409 "BRW has nothing free
+# for this line now". Two readers of the same pool were ranking the asking line differently.
+# --------------------------------------------------------------------------- #
+
+
+def _board_payload_for(board, so_number: str) -> tuple[str, list]:
+    """The confirmation body built from FIELDS ON THE BOARD RESPONSE, for one order."""
+    standing = next(o for o in board["orders"] if o["so_number"] == so_number)
+    lines = []
+    for cell in board["cells"]:
+        for contribution in cell["contributions"]:
+            if contribution["so_number"] != so_number or contribution["covered"]:
+                continue
+            lines.append(
+                {
+                    "project_line_id": contribution["project_line_id"],
+                    "timely_spo_qty": contribution["qty_proposed_incoming"],
+                    "reserve": [
+                        {"warehouse_id": s["warehouse_id"], "qty": s["qty"]}
+                        for s in contribution["sources"]
+                        if s["kind"] == "reserve"
+                    ],
+                    "buy_qty": contribution["qty_proposed_buy"],
+                }
+            )
+    return standing["project_sales_order_id"], lines
+
+
+def _pool_with_its_own_queue(db):
+    """The live shape. The pool's own book is three lines from two orders, every one of them
+    dated EARLIER than ours: 3 due in April, then 20 and 5 due in August, all with no demand
+    class on the sales order. Ours is a project-class line due in December on a document
+    raised in May. The fair policy ranks ours between them - behind the April line on need-by
+    date, ahead of the August lines on document age and demand class - so 3 of the pool's 7
+    is claimed ahead of us and 4 is left. A reader that scored ours on need-by date alone put
+    every one of them ahead and left nothing.
+    """
+    _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
+    actor = _user(db, f"{MARKER} planner")
+    product = _product(db, f"ZZT-{_uid()[:6]}")
+    own, pool = _pooled_warehouses(db)
+    _stock(db, product, own, on_hand=0)
+    _stock(db, product, pool, on_hand=7)
+    dealer = _customer(db, f"{MARKER} dealer", terms=30)
+    ours = _customer(db, f"{MARKER} project customer", terms=30)
+
+    early = _order(
+        db, so_number="ZZT-SO-EARLY", customer=dealer, order_date=date(2026, 4, 10),
+        demand_class=None,
+    )
+    _line(db, early, product, qty="3", required_date=date(2026, 4, 10), warehouse=pool)
+    mid = _order(
+        db, so_number="ZZT-SO-MID", customer=dealer, order_date=date(2026, 8, 4),
+        demand_class=None,
+    )
+    _line(db, mid, product, qty="20", required_date=date(2026, 8, 4), warehouse=pool)
+    _line(db, mid, product, qty="5", required_date=date(2026, 8, 4), warehouse=pool)
+
+    asking = _order(
+        db, so_number="ZZT-SO-ASK", customer=ours, order_date=date(2026, 5, 15),
+        demand_class="project",
+    )
+    _line(db, asking, product, qty="43", required_date=date(2026, 12, 28), warehouse=own)
+    _adopt(db, str(asking.id))
+    db.flush()
+    return {"actor": actor, "product": product, "own": own, "pool": pool, "asking": asking}
+
+
+def test_the_confirm_accepts_the_pool_reserve_the_board_proposed():
+    from app.services.project_supply_service import SupplyLinesRefused
+
+    with blank_session() as db:
+        world = _pool_with_its_own_queue(db)
+        pool, product = world["pool"], world["product"]
+
+        board = _service(db).build(["ZZT-SO-ASK"], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-12-28")["contributions"][0]
+        assert [
+            (s["kind"], s["qty"], s["location"]) for s in contribution["sources"]
+        ] == [("reserve", "4", pool.warehouse_code), ("buy", "39", None)]
+        pile = _step(contribution, "reserve_pool")["pool"]
+        assert (pile["free"], pile["claimed_ahead_qty"], pile["claimed_ahead_lines"], pile["left"]) == (
+            "7", "3", 1, "4"
+        )
+
+        pso_id, lines = _board_payload_for(board, "ZZT-SO-ASK")
+        assert lines[0]["reserve"] == [{"warehouse_id": str(pool.id), "qty": "4"}]
+
+        # Exactly the board's proposal, accepted: the confirm ranks this line against the
+        # pool's own book on the SAME factors the board did.
+        try:
+            _confirm(db, pso_id, world["actor"], lines)
+        except SupplyLinesRefused as refused:
+            pytest.fail(f"the confirm refused what the board proposed: {refused.detail}")
+
+        from app.models.project_so import SOSupplyDecision
+
+        decision = (
+            db.query(SOSupplyDecision)
+            .filter(SOSupplyDecision.project_sales_order_id == pso_id)
+            .first()
+        )
+        components = decision.line_snapshots[0]["components"]
+        assert [(c["kind"], c["qty"]) for c in components] == [
+            ("reserve", "4"), ("buy", "39"),
+        ]
+
+
+def test_the_confirm_never_accepts_more_at_the_pool_than_the_board_proposed():
+    """The reverse: one unit over the board's figure is refused, and by quantity, not by
+    location - the pool IS this line's pool, it simply has 4 left for it."""
+    from app.services.project_supply_service import SupplyLinesRefused
+
+    with blank_session() as db:
+        world = _pool_with_its_own_queue(db)
+        pool = world["pool"]
+
+        board = _service(db).build(["ZZT-SO-ASK"], granularity="week", as_of=TODAY)
+        pso_id, lines = _board_payload_for(board, "ZZT-SO-ASK")
+        lines[0]["reserve"] = [{"warehouse_id": str(pool.id), "qty": "5"}]
+        lines[0]["buy_qty"] = "38"
+
+        with pytest.raises(SupplyLinesRefused) as refused:
+            _confirm(db, pso_id, world["actor"], lines)
+
+        assert refused.value.status_code == 409
+        [failing] = refused.value.detail["failing_lines"]
+        assert f"{pool.warehouse_code} now has 4 free for this line" in failing["reason"]
+
+
+def _order_already_holding_at_the_pool(db):
+    """Our OWN order's earlier line already holds 3 of the pool's 7 under its active revision,
+    and is not being named again. The board nets that hold off the pool and leaves the covered
+    line out of the queue, so the sibling is offered the 4 that is left. The confirm has to
+    read the same 4: the hold is carried into the new revision verbatim (the union is the
+    server's), so un-netting it because it belongs to "the order being composed" hands the
+    sibling stock its own order is still holding.
+    """
+    actor = _user(db, f"{MARKER} planner")
+    product = _product(db, f"ZZT-{_uid()[:6]}")
+    own, pool = _pooled_warehouses(db)
+    _stock(db, product, own, on_hand=0)
+    _stock(db, product, pool, on_hand=7)
+    order = _order(db, so_number="ZZT-SO-HOLDS", order_date=date(2026, 5, 15))
+    first = _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+    _line(db, order, product, qty="43", required_date=date(2026, 12, 28), warehouse=own)
+    pso_id = _adopt(db, str(order.id))
+    db.flush()
+
+    from app.models.project_so import ProjectSalesOrderLine
+
+    mirror = (
+        db.query(ProjectSalesOrderLine)
+        .filter(
+            ProjectSalesOrderLine.project_sales_order_id == pso_id,
+            ProjectSalesOrderLine.core_sales_order_line_id == first.id,
+        )
+        .first()
+    )
+    # Line 1 reserves 3 of the pool's 7 and buys the rest - less than it could take, so the
+    # sibling has something left to be offered.
+    _confirm(
+        db,
+        pso_id,
+        actor,
+        [
+            {
+                "project_line_id": str(mirror.id),
+                "timely_spo_qty": "0",
+                "reserve": [{"warehouse_id": str(pool.id), "qty": "3"}],
+                "buy_qty": "7",
+            }
+        ],
+    )
+    return {"actor": actor, "product": product, "own": own, "pool": pool, "pso_id": pso_id}
+
+
+def test_a_hold_the_same_order_carries_forward_is_netted_by_the_confirm_as_the_board_nets_it():
+    from app.services.project_supply_service import SupplyLinesRefused
+
+    with blank_session() as db:
+        world = _order_already_holding_at_the_pool(db)
+        pool, product = world["pool"], world["product"]
+
+        board = _service(db).build(["ZZT-SO-HOLDS"], granularity="week", as_of=TODAY)
+        sibling = _cell(board, product.product_code, "2026-12-28")["contributions"][0]
+        assert sibling["covered"] is False
+        assert [
+            (s["kind"], s["qty"], s["location"]) for s in sibling["sources"]
+        ] == [("reserve", "4", pool.warehouse_code), ("buy", "39", None)]
+
+        pso_id, lines = _board_payload_for(board, "ZZT-SO-HOLDS")
+        assert len(lines) == 1, "the covered line is carried, not re-posted"
+
+        # The board's figure is accepted ...
+        _confirm(db, pso_id, world["actor"], lines)
+
+        # ... and one more is not, because line 1's 3 are still held under the revision
+        # this confirmation carries them into. On hand 7, held 3, reserved 4 + 1 would be 8.
+        lines[0]["reserve"] = [{"warehouse_id": str(pool.id), "qty": "5"}]
+        lines[0]["buy_qty"] = "38"
+        with pytest.raises(SupplyLinesRefused) as refused:
+            _confirm(db, pso_id, world["actor"], lines)
+        assert refused.value.status_code == 409
+        [failing] = refused.value.detail["failing_lines"]
+        assert "free for this line" in failing["reason"], failing["reason"]

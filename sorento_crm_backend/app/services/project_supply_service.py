@@ -36,8 +36,10 @@ lifecycle are all recomputed from authoritative rows before anything is written.
 
 **Confirmed cover is not free** (AC-B13). Free stock is on hand, minus reserved, minus what
 active decisions (and legacy confirmed allocations, which belong to no decision) already
-hold. The order being composed is excluded from that subtraction, or its own previous
-revision would compete with the one replacing it.
+hold. The lines being REPLACED are excluded from that subtraction, or their own previous
+revision would compete with the one replacing it - by line and not by order, because a
+covered line the confirmation carries forward keeps its hold (13.4, the union is the
+server's) and must be read as any other order's covered line.
 
 **One pile, one order of consumption** (3.5). Several lines can want the same product at the
 same location, and which of them gets the stock and which gets the incoming is decided by
@@ -646,8 +648,8 @@ class ProjectSupplyService:
         }
         warehouses.update(self._warehouses(pool_ids - set(warehouses)))
 
-        self._free_cache = self._free_stock(product_ids, exclude_order_id=None)
-        self._holds_cache = self._holds_by_project(product_ids, exclude_order_id=None)
+        self._free_cache = self._free_stock(product_ids, exclude_line_ids=None)
+        self._holds_cache = self._holds_by_project(product_ids, exclude_line_ids=None)
         self._pile_cache = None
         hot, unavailable, hot_where = self._classification(product_ids)
         levels = self._reorder_levels(product_ids, pool_ids)
@@ -1074,7 +1076,15 @@ class ProjectSupplyService:
             )
         self._lock_stock(payload_lines, lines)
 
-        facts = self._facts_for(order, lines)
+        # Only the NAMED lines are being replaced. A covered line the payload leaves alone
+        # is carried forward with its holds, so it is judged as any other order's covered
+        # line - hold netted, out of the queue - and the named lines cannot be offered what
+        # it is still holding.
+        facts = self._facts_for(
+            order,
+            lines,
+            replacing={str(entry.project_line_id) for entry in payload_lines},
+        )
         item_codes = {
             str(line.id): facts[str(line.id)].item_code for line in lines
         }
@@ -1647,8 +1657,11 @@ class ProjectSupplyService:
             return []
 
         availability = self.donor_availability(piles.keys())
+        # The WHOLE order's holds are left out here, named and carried alike, because
+        # `checked` re-adds every one of them as `taken` above.
         held_from_elsewhere = self._holds_from_elsewhere(
-            piles.keys(), exclude_order_id=str(order.id)
+            piles.keys(),
+            exclude_line_ids=[str(line.id) for line, _entry, _fact in checked],
         )
         out: List[Dict[str, Any]] = []
         reference = order.autocount_doc_no or order.provisional_ref or ""
@@ -2026,13 +2039,23 @@ class ProjectSupplyService:
     # ------------------------------------------------------------------- facts
 
     def _facts_for(
-        self, order: ProjectSalesOrder, lines: Sequence[ProjectSalesOrderLine]
+        self,
+        order: ProjectSalesOrder,
+        lines: Sequence[ProjectSalesOrderLine],
+        *,
+        replacing: Optional[Set[str]] = None,
     ) -> Dict[str, _LineFacts]:
         """Read every fact the sheet and the commit judge a line against.
 
         Refuses the whole order when a line has no reconciled core line: without it there
         is no current open quantity, and promising supply against the ORIGINAL customer
         quantity is exactly the double-count this contract exists to stop (PLAN 3.1 step 2).
+
+        `replacing` names the project lines this composition is about to REPLACE - the ones
+        the confirmation payload names. Their holds are un-netted and their demand stays in
+        the queue; every other line of the order is read as covered-elsewhere (hold netted,
+        out of the queue), which is what the union-is-the-server's carry-forward makes true
+        of it. `None` means every line (the sheet, which proposes for all of them).
         """
         unmapped = [line for line in lines if not line.core_sales_order_line_id]
         core_ids = [
@@ -2084,46 +2107,77 @@ class ProjectSupplyService:
         }
         warehouses.update(self._warehouses(pool_ids - set(warehouses)))
 
-        self._free_cache = self._free_stock(product_ids, exclude_order_id=str(order.id))
-        self._holds_cache = self._holds_by_project(
-            product_ids, exclude_order_id=str(order.id)
-        )
+        # The lines being REPLACED by this composition: their holds are un-netted (a previous
+        # revision must not compete with the one replacing it) and their demand stays in the
+        # queue. Every other line of the order - a covered line the confirmation carries
+        # forward verbatim - is treated exactly as another order's covered line: its hold is
+        # netted and it is out of the queue. The board reads it that way (`demand_facts`), and
+        # a confirm that un-netted the WHOLE order's holds handed a named line stock its own
+        # carried sibling was still holding (`test_fulfilment_board`).
+        replaced = [
+            str(line.id)
+            for line in lines
+            if replacing is None or str(line.id) in replacing
+        ]
+        self._free_cache = self._free_stock(product_ids, exclude_line_ids=replaced)
+        self._holds_cache = self._holds_by_project(product_ids, exclude_line_ids=replaced)
         self._pile_cache = None
-        pool_ahead = self.pool_claims(
-            product_ids,
-            pool_ids,
-            exclude_order_id=str(order.id),
-            members=[
+        # The core sales orders behind the lines, for the SAME factor values the board hands
+        # `pool_claims` for a member: document date, demand class, payment terms, and the
+        # sales-order number the tie-break sorts on. Passing None for them scored the asking
+        # line on need-by date alone against a pool book scored on every factor, so the confirm
+        # ranked it lower than the board had, claimed more of the pool ahead of it, and
+        # refused the very Reserve the board proposed (SO403765 line 8, live: "BRW has nothing
+        # free for this line now" against a board reading "3 claimed ahead, 4 left").
+        core_orders = {
+            str(row.id): row
+            for row in (
+                self.db.query(SalesOrder)
+                .filter(
+                    SalesOrder.id.in_(
+                        list({str(core.sales_order_id) for core in cores.values()})
+                    )
+                )
+                .all()
+                if cores
+                else []
+            )
+        }
+        terms = priority.payment_terms_by_customer(
+            self.db,
+            [str(row.customer_id) for row in core_orders.values() if row.customer_id],
+        )
+
+        members: List[Dict[str, Any]] = []
+        for line in lines:
+            core = cores.get(str(line.core_sales_order_line_id or ""))
+            if core is None or not core.warehouse_id:
+                continue
+            warehouse = warehouses.get(str(core.warehouse_id))
+            if warehouse is None or not warehouse.pool_warehouse_id:
+                continue
+            core_order = core_orders.get(str(core.sales_order_id))
+            members.append(
                 {
                     "key": str(line.id),
-                    "product_id": str(
-                        (cores.get(str(line.core_sales_order_line_id or "")) or line).product_id
+                    "product_id": str(core.product_id or line.product_id),
+                    "pool_id": str(warehouse.pool_warehouse_id),
+                    "required_date": core.required_date or line.delivery_date,
+                    "order_date": core_order.order_date if core_order else None,
+                    "payment_terms_days": (
+                        terms.get(str(core_order.customer_id or "")) if core_order else None
                     ),
-                    "pool_id": str(
-                        warehouses[
-                            str(cores[str(line.core_sales_order_line_id)].warehouse_id)
-                        ].pool_warehouse_id
+                    "demand_class": core_order.demand_class if core_order else None,
+                    "so_number": (
+                        (core_order.so_number if core_order else None)
+                        or order.provisional_ref
                     ),
-                    "required_date": (
-                        cores[str(line.core_sales_order_line_id)].required_date
-                        or line.delivery_date
-                    ),
-                    "order_date": None,
-                    "payment_terms_days": None,
-                    "demand_class": None,
-                    "so_number": order.provisional_ref,
                     "line_no": line.line_no,
-                    "line_id": str(line.core_sales_order_line_id),
+                    "line_id": str(core.id),
                 }
-                for line in lines
-                if line.core_sales_order_line_id
-                and str(line.core_sales_order_line_id) in cores
-                and cores[str(line.core_sales_order_line_id)].warehouse_id
-                and str(cores[str(line.core_sales_order_line_id)].warehouse_id) in warehouses
-                and warehouses[
-                    str(cores[str(line.core_sales_order_line_id)].warehouse_id)
-                ].pool_warehouse_id
-            ],
+            )
+        pool_ahead = self.pool_claims(
+            product_ids, pool_ids, exclude_line_ids=replaced, members=members
         )
         hot, unavailable, hot_where = self._classification(product_ids)
         levels = self._reorder_levels(product_ids, pool_ids)
@@ -2134,7 +2188,7 @@ class ProjectSupplyService:
             warehouse_ids,
             warehouses,
             spo,
-            exclude_order_id=str(order.id),
+            exclude_line_ids=replaced,
             # The sheet prints the share and never the names behind it, so it asks for
             # nobody's queue: describing every line of every pile is quadratic work on a
             # crowded location, paid on every sheet read and every confirm, for nothing.
@@ -2258,7 +2312,7 @@ class ProjectSupplyService:
         if not ids:
             return {}
         out: Dict[Tuple[str, str], Decimal] = {}
-        for key, _project_id, qty in self._hold_rows(ids, exclude_order_id=None):
+        for key, _project_id, qty in self._hold_rows(ids, exclude_line_ids=None):
             out[key] = out.get(key, _ZERO) + qty
         return out
 
@@ -2299,7 +2353,7 @@ class ProjectSupplyService:
         second opinion about availability, which would be the same defect two rankings would
         have been (`app/services/scm/priority.py`).
 
-        No order is excluded, because a cross-order reader is not composing any one order.
+        No line is excluded, because a cross-order reader is not replacing any one line.
 
         It carries `_free_stock`'s known limit, and the board is built to SHOW that limit
         rather than hide it (PLAN 13.5.1): only CONFIRMED holds are netted off, so two orders
@@ -2307,17 +2361,17 @@ class ProjectSupplyService:
         by serving one pile down the ranking and marking the rows it could not cover as
         contested. The locking fix belongs to the confirmation path.
         """
-        return self._free_stock(product_ids, exclude_order_id=None)
+        return self._free_stock(product_ids, exclude_line_ids=None)
 
     def _free_stock(
-        self, product_ids: Iterable[str], *, exclude_order_id: Optional[str]
+        self, product_ids: Iterable[str], *, exclude_line_ids: Optional[Sequence[str]]
     ) -> Dict[Tuple[str, str], Decimal]:
         """On hand, minus reserved, minus what confirmed decisions already hold.
 
         A hold counts when its allocation belongs to no decision (every row written before
         Stage 1C) or to an ACTIVE one. A superseded revision's rows are history and hold
-        nothing, and the order being composed is excluded so its own previous revision does
-        not compete with the one replacing it.
+        nothing, and the lines being replaced (`exclude_line_ids`, project line ids) are
+        excluded so their own previous revision does not compete with the one replacing it.
         """
         ids = [pid for pid in product_ids if pid]
         if not ids:
@@ -2335,7 +2389,7 @@ class ProjectSupplyService:
             for stock, _warehouse in rows
         }
         for (product_id, warehouse_id), _project_id, qty in self._hold_rows(
-            ids, exclude_order_id=exclude_order_id
+            ids, exclude_line_ids=exclude_line_ids
         ):
             key = (product_id, warehouse_id)
             if key in free:
@@ -2343,14 +2397,14 @@ class ProjectSupplyService:
         return free
 
     def _hold_rows(
-        self, product_ids: Sequence[str], *, exclude_order_id: Optional[str]
+        self, product_ids: Sequence[str], *, exclude_line_ids: Optional[Sequence[str]]
     ) -> List[Tuple[Tuple[str, str], str, Decimal]]:
         """Confirmed holds, per (product, warehouse) and holding project.
 
         Ported from `project_allocation_service._holds` and narrowed by decision state,
         because a superseded revision must stop holding stock the moment it is superseded.
         """
-        query = self._hold_query(product_ids, exclude_order_id=exclude_order_id)
+        query = self._hold_query(product_ids, exclude_line_ids=exclude_line_ids)
         # An ADOPTED order holds stock with no project behind it (section 4), and the
         # holding project is a dict KEY here - so it is the empty string rather than the
         # string "None", which is a value that looks like an id and matches nothing. The
@@ -2363,15 +2417,18 @@ class ProjectSupplyService:
         ]
 
     def _hold_query(
-        self, product_ids: Sequence[str], *, exclude_order_id: Optional[str]
+        self, product_ids: Sequence[str], *, exclude_line_ids: Optional[Sequence[str]]
     ):
         """The one predicate for "this allocation row is holding stock right now".
 
         A hold counts when its allocation belongs to no decision (every row written before
-        Stage 1C) or to an ACTIVE one; the order being composed is excluded so its own
-        previous revision does not compete with the one replacing it. Shared by the
-        free-stock arithmetic and the donor-shortfall netting so the two cannot come to
-        disagree about what is held.
+        Stage 1C) or to an ACTIVE one; the LINES being replaced (`exclude_line_ids`, project
+        line ids) are excluded so their own previous revision does not compete with the one
+        replacing it. By line and not by order, because a covered line the confirmation
+        carries forward keeps its hold - the union is the server's - and un-netting it too
+        offered a named sibling stock the order was still holding. Shared by the free-stock
+        arithmetic and the donor-shortfall netting so the two cannot come to disagree about
+        what is held.
         """
         query = (
             self.db.query(
@@ -2402,14 +2459,14 @@ class ProjectSupplyService:
                 ),
             )
         )
-        if exclude_order_id:
+        if exclude_line_ids:
             query = query.filter(
-                ProjectSalesOrder.id != exclude_order_id
+                SOLineAllocation.so_line_id.notin_(list(exclude_line_ids))
             )
         return query
 
     def _holds_from_elsewhere(
-        self, pairs: Iterable[Tuple[str, str]], *, exclude_order_id: Optional[str]
+        self, pairs: Iterable[Tuple[str, str]], *, exclude_line_ids: Optional[Sequence[str]]
     ) -> Dict[Tuple[str, str], Decimal]:
         """What other confirmed decisions hold at each (product, warehouse) FROM ELSEWHERE.
 
@@ -2424,7 +2481,7 @@ class ProjectSupplyService:
         rows = (
             self._hold_query(
                 [product_id for product_id, _w in wanted],
-                exclude_order_id=exclude_order_id,
+                exclude_line_ids=exclude_line_ids,
             )
             .outerjoin(
                 SalesOrderLine,
@@ -2452,14 +2509,14 @@ class ProjectSupplyService:
         }
 
     def _holds_by_project(
-        self, product_ids: Iterable[str], *, exclude_order_id: Optional[str]
+        self, product_ids: Iterable[str], *, exclude_line_ids: Optional[Sequence[str]]
     ) -> Dict[Tuple[str, str, str], Decimal]:
         out: Dict[Tuple[str, str, str], Decimal] = {}
         ids = [pid for pid in product_ids if pid]
         if not ids:
             return out
         for (product_id, warehouse_id), project_id, qty in self._hold_rows(
-            ids, exclude_order_id=exclude_order_id
+            ids, exclude_line_ids=exclude_line_ids
         ):
             key = (product_id, warehouse_id, project_id)
             out[key] = out.get(key, _ZERO) + qty
@@ -2605,16 +2662,20 @@ class ProjectSupplyService:
             )
         return out
 
-    def _decided_elsewhere(self, exclude_order_id: Optional[str]) -> set:
-        """Core lines an ACTIVE decision covers, other than the one being composed.
+    def _decided_elsewhere(self, exclude_line_ids: Optional[Sequence[str]]) -> set:
+        """Core lines an ACTIVE decision covers, other than the ones being replaced.
 
         The carve-out matters as much as the rule. A line covered by a decision holds stock,
         and that hold is already out of `_free_stock`, so counting its demand again as ranked
-        ahead would subtract the same units twice. But `_free_stock` EXCLUDES the order being
-        composed - its own previous revision must not compete with the one replacing it - so
-        for that order the hold is NOT netted out, and its covered lines therefore have to stay
-        in the queue. Miss this and re-confirming an order that reserved everything is refused
-        as "nothing free for this line", which is what the sheet's own suite caught.
+        ahead would subtract the same units twice. But `_free_stock` EXCLUDES the lines being
+        replaced - their own previous revision must not compete with the one replacing them -
+        so for those lines the hold is NOT netted out, and they therefore have to stay in the
+        queue. Miss this and re-confirming an order that reserved everything is refused as
+        "nothing free for this line", which is what the sheet's own suite caught.
+
+        By PROJECT LINE (`exclude_line_ids`), not by order: a covered line the confirmation
+        carries forward keeps its hold, so it stays out of the queue like any other order's
+        covered line, and only the named lines come back in.
         """
         rows = (
             self.db.query(
@@ -2623,11 +2684,12 @@ class ProjectSupplyService:
             .filter(SOSupplyDecision.state == DECISION_ACTIVE)
             .all()
         )
+        replaced = {str(line_id) for line_id in (exclude_line_ids or [])}
         out: set = set()
-        for pso_id, snapshots in rows:
-            if exclude_order_id and str(pso_id) == str(exclude_order_id):
-                continue
+        for _pso_id, snapshots in rows:
             for snapshot in snapshots or []:
+                if str((snapshot or {}).get("project_line_id") or "") in replaced:
+                    continue
                 core_line_id = (snapshot or {}).get("core_line_id")
                 if core_line_id:
                     out.add(str(core_line_id))
@@ -2638,7 +2700,7 @@ class ProjectSupplyService:
         product_ids: Iterable[str],
         warehouse_ids: Iterable[str],
         *,
-        exclude_order_id: Optional[str] = None,
+        exclude_line_ids: Optional[Sequence[str]] = None,
     ) -> Dict[Tuple[str, str], List[Dict[str, Any]]]:
         """Every line still competing for each (product, location) pile, IN RANK ORDER.
 
@@ -2650,8 +2712,8 @@ class ProjectSupplyService:
         double-count rule.** Such a line's claim on this pile is already expressed once, as a
         hold that `_free_stock` has taken out of the opening stock. Counting its outstanding
         quantity again as demand ranked ahead would subtract the same units twice and
-        understate what is left for everybody behind it. The exception is the order being
-        composed, whose own holds `_free_stock` deliberately does not net - see
+        understate what is left for everybody behind it. The exception is the lines being
+        replaced, whose own holds `_free_stock` deliberately does not net - see
         `_decided_elsewhere`.
         """
         pids = [pid for pid in product_ids if pid]
@@ -2689,7 +2751,7 @@ class ProjectSupplyService:
         )
         if not rows:
             return {}
-        decided = self._decided_elsewhere(exclude_order_id)
+        decided = self._decided_elsewhere(exclude_line_ids)
         rows = [row for row in rows if str(row.id) not in decided]
         if not rows:
             return {}
@@ -2769,7 +2831,11 @@ class ProjectSupplyService:
         return grouped
 
     def pile_book(
-        self, product_id: str, warehouse_id: str, *, exclude_order_id: Optional[str] = None
+        self,
+        product_id: str,
+        warehouse_id: str,
+        *,
+        exclude_line_ids: Optional[Sequence[str]] = None,
     ) -> List[Dict[str, Any]]:
         """The queue at ONE pile, in the active policy's order. The read behind the screen.
 
@@ -2780,7 +2846,7 @@ class ProjectSupplyService:
         then the screen would be arguing with the plan.
         """
         book = self._pile_book(
-            [product_id], [warehouse_id], exclude_order_id=exclude_order_id
+            [product_id], [warehouse_id], exclude_line_ids=exclude_line_ids
         )
         return book.get((str(product_id), str(warehouse_id)), [])
 
@@ -2790,7 +2856,7 @@ class ProjectSupplyService:
         pool_ids: Iterable[str],
         members: Sequence[Dict[str, Any]],
         *,
-        exclude_order_id: Optional[str] = None,
+        exclude_line_ids: Optional[Sequence[str]] = None,
     ) -> Dict[str, Dict[str, Any]]:
         """What a shared pool's OWN book claims ahead of each line that would draw on it.
 
@@ -2811,7 +2877,7 @@ class ProjectSupplyService:
         with two keys here, and reading it as a rival took its own quantity out of what it
         could then draw. `line_id` is what excludes it.
         """
-        book = self._pile_book(product_ids, pool_ids, exclude_order_id=exclude_order_id)
+        book = self._pile_book(product_ids, pool_ids, exclude_line_ids=exclude_line_ids)
         if not members:
             return {}
         weights, class_weights = priority.policy_weights(priority.active_policy(self.db))
@@ -2894,7 +2960,7 @@ class ProjectSupplyService:
         warehouse_ids: Iterable[str],
         warehouses: Dict[str, Warehouse],
         spo: Dict[Tuple[str, str], List[_SpoRow]],
-        exclude_order_id: Optional[str] = None,
+        exclude_line_ids: Optional[Sequence[str]] = None,
         detail_for: Optional[Set[str]] = None,
     ) -> Dict[Tuple[str, str], Dict[str, Dict[str, Any]]]:
         """Share each product-location pile across every line still competing for it.
@@ -2908,7 +2974,7 @@ class ProjectSupplyService:
         ahead, how many lines that is, and what was therefore left.
         """
         grouped = self._pile_book(
-            product_ids, warehouse_ids, exclude_order_id=exclude_order_id
+            product_ids, warehouse_ids, exclude_line_ids=exclude_line_ids
         )
 
         out: Dict[Tuple[str, str], Dict[str, Dict[str, Decimal]]] = {}

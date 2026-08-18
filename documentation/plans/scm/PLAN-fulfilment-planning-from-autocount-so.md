@@ -1709,6 +1709,42 @@ the eight fixture orders, `WESERP10B` is owed by four different orders out of bo
   the queue (`_decided_elsewhere`). Missing that carve-out refused every re-confirmation with
   "nothing free for this line", which the sheet's own suite caught.
 
+  **AMENDED, 19 August 2026, after SO403765 line 8 (live): the confirm reads the pool with the
+  board's factors, and excludes by LINE, not by order.** The board proposed "Reserve 4 at BRW, Buy
+  39" (pool sub-table: on hand 7, claimed ahead 3 in 1 line, 4 left) and the confirm refused it
+  with "BRW has nothing free for this line now". Two readers, one projection on paper, two in
+  practice:
+
+  1. `_facts_for` handed `pool_claims` a member with `order_date`, `demand_class` and
+     `payment_terms_days` all `None`, so the asking line was scored on need-by date alone against
+     a pool book scored on every factor. Its December date put it last on that one factor; the
+     board, scoring it on all four (document date May, class project, terms 30), ranked it ahead
+     of the August lines and behind only the April one - 3 claimed, 4 left. The confirm ranked
+     it behind all three - 28 claimed against 7 on hand, nothing left. **Fixed on the CONFIRM
+     side, towards the board's reading**: `_facts_for` now passes the core sales order's
+     `order_date`, `demand_class`, `so_number` and the customer's terms, the same values
+     `demand_facts` passes. The board's values were the true ones; the sheet's `None`s were an
+     omission, not a rule.
+  2. The exclusion that lets a previous revision not compete with its replacement was BY ORDER
+     (`exclude_order_id`): every hold of the order un-netted, every covered line of it back in the
+     queue. That was right when a confirmation replaced the whole revision. Since the union became
+     the server's (13.4), a covered line the payload does not name is CARRIED with its hold, and
+     un-netting that hold offered a named sibling stock the order was still holding - the confirm
+     accepted more at the pool than the board proposed (`test_fulfilment_board`: line 1 holds 3
+     of the pool's 7 under rev 1, the board offers line 2 the 4 left, the confirm took 7). It is
+     now BY LINE (`exclude_line_ids`, the payload's `project_line_id`s): a named line's holds are
+     un-netted and it stays in the queue; a carried line is read as any other order's covered
+     line - hold netted, out of the queue - which is exactly how the board reads it. The sheet
+     (`proposal_for`) still excludes every line, because it proposes for every line.
+
+  Both readers now agree in both directions, and that is pinned rather than assumed:
+  `test_the_confirm_accepts_the_pool_reserve_the_board_proposed` (the live shape, red on HEAD with
+  the live message), `test_the_confirm_never_accepts_more_at_the_pool_than_the_board_proposed`
+  (one unit over is refused, by quantity, not by location) and
+  `test_a_hold_the_same_order_carries_forward_is_netted_by_the_confirm_as_the_board_nets_it`.
+  Live afterwards: the same board, same proposal for line 8, and the confirm wrote revision 4
+  (lines 1, 2, 12 carried verbatim, line 8 Reserve 4 at BRW + Buy 39, one hold of 4 at BRW).
+
   **Three numbers live near each other and none may be printed as another:** the strip's
   `available_qty` (the whole pile), the line's `available_to_this_line` (what was left for it at
   its OWN location), and `qty_proposed_reserve` (what it took, which may exceed the second because
