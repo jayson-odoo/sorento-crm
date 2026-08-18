@@ -346,9 +346,11 @@ def _orders_by_product(rows: list[dict], b: _Builder) -> None:
 #: is simply ABSENT when this caller may not see it - and `b.item` drops empty
 #: pairs, so a denied field renders as nothing rather than as a blank row.
 #:
-#: These sit AFTER the identity/quantity pairs above them, which are never gated:
-#: product, container, shipment and quantity are the answer itself, and a contact
-#: who may not see a gatepass date must still be told what is arriving.
+#: These sit AFTER the identity pairs (company, product, shipment, container - what
+#: the row IS) and BEFORE the quantity pairs. The journey is what a contact asks
+#: about, so it leads; quantity and allocation close the row. Nothing is lost when a
+#: field is denied: the key is absent and `b.item` skips it, so a contact entitled to
+#: none of these reads identity straight into quantity, exactly as before.
 #:
 #: ETA is the exception that proves the rule - it IS gateable (an admin can revoke
 #: it) but ships allowed, so it lives in this list rather than the identity block.
@@ -392,7 +394,7 @@ def _incoming_list(rows: list[dict], b: _Builder) -> None:
                     ),
                     ("shipment_number", "Shipment", s.get("shipment_number")),
                     ("shipping_container_number", "Container", s.get("shipping_container_number")),
-                    ("batch_number", "Batch", l.get("batch_number")),
+                    *((key, label, s.get(key)) for key, label in _CLEARANCE_PAIRS),
                     (
                         "remaining_incoming_quantity",
                         "Incoming Quantity",
@@ -404,7 +406,6 @@ def _incoming_list(rows: list[dict], b: _Builder) -> None:
                         _wh_alloc(l.get("warehouse_allocations")),
                     ),
                     ("unallocated_quantity", "Unallocated Quantity", gap),
-                    *((key, label, s.get(key)) for key, label in _CLEARANCE_PAIRS),
                 ],
                 unallocated=unallocated,
                 partially_allocated=partial,

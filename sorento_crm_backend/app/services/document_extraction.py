@@ -33,11 +33,17 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.services.ai_prompt_registry import render
-from app.services.llm_provider import ImagePart, get_provider
+from app.services.llm_provider import ImagePart, get_provider, resolve_api_key
 
 logger = logging.getLogger(__name__)
 
 RASTER_MIMES = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
+
+# The environment leg of ``resolve_api_key``, named per provider so an operator
+# with no key on the settings page is told which variable to set rather than
+# being sent to look at the wrong one. Anything outside these two falls back to
+# the OpenAI key in the resolver, so it is named the same way here.
+_ENV_KEY_NAME = {"gemini": "GEMINI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 
 
 class ExtractionUnavailable(RuntimeError):
@@ -128,6 +134,26 @@ def _parse_json(text: str) -> dict:
     return json.loads(body)
 
 
+def _assistant_config(db: Session):
+    """The AI assistant config row, or ``None`` when the install has never saved one.
+
+    Read exactly the way ``ai_extract`` and the media lane read it: oldest row
+    first, no write. ``AIAssistantConfigService._ensure_singleton`` would create
+    and commit a row, which extraction must not do - it runs on the worker
+    inside somebody else's transaction and has no principal to attribute a new
+    row to. ``resolve_api_key`` treats ``None`` as "no columns set" and falls
+    through to the environment key, so an install with no row configured keeps
+    working exactly as it did before.
+    """
+    from app.models.ai_assistant import AIAssistantConfig
+
+    return (
+        db.query(AIAssistantConfig)
+        .order_by(AIAssistantConfig.created_at.asc())
+        .first()
+    )
+
+
 def extract_document(
     db: Session,
     content: bytes,
@@ -147,20 +173,31 @@ def extract_document(
     ``on_page`` is called after each page so a caller can persist progress; a long scan
     should not look frozen for two minutes.
 
+    The key is resolved through the shared ``resolve_api_key`` ladder against the
+    AI assistant config row, for the provider ``document_ai_provider`` names: the
+    provider-specific column an operator saved in the UI first, then the generic
+    column when the assistant itself runs on that provider, then the environment
+    key. Reading the environment alone meant a key saved on the settings page was
+    silently ignored and the feature reported itself unavailable.
+
     The usage row this writes carries no principal. Extraction runs on the worker with
     no request behind it, and neither version row records who uploaded it, so there is
     nothing truthful to attribute it to yet. Recording a guess would be worse than the
     blank.
     """
-    api_key = settings.gemini_api_key
+    provider_name = (settings.document_ai_provider or "").strip().lower()
+    api_key = resolve_api_key(_assistant_config(db), provider_name)
     if not api_key:
+        env_var = _ENV_KEY_NAME.get(provider_name, "OPENAI_API_KEY")
         raise ExtractionUnavailable(
-            "No document extraction key configured (GEMINI_API_KEY). "
+            f"No document extraction key configured for the '{provider_name}' provider. "
+            "Set one on the AI assistant settings page (System > AI Assistant), or as "
+            f"the {env_var} environment variable. "
             "The document is stored and can be completed by hand."
         )
 
     chosen_model = model or settings.document_ai_model
-    provider = get_provider(settings.document_ai_provider, api_key, chosen_model)
+    provider = get_provider(provider_name, api_key, chosen_model)
     images = render_pages(content, mime)
     result = ExtractionResult(model=f"{provider.name}/{chosen_model}", page_count=len(images))
 

@@ -1813,9 +1813,11 @@ class ConversationSLATrackingService:
         touch due_at / due_at_resolution / current_tier_started_at.
 
         Resolution order for (agent_id, team, tier):
-          1. The taker's own membership in the task's agent chain - pick the most
-             senior tier they hold (so escalation continues above them). This is what
-             a user means by "take it onto my desk".
+          1. The taker's own membership in the task's agent chain, preferring the
+             tracking's own team set: a link they hold within ``team_set_code`` wins,
+             and only when they hold none there does it fall back across sets (most
+             senior tier first, then team set code) so escalation continues above
+             them. This is what a user means by "take it onto my desk".
           2. Fall back to the passed queue ``team_id``'s AgentTeam link when the taker
              is not part of that agent's chain (pure cover-for-another-team case).
         """
@@ -1851,8 +1853,15 @@ class ConversationSLATrackingService:
             str(passed_link.agent_id) if passed_link else None
         )
 
-        # Prefer the taker's OWN standing in that agent chain (most senior tier held).
-        link = self._agent_link_for_user(agent_id, str(user_id))
+        # Prefer the taker's OWN standing in that agent chain (most senior tier held),
+        # resolved inside the task's own team set when they belong to it (tier-1
+        # membership is unique per set, not per agent).
+        _tracking_set = getattr(tracking, "team_set_code", None)
+        link = self._agent_link_for_user(
+            agent_id,
+            str(user_id),
+            team_set_code=str(_tracking_set) if _tracking_set else None,
+        )
         # Fall back to the passed queue team's link (cover for another team's chain).
         if not link:
             link = passed_link
@@ -1906,10 +1915,17 @@ class ConversationSLATrackingService:
         )
         return tracking
 
-    def _agent_link_for_user(self, agent_id, user_id):
+    def _agent_link_for_user(self, agent_id, user_id, team_set_code: Optional[str] = None):
         """The AgentTeam link representing ``user_id``'s standing in agent
         ``agent_id``'s chain - the most senior tier they hold (so escalation
         continues above them). None when the user isn't part of that chain.
+
+        Tier-1 membership is unique only PER TEAM SET, so a user can hold links to
+        DIFFERENT teams at the same tier under one agent. ``team_set_code`` (the
+        tracking's own set) is therefore preferred: links in that set are considered
+        first, and only when the user holds none there do we fall back across sets.
+        Either way the tie is broken deterministically by team set code and then team
+        id, so the same user always resolves to the same link.
         Shared by takeover (taker) and reassign (target) for tier re-derivation."""
         from app.models.access import AgentTeam, TeamMember
 
@@ -1923,21 +1939,36 @@ class ConversationSLATrackingService:
         ]
         if not my_team_ids:
             return None
-        return (
-            self.db.query(AgentTeam)
-            .filter(
+
+        def _query(code: Optional[str]):
+            q = self.db.query(AgentTeam).filter(
                 AgentTeam.agent_id == str(agent_id),
                 AgentTeam.team_id.in_(my_team_ids),
             )
-            .order_by(AgentTeam.tier.desc().nullslast())
-            .first()
-        )
+            if code:
+                q = q.filter(AgentTeam.code == str(code))
+            return q.order_by(
+                AgentTeam.tier.desc().nullslast(),
+                AgentTeam.code.asc(),
+                # Equal tier within ONE code is legal at tier 2/3, so code alone is
+                # not a total order - team_id makes the pick stable across calls.
+                AgentTeam.team_id.asc(),
+            ).first()
+
+        if team_set_code:
+            in_set = _query(team_set_code)
+            if in_set is not None:
+                return in_set
+        return _query(None)
 
     def reassign(self, tracking_id: str, user_id: str, target_user_id: str) -> ConversationSLATracking:
         """Hand a task to a chosen person (My Pending or Team Tasks). Re-derives the
         tier/team_set_code to the TARGET's own standing in the task's agent chain
         (handing a tier-3 task to a tier-2 member moves it to tier 2), keeping the
-        same agent and ALL clocks. When the target isn't in that agent's chain, the
+        same agent and ALL clocks. The tracking's own team set is preferred: a link
+        the target holds within ``team_set_code`` wins, and only when they hold none
+        there does it fall back across sets by seniority (tier desc, then code asc).
+        When the target isn't in that agent's chain, the
         existing team/tier are kept. Target must be in the actor's visible scope
         (scope-B). Writes a 'reassignment' event log, pushes Respond + notifies.
         """
@@ -2010,9 +2041,15 @@ class ConversationSLATrackingService:
 
         setattr(tracking, "assigned_to_id", str(target_user_id))
         setattr(tracking, "assigned_to", getattr(target, "respond_user_id", None))
-        # Re-derive tier/team_set_code to the target's standing in this agent chain;
-        # keep the agent and all clocks. No membership in the chain -> leave as-is.
-        link = self._agent_link_for_user(getattr(tracking, "agent_id", None), str(target_user_id))
+        # Re-derive tier/team_set_code to the target's standing in this agent chain,
+        # preferring the task's own team set; keep the agent and all clocks. No
+        # membership in the chain -> leave as-is.
+        _tracking_set = getattr(tracking, "team_set_code", None)
+        link = self._agent_link_for_user(
+            getattr(tracking, "agent_id", None),
+            str(target_user_id),
+            team_set_code=str(_tracking_set) if _tracking_set else None,
+        )
         if link is not None:
             setattr(tracking, "team_set_code", link.code)
             if link.tier is not None:
@@ -3541,17 +3578,22 @@ class ConversationSLATrackingService:
         Resolve the (agent_id, team_set_code, tier, team_id) an assignee belongs to, for
         assignee-driven routing correction (PLAN-sla-assignee-team-derivation).
 
-        Step 1 - global tier-1 lookup: the user's unique tier-1-linked TEAM wins (team-level
-        invariant enforced in TeamService/AccessAgentService: a user belongs to at most one
-        team that is linked at tier 1). The same team is commonly linked at tier 1 under
-        many agents (shared executive pools), so among that team's tier-1 links prefer the
-        tracking's current agent (agent stays put, only the team set flips); otherwise pick
-        the deterministic first link (code, then agent_id) - tier-2/3 configuration is
-        expected to be equivalent across those agents.
+        Step 1 - tier-1 lookup: the user's tier-1-linked TEAM wins. The membership invariant
+        (TeamService/AccessAgentService) is scoped PER TEAM SET: a user belongs to at most
+        one tier-1 team per AgentTeam.code, so the tracking's `current_team_set_code` is what
+        disambiguates a user who leads a team in two sets. With that context, only the links
+        in that set are considered. Without usable context (no team_set_code, or the user
+        holds no tier-1 link in it), a user spanning several tier-1 teams is ambiguous: log a
+        warning and fall back deterministically rather than abandoning derivation. The same
+        team is commonly linked at tier 1 under many agents (shared executive pools), so
+        among the candidate links prefer the tracking's current agent (agent stays put, only
+        the team set flips); otherwise pick the deterministic first link (code, then
+        agent_id) - tier-2/3 configuration is expected to be equivalent across those agents.
         Step 2 - scoped tier-2/3 lookup: otherwise, if the user is in the tier-2/3 team of
         the tracking's current (agent_id, team_set_code), keep agent/team and return the
         matched tier (lowest when in both).
-        Step 3 - None: unknown user, or a manager of some other team set (ambiguous).
+        Step 3 - None: unknown user, or a user with no link the two steps above can match
+        (no tier-1 link, and no tier-2/3 link in the tracking's own agent/team set).
         """
         import logging
         from app.models.access import AccessAgent, AgentTeam, TeamMember
@@ -3579,24 +3621,50 @@ class ConversationSLATrackingService:
         tier1_links = tier1_q.order_by(
             AgentTeam.code.asc(), AgentTeam.agent_id.asc()
         ).all()
-        distinct_teams = {str(l.team_id) for l in tier1_links}
-        if len(distinct_teams) > 1:
-            # Team-level invariant violated (config predates enforcement) - ambiguous.
-            logging.getLogger(__name__).warning(
-                "User %s is a member of multiple tier-1-linked teams %s; "
-                "skipping assignee-driven routing.",
-                uid,
-                sorted(distinct_teams),
-            )
-            return None
         if tier1_links:
+            # The invariant is per team set, so the tracking's team set is what picks
+            # the right tier-1 team for a user who leads one in several sets.
+            candidates = tier1_links
+            restricted_to_set = False
+            if current_team_set_code:
+                in_set = [
+                    l for l in tier1_links if str(l.code) == str(current_team_set_code)
+                ]
+                if in_set:
+                    candidates = in_set
+                    restricted_to_set = True
+            distinct_teams = {str(l.team_id) for l in candidates}
+            if len(distinct_teams) > 1:
+                # Two different situations end up here. Restricted to one team set and
+                # STILL spanning several teams means the per-set invariant itself is
+                # broken (the data should not allow it). Otherwise the context was just
+                # missing or matched no link of the user's, which is expected. Routing
+                # has to land somewhere either way, so take the deterministic pick below.
+                if restricted_to_set:
+                    logging.getLogger(__name__).warning(
+                        "User %s has ambiguous tier-1 membership across teams %s WITHIN "
+                        "team set '%s'; the per-team-set tier-1 invariant looks violated. "
+                        "Falling back deterministically.",
+                        uid,
+                        sorted(distinct_teams),
+                        current_team_set_code,
+                    )
+                else:
+                    logging.getLogger(__name__).warning(
+                        "User %s has ambiguous tier-1 membership across teams %s in "
+                        "several team sets, and no team set context applied "
+                        "(given: %s); falling back deterministically.",
+                        uid,
+                        sorted(distinct_teams),
+                        current_team_set_code or "none",
+                    )
             link = next(
                 (
                     l
-                    for l in tier1_links
+                    for l in candidates
                     if current_agent_id and str(l.agent_id) == str(current_agent_id)
                 ),
-                tier1_links[0],
+                candidates[0],
             )
             return {
                 "agent_id": str(link.agent_id),
@@ -3640,6 +3708,11 @@ class ConversationSLATrackingService:
         - Team change advances the round-robin cursor of the new (agent, team) to the
           manually picked assignee so auto-assign continues fairly after them.
         - Returns a change summary dict, or None when no derivation / nothing changed.
+
+        Because derivation now falls back deterministically instead of abandoning on
+        ambiguity, invariant-violating legacy data gets its routing rewritten here and
+        so has its deadlines moved where it previously kept them; the ambiguity WARNING
+        logged by derive_team_for_assignee is the signal that happened.
         """
         from app.models.access import AgentTeamRoundRobinCursor
 
