@@ -55,8 +55,9 @@ export function useSetKeyedStatus(q: PoWorklistQuery = {}) {
     }) => setKeyedStatus(productCode, input),
     onSuccess: (result) => {
       void qc.invalidateQueries({ queryKey: poWorklistKey(q) });
+      const where = result.warehouse_code ? ` @ ${result.warehouse_code}` : '';
       toast.success(
-        `${result.product_code} - ${KEYED_STATUS_LABELS[result.keyed_status]}`,
+        `${result.product_code}${where} - ${KEYED_STATUS_LABELS[result.keyed_status]}`,
       );
     },
     onError: (e: Error) => toast.error(e.message),

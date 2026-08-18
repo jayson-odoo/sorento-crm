@@ -948,8 +948,10 @@ describe('FulfilmentPlanningClient: search', () => {
     const hint = box.getAttribute('title') ?? '';
     // A product match is an ORDER match: the row still counts the whole order.
     expect(hint).toContain('whole order');
-    // And an order whose only matching line is already done is absent on purpose.
+    // And only an outstanding line counts as a match.
     expect(hint).toContain('outstanding');
+    // One short hint, not a paragraph: a second sentence is teaching, and belongs in the guide.
+    expect(hint).not.toMatch(/\. [A-Z]/);
   });
 
   it('sends a product code as the same query parameter', async () => {

@@ -56,7 +56,7 @@
  * 2) Set the keyed-into-AutoCount status
  *
  *      POST /api/v1/scm/po-worklist/{product_code}/keyed-status
- *          { run_id, keyed_status }
+ *          { run_id, keyed_status, warehouse_code? }
  *
  *      -> 200  KeyedStatusResult
  *      Auth: `scm.reorder.run` (this one writes), matching the decision route.
@@ -68,6 +68,12 @@
  *    Any transition is allowed, including backwards. A person who marked a row keyed
  *    by mistake has to be able to unmark it, and a state machine that only moves
  *    forward would leave them editing the database.
+ *
+ *    The write lands at the run's own grain (AC-F09). On a LOCATION-grain run every
+ *    row is its own purchase order, so `warehouse_code` names which one and the
+ *    status is per (product, location); the server 422s a location-grain write that
+ *    names none and 404s a location the run never decided for. On a product-grain
+ *    run it is omitted and the product row is keyed, exactly as before.
  *
  * -- ERROR SHAPE -------------------------------------------------------------
  * Every failure is the standard `AppException` envelope the global handler in

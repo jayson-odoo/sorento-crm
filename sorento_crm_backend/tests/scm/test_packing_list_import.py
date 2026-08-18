@@ -250,17 +250,18 @@ def test_a_code_another_company_also_uses_resolves_to_ours():
     allocate, because that product has no purchase order of ours to draw down - a failure that
     looks like missing data rather than the wrong row.
     """
-    from sqlalchemy import text
+    from app.models.company import Company
 
     with pg_session() as db:
         w = World(db)
         mine = w.product("A")
-        other_company = db.execute(
-            text("SELECT id FROM companies WHERE id <> :sorento LIMIT 1"),
-            {"sorento": "00000000-0000-0000-0000-000000000001"},
-        ).scalar()
-        if other_company is None:
-            pytest.skip("this database has only one company, so there is nothing to confuse")
+        other_company = Company(
+            id=str(uuid.uuid4()),
+            name=f"{MARKER} other company",
+            code=f"{MARKER}-{uuid.uuid4().hex[:6]}",
+        )
+        db.add(other_company)
+        db.flush()
 
         # Stamped explicitly: the auto-stamp fills Sorento when company_id is None, which
         # would collide with `mine` on (company_id, product_code) before the point is made.
@@ -268,7 +269,7 @@ def test_a_code_another_company_also_uses_resolves_to_ours():
             id=str(uuid.uuid4()), product_code=mine.product_code,
             product_name=f"{MARKER} twin", category_id=w.cat.id, base_uom_id=w.uom.id,
             list_price=0, is_active=True, is_discontinued=False,
-            company_id=str(other_company),
+            company_id=str(other_company.id),
         )
         db.add(twin)
         db.flush()

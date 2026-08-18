@@ -159,6 +159,36 @@ describe('SupplyLineCard', () => {
     expect(screen.getByText('No description')).toBeInTheDocument();
   });
 
+  it('shows an unplannable line named and blocked, with the reason and no editor', () => {
+    renderCard(
+      line({
+        unplannable_reason: 'No reconciled AutoCount line, so there is no open quantity to promise.',
+        components: [],
+      }),
+    );
+
+    expect(screen.getByText('Line 1 · CB6633')).toBeInTheDocument();
+    expect(
+      screen.getByText('No reconciled AutoCount line, so there is no open quantity to promise.'),
+    ).toBeInTheDocument();
+    // The line's own location is still stated: it is the reconciliation that is missing.
+    expect(screen.getByText('BRW-BB')).toBeInTheDocument();
+    for (const label of SECTIONS) expect(screen.queryByText(label)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Buy on line 1')).not.toBeInTheDocument();
+  });
+
+  it('shows a line with no fulfilment location the same way, naming the sales order as the way out', () => {
+    renderCard(line({ fulfilment_location: null, fulfilment_location_missing: true, components: [] }));
+
+    expect(
+      screen.getByText(
+        'No fulfilment location on the sales order line, so nothing can be composed for it.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Not on the sales order line')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Buy on line 1')).not.toBeInTheDocument();
+  });
+
   it('shows each proposed component beside the reason its rule wrote (AC-B14)', () => {
     renderCard(line());
 

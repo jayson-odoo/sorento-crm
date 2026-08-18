@@ -27,7 +27,7 @@ import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { EM_DASH, fmtInt, fmtSupplierCost } from '../../lib/format';
 import { computedAtLabel, dayLabel } from '../lib/coverageTimeline';
-import { isLegacyRun, planGrainLabel } from '../lib/planGrain';
+import { isLegacyRun, planGrainLabel, type RunGrainState } from '../lib/planGrain';
 import { decimalPlacesOf, fmtQty } from '../lib/qtyPrecision';
 import { usePoWorklist, useSetKeyedStatus } from '../hooks/usePoWorklist';
 import {
@@ -129,6 +129,19 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
   // Defaults to what is still to key, because that IS the screen's primary use (AC-E2.4).
   // Landing on "all" would make the first action, every time, a click to narrow it.
   const [statusFilter, setStatusFilter] = useState<string>(OUTSTANDING);
+
+  // The run's own two grain fields, as the server states them. A legacy run is the one
+  // with a NULL contract version, so the version is read, never inferred from the grain.
+  const runGrain = useMemo<RunGrainState | null>(
+    () =>
+      data
+        ? {
+            decision_grain: data.decision_grain,
+            front_planning_contract_version: data.front_planning_contract_version,
+          }
+        : null,
+    [data],
+  );
 
   const rows = useMemo(() => {
     const all = data?.rows ?? [];
@@ -403,7 +416,13 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
                   onChange={(v: string) =>
                     setStatus.mutate({
                       productCode: r.product_code,
-                      input: { run_id: data?.run_id ?? '', keyed_status: v as KeyedStatus },
+                      input: {
+                        run_id: data?.run_id ?? '',
+                        keyed_status: v as KeyedStatus,
+                        // A location-grain row is its own purchase order, keyed on its
+                        // own; a product-grain row names no location and keys the product.
+                        ...(r.warehouse_code ? { warehouse_code: r.warehouse_code } : {}),
+                      },
                     })
                   }
                   options={[
@@ -412,7 +431,7 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
                     { value: 'keyed', label: KEYED_STATUS_LABELS.keyed },
                   ]}
                   disabled={setStatus.isPending}
-                  id={`keyed-status-${r.product_code}`}
+                  id={`keyed-status-${r.product_code}${r.warehouse_code ? `-${r.warehouse_code}` : ''}`}
                   size="sm"
                   triggerClassName="w-28"
                   renderTriggerLabel={() => <span className="text-2xs">Change</span>}
@@ -505,17 +524,14 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-base font-semibold">PO worklist</h3>
             {/* Which grain this list is keyed on. A fact about the run, not a control. */}
-            {data ? (
+            {runGrain ? (
               <Badge
-                variant={isLegacyRun({ decision_grain: data.decision_grain, front_planning_contract_version: data.decision_grain ? 1 : null }) ? 'secondary' : 'info'}
+                variant={isLegacyRun(runGrain) ? 'secondary' : 'info'}
                 appearance="light"
                 size="sm"
                 data-testid="worklist-grain-chip"
               >
-                {planGrainLabel({
-                  decision_grain: data.decision_grain,
-                  front_planning_contract_version: data.decision_grain ? 1 : null,
-                })}
+                {planGrainLabel(runGrain)}
               </Badge>
             ) : null}
           </div>

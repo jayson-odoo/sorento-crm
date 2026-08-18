@@ -12,6 +12,32 @@ export type SalesOrderHeaderDraft = {
   area_group?: string;
 };
 
+/** The same fields as the server holds them, so a draft can be measured against them. */
+export type SalesOrderHeaderStored = {
+  area_group?: string | null;
+};
+
+/**
+ * The header keys whose staged value differs from the stored one.
+ *
+ * Dirty is measured, not touched: typing a value and typing it back is not a change, so Save
+ * stays disabled and the navigate-away warning stays quiet. Without the stored values in hand
+ * every touched key counts, which is the most the session can honestly say.
+ */
+function changedHeaderKeys(
+  draft: SalesOrderHeaderDraft,
+  stored: SalesOrderHeaderStored | undefined,
+): SalesOrderHeaderDraft {
+  if (stored === undefined) return draft;
+  const changed: SalesOrderHeaderDraft = {};
+  for (const key of Object.keys(draft) as (keyof SalesOrderHeaderDraft)[]) {
+    const value = draft[key];
+    if (value === undefined) continue;
+    if (value.trim() !== (stored[key] ?? '').trim()) changed[key] = value;
+  }
+  return changed;
+}
+
 /**
  * The edit view's state for one sales order draft.
  *
@@ -126,7 +152,9 @@ export function stagedLinesToBody(
     });
 }
 
-export function useSalesOrderEditSession(): SalesOrderEditSession {
+export function useSalesOrderEditSession(
+  stored?: SalesOrderHeaderStored,
+): SalesOrderEditSession {
   const [isEditing, setIsEditing] = React.useState(false);
   const [seeded, setSeeded] = React.useState<StagedSalesOrderLine[] | null>(null);
   const [staged, setStaged] = React.useState<StagedSalesOrderLine[] | null>(null);
@@ -191,20 +219,30 @@ export function useSalesOrderEditSession(): SalesOrderEditSession {
     [staged],
   );
 
-  const isDirty = Object.keys(headerDraft).length > 0 || linesMoved;
+  // Keyed on the values, not the object, so a fresh literal per render does not recompute.
+  const hasStored = stored !== undefined;
+  const storedAreaGroup = stored?.area_group;
+  const headerChanges = React.useMemo(
+    () =>
+      changedHeaderKeys(headerDraft, hasStored ? { area_group: storedAreaGroup } : undefined),
+    [headerDraft, hasStored, storedAreaGroup],
+  );
+
+  const isDirty = Object.keys(headerChanges).length > 0 || linesMoved;
 
   const body = React.useMemo<SalesOrderDocumentSaveBody>(() => {
     const next: SalesOrderDocumentSaveBody = {};
-    // Only the keys somebody actually typed into: an absent key leaves the stored value
-    // alone, so an untouched field cannot be blanked by a save.
-    if (headerDraft.area_group !== undefined) {
-      next.area_group = headerDraft.area_group.trim() || null;
+    // Only the keys somebody actually changed: an absent key leaves the stored value alone,
+    // so an untouched field cannot be blanked by a save, and a field typed back to what it
+    // was is not rewritten.
+    if (headerChanges.area_group !== undefined) {
+      next.area_group = headerChanges.area_group.trim() || null;
     }
     // Lines are only sent when they moved. The write REPLACES the whole set, so sending an
     // untouched set back is a real rewrite of rows nobody edited, not a no-op.
     if (linesMoved && staged) next.lines = stagedLinesToBody(staged);
     return next;
-  }, [headerDraft, linesMoved, staged]);
+  }, [headerChanges, linesMoved, staged]);
 
   return {
     isEditing,

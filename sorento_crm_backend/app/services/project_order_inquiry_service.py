@@ -255,6 +255,11 @@ class ProjectOrderInquiryService:
         location below zero availability opened a hole at THAT location, and it is raised
         there under its own verb (PLAN 13.11). A donor the borrow left covered raises
         nothing.
+
+        `created` counts the rows this confirmation ADDED to purchasing's list. A carried
+        line (`carried: True`) has its still-raised row moved under this revision - a
+        cancel and a re-raise, so `confirmed_unplaced_buy_rows` keeps seeing it under the
+        ACTIVE decision - but purchasing already had that row, so it is not counted.
         """
         inquiry = self._existing(order.id, None)
         if inquiry is None:
@@ -269,10 +274,12 @@ class ProjectOrderInquiryService:
             self.db.flush()
 
         created = 0
+        raised = 0
         exceptions: List[Dict[str, Any]] = []
         for entry in buy_lines:
             line = entry["line"]
             need = _dec(entry.get("buy_qty"))
+            carried = bool(entry.get("carried"))
             # This sales order's OWN inquiry only. An amendment raises its exception verbs
             # under its own inquiry (`amendment_id`), and cancelling those here would
             # delete an instruction purchasing is still working from.
@@ -315,7 +322,9 @@ class ProjectOrderInquiryService:
                         state=INQUIRY_RAISED,
                     )
                 )
-                created += 1
+                raised += 1
+                if not carried:
+                    created += 1
             elif placed > need:
                 message = (
                     f"Placed {_qty_str(placed)}, new need {_qty_str(need)}"
@@ -344,12 +353,14 @@ class ProjectOrderInquiryService:
                 )
 
         self._retire_uncovered_rows(inquiry, decision, buy_lines)
-        created += self._raise_borrow_shortfalls(
+        shortfalls = self._raise_borrow_shortfalls(
             order, inquiry, decision, borrow_shortfalls
         )
+        created += shortfalls
+        raised += shortfalls
         self.db.flush()
-        if created and self.task_for(inquiry.id) is None:
-            self._hand_to_purchasing(order, inquiry, created)
+        if raised and self.task_for(inquiry.id) is None:
+            self._hand_to_purchasing(order, inquiry, raised)
         return {"inquiry": inquiry, "created": created, "exceptions": exceptions}
 
     def _raise_borrow_shortfalls(

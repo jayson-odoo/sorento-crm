@@ -134,6 +134,11 @@ export interface PoWorklist {
    * neither response gains a channel key. NULL on a legacy run.
    */
   decision_grain: PlanGrain | null;
+  /**
+   * `1` on a front-planning run, NULL on a legacy one. A legacy run is identified by
+   * THIS being null (`lib/planGrain.ts`), never inferred from the grain.
+   */
+  front_planning_contract_version: number | null;
   rows: PoWorklistRow[];
 }
 
@@ -141,11 +146,18 @@ export interface PoWorklist {
 export interface KeyedStatusInput {
   run_id: string;
   keyed_status: KeyedStatus;
+  /**
+   * Which location's order, on a run decided at LOCATION grain: each location there is
+   * its own purchase order, keyed on its own. Omitted on a product-grain row.
+   */
+  warehouse_code?: string;
 }
 
 /** What the server echoes back, so the row updates without a refetch. */
 export interface KeyedStatusResult {
   product_code: string;
+  /** Echoed on a location-grain write; null when the product row was keyed. */
+  warehouse_code?: string | null;
   keyed_status: KeyedStatus;
   keyed_by: string;
   keyed_at: string;

@@ -65,3 +65,7 @@ sorento_crm_backend/scripts/container_status_trial_snapshot.json
 
 # Session handoff artifacts are machine-local, never shipped
 /HANDOFF-*.md
+
+# Repo-root node caches and e2e stack scratch
+/node_modules/
+.e2e-stack/

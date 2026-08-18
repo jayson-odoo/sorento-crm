@@ -195,3 +195,49 @@ def test_the_permission_is_also_in_the_registry_so_a_fresh_database_has_it():
     from app.rbac.permission_registry import PERMISSION_REGISTRY
 
     assert TARGET_SLUG in {entry["slug"] for entry in PERMISSION_REGISTRY}
+
+
+class _RecordingOp:
+    """Stands in for `alembic.op` so the downgrade's DELETEs run on this session while its
+    `drop_table(..., schema="scm")` - which names the real schema outright - is only noted."""
+
+    def __init__(self, connection):
+        self._connection = connection
+        self.dropped: list[tuple[str, str | None]] = []
+
+    def get_bind(self):
+        return self._connection
+
+    def drop_table(self, name, schema=None):
+        self.dropped.append((name, schema))
+
+
+def _aliases(db, doc_type: str) -> set[tuple[str, str]]:
+    rows = db.execute(
+        text("SELECT field, alias FROM import_field_alias WHERE doc_type = :d"),
+        {"d": doc_type},
+    )
+    return {(field, alias) for field, alias in rows}
+
+
+def test_downgrade_removes_only_the_aliases_this_migration_seeded(db):
+    module = _migration_module()
+    module.seed(db.connection())
+    tenant_alias = ("item_code", f"ZZT375-TENANT-{uuid.uuid4().hex[:6]}")
+    db.execute(
+        text(
+            "INSERT INTO import_field_alias (doc_type, field, alias, locale) "
+            "VALUES (:d, :f, :a, 'en')"
+        ),
+        {"d": module.DOC_TYPE, "f": tenant_alias[0], "a": tenant_alias[1]},
+    )
+    assert set(module._ALIASES) <= _aliases(db, module.DOC_TYPE)
+
+    module.op = _RecordingOp(db.connection())
+    module.downgrade()
+
+    assert _aliases(db, module.DOC_TYPE) == {tenant_alias}
+    assert module.op.dropped == [
+        ("proforma_invoice_line", "scm"),
+        ("proforma_invoice", "scm"),
+    ]

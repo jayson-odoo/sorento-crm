@@ -30,8 +30,12 @@ import {
   rowMatchesSearch,
   confirmLinesFor,
   plannedLineCount,
+  shiftedDayWindow,
   standingsFor,
   unpostableDecidedFor,
+  type ContributionOwners,
+  type UnpostableLine,
+  type UnpostableReason,
 } from '../../_shared/lib/fulfilmentBoard';
 import type {
   BoardCell,
@@ -173,9 +177,10 @@ export function FulfilmentBoardPanel({
    * Move the day window by a whole window at a time.
    *
    * The FIRST window is the server's: it opens on the earliest date still to come, falling
-   * back to the earliest owed when everything is past, and nothing here re-anchors it. This
-   * control only moves off whatever is currently rendered, so it cannot drift out of step with
-   * the columns it is scrolling.
+   * back to the earliest owed when everything is past. Once the planner has moved it, the
+   * window THEY asked for is the anchor, and the step is the contract's thirty days - never
+   * the columns that happened to come back, so a stretch nobody owes anything in is still a
+   * page and no day is skipped or shown twice.
    *
    * Day is the only granularity with a window. Week and month need none: only periods actually
    * owed become columns, so the 50-order cap tops out around 57 week or 24 month columns, and
@@ -183,16 +188,14 @@ export function FulfilmentBoardPanel({
    */
   const shiftWindow = React.useCallback(
     (direction: 1 | -1) => {
-      const dated = (board.data?.dateBuckets ?? []).filter(
-        (bucket) => bucket.kind === 'dated' && bucket.start,
-      );
-      const anchor = dated[0]?.start;
+      const anchor =
+        dayWindow ??
+        board.data?.dateBuckets.find((bucket) => bucket.kind === 'dated' && bucket.start)?.start ??
+        board.data?.as_of;
       if (!anchor) return;
-      const next = new Date(`${anchor}T00:00:00Z`);
-      next.setUTCDate(next.getUTCDate() + direction * dated.length);
-      setDayWindow(next.toISOString().slice(0, 10));
+      setDayWindow(shiftedDayWindow(anchor, direction));
     },
-    [board.data],
+    [board.data, dayWindow],
   );
 
   const decide = React.useCallback((key: string, decision: BoardDecision | null) => {
@@ -333,24 +336,31 @@ export function FulfilmentBoardPanel({
    * moment its cell left the day window, and the counter would fall as the planner scrolled.
    * The key is stored, never parsed: the server owns its format (deviation 5).
    */
-  const owners = React.useRef<Map<string, string>>(new Map());
+  const ledger = React.useRef<{ owners: ContributionOwners; covered: Set<string> }>({
+    owners: new Map(),
+    // The lines an ACTIVE decision already covers, which are decided in the DATABASE rather
+    // than in the draft. Kept beside `owners` because the order card counts both, and REMOVED
+    // again when a board says a line it once covered is no longer covered - a revision can be
+    // superseded or challenged, and a "decided" that only ever accumulates would go on
+    // claiming a decision that has been retired.
+    covered: new Set(),
+  });
   /**
-   * The lines an ACTIVE decision already covers, which are decided in the DATABASE rather than
-   * in the draft.
-   *
-   * Kept beside `owners` because the order card counts both, and REMOVED again when a board
-   * says a line it once covered is no longer covered - a revision can be superseded or
-   * challenged, and a "decided" that only ever accumulates would go on claiming a decision that
-   * has been retired.
+   * The ledger brought up to date with THIS board, once per board rather than on every render:
+   * folding a board in is idempotent, so a repeated pass changes nothing, but a pass on every
+   * render was work in the render body that a memo keyed on the board does not need to be.
    */
-  const covered = React.useRef<Set<string>>(new Set());
-  for (const cell of board.data?.cells ?? []) {
-    for (const contribution of cell.contributions) {
-      owners.current.set(contribution.key, contribution.sales_order_id);
-      if (contribution.covered) covered.current.add(contribution.key);
-      else covered.current.delete(contribution.key);
+  const ownership = React.useMemo(() => {
+    const { owners, covered } = ledger.current;
+    for (const cell of board.data?.cells ?? []) {
+      for (const contribution of cell.contributions) {
+        owners.set(contribution.key, contribution.sales_order_id);
+        if (contribution.covered) covered.add(contribution.key);
+        else covered.delete(contribution.key);
+      }
     }
-  }
+    return { owners, covered, board: board.data };
+  }, [board.data]);
 
   /**
    * The standings are the SERVER's, off `board.orders`, which counts every row of the
@@ -361,9 +371,9 @@ export function FulfilmentBoardPanel({
    * promised to leave nothing behind.
    */
   const standings = React.useMemo<BoardOrderStanding[]>(() => {
-    if (!board.data) return [];
-    return standingsFor(board.data.orders, owners.current, draft, covered.current);
-  }, [board.data, draft]);
+    if (!ownership.board) return [];
+    return standingsFor(ownership.board.orders, ownership.owners, draft, ownership.covered);
+  }, [ownership, draft]);
 
   /**
    * What each order's Confirm would actually post, and what it would leave.
@@ -390,8 +400,8 @@ export function FulfilmentBoardPanel({
     );
   }, [standings, board.data, draft]);
 
-  /** Decided lines this confirmation cannot carry, per order, named on the rail. */
-  const unpostable = React.useMemo<Record<string, BoardContribution[]>>(() => {
+  /** Decided lines this confirmation cannot carry, per order, named on the rail with why. */
+  const unpostable = React.useMemo<Record<string, UnpostableLine[]>>(() => {
     if (!board.data) return {};
     const contributions = board.data.cells.flatMap((cell) => cell.contributions);
     return Object.fromEntries(
@@ -728,26 +738,18 @@ export function FulfilmentBoardPanel({
           <Card>
             <CardHeader className="block">
               <h3 className="text-sm font-semibold">Commit</h3>
+              {/* One hint, not a paragraph: what a press does and where the Buy rows go. The
+                  destination is a link because the cross-project Order Inquiries page is where
+                  purchasing picks up an adopted order's rows. */}
               <p className="mt-0.5 text-sm text-muted-foreground">
-                One confirmation per sales order, each atomic across the lines it commits.
-                Anything left undecided stays outstanding and keeps flowing to reorder planning.
-              </p>
-              {/* Where the confirmed Buy rows go, and what still does not happen. This used to
-                  say "on the sales order itself" and warn that an adopted order was absent from
-                  the Order Inquiry list, because that list was project-scoped. The
-                  cross-project Order Inquiries page carries adopted orders' rows now, so the
-                  warning is spent and the destination is a real place to send somebody. The
-                  second sentence is unchanged, because it is still true. */}
-              <p className="mt-0.5 text-sm text-muted-foreground">
-                Raised. Purchasing picks these up on{' '}
+                One confirmation per sales order; confirmed Buy rows go to{' '}
                 <Link
                   href="/project-sales/order-inquiries"
                   className="text-primary hover:underline"
                 >
                   Order Inquiries
                 </Link>
-                , grouped by delivery month. An adopted order raises no purchasing task and
-                sends no notification.
+                .
               </p>
             </CardHeader>
             <CardContent className="space-y-2">
@@ -801,8 +803,8 @@ function OrderCommitRow({
   busy: boolean;
   /** The lines the server would not take, kept beside the order that owns them. */
   refused: SupplyFailingLine[];
-  /** Decided lines with no mirror on the planning record, which this confirmation must omit. */
-  unpostable: BoardContribution[];
+  /** Decided lines this confirmation must omit, each with the reason it cannot carry it. */
+  unpostable: UnpostableLine[];
   onConfirm: () => void;
 }) {
   const committing = preview?.committing ?? 0;
@@ -856,20 +858,20 @@ function OrderCommitRow({
         </div>
       </div>
 
-      {/* A line the planner decided that this confirmation cannot carry. Named, because
-          dropping it silently would tell them they committed something they did not - and the
-          fix is on another screen, so they would have no way to find out. */}
-      {unpostable.length > 0 && (
-        <p className="text-sm text-amber-700 break-words">
-          {`${unpostable
-            .map((entry) => `${entry.item_code} line ${entry.line_no}`)
-            .join(', ')} ${
-            unpostable.length === 1 ? 'is' : 'are'
-          } not on the planning record yet, so this confirmation leaves ${
-            unpostable.length === 1 ? 'it' : 'them'
-          } out. Re-sync the sales order to add ${unpostable.length === 1 ? 'it' : 'them'}.`}
-        </p>
-      )}
+      {/* A line the planner decided that this confirmation cannot carry. Named, with why,
+          because dropping it silently would tell them they committed something they did not -
+          and the fix is somewhere else (another screen, or the editor), so they would have no
+          way to find out. One sentence per reason, so the count on the button and this notice
+          always describe the same lines. */}
+      {UNPOSTABLE_REASONS.map((reason) => {
+        const lines = unpostable.filter((entry) => entry.reason === reason);
+        if (lines.length === 0) return null;
+        return (
+          <p key={reason} className="text-sm text-amber-700 break-words">
+            {unpostableNotice(reason, lines)}
+          </p>
+        );
+      })}
 
       {/* A refusal names the lines it refused and why, beside the work that produced them. The
           draft is untouched, so the planner fixes and presses again rather than starting over. */}
@@ -891,3 +893,24 @@ function OrderCommitRow({
   );
 }
 
+const UNPOSTABLE_REASONS: UnpostableReason[] = [
+  'no_mirror',
+  'no_reserve_warehouse',
+  'buy_reason_missing',
+];
+
+/** The sentence naming the lines this confirmation leaves out for one reason, and the fix. */
+function unpostableNotice(reason: UnpostableReason, lines: UnpostableLine[]): string {
+  const named = lines
+    .map((entry) => `${entry.contribution.item_code} line ${entry.contribution.line_no}`)
+    .join(', ');
+  const one = lines.length === 1;
+  const them = one ? 'it' : 'them';
+  if (reason === 'no_mirror') {
+    return `${named} ${one ? 'is' : 'are'} not on the planning record yet, so this confirmation leaves ${them} out. Re-sync the sales order to add ${them}.`;
+  }
+  if (reason === 'no_reserve_warehouse') {
+    return `${named} ${one ? 'reserves' : 'reserve'} at a warehouse the board cannot address, so this confirmation leaves ${them} out. Amend ${them} to place the Reserve.`;
+  }
+  return `${named} ${one ? 'buys' : 'buy'} a discontinued product with no reason given, so this confirmation leaves ${them} out. Amend ${them} to give one.`;
+}

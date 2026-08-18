@@ -54,11 +54,22 @@ export function SupplyLineCard({
 }) {
   const [adding, setAdding] = React.useState(false);
 
-  // The sales order states no fulfilment location for this line, so there is no free stock,
-  // no pool and no incoming to read and nothing can be proposed. It is named and blocked
-  // rather than guessed at, and the way out is the sales order itself.
+  // A line the sheet cannot plan is named and blocked rather than guessed at: no reconciled
+  // AutoCount line to promise against, or a sales order that states no fulfilment location
+  // (so no free stock, no pool and no incoming to read). The way out is the sales order.
+  if (line.unplannable_reason) {
+    return (
+      <BlockedLineCard line={line} reason={line.unplannable_reason} salesOrderHref={salesOrderHref} />
+    );
+  }
   if (line.fulfilment_location_missing) {
-    return <BlockedLineCard line={line} salesOrderHref={salesOrderHref} />;
+    return (
+      <BlockedLineCard
+        line={line}
+        reason="No fulfilment location on the sales order line, so nothing can be composed for it."
+        salesOrderHref={salesOrderHref}
+      />
+    );
   }
 
   const frozenComponents = line.frozen?.components ?? [];
@@ -404,9 +415,11 @@ export function SupplyLineCard({
  */
 function BlockedLineCard({
   line,
+  reason,
   salesOrderHref,
 }: {
   line: SupplyLine;
+  reason: string;
   salesOrderHref?: string | null;
 }) {
   return (
@@ -437,7 +450,11 @@ function BlockedLineCard({
           )}
         </Fact>
         <Fact label="Fulfil from">
-          <span className="text-destructive">Not on the sales order line</span>
+          {line.fulfilment_location ? (
+            <span>{line.fulfilment_location}</span>
+          ) : (
+            <span className="text-destructive">Not on the sales order line</span>
+          )}
         </Fact>
         <Fact label="Retail classification">
           <Muted>Not read</Muted>
@@ -445,9 +462,7 @@ function BlockedLineCard({
       </div>
 
       <div className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-        <p className="min-w-0 text-sm text-destructive break-words">
-          No fulfilment location on the sales order line, so nothing can be composed for it.
-        </p>
+        <p className="min-w-0 text-sm text-destructive break-words">{reason}</p>
         {salesOrderHref ? (
           <Button asChild variant="outline" size="sm" className="shrink-0">
             <Link href={salesOrderHref}>Open the sales order</Link>

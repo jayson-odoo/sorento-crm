@@ -128,6 +128,57 @@ describe('amendDraftFrom: the proposal, as something a person can edit', () => {
     });
     expect(draft.timely_spo_qty).toBe('15');
   });
+
+  it('seeds the discontinued flag from the item facts the board stated', () => {
+    const base = contributionOf({});
+    const draft = amendDraftFrom({
+      ...base,
+      item_flags: {
+        dealer_hot_selling: false,
+        dealer_hot_selling_where: [],
+        discontinued: true,
+        retail_classification_available: true,
+      },
+    });
+    expect(draft.is_discontinued).toBe(true);
+    expect(draft.buy_reason).toBe('');
+  });
+
+  it('claims nothing about the lifecycle when the board stated no item facts', () => {
+    const base = contributionOf({});
+    expect(amendDraftFrom({ ...base, item_flags: null }).is_discontinued).toBe(false);
+  });
+});
+
+describe('amendDraftFrom on a covered line', () => {
+  const frozen = {
+    revision_no: 2,
+    timely_spo_qty: '0',
+    reserve: [],
+    borrow: [],
+    buy_qty: '100',
+    buy_reason: 'Last batch for the site, agreed with purchasing.',
+  };
+
+  it('seeds the discontinued flag and the buy reason the revision froze', () => {
+    const base = contributionOf({}, { decision: frozen });
+    const draft = amendDraftFrom({
+      ...base,
+      item_flags: {
+        dealer_hot_selling: false,
+        dealer_hot_selling_where: [],
+        discontinued: true,
+        retail_classification_available: true,
+      },
+    });
+    expect(draft.is_discontinued).toBe(true);
+    expect(draft.buy_reason).toBe('Last batch for the site, agreed with purchasing.');
+  });
+
+  it('opens with an empty buy reason when the revision carries none', () => {
+    const base = contributionOf({}, { decision: { ...frozen, buy_reason: undefined } });
+    expect(amendDraftFrom(base).buy_reason).toBe('');
+  });
 });
 
 describe('borrowCandidatesOf: only a donor the confirmation can name', () => {
@@ -287,6 +338,15 @@ describe('decisionFromAmendDraft: what the draft carries away', () => {
     expect(decision.reserve).toEqual([]);
     expect(decision.borrow).toEqual([]);
     expect(decision.reason).toBeUndefined();
+  });
+
+  it('carries the buy reason, trimmed, and leaves it off when nobody gave one', () => {
+    const draft = amendDraftFrom(contributionOf({}));
+    expect(
+      decisionFromAmendDraft({ ...draft, buy_reason: '  Last batch for the site.  ' }, '')
+        .buy_reason,
+    ).toBe('Last batch for the site.');
+    expect(decisionFromAmendDraft({ ...draft, buy_reason: '   ' }, '').buy_reason).toBeUndefined();
   });
 });
 

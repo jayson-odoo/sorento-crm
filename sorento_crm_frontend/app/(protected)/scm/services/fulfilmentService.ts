@@ -26,6 +26,10 @@
  */
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import {
+  filenameFromContentDisposition,
+  saveBlobAs,
+} from '@/app/(protected)/project-sales/_shared/services/fileDownload';
 import type { UploadTestResult } from '../reorder/components/UploadTestVerdict';
 
 export interface StockListSummary {
@@ -623,17 +627,8 @@ export async function downloadPackingListExport(
 ): Promise<void> {
   const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/packing-list/export`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to export the packing list'));
-  const match = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '');
-  const filename = match?.[1] ?? `${fallbackName || 'container'}-packing-list.xlsx`;
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  // Revoked on the next tick, not straight after the click: the browser has not necessarily
-  // started reading the blob yet, and revoking under it cancels the download.
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  const filename =
+    filenameFromContentDisposition(res.headers.get('Content-Disposition')) ??
+    `${fallbackName || 'container'}-packing-list.xlsx`;
+  saveBlobAs(await res.blob(), filename);
 }

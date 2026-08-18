@@ -32,6 +32,7 @@ import io
 import logging
 from datetime import date, datetime
 from decimal import Decimal
+from itertools import groupby
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import Date, String, cast, func, or_, select
@@ -164,6 +165,12 @@ _CUSTOMER_NAME = Customer.customer_name
 # ordering the eye reads down the column.
 _PROJECT_CUSTOMER = func.coalesce(_CUSTOMER_NAME, Project.title)
 _RAISED_AT = OrderInquiryRow.created_at
+# The per-day tab is a MALAYSIAN day. `created_at` is stored naive UTC (the session runs
+# with `timezone=utc`), so a row raised at 00:30 MYT belongs to the tab of the day that
+# is still, in UTC, the evening before.
+_RAISED_DAY = cast(
+    func.timezone("Asia/Kuala_Lumpur", func.timezone("UTC", _RAISED_AT)), Date
+)
 
 _SORT_EXPRESSIONS = {
     "so_date": _SO_DATE,
@@ -310,7 +317,7 @@ class OrderInquiryWorklistService:
                 OrderInquiryRow.delivery_date < following,
             )
         if raised_date:
-            base = base.filter(cast(_RAISED_AT, Date) == _as_day(raised_date))
+            base = base.filter(_RAISED_DAY == _as_day(raised_date))
         if state:
             base = base.filter(OrderInquiryRow.state == state)
         if project_id:
@@ -515,8 +522,11 @@ class OrderInquiryWorklistService:
 
         Within a sheet the rows go SUPPLIER then ITEM CODE, which is the order their own
         sheets are in and the order a buyer places in - one purchase order per factory.
-        TOTAL QTY prints on the last row of each item-code run and totals that run, which
-        is the one thing on their sheet that is arithmetic rather than typing.
+        TOTAL QTY prints on the last row of each supplier-and-item-code run and totals
+        that run, which is the one thing on their sheet that is arithmetic rather than
+        typing. The run is the pair, not the item code alone: the same item bought from
+        two factories is two purchase orders, and a total across both is a quantity
+        nobody places.
 
         Generated per request rather than stored, exactly as the per-project export is: a
         stored file goes stale the moment supply is reconfirmed, and a stale instruction
@@ -588,33 +598,29 @@ class OrderInquiryWorklistService:
                 row.get("delivery_date") or date.max,
             ),
         )
-        totals: Dict[Any, Decimal] = {}
-        counts: Dict[Any, int] = {}
-        for row in ordered:
-            code = row.get("item_code")
-            totals[code] = totals.get(code, _ZERO) + _dec(row.get("qty"))
-            counts[code] = counts.get(code, 0) + 1
-        for index, row in enumerate(ordered):
-            code = row.get("item_code")
-            last_of_run = (
-                index == len(ordered) - 1 or ordered[index + 1].get("item_code") != code
-            )
-            # Only where it says something the QTY column does not: a single-row item has
-            # its own quantity as its total, and printing it twice is noise.
-            run_total = (
-                float(totals[code]) if last_of_run and counts[code] > 1 else None
-            )
-            sheet.append(
-                [
-                    row.get("so_date"),
-                    row.get("so_number") or "",
-                    code or "",
-                    float(_dec(row.get("qty"))),
-                    run_total,
-                    row.get("delivery_date"),
-                    row.get("project_customer") or "",
-                    # Blank means nobody has placed it, exactly as it does on their sheet.
-                    row.get("supplier") or "",
-                    row.get("po_number") or "",
-                ]
-            )
+        runs = groupby(
+            ordered, key=lambda row: (row.get("supplier"), row.get("item_code"))
+        )
+        for (_supplier, code), members in runs:
+            run = list(members)
+            total = sum((_dec(row.get("qty")) for row in run), _ZERO)
+            for index, row in enumerate(run):
+                last_of_run = index == len(run) - 1
+                # Only where it says something the QTY column does not: a single-row
+                # run has its own quantity as its total, and printing it twice is noise.
+                run_total = float(total) if last_of_run and len(run) > 1 else None
+                sheet.append(
+                    [
+                        row.get("so_date"),
+                        row.get("so_number") or "",
+                        code or "",
+                        float(_dec(row.get("qty"))),
+                        run_total,
+                        row.get("delivery_date"),
+                        row.get("project_customer") or "",
+                        # Blank means nobody has placed it, exactly as it does on their
+                        # sheet.
+                        row.get("supplier") or "",
+                        row.get("po_number") or "",
+                    ]
+                )

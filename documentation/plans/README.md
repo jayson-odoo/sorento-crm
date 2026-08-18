@@ -8,7 +8,7 @@ shared-service model, adapted for Sorento's continuous (non-sprint) delivery.
 For each feature, in this order:
 
 1. **`<slug>-acceptance-criteria.md`** (equivalently **`UAC-<slug>.md`**, the form newer
-   cluster plans use) — the **UAC, written FIRST**. Independently-verifiable
+   cluster plans use) - the **UAC, written FIRST**. Independently-verifiable
    Given/When/Then list, per-AC id (`AC-<NN>`), grouped by phase, tagged `[BE]` / `[FE]` /
    `[E2E]` / `[T]`. This is the **contract** the feature must satisfy.
 2. **`PLAN-<slug>.md`** — the design that *fulfils* the UAC. Carries a `Status:` line kept current

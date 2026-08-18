@@ -541,6 +541,15 @@ def test_an_unknown_container_is_a_404(db):
     assert err.value.status_code == 404
 
 
+def test_an_id_that_is_not_an_id_is_a_404_not_a_broken_session(db):
+    with pytest.raises(AppException) as err:
+        svc.build(db, "not-a-uuid")
+
+    assert err.value.status_code == 404
+    # The session is still usable: the refusal came before the UUID column was ever compared.
+    assert db.query(InboundShipment).count() == 0
+
+
 # --------------------------------------------------------------------------- #
 # the workbook
 # --------------------------------------------------------------------------- #
@@ -711,6 +720,15 @@ def test_the_export_route_returns_a_workbook_named_after_the_container(db, clien
 
 def test_an_unknown_container_is_a_404_over_the_wire(db, client):
     r = client.get(f"/api/v1/scm/inbound-shipments/{uuid.uuid4()}/packing-list")
+
+    assert r.status_code == 404, r.text
+
+
+def test_a_container_id_that_is_not_an_id_is_a_404_over_the_wire(db, client):
+    r = client.get("/api/v1/scm/inbound-shipments/not-a-uuid/packing-list")
+
+    assert r.status_code == 404, r.text
+    r = client.get("/api/v1/scm/inbound-shipments/not-a-uuid/packing-list/export")
 
     assert r.status_code == 404, r.text
 

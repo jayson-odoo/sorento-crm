@@ -903,15 +903,17 @@ def demand_drill(db: Session, product_code: str, *, kind: str) -> dict:
     retail_lines: list[dict] = []
     unclassified_lines: list[dict] = []
     total = 0.0
-    line_ids = [str(r[4]) for r in rows if _channel_of(r[3]) == PROJECT_KIND]
-    decision_refs = _decision_refs(db, line_ids) if kind == PROJECT_KIND else {}
+    line_ids = [str(r[4]) for r in rows if _channel_of(r[3]) == kind]
+    decision_refs = _decision_refs(db, line_ids) if kind != RETAIL_KIND else {}
     for r in rows:
         (_so_id, so_number, order_date, demand_class, line_id, qty_ordered, qty_delivered,
          required_date, requested_delivery_date, customer_name, warehouse_code) = r
         # `public.sales_order_lines` carries no line number - the human one lives on the
         # reconciled PROJECT line, which is also where the decision reference comes from,
-        # so both are resolved through the same join. A line with no reconciled project
-        # line has no human number, and NULL says so rather than inventing an index.
+        # so both are resolved through the same join, for the project drill and for the
+        # unclassified one (an order whose class was never stamped can still have been
+        # reconciled). A line with no reconciled project line has no human number, and
+        # NULL says so rather than inventing an index.
         traced = decision_refs.get(str(line_id)) or {}
         line_no = traced.get("line_no")
         if _channel_of(demand_class) != kind:
@@ -1618,7 +1620,13 @@ def po_worklist(db: Session, *, run_id: Optional[str] = None) -> dict:
     run = _run_for(db, run_id)
     grain = plan_grain.decision_grain_of(run)
     if plan_grain.is_legacy_run(run):
-        return {"run_id": str(run.id), "as_of": None, "decision_grain": None, "rows": []}
+        return {
+            "run_id": str(run.id),
+            "as_of": None,
+            "decision_grain": None,
+            "front_planning_contract_version": None,
+            "rows": [],
+        }
     if grain == plan_grain.LOCATION_GRAIN:
         return _location_grain_worklist(db, run)
     rows = (
@@ -1705,6 +1713,7 @@ def po_worklist(db: Session, *, run_id: Optional[str] = None) -> dict:
         "run_id": str(run.id),
         "as_of": (rows[0][0].as_of.isoformat() if rows else None),
         "decision_grain": plan_grain.decision_grain_of(run),
+        "front_planning_contract_version": run.front_planning_contract_version,
         "rows": out,
     }
 
@@ -1718,8 +1727,10 @@ def _location_grain_worklist(db: Session, run: ReorderRun) -> dict:
     named a location AND a split would invite keying the same units twice.
 
     The product summary row is a read-only aggregate under this grain, so it supplies the
-    keyed status and the frozen need-by date the row is worked against, and never a
-    quantity.
+    frozen need-by date the row is worked against, and never a quantity. The keyed status
+    is the recommendation's own: keying is per location here, because each location IS a
+    purchase order, and one status shared across a product's locations would key WH-B the
+    moment WH-A was.
     """
     from app.models.scm import RecommendationOverride
 
@@ -1794,12 +1805,9 @@ def _location_grain_worklist(db: Session, run: ReorderRun) -> dict:
             "last_po_currency": leads.get(
                 ("ccy", str(rec.product_id), str(rec.supplier_id or ""))),
             "cash_committed": (round(chosen * unit, 2) if unit is not None else None),
-            # Keying is recorded per product on the summary row, which is the document a
-            # buyer keys; a location row reads it rather than inventing a second state.
-            "keyed_status": (row.keyed_status if row is not None else None) or "not_keyed",
-            "keyed_by": row.keyed_by if row is not None else None,
-            "keyed_at": (row.keyed_at.isoformat()
-                         if row is not None and row.keyed_at else None),
+            "keyed_status": rec.keyed_status or "not_keyed",
+            "keyed_by": rec.keyed_by,
+            "keyed_at": rec.keyed_at.isoformat() if rec.keyed_at else None,
         })
 
     out.sort(
@@ -1816,6 +1824,7 @@ def _location_grain_worklist(db: Session, run: ReorderRun) -> dict:
         "run_id": str(run.id),
         "as_of": as_of,
         "decision_grain": plan_grain.LOCATION_GRAIN,
+        "front_planning_contract_version": run.front_planning_contract_version,
         "rows": out,
     }
 
@@ -1916,6 +1925,7 @@ def set_keyed_status(
     run_id: str,
     keyed_status: str,
     actor: Optional[str] = None,
+    warehouse_code: Optional[str] = None,
 ) -> dict:
     """Record that a PO has been keyed into AutoCount, or un-record it (AC-E2.2).
 
@@ -1925,6 +1935,11 @@ def set_keyed_status(
 
     A use-pool decision (quantity zero) is refused: there is no purchase order to key, and
     accepting the write would record a fiction the worklist then reports as done.
+
+    The write lands at the run's own grain (AC-F09). A PRODUCT-grain run keys the product
+    summary row and names no location. A LOCATION-grain run keys ONE recommendation, so
+    `warehouse_code` is required there: each location is its own purchase order, and the
+    product row under that grain is an aggregate that owns no decision to key.
     """
     if keyed_status not in KEYED_STATUSES:
         raise AppException(
@@ -1932,6 +1947,23 @@ def set_keyed_status(
         )
     run = _run_for(db, run_id)
     product = _product_by_code(db, product_code)
+    if plan_grain.decision_grain_of(run) == plan_grain.LOCATION_GRAIN:
+        if not (warehouse_code or "").strip():
+            raise AppException(
+                422,
+                f"{product.product_code} was decided per location in that plan, so the "
+                "location to key has to be named.",
+            )
+        return _set_location_keyed_status(
+            db, run, product, warehouse_code=warehouse_code,
+            keyed_status=keyed_status, actor=actor,
+        )
+    if (warehouse_code or "").strip():
+        raise AppException(
+            409,
+            f"{product.product_code} was decided as one order for the company in that "
+            "plan, so it is keyed as a whole, not per location.",
+        )
     row = (
         db.query(OrderSummaryRow)
         .filter(
@@ -1959,7 +1991,82 @@ def set_keyed_status(
     db.refresh(row)
     return {
         "product_code": product.product_code,
+        "warehouse_code": None,
         "keyed_status": row.keyed_status,
         "keyed_by": row.keyed_by,
         "keyed_at": row.keyed_at.isoformat(),
+    }
+
+
+def _set_location_keyed_status(
+    db: Session,
+    run: ReorderRun,
+    product: Product,
+    *,
+    warehouse_code: str,
+    keyed_status: str,
+    actor: Optional[str],
+) -> dict:
+    """The LOCATION-grain half of `set_keyed_status`: one recommendation, one status.
+
+    Only an accepted or adjusted recommendation is on the worklist, so only that is
+    keyable; a location the run never decided for is a 404, the same answer the product
+    path gives a product with no decision.
+    """
+    from app.models.scm import RecommendationOverride
+
+    warehouse = (
+        db.query(Warehouse)
+        .filter(func.upper(Warehouse.warehouse_code) == warehouse_code.strip().upper())
+        .first()
+    )
+    if warehouse is None:
+        raise AppException(404, f"No location with code {warehouse_code}.")
+    recs = (
+        db.query(ReorderRecommendation)
+        .filter(
+            ReorderRecommendation.run_id == str(run.id),
+            ReorderRecommendation.product_id == str(product.id),
+            ReorderRecommendation.warehouse_id == str(warehouse.id),
+            ReorderRecommendation.status.in_(("accepted", "adjusted")),
+        )
+        .all()
+    )
+    if not recs:
+        raise AppException(
+            404,
+            f"{product.product_code} has no decision at {warehouse.warehouse_code} in that "
+            "plan, so there is nothing to key.",
+        )
+    override = (
+        db.query(RecommendationOverride)
+        .filter(RecommendationOverride.recommendation_id.in_([str(r.id) for r in recs]))
+        .order_by(RecommendationOverride.overridden_at.desc().nullslast())
+        .first()
+    )
+    chosen = (
+        _f(override.override_qty)
+        if override is not None and override.override_qty is not None
+        else _f(recs[0].rounded_qty)
+    ) or 0.0
+    if chosen <= 0:
+        raise AppException(
+            422,
+            f"{product.product_code} at {warehouse.warehouse_code} is covered from stock, "
+            "so there is no purchase order to key.",
+        )
+    now = to_naive_datetime(datetime.now(MALAYSIA_TZ))
+    for rec in recs:
+        rec.keyed_status = keyed_status
+        rec.keyed_by = actor or "unknown"
+        rec.keyed_at = now
+    db.commit()
+    rec = recs[0]
+    db.refresh(rec)
+    return {
+        "product_code": product.product_code,
+        "warehouse_code": warehouse.warehouse_code,
+        "keyed_status": rec.keyed_status,
+        "keyed_by": rec.keyed_by,
+        "keyed_at": rec.keyed_at.isoformat(),
     }

@@ -17,9 +17,12 @@ import {
   bucketLabelText,
   commitPreviewFor,
   confirmLinesFor,
+  DAY_WINDOW_COLUMNS as BOARD_DAY_WINDOW_COLUMNS,
   factorLabel,
+  plannedLineCount,
   rankingNote,
   rowMatchesSearch,
+  shiftedDayWindow,
   unpostableDecidedFor,
   standingsFor,
 } from './fulfilmentBoard';
@@ -1178,6 +1181,21 @@ describe('confirmLinesFor and a composed amendment', () => {
       },
     });
     expect(lines[0].amend_reason).toBeUndefined();
+    expect(lines[0].buy_reason).toBeUndefined();
+  });
+
+  it('carries the buy reason the editor took for a discontinued product', () => {
+    const lines = confirmLinesFor([base], 'so-a', {
+      [base.key]: {
+        verdict: 'amended',
+        reserve: [],
+        borrow: [],
+        buy_qty: '100',
+        timely_spo_qty: '0',
+        buy_reason: 'Last batch for the site, agreed with purchasing.',
+      },
+    });
+    expect(lines[0].buy_reason).toBe('Last batch for the site, agreed with purchasing.');
   });
 
   it('still derives the Buy for an amendment carrying only the old single number', () => {
@@ -1382,9 +1400,9 @@ describe('confirmLinesFor and a line with no mirror', () => {
   it('names the decided lines it had to leave out, so the planner is not told they committed', () => {
     expect(
       unpostableDecidedFor(contributions, 'so-a', approved).map(
-        (entry) => `${entry.item_code} line ${entry.line_no}`,
+        (entry) => `${entry.contribution.item_code} line ${entry.contribution.line_no}: ${entry.reason}`,
       ),
-    ).toEqual(['TPE-9204 line 2']);
+    ).toEqual(['TPE-9204 line 2: no_mirror']);
   });
 
   it('counts nothing as unpostable when every decided line has its mirror', () => {
@@ -1397,6 +1415,156 @@ describe('confirmLinesFor and a line with no mirror', () => {
       contributions.map((entry) => [entry.key, { verdict: 'rejected' as const, reason: 'No.' }]),
     );
     expect(unpostableDecidedFor(contributions, 'so-a', rejected)).toEqual([]);
+  });
+});
+
+/**
+ * A Buy on a DISCONTINUED product needs a reason (AC-B11), and the server refuses the whole
+ * order's confirmation without one. The board states the flag on every line it judged, so a
+ * line that would be refused is never posted from here: it is left out and NAMED, and the
+ * planner gives the reason in the editor.
+ */
+describe('confirmLinesFor and a discontinued product', () => {
+  const board = buildBoard(
+    [
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, qty: '10' }),
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 2, qty: '20', item_code: 'OLD-1' }),
+    ],
+    { today: TODAY },
+  );
+  const discontinued = {
+    dealer_hot_selling: false,
+    dealer_hot_selling_where: [],
+    discontinued: true,
+    retail_classification_available: true,
+  };
+  const contributions = board.cells
+    .flatMap((cell) => cell.contributions)
+    .map((entry) => (entry.line_no === 2 ? { ...entry, item_flags: discontinued } : entry));
+  const old = contributions.find((entry) => entry.line_no === 2) as BoardContribution;
+  const approved = Object.fromEntries(
+    contributions.map((entry) => [entry.key, { verdict: 'approved' as const }]),
+  );
+
+  it('leaves an approved Buy of a discontinued product out of the body, and names why', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', approved);
+    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-1']);
+    expect(
+      unpostableDecidedFor(contributions, 'so-a', approved).map(
+        (entry) => `${entry.contribution.item_code}: ${entry.reason}`,
+      ),
+    ).toEqual(['OLD-1: buy_reason_missing']);
+  });
+
+  it('posts it once the amendment carries the reason', () => {
+    const draft = {
+      ...approved,
+      [old.key]: {
+        verdict: 'amended' as const,
+        reserve: [],
+        borrow: [],
+        buy_qty: '20',
+        timely_spo_qty: '0',
+        buy_reason: 'Last batch for the site.',
+      },
+    };
+    expect(confirmLinesFor(contributions, 'so-a', draft)).toHaveLength(2);
+    expect(unpostableDecidedFor(contributions, 'so-a', draft)).toEqual([]);
+  });
+
+  it('still names it on an amendment that buys it without a reason', () => {
+    const draft = {
+      [old.key]: {
+        verdict: 'amended' as const,
+        reserve: [],
+        borrow: [],
+        buy_qty: '20',
+        timely_spo_qty: '0',
+      },
+    };
+    expect(confirmLinesFor(contributions, 'so-a', draft)).toEqual([]);
+    expect(unpostableDecidedFor(contributions, 'so-a', draft).map((entry) => entry.reason)).toEqual([
+      'buy_reason_missing',
+    ]);
+  });
+
+  it('does not ask for a reason when the discontinued line buys nothing', () => {
+    const covered = contributions.map((entry) =>
+      entry.line_no === 2
+        ? {
+            ...entry,
+            qty_proposed_reserve: '20',
+            qty_proposed_buy: '0',
+            sources: [
+              { kind: 'reserve' as const, qty: '20', location: 'BRW-BB', warehouse_id: 'wh-BRW-BB', reason: 'Covered.' },
+            ],
+          }
+        : entry,
+    );
+    expect(confirmLinesFor(covered, 'so-a', approved)).toHaveLength(2);
+    expect(unpostableDecidedFor(covered, 'so-a', approved)).toEqual([]);
+  });
+
+  it('names it on an order nobody has adopted yet, and does not count it as planned', () => {
+    const unadopted = contributions.map((entry) => ({ ...entry, project_line_id: null }));
+    expect(
+      unpostableDecidedFor(unadopted, 'so-a', approved, false).map((entry) => entry.reason),
+    ).toEqual(['buy_reason_missing']);
+    expect(plannedLineCount(unadopted, 'so-a', approved)).toBe(1);
+  });
+});
+
+/**
+ * A decided line whose Reserve cannot be addressed to any warehouse is left out of the body
+ * rather than posted with a guessed id. It used to be left out SILENTLY: the button read
+ * "Confirm 7 lines" beside eight verdicts and nothing said which one was missing or why.
+ */
+describe('confirmLinesFor and a Reserve nobody can address', () => {
+  const board = buildBoard(
+    [
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, qty: '10' }),
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 2, qty: '20', item_code: 'TPE-9204' }),
+    ],
+    { today: TODAY },
+  );
+  const contributions = board.cells.flatMap((cell) => cell.contributions).map((entry) =>
+    entry.line_no === 2
+      ? {
+          ...entry,
+          qty_proposed_reserve: '20',
+          qty_proposed_buy: '0',
+          sources: [{ kind: 'reserve' as const, qty: '20', location: 'BRW-BB', reason: 'Covered.' }],
+        }
+      : entry,
+  );
+  const approved = Object.fromEntries(
+    contributions.map((entry) => [entry.key, { verdict: 'approved' as const }]),
+  );
+
+  it('names the line it left out, so the body length and the notice agree', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', approved);
+    const unpostable = unpostableDecidedFor(contributions, 'so-a', approved);
+    expect(lines).toHaveLength(1);
+    expect(unpostable.map((entry) => `${entry.contribution.item_code}: ${entry.reason}`)).toEqual([
+      'TPE-9204: no_reserve_warehouse',
+    ]);
+    expect(lines.length + unpostable.length).toBe(Object.keys(approved).length);
+  });
+});
+
+/**
+ * The day window scrolls by a WHOLE window (deviation 7), whether or not the current one has any
+ * dated column in it: an empty stretch of calendar is still thirty days wide.
+ */
+describe('shiftedDayWindow', () => {
+  it('moves by the contract\'s window, forwards and back', () => {
+    expect(BOARD_DAY_WINDOW_COLUMNS).toBe(30);
+    expect(shiftedDayWindow('2026-08-18', 1)).toBe('2026-09-17');
+    expect(shiftedDayWindow('2026-08-18', -1)).toBe('2026-07-19');
+  });
+
+  it('crosses a year boundary without drifting', () => {
+    expect(shiftedDayWindow('2026-12-20', 1)).toBe('2027-01-19');
   });
 });
 
@@ -1635,4 +1803,28 @@ describe('rankingNote', () => {
     const note = rankingNote(cellOf(4, { rank_separates: false, distinct_order_count: 3 }));
     expect(note?.note).toBe('The active policy separates none of these rows');
   });
+
+  it('says nothing about a cell that states neither flag, so the rank shows as scored', () => {
+    // A pivoted cell spans several piles and has no single ranking to describe; the lines
+    // keep their own scores and no tie sentence is invented for them.
+    expect(rankingNote(cellOf(4))).toBeNull();
+  });
+
+  it('is null on every pivoted cell', () => {
+    const board = buildBoard(
+      [
+        line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, item_code: 'AAA', qty: '10' }),
+        line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 2, item_code: 'BBB', qty: '20' }),
+      ],
+      { today: TODAY },
+    );
+    const { cells } = boardAxis('sales_order', cells_with_flags(board.cells));
+    expect(cells).toHaveLength(1);
+    expect(cells[0].contributions).toHaveLength(2);
+    expect(rankingNote(cells[0])).toBeNull();
+  });
+
+  function cells_with_flags(cells: BoardCell[]): BoardCell[] {
+    return cells.map((cell) => ({ ...cell, rank_separates: false, distinct_order_count: 1 }));
+  }
 });

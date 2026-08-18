@@ -17,12 +17,14 @@ from datetime import date, datetime, timedelta
 from io import BytesIO
 from typing import Any, Optional
 
+from sqlalchemy import Date, cast
 from sqlalchemy.orm import Session
 
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 from app.models.product import Brand, Product
 from app.models.supplier_notice import SupplierNotice, SupplierNoticeLine
 from app.services.error_handler import AppException
+from app.services.scm.supplier_scope import is_uuid
 
 #: The captain's own file counts SANDEL / CABANA / blank under SORENTO, so this is a single
 #: named brand rather than a lookup table: MOCHA is the one that is invoiced separately.
@@ -86,6 +88,8 @@ def _totals(lines: list[dict]) -> dict:
 
 
 def _shipment_or_404(db: Session, shipment_id: str) -> InboundShipment:
+    if not is_uuid(shipment_id):
+        raise AppException(404, "Inbound shipment not found")
     row = db.query(InboundShipment).filter(InboundShipment.id == shipment_id).one_or_none()
     if row is None:
         raise AppException(404, "Inbound shipment not found")
@@ -111,23 +115,29 @@ def _latest_notices(
     """
     if not supplier_ids:
         return {}
-    rows = (
-        db.query(SupplierNotice)
-        .filter(SupplierNotice.supplier_id.in_(supplier_ids))
-        .order_by(SupplierNotice.created_at.desc())
-        .all()
-    )
+
+    def newest_per_supplier(*extra_filters) -> dict[str, SupplierNotice]:
+        rows = (
+            db.query(SupplierNotice)
+            .filter(SupplierNotice.supplier_id.in_(supplier_ids), *extra_filters)
+            .distinct(SupplierNotice.supplier_id)
+            .order_by(
+                SupplierNotice.supplier_id,
+                SupplierNotice.created_at.desc(),
+                SupplierNotice.id.desc(),
+            )
+            .all()
+        )
+        return {str(row.supplier_id): row for row in rows}
+
+    latest = newest_per_supplier()
     # A day's grace: a plan approved the morning a container was booked was still the plan
     # that container was packed to.
-    cutoff = shipment_date + timedelta(days=1) if shipment_date else None
-    latest: dict[str, SupplierNotice] = {}
-    in_time: dict[str, SupplierNotice] = {}
-    for row in rows:
-        supplier_id = str(row.supplier_id)
-        latest.setdefault(supplier_id, row)
-        created = _as_date(row.created_at)
-        if cutoff is not None and created is not None and created <= cutoff:
-            in_time.setdefault(supplier_id, row)
+    if shipment_date:
+        cutoff = shipment_date + timedelta(days=1)
+        in_time = newest_per_supplier(cast(SupplierNotice.created_at, Date) <= cutoff)
+    else:
+        in_time = {}
     return {sid: in_time.get(sid, row) for sid, row in latest.items()}
 
 

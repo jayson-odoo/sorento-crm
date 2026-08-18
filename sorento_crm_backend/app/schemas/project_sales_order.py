@@ -159,7 +159,8 @@ class SODraftFindingRow(BaseModel):
 
 
 class ProjectSalesOrderDetail(ProjectSalesOrderRow):
-    project_id: str
+    # None for an order adopted from the AutoCount book, which has no project by design.
+    project_id: Optional[str] = None
     purchase_order_id: Optional[str] = None
     schedule_version_id: Optional[str] = None
     schedule_revision_label: Optional[str] = None

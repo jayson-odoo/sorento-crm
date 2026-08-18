@@ -286,9 +286,9 @@ def test_upgrade_moves_and_renames_when_the_tables_are_in_the_default_schema(db)
     # A table born after the move stays in the projects schema through 354's downgrade:
     # the revision's TABLES list has never heard of it.
     stayed = {f"{target}.{name}" for name in BORN_AFTER_THE_MOVE}
-    assert after_down == {f"{default}.{old}" for old, _ in module.TABLES} | (
-        stayed & after_down
-    ), "downgrade did not produce the pre-move schema"
+    assert after_down == {f"{default}.{old}" for old, _ in module.TABLES} | stayed, (
+        "downgrade did not produce the pre-move schema"
+    )
     assert not [
         name
         for name in after_down

@@ -26,7 +26,10 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerbPill';
+import {
+  OrderInquiryStatePill,
+  OrderInquiryVerbPill,
+} from '../../_shared/components/OrderInquiryVerbPill';
 import {
   useOrderInquiryWorklist,
   useOrderInquiryWorklistSummary,
@@ -265,13 +268,16 @@ export function OrderInquiriesClient() {
           ),
       },
       {
-        accessorKey: 'state',
-        header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
-        size: 120,
-        meta: { headerTitle: 'State', skeleton: <Skeleton className="h-4 w-16" /> },
+        accessorKey: 'verb',
+        header: ({ column }) => <DataGridColumnHeader title="Instruction" column={column} />,
+        size: 210,
+        meta: { headerTitle: 'Instruction', skeleton: <Skeleton className="h-4 w-24" /> },
+        // The verb is what purchasing DOES with the row: an ORDER and a BORROW SHORTFALL both
+        // cost money, a CANCEL BALANCE takes it back, and the state alone tells them apart
+        // from nothing.
         cell: ({ row }) => (
           <div className="min-w-0 space-y-1">
-            <OrderInquiryStatePill state={row.original.state} />
+            <OrderInquiryVerbPill verb={row.original.verb} />
             {row.original.note && (
               <span
                 className="block truncate text-xs text-muted-foreground"
@@ -282,6 +288,13 @@ export function OrderInquiriesClient() {
             )}
           </div>
         ),
+      },
+      {
+        accessorKey: 'state',
+        header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
+        size: 120,
+        meta: { headerTitle: 'State', skeleton: <Skeleton className="h-4 w-16" /> },
+        cell: ({ row }) => <OrderInquiryStatePill state={row.original.state} />,
       },
       {
         accessorKey: 'raised_at',

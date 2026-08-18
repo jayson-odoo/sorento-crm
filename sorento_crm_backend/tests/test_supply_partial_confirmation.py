@@ -352,6 +352,9 @@ def test_a_line_the_next_confirmation_does_not_name_keeps_its_raised_buy(api):
     assert narrowed.status_code == 200, narrowed.text
     assert narrowed.json()["lines_decided"] == 2
     assert narrowed.json()["lines_undecided"] == 0
+    # Line 1 was decided again, so its row counts; line 2's row is carried under the new
+    # revision but purchasing already had it, and the toast must not say two rows again.
+    assert narrowed.json()["inquiry_rows_created"] == 1
 
     db.expire_all()
     rows = (
@@ -400,6 +403,9 @@ def test_a_later_confirmation_carries_the_covered_lines_forward(api):
     assert body["revision_no"] == 2
     assert body["lines_decided"] == 2, "the carried line counts as decided"
     assert body["lines_undecided"] == 0
+    assert body["inquiry_rows_created"] == 1, (
+        "line 2's Buy is new to purchasing; line 1's carried row is not counted again"
+    )
 
     db.expire_all()
     active = _decision(db, order)
@@ -574,11 +580,14 @@ def test_a_discontinued_covered_line_survives_a_later_confirmation_of_another_li
     assert carried["buy_reason"] == "Last batch for the show flat."
 
 
-def test_a_covered_line_whose_open_quantity_drifted_is_still_carried_verbatim(api):
-    """F2, the other half: a covered line is not re-validated when another line is
-    confirmed. Its open quantity moved after it was frozen; the carry keeps the frozen
-    figure, and the drift is the read-side check's to raise (`challenge_if_drifted`),
-    not this confirmation's to refuse."""
+def test_a_covered_line_whose_open_quantity_drifted_is_not_carried_and_the_revision_is_challenged(api):
+    """A carried line is not re-validated - but a revision whose frozen facts have moved is
+    no promise anybody can keep, and carrying its snapshot verbatim into a fresh revision
+    stamped confirmed NOW would be re-making that promise against facts that are gone.
+    The confirmation runs the same drift check the sheet runs (`challenge_if_drifted`)
+    before it reads the active revision for the carry: revision 1 (lines 1 and 2) is
+    challenged, line 1 alone is confirmed into revision 2, and line 2 - whose open
+    quantity moved - is undecided again rather than carried on a stale snapshot."""
     from app.models.order import SalesOrderLine
 
     client, world = api
@@ -587,26 +596,39 @@ def test_a_covered_line_whose_open_quantity_drifted_is_still_carried_verbatim(ap
 
     first = client.post(
         f"{BASE}/sales-orders/{order.id}/confirm",
-        json={"lines": [_line_payload(line_1.id, buy_qty="50")]},
+        json={
+            "lines": [
+                _line_payload(line_1.id, buy_qty="50"),
+                _line_payload(line_2.id, buy_qty="30"),
+            ]
+        },
     )
     assert first.status_code == 200, first.text
-    frozen_1 = _snapshot_of(_decision(db, order), line_1.id)
 
     core = (
         db.query(SalesOrderLine)
-        .filter(SalesOrderLine.id == line_1.core_sales_order_line_id)
+        .filter(SalesOrderLine.id == line_2.core_sales_order_line_id)
         .first()
     )
-    core.qty_ordered = Decimal("60")
+    core.qty_ordered = Decimal("40")
     db.commit()
 
     second = client.post(
         f"{BASE}/sales-orders/{order.id}/confirm",
-        json={"lines": [_line_payload(line_2.id, buy_qty="30")]},
+        json={"lines": [_line_payload(line_1.id, buy_qty="50")]},
     )
     assert second.status_code == 200, second.text
+    assert second.json()["revision_no"] == 2
+    assert second.json()["lines_decided"] == 1
+    assert second.json()["lines_undecided"] == 1
 
     db.expire_all()
-    carried = _snapshot_of(_decision(db, order), line_1.id)
-    assert carried == frozen_1
-    assert carried["open_qty"] == "50"
+    active = _decision(db, order)
+    assert active.revision_no == 2
+    assert [s["project_line_id"] for s in active.line_snapshots] == [str(line_1.id)], (
+        "line 2's stale snapshot is not carried into a revision confirmed now"
+    )
+    challenged = _decision(db, order, state="challenged")
+    assert challenged is not None and challenged.revision_no == 1
+    assert "Line 20" in (challenged.superseded_reason or "")
+    assert _decision(db, order, state="superseded") is None

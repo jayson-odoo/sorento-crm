@@ -96,6 +96,8 @@ class SupplyFrozenLine(BaseModel):
     #: The reason given for overriding the engine's proposal, when one was. Absent on a line
     #: confirmed as proposed, and on any line frozen before the field existed.
     amend_reason: Optional[str] = None
+    #: The reason a discontinued product was still bought (AC-B11), when one was given.
+    buy_reason: Optional[str] = None
 
 
 class SupplyLine(BaseModel):
@@ -124,6 +126,11 @@ class SupplyLine(BaseModel):
     #: field rather than left to be inferred from `frozen`, because "nobody decided this"
     #: and "decided, and it needed nothing" are different answers.
     decided: bool = False
+    #: Why nothing can be proposed for this line, when nothing can: a mirror line with no
+    #: reconciled AutoCount line has no open quantity to promise against. Such a line still
+    #: reads on the sheet, with no components and no donors, rather than refusing the whole
+    #: read; a plannable line carries `null` here.
+    unplannable_reason: Optional[str] = None
 
 
 class SupplyDecisionOut(BaseModel):

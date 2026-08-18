@@ -224,6 +224,8 @@ describe('PileQueueDialog', () => {
     expect(
       await screen.findByText(/Lines a confirmed decision already covers are not in this queue/),
     ).toBeInTheDocument();
+    // The fact, and only the fact: the sentence explaining where their stock went was prose.
+    expect(screen.queryByText(/held for them/)).not.toBeInTheDocument();
   });
 
   it('shows a skeleton while the queue is being read', () => {

@@ -785,7 +785,13 @@ def test_the_board_route_answers_the_selection_it_was_given():
             with company_scope(db, frozenset({company_id})):
                 response = client.get(
                     f"{BASE}/fulfilment-planning/board",
-                    params={"orders": order.so_number, "granularity": "week"},
+                    params={
+                        "orders": order.so_number,
+                        "granularity": "week",
+                        # Pinned, like every service-level build: `past_line_count` below
+                        # is judged against this date, not against the clock.
+                        "as_of": TODAY.isoformat(),
+                    },
                 )
         finally:
             _restore(originals)
@@ -2421,7 +2427,14 @@ def test_the_drill_down_route_answers_over_the_wire():
                         "warehouse_id": str(warehouse.id),
                     },
                 )
-                denied = _client(db, actor, [])
+                denied, _denied_originals = _client(db, actor, [])
+                refused = denied.get(
+                    f"{BASE}/fulfilment-planning/stock-detail",
+                    params={
+                        "product_id": str(product.id),
+                        "warehouse_id": str(warehouse.id),
+                    },
+                )
         finally:
             _restore(originals)
 
@@ -2430,7 +2443,7 @@ def test_the_drill_down_route_answers_over_the_wire():
         assert body["so_qty"] == "75"
         assert body["available_qty"] == "25"
         assert len(body["sales_orders"]) == 3
-        assert len(denied) == 2  # the helper returns (client, originals)
+        assert refused.status_code == 403, refused.text
 
 
 def test_the_drill_down_route_refuses_a_caller_without_the_view_permission():
@@ -2455,6 +2468,65 @@ def test_the_drill_down_route_refuses_a_caller_without_the_view_permission():
             _restore(originals)
 
         assert response.status_code == 403
+
+
+def test_the_supply_sheet_route_refuses_a_caller_without_the_view_permission():
+    from app.models.base import company_scope
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        actor = _user(db, f"{MARKER} Eling")
+        order, _product = _board_world(db)
+        pso_id = _adopt(db, str(order.id))
+        db.commit()
+        client, originals = _client(db, actor, [])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                response = client.get(f"{BASE}/sales-orders/{pso_id}/supply")
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 403, response.text
+
+
+def test_the_confirm_route_refuses_a_caller_with_the_view_permission_alone():
+    """Reading the sheet is `projects.projects.view`; confirming it is a WRITE and takes
+    `projects.projects.edit`. A reader must not be able to promise stock."""
+    from app.models.base import company_scope
+    from app.models.project_so import ProjectSalesOrderLine, SOSupplyDecision
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        actor = _user(db, f"{MARKER} Eling")
+        order, _product = _board_world(db)
+        pso_id = _adopt(db, str(order.id))
+        db.commit()
+        line = (
+            db.query(ProjectSalesOrderLine)
+            .filter(ProjectSalesOrderLine.project_sales_order_id == pso_id)
+            .first()
+        )
+        client, originals = _client(db, actor, [VIEW])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                response = client.post(
+                    f"{BASE}/sales-orders/{pso_id}/confirm",
+                    json={
+                        "lines": [
+                            {"project_line_id": str(line.id), "buy_qty": "10"}
+                        ]
+                    },
+                )
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 403, response.text
+        assert (
+            db.query(SOSupplyDecision)
+            .filter(SOSupplyDecision.project_sales_order_id == pso_id)
+            .count()
+            == 0
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -3268,6 +3340,57 @@ def test_the_pile_queue_is_ordered_exactly_as_the_pile_book_orders_it():
         ]
 
 
+def test_a_pool_draw_is_queued_by_the_same_rule_the_pile_book_orders_the_pool_by():
+    """`pool_claims` puts the asking line INTO the pool's own queue and ranks the lot with
+    `_pile_book`'s one rule. When the policy separates nobody (every score 0.0), the queue is
+    by required date and then sales-order number - so a line due on the 3rd stands behind
+    the pool's own line due on the 1st and AHEAD of its line due on the 5th, whatever the
+    sales-order numbers say. Ranked by sales-order number alone the asker read both pool
+    lines as ahead of it, and the trail's "claimed ahead" disagreed with the queue dialog.
+    """
+    from app.services.project_supply_service import ProjectSupplyService
+
+    with blank_session() as db:
+        # A factor no sales-order line carries: every demand row scores 0.0, so the queue is
+        # decided by the tie-break alone.
+        _policy(db, {"po_document_sequence": 1.0})
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _pooled_warehouses(db)
+        _stock(db, product, pool, on_hand=100)
+        later = _order(db, so_number="ZZT-SO-AAA", order_date=date(2026, 1, 1))
+        sooner = _order(db, so_number="ZZT-SO-BBB", order_date=date(2026, 1, 1))
+        _line(db, later, product, qty="10", required_date=date(2026, 9, 5), warehouse=pool)
+        _line(db, sooner, product, qty="20", required_date=date(2026, 9, 1), warehouse=pool)
+
+        supply = ProjectSupplyService(db)
+        book = supply.pile_book(str(product.id), str(pool.id))
+        assert [row["so_number"] for row in book] == ["ZZT-SO-BBB", "ZZT-SO-AAA"], (
+            "the pool's own queue is by required date, not by sales-order number"
+        )
+
+        claims = supply.pool_claims(
+            [str(product.id)],
+            [str(pool.id)],
+            [
+                {
+                    "key": "asker",
+                    "product_id": str(product.id),
+                    "pool_id": str(pool.id),
+                    "required_date": date(2026, 9, 3),
+                    "order_date": date(2026, 1, 1),
+                    "payment_terms_days": None,
+                    "demand_class": "project",
+                    "so_number": "ZZT-SO-ZZZ",
+                    "line_no": 1,
+                }
+            ],
+        )
+
+        assert claims["asker"] == {"qty": Decimal("20"), "lines": 1}, (
+            "only the pool line due before the 3rd is ahead of the asker"
+        )
+
+
 def test_every_queued_line_carries_its_rank_and_the_factors_behind_it():
     with blank_session() as db:
         ours, product, warehouse = _queued_pile(db)
@@ -3564,6 +3687,17 @@ def test_a_line_an_active_decision_covers_says_so_and_carries_what_was_frozen():
                 "reason": "The other site can wait a week.",
             }
         ]
+        # A covered line was not bought against a discontinued product, so no reason was
+        # given; the key is still there for Amend to seed from.
+        assert decision["buy_reason"] is None
+        # Amend on a covered line reads the same flags a proposal states (this world seeds
+        # no retail classification, so it is stated unavailable, not guessed).
+        assert contribution["item_flags"] == {
+            "dealer_hot_selling": False,
+            "dealer_hot_selling_where": [],
+            "discontinued": False,
+            "retail_classification_available": False,
+        }
 
 
 def test_an_undecided_line_of_the_same_order_is_not_marked_covered():

@@ -62,12 +62,54 @@ describe('useSalesOrderEditSession', () => {
   });
 
   it('clears a header field to null rather than to an empty string', () => {
-    const { result } = renderHook(() => useSalesOrderEditSession());
+    const { result } = renderHook(() => useSalesOrderEditSession({ area_group: 'TOWER' }));
 
     act(() => result.current.begin());
     act(() => result.current.stageHeader({ area_group: '   ' }));
 
+    expect(result.current.isDirty).toBe(true);
     expect(result.current.body).toEqual({ area_group: null });
+  });
+
+  it('is not dirty when a header field is typed and typed back to what is stored', () => {
+    const { result } = renderHook(() => useSalesOrderEditSession({ area_group: 'TOWER' }));
+
+    act(() => result.current.begin());
+    act(() => result.current.seed([line()]));
+    act(() => result.current.stageHeader({ area_group: 'TOWERS' }));
+    expect(result.current.isDirty).toBe(true);
+
+    act(() => result.current.stageHeader({ area_group: 'TOWER' }));
+
+    // Nothing to save, nothing to warn about on the way out, and no no-op PUT.
+    expect(result.current.isDirty).toBe(false);
+    expect(result.current.body).toEqual({});
+  });
+
+  it('treats a blank stored value and an erased field as the same thing', () => {
+    const { result } = renderHook(() => useSalesOrderEditSession({ area_group: null }));
+
+    act(() => result.current.begin());
+    act(() => result.current.stageHeader({ area_group: 'PODIUM' }));
+    act(() => result.current.stageHeader({ area_group: '' }));
+
+    expect(result.current.isDirty).toBe(false);
+    expect(result.current.body).toEqual({});
+  });
+
+  it('measures the header against the stored values as they load, not as they were on mount', () => {
+    const { result, rerender } = renderHook(
+      ({ stored }: { stored?: { area_group?: string | null } }) => useSalesOrderEditSession(stored),
+      { initialProps: { stored: undefined } as { stored?: { area_group?: string | null } } },
+    );
+
+    act(() => result.current.begin());
+    act(() => result.current.stageHeader({ area_group: 'TOWER' }));
+    expect(result.current.isDirty).toBe(true);
+
+    rerender({ stored: { area_group: 'TOWER' } });
+
+    expect(result.current.isDirty).toBe(false);
   });
 
   it('sends the whole line set once any line moves', () => {

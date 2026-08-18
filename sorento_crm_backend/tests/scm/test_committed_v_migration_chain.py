@@ -22,6 +22,7 @@ from alembic.operations import Operations
 from sqlalchemy import text
 
 from app.services.scm.demand import COMMITTED_V_SQL
+from tests._migration_imports import app_imports
 from tests._pg_fixture import blank_session
 from tests.scm.conftest import requires_pg
 
@@ -65,10 +66,10 @@ def test_migration_bodies_are_frozen_not_imported():
         "376_scm_channel_read_model",
         "384_committed_v_line_decision",
     ):
-        source = (_VERSIONS / f"{name}.py").read_text()
-        assert "from app.services" not in source, (
-            f"{name} imports live application code; freeze the SQL in the migration "
-            "instead - a migration describes a point in history."
+        imported = app_imports(_VERSIONS / f"{name}.py")
+        assert imported == [], (
+            f"{name} imports live application code ({', '.join(imported)}); freeze the "
+            "SQL in the migration instead - a migration describes a point in history."
         )
 
 

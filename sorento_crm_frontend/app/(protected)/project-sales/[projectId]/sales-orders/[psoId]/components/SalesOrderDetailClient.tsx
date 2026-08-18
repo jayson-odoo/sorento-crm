@@ -88,7 +88,9 @@ export function SalesOrderDetailClient({
   const { acknowledge, save, regroup, publish } = useSalesOrderMutations(projectId, psoId);
   const removeOrder = useSalesOrderDelete(projectId);
   const importFile = useSalesOrderImportFile(psoId);
-  const edit = useSalesOrderEditSession();
+  const edit = useSalesOrderEditSession(
+    salesOrder.data ? { area_group: salesOrder.data.area_group } : undefined,
+  );
   // The pager's set is the project's own sales orders, in the order the tab lists them.
   const neighbours = useProjectSalesOrderNeighbours(projectId, psoId);
   // Called above the early returns, as every hook must be. Keyed on the order's

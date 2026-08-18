@@ -116,9 +116,10 @@ export function amendDraftFrom(contribution: BoardContribution): DraftLine {
       numberOr(contribution.qty_proposed_buy, () => sumSources(contribution, 'buy')),
     ),
     buy_reason: '',
-    // The board does not state a product's lifecycle, so it never claims one here. The
-    // confirmation rechecks it against the product record either way.
-    is_discontinued: false,
+    // The item facts the ladder judged the line on, so a Buy of a discontinued product asks
+    // for its reason HERE rather than being refused by the confirmation. Absent flags claim
+    // nothing; the confirmation rechecks against the product record either way.
+    is_discontinued: Boolean(contribution.item_flags?.discontinued),
   };
 }
 
@@ -185,8 +186,8 @@ function frozenDraft(
         },
     })),
     buy_qty: frozen.buy_qty,
-    buy_reason: '',
-    is_discontinued: false,
+    buy_reason: frozen.buy_reason ?? '',
+    is_discontinued: Boolean(contribution.item_flags?.discontinued),
   };
 }
 
@@ -262,6 +263,7 @@ export function decisionFromAmendDraft(draft: DraftLine, reason: string): BoardD
     reserve,
     borrow,
     buy_qty: fromMinor(toMinor(draft.buy_qty)),
+    buy_reason: draft.buy_reason.trim() || undefined,
     reason: reason.trim() || undefined,
   };
 }

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import io
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import openpyxl
@@ -301,26 +301,35 @@ def _seed(db, company_id: str, user_id: str) -> dict:
     }
 
 
-def _placed_supply(db, company_id: str, row: OrderInquiryRow) -> dict:
+def _placed_supply(
+    db,
+    company_id: str,
+    row: OrderInquiryRow,
+    *,
+    supplier: Supplier | None = None,
+    supplier_name: str = f"{MARKER} DAFUYUAN",
+) -> dict:
     """A purchase order the row can actually be traced to, through its SPO reference.
 
     This is the ONLY link the schema holds today between an inquiry row and a placed
     order, so it is the only thing the SUPPLIER and PO NO columns are allowed to print.
     Everything else on the sheet is filled in by hand and stays blank here.
     """
-    supplier = Supplier(
-        id=_uid(),
-        company_id=company_id,
-        supplier_code=f"ZZT-{_uid()[:8]}",
-        supplier_name=f"{MARKER} DAFUYUAN",
-    )
+    if supplier is None:
+        supplier = Supplier(
+            id=_uid(),
+            company_id=company_id,
+            supplier_code=f"ZZT-{_uid()[:8]}",
+            supplier_name=supplier_name,
+        )
+        db.add(supplier)
     warehouse = Warehouse(
         id=_uid(),
         company_id=company_id,
         warehouse_code=f"ZZT{_uid()[:6]}",
         warehouse_name=f"{MARKER} WH",
     )
-    db.add_all([supplier, warehouse])
+    db.add(warehouse)
     db.flush()
     order = PurchaseOrder(
         id=_uid(),
@@ -479,7 +488,8 @@ def test_the_project_filter_narrows_to_one_project(api):
 
 def test_the_raised_date_filter_is_the_per_day_tab(api):
     client, _db, _company_id, seeded = api
-    raised_on = seeded["adopted_row"].created_at.date().isoformat()
+    # `created_at` is naive UTC; the tab is a Malaysian day.
+    raised_on = (seeded["adopted_row"].created_at + timedelta(hours=8)).date().isoformat()
 
     body = client.get(LIST, params={"raised_date": raised_on}).json()
 
@@ -487,6 +497,43 @@ def test_the_raised_date_filter_is_the_per_day_tab(api):
     assert client.get(LIST, params={"raised_date": "2001-01-01"}).json()[
         "pagination"
     ]["total"] == 0
+
+
+def test_the_raised_date_tab_is_a_malaysian_day_not_a_utc_one(api):
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["adopted_row"].order_inquiry_id)
+    # 00:30 MYT on 20 Aug is 16:30 UTC on 19 Aug; 23:30 MYT on 19 Aug is 15:30 UTC.
+    after_midnight = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=f"ZZT-MIDNIGHT-{_uid()[:6]}",
+        qty="1",
+        created_at=datetime(2026, 8, 19, 16, 30),
+    )
+    before_midnight = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=f"ZZT-EVENING-{_uid()[:6]}",
+        qty="1",
+        created_at=datetime(2026, 8, 19, 15, 30),
+    )
+    db.commit()
+
+    on_the_20th = {
+        row["id"]
+        for row in client.get(LIST, params={"raised_date": "2026-08-20"}).json()["data"]
+    }
+    on_the_19th = {
+        row["id"]
+        for row in client.get(LIST, params={"raised_date": "2026-08-19"}).json()["data"]
+    }
+
+    assert after_midnight.id in on_the_20th
+    assert after_midnight.id not in on_the_19th
+    assert before_midnight.id in on_the_19th
+    assert before_midnight.id not in on_the_20th
 
 
 def test_the_query_box_matches_the_sales_order_the_item_the_product_and_the_customer(api):
@@ -661,6 +708,49 @@ def test_the_workbook_honours_the_filters_the_screen_is_showing(api):
 
     book = openpyxl.load_workbook(io.BytesIO(response.content))
     assert book.sheetnames == ["MAR 26"]
+
+
+def test_total_qty_totals_the_supplier_and_item_run_not_the_item_across_suppliers(api):
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["adopted_row"].order_inquiry_id)
+    abc = f"ZZT-ABC-{_uid()[:6]}"
+    dfe = f"ZZT-DEF-{_uid()[:6]}"
+
+    def raised(code: str, qty: str, day: int) -> OrderInquiryRow:
+        return _row(
+            db,
+            company_id,
+            inquiry,
+            item_code=code,
+            qty=qty,
+            delivery_date=date(2026, 5, day),
+        )
+
+    # Supplier A: ABC 10 + ABC 4, DEF 5. Supplier B: ABC 3.
+    a_abc_first, a_abc_second, a_def, b_abc = (
+        raised(abc, "10", 4),
+        raised(abc, "4", 5),
+        raised(dfe, "5", 4),
+        raised(abc, "3", 4),
+    )
+    supplier_a = _placed_supply(
+        db, company_id, a_abc_first, supplier_name=f"{MARKER} A FACTORY"
+    )["supplier"]
+    _placed_supply(db, company_id, a_abc_second, supplier=supplier_a)
+    _placed_supply(db, company_id, a_def, supplier=supplier_a)
+    _placed_supply(db, company_id, b_abc, supplier_name=f"{MARKER} B FACTORY")
+
+    response = client.get(f"{LIST}/export", params={"delivery_month": "2026-05"})
+
+    book = openpyxl.load_workbook(io.BytesIO(response.content))
+    sheet = book["MAY 26"]
+    body = [[cell.value for cell in row[:9]] for row in sheet.iter_rows(min_row=3)]
+    assert [(row[7], row[2], row[3], row[4]) for row in body] == [
+        (supplier_a.supplier_name, abc, 10.0, None),
+        (supplier_a.supplier_name, abc, 4.0, 14.0),
+        (supplier_a.supplier_name, dfe, 5.0, None),
+        (f"{MARKER} B FACTORY", abc, 3.0, None),
+    ]
 
 
 def test_an_empty_export_is_still_a_workbook_a_person_can_open(api):

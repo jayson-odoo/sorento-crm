@@ -779,6 +779,72 @@ describe('FulfilmentBoardPanel: the calendar control (13.3)', () => {
     );
   });
 
+  /**
+   * The step is the contract's thirty days, and the anchor is the window the planner asked
+   * for. Stepping by the dated columns that came back skipped or re-showed days whenever the
+   * server sent fewer than thirty, and a window with no dated column at all could not move.
+   */
+  it('steps by thirty days even when the server sent fewer dated columns', async () => {
+    const dayBoard = boardOf([demand({ required_date: '2026-09-04' })], {}, 'day');
+    getPlanningBoard.mockResolvedValue({
+      ...dayBoard,
+      dateBuckets: dayBoard.dateBuckets.filter((bucket) => bucket.kind === 'dated').slice(0, 5),
+    });
+    currentSearchParams = new URLSearchParams('granularity=day');
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    const first = dayBoard.dateBuckets.find((bucket) => bucket.kind === 'dated')?.start;
+    expect(first).toBe('2026-09-04');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Later days' }));
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenLastCalledWith(['SO403340'], 'day', false, {
+        dayWindow: '2026-10-04',
+      }),
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Later days' }));
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenLastCalledWith(['SO403340'], 'day', false, {
+        dayWindow: '2026-11-03',
+      }),
+    );
+  });
+
+  it('still moves off a window with no dated column in it', async () => {
+    const dayBoard = boardOf([demand({ required_date: '2026-09-04' })], {}, 'day');
+    getPlanningBoard.mockResolvedValue(dayBoard);
+    currentSearchParams = new URLSearchParams('granularity=day');
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Later days' }));
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenLastCalledWith(['SO403340'], 'day', false, {
+        dayWindow: '2026-10-04',
+      }),
+    );
+
+    // The next window has nothing owed in it: no cells, no dated columns.
+    getPlanningBoard.mockResolvedValue({ ...dayBoard, dateBuckets: [], cells: [] });
+    fireEvent.click(await screen.findByRole('button', { name: 'Later days' }));
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenLastCalledWith(['SO403340'], 'day', false, {
+        dayWindow: '2026-11-03',
+      }),
+    );
+    await screen.findByText('Nothing is owed in these dates');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier days' }));
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenLastCalledWith(['SO403340'], 'day', false, {
+        dayWindow: '2026-10-04',
+      }),
+    );
+  });
+
   it('asks the server for the live policy, the preview offer having been retired', async () => {
     getPlanningBoard.mockResolvedValue(boardOf([demand()]));
 
@@ -951,23 +1017,20 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
 
     const link = screen.getByRole('link', { name: 'Order Inquiries' });
     expect(link).toHaveAttribute('href', '/project-sales/order-inquiries');
-    expect(
-      screen.getByText(/Purchasing picks these up on/),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/grouped by delivery month/)).toBeInTheDocument();
+    expect(screen.getByText(/confirmed Buy rows go to/)).toBeInTheDocument();
     // The old caveat is gone with the reason for it.
     expect(screen.queryByText(/on the sales order itself/)).not.toBeInTheDocument();
   });
 
-  it('still says what confirming does NOT do, because that part is unchanged', async () => {
+  it('keeps the commit header to one hint, not a paragraph teaching the feature', async () => {
     getPlanningBoard.mockResolvedValue(twoLineOrder());
 
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
 
-    expect(
-      screen.getByText(/An adopted order raises no purchasing task and sends no notification\./),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/keeps flowing to reorder planning/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/raises no purchasing task/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/grouped by delivery month/)).not.toBeInTheDocument();
   });
 
   /**
@@ -1015,6 +1078,90 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     fireEvent.click(confirm);
     await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
     expect(confirmSupply.mock.calls[0][1].lines).toHaveLength(1);
+  });
+
+  /**
+   * The other two ways a decided line cannot be posted used to be SILENT: the body left the
+   * line out and the button said "Confirm 7 lines" beside eight verdicts, with nothing on the
+   * rail saying which one was missing or why. Both are named now, and the count agrees.
+   */
+  it('names a decided line whose Reserve the board cannot address, and does not count it', async () => {
+    const board = twoLineOrder();
+    getPlanningBoard.mockResolvedValue({
+      ...board,
+      cells: board.cells.map((cell) => ({
+        ...cell,
+        contributions: cell.contributions.map((entry) =>
+          entry.item_code === 'TPE-9204'
+            ? {
+                ...entry,
+                qty_proposed_reserve: '100',
+                qty_proposed_buy: '0',
+                sources: [
+                  { kind: 'reserve' as const, qty: '100', location: 'BRW-BB', reason: 'Covered.' },
+                ],
+              }
+            : entry,
+        ),
+      })),
+    });
+
+    renderPanel(['SO403340']);
+
+    fireEvent.click(await screen.findByRole('button', { name: /WESERP10B, 100 across 1 sales order/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+    closeDialog();
+    fireEvent.click(await screen.findByRole('button', { name: /TPE-9204, 100 across 1 sales order/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+    closeDialog();
+
+    await waitFor(() => expect(screen.getByText('2 of 2 lines decided')).toBeInTheDocument());
+    expect(
+      await screen.findByText(
+        'TPE-9204 line 2 reserves at a warehouse the board cannot address, so this confirmation leaves it out. Amend it to place the Reserve.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Confirm 1 line' })).toBeInTheDocument();
+  });
+
+  it('names an approved Buy of a discontinued product that carries no reason, and does not count it', async () => {
+    const board = twoLineOrder();
+    getPlanningBoard.mockResolvedValue({
+      ...board,
+      cells: board.cells.map((cell) => ({
+        ...cell,
+        contributions: cell.contributions.map((entry) =>
+          entry.item_code === 'TPE-9204'
+            ? {
+                ...entry,
+                item_flags: {
+                  dealer_hot_selling: false,
+                  dealer_hot_selling_where: [],
+                  discontinued: true,
+                  retail_classification_available: true,
+                },
+              }
+            : entry,
+        ),
+      })),
+    });
+
+    renderPanel(['SO403340']);
+
+    fireEvent.click(await screen.findByRole('button', { name: /WESERP10B, 100 across 1 sales order/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+    closeDialog();
+    fireEvent.click(await screen.findByRole('button', { name: /TPE-9204, 100 across 1 sales order/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+    closeDialog();
+
+    await waitFor(() => expect(screen.getByText('2 of 2 lines decided')).toBeInTheDocument());
+    expect(
+      await screen.findByText(
+        'TPE-9204 line 2 buys a discontinued product with no reason given, so this confirmation leaves it out. Amend it to give one.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Confirm 1 line' })).toBeInTheDocument();
   });
 
   // The "no planning record, so no Confirm" state is deliberately GONE: pressing Confirm on

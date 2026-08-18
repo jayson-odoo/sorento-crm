@@ -10,7 +10,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   SupplyLine,
@@ -53,6 +53,7 @@ vi.mock('sonner', () => ({
 }));
 
 import { ConfirmSupplyError } from '../../_shared/services/fulfilmentPlanningService';
+import { SUPPLY_KEY } from '../../_shared/hooks/useFulfilmentPlanning';
 import { SupplyCompositionSection } from './SupplyCompositionSection';
 
 const PSO_ID = 'c7b2a3f1-2222-4b22-9b22-222222222222';
@@ -141,12 +142,37 @@ function renderSection(open = true) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
   });
-  return render(
+  const rendered = render(
     <QueryClientProvider client={client}>
       <SupplyCompositionSection psoId={PSO_ID} reference="SO376201" open={open} />
     </QueryClientProvider>,
   );
+  return { ...rendered, client };
 }
+
+/** A refetch of the composition under the same revision, as an invalidation elsewhere causes. */
+async function refetchSupply(client: QueryClient) {
+  await act(async () => {
+    await client.refetchQueries({ queryKey: [SUPPLY_KEY, PSO_ID] });
+  });
+}
+
+const LINE_2 = line({
+  project_line_id: 'd4000000-0000-4000-8000-000000000002',
+  line_no: 2,
+  item_code: 'SRT501-CP',
+  open_qty: '70',
+  components: [{ kind: 'buy', qty: '70', reason: 'Remaining uncovered need.' }],
+});
+
+const UNPLANNABLE = line({
+  project_line_id: 'd4000000-0000-4000-8000-000000000003',
+  line_no: 3,
+  item_code: 'SRT770-BK',
+  open_qty: '0',
+  unplannable_reason: 'No reconciled AutoCount line, so there is no open quantity to promise.',
+  components: [],
+});
 
 const confirmButton = () => screen.getByRole('button', { name: 'Confirm Project SO' });
 
@@ -228,6 +254,76 @@ describe('SupplyCompositionSection', () => {
     expect(await screen.findByText('Line 1 · CB6633')).toBeInTheDocument();
     expect(screen.getByText('Line 2 · SRT501-CP')).toBeInTheDocument();
     expect(confirmButton()).toBeEnabled();
+  });
+
+  // ------------------------------------------- the line set moving under the same revision
+  it('renders a line a refetch adds, and keeps what was typed on the lines it kept', async () => {
+    const { client } = renderSection();
+    await screen.findByText('Line 1 · CB6633');
+    fireEvent.change(screen.getByLabelText('Buy on line 1'), { target: { value: '300' } });
+
+    getSupply.mockResolvedValue(proposal({ lines: [line(), LINE_2] }));
+    await refetchSupply(client);
+
+    expect(await screen.findByText('Line 2 · SRT501-CP')).toBeInTheDocument();
+    expect(screen.getByLabelText('Buy on line 1')).toHaveValue(300);
+    expect(screen.getByLabelText('Buy on line 2')).toHaveValue(70);
+  });
+
+  it('posts the drafts after a dropped line against their own line ids', async () => {
+    getSupply.mockResolvedValue(proposal({ lines: [line(), LINE_2] }));
+    const { client } = renderSection();
+    await screen.findByText('Line 2 · SRT501-CP');
+    fireEvent.change(screen.getByLabelText('Buy on line 2'), { target: { value: '70' } });
+
+    getSupply.mockResolvedValue(proposal({ lines: [LINE_2] }));
+    await refetchSupply(client);
+    await waitFor(() => expect(screen.queryByText('Line 1 · CB6633')).not.toBeInTheDocument());
+
+    fireEvent.click(confirmButton());
+    fireEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: 'Confirm the sales order',
+      }),
+    );
+
+    await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
+    const body = confirmSupply.mock.calls[0][1] as { lines: { project_line_id: string }[] };
+    expect(body.lines.map((entry) => entry.project_line_id)).toEqual([LINE_2.project_line_id]);
+  });
+
+  // ------------------------------------------------------- an unplannable line
+  it('shows an unplannable line blocked with its reason, and confirms the rest without it', async () => {
+    getSupply.mockResolvedValue(proposal({ lines: [line(), UNPLANNABLE] }));
+    renderSection();
+    await screen.findByText('Line 3 · SRT770-BK');
+
+    expect(
+      screen.getByText('No reconciled AutoCount line, so there is no open quantity to promise.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText('Buy on line 3')).not.toBeInTheDocument();
+    // Not a blocker: it is left out of the confirmation, not holding it up.
+    expect(screen.queryByText(/Line 3, SRT770-BK/)).not.toBeInTheDocument();
+    expect(confirmButton()).toBeEnabled();
+
+    fireEvent.click(confirmButton());
+    const dialog = within(await screen.findByRole('alertdialog'));
+    expect(dialog.getByText('All 1 line are confirmed together.')).toBeInTheDocument();
+    fireEvent.click(dialog.getByRole('button', { name: 'Confirm the sales order' }));
+
+    await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
+    const body = confirmSupply.mock.calls[0][1] as { lines: { project_line_id: string }[] };
+    expect(body.lines.map((entry) => entry.project_line_id)).toEqual([
+      'd4000000-0000-4000-8000-000000000001',
+    ]);
+  });
+
+  it('disables the Confirm when every line is unplannable: there is nothing it could name', async () => {
+    getSupply.mockResolvedValue(proposal({ lines: [UNPLANNABLE] }));
+    renderSection();
+    await screen.findByText('Line 3 · SRT770-BK');
+
+    expect(confirmButton()).toBeDisabled();
   });
 
   // ------------------------------------------------------------------ blockers

@@ -329,6 +329,15 @@ class ReorderRecommendation(Base, CompanyScopedMixin):
     market_advisory = Column(Text, nullable=True)  # LLM (M5)
     funding_status = Column(String(20), nullable=True)  # funded | deferred
     status = Column(String(20), default="proposed", nullable=False)  # proposed | accepted | adjusted | dismissed
+    # Whether THIS location's purchase order has been keyed into AutoCount (AC-E2.2), for a
+    # run decided at LOCATION grain, where the decision lives here rather than on the
+    # product summary row. Same three values and the same manual semantics as
+    # `OrderSummaryRow.keyed_status`; exactly one of the two applies to a run (AC-F09).
+    keyed_status = Column(
+        String(20), nullable=False, default="not_keyed", server_default=text("'not_keyed'")
+    )
+    keyed_by = Column(String, nullable=True)
+    keyed_at = Column(DateTime(timezone=False), nullable=True)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -343,6 +352,11 @@ class ReorderRecommendation(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_scm_reorder_recommendation_run_id", "run_id"),
         Index("ix_scm_reorder_recommendation_product_id", "product_id"),
+        Index("ix_scm_reorder_recommendation_run_keyed", "run_id", "keyed_status"),
+        CheckConstraint(
+            "keyed_status IN ('not_keyed', 'keying', 'keyed')",
+            name="ck_scm_reorder_recommendation_keyed_status",
+        ),
         {"schema": "scm"},
     )
 

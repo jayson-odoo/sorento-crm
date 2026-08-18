@@ -72,15 +72,28 @@ EDIT = "projects.projects.edit"
 DELETE = "projects.projects.delete"
 
 
-def _order_for_edit(db: Session, pso_id: str, current_user: dict):
-    """Ownership is the PROJECT's rule, re-checked in the service that owns it."""
-    validate_uuid_path(pso_id, resource="Sales order")
-    service = ProjectSODraftService(db)
-    order = service.get_order(pso_id)
+def _assert_can_act_on(db: Session, order, current_user: dict) -> None:
+    """Write authorisation for one order, whether or not it has a project.
+
+    Ownership is the PROJECT's rule, re-checked in the service that owns it - for an order
+    that HAS a project. An order adopted from the AutoCount book has none by design
+    (`PLAN-fulfilment-planning-from-autocount-so.md` section 2, "Authorisation with no
+    project"), so there the module permission on the route is the whole gate; company scope
+    is enforced by the mixin either way. Same shape as `fulfilment_planning._assert_can_act_on`.
+    """
+    if not order.project_id:
+        return
     project = projects.get_project_or_404(db, order.project_id)
     projects.assert_can_edit_project(
         db, project, current_user["id"], permission_slugs(db, current_user["id"])
     )
+
+
+def _order_for_edit(db: Session, pso_id: str, current_user: dict):
+    validate_uuid_path(pso_id, resource="Sales order")
+    service = ProjectSODraftService(db)
+    order = service.get_order(pso_id)
+    _assert_can_act_on(db, order, current_user)
     return service, order
 
 
@@ -317,13 +330,7 @@ async def delete_sales_order(
     from the service.
     """
     try:
-        validate_uuid_path(pso_id, resource="Sales order")
-        service = ProjectSODraftService(db)
-        order = service.get_order(pso_id)
-        project = projects.get_project_or_404(db, order.project_id)
-        projects.assert_can_edit_project(
-            db, project, current_user["id"], permission_slugs(db, current_user["id"])
-        )
+        service, order = _order_for_edit(db, pso_id, current_user)
         reference = order.provisional_ref
         deleted = service.delete_order(order)
         db.commit()
@@ -380,10 +387,7 @@ async def bulk_delete_sales_orders(
                 ),
                 code="so_bulk_cross_project",
             )
-        project = projects.get_project_or_404(db, orders[0].project_id)
-        projects.assert_can_edit_project(
-            db, project, current_user["id"], permission_slugs(db, current_user["id"])
-        )
+        _assert_can_act_on(db, orders[0], current_user)
 
         refusals = service.describe_delete_refusals(orders)
         if refusals:

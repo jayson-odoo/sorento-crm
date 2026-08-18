@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -54,9 +55,11 @@ async def preview_proforma_invoice(
 ):
     """Every invoice the file holds, in which currency, and which codes we do not hold."""
     proforma_invoice_service.assert_supplier(db, supplier_id)
-    return proforma_invoice_service.preview(
+    data = await read_upload(file)
+    return await run_in_threadpool(
+        proforma_invoice_service.preview,
         db,
-        await read_upload(file),
+        data,
         supplier_id=supplier_id,
         currency=currency,
         source_ref=file.filename,
@@ -79,11 +82,17 @@ async def apply_proforma_invoice(
     proforma_invoice_service.assert_supplier(db, supplier_id)
     data = await read_upload(file)
     if validate_only:
-        return proforma_invoice_service.validate(
-            db, data, supplier_id=supplier_id, currency=currency, source_ref=file.filename
+        return await run_in_threadpool(
+            proforma_invoice_service.validate,
+            db,
+            data,
+            supplier_id=supplier_id,
+            currency=currency,
+            source_ref=file.filename,
         )
 
-    out = proforma_invoice_service.apply(
+    out = await run_in_threadpool(
+        proforma_invoice_service.apply,
         db,
         data,
         supplier_id=supplier_id,

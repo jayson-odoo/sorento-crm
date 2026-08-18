@@ -324,6 +324,8 @@ export interface SupplyFrozenLine {
   components: SupplyComponent[];
   /** The reason given for overriding the proposal, when one was. Absent otherwise. */
   amend_reason?: string | null;
+  /** The reason a discontinued product was still bought, when one was given. */
+  buy_reason?: string | null;
 }
 
 export interface SupplyLine {
@@ -348,6 +350,12 @@ export interface SupplyLine {
    * guessed default.
    */
   fulfilment_location_missing?: boolean;
+  /**
+   * Why this line cannot be planned on the sheet at all (it has no reconciled AutoCount
+   * line, so there is no current open quantity to promise against). The sheet shows it
+   * blocked and never names it in a confirmation; `null` on every plannable line.
+   */
+  unplannable_reason?: string | null;
   is_dealer_hot_selling: boolean;
   /** No classification row at any qualifying dealer warehouse (AC-B05). */
   classification_unavailable: boolean;
@@ -690,6 +698,8 @@ export interface BoardLineDecision {
   reserve: BoardReserveComponent[];
   borrow: BoardDecisionBorrow[];
   buy_qty: string;
+  /** Why a discontinued product was bought (AC-B11), when the revision froze one. */
+  buy_reason?: string | null;
   /** Why the composition was not the engine's, in the planner's own words. */
   amend_reason?: string | null;
 }
@@ -1190,6 +1200,11 @@ export interface BoardDecision {
   reserve?: BoardReserveComponent[];
   borrow?: BoardBorrowComponent[];
   buy_qty?: string;
+  /**
+   * Mandatory when the product is discontinued and `buy_qty > 0` (AC-B11), the same rule the
+   * per-line card applies. The confirmation refuses the whole order without it.
+   */
+  buy_reason?: string;
   /** The server's incoming cover, carried through unedited: it is dated supply, not a choice. */
   timely_spo_qty?: string;
   /**

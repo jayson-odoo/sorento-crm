@@ -271,6 +271,8 @@ class BoardLineDecision(BaseModel):
     reserve: List[BoardDecisionReserve] = []
     borrow: List[BoardDecisionBorrow] = []
     buy_qty: str = "0"
+    #: The reason a discontinued product is still being bought (AC-B11), when one was given.
+    buy_reason: Optional[str] = None
     #: Why the composition is not the engine's, in the planner's own words. Absent when they
     #: took the proposal as it stood.
     amend_reason: Optional[str] = None

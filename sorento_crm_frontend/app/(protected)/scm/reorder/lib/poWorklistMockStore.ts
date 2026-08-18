@@ -209,13 +209,21 @@ const ROWS: PoWorklistRow[] = [
   },
 ];
 
-/** Mutated by the mock keyed-status write so the prototype behaves like the real thing. */
+/**
+ * Mutated by the mock keyed-status write so the prototype behaves like the real thing.
+ * Keyed by product AND location, because a location-grain row is its own purchase
+ * order and keying one location must leave the product's other locations alone.
+ */
 const state = new Map<string, Pick<PoWorklistRow, 'keyed_status' | 'keyed_by' | 'keyed_at'>>(
   ROWS.map((r) => [
-    r.product_code,
+    stateKey(r.product_code, null),
     { keyed_status: r.keyed_status, keyed_by: r.keyed_by, keyed_at: r.keyed_at },
   ]),
 );
+
+function stateKey(productCode: string, warehouseCode: string | null | undefined): string {
+  return warehouseCode ? `${productCode}:${warehouseCode}` : productCode;
+}
 
 function delay<T>(value: T): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), MOCK_LATENCY_MS));
@@ -230,7 +238,14 @@ function delay<T>(value: T): Promise<T> {
  * split, because the location IS the row. Neither shape carries a channel key.
  */
 function scenarioRows(): PoWorklistRow[] {
-  const rows = ROWS.map((r) => ({ ...r, ...(state.get(r.product_code) ?? {}) }));
+  return shapeRows().map((r) => ({
+    ...r,
+    ...(state.get(stateKey(r.product_code, r.warehouse_code)) ?? {}),
+  }));
+}
+
+function shapeRows(): PoWorklistRow[] {
+  const rows = ROWS.map((r) => ({ ...r }));
   const grain = runGrainFields().decision_grain;
   if (frontPlanningScenario() === 'legacy') {
     return rows.map((r) => ({ ...r, location_allocations: null }));
@@ -260,10 +275,12 @@ function scenarioRows(): PoWorklistRow[] {
 }
 
 export function mockPoWorklist(): Promise<PoWorklist> {
+  const grain = runGrainFields();
   return delay({
     run_id: RUN_ID,
     as_of: AS_OF,
-    decision_grain: runGrainFields().decision_grain,
+    decision_grain: grain.decision_grain,
+    front_planning_contract_version: grain.front_planning_contract_version,
     rows: scenarioRows(),
   });
 }
@@ -273,13 +290,14 @@ export function mockSetKeyedStatus(
   input: KeyedStatusInput,
 ): Promise<KeyedStatusResult> {
   const at = `${AS_OF}T12:00:00`;
-  state.set(productCode, {
+  state.set(stateKey(productCode, input.warehouse_code), {
     keyed_status: input.keyed_status,
     keyed_by: 'Joey',
     keyed_at: at,
   });
   return delay({
     product_code: productCode,
+    warehouse_code: input.warehouse_code ?? null,
     keyed_status: input.keyed_status,
     keyed_by: 'Joey',
     keyed_at: at,

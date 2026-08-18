@@ -33,6 +33,7 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
 }));
 
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
+import { boardAxis } from '../../_shared/lib/fulfilmentBoard';
 import {
   buildBoard,
   OWN_ELIGIBLE,
@@ -548,6 +549,33 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     expect(
       screen.getByText('The active policy separates none of these rows'),
     ).toBeInTheDocument();
+  });
+
+  it('shows each line\'s own score on a pivoted cell, which states no ranking of its own', () => {
+    // A sales-order, customer or project cell is built on the client from the server's product
+    // cells and spans several piles: it carries neither flag, and used to print "Not ranked" on
+    // every row for it. The lines keep the score the server gave them.
+    const board = buildBoard(
+      [
+        demand({ line_no: 1, item_code: 'AAA', sales_order_id: 'so-a', so_number: 'SO000001' }),
+        demand({ line_no: 2, item_code: 'BBB', sales_order_id: 'so-a', so_number: 'SO000001' }),
+      ],
+      { today: TODAY, policy: PREVIEW_POLICY },
+    );
+    const { cells } = boardAxis(
+      'sales_order',
+      board.cells.map((cell) => ({ ...cell, rank_separates: false, distinct_order_count: 1 })),
+    );
+    expect(cells).toHaveLength(1);
+    renderCell(cells[0]);
+
+    for (const contribution of cells[0].contributions) {
+      expect(screen.getByTestId(`rank-factors-${contribution.key}`).textContent).toBe(
+        contribution.rank_score.toFixed(2),
+      );
+    }
+    expect(screen.queryByText(/Not ranked/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/line order decided/)).not.toBeInTheDocument();
   });
 
   it('says nothing about the ranking, and shows it, when the policy does separate the rows', () => {

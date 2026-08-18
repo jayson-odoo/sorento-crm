@@ -21,7 +21,8 @@ Runs against the REAL database (`pg_session`) rather than the scratch schema, an
 deliberate: the migration's guards inspect `projects.*` by name, which a
 `schema_translate_map` connection does not rewrite, so a scratch run would inspect one
 schema and write to another. Postgres DDL is transactional, so the outer rollback in
-`pg_session` discards every statement below. Nothing here reads or asserts a live row.
+`pg_session` discards every statement below, including the detach of adopted orders that
+lets the downgrade's NOT NULL land. Nothing here asserts a live row.
 """
 from __future__ import annotations
 
@@ -52,10 +53,19 @@ def _load_migration():
 
 
 def _run(db, direction: str) -> None:
+    if direction == "downgrade":
+        _detach_adopted_orders(db)
     module = _load_migration()
     context = MigrationContext.configure(db.connection())
     with Operations.context(context):
         getattr(module, direction)()
+
+
+def _detach_adopted_orders(db) -> None:
+    """The downgrade refuses while an adopted record exists; that refusal is its contract,
+    the round trip here is about the DDL. Children cascade or null on delete, and the outer
+    rollback discards this with everything else."""
+    db.execute(sa.text("delete from projects.sales_orders where project_id is null"))
 
 
 def _project_id_is_nullable(db) -> bool:

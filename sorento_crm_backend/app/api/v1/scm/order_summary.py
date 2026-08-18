@@ -227,4 +227,5 @@ def post_keyed_status(
         run_id=payload.run_id,
         keyed_status=payload.keyed_status,
         actor=_actor(_user),
+        warehouse_code=payload.warehouse_code,
     )

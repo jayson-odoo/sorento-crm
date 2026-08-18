@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Launch / stop / status for the disposable SCM e2e integration stack in this worktree.
 # Processes are detached (nohup + disown; macOS has no setsid) so they outlive any
-# agent shell. Logs and pidfiles live under .e2e-stack/ (gitignored via .git/info/exclude).
+# agent shell. Logs and pidfiles live under .e2e-stack/ (gitignored at the repo root).
 #   ./e2e-stack.sh start | stop | status
 set -u
 ROOT="${0:A:h}"

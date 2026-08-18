@@ -24,6 +24,7 @@ const getReconciliation = vi.fn();
 const rerunReconciliation = vi.fn();
 const getSupply = vi.fn();
 const confirmSupply = vi.fn();
+const getStockDetail = vi.fn();
 
 vi.mock('../services/fulfilmentPlanningService', () => ({
   listFulfilmentPlanning: (...args: unknown[]) => listFulfilmentPlanning(...args),
@@ -31,6 +32,7 @@ vi.mock('../services/fulfilmentPlanningService', () => ({
   rerunReconciliation: (...args: unknown[]) => rerunReconciliation(...args),
   getSupply: (...args: unknown[]) => getSupply(...args),
   confirmSupply: (...args: unknown[]) => confirmSupply(...args),
+  getStockDetail: (...args: unknown[]) => getStockDetail(...args),
 }));
 
 const toastSuccess = vi.fn();
@@ -46,14 +48,22 @@ vi.mock('sonner', () => ({
 
 import {
   FULFILMENT_PLANNING_KEY,
+  PILE_QUEUE_KEY,
   RECONCILIATION_KEY,
+  STOCK_DETAIL_KEY,
   SUPPLY_KEY,
   useFulfilmentPlanning,
   useReconciliation,
   useReconciliationMutations,
+  useStockDetail,
   useSupply,
 } from './useFulfilmentPlanning';
-import { ORDER_INQUIRY_ROWS_KEY, ORDER_INQUIRY_SUMMARY_KEY } from './useOrderInquiry';
+import {
+  ORDER_INQUIRY_ROWS_KEY,
+  ORDER_INQUIRY_SUMMARY_KEY,
+  ORDER_INQUIRY_WORKLIST_KEY,
+  ORDER_INQUIRY_WORKLIST_SUMMARY_KEY,
+} from './useOrderInquiry';
 import { SALES_ORDERS_KEY, SALES_ORDER_KEY } from './useProjectSalesOrders';
 
 function summary(overrides: Partial<ReconciliationSummary> = {}): ReconciliationSummary {
@@ -358,6 +368,10 @@ describe('useReconciliationMutations', () => {
       SALES_ORDER_KEY,
       ORDER_INQUIRY_ROWS_KEY,
       ORDER_INQUIRY_SUMMARY_KEY,
+      ORDER_INQUIRY_WORKLIST_KEY,
+      ORDER_INQUIRY_WORKLIST_SUMMARY_KEY,
+      PILE_QUEUE_KEY,
+      STOCK_DETAIL_KEY,
     ]) {
       expect(flattened.some((entry) => entry.includes(key))).toBe(true);
     }
@@ -406,5 +420,22 @@ describe('useReconciliationMutations', () => {
     expect(toastSuccess).not.toHaveBeenCalled();
     // Nothing is invalidated by a refusal: nothing was written.
     expect(invalidated).toEqual([]);
+  });
+});
+
+describe('useStockDetail', () => {
+  it('reads the detail by ids under the exported key, so a confirmation can invalidate it', async () => {
+    getStockDetail.mockResolvedValue({ product_id: 'prod-1', warehouse_id: 'wh-1' });
+
+    const { result } = renderHook(() => useStockDetail('prod-1', 'wh-1'), {
+      wrapper: wrapper(),
+    });
+
+    await waitFor(() => expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1'));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(client.getQueryData([STOCK_DETAIL_KEY, 'prod-1', 'wh-1'])).toEqual({
+      product_id: 'prod-1',
+      warehouse_id: 'wh-1',
+    });
   });
 });

@@ -330,6 +330,53 @@ describe('BoardAmendDialog: the balance, and what it stops', () => {
 });
 
 /**
+ * A Buy of a DISCONTINUED product needs a reason (AC-B11), exactly as the per-line card
+ * demands one. The board states the flag on the line, so the field is offered here rather than
+ * the confirmation refusing the whole order for want of it.
+ */
+describe('BoardAmendDialog: buying a discontinued product', () => {
+  const discontinued = {
+    dealer_hot_selling: false,
+    dealer_hot_selling_where: [],
+    discontinued: true,
+    retail_classification_available: true,
+  };
+
+  it('offers no buy reason on an ordinary product', () => {
+    renderDialog(contributionOf({}));
+    expect(screen.queryByLabelText(/^Reason/)).not.toBeInTheDocument();
+  });
+
+  it('demands the reason while the discontinued line buys anything', () => {
+    const { onSave } = renderDialog(contributionOf({}, { item_flags: discontinued }));
+
+    const save = screen.getByRole('button', { name: 'Save the amendment' });
+    expect(screen.getByText(/buying a discontinued product needs a reason/)).toBeInTheDocument();
+    expect(save).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Last batch for the site, agreed with purchasing.' },
+    });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'amended',
+        buy_qty: '100',
+        buy_reason: 'Last batch for the site, agreed with purchasing.',
+      }),
+    );
+  });
+
+  it('does not demand it once the line buys nothing', () => {
+    renderDialog(contributionOf({ 'B2155-NL-BLUE|BRW-BB': '100' }, { item_flags: discontinued }));
+    expect(screen.getByLabelText(/^Reason/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save the amendment' })).toBeEnabled();
+  });
+});
+
+/**
  * Amending a line an ACTIVE decision already covers (PLAN 13.4).
  *
  * There is no proposal to seed from - the board proposes nothing for a decided line - so the

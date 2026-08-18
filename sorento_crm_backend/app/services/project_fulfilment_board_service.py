@@ -968,6 +968,7 @@ class FulfilmentBoardService:
                 if c.get("kind") == BORROW
             ],
             "buy_qty": qty_text(total(BUY)),
+            "buy_reason": frozen.get("buy_reason"),
             "amend_reason": frozen.get("amend_reason"),
         }
 
@@ -1334,9 +1335,18 @@ class FulfilmentBoardService:
         for row in plannable:
             if not row.covered:
                 continue
+            fact = facts[row.key]
             row.borrow_candidates = self._donors_for(
-                borrow_cache, row, facts[row.key], row.proposed.get(BUY, _ZERO)
+                borrow_cache, row, fact, row.proposed.get(BUY, _ZERO)
             )
+            # Amend on a covered line reads the same flags a proposal states: a discontinued
+            # product needs a Buy reason whether or not the line was decided before.
+            row.item_flags = {
+                "dealer_hot_selling": bool(fact.is_hot_selling),
+                "dealer_hot_selling_where": list(fact.hot_selling_where or []),
+                "discontinued": bool(fact.is_discontinued),
+                "retail_classification_available": not fact.classification_unavailable,
+            }
 
     def _donors_for(
         self,

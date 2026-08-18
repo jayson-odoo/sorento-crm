@@ -455,6 +455,50 @@ def test_a_drill_total_equals_the_row_aggregate(db, chain):
     assert drill["total_qty"] == row["project_demand"] == 75
 
 
+def _reconcile_to_project_line(db, so, *, line_no):
+    """The AutoCount upload's reconciliation: a project SO line pointing at the core line.
+
+    `public.sales_order_lines` carries no line number; the human one lives here, and it is
+    the only place a drill can read it from.
+    """
+    from app.models.project_so import ProjectSalesOrder, ProjectSalesOrderLine
+    from tests.scm.conftest import SORENTO_COMPANY_ID
+
+    core_line = db.query(SalesOrderLine).filter(SalesOrderLine.sales_order_id == so.id).one()
+    pso = ProjectSalesOrder(
+        id=_u(), company_id=SORENTO_COMPANY_ID, provisional_ref=_code("PSO"), so_id=so.id,
+    )
+    db.add(pso)
+    db.flush()
+    db.add(ProjectSalesOrderLine(
+        id=_u(), company_id=SORENTO_COMPANY_ID, project_sales_order_id=pso.id,
+        line_no=line_no, product_id=core_line.product_id, qty=core_line.qty_ordered,
+        core_sales_order_line_id=core_line.id,
+    ))
+    db.flush()
+
+
+def test_an_unclassified_line_carries_its_human_line_number_when_it_has_one(db, chain):
+    """The exception names the line to fix, not just the order: an SO with three lines and
+    no class is a different job from one line, and the number is what the person opens."""
+    f = chain
+    so, _cust = _so(db, f["product"], f["bin"], 99, order_type=None)
+    _reconcile_to_project_line(db, so, line_no=30)
+
+    out = svc.demand_drill(db, f["product"].product_code, kind="unclassified")
+
+    assert [l["line_no"] for l in out["unclassified_lines"]] == [30]
+
+
+def test_an_unreconciled_unclassified_line_has_no_line_number_rather_than_an_index(db, chain):
+    f = chain
+    _so(db, f["product"], f["bin"], 99, order_type=None)
+
+    out = svc.demand_drill(db, f["product"].product_code, kind="unclassified")
+
+    assert [l["line_no"] for l in out["unclassified_lines"]] == [None]
+
+
 def test_an_unknown_drill_kind_is_refused(db, chain):
     with pytest.raises(AppException) as e:
         svc.demand_drill(db, chain["product"].product_code, kind="everything")

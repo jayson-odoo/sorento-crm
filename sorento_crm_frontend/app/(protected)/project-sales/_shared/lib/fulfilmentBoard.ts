@@ -47,6 +47,20 @@ export function bucketLabelText(label: string): string {
 }
 
 /**
+ * How many day columns the server renders at day granularity (deviation 7): the board's
+ * `DAY_WINDOW_COLUMNS`. Paging moves by this, never by the columns that happened to come back,
+ * so a window with nothing owed in it is still a page and no day is skipped or shown twice.
+ */
+export const DAY_WINDOW_COLUMNS = 30;
+
+/** The first day of the window one page on from `anchor` (an ISO date), or one page back. */
+export function shiftedDayWindow(anchor: string, direction: 1 | -1): string {
+  const next = new Date(`${anchor}T00:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + direction * DAY_WINDOW_COLUMNS);
+  return next.toISOString().slice(0, 10);
+}
+
+/**
  * A ranking factor named in words a planner uses.
  *
  * The chips printed `po_document_sequence absent` and `need_by_date` - database column names,
@@ -239,89 +253,123 @@ export function confirmLinesFor(
   const lines: ConfirmLine[] = [];
   for (const contribution of contributions) {
     if (contribution.sales_order_id !== salesOrderId) continue;
-    const decision = draft[contribution.key];
-
-    // ALREADY CONFIRMED, AND NOT TOUCHED SINCE: the server carries it. Nothing to post, and
-    // nothing to derive - the board proposes nothing for a covered line, and inventing one
-    // would overwrite a person's composition with the engine's opinion of it.
-    if (contribution.covered && !isAmendment(decision)) continue;
-
-    if (!decision || decision.verdict === 'rejected') continue;
-    if (!contribution.project_line_id) continue;
-
-    // AN AMENDMENT COMPOSED IN THE EDITOR IS POSTED AS COMPOSED. Every warehouse and every
-    // donor was chosen by a person against the balance in front of them, so there is nothing
-    // left to derive - and the derivation is what used to lose them: a line the engine met
-    // entirely from Buy has no Reserve source to read a warehouse off, so an amendment moving
-    // it into a Reserve was dropped from the body while the row still read "Amended".
-    if (decision.verdict === 'amended' && decision.reserve) {
-      lines.push({
-        project_line_id: contribution.project_line_id,
-        timely_spo_qty: fromMinor(toMinor(decision.timely_spo_qty ?? '0')),
-        reserve: decision.reserve
-          .filter((row) => toMinor(row.qty) > 0)
-          .map((row) => ({ warehouse_id: row.warehouse_id, qty: row.qty })),
-        borrow: (decision.borrow ?? [])
-          .filter((row) => toMinor(row.qty) > 0)
-          .map((row) => ({
-            source: row.source,
-            warehouse_id: row.warehouse_id,
-            donor_project_id: row.donor_project_id ?? null,
-            qty: row.qty,
-            reason: row.reason,
-          })),
-        buy_qty: fromMinor(toMinor(decision.buy_qty ?? '0')),
-        // Frozen with the line. Every other component carries the sentence of the RULE that
-        // produced it, and those explain a decision nobody took once a person overrode them.
-        amend_reason: decision.reason,
-      });
-      continue;
-    }
-
-    const owed = toMinor(contribution.qty_outstanding ?? contribution.qty);
-    // The engine's own numbers when it sends them. The board now proposes what the SHEET
-    // proposes - pool and borrow are considered, not just own-location reserve then buy - so
-    // re-deriving a composition from the source strip would be a second, worse allocator
-    // quietly disagreeing with the real one.
-    const incoming = numberOr(contribution.qty_proposed_incoming, () =>
-      sumSources(contribution, 'timely_spo'),
-    );
-    const proposedReserve = numberOr(contribution.qty_proposed_reserve, () =>
-      sumSources(contribution, 'reserve'),
-    );
-    const reserveQty =
-      decision.verdict === 'amended' && decision.reserve_qty !== undefined
-        ? toMinor(decision.reserve_qty)
-        : proposedReserve;
-    // Whatever the Reserve and the incoming stock do not cover is bought. Derived rather than
-    // read off the proposal so an amendment cannot leave a quantity owed by nobody.
-    // On an unchanged proposal the server's own Buy stands; an amendment moves the quantity
-    // the planner took off the Reserve into it, because that quantity is still owed.
-    const buy =
-      decision.verdict === 'amended' || contribution.qty_proposed_buy === undefined ||
-      contribution.qty_proposed_buy === null
-        ? Math.max(owed - incoming - reserveQty, 0)
-        : toMinor(contribution.qty_proposed_buy);
-    const reserve = reserveWarehouses(contribution, reserveQty);
-    // A Reserve nobody can address is not a Reserve. Dropping the line leaves it undecided,
-    // which is recoverable; posting a Reserve with no warehouse would fail the whole
-    // confirmation and take the other lines down with it.
-    if (reserve === null) continue;
-
-    lines.push({
-      project_line_id: contribution.project_line_id,
-      timely_spo_qty: fromMinor(incoming),
-      reserve,
-      // The board never PROPOSES a Borrow: it crosses locations, and the board allocates per
-      // (product, location) only (13.7, deviation 8). One composed by hand in the editor takes
-      // the branch above.
-      borrow: [],
-      buy_qty: fromMinor(buy),
-      // Present only on the legacy single-number amendment, which is still an override.
-      amend_reason: decision.verdict === 'amended' ? decision.reason : undefined,
-    });
+    const built = lineFor(contribution, draft[contribution.key]);
+    if (built && typeof built !== 'string') lines.push(built);
   }
   return lines;
+}
+
+/**
+ * Why a decided line cannot be posted by this confirmation. Every one of these is a line the
+ * server would refuse, and the confirmation is atomic across the order, so posting it would take
+ * every other line down with it. It is left out and NAMED instead.
+ */
+export type UnpostableReason = 'no_mirror' | 'no_reserve_warehouse' | 'buy_reason_missing';
+
+export interface UnpostableLine {
+  contribution: BoardContribution;
+  reason: UnpostableReason;
+}
+
+/**
+ * ONE line of the body, or the reason it cannot be one, or null when nothing is to be posted
+ * for it at all (undecided, rejected, or covered and untouched - none of which is a loss).
+ *
+ * The single place the rule lives, so the body, the notice that names what the body left out
+ * and the count on the button cannot disagree about which lines those are.
+ */
+function lineFor(
+  contribution: BoardContribution,
+  decision: BoardDecision | undefined,
+): ConfirmLine | UnpostableReason | null {
+  // ALREADY CONFIRMED, AND NOT TOUCHED SINCE: the server carries it. Nothing to post, and
+  // nothing to derive - the board proposes nothing for a covered line, and inventing one
+  // would overwrite a person's composition with the engine's opinion of it.
+  if (contribution.covered && !isAmendment(decision)) return null;
+  if (!decision || decision.verdict === 'rejected') return null;
+
+  const discontinued = Boolean(contribution.item_flags?.discontinued);
+  const buyReason = decision.buy_reason?.trim() || undefined;
+
+  // AN AMENDMENT COMPOSED IN THE EDITOR IS POSTED AS COMPOSED. Every warehouse and every
+  // donor was chosen by a person against the balance in front of them, so there is nothing
+  // left to derive - and the derivation is what used to lose them: a line the engine met
+  // entirely from Buy has no Reserve source to read a warehouse off, so an amendment moving
+  // it into a Reserve was dropped from the body while the row still read "Amended".
+  if (decision.verdict === 'amended' && decision.reserve) {
+    const buy = toMinor(decision.buy_qty ?? '0');
+    if (discontinued && buy > 0 && !buyReason) return 'buy_reason_missing';
+    if (!contribution.project_line_id) return 'no_mirror';
+    return {
+      project_line_id: contribution.project_line_id,
+      timely_spo_qty: fromMinor(toMinor(decision.timely_spo_qty ?? '0')),
+      reserve: decision.reserve
+        .filter((row) => toMinor(row.qty) > 0)
+        .map((row) => ({ warehouse_id: row.warehouse_id, qty: row.qty })),
+      borrow: (decision.borrow ?? [])
+        .filter((row) => toMinor(row.qty) > 0)
+        .map((row) => ({
+          source: row.source,
+          warehouse_id: row.warehouse_id,
+          donor_project_id: row.donor_project_id ?? null,
+          qty: row.qty,
+          reason: row.reason,
+        })),
+      buy_qty: fromMinor(buy),
+      buy_reason: buyReason,
+      // Frozen with the line. Every other component carries the sentence of the RULE that
+      // produced it, and those explain a decision nobody took once a person overrode them.
+      amend_reason: decision.reason,
+    };
+  }
+
+  const owed = toMinor(contribution.qty_outstanding ?? contribution.qty);
+  // The engine's own numbers when it sends them. The board now proposes what the SHEET
+  // proposes - pool and borrow are considered, not just own-location reserve then buy - so
+  // re-deriving a composition from the source strip would be a second, worse allocator
+  // quietly disagreeing with the real one.
+  const incoming = numberOr(contribution.qty_proposed_incoming, () =>
+    sumSources(contribution, 'timely_spo'),
+  );
+  const proposedReserve = numberOr(contribution.qty_proposed_reserve, () =>
+    sumSources(contribution, 'reserve'),
+  );
+  const reserveQty =
+    decision.verdict === 'amended' && decision.reserve_qty !== undefined
+      ? toMinor(decision.reserve_qty)
+      : proposedReserve;
+  // Whatever the Reserve and the incoming stock do not cover is bought. Derived rather than
+  // read off the proposal so an amendment cannot leave a quantity owed by nobody.
+  // On an unchanged proposal the server's own Buy stands; an amendment moves the quantity
+  // the planner took off the Reserve into it, because that quantity is still owed.
+  const buy =
+    decision.verdict === 'amended' || contribution.qty_proposed_buy === undefined ||
+    contribution.qty_proposed_buy === null
+      ? Math.max(owed - incoming - reserveQty, 0)
+      : toMinor(contribution.qty_proposed_buy);
+  // An approval carries no reason, and a Buy of a discontinued product needs one (AC-B11):
+  // the line is left out until the planner gives it in the editor.
+  if (discontinued && buy > 0 && !buyReason) return 'buy_reason_missing';
+  const reserve = reserveWarehouses(contribution, reserveQty);
+  // A Reserve nobody can address is not a Reserve. Leaving the line out keeps it undecided,
+  // which is recoverable; posting a Reserve with no warehouse would fail the whole
+  // confirmation and take the other lines down with it.
+  if (reserve === null) return 'no_reserve_warehouse';
+  if (!contribution.project_line_id) return 'no_mirror';
+
+  return {
+    project_line_id: contribution.project_line_id,
+    timely_spo_qty: fromMinor(incoming),
+    reserve,
+    // The board never PROPOSES a Borrow: it crosses locations, and the board allocates per
+    // (product, location) only (13.7, deviation 8). One composed by hand in the editor takes
+    // the branch above.
+    borrow: [],
+    buy_qty: fromMinor(buy),
+    buy_reason: buyReason,
+    // Present only on the legacy single-number amendment, which is still an override.
+    amend_reason: decision.verdict === 'amended' ? decision.reason : undefined,
+  };
 }
 
 /** An amendment composed in the editor, which replaces whatever was there before. */
@@ -390,13 +438,16 @@ function reserveWarehouses(
 }
 
 /**
- * The lines a planner DECIDED that this confirmation cannot carry, so the screen can say so.
+ * The lines a planner DECIDED that this confirmation cannot carry, and why, so the screen can
+ * say so and the count on the button agrees with the notice beside it.
  *
  * Adoption mirrored the order's open lines at the time it ran, so a later upload can add a core
  * line with no mirror: its order stays confirmable and that one contribution has no
  * `project_line_id`. Posting an invented id is refused outright, and silently dropping the row
  * would tell a planner they committed something they did not. The fix is a re-sync on the
  * sheet, which is somewhere else entirely - which is exactly why saying nothing would be wrong.
+ * The other two reasons are fixed in the editor: a Reserve the board cannot address to a
+ * warehouse, and a Buy of a discontinued product with no reason given.
  *
  * A REJECTED line is not counted: it was never going to post, so it is not a loss.
  */
@@ -407,17 +458,20 @@ export function unpostableDecidedFor(
   /**
    * Whether the order HAS a planning record. On one that was simply never adopted every line
    * lacks a mirror, which is not this problem at all - the press adopts first and the mirrors
-   * appear - so naming all of them would be eleven false alarms.
+   * appear - so naming all of them would be eleven false alarms. The other reasons still name
+   * their line: adoption fixes none of them.
    */
   isAdopted = true,
-): BoardContribution[] {
-  if (!isAdopted) return [];
-  return contributions.filter((contribution) => {
-    if (contribution.sales_order_id !== salesOrderId) return false;
-    const decision = draft[contribution.key];
-    if (!decision || decision.verdict === 'rejected') return false;
-    return !contribution.project_line_id;
-  });
+): UnpostableLine[] {
+  const unpostable: UnpostableLine[] = [];
+  for (const contribution of contributions) {
+    if (contribution.sales_order_id !== salesOrderId) continue;
+    const built = lineFor(contribution, draft[contribution.key]);
+    if (typeof built !== 'string') continue;
+    if (built === 'no_mirror' && !isAdopted) continue;
+    unpostable.push({ contribution, reason: built });
+  }
+  return unpostable;
 }
 
 /**
@@ -427,7 +481,8 @@ export function unpostableDecidedFor(
  * cannot be built at all yet - `project_line_id` is null everywhere until adoption mirrors the
  * open lines - so the count comes from the verdicts instead, and the press adopts before it
  * builds anything. Without this the Confirm on a fresh order would read "Confirm 0 lines" and
- * be disabled, which is exactly the dead end the captain hit.
+ * be disabled, which is exactly the dead end the captain hit. A verdict the body could not
+ * carry for any OTHER reason is not counted: adoption does not fix it, and the notice names it.
  */
 export function plannedLineCount(
   contributions: BoardContribution[],
@@ -437,8 +492,8 @@ export function plannedLineCount(
   return contributions.filter((contribution) => {
     if (contribution.sales_order_id !== salesOrderId) return false;
     if (contribution.unplannable) return false;
-    const decision = draft[contribution.key];
-    return Boolean(decision) && decision.verdict !== 'rejected';
+    const built = lineFor(contribution, draft[contribution.key]);
+    return built !== null && (typeof built !== 'string' || built === 'no_mirror');
   }).length;
 }
 
@@ -705,6 +760,9 @@ export function rankingNote(
   cell: Pick<BoardCell, 'contributions' | 'distinct_order_count' | 'rank_separates'>,
 ): { cell: string; note: string } | null {
   if (cell.rank_separates) return null;
+  // A cell that states neither flag was not ranked as one queue: a pivoted cell spans several
+  // piles, so it has no single ranking sentence and each line keeps its own score.
+  if (cell.rank_separates === undefined && cell.distinct_order_count === undefined) return null;
   const note =
     cell.contributions.length === 1
       ? 'Only line in this cell'

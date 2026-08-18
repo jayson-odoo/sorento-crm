@@ -8,6 +8,7 @@ import {
 } from '@/hooks/useRecordNeighbours';
 import { saveBlobAs } from '../services/fileDownload';
 import { projectKey } from './useProjects';
+import { allocationsKey } from './useProjectAllocations';
 import {
   acknowledgeFinding,
   buildSalesOrders,
@@ -163,13 +164,15 @@ export function useSalesOrderBuild(projectId: string) {
 /**
  * Everything that writes to one draft. Each success refetches the draft itself AND the
  * project's list, because the list carries the finding counts and the status the user is
- * looking at on the other screen.
+ * looking at on the other screen, AND the order's allocations, which the same detail page
+ * shows per line and which a line edit can leave describing a line that no longer exists.
  */
 export function useSalesOrderMutations(projectId: string, psoId: string) {
   const queryClient = useQueryClient();
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: salesOrderKey(psoId) });
     queryClient.invalidateQueries({ queryKey: [SALES_ORDERS_KEY, projectId] });
+    queryClient.invalidateQueries({ queryKey: allocationsKey(psoId) });
   };
 
   const acknowledge = useMutation({

@@ -25,6 +25,7 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.models.procurement import Supplier
 from app.models.scm import ProformaInvoice, ProformaInvoiceLine
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
@@ -453,8 +454,11 @@ def list_for_supplier(
         .limit(limit)
         .all()
     )
+    labels = _supplier_labels(db, [str(r.supplier_id) for r in rows])
     return {
-        "data": [serialize(db, r, with_lines=False) for r in rows],
+        "data": [
+            serialize(db, r, with_lines=False, supplier_labels=labels) for r in rows
+        ],
         "total": total,
         "limit": limit,
         "offset": max(offset, 0),
@@ -467,9 +471,24 @@ def delete(db: Session, invoice_id: str) -> None:
     db.flush()
 
 
-def serialize(db: Session, invoice: ProformaInvoice, *, with_lines: bool = True) -> dict:
-    """One invoice as the API returns it: codes and names, never a bare identifier."""
-    supplier_code, supplier_name = _supplier_label(db, str(invoice.supplier_id))
+def serialize(
+    db: Session,
+    invoice: ProformaInvoice,
+    *,
+    with_lines: bool = True,
+    supplier_labels: Optional[dict[str, tuple[Optional[str], Optional[str]]]] = None,
+) -> dict:
+    """One invoice as the API returns it: codes and names, never a bare identifier.
+
+    `supplier_labels` is the page's `{supplier_id: (code, name)}`, resolved once by the
+    caller listing several invoices; a single serialization resolves its own.
+    """
+    if supplier_labels is not None:
+        supplier_code, supplier_name = supplier_labels.get(
+            str(invoice.supplier_id), (None, None)
+        )
+    else:
+        supplier_code, supplier_name = _supplier_label(db, str(invoice.supplier_id))
     out: dict[str, Any] = {
         "id": str(invoice.id),
         "supplier_id": str(invoice.supplier_id),
@@ -519,6 +538,21 @@ def serialize(db: Session, invoice: ProformaInvoice, *, with_lines: bool = True)
         for ln in lines
     ]
     return out
+
+
+def _supplier_labels(
+    db: Session, supplier_ids: list[str]
+) -> dict[str, tuple[Optional[str], Optional[str]]]:
+    """`(supplier_code, supplier_name)` per id in one query, company-scoped by the ORM."""
+    ids = [sid for sid in set(supplier_ids) if _is_uuid(sid)]
+    if not ids:
+        return {}
+    rows = (
+        db.query(Supplier.id, Supplier.supplier_code, Supplier.supplier_name)
+        .filter(Supplier.id.in_(ids))
+        .all()
+    )
+    return {str(sid): (code, name) for sid, code, name in rows}
 
 
 def _product_codes(db: Session, product_ids: list[str]) -> dict[str, str]:

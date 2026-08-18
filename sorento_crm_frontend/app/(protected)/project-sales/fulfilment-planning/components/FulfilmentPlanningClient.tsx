@@ -666,12 +666,10 @@ export function FulfilmentPlanningClient() {
                   />
                   <Input
                     placeholder="Search sales order, customer, project or product"
-                    // The two surprises, as a hint on the box rather than prose on the page.
-                    // Both are things a planner would otherwise learn by being wrong about
-                    // them: a product needle matches the ORDER, so the counts do not shrink to
-                    // the matching lines, and an order whose only matching line is already done
-                    // is absent by design rather than missing.
-                    title="A product match finds orders with an outstanding line for it; the row still counts the whole order. An order whose only matching line is already delivered, closed or covered is not listed."
+                    // The one surprise, as a hint on the box rather than prose on the page: a
+                    // product needle matches the ORDER, so the row still counts the whole
+                    // order, and only an outstanding line counts as a match.
+                    title="A product match lists the whole order that has an outstanding line for it."
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
                     className="w-full ps-9 sm:w-72"

@@ -19,8 +19,6 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
-import pytest
-
 from app.services.scm import priority
 from app.services.scm.cash_ranking import rank_score
 from tests._pg_fixture import pg_session
@@ -294,20 +292,12 @@ def test_payment_terms_are_read_off_the_customer_when_the_column_is_there():
     from sqlalchemy import text
 
     from app.models.order import Customer
+    from tests._pg_fixture import blank_session
 
-    with pg_session() as db:
-        # The column is a database fact, not a model fact: the prod-copy schema has it,
-        # a freshly migrated one (CI, `bootstrap_env`) does not. Probe the way the code
-        # under test does; when the column is absent this test has nothing to say and
-        # its sibling below covers the absent branch.
-        present = db.execute(
-            text(
-                "SELECT 1 FROM information_schema.columns "
-                "WHERE table_name = 'customers' AND column_name = 'payment_terms_days'"
-            )
-        ).first()
-        if present is None:
-            pytest.skip("customers.payment_terms_days is not in this schema")
+    with blank_session() as db:
+        db.execute(
+            text("ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_terms_days integer")
+        )
         customer = Customer(
             id=str(uuid.uuid4()),
             customer_code=f"{MARKER}-{uuid.uuid4().hex[:6]}",

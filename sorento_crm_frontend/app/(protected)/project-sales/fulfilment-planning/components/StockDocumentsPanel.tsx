@@ -2,14 +2,13 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { useQuery } from '@tanstack/react-query';
 import { ColumnDef } from '@tanstack/react-table';
 import { PackageSearch } from 'lucide-react';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
-import { getStockDetail } from '../../_shared/services/fulfilmentPlanningService';
+import { useStockDetail } from '../../_shared/hooks/useFulfilmentPlanning';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 
 /**
@@ -40,12 +39,7 @@ export function StockDocumentsPanel({
   itemCode: string;
   locationCode: string;
 }) {
-  const detail = useQuery({
-    queryKey: ['project-stock-detail', productId, warehouseId],
-    queryFn: () => getStockDetail(productId, warehouseId),
-    retry: 1,
-    refetchOnWindowFocus: false,
-  });
+  const detail = useStockDetail(productId, warehouseId);
 
   const rows = React.useMemo<StockDetailRow[]>(() => {
     const data = detail.data;

@@ -9,6 +9,7 @@ import {
   getPlanningBoard,
   confirmSupply,
   getReconciliation,
+  getStockDetail,
   getSupply,
   listFulfilmentPlanning,
   rerunReconciliation,
@@ -19,12 +20,18 @@ import type {
   ConfirmSupplyBody,
   FulfilmentPlanningListParams,
 } from '../types/fulfilmentPlanning.types';
-import { ORDER_INQUIRY_ROWS_KEY, ORDER_INQUIRY_SUMMARY_KEY } from './useOrderInquiry';
+import {
+  ORDER_INQUIRY_ROWS_KEY,
+  ORDER_INQUIRY_SUMMARY_KEY,
+  ORDER_INQUIRY_WORKLIST_KEY,
+  ORDER_INQUIRY_WORKLIST_SUMMARY_KEY,
+} from './useOrderInquiry';
 import { SALES_ORDERS_KEY, SALES_ORDER_KEY } from './useProjectSalesOrders';
 
 export const FULFILMENT_PLANNING_KEY = 'project-fulfilment-planning';
 export const PLANNING_BOARD_KEY = 'project-fulfilment-board';
 export const PILE_QUEUE_KEY = 'project-pile-queue';
+export const STOCK_DETAIL_KEY = 'project-stock-detail';
 export const RECONCILIATION_KEY = 'project-so-reconciliation';
 export const SUPPLY_KEY = 'project-so-supply';
 
@@ -161,9 +168,10 @@ export function useReconciliationMutations() {
 
   /**
    * One press confirms every line (AC-C01). It invalidates the same four key families the
-   * re-run does, plus the order inquiry: the confirmed Buy residual is what purchasing is
-   * handed, so a stale inquiry list is the one place the decision would look like it had
-   * not happened.
+   * re-run does, plus the order inquiry (per project and the cross-project worklist): the
+   * confirmed Buy residual is what purchasing is handed, so a stale inquiry list is the one
+   * place the decision would look like it had not happened. The pile queue and the stock
+   * detail show the holds the confirmation placed, so they go too.
    *
    * The error toast is deliberately short. A refusal names each failing line, and that
    * list belongs on the sheet beside the lines, not in a toast that scrolls away.
@@ -183,6 +191,10 @@ export function useReconciliationMutations() {
       queryClient.invalidateQueries({ queryKey: [SALES_ORDER_KEY] });
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_ROWS_KEY] });
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_SUMMARY_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
+      queryClient.invalidateQueries({ queryKey: [PILE_QUEUE_KEY] });
+      queryClient.invalidateQueries({ queryKey: [STOCK_DETAIL_KEY] });
       const rows = result.inquiry_rows_created;
       toast.success(
         `Confirmed as revision ${result.revision_no}. ${rows} purchase row${
@@ -252,6 +264,21 @@ export function usePileQueue(
     queryKey: [PILE_QUEUE_KEY, productId ?? '', warehouseId ?? '', lineId ?? ''],
     queryFn: () => getPileQueue(productId as string, warehouseId as string, lineId),
     enabled: enabled && Boolean(productId) && Boolean(warehouseId),
+    retry: 1,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/**
+ * The documents behind one location row - AutoCount's "Stock Status with Detail".
+ *
+ * Addressed by ids: two products on the live book share the item code `B2155-NL-BLUE`, so a
+ * lookup by code would answer confidently about the wrong one.
+ */
+export function useStockDetail(productId: string, warehouseId: string) {
+  return useQuery({
+    queryKey: [STOCK_DETAIL_KEY, productId, warehouseId],
+    queryFn: () => getStockDetail(productId, warehouseId),
     retry: 1,
     refetchOnWindowFocus: false,
   });

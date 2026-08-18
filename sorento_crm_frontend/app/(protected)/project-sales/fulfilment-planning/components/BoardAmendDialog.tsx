@@ -240,17 +240,38 @@ export function BoardAmendDialog({
           </Section>
 
           <Section label="Buy">
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                type="number"
-                min="0"
-                step="any"
-                value={draft.buy_qty}
-                aria-label="Buy"
-                onChange={(event) => setDraft({ ...draft, buy_qty: event.target.value })}
-                className="h-8 w-28 tabular-nums"
-              />
-              <span className="text-sm text-muted-foreground">To purchase</span>
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={draft.buy_qty}
+                  aria-label="Buy"
+                  onChange={(event) => setDraft({ ...draft, buy_qty: event.target.value })}
+                  className="h-8 w-28 tabular-nums"
+                />
+                <span className="text-sm text-muted-foreground">To purchase</span>
+              </div>
+              {/* The same field the per-line card carries (AC-B11): a Buy of a discontinued
+                  product needs a reason, and `lineBlockers` shuts Save without one. */}
+              {draft.is_discontinued && (
+                <div className="space-y-1">
+                  <label
+                    className="block text-2xs uppercase tracking-wide text-muted-foreground"
+                    htmlFor="board-buy-reason"
+                  >
+                    Reason <span className="text-destructive">*</span>
+                  </label>
+                  <Textarea
+                    id="board-buy-reason"
+                    rows={2}
+                    value={draft.buy_reason}
+                    placeholder="In your own words"
+                    onChange={(event) => setDraft({ ...draft, buy_reason: event.target.value })}
+                  />
+                </div>
+              )}
             </div>
           </Section>
 

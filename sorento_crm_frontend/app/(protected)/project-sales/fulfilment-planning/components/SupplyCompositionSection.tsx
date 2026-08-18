@@ -15,7 +15,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { useReconciliationMutations, useSupply } from '../../_shared/hooks/useFulfilmentPlanning';
 import { ConfirmSupplyError } from '../../_shared/services/fulfilmentPlanningService';
-import type { SupplyFailingLine } from '../../_shared/types/fulfilmentPlanning.types';
+import type {
+  SupplyFailingLine,
+  SupplyLine,
+} from '../../_shared/types/fulfilmentPlanning.types';
 import {
   confirmLineFromDraft,
   draftBlockers,
@@ -86,24 +89,61 @@ export function SupplyCompositionSection({
     : null;
 
   /**
+   * The lines a confirmation may name. An unplannable line (no reconciled AutoCount line, so
+   * no open quantity to promise against) is shown blocked and left out of the payload: the
+   * server refuses a confirmation that names one, and one such line must not stop the rest
+   * of the order being decided.
+   */
+  const plannableLines = React.useMemo(
+    () => lines.filter((line) => !line.unplannable_reason),
+    [lines],
+  );
+
+  /**
+   * Drafts are looked up by line id, never by position. A refetch under the same revision
+   * can add or drop a line, and matching by index would render an added line as nothing and
+   * post the drafts after a dropped one against the wrong line. A line the seed did not see
+   * starts from the engine's proposal until it is typed into.
+   */
+  const draftsById = React.useMemo(
+    () => new Map(drafts.map((draft) => [draft.project_line_id, draft])),
+    [drafts],
+  );
+  const draftFor = React.useCallback(
+    (line: SupplyLine) => draftsById.get(line.project_line_id) ?? draftFromLine(line),
+    [draftsById],
+  );
+  const activeDrafts = React.useMemo(
+    () => plannableLines.map(draftFor),
+    [plannableLines, draftFor],
+  );
+  const updateDraft = React.useCallback((next: DraftLine) => {
+    setDrafts((current) =>
+      current.some((entry) => entry.project_line_id === next.project_line_id)
+        ? current.map((entry) => (entry.project_line_id === next.project_line_id ? next : entry))
+        : [...current, next],
+    );
+  }, []);
+
+  /**
    * A line whose sales order states no fulfilment location blocks the whole order's Confirm,
    * named by line number and item code the way every other refusal is. It is listed FIRST
    * because it is the only blocker that cannot be cleared on this screen.
    */
   const locationBlockers = React.useMemo(
     () =>
-      lines
+      plannableLines
         .filter((line) => line.fulfilment_location_missing)
         .map(
           (line) =>
             `Line ${line.line_no}${line.item_code ? `, ${line.item_code}` : ''}: no fulfilment location on the sales order line.`,
         ),
-    [lines],
+    [plannableLines],
   );
 
   const blockers = React.useMemo(
-    () => (frozen ? [] : [...locationBlockers, ...draftBlockers(drafts)]),
-    [frozen, locationBlockers, drafts],
+    () => (frozen ? [] : [...locationBlockers, ...draftBlockers(activeDrafts)]),
+    [frozen, locationBlockers, activeDrafts],
   );
 
   async function submit() {
@@ -111,7 +151,7 @@ export function SupplyCompositionSection({
     try {
       await confirm.mutateAsync({
         psoId,
-        body: { lines: drafts.map(confirmLineFromDraft) },
+        body: { lines: activeDrafts.map(confirmLineFromDraft) },
       });
       setConfirming(false);
       setComposingAgain(false);
@@ -241,24 +281,16 @@ export function SupplyCompositionSection({
         </div>
       ) : (
         <div className="space-y-3">
-          {lines.map((line, index) => {
-            const draft = drafts[index];
-            if (!draft) return null;
-            return (
-              <SupplyLineCard
-                key={line.project_line_id}
-                line={line}
-                draft={draft}
-                frozen={frozen}
-                salesOrderHref={salesOrderHref}
-                onChange={(next) =>
-                  setDrafts((current) =>
-                    current.map((entry, position) => (position === index ? next : entry)),
-                  )
-                }
-              />
-            );
-          })}
+          {lines.map((line) => (
+            <SupplyLineCard
+              key={line.project_line_id}
+              line={line}
+              draft={draftFor(line)}
+              frozen={frozen}
+              salesOrderHref={salesOrderHref}
+              onChange={updateDraft}
+            />
+          ))}
         </div>
       )}
 
@@ -268,7 +300,7 @@ export function SupplyCompositionSection({
             <>
               <div className="flex items-center gap-2 text-sm">
                 <CheckCircle2 className="size-4 shrink-0 text-emerald-600" aria-hidden />
-                {`All ${lines.length} line${lines.length === 1 ? '' : 's'} are held by revision ${
+                {`All ${plannableLines.length} line${plannableLines.length === 1 ? '' : 's'} are held by revision ${
                   decision?.revision_no ?? 1
                 }.`}
               </div>
@@ -295,7 +327,9 @@ export function SupplyCompositionSection({
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
-                  disabled={blockers.length > 0 || confirm.isPending}
+                  disabled={
+                    blockers.length > 0 || activeDrafts.length === 0 || confirm.isPending
+                  }
                   onClick={() => setConfirming(true)}
                 >
                   Confirm Project SO
@@ -321,7 +355,7 @@ export function SupplyCompositionSection({
       {confirming && (
         <ConfirmProjectSoDialog
           reference={reference}
-          lineCount={lines.length}
+          lineCount={plannableLines.length}
           currentRevision={isConfirmed ? (decision?.revision_no ?? null) : null}
           submitting={confirm.isPending}
           onDone={() => setConfirming(false)}

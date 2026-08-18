@@ -93,7 +93,19 @@ def _project_numbering_rule(db) -> None:
     and the registration then 422s `project_numbering_rule_missing`. Seed our own inside the
     rolled-back session, the way `tests/test_project_registration.py` does, rather than
     borrowing whatever the environment happens to hold.
+
+    Once per session: `NumberingService.get_next_number` orders candidate rules by
+    `company_id NULLS LAST, id`, so a second rule at the same `next_value` can hand the
+    same code out twice and collide on `uq_projects_company_code`.
     """
+    present = db.execute(
+        text(
+            "select 1 from document_numbering_rules "
+            "where doc_type = 'project' and enabled limit 1"
+        )
+    ).first()
+    if present is not None:
+        return
     db.execute(
         text(
             "insert into document_numbering_rules "
@@ -441,6 +453,25 @@ def test_confirmed_decision_and_sheet_origin_counts_the_confirmed_buy_once(db, w
 
     assert row["project_committed"] == 8
     assert row["project_confirmed_committed"] == 8
+
+
+def test_two_confirmed_legs_in_one_session_register_distinct_projects(db, world):
+    """The helper builds a project per call, and two projects in one company cannot share a
+    code (`uq_projects_company_code`)."""
+    from app.models.projects import Project
+
+    first = _confirmed_leg(db, product_id=world["product"].id, warehouse_id=world["own"].id,
+                           buy_qty=3)
+    second = _confirmed_leg(db, product_id=world["product"].id, warehouse_id=world["own"].id,
+                            buy_qty=4)
+
+    codes = {
+        db.get(Project, first["pso"].project_id).project_code,
+        db.get(Project, second["pso"].project_id).project_code,
+    }
+
+    assert len(codes) == 2
+    assert _row(db, world)["project_confirmed_committed"] == 7
 
 
 def test_project_confirmed_committed_counts_only_the_confirmed_leg(db, world):

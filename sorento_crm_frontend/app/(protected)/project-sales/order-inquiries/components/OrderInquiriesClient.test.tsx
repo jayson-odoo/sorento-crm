@@ -136,6 +136,8 @@ describe('OrderInquiriesClient', () => {
       'Project / customer',
       'Supplier',
       'PO no',
+      'Instruction',
+      'State',
     ];
     let cursor = -1;
     for (const title of order) {
@@ -145,6 +147,30 @@ describe('OrderInquiriesClient', () => {
       expect(at, `${title} out of order`).toBeGreaterThan(cursor);
       cursor = at;
     }
+  });
+
+  it('names the verb on every row, so a borrow shortfall is not mistaken for an order', async () => {
+    listOrderInquiryWorklist.mockResolvedValue(
+      envelope([
+        MOCK_WORKLIST_ROWS[0],
+        {
+          ...MOCK_WORKLIST_ROWS[1],
+          id: 'oi-borrow',
+          so_number: 'SO390001',
+          verb: 'BORROW_SHORTFALL',
+          note: 'BRW-BB is short by 12',
+        },
+      ]),
+    );
+
+    renderClient();
+
+    const shortfall = (await screen.findByText('SO390001')).closest('tr') as HTMLElement;
+    expect(within(shortfall).getByText('BORROW SHORTFALL')).toBeInTheDocument();
+    expect(within(shortfall).getByText('BRW-BB is short by 12')).toBeInTheDocument();
+    const order = screen.getByText('SO385126').closest('tr') as HTMLElement;
+    expect(within(order).getByText('ORDER')).toBeInTheDocument();
+    expect(within(order).queryByText('BORROW SHORTFALL')).not.toBeInTheDocument();
   });
 
   it('says nothing has been raised yet, and offers the screen that raises it', async () => {

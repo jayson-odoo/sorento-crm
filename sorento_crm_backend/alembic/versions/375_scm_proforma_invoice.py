@@ -292,8 +292,13 @@ def downgrade() -> None:
     bind.execute(
         sa.text("DELETE FROM user_permissions WHERE slug = :slug"), {"slug": _PERMISSION[0]}
     )
-    bind.execute(
-        sa.text("DELETE FROM import_field_alias WHERE doc_type = :d"), {"d": DOC_TYPE}
-    )
+    for field, alias in _ALIASES:
+        bind.execute(
+            sa.text(
+                "DELETE FROM import_field_alias "
+                "WHERE doc_type = :d AND field = :f AND alias = :a"
+            ),
+            {"d": DOC_TYPE, "f": field, "a": alias},
+        )
     op.drop_table("proforma_invoice_line", schema="scm")
     op.drop_table("proforma_invoice", schema="scm")

@@ -115,6 +115,24 @@ CONFIRMABLE_STATUSES = LIVE_SO_STATUSES
 #: row, never parsed out of a code.
 DEALER_SEGMENT = "dealer"
 
+#: The product a hold is keyed by: the CORE line's when the mirror line is reconciled to
+#: one, else the mirror's own. Free stock is read against the core product (`_facts_for`
+#: prefers it on a remap), so the hold must net out of that pile and not the mirror's.
+_hold_product = func.coalesce(SalesOrderLine.product_id, ProjectSalesOrderLine.product_id)
+
+
+def _pile_order(line: Dict[str, Any]) -> Tuple[Any, ...]:
+    """The queue order at one pile: score, then required date (missing last), then
+    sales-order number, line number, line id. See `ProjectSupplyService._rank_pile`."""
+    return (
+        -line["rank_score"],
+        line.get("required_date") is None,
+        line.get("required_date") or date.min,
+        line.get("so_number") or "",
+        line["line_no"] if line.get("line_no") is not None else 0,
+        line["line_id"],
+    )
+
 
 def _dec(value: Any, default: Decimal = _ZERO) -> Decimal:
     if value is None:
@@ -308,6 +326,10 @@ class _LineFacts:
     timely_qty: Decimal = _ZERO
     timely_refs: List[_SpoRow] = field(default_factory=list)
     advisory_refs: List[_SpoRow] = field(default_factory=list)
+    #: Why nothing can be proposed for this line, when nothing can (a mirror line with no
+    #: reconciled AutoCount line). Set, the line is read out with no components and no
+    #: donors; it is never carried and cannot be named to a confirmation.
+    unplannable_reason: Optional[str] = None
 
     @property
     def own_code(self) -> Optional[str]:
@@ -434,6 +456,14 @@ class ProjectSupplyService:
         # Lazily filled, and only when somebody asks for borrow donors: a board that offers
         # no Borrow must not pay for three more reads. `None` means "not asked yet".
         self._pile_cache: Optional[Dict[Tuple[str, str], Dict[str, Decimal]]] = None
+        # Warehouse and project rows this request has already read, by id. A donor list is
+        # asked for once per line, and a board of hundreds of lines paid two round trips
+        # per line to re-read the same handful of rows.
+        self._warehouse_memo: Dict[str, Optional[Warehouse]] = {}
+        self._project_memo: Dict[str, Optional[Project]] = {}
+        # The free / holds caches indexed by product, rebuilt when either cache is
+        # replaced (`_by_product`), so a per-line lookup walks that product's rows only.
+        self._indexed: Optional[Tuple[Any, Any, Dict[str, Any], Dict[str, Any]]] = None
 
     # ------------------------------------------------------------------ lookups
 
@@ -493,6 +523,11 @@ class ProjectSupplyService:
         payload_lines: List[Dict[str, Any]] = []
         for line in lines:
             fact = facts[str(line.id)]
+            if fact.unplannable_reason:
+                # Nothing to walk the ladder for: no core line, no open quantity, no
+                # location. The line is read out with the reason and nothing else.
+                payload_lines.append(self._serialize_line(fact, (), None))
+                continue
             pool_key = fact.pool_key
             if pool_key and pool_key not in pool_left:
                 pool_left[pool_key] = fact.pool_free
@@ -796,13 +831,23 @@ class ProjectSupplyService:
             "advisory_spo": [self._serialize_spo(ref) for ref in fact.advisory_refs],
             # Ranked against what this line still has to cover - the Buy the ladder just
             # proposed - because that is the quantity a donor would be asked for (13.11).
-            "borrow_candidates": self._borrow_candidates(
-                fact,
-                need=sum(
-                    (component.qty for component in components if component.kind == BUY),
-                    _ZERO,
-                ),
+            # An unplannable line is offered nobody's stock: there is no need to rank against.
+            "borrow_candidates": (
+                []
+                if fact.unplannable_reason
+                else self._borrow_candidates(
+                    fact,
+                    need=sum(
+                        (
+                            component.qty
+                            for component in components
+                            if component.kind == BUY
+                        ),
+                        _ZERO,
+                    ),
+                )
             ),
+            "unplannable_reason": fact.unplannable_reason,
             "frozen": frozen,
             # Covered by the order's active revision, or explicitly not (13.4). Never
             # inferred from `frozen` being absent by whoever reads this next: an undecided
@@ -864,6 +909,7 @@ class ProjectSupplyService:
                 # field existed simply has none, which is the same answer as "nobody amended
                 # this line" and reads identically on screen.
                 "amend_reason": snapshot.get("amend_reason"),
+                "buy_reason": snapshot.get("buy_reason"),
             }
         return out
 
@@ -1074,16 +1120,21 @@ class ProjectSupplyService:
                 ),
                 code="supply_nothing_to_confirm",
             )
+        # The same drift check the sheet runs, BEFORE the active revision is read for the
+        # carry: a revision whose frozen facts have moved is challenged here exactly as it
+        # would be on the next read, so its snapshots and holds are not carried verbatim
+        # into a fresh revision stamped as confirmed now. Nothing is carried from a
+        # challenged revision; the lines it covered are undecided again.
+        self.challenge_if_drifted(order, lines=lines)
         self._lock_stock(payload_lines, lines)
 
+        named = {str(entry.project_line_id) for entry in payload_lines}
         # Only the NAMED lines are being replaced. A covered line the payload leaves alone
         # is carried forward with its holds, so it is judged as any other order's covered
         # line - hold netted, out of the queue - and the named lines cannot be offered what
-        # it is still holding.
+        # it is still holding. An unreconciled line is refused only when it is named.
         facts = self._facts_for(
-            order,
-            lines,
-            replacing={str(entry.project_line_id) for entry in payload_lines},
+            order, lines, replacing=named, refuse_unmapped=named
         )
         item_codes = {
             str(line.id): facts[str(line.id)].item_code for line in lines
@@ -1539,6 +1590,9 @@ class ProjectSupplyService:
                     "buy_qty": entry.buy_qty,
                     "required_date": entry.fact.required_date or entry.line.delivery_date,
                     "stock_location": entry.line.stock_location,
+                    # Re-raised under this revision, but not NEW to purchasing: the
+                    # confirm result counts only what this confirmation decided.
+                    "carried": True,
                 }
             )
         self.db.flush()
@@ -2044,12 +2098,17 @@ class ProjectSupplyService:
         lines: Sequence[ProjectSalesOrderLine],
         *,
         replacing: Optional[Set[str]] = None,
+        refuse_unmapped: Optional[Set[str]] = None,
     ) -> Dict[str, _LineFacts]:
         """Read every fact the sheet and the commit judge a line against.
 
-        Refuses the whole order when a line has no reconciled core line: without it there
-        is no current open quantity, and promising supply against the ORIGINAL customer
-        quantity is exactly the double-count this contract exists to stop (PLAN 3.1 step 2).
+        A line with no reconciled core line has no current open quantity, and promising
+        supply against the ORIGINAL customer quantity is exactly the double-count this
+        contract exists to stop (PLAN 3.1 step 2). Such a line is refused ONLY when
+        `refuse_unmapped` names it - the confirmation passes the lines its payload names,
+        so one unreconciled sibling cannot stop the lines that are ready. Every other
+        unmapped line is read as unplannable (`unplannable_reason`, open quantity 0, no
+        location), which is how the sheet still reads while it waits for reconciliation.
 
         `replacing` names the project lines this composition is about to REPLACE - the ones
         the confirmation payload names. Their holds are un-netted and their demand stays in
@@ -2057,7 +2116,13 @@ class ProjectSupplyService:
         out of the queue), which is what the union-is-the-server's carry-forward makes true
         of it. `None` means every line (the sheet, which proposes for all of them).
         """
-        unmapped = [line for line in lines if not line.core_sales_order_line_id]
+        unmapped = [
+            line
+            for line in lines
+            if not line.core_sales_order_line_id
+            and refuse_unmapped is not None
+            and str(line.id) in refuse_unmapped
+        ]
         core_ids = [
             str(line.core_sales_order_line_id)
             for line in lines
@@ -2255,6 +2320,11 @@ class ProjectSupplyService:
                 advisory_refs=[
                     row for row in spo.get(key, []) if row not in timely_refs
                 ],
+                unplannable_reason=(
+                    None
+                    if core is not None
+                    else "No reconciled AutoCount line. Reconcile the sales order first."
+                ),
             )
         return facts
 
@@ -2283,20 +2353,65 @@ class ProjectSupplyService:
         }
 
     def _warehouses(self, warehouse_ids: Iterable[str]) -> Dict[str, Warehouse]:
-        ids = [wid for wid in warehouse_ids if wid]
-        if not ids:
-            return {}
+        """Warehouse rows by id, read once per request and remembered (an id that matches
+        no row is remembered too, so it is not asked for again)."""
+        ids = {str(wid) for wid in warehouse_ids if wid}
+        missing = [wid for wid in ids if wid not in self._warehouse_memo]
+        if missing:
+            for wid in missing:
+                self._warehouse_memo[wid] = None
+            for row in self.db.query(Warehouse).filter(Warehouse.id.in_(missing)).all():
+                self._warehouse_memo[str(row.id)] = row
         return {
-            str(row.id): row
-            for row in self.db.query(Warehouse).filter(Warehouse.id.in_(ids)).all()
+            wid: self._warehouse_memo[wid]
+            for wid in ids
+            if self._warehouse_memo.get(wid) is not None
         }
 
     def _warehouse_row(self, warehouse_id: str) -> Optional[Warehouse]:
-        return (
-            self.db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
-            if warehouse_id
-            else None
-        )
+        return self._warehouses([warehouse_id]).get(str(warehouse_id)) if warehouse_id else None
+
+    def _projects(self, project_ids: Iterable[str]) -> Dict[str, Project]:
+        """Project rows by id, the same way `_warehouses` remembers warehouses."""
+        ids = {str(pid) for pid in project_ids if pid}
+        missing = [pid for pid in ids if pid not in self._project_memo]
+        if missing:
+            for pid in missing:
+                self._project_memo[pid] = None
+            for row in self.db.query(Project).filter(Project.id.in_(missing)).all():
+                self._project_memo[str(row.id)] = row
+        return {
+            pid: self._project_memo[pid]
+            for pid in ids
+            if self._project_memo.get(pid) is not None
+        }
+
+    def _by_product(
+        self,
+    ) -> Tuple[
+        Dict[str, Dict[str, Decimal]], Dict[str, Dict[Tuple[str, str], Decimal]]
+    ]:
+        """The free and holds caches, indexed by product.
+
+        `free[product_id][warehouse_id]` and `holds[product_id][(warehouse_id,
+        project_id)]`, over the SAME cache dicts `_free_at` / `_held_at` read - rebuilt
+        only when `_facts_for` or `demand_facts` replaces them, which is the only way
+        they change. A donor list walks one product's rows, not the whole request's.
+        """
+        view = self._indexed
+        if (
+            view is None
+            or view[0] is not self._free_cache
+            or view[1] is not self._holds_cache
+        ):
+            free: Dict[str, Dict[str, Decimal]] = {}
+            for (product_id, warehouse_id), qty in self._free_cache.items():
+                free.setdefault(product_id, {})[warehouse_id] = qty
+            holds: Dict[str, Dict[Tuple[str, str], Decimal]] = {}
+            for (product_id, warehouse_id, project_id), qty in self._holds_cache.items():
+                holds.setdefault(product_id, {})[(warehouse_id, project_id)] = qty
+            view = self._indexed = (self._free_cache, self._holds_cache, free, holds)
+        return view[2], view[3]
 
     def held_stock_by_location(
         self, product_ids: Iterable[str]
@@ -2429,10 +2544,15 @@ class ProjectSupplyService:
         offered a named sibling stock the order was still holding. Shared by the free-stock
         arithmetic and the donor-shortfall netting so the two cannot come to disagree about
         what is held.
+
+        The hold is keyed by the CORE line's product when the mirror line has one, and by
+        the mirror's own product only when it does not (`_hold_product`): free stock is
+        read against the core product (`_facts_for` prefers it on a remap), and a hold
+        keyed by the mirror's product would net out of the wrong pile.
         """
         query = (
             self.db.query(
-                ProjectSalesOrderLine.product_id,
+                _hold_product,
                 SOLineAllocation.warehouse_id,
                 ProjectSalesOrder.project_id,
                 SOLineAllocation.qty,
@@ -2446,10 +2566,14 @@ class ProjectSupplyService:
                 ProjectSalesOrder.id == ProjectSalesOrderLine.project_sales_order_id,
             )
             .outerjoin(
+                SalesOrderLine,
+                SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
+            )
+            .outerjoin(
                 SOSupplyDecision, SOSupplyDecision.id == SOLineAllocation.decision_id
             )
             .filter(
-                ProjectSalesOrderLine.product_id.in_(list(product_ids)),
+                _hold_product.in_(list(product_ids)),
                 SOLineAllocation.confirmed_at.isnot(None),
                 SOLineAllocation.warehouse_id.isnot(None),
                 SOLineAllocation.source_type != ALLOC_SOURCE_ORDER,
@@ -2483,10 +2607,6 @@ class ProjectSupplyService:
                 [product_id for product_id, _w in wanted],
                 exclude_line_ids=exclude_line_ids,
             )
-            .outerjoin(
-                SalesOrderLine,
-                SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
-            )
             .filter(
                 SOLineAllocation.warehouse_id.in_([w for _p, w in wanted]),
                 or_(
@@ -2495,11 +2615,11 @@ class ProjectSupplyService:
                 ),
             )
             .with_entities(
-                ProjectSalesOrderLine.product_id,
+                _hold_product,
                 SOLineAllocation.warehouse_id,
                 func.coalesce(func.sum(SOLineAllocation.qty), 0),
             )
-            .group_by(ProjectSalesOrderLine.product_id, SOLineAllocation.warehouse_id)
+            .group_by(_hold_product, SOLineAllocation.warehouse_id)
             .all()
         )
         return {
@@ -2788,47 +2908,56 @@ class ProjectSupplyService:
                 }
             )
 
-        for key, lines in grouped.items():
-            factors = priority.factors_for_demand_rows(
-                self.db,
-                [
-                    {
-                        "row_key": line["line_id"],
-                        "required_date": line["required_date"],
-                        "order_date": line["order_date"],
-                        "payment_terms_days": line["payment_terms_days"],
-                        "demand_class": line["demand_class"],
-                    }
-                    for line in lines
-                ],
-                weights=weights,
-                class_weights=class_weights,
-            )
-            scores = priority.scores_for(factors)
-            for line in lines:
-                line["rank_score"] = scores[line["line_id"]]
-                # The terms behind the score, KEPT rather than thrown away with the local. A
-                # queued line has to be able to say which factor put it in front of the line
-                # behind it ("why do the orders stand ahead of me?"), and re-ranking the pile a
-                # second time to answer that is how two rankings of one pile appear.
-                line["factors"] = factors[line["line_id"]]
-            # Score first, then PLAN 3.5's own order as the tie-break: required date (missing
-            # last), sales-order number, line number, line id. The tie-break is load-bearing
-            # rather than decorative - a database with no policy configured scores every demand
-            # row 0.0 (the default weights name only `po_document_sequence`, which no
-            # sales-order line has), and without the date here the queue for a scarce pile
-            # would be alphabetical by sales-order number.
-            lines.sort(
-                key=lambda line: (
-                    -line["rank_score"],
-                    line["required_date"] is None,
-                    line["required_date"] or date.min,
-                    line["so_number"],
-                    line["line_no"] if line["line_no"] is not None else 0,
-                    line["line_id"],
-                )
-            )
+        for lines in grouped.values():
+            self._rank_pile(lines, weights=weights, class_weights=class_weights)
         return grouped
+
+    def _rank_pile(
+        self,
+        lines: List[Dict[str, Any]],
+        *,
+        weights: Dict[str, Any],
+        class_weights: Dict[str, Any],
+    ) -> None:
+        """Score and sort ONE pile's lines in place, in the active policy's order.
+
+        The one ranking rule for a pile, so the queue the sheet and the board serve stock
+        down (`_pile_book`) and the queue a pool draw is measured against (`pool_claims`)
+        cannot disagree about who is ahead. Each line states `line_id` (its ranking key),
+        `required_date`, `order_date`, `payment_terms_days`, `demand_class`, `so_number`
+        and `line_no`; scores are normalised across the lines passed in.
+
+        Score first, then PLAN 3.5's own order as the tie-break: required date (missing
+        last), sales-order number, line number, line id. The tie-break is load-bearing
+        rather than decorative - a database with no policy configured scores every demand
+        row 0.0 (the default weights name only `po_document_sequence`, which no
+        sales-order line has), and without the date here the queue for a scarce pile
+        would be alphabetical by sales-order number.
+        """
+        factors = priority.factors_for_demand_rows(
+            self.db,
+            [
+                {
+                    "row_key": line["line_id"],
+                    "required_date": line.get("required_date"),
+                    "order_date": line.get("order_date"),
+                    "payment_terms_days": line.get("payment_terms_days"),
+                    "demand_class": line.get("demand_class"),
+                }
+                for line in lines
+            ],
+            weights=weights,
+            class_weights=class_weights,
+        )
+        scores = priority.scores_for(factors)
+        for line in lines:
+            line["rank_score"] = scores[line["line_id"]]
+            # The terms behind the score, KEPT rather than thrown away with the local. A
+            # queued line has to be able to say which factor put it in front of the line
+            # behind it ("why do the orders stand ahead of me?"), and re-ranking the pile a
+            # second time to answer that is how two rankings of one pile appear.
+            line["factors"] = factors[line["line_id"]]
+        lines.sort(key=_pile_order)
 
     def pile_book(
         self,
@@ -2888,68 +3017,37 @@ class ProjectSupplyService:
             by_pile.setdefault(key, []).append(member)
 
         for key, asking in by_pile.items():
-            pool_lines = book.get(key, [])
-            # Rank the askers against the pool's own book, in one candidate set, so "ahead"
-            # means the same thing for both.
-            everyone = [
+            # The askers are put INTO the pool's queue and ranked by the one rule the queue
+            # itself is ranked by (`_rank_pile`), so "ahead" means exactly what the queue
+            # screen shows: score, then required date, then sales-order number and line.
+            everyone = [dict(line) for line in book.get(key, [])] + [
                 {
-                    "row_key": line["line_id"],
-                    "required_date": line["required_date"],
-                    "order_date": line["order_date"],
-                    "payment_terms_days": line["payment_terms_days"],
-                    "demand_class": line["demand_class"],
-                }
-                for line in pool_lines
-            ] + [
-                {
-                    "row_key": member["key"],
+                    "line_id": str(member["key"]),
+                    "so_number": member.get("so_number") or "",
+                    "line_no": member.get("line_no"),
+                    "open_qty": _ZERO,
                     "required_date": member.get("required_date"),
                     "order_date": member.get("order_date"),
                     "payment_terms_days": member.get("payment_terms_days"),
                     "demand_class": member.get("demand_class"),
+                    "asker": True,
                 }
                 for member in asking
             ]
-            scores = priority.scores_for(
-                priority.factors_for_demand_rows(
-                    self.db, everyone, weights=weights, class_weights=class_weights
-                )
-            )
-
-            def sort_key(entry: Tuple[float, str, Any, str]) -> Tuple[Any, ...]:
-                score, so_number, line_no, ident = entry
-                return (-score, so_number, line_no if line_no is not None else 0, ident)
-
-            ordered_pool = sorted(
-                (
-                    (
-                        scores[line["line_id"]],
-                        line["so_number"],
-                        line["line_no"],
-                        line["line_id"],
-                        line["open_qty"],
-                    )
-                    for line in pool_lines
-                ),
-                key=lambda row: sort_key(row[:4]),
-            )
+            self._rank_pile(everyone, weights=weights, class_weights=class_weights)
             for member in asking:
-                mine = sort_key(
-                    (
-                        scores[member["key"]],
-                        member.get("so_number") or "",
-                        member.get("line_no"),
-                        str(member["key"]),
-                    )
-                )
                 own_line_id = str(member["line_id"]) if member.get("line_id") else None
-                ahead = [
-                    row
-                    for row in ordered_pool
-                    if row[3] != own_line_id and sort_key(row[:4]) < mine
-                ]
+                ahead: List[Dict[str, Any]] = []
+                for line in everyone:
+                    if line.get("asker"):
+                        if line["line_id"] == str(member["key"]):
+                            break
+                        continue
+                    if line["line_id"] == own_line_id:
+                        continue
+                    ahead.append(line)
                 out[str(member["key"])] = {
-                    "qty": sum((row[4] for row in ahead), _ZERO),
+                    "qty": sum((line["open_qty"] for line in ahead), _ZERO),
                     "lines": len(ahead),
                 }
         return out
@@ -3077,26 +3175,24 @@ class ProjectSupplyService:
         inside = self._reserve_location_ids(fact)
         out: List[Dict[str, Any]] = []
 
-        free_cache = self._free_cache
+        free_index, holds_index = self._by_product()
+        free_here = free_index.get(fact.product_id, {})
+        holds_here = holds_index.get(fact.product_id, {})
+        committed_at: Dict[str, Decimal] = {}
+        for (held_warehouse, _project), qty in holds_here.items():
+            committed_at[held_warehouse] = committed_at.get(held_warehouse, _ZERO) + qty
         warehouse_ids = [
             warehouse_id
-            for (product_id, warehouse_id), qty in free_cache.items()
-            if product_id == fact.product_id and qty > _ZERO and warehouse_id not in inside
+            for warehouse_id, qty in free_here.items()
+            if qty > _ZERO and warehouse_id not in inside
         ]
         warehouses = self._warehouses(warehouse_ids)
         for warehouse_id in sorted(warehouse_ids):
             warehouse = warehouses.get(warehouse_id)
             if warehouse is None:
                 continue
-            free = free_cache[(fact.product_id, warehouse_id)]
-            committed = sum(
-                (
-                    qty
-                    for (product_id, held_warehouse, _project), qty in self._holds_cache.items()
-                    if product_id == fact.product_id and held_warehouse == warehouse_id
-                ),
-                _ZERO,
-            )
+            free = free_here[warehouse_id]
+            committed = committed_at.get(warehouse_id, _ZERO)
             out.append(
                 {
                     "source": ALLOC_SOURCE_OTHER_LOCATION,
@@ -3114,26 +3210,21 @@ class ProjectSupplyService:
 
         holds = [
             (warehouse_id, project_id, qty)
-            for (product_id, warehouse_id, project_id), qty in self._holds_cache.items()
+            for (warehouse_id, project_id), qty in holds_here.items()
             # `project_id` empty means an adopted order holds it and there is no project to
             # name as the donor. Offering it would be offering a Borrow that cannot be
             # confirmed, so it is not offered - the stock stays netted out of free either way.
-            if product_id == fact.product_id and qty > _ZERO and project_id
+            if qty > _ZERO and project_id
         ]
         if holds:
-            projects = {
-                str(row.id): row
-                for row in self.db.query(Project)
-                .filter(Project.id.in_([project_id for _w, project_id, _q in holds]))
-                .all()
-            }
+            projects = self._projects([project_id for _w, project_id, _q in holds])
             donor_warehouses = self._warehouses([w for w, _p, _q in holds])
             for warehouse_id, project_id, qty in sorted(holds):
                 warehouse = donor_warehouses.get(warehouse_id)
                 donor = projects.get(project_id)
                 if warehouse is None or donor is None:
                     continue
-                free = free_cache.get((fact.product_id, warehouse_id), _ZERO)
+                free = free_here.get(warehouse_id, _ZERO)
                 out.append(
                     {
                         "source": ALLOC_SOURCE_OTHER_PROJECT,

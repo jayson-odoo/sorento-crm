@@ -344,6 +344,10 @@ class PoWorklistOut(BaseModel):
     # The worklist reads ONE grain, the run's own (AC-F09). NULL on a legacy run, which
     # has no actionable grain and therefore no rows.
     decision_grain: Optional[str] = None
+    # `1` on a front-planning run, NULL on a legacy one. A legacy run is identified by
+    # THIS being null, not by a missing grain, so the reader gets the real value rather
+    # than inferring one from the grain.
+    front_planning_contract_version: Optional[int] = None
     rows: List[PoWorklistRowOut] = Field(default_factory=list)
 
 
@@ -356,10 +360,15 @@ class KeyedStatusIn(BaseModel):
 
     run_id: str
     keyed_status: str
+    # Which location's order, on a run decided at LOCATION grain, where each location is
+    # its own purchase order. Omitted on a product-grain run, which keys the product.
+    warehouse_code: Optional[str] = None
 
 
 class KeyedStatusOut(BaseModel):
     product_code: str
+    # Echoed on a location-grain write; null when the product row was keyed.
+    warehouse_code: Optional[str] = None
     keyed_status: str
     # A human NAME, never a user id: it is rendered beside the row.
     keyed_by: str

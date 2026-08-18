@@ -303,8 +303,7 @@ export function PileQueueDialog({
               {/* Said once, at the bottom, because it is a fact about the QUEUE rather than
                   about any row: a line a confirmed decision covers is not in it. */}
               <p className="text-xs text-muted-foreground">
-                Lines a confirmed decision already covers are not in this queue. Their stock is
-                held for them and is already out of the free figure above.
+                Lines a confirmed decision already covers are not in this queue.
               </p>
             </>
           )}
