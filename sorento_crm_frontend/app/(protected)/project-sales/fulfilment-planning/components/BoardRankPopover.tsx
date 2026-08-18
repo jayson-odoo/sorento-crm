@@ -27,9 +27,24 @@ export function BoardRankPopover({
   contribution,
   /** What the cell says about its own ranking, when the policy separated nothing (13.5). */
   note,
+  /**
+   * The policy these weights come from, named above the table.
+   *
+   * It used to be a banner across the top of the board, and the captain's verdict on that was
+   * "this text is not needed at the top". The NAME is still worth having - a weight of 3 means
+   * nothing without the rule it belongs to - so it lives here, where somebody is already asking
+   * how a rank was arrived at, instead of in front of everybody who is not.
+   */
+  policyName,
 }: {
-  contribution: BoardContribution;
+  /**
+   * Anything that carries a key and its factors. A board contribution does; so does one line of
+   * the pile queue, which is ranked by the same policy and deserves the same explanation rather
+   * than a second one written beside it.
+   */
+  contribution: Pick<BoardContribution, 'key' | 'rank_factors'>;
   note?: string | null;
+  policyName?: string | null;
 }) {
   const factors = contribution.rank_factors ?? [];
   const present = factors.filter((factor) => factor.present && factor.value !== null);
@@ -72,6 +87,14 @@ export function BoardRankPopover({
             <div className="border-b px-3 py-2 text-xs font-semibold">
               How this rank was calculated
             </div>
+            {policyName && (
+              <p
+                data-testid={`rank-policy-${contribution.key}`}
+                className="border-b px-3 py-2 text-xs text-muted-foreground"
+              >
+                {`Ranked by ${policyName}`}
+              </p>
+            )}
             {note && (
               <p className="border-b px-3 py-2 text-xs text-muted-foreground">{note}</p>
             )}

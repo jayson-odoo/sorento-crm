@@ -15,7 +15,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -24,13 +24,20 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 
 /** Only reached when a location row is expanded - the stock table's own documents panel. */
 const getStockDetail = vi.fn();
+/** Only reached when the trail's own "View the queue" is pressed. */
+const getPileQueue = vi.fn();
 
 vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   getStockDetail: (...args: unknown[]) => getStockDetail(...args),
+  getPileQueue: (...args: unknown[]) => getPileQueue(...args),
 }));
 
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
-import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
+import {
+  buildBoard,
+  PREVIEW_POLICY,
+  type BoardDemandLine,
+} from '../../_shared/lib/__testsupport__/boardFixture';
 import type {
   BoardCell,
   BoardContribution,
@@ -1414,6 +1421,122 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     );
   });
 
+  /**
+   * WHY each rung ended that way, and WHO is in the queue.
+   *
+   * The captain, reading the numbers: "what does this mean? why do the orders stand ahead of me?
+   * why? and why is the donor offered but I did not take, why?" So every rung carries one plain
+   * sentence, and the rung with a queue names the top of it.
+   */
+  function rankedCell(lines: BoardDemandLine[], freeStock: Record<string, string> = {}) {
+    return buildBoard(lines, { today: TODAY, freeStock, policy: PREVIEW_POLICY }).cells[0];
+  }
+
+  function renderCell(cell: BoardCell) {
+    // The queue the trail offers is a READ, so this branch needs a client. The rest of the
+    // suite deliberately renders without one: nothing else here fetches.
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  function queueOfFive() {
+    return [1, 2, 3, 4, 5].map((index) =>
+      demand({
+        sales_order_id: `so-${index}`,
+        so_number: `SO40000${index}`,
+        line_no: index,
+        qty: '100',
+        required_date: `2026-09-0${index}`,
+      }),
+    );
+  }
+
+  it('says in words why each rung ended the way it did', () => {
+    const cell = rankedCell(queueOfFive(), { 'WESERP10B|BRW-BB': '40' });
+    renderCell(cell);
+    const last = cell.contributions[cell.contributions.length - 1].key;
+    openTrail(last);
+
+    const trail = screen.getByTestId(`trail-${last}`);
+    expect(trail.textContent).toContain(
+      '40 on hand, but 4 lines with an earlier required date rank ahead and want 400 - none is left for this line.',
+    );
+    expect(screen.getByTestId(`trail-why-${last}-buy`).textContent).toBe(
+      'Nothing left to take, so the remainder is bought.',
+    );
+  });
+
+  it('names the top of the queue ahead of this line, and counts the rest', () => {
+    const cell = rankedCell(queueOfFive(), { 'WESERP10B|BRW-BB': '40' });
+    renderCell(cell);
+    const last = cell.contributions[cell.contributions.length - 1].key;
+    openTrail(last);
+
+    const ahead = screen.getByTestId(`trail-ahead-${last}`);
+    const rows = [...ahead.querySelectorAll('[data-testid^="trail-ahead-line-"]')];
+    expect(rows).toHaveLength(3);
+    expect(rows[0].textContent).toContain('SO400001');
+    expect(rows[0].textContent).toContain('L1');
+    expect(rows[0].textContent).toContain('100');
+    expect(rows[0].textContent).toContain('Required date');
+    // Words, never the policy's own key for the factor.
+    expect(ahead.textContent).not.toContain('need_by_date');
+    expect(ahead.textContent).toContain('and 1 more');
+  });
+
+  it('offers the whole queue rather than only the three it names', async () => {
+    getPileQueue.mockReturnValue(new Promise(() => {}));
+    const cell = rankedCell(queueOfFive(), { 'WESERP10B|BRW-BB': '40' });
+    const asking = cell.contributions[cell.contributions.length - 1];
+    renderCell(cell);
+    openTrail(asking.key);
+
+    const button = screen.getByTestId(`trail-queue-${asking.key}`);
+    expect(button.textContent).toBe('View the queue (4 ahead)');
+
+    fireEvent.click(button);
+
+    // Asked by IDS and on BEHALF of this line: both change what comes back.
+    await waitFor(() =>
+      expect(getPileQueue).toHaveBeenCalledWith(
+        asking.product_id,
+        asking.fulfilment_warehouse_id,
+        asking.line_id,
+      ),
+    );
+  });
+
+  it('says a Borrow was found and left alone, and names the donors', () => {
+    const cell = cellOf([demand({ qty: '100' })]);
+    const contribution = cell.contributions[0];
+    const borrow = contribution.trail?.find((step) => step.kind === 'borrow');
+    Object.assign(borrow ?? {}, {
+      opening: '25',
+      offered: '25',
+      outcome: 'offered',
+      note: 'MWH-IB 20 · BRW 5',
+      why: 'Borrowing is never automatic: a person names the donor and the reason. Use Amend to borrow.',
+    });
+    renderCell(cell);
+    openTrail(contribution.key);
+
+    const why = screen.getByTestId(`trail-why-${contribution.key}-borrow`);
+    expect(why.textContent).toContain('Use Amend to borrow');
+    expect(screen.getByText('MWH-IB 20 · BRW 5')).toBeInTheDocument();
+  });
+
   it('leaves the source strip, the share note and the Contested chip exactly as they were', () => {
     const lines = [
       demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 1, qty: '100', required_date: '2026-09-04' }),
@@ -1483,5 +1606,136 @@ describe('BoardCellBreakdownDialog: the stock expansions belong to the cell', ()
 
     expect(screen.queryByTestId('stock-expansion-BRW-BB')).not.toBeInTheDocument();
     expect(screen.getByTestId('cell-location-BRW-BB')).toBeInTheDocument();
+  });
+});
+
+/**
+ * A line an ACTIVE decision already covers (PLAN 13.4).
+ *
+ * Live on SO403765 line 1: the planner confirmed "borrow 10 from MWH-IB, buy 33" and the board
+ * went on offering Approve / Amend / Reject beside a FRESH proposal of Buy 43, a share note
+ * reading "First in the queue at BRW-BB · 0 left for this line", and a trail whose first rung
+ * said the pile had offered nothing. Every one of those is a statement about a contest the line
+ * had already left.
+ *
+ * A covered row states what was decided, and offers the only decision that is left: Amend.
+ */
+describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
+  const frozen = {
+    revision_no: 1,
+    confirmed_at: '2026-08-18T02:00:00',
+    timely_spo_qty: '0',
+    reserve: [],
+    borrow: [
+      {
+        source: 'other_location' as const,
+        warehouse_id: 'wh-mwh-ib',
+        location: 'MWH-IB',
+        donor_project_id: null,
+        qty: '10',
+        reason: 'The other site can wait a week.',
+      },
+    ],
+    buy_qty: '33',
+    amend_reason: 'Borrowed rather than bought, agreed with the other site.',
+  };
+
+  const covered = (overrides: Partial<BoardDemandLine> = {}) =>
+    demand({ qty: '43', decision: frozen, ...overrides });
+
+  it('states the revision and the composition that was frozen, not a verdict', () => {
+    renderDialog([covered()]);
+
+    expect(screen.getByText('Confirmed rev 1 · Borrow 10 · Buy 33')).toBeInTheDocument();
+  });
+
+  it('offers Amend and nothing else: there is no approving what is already decided', () => {
+    renderDialog([covered()]);
+
+    const table = contributionTable();
+    expect(within(table).getByRole('button', { name: 'Amend' })).toBeInTheDocument();
+    expect(within(table).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+    expect(within(table).queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
+    expect(within(table).queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+  });
+
+  it('shows the frozen composition in the source strip, naming where a borrow came from', () => {
+    renderDialog([covered()]);
+
+    expect(screen.getByText('Borrow 10 from MWH-IB · Buy 33')).toBeInTheDocument();
+  });
+
+  it('says nothing about a queue it is not in', () => {
+    // "0 left for this line" is a claim about a contest. A covered line left the contest, which
+    // is exactly why the pile's own queue does not hold it.
+    renderDialog([covered()]);
+
+    expect(screen.queryByTestId(/^share-note-/)).not.toBeInTheDocument();
+  });
+
+  it('replaces the ladder with the one fact there is: when it was confirmed', () => {
+    renderDialog([covered()]);
+
+    fireEvent.click(screen.getByTestId('trail-info-so-a|1|WESERP10B|2026-08-31'));
+
+    const trail = screen.getByTestId('trail-so-a|1|WESERP10B|2026-08-31');
+    expect(trail.textContent).toContain('Confirmed in revision 1');
+    expect(trail.querySelector('table')).toBeNull();
+  });
+
+  it('seeds the amendment from the frozen composition, not from a fresh proposal', () => {
+    renderDialog([covered()]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+
+    // The borrow the planner made is IN the editor, and the buy is the confirmed 33 rather
+    // than the 43 the engine would propose for an undecided line.
+    expect(screen.getByLabelText('Borrow from MWH-IB')).toHaveValue(10);
+    expect(screen.getByLabelText('Buy')).toHaveValue(33);
+  });
+
+  it('behaves like any amended row once it has been amended', () => {
+    renderDialog([covered()], {}, {
+      'so-a|1|WESERP10B|2026-08-31': {
+        verdict: 'amended',
+        reserve_qty: '0',
+        timely_spo_qty: '0',
+        reserve: [],
+        borrow: [],
+        buy_qty: '43',
+        reason: 'The other site needs its stock back.',
+      },
+    });
+
+    expect(screen.getByText('Buy 43')).toBeInTheDocument();
+    const table = contributionTable();
+    expect(within(table).getByRole('button', { name: 'Undo' })).toBeInTheDocument();
+  });
+
+  it('cannot be swept into a bulk verdict, because Amend is the only verb it has', () => {
+    renderDialog([covered()]);
+
+    const table = contributionTable();
+    const boxes = within(table).getAllByRole('checkbox');
+    // The row's own box, not the header's.
+    expect(boxes[boxes.length - 1]).toBeDisabled();
+  });
+
+  it('counts as decided in the header, because it is - in the database', () => {
+    renderDialog([covered(), demand({ line_no: 2, qty: '21' })]);
+
+    expect(screen.getByText('64 across 2 lines, 1 decided')).toBeInTheDocument();
+  });
+
+  it('counts the frozen numbers into the cell balance', () => {
+    renderDialog([covered(), demand({ line_no: 2, qty: '21', sales_order_id: 'so-a' })], {
+      'WESERP10B|BRW-BB': '5',
+    });
+
+    // 43 owed on the covered line (borrow 10 + buy 33) and 21 on the undecided one (reserve 5
+    // + buy 16), so the whole cell reads 64 owed against 5 + 10 + 49.
+    expect(screen.getByTestId('cell-balance').textContent).toBe(
+      '64 owed = 5 reserve + 0 incoming + 10 borrow + 49 buy',
+    );
   });
 });

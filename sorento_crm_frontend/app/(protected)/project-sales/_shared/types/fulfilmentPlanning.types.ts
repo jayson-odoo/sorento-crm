@@ -280,6 +280,18 @@ export interface BorrowDonorImpact {
   committed_qty: string;
 }
 
+/**
+ * A donor, with its OWN position beside what it could give (PLAN 13.11).
+ *
+ * The captain, on a list that stated free stock alone: "before I decide to borrow, I need to
+ * know I am not hurting them". Free nets reserved and confirmed holds only, so it reads as
+ * raw on-hand on this book; the AutoCount triple is what says whether they can spare it.
+ *
+ * The server RANKS the list by what meeting THIS line would leave each donor with
+ * (`available_after_need`, then availability, then free) and flags exactly one row
+ * `recommended`. The screen never re-sorts it: a list that reshuffles as a quantity is typed
+ * is not a recommendation.
+ */
 export interface BorrowCandidate {
   source: BorrowSource;
   warehouse_code: string;
@@ -287,7 +299,22 @@ export interface BorrowCandidate {
   warehouse_id: string;
   donor_project_ref?: string | null;
   donor_project_id?: string | null;
+  /** What this donor can give: the location's free stock, or the donor project's own hold. */
   free_qty: string;
+  /** AutoCount's Stock Status columns for the donor's own (product, location) pile. */
+  qty_on_hand?: string | null;
+  so_qty?: string | null;
+  spo_qty?: string | null;
+  /** on hand - SO + SPO. Signed: a donor the book has oversold says so. */
+  available_qty?: string | null;
+  qty_free?: string | null;
+  qty_committed?: string | null;
+  /** What this line still has to cover at the borrow rung: the Buy the ladder proposed. */
+  need_qty?: string | null;
+  /** `available_qty - need_qty`, signed. The ranking key, and the default "After borrow". */
+  available_after_need?: string | null;
+  /** First in the ranking. Exactly one candidate carries it. */
+  recommended?: boolean;
   donor_impact: BorrowDonorImpact;
 }
 
@@ -486,8 +513,15 @@ export interface BoardDateBucket {
   is_past?: boolean;
 }
 
-/** How a contributing line's quantity is proposed to be met. Mirrors SupplyComponentKind. */
-export type BoardSourceKind = 'reserve' | 'timely_spo' | 'buy' | 'unplannable';
+/**
+ * How a contributing line's quantity is proposed to be met. Mirrors SupplyComponentKind.
+ *
+ * `borrow` only ever appears on a COVERED line. The engine proposes none on either surface - a
+ * Borrow needs a donor and a reason from a person (AC-B09) - but a line an active decision
+ * covers states the composition that was FROZEN for it, and a frozen Borrow is a source like
+ * any other. Printing it as anything else would describe a decision nobody took.
+ */
+export type BoardSourceKind = 'reserve' | 'timely_spo' | 'buy' | 'borrow' | 'unplannable';
 
 /** The rungs of the source ladder, in the order the engine walks them. */
 export type BoardTrailKind = 'reserve_own' | 'reserve_pool' | 'incoming' | 'borrow' | 'buy';
@@ -530,6 +564,17 @@ export interface BoardTrailStep {
   /** Own location only: what the queue in front of this line wants, and how long it is. */
   ahead_qty?: string | null;
   ahead_lines?: number | null;
+  /**
+   * WHO is in that queue: the top of it in rank order, how many more, and a count of the WHOLE
+   * queue by the factor that put each line in front.
+   *
+   * The captain, reading `478 | 18730 across 142 lines | 0 | 0 | 21 | Nothing left`: "what does
+   * this mean? why do the orders stand ahead of me? why?" Totals answer neither question.
+   * Own-location rung only; every other rung sends an empty list, because no other rung queues.
+   */
+  ahead?: BoardAheadLine[];
+  ahead_more?: number;
+  ahead_by_factor?: Record<string, number>;
   /** What this source could give THIS line once its own rules were applied. */
   offered: string;
   /** What the line actually took. Always 0 for Borrow, which is offered and never proposed. */
@@ -537,8 +582,63 @@ export interface BoardTrailStep {
   /** Still uncovered after this step. Zero on the last one. */
   remaining_after: string;
   outcome: BoardTrailOutcome;
-  /** One short hint, never a paragraph: "hot-selling: pool only", "3 donors". */
+  /**
+   * WHY it ended that way, in one plain sentence from the server. Never assembled here: the side
+   * that walked the ladder is the side that knows, and a sentence written on the client would
+   * eventually describe a rule the engine no longer applies.
+   */
+  why?: string | null;
+  /** One short hint, never a paragraph: "hot-selling: pool only", "MWH-IB 12000 · BRW 9000". */
   note?: string | null;
+}
+
+/** One line standing in front of this one at its pile, and what put it there. */
+export interface BoardAheadLine {
+  so_number: string;
+  line_no?: number | null;
+  qty: string;
+  required_date?: string | null;
+  rank_score: number;
+  /**
+   * The policy factor with the largest weighted difference in that line's favour. `line_order`
+   * or `tie_break` when the two scores are EQUAL: the policy separated nothing and the queue
+   * was decided by the tie-break, so naming a factor would claim a difference that is not there.
+   */
+  leading_factor?: string | null;
+  /** An earlier line of the SAME sales order, which is not a rival at all. */
+  same_order?: boolean;
+}
+
+/** One donor of a FROZEN Borrow, as the confirmation takes it back. */
+export interface BoardDecisionBorrow {
+  source: BorrowSource;
+  warehouse_id?: string | null;
+  /** The donor's warehouse CODE, which is what the screen reads. */
+  location?: string | null;
+  donor_project_id?: string | null;
+  qty: string;
+  /** The PERSON's reason. The confirmation refuses a Borrow that carries none. */
+  reason: string;
+}
+
+/**
+ * What the ACTIVE revision froze for one line (13.4).
+ *
+ * The WHOLE composition rather than a summary of it, because the board POSTS it back: a second
+ * confirmation on the same order covers the UNION of what was decided before and what is being
+ * decided now, so every already-decided line has to be re-emitted from this. A board that sent
+ * only its newly decided lines silently un-decided the earlier ones.
+ */
+export interface BoardLineDecision {
+  revision_no: number;
+  confirmed_at?: string | null;
+  timely_spo_qty: string;
+  /** Same shape as an amendment's Reserve: addressed by id, labelled by code. */
+  reserve: BoardReserveComponent[];
+  borrow: BoardDecisionBorrow[];
+  buy_qty: string;
+  /** Why the composition was not the engine's, in the planner's own words. */
+  amend_reason?: string | null;
 }
 
 /**
@@ -550,6 +650,18 @@ export interface BoardContribution {
   /** Stable key for the draft. Addressing only, never rendered. */
   key: string;
   sales_order_id: string;
+  /**
+   * The CORE sales-order line id, which is how its pile queue is asked for. Addressing only,
+   * never rendered. NOT `project_line_id`: that is the mirror and is null until the order is
+   * adopted, while a line with no mirror still stands in the queue at its pile.
+   */
+  line_id?: string | null;
+  /**
+   * The product this line is for, for the drill-down only, never rendered. Two products on the
+   * live book share the item code `B2155-NL-BLUE`, so a queue looked up by code would answer
+   * confidently about the wrong pile.
+   */
+  product_id?: string | null;
   so_number: string;
   customer_name?: string | null;
   /**
@@ -675,8 +787,22 @@ export interface BoardContribution {
    * rule gave it to an earlier-dated row and this one is bought instead (13.5). Named because
    * today the two orders would both silently propose the same stock and the second would only
    * be refused at confirmation.
+   *
+   * Always false on a covered row: a decided line is not competing for anything.
    */
   contested: boolean;
+  /**
+   * An ACTIVE decision on this line's sales order already covers it (13.4).
+   *
+   * The board went on proposing for such a line - "Buy 43" beside a decision that had borrowed
+   * 10 and bought 33 - because it kept the line in its own demand while the pile's queue
+   * rightly left it out. A covered row is not re-planned: `sources` and `qty_proposed_*` are
+   * the FROZEN composition, the trail is empty (no ladder was walked), and the three share
+   * fields are absent because it is not in the queue they count.
+   */
+  covered?: boolean;
+  /** What was frozen, when the row is covered. Absent otherwise, never an empty object. */
+  decision?: BoardLineDecision | null;
 }
 
 /**
@@ -750,6 +876,17 @@ export interface BoardBorrowCandidate {
   donor_project_ref?: string | null;
   donor_project_id?: string | null;
   free_qty: string;
+  /** The donor's own AutoCount position, and where the ranking put it (PLAN 13.11). */
+  qty_on_hand?: string | null;
+  so_qty?: string | null;
+  spo_qty?: string | null;
+  available_qty?: string | null;
+  qty_free?: string | null;
+  qty_committed?: string | null;
+  /** This line's residual at the borrow rung, and what the donor keeps once it is met. */
+  need_qty?: string | null;
+  available_after_need?: string | null;
+  recommended?: boolean;
   /** What taking it costs whoever holds it (AC-B09). Shown while the borrow is chosen. */
   donor_impact?: BorrowDonorImpact;
 }
@@ -1061,4 +1198,56 @@ export interface StockDetail {
   qty_free: string;
   sales_orders: StockDetailSalesOrder[];
   incoming: StockDetailIncoming[];
+}
+
+/**
+ * One line of the queue at a pile: `GET /project-sales/fulfilment-planning/queue`.
+ *
+ * The captain, having been shown the top three beside the rung: "I need to know what is ahead of
+ * me to have the visibility, and why they are ahead of me, meaning I need to know their rank
+ * also."
+ */
+export interface PileQueueLine {
+  /** 1-based, in the order the stock is served. */
+  position: number;
+  /** The CORE sales-order line. Addressing only. */
+  line_id: string;
+  /** Its sales order, so the row can link to it. Addressing only, never rendered. */
+  sales_order_id?: string | null;
+  so_number: string;
+  /** Null until the order has been adopted: an un-mirrored line has no line number. */
+  line_no?: number | null;
+  customer_name?: string | null;
+  qty: string;
+  required_date?: string | null;
+  order_date?: string | null;
+  payment_terms_days?: number | null;
+  demand_class?: string | null;
+  rank_score: number;
+  /** The same per-factor breakdown a board row carries, so one popover explains both. */
+  rank_factors: BoardRankFactor[];
+  /** Which factor puts this line in front of the one that asked. Null for that line itself. */
+  leading_factor?: string | null;
+  /** What the queue has claimed by the time it has served this row, this row included. */
+  cumulative_ahead_qty: string;
+  is_this_line: boolean;
+  /** Always false on a row that is here: a covered line is EXCLUDED from the queue. */
+  is_covered_excluded: boolean;
+}
+
+/** The whole queue at one pile, in the order the stock is actually served. */
+export interface PileQueue {
+  product_id: string;
+  item_code: string;
+  description?: string | null;
+  warehouse_id: string;
+  /** The warehouse CODE, which is what the screen shows. */
+  location: string;
+  /** What the pile held before the queue drew on it: the trail's own opening figure. */
+  qty_free_opening: string;
+  /** Where the asked-about line stands. Null when no line was named. */
+  this_line_position?: number | null;
+  /** The rule that produced this order, named. Always the LIVE policy. */
+  policy_name: string;
+  lines: PileQueueLine[];
 }

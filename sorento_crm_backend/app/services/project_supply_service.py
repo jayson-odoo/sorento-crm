@@ -50,9 +50,9 @@ import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -82,7 +82,7 @@ from app.models.scm import ItemClassification, ReorderLevel
 from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.scm import priority
-from app.services.scm.demand import is_open_demand
+from app.services.scm.demand import demand_qty, is_open_demand
 from app.services.scm.front_planning_engine import (
     BUY,
     RESERVE,
@@ -123,6 +123,84 @@ def _dec(value: Any, default: Decimal = _ZERO) -> Decimal:
         return Decimal(str(value))
     except (InvalidOperation, ValueError):
         return default
+
+
+#: How many of the queue in front of a line are NAMED beside it. The captain's question is "why
+#: do the orders stand ahead of me", and 142 rows is not an answer to it: three named lines plus
+#: a count of the rest BY WHAT PUT THEM THERE is. The whole queue is a click away (`pile_queue`).
+_AHEAD_NAMED = 3
+
+
+def _leading_factor(mine: Dict[str, Any], theirs: Dict[str, Any]) -> str:
+    """Which factor put `theirs` in front of `mine`, in one word.
+
+    The largest WEIGHTED difference, `weight * (their value - my value)` over the factors both
+    lines carry a value for, because that is literally the term that made their score the bigger
+    one. Absent on either side is skipped rather than read as zero, the same rule `rank_score`
+    itself applies.
+
+    Equal scores mean the POLICY separated nothing and the queue was decided by the tie-break
+    instead. Saying "required date" there would be a lie about a date the two lines share, so it
+    is named for what it was: an earlier line of the same order, or a lower sales-order number.
+    """
+    same_order = (theirs.get("so_number") or "") == (mine.get("so_number") or "")
+    tie = "line_order" if same_order else "tie_break"
+    if round(float(theirs.get("rank_score") or 0.0), 9) == round(
+        float(mine.get("rank_score") or 0.0), 9
+    ):
+        return tie
+    ours = {
+        factor.key: factor
+        for factor in (mine.get("factors") or [])
+        if factor.present and factor.value is not None
+    }
+    best_key: Optional[str] = None
+    best_diff = 0.0
+    for factor in theirs.get("factors") or []:
+        if not factor.present or factor.value is None or factor.weight <= 0:
+            continue
+        counterpart = ours.get(factor.key)
+        if counterpart is None:
+            continue
+        diff = float(factor.weight) * (float(factor.value) - float(counterpart.value))
+        if diff > best_diff:
+            best_key, best_diff = factor.key, diff
+    return best_key or tie
+
+
+def _queue_entry(line: Dict[str, Any], mine: Dict[str, Any]) -> Dict[str, Any]:
+    """One line of the queue as a screen reads it, against the line that is asking."""
+    return {
+        "so_number": line.get("so_number") or "",
+        "line_no": line.get("line_no"),
+        "qty": qty_text(line["open_qty"]),
+        "required_date": line.get("required_date"),
+        "rank_score": round(float(line.get("rank_score") or 0.0), 6),
+        "leading_factor": _leading_factor(mine, line),
+        "same_order": (line.get("so_number") or "") == (mine.get("so_number") or ""),
+    }
+
+
+def _ahead_detail(mine: Dict[str, Any], queued: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Who is in front of this line at its pile, and what put each of them there.
+
+    Three named, in queue order, plus how many more there are and a count of the WHOLE queue by
+    leading factor - so "142 lines are ahead" becomes "139 of them by required date, 2 by
+    document age, and one is an earlier line of your own order".
+    """
+    by_factor: Dict[str, int] = {}
+    named: List[Dict[str, Any]] = []
+    for other in queued:
+        entry = _queue_entry(other, mine)
+        key = entry["leading_factor"]
+        by_factor[key] = by_factor.get(key, 0) + 1
+        if len(named) < _AHEAD_NAMED:
+            named.append(entry)
+    return {
+        "lines": named,
+        "more": max(len(queued) - len(named), 0),
+        "by_factor": by_factor,
+    }
 
 
 def _open_of(core: Optional[SalesOrderLine]) -> Decimal:
@@ -196,6 +274,12 @@ class _LineFacts:
     #: held - so_qty_ahead`. Distinct from `own_free`, which is what the line actually TOOK of
     #: it (capped at what it needs), and from a Reserve total, which may also draw on the pool.
     available_to_this_line: Decimal = _ZERO
+    #: WHO is in that queue: the first `_AHEAD_NAMED` of it in rank order, how many more there
+    #: are, and a count of the whole queue by the factor that put each line there. The captain,
+    #: on a rung reading "18730 across 142 lines": "why do the orders stand ahead of me? why?"
+    ahead_lines_named: List[Dict[str, Any]] = field(default_factory=list)
+    ahead_more: int = 0
+    ahead_by_factor: Dict[str, int] = field(default_factory=dict)
     pool_free: Decimal = _ZERO
     pool_reorder_level: Decimal = _ZERO
     is_hot_selling: bool = False
@@ -276,6 +360,10 @@ class ProjectSupplyService:
         # free at that location" question once per line and once per borrow candidate.
         self._free_cache: Dict[Tuple[str, str], Decimal] = {}
         self._holds_cache: Dict[Tuple[str, str, str], Decimal] = {}
+        # AutoCount's Stock Status triple per pile, for the locations this request touches.
+        # Lazily filled, and only when somebody asks for borrow donors: a board that offers
+        # no Borrow must not pay for three more reads. `None` means "not asked yet".
+        self._pile_cache: Optional[Dict[Tuple[str, str], Dict[str, Decimal]]] = None
 
     # ------------------------------------------------------------------ lookups
 
@@ -428,14 +516,21 @@ class ProjectSupplyService:
             is_discontinued=fact.is_discontinued,
         )
 
-    def borrow_candidates_for(self, fact: _LineFacts) -> List[Dict[str, Any]]:
+    def borrow_candidates_for(
+        self, fact: _LineFacts, *, need: Optional[Decimal] = None
+    ) -> List[Dict[str, Any]]:
         """Where else this line could be met from, with what it costs the holder (AC-B09).
 
         Public for the board, which otherwise prints a bare Buy for a line whose stock exists
         one location away. Requires `demand_facts` or `_facts_for` to have run, because it
         reads the same free / holds caches the proposal was computed from.
+
+        `need` is the line's RESIDUAL at the borrow rung - what the ladder was going to buy -
+        and it is what the ranking is computed against (13.11). The caller states it because
+        the caller is the one that just walked the ladder; omitted, the donors are ranked on
+        availability alone.
         """
-        return self._borrow_candidates(fact)
+        return self._borrow_candidates(fact, need=need or _ZERO)
 
     def attribution_by_core_line(
         self, product_ids: Iterable[str], warehouse_ids: Iterable[str]
@@ -485,13 +580,23 @@ class ProjectSupplyService:
 
         self._free_cache = self._free_stock(product_ids, exclude_order_id=None)
         self._holds_cache = self._holds_by_project(product_ids, exclude_order_id=None)
+        self._pile_cache = None
         hot, unavailable = self._classification(product_ids)
         levels = self._reorder_levels(product_ids, pool_ids)
         discontinued = self._discontinued(product_ids)
         spo = self._spo_rows(product_ids, warehouse_ids)
 
         attribution = self._attribution(
-            product_ids, warehouse_ids, warehouses, self._spo_rows(product_ids, warehouse_ids)
+            product_ids,
+            warehouse_ids,
+            warehouses,
+            self._spo_rows(product_ids, warehouse_ids),
+            # Only these lines are asking, so only these lines' queues are described. Every
+            # other line of the pile still counts toward them - it is named, not counted, that
+            # is being narrowed here.
+            detail_for={
+                str(row.get("line_id") or row["key"]) for row in rows if row.get("key")
+            },
         )
         # What the shared pool's own book claims ahead of each line that would draw on it.
         pool_ahead = self.pool_claims(
@@ -560,6 +665,11 @@ class ProjectSupplyService:
                 so_qty_ahead=_dec(shares.get("so_qty_ahead")),
                 lines_ahead=int(shares.get("lines_ahead") or 0),
                 available_to_this_line=_dec(shares.get("available_to_this_line")),
+                ahead_lines_named=list((shares.get("ahead_detail") or {}).get("lines") or []),
+                ahead_more=int((shares.get("ahead_detail") or {}).get("more") or 0),
+                ahead_by_factor=dict(
+                    (shares.get("ahead_detail") or {}).get("by_factor") or {}
+                ),
                 # The pool nets its own book the same way the own location does: what is left
                 # after the lines the policy ranks ahead of this one there.
                 pool_free=(
@@ -607,7 +717,15 @@ class ProjectSupplyService:
             ],
             "timely_spo": [self._serialize_spo(ref) for ref in fact.timely_refs],
             "advisory_spo": [self._serialize_spo(ref) for ref in fact.advisory_refs],
-            "borrow_candidates": self._borrow_candidates(fact),
+            # Ranked against what this line still has to cover - the Buy the ladder just
+            # proposed - because that is the quantity a donor would be asked for (13.11).
+            "borrow_candidates": self._borrow_candidates(
+                fact,
+                need=sum(
+                    (component.qty for component in components if component.kind == BUY),
+                    _ZERO,
+                ),
+            ),
             "frozen": frozen,
             # Covered by the order's active revision, or explicitly not (13.4). Never
             # inferred from `frozen` being absent by whoever reads this next: an undecided
@@ -638,6 +756,17 @@ class ProjectSupplyService:
             "arrival_date": ref.arrival_date,
             "qty": qty_text(ref.qty),
         }
+
+    def frozen_lines_of(
+        self, decision: Optional[SOSupplyDecision]
+    ) -> Dict[str, Dict[str, Any]]:
+        """`_frozen_by_line` for a caller outside this service (the planning board).
+
+        Public because the board reads back the same snapshots the sheet does, and a second
+        parse of `line_snapshots` on that side would be a second opinion about what a decision
+        covered.
+        """
+        return self._frozen_by_line(decision)
 
     def _frozen_by_line(
         self, decision: Optional[SOSupplyDecision]
@@ -1273,7 +1402,11 @@ class ProjectSupplyService:
         )
 
         handoff = ProjectOrderInquiryService(self.db).refresh_for_decision(
-            order, decision, buy_lines, actor_user_id=actor_user_id
+            order,
+            decision,
+            buy_lines,
+            actor_user_id=actor_user_id,
+            borrow_shortfalls=self._borrow_shortfalls(order, checked),
         )
         decided = len(checked)
         return {
@@ -1287,6 +1420,73 @@ class ProjectSupplyService:
             "lines_decided": decided,
             "lines_undecided": max(len(self.lines_of(str(order.id))) - decided, 0),
         }
+
+    def _borrow_shortfalls(
+        self,
+        order: ProjectSalesOrder,
+        checked: Sequence[Tuple[ProjectSalesOrderLine, Any, _LineFacts]],
+    ) -> List[Dict[str, Any]]:
+        """The holes this confirmation's borrows opened at the donors (PLAN 13.11).
+
+        The captain: "when borrowed, does it / should it trigger an order back via order
+        inquiries? Because I sort of need to return, right - or we should order back only if
+        the available quantity of the borrowed location is negative?" **Only if negative.**
+        A donor whose availability survives the borrow is not short of anything, and raising
+        a buy for it would order stock nobody needs; a donor pushed below zero has a hole
+        somebody must cover, and purchasing is told about the HOLE, not about the whole
+        quantity that was taken.
+
+        Aggregated per donor pile, because two lines of one order taking from the same
+        location open one hole between them and not two.
+        """
+        piles: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for line, entry, fact in checked:
+            for item in entry.borrow or []:
+                qty = _dec(item.qty)
+                if qty <= _ZERO or not fact.product_id or not item.warehouse_id:
+                    continue
+                key = (fact.product_id, str(item.warehouse_id))
+                pile = piles.setdefault(
+                    key,
+                    {
+                        "qty": _ZERO,
+                        "item_code": fact.item_code,
+                        "lines": [],
+                        "line": line,
+                        "required_date": fact.required_date or line.delivery_date,
+                    },
+                )
+                pile["qty"] += qty
+                pile["lines"].append(line.line_no)
+        if not piles:
+            return []
+
+        availability = self.donor_availability(piles.keys())
+        out: List[Dict[str, Any]] = []
+        reference = order.autocount_doc_no or order.provisional_ref or ""
+        for key, pile in piles.items():
+            after = availability.get(key, _ZERO) - pile["qty"]
+            if after >= _ZERO:
+                continue
+            warehouse = self._warehouse_row(key[1])
+            code = warehouse.warehouse_code if warehouse else ""
+            lines = ", ".join(f"line {no}" for no in sorted(pile["lines"]))
+            out.append(
+                {
+                    "line": pile["line"],
+                    "item_code": pile["item_code"],
+                    # The hole, not the borrow: taking 20 from a donor with 10 to spare
+                    # leaves 10 to be bought, and the other 10 was theirs to give.
+                    "qty": min(pile["qty"], -after),
+                    "required_date": pile["required_date"],
+                    "stock_location": code,
+                    "note": (
+                        f"Borrowed {qty_text(pile['qty'])} for {reference} {lines}; "
+                        f"{code} goes short by {qty_text(-after)}"
+                    ),
+                }
+            )
+        return out
 
     def _snapshot(
         self, line: ProjectSalesOrderLine, entry: Any, fact: _LineFacts
@@ -1644,6 +1844,7 @@ class ProjectSupplyService:
         self._holds_cache = self._holds_by_project(
             product_ids, exclude_order_id=str(order.id)
         )
+        self._pile_cache = None
         pool_ahead = self.pool_claims(
             product_ids,
             pool_ids,
@@ -2138,6 +2339,7 @@ class ProjectSupplyService:
                 SalesOrderLine.qty_ordered,
                 SalesOrderLine.qty_delivered,
                 SalesOrderLine.required_date,
+                SalesOrder.id.label("sales_order_id"),
                 SalesOrder.so_number,
                 SalesOrder.order_date,
                 SalesOrder.demand_class,
@@ -2182,6 +2384,11 @@ class ProjectSupplyService:
                     # mirrored cannot collapse onto `(so_number, None)` and lose their share.
                     "key": str(row.id),
                     "so_number": row.so_number or "",
+                    # Addressing only, and only because the queue is now READ: a screen showing
+                    # who is ahead of you has to be able to link to their sales order and name
+                    # their customer.
+                    "sales_order_id": str(row.sales_order_id),
+                    "customer_id": str(row.customer_id) if row.customer_id else None,
                     "line_no": row.line_no,
                     "line_id": str(row.id),
                     "open_qty": open_qty,
@@ -2211,6 +2418,11 @@ class ProjectSupplyService:
             scores = priority.scores_for(factors)
             for line in lines:
                 line["rank_score"] = scores[line["line_id"]]
+                # The terms behind the score, KEPT rather than thrown away with the local. A
+                # queued line has to be able to say which factor put it in front of the line
+                # behind it ("why do the orders stand ahead of me?"), and re-ranking the pile a
+                # second time to answer that is how two rankings of one pile appear.
+                line["factors"] = factors[line["line_id"]]
             # Score first, then PLAN 3.5's own order as the tie-break: required date (missing
             # last), sales-order number, line number, line id. The tie-break is load-bearing
             # rather than decorative - a database with no policy configured scores every demand
@@ -2228,6 +2440,22 @@ class ProjectSupplyService:
                 )
             )
         return grouped
+
+    def pile_book(
+        self, product_id: str, warehouse_id: str, *, exclude_order_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """The queue at ONE pile, in the active policy's order. The read behind the screen.
+
+        Public because the captain asked to see it - "I need to know what is ahead of me to have
+        the visibility, and why they are ahead of me, meaning I need to know their rank also" -
+        and it is `_pile_book` itself rather than a second query shaped like it: a queue drawn a
+        second way would eventually disagree with the one the proposal was computed from, and
+        then the screen would be arguing with the plan.
+        """
+        book = self._pile_book(
+            [product_id], [warehouse_id], exclude_order_id=exclude_order_id
+        )
+        return book.get((str(product_id), str(warehouse_id)), [])
 
     def pool_claims(
         self,
@@ -2325,6 +2553,7 @@ class ProjectSupplyService:
         warehouses: Dict[str, Warehouse],
         spo: Dict[Tuple[str, str], List[_SpoRow]],
         exclude_order_id: Optional[str] = None,
+        detail_for: Optional[Set[str]] = None,
     ) -> Dict[Tuple[str, str], Dict[str, Dict[str, Any]]]:
         """Share each product-location pile across every line still competing for it.
 
@@ -2369,6 +2598,7 @@ class ProjectSupplyService:
             per_line: Dict[str, Dict[str, Any]] = {}
             ahead = _ZERO
             lines_ahead = 0
+            queued: List[Dict[str, Any]] = []
             for line in demand_lines:
                 line_id = line["line_id"]
                 totals: Dict[str, Decimal] = {}
@@ -2385,6 +2615,14 @@ class ProjectSupplyService:
                     "lines_ahead": lines_ahead,
                     "available_to_this_line": max(opening - ahead, _ZERO),
                 }
+                # WHO is in that queue, for the lines somebody is about to ask about. Computed
+                # here, where the queue is already walked in rank order and every entry still
+                # carries the factors it was ranked on - and only for the asked-for lines,
+                # because naming the queue in front of all 2000 lines of a crowded pile would
+                # be quadratic work nobody reads.
+                if detail_for is None or line_id in detail_for:
+                    per_line[line_id]["ahead_detail"] = _ahead_detail(line, queued)
+                queued.append(line)
                 ahead += line["open_qty"]
                 lines_ahead += 1
             out[key] = per_line
@@ -2392,13 +2630,36 @@ class ProjectSupplyService:
 
     # ------------------------------------------------------------ borrow candidates
 
-    def _borrow_candidates(self, fact: _LineFacts) -> List[Dict[str, Any]]:
+    def _borrow_candidates(
+        self, fact: _LineFacts, *, need: Decimal = _ZERO
+    ) -> List[Dict[str, Any]]:
         """Where else this line could be met from, with what it costs the holder.
 
         Two shapes, and they are answered differently: free stock at a location outside
         the Reserve pool has no donor to ask, so it carries no claim; stock another
         project is holding names that project and its impact, so CS is deciding with the
         donor's position in front of them (AC-B09).
+
+        **Every donor states AutoCount's own triple beside the engine's figures** (PLAN
+        13.11). Free stock alone nets reserved and confirmed holds only, and on this book
+        almost nothing is confirmed, so "6,990 free" reads as a donor with plenty when
+        47,000 is owed there. `qty_on_hand`, `so_qty`, `spo_qty` and the signed
+        `available_qty` are the sentence the planner needs before taking somebody's stock.
+
+        **The list is RANKED by what meeting THIS line would leave the donor with**, which is
+        the answer to the captain's "I assume this list is ranked by recommendation, is it?" -
+        it was not. The key is `available_after_need = available_qty - need`, where `need` is
+        the line's residual at this rung (what the ladder was otherwise going to buy),
+        descending, then availability descending, then free descending. The first row, and
+        only the first, is `recommended`.
+
+        A donor is never judged on giving away the WHOLE of its free stock. That was the first
+        rule here and it was wrong in the way that matters: a location holding 11,000 with 140
+        owed against it ranked below one holding 7,000 with nothing owed, so the screen
+        recommended the smaller pile to cover 21 units.
+
+        The typed quantity never re-orders the list either: a list that reshuffles under the
+        cursor is not a recommendation.
         """
         if not fact.product_id:
             return []
@@ -2434,6 +2695,7 @@ class ProjectSupplyService:
                     "warehouse_code": warehouse.warehouse_code,
                     "warehouse_id": warehouse_id,
                     "free_qty": qty_text(free),
+                    **self._donor_pile(fact.product_id, warehouse_id, committed, need),
                     "donor_impact": {
                         "free_before": qty_text(free),
                         "free_after_full_borrow": qty_text(_ZERO),
@@ -2472,6 +2734,7 @@ class ProjectSupplyService:
                         "donor_project_ref": donor.project_code,
                         "donor_project_id": project_id,
                         "free_qty": qty_text(qty),
+                        **self._donor_pile(fact.product_id, warehouse_id, qty, need),
                         "donor_impact": {
                             "free_before": qty_text(free + qty),
                             "free_after_full_borrow": qty_text(free),
@@ -2479,4 +2742,155 @@ class ProjectSupplyService:
                         },
                     }
                 )
+        return self._ranked(out)
+
+    def _donor_pile(
+        self,
+        product_id: str,
+        warehouse_id: str,
+        committed: Decimal,
+        need: Decimal = _ZERO,
+    ) -> Dict[str, Any]:
+        """The (product, location) pile behind a donor, in AutoCount's vocabulary.
+
+        `available_qty` is on hand, less what the whole book still owes there, plus what is
+        on the water. SIGNED and never clamped: "this donor is oversold by 46,531" is the
+        fact that decides whether taking from them is safe, and a floor of zero would report
+        it as "nothing left", which is a different and much weaker statement.
+
+        `available_after_need` is that figure once THIS line is met, and `need_qty` is the
+        quantity it was computed against, so the screen can state the default "After borrow"
+        before anybody types anything and the planner can check the subtraction.
+        """
+        pile = self._pile_facts().get(
+            (product_id, warehouse_id),
+            {"on_hand": _ZERO, "so_qty": _ZERO, "spo_qty": _ZERO},
+        )
+        available = pile["on_hand"] - pile["so_qty"] + pile["spo_qty"]
+        return {
+            "qty_on_hand": qty_text(pile["on_hand"]),
+            "so_qty": qty_text(pile["so_qty"]),
+            "spo_qty": qty_text(pile["spo_qty"]),
+            "available_qty": qty_text(available),
+            "qty_free": qty_text(self._free_cache.get((product_id, warehouse_id), _ZERO)),
+            "qty_committed": qty_text(committed),
+            "need_qty": qty_text(need),
+            # Signed like availability itself: a donor that cannot meet the line without going
+            # short says so here, and that is the row the impact line turns red on.
+            "available_after_need": qty_text(available - need),
+        }
+
+    @staticmethod
+    def _ranked(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Least-damaging donor first, and only that one carries `recommended`.
+
+        Damage is measured against THIS line's residual (`available_after_need`), not against
+        the donor's whole free stock. Availability then free break the ties, so of two donors
+        that could both meet the line comfortably the one with more room to spare wins.
+        """
+        candidates.sort(
+            key=lambda candidate: (
+                -_dec(candidate["available_after_need"]),
+                -_dec(candidate["available_qty"]),
+                -_dec(candidate["free_qty"]),
+                candidate["warehouse_code"],
+            )
+        )
+        for index, candidate in enumerate(candidates):
+            candidate["recommended"] = index == 0
+        return candidates
+
+    def _pile_facts(self) -> Dict[Tuple[str, str], Dict[str, Decimal]]:
+        """`on hand / SO qty / SPO qty` for every pile this request could borrow from.
+
+        Read ONCE per request and only when a donor list is actually asked for: three
+        queries, spanning every (product, location) the free and hold caches already know
+        about, rather than three per donor row. A board of 800 products offering donors on
+        every line would otherwise pay for thousands of round trips.
+
+        `so_qty` is the shared `is_open_demand()` rule over every demand class, exactly as
+        the cell's own stock strip counts it (13.7) - a dealer order occupies the donor's
+        stock as completely as a project one does.
+        """
+        if self._pile_cache is not None:
+            return self._pile_cache
+
+        self._pile_cache = self._pile_read(
+            {product_id for product_id, _w in self._free_cache}
+            | {product_id for product_id, _w, _p in self._holds_cache},
+            {warehouse_id for _p, warehouse_id in self._free_cache}
+            | {warehouse_id for _p, warehouse_id, _project in self._holds_cache},
+        )
+        return self._pile_cache
+
+    def _pile_read(
+        self, product_ids: Iterable[str], warehouse_ids: Iterable[str]
+    ) -> Dict[Tuple[str, str], Dict[str, Decimal]]:
+        """The three reads behind `_pile_facts`, over a stated span and cached by nobody."""
+        product_ids = {pid for pid in product_ids if pid}
+        warehouse_ids = {wid for wid in warehouse_ids if wid}
+        pile: Dict[Tuple[str, str], Dict[str, Decimal]] = {}
+        if not product_ids or not warehouse_ids:
+            return pile
+
+        for key, (on_hand, _reserved) in self.stock_levels_by_location(
+            product_ids
+        ).items():
+            if key[1] in warehouse_ids:
+                pile[key] = {"on_hand": on_hand, "so_qty": _ZERO, "spo_qty": _ZERO}
+
+        owed = demand_qty()
+        rows = (
+            self.db.query(
+                SalesOrderLine.product_id,
+                SalesOrderLine.warehouse_id,
+                func.coalesce(func.sum(owed), 0).label("owed"),
+            )
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .filter(
+                SalesOrderLine.product_id.in_(list(product_ids)),
+                SalesOrderLine.warehouse_id.in_(list(warehouse_ids)),
+                SalesOrder.status == "open",
+                is_open_demand(),
+            )
+            .group_by(SalesOrderLine.product_id, SalesOrderLine.warehouse_id)
+            .all()
+        )
+        for row in rows:
+            key = (str(row.product_id), str(row.warehouse_id))
+            pile.setdefault(
+                key, {"on_hand": _ZERO, "so_qty": _ZERO, "spo_qty": _ZERO}
+            )["so_qty"] = _dec(row.owed)
+
+        for key, refs in self._spo_rows(product_ids, warehouse_ids).items():
+            pile.setdefault(
+                key, {"on_hand": _ZERO, "so_qty": _ZERO, "spo_qty": _ZERO}
+            )["spo_qty"] = sum((ref.qty for ref in refs), _ZERO)
+
+        return pile
+
+    def donor_availability(
+        self, pairs: Iterable[Tuple[str, str]]
+    ) -> Dict[Tuple[str, str], Decimal]:
+        """Signed `available_qty` per (product, location), for the confirmation.
+
+        Public because the confirm path asks the same question the donor list answers: a
+        borrow that pushes a donor's availability below zero opens a hole somebody has to
+        buy (PLAN 13.11), and asking it twice in two ways is how the screen and the
+        confirmation come to disagree about who was hurt.
+        """
+        wanted = [(str(product_id), str(warehouse_id)) for product_id, warehouse_id in pairs]
+        if not wanted:
+            return {}
+        # Its own read, deliberately: the request-wide caches belong to the composition
+        # that is mid-flight when the confirmation asks this, and refilling them here would
+        # answer a later question with the wrong span.
+        facts = self._pile_read(
+            {product_id for product_id, _w in wanted},
+            {warehouse_id for _p, warehouse_id in wanted},
+        )
+        out: Dict[Tuple[str, str], Decimal] = {}
+        for key in wanted:
+            pile = facts.get(key, {"on_hand": _ZERO, "so_qty": _ZERO, "spo_qty": _ZERO})
+            out[key] = pile["on_hand"] - pile["so_qty"] + pile["spo_qty"]
         return out

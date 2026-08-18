@@ -10,11 +10,13 @@
  * `app/services/scm/priority.py` exists to warn about.
  */
 import type {
+  BoardAheadLine,
   BoardCell,
   BoardCellLocation,
   BoardContribution,
   BoardDateBucket,
   BoardGranularity,
+  BoardLineDecision,
   BoardOrderStanding,
   BoardPolicy,
   BoardProductRow,
@@ -68,6 +70,14 @@ export interface BoardDemandLine {
   payment_terms_days?: number | null;
   /** Always 'project' on this board, so it weighs but never discriminates. */
   demand_class?: string | null;
+  /**
+   * An ACTIVE decision already covers this line, and this is what it froze (13.4).
+   *
+   * Such a line is NOT run through the allocation below, exactly as the server does not run it
+   * through the ladder: it states the frozen composition, carries no trail, is never contested
+   * and says nothing about a queue it is not in.
+   */
+  decision?: BoardLineDecision | null;
 }
 
 /**
@@ -309,13 +319,23 @@ function allocate(
   // server queues the whole book; this queues the cell, which is as much as a fixture can see.
   const opening: Record<string, number> = {};
   const ahead: Record<string, { lines: number; qty: number }> = {};
+  // WHO is in each queue, in the order they were served, so a rung can name them the way the
+  // server does rather than only counting them.
+  const queued: Record<string, BoardContribution[]> = {};
   for (const contribution of contributions) {
-    if (contribution.unplannable) continue;
+    if (contribution.unplannable || contribution.covered) continue;
     const stockKey = `${contribution.item_code}|${contribution.fulfilment_location}`;
     if (!(stockKey in opening)) opening[stockKey] = remaining[stockKey] ?? 0;
   }
 
   for (const contribution of contributions) {
+    // A line an active decision covers is not planned again, and draws nothing down: its
+    // claim on the pile is already expressed as a hold, which is why the server's own queue
+    // leaves it out too.
+    if (contribution.covered) {
+      applyFrozen(contribution);
+      continue;
+    }
     if (contribution.unplannable) {
       contribution.sources = [
         {
@@ -372,11 +392,14 @@ function allocate(
       location,
       opening: opening[stockKey] ?? 0,
       ahead: queue,
+      aheadLines: queued[stockKey] ?? [],
+      mine: contribution,
       offered: toMinor(contribution.available_to_this_line),
       reserved,
       need,
       buy,
     });
+    queued[stockKey] = [...(queued[stockKey] ?? []), contribution];
     // Contested means the stock this line would otherwise have had was actually TAKEN, either
     // by a higher-ranked line in this same cell or by an earlier bucket that drew the pool down
     // first. Both are "somebody got there before you"; the screen therefore says exactly that
@@ -385,6 +408,61 @@ function allocate(
     contribution.contested = buy > 0 && (consumed[stockKey] ?? 0) > 0;
     consumed[stockKey] = (consumed[stockKey] ?? 0) + reserved;
   }
+}
+
+/**
+ * A covered line, as the server sends one: the FROZEN composition and nothing else.
+ *
+ * No trail (no ladder was walked), never contested (a decided line is not competing), and no
+ * share of the queue - `undefined` rather than `'0'`, because "0 left for this line" is a claim
+ * about a contest this line is not in.
+ */
+function applyFrozen(contribution: BoardContribution): void {
+  const decision = contribution.decision as BoardLineDecision;
+  const sources: BoardSource[] = [];
+  for (const row of decision.reserve ?? []) {
+    sources.push({
+      kind: 'reserve',
+      qty: row.qty,
+      location: row.location ?? null,
+      warehouse_id: row.warehouse_id,
+      reason: `Reserved at ${row.location} in revision ${decision.revision_no}.`,
+    });
+  }
+  if (toMinor(decision.timely_spo_qty) > 0) {
+    sources.push({
+      kind: 'timely_spo',
+      qty: decision.timely_spo_qty,
+      location: contribution.fulfilment_location ?? null,
+      warehouse_id: contribution.fulfilment_warehouse_id,
+      reason: `Incoming supply, as confirmed in revision ${decision.revision_no}.`,
+    });
+  }
+  for (const row of decision.borrow ?? []) {
+    sources.push({
+      kind: 'borrow',
+      qty: row.qty,
+      location: row.location ?? null,
+      warehouse_id: row.warehouse_id,
+      reason: `Borrowed from ${row.location} in revision ${decision.revision_no}. ${row.reason}`,
+    });
+  }
+  if (toMinor(decision.buy_qty) > 0) {
+    sources.push({
+      kind: 'buy',
+      qty: decision.buy_qty,
+      location: null,
+      reason: `Bought, as confirmed in revision ${decision.revision_no}.`,
+    });
+  }
+  contribution.sources = sources;
+  contribution.trail = [];
+  contribution.contested = false;
+  contribution.qty_proposed_reserve = fromMinor(
+    (decision.reserve ?? []).reduce((total, row) => total + toMinor(row.qty), 0),
+  );
+  contribution.qty_proposed_incoming = decision.timely_spo_qty;
+  contribution.qty_proposed_buy = decision.buy_qty;
 }
 
 /**
@@ -399,6 +477,9 @@ function trailFor(input: {
   location: string;
   opening: number;
   ahead: { lines: number; qty: number };
+  /** The contributions actually served before this one at the same pile, in queue order. */
+  aheadLines: BoardContribution[];
+  mine: BoardContribution;
   offered: number;
   reserved: number;
   need: number;
@@ -434,26 +515,124 @@ function trailFor(input: {
     });
   };
 
+  const named = input.aheadLines.slice(0, 3).map((other) => aheadLineOf(other, input.mine));
+  const byFactor: Record<string, number> = {};
+  for (const other of input.aheadLines) {
+    const key = leadingFactorOf(other, input.mine);
+    byFactor[key] = (byFactor[key] ?? 0) + 1;
+  }
   add('reserve_own', {
     location: input.location,
     warehouse_id: `wh-${input.location}`,
     opening: fromMinor(input.opening),
     ahead_qty: fromMinor(input.ahead.qty),
     ahead_lines: input.ahead.lines,
+    ahead: named,
+    ahead_more: Math.max(input.aheadLines.length - named.length, 0),
+    ahead_by_factor: byFactor,
     offered: input.offered,
     taken: input.reserved,
+    why:
+      input.reserved > 0
+        ? input.ahead.lines > 0
+          ? `${fromMinor(input.offered)} left after the ${input.ahead.lines} lines ahead; this line takes ${fromMinor(input.reserved)}.`
+          : `First in the queue here; this line takes ${fromMinor(input.reserved)}.`
+        : input.ahead.lines > 0
+          ? `${fromMinor(input.opening)} on hand, but ${input.ahead.lines} lines with ${aheadPhraseOf(byFactor)} rank ahead and want ${fromMinor(input.ahead.qty)} - none is left for this line.`
+          : `No free stock at ${input.location}.`,
   });
-  add('reserve_pool', { offered: 0, taken: 0, outcome: 'not_eligible', note: 'no shared pool' });
+  add('reserve_pool', {
+    offered: 0,
+    taken: 0,
+    outcome: 'not_eligible',
+    note: 'no shared pool',
+    why: 'No shared pool for this product.',
+  });
   add('incoming', {
     location: input.location,
     warehouse_id: `wh-${input.location}`,
     opening: '0',
     offered: 0,
     taken: 0,
+    why: 'No supplier PO arrives by 3 Sep 2026.',
   });
-  add('borrow', { opening: '0', offered: 0, taken: 0 });
-  add('buy', { offered: input.buy, taken: input.buy });
+  add('borrow', {
+    opening: '0',
+    offered: 0,
+    taken: 0,
+    why: 'No other location holds this product free.',
+  });
+  add('buy', {
+    offered: input.buy,
+    taken: input.buy,
+    why:
+      input.buy > 0
+        ? 'Nothing left to take, so the remainder is bought.'
+        : 'Fully covered before this rung.',
+  });
   return steps;
+}
+
+/** One queued line as the server names it, against the line that is asking. */
+function aheadLineOf(other: BoardContribution, mine: BoardContribution): BoardAheadLine {
+  return {
+    so_number: other.so_number,
+    line_no: other.line_no,
+    qty: other.qty,
+    required_date: other.required_date ?? null,
+    rank_score: other.rank_score,
+    leading_factor: leadingFactorOf(other, mine),
+    same_order: other.sales_order_id === mine.sales_order_id,
+  };
+}
+
+/**
+ * Which factor put `other` in front of `mine`: the largest weighted difference, exactly as the
+ * server computes it. Equal scores mean the policy separated nothing, so the tie-break is named
+ * instead of a factor the two lines do not differ on.
+ */
+function leadingFactorOf(other: BoardContribution, mine: BoardContribution): string {
+  const tie = other.sales_order_id === mine.sales_order_id ? 'line_order' : 'tie_break';
+  if (other.rank_score === mine.rank_score) return tie;
+  const ours = new Map(
+    (mine.rank_factors ?? [])
+      .filter((factor) => factor.present && factor.value !== null)
+      .map((factor) => [factor.key, factor.value as number]),
+  );
+  let best: string | null = null;
+  let bestDiff = 0;
+  for (const factor of other.rank_factors ?? []) {
+    if (!factor.present || factor.value === null || factor.weight <= 0) continue;
+    const mineValue = ours.get(factor.key);
+    if (mineValue === undefined) continue;
+    const diff = factor.weight * (factor.value - mineValue);
+    if (diff > bestDiff) {
+      best = factor.key;
+      bestDiff = diff;
+    }
+  }
+  return best ?? tie;
+}
+
+/** The two commonest reasons the queue is ahead, in the words the server uses. */
+function aheadPhraseOf(byFactor: Record<string, number>): string {
+  const phrases: Record<string, string> = {
+    need_by_date: 'an earlier required date',
+    document_age: 'an older order date',
+    customer_credit: 'shorter payment terms',
+    demand_class: 'a higher-ranked demand type',
+    po_document_sequence: 'an earlier purchase order sequence',
+    line_order: 'an earlier line number in the same order',
+    tie_break: 'the same rank and a lower sales order number',
+  };
+  const ranked = Object.entries(byFactor).sort(
+    (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+  );
+  if (ranked.length === 0) return 'a higher rank';
+  return ranked
+    .slice(0, 2)
+    .map(([key]) => phrases[key] ?? key.replace(/_/g, ' '))
+    .join(' or ');
 }
 
 /**
@@ -494,6 +673,10 @@ export function buildBoard(
     const contribution: BoardContribution = {
       key: `${line.sales_order_id}|${line.line_no}|${line.item_code}|${bucketKey}`,
       sales_order_id: line.sales_order_id,
+      // Addressing only, and only so the pile queue can be asked for: the queue is keyed by the
+      // core line at its (product, location).
+      line_id: `core-${line.sales_order_id}-${line.line_no}`,
+      product_id: `prod-${line.item_code}`,
       so_number: line.so_number,
       customer_name: line.customer_name ?? null,
       project_label: line.project_label ?? null,
@@ -517,6 +700,8 @@ export function buildBoard(
       contested: false,
       rank_score: 0,
       rank_factors: [],
+      covered: Boolean(line.decision),
+      decision: line.decision ?? null,
     };
     const bucket = contributionsByCell.get(cellKey);
     if (bucket) bucket.push(contribution);

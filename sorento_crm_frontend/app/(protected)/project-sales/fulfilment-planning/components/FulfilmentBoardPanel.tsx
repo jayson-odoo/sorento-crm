@@ -27,7 +27,6 @@ import {
   boardAxis,
   bucketLabelText,
   commitPreviewFor,
-  factorLabel,
   rowMatchesSearch,
   confirmLinesFor,
   plannedLineCount,
@@ -43,7 +42,6 @@ import type {
   BoardGranularity,
   BoardOrderStanding,
   BoardRowAxis,
-  BoardPolicy,
   SupplyFailingLine,
 } from '../../_shared/types/fulfilmentPlanning.types';
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
@@ -140,7 +138,6 @@ export function FulfilmentBoardPanel({
   );
   const [draft, setDraft] = React.useState<BoardDraft>({});
   const [openCell, setOpenCell] = React.useState<BoardCell | null>(null);
-  const [previewPolicy, setPreviewPolicy] = React.useState(false);
   /** Which 30-day window the day view is showing. Undefined lets the server choose the first. */
   const [dayWindow, setDayWindow] = React.useState<string | undefined>(undefined);
 
@@ -165,7 +162,10 @@ export function FulfilmentBoardPanel({
   const board = usePlanningBoard(
     soNumbers,
     granularity,
-    previewPolicy,
+    // Always the LIVE policy. The preview was a what-if for showing a fair weighting before one
+    // was switched on; the fair policy is now the live one, the offer was retired with it, and
+    // the banner that carried the way back went with the banner itself.
+    false,
     dayWindow ? { dayWindow } : {},
   );
 
@@ -330,9 +330,21 @@ export function FulfilmentBoardPanel({
    * The key is stored, never parsed: the server owns its format (deviation 5).
    */
   const owners = React.useRef<Map<string, string>>(new Map());
+  /**
+   * The lines an ACTIVE decision already covers, which are decided in the DATABASE rather than
+   * in the draft.
+   *
+   * Kept beside `owners` because the order card counts both, and REMOVED again when a board
+   * says a line it once covered is no longer covered - a revision can be superseded or
+   * challenged, and a "decided" that only ever accumulates would go on claiming a decision that
+   * has been retired.
+   */
+  const covered = React.useRef<Set<string>>(new Set());
   for (const cell of board.data?.cells ?? []) {
     for (const contribution of cell.contributions) {
       owners.current.set(contribution.key, contribution.sales_order_id);
+      if (contribution.covered) covered.current.add(contribution.key);
+      else covered.current.delete(contribution.key);
     }
   }
 
@@ -346,7 +358,7 @@ export function FulfilmentBoardPanel({
    */
   const standings = React.useMemo<BoardOrderStanding[]>(() => {
     if (!board.data) return [];
-    return standingsFor(board.data.orders, owners.current, draft);
+    return standingsFor(board.data.orders, owners.current, draft, covered.current);
   }, [board.data, draft]);
 
   /**
@@ -674,14 +686,12 @@ export function FulfilmentBoardPanel({
             </Alert>
           )}
 
-          {/* Which ranking produced what is on screen. Always stated: under the live policy
-              every row scores 0.0, and a planner who cannot see that is looking at a flat
-              ranking believing it is a considered one (PLAN 13.5). */}
-          <PolicyNote
-            policy={board.data.policy}
-            previewing={previewPolicy}
-            onPreviewChange={setPreviewPolicy}
-          />
+          {/* NO POLICY BANNER. It named the rule and listed its weights across the top of the
+              board, and the captain's verdict on it was "this text is not needed at the top":
+              it is not what anybody opens this screen to read, and it was there whether or not
+              a question about ranking had been asked. The information is not lost - the rank
+              popover on a row names the policy above its factor table, which is where somebody
+              IS asking - see `BoardRankPopover` and PLAN 13.10. */}
 
           {/* How much of the board is on screen. Only while a filter is on, and stated as a
               fraction, so a narrowed board is never mistaken for the whole one. */}
@@ -814,7 +824,11 @@ function OrderCommitRow({
               is information; this is the consequence. */}
           <span className="min-w-0 text-sm text-muted-foreground break-words">
             {committing === 0
-                ? 'Nothing decided yet on this order.'
+                ? standing.decided_count > 0
+                  // Everything decided on this order is already confirmed. Saying "nothing
+                  // decided yet" beside "2 of 23 lines decided" contradicts the line above it.
+                  ? 'Nothing new to confirm on this order.'
+                  : 'Nothing decided yet on this order.'
                 : leaving === 0
                   ? `Confirms all ${committing}.`
                 : `Confirms ${committing}, leaves ${leaving} undecided for reorder planning${
@@ -873,71 +887,3 @@ function OrderCommitRow({
   );
 }
 
-/**
- * The policy the board ranked by, named on screen.
- *
- * The live seeded row weights only `po_document_sequence`, which a sales-order line cannot have,
- * so it scores every contributor 0.0 and ranks nothing. That is not a bug to hide behind a
- * plausible-looking order; it is the thing the captain has to decide about (PLAN 13.5).
- */
-function PolicyNote({
-  policy,
-  previewing,
-  onPreviewChange,
-}: {
-  policy: BoardPolicy;
-  previewing: boolean;
-  onPreviewChange: (next: boolean) => void;
-}) {
-  // The weights are shown as evidence; whether they SEPARATE anything is the server's verdict
-  // (deviation 1), because a weighted-but-constant factor looks healthy from here.
-  const weights = Object.entries(policy.factors).filter(([, weight]) => Number(weight) > 0);
-  return (
-    <div className="flex flex-col gap-1 rounded-lg border border-border px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
-      <div className="min-w-0 text-sm">
-        <span className="text-muted-foreground">Ranked by </span>
-        <span className="font-medium">{policy.name}</span>
-        {policy.is_preview && (
-          <span className="ms-2 rounded bg-amber-100 px-1 text-[10px] font-medium text-amber-800">
-            Preview, not live
-          </span>
-        )}
-      </div>
-      <div className="flex min-w-0 flex-wrap items-center gap-3">
-        {policy.discriminates_nothing ? (
-          <p className="min-w-0 text-sm text-destructive break-words">
-            This policy weights nothing that separates these rows, so every one scores the same
-            and the ranking is flat.
-          </p>
-        ) : (
-          <p className="min-w-0 text-sm text-muted-foreground break-words">
-            {/* Words, not database columns. These printed `need_by_date 3 · document_age 1`
-                - the same identifiers the rank chips were told to stop showing, in a banner
-                that is now describing a ranking somebody has to trust. */}
-            {weights.map(([key, weight]) => `${factorLabel(key)} ${weight}`).join(' · ')}
-          </p>
-        )}
-        {/* A what-if, never an activation: previewing shows what a fair weighting would do to
-            these real orders without changing what container loading and stock assignment use.
-            The offer is RETIRED: it existed to show what a fair weighting would do before one
-            was switched on, and the fair policy is now the live one (PLAN 13.5's "ship the
-            preview first, then re-weight the active row" - both have happened). Offering to
-            preview the policy that is already running is an offer to nowhere. Only the way
-            BACK survives, for a preview that is on show. Note a flat ranking no longer implies
-            an unfair policy: the fair policy still separates nothing on a single-order board,
-            because customer, order date and demand class are constant across one order. */}
-        {policy.is_preview && (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="shrink-0"
-            onClick={() => onPreviewChange(!previewing)}
-          >
-            {policy.is_preview ? 'Back to the live policy' : 'Preview a fairer weighting'}
-          </Button>
-        )}
-      </div>
-    </div>
-  );
-}

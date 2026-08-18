@@ -39,8 +39,15 @@ import {
  * is the row a planner most often wants - "there is stock at my own warehouse, reserve it
  * instead of buying" - and it is precisely the one a form built from the proposal alone would
  * not have.
+ *
+ * ON A COVERED LINE THE FROZEN DECISION WINS, because there is no proposal to seed from: the
+ * board proposes nothing for a line an active decision already covers. Amending it opens on
+ * what was actually decided - the borrow that was made, the quantity that was bought - so the
+ * planner edits their own composition rather than one the engine would have suggested instead.
  */
 export function amendDraftFrom(contribution: BoardContribution): DraftLine {
+  const frozen = contribution.covered ? contribution.decision : null;
+  if (frozen) return frozenDraft(contribution, frozen);
   const reserveSources = contribution.sources.filter(
     (source) => source.kind === 'reserve',
   );
@@ -116,10 +123,82 @@ export function amendDraftFrom(contribution: BoardContribution): DraftLine {
 }
 
 /**
+ * The editor's draft for a line an active decision already covers: the FROZEN composition.
+ *
+ * The line's own location is still always a Reserve row, for the same reason it is on an
+ * undecided line. The donor impact behind a frozen Borrow is whatever the board still knows -
+ * the candidate list if that donor is still on it, and zeroes otherwise, exactly as the
+ * per-order sheet's own `draftFromLine` does for a frozen borrow: the impact is a fact about
+ * the donor NOW, and a decision taken last week does not carry it.
+ */
+function frozenDraft(
+  contribution: BoardContribution,
+  frozen: NonNullable<BoardContribution['decision']>,
+): DraftLine {
+  const candidates = borrowCandidatesOf(contribution);
+  const rows: DraftReserve[] = frozen.reserve
+    .filter((row) => Boolean(row.warehouse_id))
+    .map((row) => ({
+      key: `reserve-${row.location ?? row.warehouse_id}`,
+      location: row.location ?? null,
+      warehouse_id: row.warehouse_id,
+      qty: row.qty,
+      reason: '',
+    }));
+  const ownId = contribution.fulfilment_warehouse_id;
+  const ownCode = contribution.fulfilment_location;
+  const hasOwn = rows.some(
+    (row) => row.warehouse_id === ownId || (Boolean(ownCode) && row.location === ownCode),
+  );
+  if (!hasOwn && ownId) {
+    rows.unshift({
+      key: `reserve-${ownCode ?? ownId}`,
+      location: ownCode ?? null,
+      warehouse_id: ownId,
+      qty: '0',
+      reason: '',
+    });
+  }
+
+  return {
+    project_line_id: contribution.project_line_id ?? '',
+    line_no: contribution.line_no,
+    item_code: contribution.item_code,
+    open_qty: contribution.qty_outstanding ?? contribution.qty,
+    timely_spo_qty: frozen.timely_spo_qty,
+    reserve: rows,
+    borrow: frozen.borrow.map((row, index) => ({
+      key: `borrow-${row.warehouse_id ?? index}-${index}`,
+      source: row.source,
+      warehouse_code: row.location ?? '',
+      warehouse_id: row.warehouse_id ?? '',
+      donor_project_ref: null,
+      donor_project_id: row.donor_project_id ?? null,
+      qty: row.qty,
+      reason: row.reason,
+      donor_impact:
+        candidates.find((candidate) => candidate.warehouse_id === row.warehouse_id)
+          ?.donor_impact ?? {
+          free_before: '0',
+          free_after_full_borrow: '0',
+          committed_qty: '0',
+        },
+    })),
+    buy_qty: frozen.buy_qty,
+    buy_reason: '',
+    is_discontinued: false,
+  };
+}
+
+/**
  * The donors this row could borrow from, in the shape `BorrowAddDialog` already speaks.
  *
  * A candidate the server gave no `warehouse_id` for is NOT offered: `ConfirmBorrowComponent`
  * names the donor by id, so offering it would be offering a borrow that cannot be confirmed.
+ *
+ * The server's ORDER is kept as it came, and so is `recommended`: the ranking is the server's
+ * one opinion about which donor this borrow hurts least (PLAN 13.11), and re-deriving it here
+ * would be the second implementation of it.
  */
 export function borrowCandidatesOf(contribution: BoardContribution): BorrowCandidate[] {
   return (contribution.borrow_candidates ?? [])
@@ -131,6 +210,15 @@ export function borrowCandidatesOf(contribution: BoardContribution): BorrowCandi
       donor_project_ref: candidate.donor_project_ref ?? null,
       donor_project_id: candidate.donor_project_id ?? null,
       free_qty: candidate.free_qty,
+      qty_on_hand: candidate.qty_on_hand ?? null,
+      so_qty: candidate.so_qty ?? null,
+      spo_qty: candidate.spo_qty ?? null,
+      available_qty: candidate.available_qty ?? null,
+      qty_free: candidate.qty_free ?? null,
+      qty_committed: candidate.qty_committed ?? null,
+      need_qty: candidate.need_qty ?? null,
+      available_after_need: candidate.available_after_need ?? null,
+      recommended: Boolean(candidate.recommended),
       donor_impact: candidate.donor_impact ?? {
         free_before: candidate.free_qty,
         free_after_full_borrow: '0',

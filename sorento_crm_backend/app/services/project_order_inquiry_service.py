@@ -58,6 +58,7 @@ from app.models.project_so import (
     INQUIRY_RAISED,
     IV_ADVANCE,
     IV_ALREADY_INBOUND,
+    IV_BORROW_SHORTFALL,
     IV_CANCEL_BALANCE,
     IV_CHANGE_SO,
     IV_DELAY,
@@ -117,6 +118,8 @@ REMARK_SPELLING = {
     IV_CANCEL_BALANCE: "CANCEL BALANCE",
     IV_PRE_ORDERED: "PRE-ORDERED, DO NOT ORDER",
     IV_ALREADY_INBOUND: "ALREADY INBOUND",
+    # Not a spelling of theirs: this row is new to them, and it says what it is.
+    IV_BORROW_SHORTFALL: "BORROW SHORTFALL",
 }
 
 # The headings on `(04).03.2026 MARYAM TUJU RESIDENCE.xlsx`, committed to the golden set
@@ -214,6 +217,7 @@ class ProjectOrderInquiryService:
         buy_lines: Sequence[Dict[str, Any]],
         *,
         actor_user_id: Optional[str] = None,
+        borrow_shortfalls: Sequence[Dict[str, Any]] = (),
     ) -> Dict[str, Any]:
         """The Buy-only handoff, written INSIDE the atomic confirmation (PLAN section 4).
 
@@ -241,6 +245,12 @@ class ProjectOrderInquiryService:
         old revision would be the same requirement told to purchasing twice. Those rows
         are cancelled below, by the same rule and with the same words as any other
         superseded row - never deleted, because they are what purchasing was told.
+
+        `borrow_shortfalls` is the fourth thing purchasing is handed, and the only one that
+        is not about the borrowing line's own quantity: a borrow that pushed a DONOR
+        location below zero availability opened a hole at THAT location, and it is raised
+        there under its own verb (PLAN 13.11). A donor the borrow left covered raises
+        nothing.
         """
         inquiry = self._existing(order.id, None)
         if inquiry is None:
@@ -330,10 +340,70 @@ class ProjectOrderInquiryService:
                 )
 
         self._retire_uncovered_rows(inquiry, decision, buy_lines)
+        created += self._raise_borrow_shortfalls(
+            order, inquiry, decision, borrow_shortfalls
+        )
         self.db.flush()
         if created and self.task_for(inquiry.id) is None:
             self._hand_to_purchasing(order, inquiry, created)
         return {"inquiry": inquiry, "created": created, "exceptions": exceptions}
+
+    def _raise_borrow_shortfalls(
+        self,
+        order: ProjectSalesOrder,
+        inquiry: OrderInquiry,
+        decision: Any,
+        shortfalls: Sequence[Dict[str, Any]],
+    ) -> int:
+        """One row per donor location this confirmation left oversold (PLAN 13.11).
+
+        Its own verb rather than `ORDER`, and that is not cosmetic: the quantity belongs to
+        the DONOR's location while the row hangs off the borrowing line, so counted as
+        `ORDER` it would reach `confirmed_unplaced_buy_rows` attributed to the borrowing
+        line's warehouse and be cancelled by the Buy-residual rules on the next re-confirm.
+
+        The lifecycle is the same as every other row here: a still-raised one from an
+        earlier revision is CANCELLED and kept, never edited in place, and one purchasing
+        has already actioned stays.
+        """
+        stale = (
+            self.db.query(OrderInquiryRow)
+            .filter(
+                OrderInquiryRow.order_inquiry_id == inquiry.id,
+                OrderInquiryRow.verb == IV_BORROW_SHORTFALL,
+                OrderInquiryRow.state == INQUIRY_RAISED,
+            )
+            .all()
+        )
+        for row in stale:
+            row.state = INQUIRY_CANCELLED
+            row.note = f"Superseded by revision {decision.revision_no}"
+
+        created = 0
+        for entry in shortfalls:
+            qty = _dec(entry.get("qty"))
+            if qty <= _ZERO:
+                continue
+            line = entry.get("line")
+            self.db.add(
+                OrderInquiryRow(
+                    company_id=order.company_id,
+                    order_inquiry_id=inquiry.id,
+                    so_line_id=line.id if line is not None else None,
+                    item_code=entry.get("item_code") or None,
+                    qty=qty,
+                    delivery_date=entry.get("required_date"),
+                    #: The DONOR's location, which is where the hole is.
+                    stock_location=entry.get("stock_location"),
+                    verb=IV_BORROW_SHORTFALL,
+                    note=entry.get("note"),
+                    covered_by=None,
+                    supply_decision_id=decision.id,
+                    state=INQUIRY_RAISED,
+                )
+            )
+            created += 1
+        return created
 
     def _retire_uncovered_rows(
         self, inquiry: OrderInquiry, decision: Any, buy_lines: Sequence[Dict[str, Any]]
@@ -769,7 +839,11 @@ class ProjectOrderInquiryService:
             self.db.query(func.count(OrderInquiryRow.id))
             .filter(
                 OrderInquiryRow.order_inquiry_id == inquiry_id,
-                OrderInquiryRow.verb.in_([IV_ORDER, IV_RESERVE_AND_ORDER]),
+                # A borrow shortfall is buying work too: the donor is oversold and
+                # somebody has to buy the hole (PLAN 13.11).
+                OrderInquiryRow.verb.in_(
+                    [IV_ORDER, IV_RESERVE_AND_ORDER, IV_BORROW_SHORTFALL]
+                ),
             )
             .scalar()
             or 0

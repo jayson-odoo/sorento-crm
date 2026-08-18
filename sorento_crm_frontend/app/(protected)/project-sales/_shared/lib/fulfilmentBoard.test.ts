@@ -1091,6 +1091,134 @@ describe('confirmLinesFor and a composed amendment', () => {
 });
 
 /**
+ * A LATER confirmation on the same order covers the UNION (PLAN 13.4).
+ *
+ * "Deciding more lines later is a NEW revision covering the union, which is exactly what
+ * revisions already do." The per-order sheet gets that for free - it submits every line, seeded
+ * from the frozen decision - and the board did not: `confirmLinesFor` sent only the lines the
+ * client had just decided, and `_write_decision` supersedes the active revision and writes ONLY
+ * what it was sent. So a second confirm on the same order silently UN-DECIDED everything
+ * confirmed before it, and nothing on screen said so.
+ */
+describe('confirmLinesFor and a line an active decision already covers', () => {
+  const frozen = {
+    revision_no: 1,
+    confirmed_at: '2026-08-18T02:00:00',
+    timely_spo_qty: '0',
+    reserve: [],
+    borrow: [
+      {
+        source: 'other_location' as const,
+        warehouse_id: 'wh-mwh-ib',
+        location: 'MWH-IB',
+        donor_project_id: null,
+        qty: '10',
+        reason: 'The other site can wait a week.',
+      },
+    ],
+    buy_qty: '33',
+    amend_reason: 'Borrowed rather than bought, agreed with the other site.',
+  };
+  const board = buildBoard(
+    [
+      line({ sales_order_id: 'so-a', so_number: 'SO403765', line_no: 1, qty: '43', decision: frozen }),
+      line({ sales_order_id: 'so-a', so_number: 'SO403765', line_no: 2, qty: '21', item_code: 'TPE-9204' }),
+    ],
+    { today: TODAY, freeStock: { 'TPE-9204|BRW-BB': '5' } },
+  );
+  const contributions = board.cells.flatMap((cell) => cell.contributions);
+  const keyOf = (lineNo: number) =>
+    contributions.find((entry) => entry.line_no === lineNo)!.key;
+
+  it('re-emits the covered line beside the newly decided one, so the earlier decision survives', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [keyOf(2)]: { verdict: 'approved' },
+    });
+
+    expect(lines).toHaveLength(2);
+    const covered = lines.find((entry) => entry.project_line_id === 'pl-so-a-1');
+    // Verbatim: the same donor, the same warehouse id, the same reason, the same Buy. A
+    // re-derived composition would be a second opinion about a decision already taken.
+    expect(covered).toEqual({
+      project_line_id: 'pl-so-a-1',
+      timely_spo_qty: '0',
+      reserve: [],
+      borrow: [
+        {
+          source: 'other_location',
+          warehouse_id: 'wh-mwh-ib',
+          donor_project_id: null,
+          qty: '10',
+          reason: 'The other site can wait a week.',
+        },
+      ],
+      buy_qty: '33',
+      amend_reason: 'Borrowed rather than bought, agreed with the other site.',
+    });
+    expect(lines.find((entry) => entry.project_line_id === 'pl-so-a-2')?.buy_qty).toBe('16');
+  });
+
+  it('confirms nothing at all when every decided line is already confirmed', () => {
+    // Nothing to do: re-posting the same revision would supersede a decision with a copy of
+    // itself, and the planner asked for no such thing.
+    expect(confirmLinesFor(contributions, 'so-a', {})).toEqual([]);
+  });
+
+  it('sends the amendment when the planner amended the covered line', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [keyOf(1)]: {
+        verdict: 'amended',
+        reserve_qty: '5',
+        timely_spo_qty: '0',
+        reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '5' }],
+        borrow: [],
+        buy_qty: '38',
+        reason: 'The stock arrived at my own warehouse.',
+      },
+    });
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toEqual({
+      project_line_id: 'pl-so-a-1',
+      timely_spo_qty: '0',
+      reserve: [{ warehouse_id: 'wh-BRW-BB', qty: '5' }],
+      borrow: [],
+      buy_qty: '38',
+      amend_reason: 'The stock arrived at my own warehouse.',
+    });
+  });
+
+  it('counts an already-confirmed line as decided on the order card', () => {
+    // "1 of 2 lines decided" beside an order whose first line IS confirmed read "0 of 2",
+    // because the count only ever looked at the client draft.
+    const owners = new Map(contributions.map((entry) => [entry.key, entry.sales_order_id]));
+    const covered = new Set([keyOf(1)]);
+    const standings = standingsFor(board.orders, owners, {}, covered);
+    expect(standings[0].decided_count).toBe(1);
+    expect(standings[0].line_count).toBe(2);
+  });
+
+  it('counts a covered line the planner amended once, not twice', () => {
+    const owners = new Map(contributions.map((entry) => [entry.key, entry.sales_order_id]));
+    const standings = standingsFor(
+      board.orders,
+      owners,
+      { [keyOf(1)]: { verdict: 'amended', reason: 'Changed.' } },
+      new Set([keyOf(1)]),
+    );
+    expect(standings[0].decided_count).toBe(1);
+  });
+
+  it('leaves a covered line out when it has no mirror id, rather than posting a null', () => {
+    const orphan = contributions.map((entry) =>
+      entry.line_no === 1 ? { ...entry, project_line_id: null } : entry,
+    );
+    const lines = confirmLinesFor(orphan, 'so-a', { [keyOf(2)]: { verdict: 'approved' } });
+    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-2']);
+  });
+});
+
+/**
  * Adoption mirrored the order's OPEN lines at the time it ran, so a later upload can add a core
  * line that has no mirror. Its order is still confirmable; that one line is not.
  *

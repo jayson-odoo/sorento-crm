@@ -18,7 +18,13 @@ export type OrderInquiryVerb =
   | 'CHANGE_SO'
   | 'CANCEL_BALANCE'
   | 'PRE_ORDERED_DO_NOT_ORDER'
-  | 'ALREADY_INBOUND';
+  | 'ALREADY_INBOUND'
+  /**
+   * A confirmed borrow left the DONOR location oversold, so the hole it opened is
+   * buying work at that location (PLAN-fulfilment-planning 13.11). Its own verb: the
+   * quantity belongs to the donor's location, not to the borrowing line's.
+   */
+  | 'BORROW_SHORTFALL';
 
 export type OrderInquiryState = 'raised' | 'actioned' | 'cancelled';
 

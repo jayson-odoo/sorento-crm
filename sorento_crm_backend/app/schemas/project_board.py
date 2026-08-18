@@ -15,14 +15,17 @@ pair of odd-looking field names.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
 BoardGranularity = Literal["day", "week", "month"]
 BoardBucketKind = Literal["dated", "no_date"]
-BoardSourceKind = Literal["reserve", "timely_spo", "buy", "unplannable"]
+#: `borrow` appears on a COVERED line only. The engine never proposes one - a Borrow needs a
+#: donor and a reason from a person (AC-B09) - but a line a decision already covers states the
+#: composition that was frozen for it, and a frozen Borrow is a source like any other.
+BoardSourceKind = Literal["reserve", "timely_spo", "buy", "borrow", "unplannable"]
 
 
 class BoardDateBucket(BaseModel):
@@ -88,6 +91,29 @@ BoardTrailOutcome = Literal[
 ]
 
 
+class BoardAheadLine(BaseModel):
+    """One line standing in front of this one at its pile, and what put it there.
+
+    The captain, on a rung reading "18730 across 142 lines": "what does this mean? why do the
+    orders stand ahead of me? why?" A total answers neither question, so the queue is NAMED -
+    the top of it beside the rung, the whole of it one click away.
+    """
+
+    so_number: str
+    line_no: Optional[int] = None
+    qty: str
+    required_date: Optional[date] = None
+    rank_score: float = 0.0
+    #: The policy factor with the largest weighted difference in this line's favour, which is
+    #: literally the term that made its score the bigger one. `line_order` / `tie_break` when
+    #: the two scores are EQUAL: the policy separated nothing there and the queue was decided by
+    #: the tie-break, so naming a factor would claim a difference that does not exist.
+    leading_factor: Optional[str] = None
+    #: It is an earlier line of the SAME sales order. Not a rival at all, and the one case where
+    #: "somebody outranks you" is the wrong sentence.
+    same_order: bool = False
+
+
 class BoardTrailStep(BaseModel):
     """One rung of the source ladder, as it was walked for one line.
 
@@ -123,6 +149,12 @@ class BoardTrailStep(BaseModel):
     #: incoming and Buy have no queue.
     ahead_qty: Optional[str] = None
     ahead_lines: Optional[int] = None
+    #: WHO is in that queue: the top of it in rank order, how many more there are, and a count
+    #: of the whole queue by the factor that put each line in front. Own location only, for the
+    #: same reason `ahead_qty` is - no other rung has a queue.
+    ahead: List[BoardAheadLine] = []
+    ahead_more: int = 0
+    ahead_by_factor: Dict[str, int] = {}
     #: What this source could give THIS line after its own rules were applied.
     offered: str = "0"
     #: What the line actually took from it. Always "0" for Borrow: it is offered and never
@@ -131,9 +163,57 @@ class BoardTrailStep(BaseModel):
     #: The line's still-uncovered quantity after this step. Zero on the last one.
     remaining_after: str = "0"
     outcome: BoardTrailOutcome
+    #: WHY it ended that way, in ONE plain sentence. The numbers above are what the captain was
+    #: already looking at when he asked "what does this mean? why do the orders stand ahead of
+    #: me? why? and why is the donor offered but I did not take, why?" - so this answers in
+    #: words, never by restating the row.
+    why: Optional[str] = None
     #: ONE short structured hint, never a paragraph: "hot-selling: pool only", "capped by
-    #: reorder level 10", "ZZT-SPO-0001 arrives 2026-08-25", "3 donors".
+    #: reorder level 10", "ZZT-SPO-0001 arrives 2026-08-25", "MWH-IB 12000 · BRW 9000".
     note: Optional[str] = None
+
+
+class BoardDecisionReserve(BaseModel):
+    """One warehouse's share of a frozen Reserve."""
+
+    warehouse_id: Optional[str] = None
+    #: The warehouse CODE, which is what the screen reads. The id beside it is addressing.
+    location: Optional[str] = None
+    qty: str
+
+
+class BoardDecisionBorrow(BaseModel):
+    """One donor of a frozen Borrow, in the words `ConfirmBorrowComponent` takes them."""
+
+    source: str
+    warehouse_id: Optional[str] = None
+    location: Optional[str] = None
+    donor_project_id: Optional[str] = None
+    qty: str
+    #: The PERSON's reason, not the rule's sentence: the confirmation refuses a Borrow that
+    #: carries none, so re-posting this composition needs the one that was given.
+    reason: str = ""
+
+
+class BoardLineDecision(BaseModel):
+    """What the ACTIVE revision froze for this line (13.4).
+
+    Read back off `so_supply_decisions.line_snapshots`, which is the only place a decision
+    lives: the board writes nothing and holds no decision object of its own. It is the whole
+    composition rather than a summary of it, because the board's Confirm re-posts it verbatim -
+    a later confirmation on the same order covers the UNION of what was decided before and what
+    is being decided now, and a summary could not be posted back.
+    """
+
+    revision_no: int
+    confirmed_at: Optional[datetime] = None
+    timely_spo_qty: str = "0"
+    reserve: List[BoardDecisionReserve] = []
+    borrow: List[BoardDecisionBorrow] = []
+    buy_qty: str = "0"
+    #: Why the composition is not the engine's, in the planner's own words. Absent when they
+    #: took the proposal as it stood.
+    amend_reason: Optional[str] = None
 
 
 class BoardContribution(BaseModel):
@@ -143,6 +223,15 @@ class BoardContribution(BaseModel):
     #: `${sales_order_id}|${line_no}|${item_code}|${bucket_key}`. Addressing only.
     key: str
     sales_order_id: str
+    #: The CORE sales-order line id, which is how the pile queue is addressed
+    #: (`GET .../fulfilment-planning/queue?line_id=`). Addressing only, never rendered. NOT the
+    #: same as `project_line_id`: that is the mirror, and a line with no mirror still stands in
+    #: the queue at its pile.
+    line_id: Optional[str] = None
+    #: The product, for the same drill-down and by the same rule as `BoardCellLocation`: two
+    #: products on the live book share the item code `B2155-NL-BLUE`, so a pile looked up by
+    #: code would be the wrong pile. Addressing only, never rendered.
+    product_id: Optional[str] = None
     #: The MIRROR line id, which is how `confirm` names a line (`lines[].project_line_id`):
     #: the service builds its index from the planning record's own lines and refuses anything
     #: else. NULL until somebody adopts this sales order - there is no planning record yet, and
@@ -176,8 +265,13 @@ class BoardContribution(BaseModel):
     # ---- why the Reserve is the size it is, in the strip's vocabulary ----
     #: What the demand ranked AHEAD of this line at its own pile still wants, and how many
     #: lines that is. The active policy decides the order; required date is the tie-break.
-    so_qty_ahead: str = "0"
-    lines_ahead: int = 0
+    #:
+    #: NULL, never zero, on a line an active decision covers: such a line is not in the queue
+    #: at all (`_pile_book` leaves it out, because its claim is already expressed as a hold),
+    #: and "0 left for this line" is a claim about a contest it is not in. Absent is the only
+    #: honest answer, and the screen says nothing rather than something false.
+    so_qty_ahead: Optional[str] = None
+    lines_ahead: Optional[int] = None
     #: What was LEFT AT THIS LINE'S OWN LOCATION when it was reached: on hand, less reserved,
     #: less what confirmed decisions hold, less `so_qty_ahead`. Three numbers live near each
     #: other and none may be printed as another:
@@ -185,7 +279,8 @@ class BoardContribution(BaseModel):
     #:   * this is what was left for THIS line at its own location;
     #:   * `qty_proposed_reserve` is what the line actually took - which can EXCEED this one,
     #:     because the shared pool is a second source with a queue of its own.
-    available_to_this_line: str = "0"
+    #: Null on a covered line, for the reason given on `so_qty_ahead`.
+    available_to_this_line: Optional[str] = None
     #: What could be borrowed instead of bought, and from where. Borrow is never proposed on
     #: either surface - it needs a donor and a reason from a person - but a Buy printed with no
     #: mention of it reads as "this stock exists nowhere".
@@ -213,7 +308,18 @@ class BoardContribution(BaseModel):
     #: line that cannot be planned: no ladder was walked for it.
     trail: List[BoardTrailStep] = []
     #: The supply this row would otherwise have had was taken by a row served before it.
+    #: Always false on a covered line: a decided line is not competing for anything.
     contested: bool = False
+    #: An ACTIVE decision on this line's sales order already covers it (13.4).
+    #:
+    #: The board went on proposing for such a line - "Buy 43" beside a decision that had
+    #: borrowed 10 and bought 33 - because it kept the line in its demand while the pile's
+    #: queue rightly left it out. A covered line is not re-planned: it states what was frozen
+    #: and offers Amend, which is the only decision left to take about it.
+    covered: bool = False
+    #: What was frozen, when the line is covered. Null otherwise, and never an empty object:
+    #: "nobody decided this" and "decided, to nothing" are different answers.
+    decision: Optional[BoardLineDecision] = None
 
 
 class BorrowDonorImpact(BaseModel):
@@ -242,7 +348,22 @@ class BorrowCandidate(BaseModel):
     warehouse_id: Optional[str] = None
     donor_project_ref: Optional[str] = None
     donor_project_id: Optional[str] = None
+    #: What this donor can give: the location's free stock, or the donor project's own hold.
     free_qty: str
+    #: AutoCount's Stock Status columns for the DONOR's own pile, so the planner can see
+    #: whether taking from them hurts (PLAN 13.11). `available_qty` is SIGNED.
+    qty_on_hand: Optional[str] = None
+    so_qty: Optional[str] = None
+    spo_qty: Optional[str] = None
+    available_qty: Optional[str] = None
+    qty_free: Optional[str] = None
+    qty_committed: Optional[str] = None
+    #: This line's residual at the borrow rung, and what the donor keeps once it is met.
+    #: `available_after_need` is the ranking key and is signed.
+    need_qty: Optional[str] = None
+    available_after_need: Optional[str] = None
+    #: First in the ranking - the donor this borrow hurts least. Exactly one row carries it.
+    recommended: bool = False
     #: Absent only on a payload built before this field existed; the engine always states it.
     donor_impact: Optional[BorrowDonorImpact] = None
 
@@ -299,6 +420,68 @@ class StockDetail(BaseModel):
     qty_free: str
     sales_orders: List[StockDetailSalesOrder] = []
     incoming: List[StockDetailIncoming] = []
+
+
+class PileQueueLine(BaseModel):
+    """One line of the queue at a pile, with the rank that put it where it is."""
+
+    #: 1-based, in the order the stock is served.
+    position: int
+    #: The CORE sales-order line. Addressing only.
+    line_id: str
+    #: The sales order it belongs to, so the screen can link to it. Addressing only.
+    sales_order_id: Optional[str] = None
+    so_number: str
+    #: Null until the order has been adopted onto a planning record: an un-mirrored line has no
+    #: line number of its own, and inventing one would name a line that does not exist.
+    line_no: Optional[int] = None
+    customer_name: Optional[str] = None
+    qty: str
+    required_date: Optional[date] = None
+    order_date: Optional[date] = None
+    payment_terms_days: Optional[int] = None
+    demand_class: Optional[str] = None
+    rank_score: float = 0.0
+    #: The same per-factor breakdown a board row carries, so one row's rank popover explains a
+    #: queued line exactly as it explains a contributor.
+    rank_factors: List[BoardRankFactor] = []
+    #: Which factor puts this line in front of the line that ASKED. Null for the asked line
+    #: itself, and null when nobody asked.
+    leading_factor: Optional[str] = None
+    #: What the queue has claimed by the time it has served this row, this row included.
+    cumulative_ahead_qty: str = "0"
+    is_this_line: bool = False
+    #: Always false on a row that is here: a line an active decision covers is EXCLUDED from
+    #: the queue, because its claim already came out of the opening stock as a hold and
+    #: counting it again would subtract the same units twice.
+    is_covered_excluded: bool = False
+
+
+class PileQueue(BaseModel):
+    """`GET /project-sales/fulfilment-planning/queue`.
+
+    Who is standing in front of this line at its pile, and why. The captain: "I need to know
+    what is ahead of me to have the visibility, and why they are ahead of me, meaning I need to
+    know their rank also."
+
+    The SAME queue the trail counted (`_pile_book`), never a second ranking of one pile: two
+    orderings of the same stock would eventually disagree, and then the screen would be arguing
+    with the plan it is explaining.
+    """
+
+    product_id: str
+    item_code: str
+    description: Optional[str] = None
+    warehouse_id: str
+    location: str
+    #: What the pile held before the queue drew on it - the trail's own opening figure.
+    qty_free_opening: str
+    #: Where the asked-about line stands. Null when no line was named.
+    this_line_position: Optional[int] = None
+    #: The rule that produced this order, named. It is the LIVE policy: the queue is what the
+    #: stock is actually served in, and a previewed weighting has not served anything.
+    policy_name: str
+    lines: List[PileQueueLine] = []
 
 
 class BoardCellLocation(BaseModel):

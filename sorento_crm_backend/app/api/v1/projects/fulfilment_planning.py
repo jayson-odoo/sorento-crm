@@ -28,7 +28,7 @@ from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
-from app.schemas.project_board import PlanningBoard, StockDetail
+from app.schemas.project_board import PileQueue, PlanningBoard, StockDetail
 from app.schemas.project_so_reconciliation import (
     AdoptSalesOrderBody,
     AdoptSalesOrderResult,
@@ -259,6 +259,39 @@ def get_stock_detail(
         validate_uuid_path(product_id, resource="Product")
         validate_uuid_path(warehouse_id, resource="Warehouse")
         return FulfilmentBoardService(db).stock_detail(product_id, warehouse_id)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/fulfilment-planning/queue", response_model=PileQueue)
+def get_pile_queue(
+    product_id: str = Query(..., description="Addressing only; the board's cell carries it."),
+    warehouse_id: str = Query(...),
+    line_id: Optional[str] = Query(
+        None,
+        description=(
+            "The CORE sales-order line asking. Its row is marked, its position is stated, and "
+            "every line in front of it says which factor put it there. Omitted reads the queue "
+            "on nobody's behalf."
+        ),
+    ),
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Who is standing in front of this line at its pile, in the order the stock is served.
+
+    The same queue the trail counted (`_pile_book`), read out in full with each line's rank and
+    the facts behind it. A pure read.
+
+    Plain ``def``, so FastAPI runs it in a threadpool: it is synchronous SQLAlchemy over one
+    product-location's outstanding book, the widest of which on the live data is 289 lines.
+    """
+    try:
+        validate_uuid_path(product_id, resource="Product")
+        validate_uuid_path(warehouse_id, resource="Warehouse")
+        if line_id:
+            validate_uuid_path(line_id, resource="Sales order line")
+        return FulfilmentBoardService(db).pile_queue(product_id, warehouse_id, line_id)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

@@ -2996,6 +2996,366 @@ def test_the_borrow_step_offers_what_it_found_and_takes_none_of_it():
         assert _step(contribution, "buy")["taken"] == "10"
 
 
+# --------------------------------------------------------------------------- #
+# WHY each rung ended the way it did
+#
+# The captain, reading a trail whose first rung said "478 | 18730 across 142 lines | 0 | 0 | 21 |
+# Nothing left": "what does this mean? why do the orders stand ahead of me? why? and why is the
+# donor offered but I did not take, why?"
+#
+# Numbers alone answered none of those. So every rung carries ONE plain sentence, and the rung
+# with a queue in front of it also names who is in that queue and what put them there.
+# --------------------------------------------------------------------------- #
+
+
+def _queued_pile(db):
+    """One pile, six lines ahead of ours: five other orders, then our own earlier line.
+
+    The five differ from us by REQUIRED DATE alone (same order date, no customer, same demand
+    class), so the factor that puts them ahead is unambiguous. The sixth shares our order AND
+    our required date, so nothing separates it on score at all and only line order does.
+    """
+    _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
+    product = _product(db, f"ZZT-{_uid()[:6]}")
+    warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+    _stock(db, product, warehouse, on_hand=100)
+    for index in range(5):
+        earlier = _order(
+            db, so_number=f"ZZT-SO-A{index:02d}{_uid()[:4]}", order_date=date(2026, 1, 1)
+        )
+        _line(
+            db,
+            earlier,
+            product,
+            qty="30",
+            required_date=date(2026, 3, 1) + timedelta(days=index),
+            warehouse=warehouse,
+        )
+    ours = _order(db, so_number=f"ZZT-SO-MINE{_uid()[:4]}", order_date=date(2026, 1, 1))
+    # Both of ours are the same size: nothing has been mirrored onto a planning record, so the
+    # two carry no line number and the queue separates them by line id. Which of them ends up
+    # behind the other is therefore arbitrary, and the totals must not depend on it.
+    _line(db, ours, product, qty="20", required_date=date(2026, 12, 29), warehouse=warehouse)
+    _line(db, ours, product, qty="20", required_date=date(2026, 12, 29), warehouse=warehouse)
+    return ours, product, warehouse
+
+
+def _behind(board, item_code: str) -> dict:
+    """Whichever of our two same-dated lines the queue put LAST: the one with six ahead of it."""
+    cell = _cell(board, item_code, "2026-12-28")
+    return max(cell["contributions"], key=lambda c: c["lines_ahead"])
+
+
+def test_every_rung_says_why_it_ended_the_way_it_did():
+    with blank_session() as db:
+        ours, product, _warehouse = _queued_pile(db)
+
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+        contribution = _behind(board, product.product_code)
+
+        for step in _trail(contribution):
+            assert (step.get("why") or "").strip(), step["kind"]
+            # A sentence, not a restatement of the identifiers beside it.
+            assert "reserve_own" not in (step["why"] or "")
+
+
+def test_the_own_rung_names_the_queue_ahead_of_this_line():
+    """Three of them, in queue order, with how many more and what put each there."""
+    with blank_session() as db:
+        ours, product, _warehouse = _queued_pile(db)
+
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+        own = _step(_behind(board, product.product_code), "reserve_own")
+
+        assert own["ahead_lines"] == 6
+        assert own["ahead_qty"] == "170"
+        ahead = own["ahead"]
+        assert len(ahead) == 3, "the top of the queue, never all 142 of it"
+        assert own["ahead_more"] == 3
+        # In queue order, which for these five is required date, soonest first.
+        assert [entry["required_date"] for entry in ahead] == [
+            date(2026, 3, 1),
+            date(2026, 3, 2),
+            date(2026, 3, 3),
+        ]
+        assert [entry["qty"] for entry in ahead] == ["30", "30", "30"]
+        assert all(entry["leading_factor"] == "need_by_date" for entry in ahead)
+        assert all(entry["same_order"] is False for entry in ahead)
+        assert all(entry["so_number"] for entry in ahead)
+
+
+def test_the_own_rung_counts_the_whole_queue_by_what_put_each_line_there():
+    """Five ahead on the required date, one ahead only because it is an earlier line of ours."""
+    with blank_session() as db:
+        ours, product, _warehouse = _queued_pile(db)
+
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+        own = _step(_behind(board, product.product_code), "reserve_own")
+
+        assert own["ahead_by_factor"] == {"need_by_date": 5, "line_order": 1}
+
+
+def test_the_own_rung_why_names_the_queue_in_words_a_planner_uses():
+    with blank_session() as db:
+        ours, product, _warehouse = _queued_pile(db)
+
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+        own = _step(_behind(board, product.product_code), "reserve_own")
+
+        why = own["why"]
+        assert why.startswith("100 on hand, but 6 lines")
+        assert "an earlier required date" in why
+        assert "170" in why
+        assert "none is left for this line" in why
+        # Words, never the database's own names for them.
+        assert "need_by_date" not in why
+
+
+def test_a_line_first_in_the_queue_says_so_rather_than_naming_nobody():
+    with blank_session() as db:
+        _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=50)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=warehouse)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        own = _step(_cell(board, product.product_code, "2026-08-31")["contributions"][0],
+                    "reserve_own")
+
+        assert own["ahead"] == []
+        assert own["ahead_more"] == 0
+        assert own["ahead_by_factor"] == {}
+        assert own["why"].startswith("First in the queue here")
+
+
+def test_the_borrow_rung_says_borrowing_is_a_persons_decision_and_names_the_donors():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTO{_uid()[:6]}"[:20])
+        elsewhere = _warehouse(db, f"ZZTE{_uid()[:6]}"[:20])
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, elsewhere, on_hand=25)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        step = _step(contribution, "borrow")
+        assert "Amend" in step["why"], "the answer to 'why is it offered and not taken'"
+        assert f"{elsewhere.warehouse_code} 25" in (step["note"] or "")
+        assert _step(contribution, "buy")["why"] == (
+            "Nothing left to take, so the remainder is bought."
+        )
+
+
+def test_a_hot_selling_rung_says_why_its_own_location_was_off_limits():
+    from app.models.scm import ItemClassification
+
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _pooled_warehouses(db)
+        own.segment = "dealer"
+        db.flush()
+        _stock(db, product, own, on_hand=20)
+        _stock(db, product, pool, on_hand=0)
+        db.add(
+            ItemClassification(
+                id=_uid(), product_id=product.id, warehouse_id=own.id, abc_class="A"
+            )
+        )
+        db.flush()
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        assert _step(contribution, "reserve_own")["why"] == (
+            "Hot-selling item: own-location stock stays for retail, pool only."
+        )
+        assert "No free stock at the pool" in _step(contribution, "reserve_pool")["why"]
+
+
+def test_the_incoming_rung_says_whether_anything_arrives_in_time():
+    with blank_session() as db:
+        order, product, _warehouse = _quantity_world(db)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        why = _step(contribution, "incoming")["why"]
+        assert "ZZT-SPO-0001" in why
+        assert "in time" in why
+
+
+def test_a_line_with_nothing_incoming_says_so_against_its_own_required_date():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=0)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=warehouse)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        assert _step(contribution, "incoming")["why"] == (
+            "No supplier PO arrives by 3 Sep 2026."
+        )
+
+
+# --------------------------------------------------------------------------- #
+# the WHOLE queue at a pile
+#
+# The captain, after the top three: "I need to know what is ahead of me to have the visibility,
+# and why they are ahead of me, meaning I need to know their rank also."
+#
+# So the same queue the trail counted is readable in full, with each line's rank and the factors
+# behind it. The SAME queue, from `_pile_book`: a second ranking of one pile would eventually
+# disagree with the one the proposal was computed from, and then the screen would be arguing
+# with the plan.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_pile_queue_is_exactly_the_queue_the_trail_counted():
+    with blank_session() as db:
+        ours, product, warehouse = _queued_pile(db)
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+        contribution = _behind(board, product.product_code)
+
+        queue = _service(db).pile_queue(
+            str(product.id), str(warehouse.id), contribution["line_id"]
+        )
+
+        assert queue["item_code"] == product.product_code
+        assert queue["location"] == warehouse.warehouse_code
+        assert queue["qty_free_opening"] == "100"
+        assert [line["position"] for line in queue["lines"]] == [1, 2, 3, 4, 5, 6, 7]
+        assert queue["this_line_position"] == 7
+        mine = next(line for line in queue["lines"] if line["is_this_line"])
+        assert mine["line_id"] == contribution["line_id"]
+        ahead = [line for line in queue["lines"] if line["position"] < mine["position"]]
+        # The two numbers the trail printed, recomputed from the rows it printed them about.
+        assert len(ahead) == contribution["lines_ahead"]
+        assert sum(Decimal(line["qty"]) for line in ahead) == Decimal(
+            contribution["so_qty_ahead"]
+        )
+        assert mine["cumulative_ahead_qty"] == "190", "the running sum includes this row"
+
+
+def test_the_pile_queue_is_ordered_exactly_as_the_pile_book_orders_it():
+    from app.services.project_supply_service import ProjectSupplyService
+
+    with blank_session() as db:
+        ours, product, warehouse = _queued_pile(db)
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+        contribution = _behind(board, product.product_code)
+
+        queue = _service(db).pile_queue(
+            str(product.id), str(warehouse.id), contribution["line_id"]
+        )
+        book = ProjectSupplyService(db).pile_book(str(product.id), str(warehouse.id))
+
+        assert [line["line_id"] for line in queue["lines"]] == [
+            row["line_id"] for row in book
+        ]
+
+
+def test_every_queued_line_carries_its_rank_and_the_factors_behind_it():
+    with blank_session() as db:
+        ours, product, warehouse = _queued_pile(db)
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+        contribution = _behind(board, product.product_code)
+
+        queue = _service(db).pile_queue(
+            str(product.id), str(warehouse.id), contribution["line_id"]
+        )
+
+        assert queue["policy_name"], "the rule that produced this order, named"
+        first = queue["lines"][0]
+        assert first["so_number"]
+        assert first["required_date"] == date(2026, 3, 1)
+        assert first["order_date"] == date(2026, 1, 1)
+        assert first["is_covered_excluded"] is False
+        keys = {factor["key"] for factor in first["rank_factors"]}
+        assert "need_by_date" in keys and "document_age" in keys
+        # The FACT behind the factor, not only its normalised value.
+        need_by = next(f for f in first["rank_factors"] if f["key"] == "need_by_date")
+        assert need_by["raw"] == "2026-03-01"
+        # Why THAT line is in front of the one that asked. The asked line outranks nobody.
+        assert first["leading_factor"] == "need_by_date"
+        mine = next(line for line in queue["lines"] if line["is_this_line"])
+        assert mine["leading_factor"] is None
+
+
+def test_the_pile_queue_answers_over_the_wire_and_refuses_a_caller_without_the_view():
+    from app.models.base import company_scope
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        actor = _user(db, f"{MARKER} Eling")
+        ours, product, warehouse = _queued_pile(db)
+        db.commit()
+        client, originals = _client(db, actor, [VIEW])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                response = client.get(
+                    f"{BASE}/fulfilment-planning/queue",
+                    params={
+                        "product_id": str(product.id),
+                        "warehouse_id": str(warehouse.id),
+                    },
+                )
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert len(body["lines"]) == 7
+        assert body["this_line_position"] is None, "nobody asked about a line"
+
+        denied, originals = _client(db, actor, [])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                refused = denied.get(
+                    f"{BASE}/fulfilment-planning/queue",
+                    params={
+                        "product_id": str(product.id),
+                        "warehouse_id": str(warehouse.id),
+                    },
+                )
+        finally:
+            _restore(originals)
+
+        assert refused.status_code == 403
+
+
+def test_a_contribution_names_its_core_line_so_its_queue_can_be_asked_for():
+    with blank_session() as db:
+        ours, product, _warehouse = _queued_pile(db)
+
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+
+        for contribution in _cell(board, product.product_code, "2026-12-28")["contributions"]:
+            assert contribution["line_id"]
+
+
+def test_a_covered_line_carries_no_ahead_list_because_it_carries_no_trail():
+    with blank_session() as db:
+        ours, product, _warehouse = _queued_pile(db)
+
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+
+        for contribution in _cell(board, product.product_code, "2026-12-28")["contributions"]:
+            for step in contribution["trail"]:
+                if step["kind"] != "reserve_own":
+                    assert step["ahead"] == [], step["kind"]
+                    assert step["ahead_by_factor"] == {}, step["kind"]
+
+
 def test_an_unplannable_line_carries_no_trail_at_all():
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
@@ -3034,3 +3394,334 @@ def test_an_unplannable_line_has_no_fulfilment_warehouse_id():
         cell = _cell(board, product.product_code, "2026-08-31")
 
         assert cell["contributions"][0]["fulfilment_warehouse_id"] is None
+
+
+# --------------------------------------------------------------------------- #
+# a line an ACTIVE decision already covers (13.4)
+#
+# The defect, live on SO403765 line 1: a planner confirmed "borrow 10 from MWH-IB, buy 33"
+# and the board went on showing the line with a FRESH proposal of Buy 43, a share note
+# reading "First in the queue at BRW-BB - 0 left for this line", and a trail whose first rung
+# offered nothing. Two rules had come apart:
+#
+#   * `_demand_rows` keeps every open line, including one an active decision covers;
+#   * `_pile_book` / `_decided_elsewhere` EXCLUDE a covered line from the queue, which is the
+#     double-count rule and is right - its claim is already expressed once, as a hold.
+#
+# So the covered line asked the projection for a share it is deliberately not in, got nothing
+# back, and every share field defaulted to zero - indistinguishable from "genuinely nothing
+# ahead of you". The ladder then re-proposed a line that had already been decided.
+#
+# The fix is not to put it back in the queue. A covered line is not competing for anything:
+# it states what was FROZEN for it, and no ladder is walked for it at all.
+# --------------------------------------------------------------------------- #
+
+
+def _confirm(db, pso_id: str, actor_user_id: str, lines: list) -> None:
+    """Confirm through the real service, so the snapshot is a real snapshot.
+
+    Hand-writing `line_snapshots` would make this suite agree with itself about a shape only
+    `ProjectSupplyService._snapshot` actually writes.
+    """
+    from app.schemas.project_supply import ConfirmSupplyBody
+    from app.services.project_supply_service import ProjectSupplyService
+
+    service = ProjectSupplyService(db)
+    order = service.get_order(pso_id)
+    service.confirm(
+        order, ConfirmSupplyBody(lines=lines), actor_user_id=actor_user_id
+    )
+    db.flush()
+
+
+def _covered_world(db):
+    """One order with two lines at one pile, one line of an earlier order ahead of both.
+
+    Quantities are the live ones: line 1 owes 43 and is decided as borrow 10 + buy 33, line 2
+    owes 21 and is left undecided. The queue in front of them is a third order's line for 15,
+    dated earlier, so the sibling's share of the pile is a real number rather than the whole
+    of it.
+
+    Nothing is confirmed here. The caller confirms line 1 when it wants the covered state, so
+    the same world answers "before" and "after".
+    """
+    actor = _user(db, f"{MARKER} planner")
+    product = _product(db, f"ZZT-{_uid()[:6]}")
+    own = _warehouse(db, f"ZZTO{_uid()[:6]}"[:20])
+    donor = _warehouse(db, f"ZZTD{_uid()[:6]}"[:20])
+    _stock(db, product, own, on_hand=20)
+    _stock(db, product, donor, on_hand=10)
+
+    ahead = _order(db, so_number="ZZT-SO-AHEAD", order_date=date(2026, 1, 1))
+    _line(db, ahead, product, qty="15", required_date=date(2026, 8, 30), warehouse=own)
+
+    order = _order(db, so_number="ZZT-SO-COVER", order_date=date(2026, 1, 1))
+    # Line 1 is dated AFTER line 2 on purpose: it is behind its sibling in the queue either
+    # way, so removing it from that queue when it becomes covered cannot move the sibling.
+    first = _line(db, order, product, qty="43", required_date=date(2026, 9, 4), warehouse=own)
+    _line(db, order, product, qty="21", required_date=date(2026, 9, 1), warehouse=own)
+    pso_id = _adopt(db, str(order.id))
+
+    from app.models.project_so import ProjectSalesOrderLine
+
+    mirror = (
+        db.query(ProjectSalesOrderLine)
+        .filter(
+            ProjectSalesOrderLine.project_sales_order_id == pso_id,
+            ProjectSalesOrderLine.core_sales_order_line_id == first.id,
+        )
+        .first()
+    )
+    return {
+        "actor": actor,
+        "product": product,
+        "own": own,
+        "donor": donor,
+        "order": order,
+        "ahead": ahead,
+        "pso_id": pso_id,
+        "mirror_line_id": str(mirror.id),
+    }
+
+
+def _decide_line_one(db, world) -> None:
+    """Borrow 10 from the donor, buy the other 33, with a reason - the live composition."""
+    _confirm(
+        db,
+        world["pso_id"],
+        world["actor"],
+        [
+            {
+                "project_line_id": world["mirror_line_id"],
+                "timely_spo_qty": "0",
+                "reserve": [],
+                "borrow": [
+                    {
+                        "source": "other_location",
+                        "warehouse_id": str(world["donor"].id),
+                        "qty": "10",
+                        "reason": "The other site can wait a week.",
+                    }
+                ],
+                "buy_qty": "33",
+                "amend_reason": "Borrowed rather than bought, agreed with the other site.",
+            }
+        ],
+    )
+
+
+def _covered_contribution(board, world) -> dict:
+    return next(
+        contribution
+        for cell in board["cells"]
+        for contribution in cell["contributions"]
+        if contribution["so_number"] == "ZZT-SO-COVER" and contribution["qty"] == "43"
+    )
+
+
+def _sibling_contribution(board) -> dict:
+    return next(
+        contribution
+        for cell in board["cells"]
+        for contribution in cell["contributions"]
+        if contribution["so_number"] == "ZZT-SO-COVER" and contribution["qty"] == "21"
+    )
+
+
+def test_a_line_an_active_decision_covers_says_so_and_carries_what_was_frozen():
+    with blank_session() as db:
+        world = _covered_world(db)
+        _decide_line_one(db, world)
+
+        board = _service(db).build(
+            ["ZZT-SO-COVER", "ZZT-SO-AHEAD"], granularity="week", as_of=TODAY
+        )
+
+        contribution = _covered_contribution(board, world)
+        assert contribution["covered"] is True
+        decision = contribution["decision"]
+        assert decision["revision_no"] == 1
+        assert decision["confirmed_at"] is not None
+        assert decision["timely_spo_qty"] == "0"
+        assert decision["reserve"] == []
+        assert decision["buy_qty"] == "33"
+        assert decision["amend_reason"] == (
+            "Borrowed rather than bought, agreed with the other site."
+        )
+        assert decision["borrow"] == [
+            {
+                "source": "other_location",
+                "warehouse_id": str(world["donor"].id),
+                "location": world["donor"].warehouse_code,
+                "donor_project_id": None,
+                "qty": "10",
+                # The person's own reason, not the rule's sentence: it is what the
+                # confirmation demands back when this composition is re-posted.
+                "reason": "The other site can wait a week.",
+            }
+        ]
+
+
+def test_an_undecided_line_of_the_same_order_is_not_marked_covered():
+    with blank_session() as db:
+        world = _covered_world(db)
+        _decide_line_one(db, world)
+
+        board = _service(db).build(
+            ["ZZT-SO-COVER", "ZZT-SO-AHEAD"], granularity="week", as_of=TODAY
+        )
+
+        sibling = _sibling_contribution(board)
+        assert sibling["covered"] is False
+        assert sibling["decision"] is None
+
+
+def test_a_covered_line_is_not_run_through_the_ladder_again():
+    """The heart of the defect: it was, and it re-proposed a Buy for a decided line."""
+    with blank_session() as db:
+        world = _covered_world(db)
+        _decide_line_one(db, world)
+
+        board = _service(db).build(
+            ["ZZT-SO-COVER", "ZZT-SO-AHEAD"], granularity="week", as_of=TODAY
+        )
+
+        contribution = _covered_contribution(board, world)
+        # The FROZEN composition, in the frozen order, and never a fresh Buy 43.
+        assert [
+            (source["kind"], source["qty"], source["location"])
+            for source in contribution["sources"]
+        ] == [
+            ("borrow", "10", world["donor"].warehouse_code),
+            ("buy", "33", None),
+        ]
+        assert contribution["qty_proposed_reserve"] == "0"
+        assert contribution["qty_proposed_incoming"] == "0"
+        assert contribution["qty_proposed_buy"] == "33"
+        # No ladder was walked for it, so it carries none - rather than an invented one whose
+        # first rung reads "had 20, offered 0", which is what a queue it is not in produces.
+        assert contribution["trail"] == []
+        assert contribution["contested"] is False
+
+
+def test_a_covered_line_says_nothing_about_a_queue_it_is_not_in():
+    """Absent, never zero.
+
+    "0 left for this line" is a claim about a contest. A covered line is not in the contest:
+    its claim on the pile is already expressed as a hold, which is exactly why `_pile_book`
+    leaves it out. So the three share fields are null and the screen says nothing.
+    """
+    with blank_session() as db:
+        world = _covered_world(db)
+        _decide_line_one(db, world)
+
+        board = _service(db).build(
+            ["ZZT-SO-COVER", "ZZT-SO-AHEAD"], granularity="week", as_of=TODAY
+        )
+
+        contribution = _covered_contribution(board, world)
+        assert contribution["so_qty_ahead"] is None
+        assert contribution["lines_ahead"] is None
+        assert contribution["available_to_this_line"] is None
+
+
+def test_covering_a_line_does_not_move_what_is_left_for_the_lines_behind_it():
+    """The queue is the book's, and the covered line was never ahead of its sibling.
+
+    Line 1 is dated after line 2, so it sits BEHIND it in the queue whether it is covered or
+    not. Its removal from that queue (the double-count rule) must therefore leave the
+    sibling's share exactly as it was, and the line of the earlier order must still be in
+    front of it.
+    """
+    with blank_session() as db:
+        world = _covered_world(db)
+
+        before = _sibling_contribution(
+            _service(db).build(
+                ["ZZT-SO-COVER", "ZZT-SO-AHEAD"], granularity="week", as_of=TODAY
+            )
+        )
+        _decide_line_one(db, world)
+        after = _sibling_contribution(
+            _service(db).build(
+                ["ZZT-SO-COVER", "ZZT-SO-AHEAD"], granularity="week", as_of=TODAY
+            )
+        )
+
+        for field in ("so_qty_ahead", "lines_ahead", "available_to_this_line"):
+            assert after[field] == before[field], field
+        # And the numbers are real ones, so the equality means something: the earlier order's
+        # 15 is still ahead of this line, leaving 5 of the 20 on hand for it.
+        assert after["lines_ahead"] == 1
+        assert after["so_qty_ahead"] == "15"
+        assert after["available_to_this_line"] == "5"
+
+
+def test_an_uncovered_line_of_a_partly_confirmed_order_is_still_proposed():
+    with blank_session() as db:
+        world = _covered_world(db)
+        _decide_line_one(db, world)
+
+        board = _service(db).build(
+            ["ZZT-SO-COVER", "ZZT-SO-AHEAD"], granularity="week", as_of=TODAY
+        )
+
+        sibling = _sibling_contribution(board)
+        assert sibling["qty_proposed_reserve"] == "5"
+        assert sibling["qty_proposed_buy"] == "16"
+        assert [step["kind"] for step in sibling["trail"]] == [
+            "reserve_own", "reserve_pool", "incoming", "borrow", "buy"
+        ]
+
+
+def test_a_cell_totals_the_frozen_numbers_for_a_covered_line():
+    """The strip and the counts read what was decided, not what would have been proposed."""
+    with blank_session() as db:
+        world = _covered_world(db)
+        _decide_line_one(db, world)
+
+        board = _service(db).build(
+            ["ZZT-SO-COVER", "ZZT-SO-AHEAD"], granularity="week", as_of=TODAY
+        )
+
+        cell = _cell(board, world["product"].product_code, "2026-08-31")
+        assert {c["qty"] for c in cell["contributions"]} == {"43", "21"}
+        location = next(
+            entry for entry in cell["locations"]
+            if entry["location"] == world["own"].warehouse_code
+        )
+        # 5 reserved for the sibling, and the frozen 33 plus the sibling's 16 bought.
+        assert location["qty_proposed_reserve"] == "5"
+        assert location["qty_proposed_buy"] == "49"
+        # Only the sibling is in a contest. A decided line is not competing for anything.
+        assert cell["contested_count"] == 1
+
+
+def test_the_covered_state_reaches_the_wire():
+    """A field the service returns and the response model does not declare is dropped."""
+    from app.models.base import company_scope
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        world = _covered_world(db)
+        _decide_line_one(db, world)
+        db.commit()
+
+        client, originals = _client(db, world["actor"], [VIEW])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                response = client.get(
+                    f"{BASE}/fulfilment-planning/board",
+                    params={"orders": "ZZT-SO-COVER,ZZT-SO-AHEAD", "granularity": "week"},
+                )
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 200, response.text
+        contribution = _covered_contribution(response.json(), world)
+        assert contribution["covered"] is True
+        assert contribution["decision"]["revision_no"] == 1
+        assert contribution["decision"]["buy_qty"] == "33"
+        assert contribution["decision"]["borrow"][0]["qty"] == "10"
+        assert [source["kind"] for source in contribution["sources"]] == ["borrow", "buy"]
+        assert contribution["so_qty_ahead"] is None

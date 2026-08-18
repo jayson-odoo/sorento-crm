@@ -878,6 +878,160 @@ def test_cross_project_borrow_writes_an_accepted_claim_directly_with_no_requeste
     ), "no requested-state claim should ever exist on the confirmation path"
 
 
+def test_a_borrow_that_leaves_the_donor_short_raises_an_order_inquiry_for_the_donor(api):
+    """PLAN 13.11. The captain: "when borrowed, does it / should it trigger an order back
+    via order inquiries? ... or we should order back only if the available quantity of the
+    borrowed location is negative?"
+
+    Only then. The donor here holds 100 and the book has already sold 90 of it, so its
+    availability is 10 and a borrow of 20 opens a hole of 10 - and purchasing is told about
+    the 10, at the DONOR's location, not the 20 that was taken.
+    """
+    from app.models.project_so import IV_BORROW_SHORTFALL, OrderInquiryRow
+
+    client, world = api
+    db = world.db
+    donor_wh = _warehouse(db, f"ZZT-SHORT-{_uid()[:4]}")
+    _stock(db, world.product, donor_wh, on_hand=100)
+    # The donor's own book: 90 of that 100 is already owed to somebody.
+    theirs = _core_so(db, world.company_id)
+    _core_line(db, theirs, world.product, donor_wh, qty_ordered="90")
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=20, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id,
+                    borrow=[
+                        {
+                            "source": "other_location",
+                            "warehouse_id": donor_wh.id,
+                            "qty": "20",
+                            "reason": "Their hand-over is in December.",
+                        }
+                    ],
+                )
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    # Nothing is BOUGHT for this line - it is fully borrowed - so the only row purchasing
+    # gets is the hole the borrow opened.
+    assert response.json()["inquiry_rows_created"] == 1
+
+    rows = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.verb == IV_BORROW_SHORTFALL)
+        .all()
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert str(row.qty) in ("10", "10.0000")
+    assert row.stock_location == donor_wh.warehouse_code
+    assert row.state == "raised"
+    assert row.so_line_id == line.id
+    # The sentence purchasing reads: what was taken, for whom, and who it left short.
+    assert "20" in row.note and donor_wh.warehouse_code in row.note
+    assert "short by 10" in row.note
+    assert order.provisional_ref in row.note
+
+
+def test_a_borrow_a_donor_can_afford_raises_nothing(api):
+    """A donor whose availability stays at or above zero needs nothing back. Borrowing from
+    them is a plain transfer, and raising a buy for it would order stock nobody is short of.
+    """
+    from app.models.project_so import IV_BORROW_SHORTFALL, OrderInquiryRow
+
+    client, world = api
+    db = world.db
+    donor_wh = _warehouse(db, f"ZZT-RICH-{_uid()[:4]}")
+    _stock(db, world.product, donor_wh, on_hand=100)
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=20, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id,
+                    borrow=[
+                        {
+                            "source": "other_location",
+                            "warehouse_id": donor_wh.id,
+                            "qty": "20",
+                            "reason": "They are holding far more than they will ship.",
+                        }
+                    ],
+                )
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["inquiry_rows_created"] == 0
+    assert (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.verb == IV_BORROW_SHORTFALL)
+        .count()
+        == 0
+    )
+
+
+def test_re_confirming_the_same_borrow_does_not_stack_a_second_shortfall_row(api):
+    """A shortfall row is superseded like every other still-raised row, never doubled."""
+    from app.models.project_so import IV_BORROW_SHORTFALL, OrderInquiryRow
+
+    client, world = api
+    db = world.db
+    donor_wh = _warehouse(db, f"ZZT-SHORT-{_uid()[:4]}")
+    _stock(db, world.product, donor_wh, on_hand=100)
+    theirs = _core_so(db, world.company_id)
+    _core_line(db, theirs, world.product, donor_wh, qty_ordered="90")
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=20, product=world.product, core_line=core_line)
+    db.commit()
+
+    payload = {
+        "lines": [
+            _line_payload(
+                line.id,
+                borrow=[
+                    {
+                        "source": "other_location",
+                        "warehouse_id": donor_wh.id,
+                        "qty": "20",
+                        "reason": "Their hand-over is in December.",
+                    }
+                ],
+            )
+        ]
+    }
+    assert client.post(f"{BASE}/sales-orders/{order.id}/confirm", json=payload).status_code == 200
+    assert client.post(f"{BASE}/sales-orders/{order.id}/confirm", json=payload).status_code == 200
+
+    rows = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.verb == IV_BORROW_SHORTFALL)
+        .all()
+    )
+    assert [row.state for row in rows].count("raised") == 1
+    assert len(rows) == 2, "the first is cancelled and kept, never edited in place"
+
+
 # --------------------------------------------------------------------------- discontinued
 
 

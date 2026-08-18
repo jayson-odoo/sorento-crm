@@ -5,6 +5,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { toast } from 'sonner';
 import {
   adoptSalesOrder,
+  getPileQueue,
   getPlanningBoard,
   confirmSupply,
   getReconciliation,
@@ -23,6 +24,7 @@ import { SALES_ORDERS_KEY, SALES_ORDER_KEY } from './useProjectSalesOrders';
 
 export const FULFILMENT_PLANNING_KEY = 'project-fulfilment-planning';
 export const PLANNING_BOARD_KEY = 'project-fulfilment-board';
+export const PILE_QUEUE_KEY = 'project-pile-queue';
 export const RECONCILIATION_KEY = 'project-so-reconciliation';
 export const SUPPLY_KEY = 'project-so-supply';
 
@@ -226,6 +228,30 @@ export function usePlanningBoard(
     ],
     queryFn: () => getPlanningBoard(soNumbers, granularity, previewPolicy, options),
     enabled: enabled && soNumbers.length > 0,
+    retry: 1,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/**
+ * The whole queue at one pile, on behalf of one line.
+ *
+ * `enabled` only once the dialog is open and the pile is addressable: a line whose sales order
+ * states no location has no pile to queue at, and asking for one would 404 behind a dialog that
+ * has nothing to show anyway.
+ */
+export function usePileQueue(
+  productId?: string | null,
+  warehouseId?: string | null,
+  lineId?: string | null,
+  enabled = true,
+) {
+  return useQuery({
+    // The asking line is part of the key: the same pile read on behalf of two different lines
+    // marks a different row and answers a different `leading_factor` per row.
+    queryKey: [PILE_QUEUE_KEY, productId ?? '', warehouseId ?? '', lineId ?? ''],
+    queryFn: () => getPileQueue(productId as string, warehouseId as string, lineId),
+    enabled: enabled && Boolean(productId) && Boolean(warehouseId),
     retry: 1,
     refetchOnWindowFocus: false,
   });

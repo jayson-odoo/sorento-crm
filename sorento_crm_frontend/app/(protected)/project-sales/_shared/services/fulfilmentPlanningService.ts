@@ -9,6 +9,7 @@ import type {
   FulfilmentPlanningListEnvelope,
   FulfilmentPlanningListParams,
   FulfilmentPlanningRow,
+  PileQueue,
   ReconciliationSummary,
   StockDetail,
   SupplyFailingLine,
@@ -338,5 +339,31 @@ export async function getStockDetail(
   );
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the stock detail'));
+  return response.json();
+}
+
+/**
+ * The whole queue at one pile, in the order the stock is served.
+ *
+ *   GET /project-sales/fulfilment-planning/queue?product_id=&warehouse_id=&line_id=
+ *
+ * The captain, after being shown the top three beside a rung: "I need to know what is ahead of
+ * me to have the visibility, and why they are ahead of me, meaning I need to know their rank
+ * also."
+ *
+ * `lineId` is the CORE sales-order line asking. It marks its own row, states its position, and
+ * makes every row above it say WHICH factor put it there. Omitted reads the queue on nobody's
+ * behalf, which is what the pile looks like to somebody who is not in it.
+ */
+export async function getPileQueue(
+  productId: string,
+  warehouseId: string,
+  lineId?: string | null,
+): Promise<PileQueue> {
+  const search = new URLSearchParams({ product_id: productId, warehouse_id: warehouseId });
+  if (lineId) search.set('line_id', lineId);
+  const response = await apiFetch(`${BASE}/fulfilment-planning/queue?${search.toString()}`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the queue'));
   return response.json();
 }

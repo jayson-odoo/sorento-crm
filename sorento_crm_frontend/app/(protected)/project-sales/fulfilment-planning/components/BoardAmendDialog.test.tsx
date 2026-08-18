@@ -313,3 +313,90 @@ describe('BoardAmendDialog: the balance, and what it stops', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Amending a line an ACTIVE decision already covers (PLAN 13.4).
+ *
+ * There is no proposal to seed from - the board proposes nothing for a decided line - so the
+ * editor opens on what was actually DECIDED. Seeding it from the engine instead would offer the
+ * planner the composition it would have suggested, silently discarding the borrow they made and
+ * the reason they gave for it.
+ */
+describe('BoardAmendDialog: a line a decision already covers', () => {
+  const frozen = {
+    revision_no: 1,
+    confirmed_at: '2026-08-18T02:00:00',
+    timely_spo_qty: '0',
+    reserve: [],
+    borrow: [
+      {
+        source: 'other_location' as const,
+        warehouse_id: 'wh-mwh-ib',
+        location: 'MWH-IB',
+        donor_project_id: null,
+        qty: '10',
+        reason: 'The other site can wait a week.',
+      },
+    ],
+    buy_qty: '33',
+    amend_reason: 'Borrowed rather than bought, agreed with the other site.',
+  };
+
+  const coveredContribution = () =>
+    contributionOf({}, {}, { qty: '43', decision: frozen });
+
+  it('opens on the frozen composition, borrow, reason and all', () => {
+    renderDialog(coveredContribution());
+
+    expect(screen.getByTestId('amend-owed').textContent).toBe('43');
+    expect(screen.getByLabelText('Borrow from MWH-IB')).toHaveValue(10);
+    expect(screen.getByLabelText('Buy')).toHaveValue(33);
+    // The line's own location is still a row, at zero, because "reserve it at my own warehouse
+    // instead" is the amendment a planner most often wants to make.
+    expect(screen.getByLabelText('Reserve at BRW-BB')).toHaveValue(0);
+    expect(screen.getByTestId('amend-balance').textContent).toBe(
+      '43 owed = 0 incoming + 0 reserve + 10 borrow + 33 buy',
+    );
+  });
+
+  it('says the donor position is not stated rather than printing it as zero', () => {
+    // A frozen borrow carries no donor impact - that is a fact about NOW - and "0 free before"
+    // would read as a donor holding nothing.
+    renderDialog(coveredContribution());
+
+    expect(screen.getByText("The donor's position is not stated here.")).toBeInTheDocument();
+  });
+
+  it('carries the reason the decision was made for, rather than demanding it again', () => {
+    renderDialog(coveredContribution());
+
+    expect(screen.getByLabelText(/^Why this differs/)).toHaveValue(
+      'Borrowed rather than bought, agreed with the other site.',
+    );
+    expect(screen.getByRole('button', { name: 'Save the amendment' })).toBeEnabled();
+  });
+
+  it('saves the composition the planner leaves behind, borrow reason intact', () => {
+    const { onSave } = renderDialog(coveredContribution());
+
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-BB'), { target: { value: '5' } });
+    fireEvent.change(screen.getByLabelText('Buy'), { target: { value: '28' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save the amendment' }));
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'amended',
+        reserve: [expect.objectContaining({ location: 'BRW-BB', qty: '5' })],
+        borrow: [
+          expect.objectContaining({
+            warehouse_id: 'wh-mwh-ib',
+            qty: '10',
+            reason: 'The other site can wait a week.',
+          }),
+        ],
+        buy_qty: '28',
+        reason: 'Borrowed rather than bought, agreed with the other site.',
+      }),
+    );
+  });
+});

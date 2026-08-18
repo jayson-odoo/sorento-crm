@@ -55,12 +55,36 @@ class BorrowDonorImpact(BaseModel):
 
 
 class BorrowCandidate(BaseModel):
+    """A donor, with the whole of its own position beside what it could give.
+
+    The captain, on a list that stated free stock alone: "before I decide to borrow, I need
+    to know I am not hurting them". Free nets reserved and confirmed holds only, so on this
+    book it reads as raw on-hand; the AutoCount triple is what says whether the donor can
+    actually spare it (PLAN 13.11).
+    """
+
     source: BorrowSource
     warehouse_code: str
     warehouse_id: str
     donor_project_ref: Optional[str] = None
     donor_project_id: Optional[str] = None
+    #: What this donor can give: the location's free stock, or the donor project's own hold.
     free_qty: str
+    #: AutoCount's Stock Status columns for the DONOR's (product, location) pile.
+    qty_on_hand: Optional[str] = None
+    so_qty: Optional[str] = None
+    spo_qty: Optional[str] = None
+    #: on hand - SO + SPO. SIGNED: a donor the book has oversold says so.
+    available_qty: Optional[str] = None
+    #: The engine's own pair, so the two arithmetics can be reconciled on screen.
+    qty_free: Optional[str] = None
+    qty_committed: Optional[str] = None
+    #: What this line still has to cover at the borrow rung, and what the donor is left with
+    #: once it is met. `available_after_need` is what the list is RANKED on, and is signed.
+    need_qty: Optional[str] = None
+    available_after_need: Optional[str] = None
+    #: First in the ranking - the donor this borrow hurts least. Exactly one row carries it.
+    recommended: bool = False
     donor_impact: BorrowDonorImpact
 
 

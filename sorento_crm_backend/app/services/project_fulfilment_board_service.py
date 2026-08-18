@@ -43,7 +43,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
@@ -51,12 +51,23 @@ from sqlalchemy.orm import Session
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product
-from app.models.project_so import ProjectSalesOrder, ProjectSalesOrderLine
+from app.models.project_so import (
+    DECISION_ACTIVE,
+    ProjectSalesOrder,
+    ProjectSalesOrderLine,
+    SOSupplyDecision,
+)
 from app.services.error_handler import AppException
-from app.services.project_supply_service import ProjectSupplyService, _dec, _open_of
+from app.services.project_supply_service import (
+    ProjectSupplyService,
+    _dec,
+    _leading_factor,
+    _open_of,
+)
 from app.services.scm import priority
 from app.services.scm.demand import demand_qty, is_open_demand, is_plan_demand_line
 from app.services.scm.front_planning_engine import (
+    BORROW,
     BUY,
     RESERVE,
     TIMELY_SPO,
@@ -159,6 +170,46 @@ def _bucket_label(key: str, granularity: str) -> str:
     return f"w/c {when.day} {month} {when.year}"
 
 
+#: Said by every rung the ladder reached after the line was already covered. One sentence, in
+#: one place, so five rungs cannot phrase the same fact five ways.
+_COVERED_BEFORE = "Fully covered before this rung."
+
+#: What each ranking factor MEANS when it is the reason another line stands in front of you.
+#: The planner's words, matching the frontend's `factorLabel` map subject for subject: the
+#: policy's own keys (`need_by_date`) are exactly what the rank chips were told to stop showing.
+_AHEAD_PHRASES = {
+    "need_by_date": "an earlier required date",
+    "document_age": "an older order date",
+    "customer_credit": "shorter payment terms",
+    "demand_class": "a higher-ranked demand type",
+    "po_document_sequence": "an earlier purchase order sequence",
+    #: Not a policy factor at all: these two are the tie-break, and naming a factor here would
+    #: claim a difference the two lines do not have.
+    "line_order": "an earlier line number in the same order",
+    "tie_break": "the same rank and a lower sales order number",
+}
+
+
+def _ahead_phrase(by_factor: Optional[Dict[str, int]]) -> str:
+    """Why the queue is ahead, in at most two reasons.
+
+    The two commonest, biggest first. Naming all five would be a paragraph, and a paragraph is
+    what the captain rejected ("the justification needs to be STRUCTURED").
+    """
+    ranked = sorted((by_factor or {}).items(), key=lambda item: (-item[1], item[0]))
+    phrases = [_AHEAD_PHRASES.get(key, key.replace("_", " ")) for key, _n in ranked[:2]]
+    if not phrases:
+        return "a higher rank"
+    return " or ".join(phrases)
+
+
+def _date_words(when: Optional[date]) -> str:
+    """A date as it is said out loud: `3 Sep 2026`. Never ISO inside a sentence."""
+    if when is None:
+        return "an unstated date"
+    return f"{when.day} {_MONTHS[when.month - 1]} {when.year}"
+
+
 def _project_key(label: Optional[str]) -> Optional[str]:
     """A stable key a pivot may group a project by.
 
@@ -201,6 +252,7 @@ class _Row:
         "raw_facts", "taken_before", "last_taker", "borrow_candidates",
         "project_sales_order_id", "project_line_id", "warehouse_ids", "project_key",
         "so_qty_ahead", "lines_ahead", "available_to_this_line",
+        "decision",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -228,10 +280,24 @@ class _Row:
         # component addresses a warehouse by id and the screen reads a code, so the pair has
         # to travel together (the same reason `SupplyComponent.source_warehouse_id` exists).
         self.warehouse_ids = {}
-        # The queue in front of this line at its own pile, and what it left behind.
-        self.so_qty_ahead = _ZERO
-        self.lines_ahead = 0
-        self.available_to_this_line = _ZERO
+        # The queue in front of this line at its own pile, and what it left behind. None on a
+        # covered line, which is not in that queue at all - see `covered`.
+        self.so_qty_ahead: Optional[Decimal] = _ZERO
+        self.lines_ahead: Optional[int] = 0
+        self.available_to_this_line: Optional[Decimal] = _ZERO
+        # What the order's ACTIVE revision froze for this line, when it covers it (13.4).
+        self.decision: Optional[Dict[str, Any]] = None
+
+    @property
+    def covered(self) -> bool:
+        """An active decision already covers this line, so nothing is proposed for it.
+
+        The board kept re-planning such a line - "Buy 43" beside a confirmed borrow of 10 and
+        buy of 33 - because it stayed in the board's demand while the pile's own queue
+        (`_pile_book`) rightly left it out: it asked the projection for a share it is
+        deliberately not in, got nothing, and read that as "nothing is ahead of you".
+        """
+        return self.decision is not None
 
     @property
     def unplannable(self) -> bool:
@@ -546,6 +612,128 @@ class FulfilmentBoardService:
             "incoming": incoming,
         }
 
+    def pile_queue(
+        self,
+        product_id: str,
+        warehouse_id: str,
+        line_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """The WHOLE queue at one pile, in the order the stock is actually served in.
+
+        The captain, having been given the top three beside the rung: "I need to know what is
+        ahead of me to have the visibility, and why they are ahead of me, meaning I need to know
+        their rank also."
+
+        So this is `_pile_book` read out - the SAME list `_attribution` counts `so_qty_ahead`
+        from, never a second ranking of the same pile - with each line's rank, the factors and
+        the facts behind it, the running total of what is claimed by the time the queue reaches
+        it, and (against the line that asked) which factor put it in front.
+
+        A line a confirmed decision covers is absent for the reason `_pile_book` states: its
+        claim is already expressed as a hold that came out of the opening stock, and listing it
+        again would count the same units twice. `is_covered_excluded` says so per row and is
+        false on every row that IS here, so the field means something the day the exclusion is
+        made visible rather than being a placeholder.
+        """
+        product = (
+            self.db.query(Product).filter(Product.id == product_id).first()
+            if product_id
+            else None
+        )
+        warehouse = (
+            self.db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
+            if warehouse_id
+            else None
+        )
+        if product is None or warehouse is None:
+            raise AppException(
+                status_code=404,
+                message="That product or location does not exist.",
+                code="pile_queue_not_found",
+            )
+
+        book = self.supply.pile_book(str(product.id), str(warehouse.id))
+        asked = next(
+            (row for row in book if line_id and row["line_id"] == str(line_id)), None
+        )
+        names = self._customer_names(
+            {row["customer_id"] for row in book if row.get("customer_id")}
+        )
+
+        lines: List[Dict[str, Any]] = []
+        running = _ZERO
+        for position, row in enumerate(book, start=1):
+            running += _dec(row["open_qty"])
+            raw = priority.raw_facts_for_demand_row(row)
+            lines.append(
+                {
+                    "position": position,
+                    "line_id": row["line_id"],
+                    "sales_order_id": row.get("sales_order_id"),
+                    "so_number": row["so_number"],
+                    "line_no": row.get("line_no"),
+                    "customer_name": names.get(row.get("customer_id") or ""),
+                    "qty": qty_text(_dec(row["open_qty"])),
+                    "required_date": row["required_date"],
+                    "order_date": row.get("order_date"),
+                    "payment_terms_days": row.get("payment_terms_days"),
+                    "demand_class": row.get("demand_class"),
+                    "rank_score": round(float(row.get("rank_score") or 0.0), 6),
+                    "rank_factors": [
+                        {**factor.as_dict(), "raw": raw.get(factor.key)}
+                        for factor in (row.get("factors") or [])
+                    ],
+                    # Why this line is in front of the one that asked. Null for the asked line
+                    # itself, which outranks nobody, and null when nobody asked.
+                    "leading_factor": (
+                        None
+                        if asked is None or row["line_id"] == asked["line_id"]
+                        else _leading_factor(asked, row)
+                    ),
+                    #: What the queue has claimed by the time it has served this row, this row
+                    #: included. Read down the column and the point the pile runs out is
+                    #: visible without arithmetic.
+                    "cumulative_ahead_qty": qty_text(running),
+                    "is_this_line": asked is not None and row["line_id"] == asked["line_id"],
+                    "is_covered_excluded": False,
+                }
+            )
+
+        return {
+            "product_id": str(product.id),
+            "item_code": product.product_code,
+            "description": product.product_name,
+            "warehouse_id": str(warehouse.id),
+            "location": warehouse.warehouse_code,
+            #: What the pile held before the queue drew on it: the same opening figure the
+            #: trail's own rung prints.
+            "qty_free_opening": qty_text(
+                self.supply.free_stock_by_location([str(product.id)]).get(
+                    (str(product.id), str(warehouse.id)), _ZERO
+                )
+            ),
+            "this_line_position": (
+                next(
+                    (line["position"] for line in lines if line["is_this_line"]),
+                    None,
+                )
+            ),
+            "policy_name": self._policy(None)[0],
+            "lines": lines,
+        }
+
+    def _customer_names(self, customer_ids: Iterable[str]) -> Dict[str, str]:
+        """Ids to names in one query. The queue prints a customer, never an id."""
+        ids = [cid for cid in customer_ids if cid]
+        if not ids:
+            return {}
+        rows = (
+            self.db.query(Customer.id, Customer.customer_name)
+            .filter(Customer.id.in_(ids))
+            .all()
+        )
+        return {str(row.id): row.customer_name for row in rows}
+
     # ---------------------------------------------------------------- policy
 
     def _policy(
@@ -629,6 +817,8 @@ class FulfilmentBoardService:
         # Resolved before the line numbers, which prefer the mirror's own numbering.
         self._addressing = self._mirror_addressing([str(line.id) for line, *_r in records])
         line_numbers = self._line_numbers(records)
+        # What an active revision already froze, per CORE line. One read for the whole board.
+        frozen = self._frozen_decisions()
 
         rows: List[_Row] = []
         for line, order, product, warehouse in records:
@@ -663,8 +853,97 @@ class FulfilmentBoardService:
             row.project_line_id = addressing.get("project_line_id")
             row.project_key = _project_key(row.project_label)
             row.payment_terms_days = terms.get(customer_id or "")
+            # Covered or not, and by what. A line an active decision covers is not planned
+            # again: it states the composition that was frozen for it (13.4).
+            row.decision = frozen.get(str(line.id))
             rows.append(row)
         return rows
+
+    def _frozen_decisions(self) -> Dict[str, Dict[str, Any]]:
+        """What each ACTIVE revision froze, keyed by the CORE line it covers.
+
+        The core line id is the key because that is what a snapshot names a covered line by,
+        and it is the same key `_decided_elsewhere` reads to keep such a line out of the pile's
+        queue - so the two halves of "this line is decided" cannot come apart.
+
+        One query for the whole board, and the parse is `ProjectSupplyService`'s own
+        (`frozen_lines_of`): a second reading of `line_snapshots` here would be a second
+        opinion about what a decision covered.
+        """
+        pso_ids = {
+            entry["project_sales_order_id"]
+            for entry in self._addressing.values()
+            if entry.get("project_sales_order_id")
+        }
+        if not pso_ids:
+            return {}
+        decisions = (
+            self.db.query(SOSupplyDecision)
+            .filter(
+                SOSupplyDecision.project_sales_order_id.in_(list(pso_ids)),
+                SOSupplyDecision.state == DECISION_ACTIVE,
+            )
+            .all()
+        )
+        out: Dict[str, Dict[str, Any]] = {}
+        for decision in decisions:
+            frozen = self.supply.frozen_lines_of(decision)
+            for snapshot in decision.line_snapshots or []:
+                core_line_id = (snapshot or {}).get("core_line_id")
+                line_id = str((snapshot or {}).get("project_line_id") or "")
+                if not core_line_id or line_id not in frozen:
+                    continue
+                out[str(core_line_id)] = self._line_decision(decision, frozen[line_id])
+        return out
+
+    def _line_decision(
+        self, decision: SOSupplyDecision, frozen: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """One covered line's frozen composition, in the words the confirmation takes back.
+
+        The WHOLE composition rather than a summary of it: a later confirmation on the same
+        order covers the UNION of what was decided before and what is being decided now (13.4),
+        and the board builds that union out of this. A summary could not be re-posted, and a
+        board that posted only the newly decided lines would silently un-decide the rest.
+        """
+        components = list(frozen.get("components") or [])
+
+        def total(kind: str) -> Decimal:
+            return sum(
+                (_dec(c.get("qty")) for c in components if c.get("kind") == kind), _ZERO
+            )
+
+        return {
+            "revision_no": decision.revision_no,
+            "confirmed_at": decision.confirmed_at,
+            "timely_spo_qty": qty_text(total(TIMELY_SPO)),
+            "reserve": [
+                {
+                    "warehouse_id": c.get("source_warehouse_id"),
+                    "location": c.get("source_location"),
+                    "qty": qty_text(_dec(c.get("qty"))),
+                }
+                for c in components
+                if c.get("kind") == RESERVE
+            ],
+            "borrow": [
+                {
+                    "source": c.get("source") or "other_location",
+                    "warehouse_id": c.get("source_warehouse_id"),
+                    "location": c.get("source_location"),
+                    "donor_project_id": c.get("donor_project_id"),
+                    "qty": qty_text(_dec(c.get("qty"))),
+                    # The PERSON's reason, with the rule's sentence as the fallback: the
+                    # confirmation refuses a Borrow carrying none, so re-posting this
+                    # composition needs whichever of the two was actually given.
+                    "reason": (c.get("cs_reason") or c.get("reason") or ""),
+                }
+                for c in components
+                if c.get("kind") == BORROW
+            ],
+            "buy_qty": qty_text(total(BUY)),
+            "amend_reason": frozen.get("amend_reason"),
+        }
 
     def _demand_pressure(
         self, product_ids: Iterable[str], warehouse_ids: Iterable[str]
@@ -848,10 +1127,21 @@ class FulfilmentBoardService:
         Borrow is not proposed, here or on the sheet: it needs a donor and a reason from a
         person (AC-B09). What the board does is SAY it is available, so a Buy is never printed
         as if the stock existed nowhere.
+
+        A line an ACTIVE decision covers is left out of all of it. It is not competing for the
+        pile - the pile's own queue leaves it out, because its claim is already a hold - so
+        running the ladder for it produced a fresh proposal for a line that had been decided,
+        beside share figures that defaulted to zero because it is not in the queue they are
+        counted from. It states what was frozen instead.
         """
+        # Covered rows still count towards the STOCK reads: a cell whose only line is decided
+        # still has a location, and dropping it here would blank that location's position.
         plannable = [row for row in served if not row.unplannable]
+        proposable = [row for row in plannable if not row.covered]
         for row in served:
-            if row.unplannable:
+            if row.covered:
+                self._apply_frozen(row)
+            elif row.unplannable:
                 row.sources = [
                     {
                         "kind": "unplannable",
@@ -894,12 +1184,12 @@ class FulfilmentBoardService:
                     "line_no": row.line_no,
                     "item_code": row.item_code,
                 }
-                for row in plannable
+                for row in proposable
             ]
         )
 
         piles: Dict[Tuple[str, str], List[_Row]] = defaultdict(list)
-        for row in plannable:
+        for row in proposable:
             piles[(row.product_id, row.warehouse_id)].append(row)
 
         # Pass one: bookkeeping only. How much of its own pile each line may have was already
@@ -928,7 +1218,7 @@ class FulfilmentBoardService:
         # Pass two: run the ladder per line, in board order, against the running pool balance.
         pool_left: Dict[str, Decimal] = {}
         borrow_cache: Dict[Tuple[Any, ...], List[Dict[str, Any]]] = {}
-        for row in plannable:
+        for row in proposable:
             fact = facts[row.key]
             pool_key = fact.pool_key
             if pool_key and pool_key not in pool_left:
@@ -975,18 +1265,120 @@ class FulfilmentBoardService:
             ) > _ZERO
 
             if bought > _ZERO:
-                # Cached per (product, location, hot-selling): the answer depends on the fact's
-                # reserve reach, not on the line, and recomputing it per row walks the whole
-                # free-stock cache once per row.
-                cache_key = (fact.product_id, row.warehouse_id, fact.is_hot_selling)
+                # Cached per (product, location, hot-selling, the Buy being covered): the
+                # facts depend on the fact's reserve reach rather than on the line, and
+                # recomputing them per row walks the whole free-stock cache once per row - but
+                # the RANKING is against this line's residual (13.11), so two rows buying
+                # different quantities are two different questions.
+                cache_key = (
+                    fact.product_id,
+                    row.warehouse_id,
+                    fact.is_hot_selling,
+                    bought,
+                )
                 if cache_key not in borrow_cache:
-                    borrow_cache[cache_key] = self.supply.borrow_candidates_for(fact)
+                    borrow_cache[cache_key] = self.supply.borrow_candidates_for(
+                        fact, need=bought
+                    )
                 row.borrow_candidates = borrow_cache[cache_key]
             else:
                 row.borrow_candidates = []
 
             row.sources = [self._source(component, row) for component in components]
             row.trail = self._trail(row, fact, components, pool_open)
+
+    def _apply_frozen(self, row: _Row) -> None:
+        """A covered line states what was decided for it, and nothing else (13.4).
+
+        The sources are the FROZEN composition, including a Borrow - the engine proposes none,
+        but a person did, and printing it as anything else would describe a decision nobody
+        took. There is no trail because no ladder was walked, no contest because a decided line
+        is not competing, and no share of the queue because it is not in the queue: `null`
+        there, never `0`, which would be a claim about a contest it left.
+        """
+        decision = row.decision or {}
+        reserve = sum((_dec(c["qty"]) for c in decision.get("reserve") or []), _ZERO)
+        incoming = _dec(decision.get("timely_spo_qty"))
+        bought = _dec(decision.get("buy_qty"))
+        row.proposed = {RESERVE: reserve, TIMELY_SPO: incoming, BUY: bought}
+        row.sources = [
+            *(
+                {
+                    "kind": RESERVE,
+                    "qty": component["qty"],
+                    "location": component.get("location"),
+                    "warehouse_id": component.get("warehouse_id"),
+                    "reason": self._frozen_reason(row, f"Reserved at {component.get('location')}"),
+                    "spo_number": None,
+                    "arrival_date": None,
+                }
+                for component in decision.get("reserve") or []
+            ),
+            *(
+                [
+                    {
+                        "kind": TIMELY_SPO,
+                        "qty": qty_text(incoming),
+                        "location": row.location,
+                        "warehouse_id": row.warehouse_id,
+                        "reason": self._frozen_reason(row, "Incoming supply, as confirmed"),
+                        "spo_number": None,
+                        "arrival_date": None,
+                    }
+                ]
+                if incoming > _ZERO
+                else []
+            ),
+            *(
+                {
+                    "kind": BORROW,
+                    "qty": component["qty"],
+                    "location": component.get("location"),
+                    "warehouse_id": component.get("warehouse_id"),
+                    "reason": self._frozen_reason(
+                        row,
+                        f"Borrowed from {component.get('location') or 'another location'}",
+                        component.get("reason"),
+                    ),
+                    "spo_number": None,
+                    "arrival_date": None,
+                }
+                for component in decision.get("borrow") or []
+            ),
+            *(
+                [
+                    {
+                        "kind": BUY,
+                        "qty": qty_text(bought),
+                        "location": None,
+                        "warehouse_id": None,
+                        "reason": self._frozen_reason(row, "Bought, as confirmed"),
+                        "spo_number": None,
+                        "arrival_date": None,
+                    }
+                ]
+                if bought > _ZERO
+                else []
+            ),
+        ]
+        row.trail = []
+        row.contested = False
+        row.borrow_candidates = []
+        row.so_qty_ahead = None
+        row.lines_ahead = None
+        row.available_to_this_line = None
+
+    @staticmethod
+    def _frozen_reason(row: _Row, what: str, said: Optional[str] = None) -> str:
+        """The sentence a frozen component carries: what was done, in which revision.
+
+        Never the engine's own reason for a proposal it did not make - this quantity was
+        decided by a person, and the reason they gave (a Borrow's, always) is what follows it.
+        """
+        revision = (row.decision or {}).get("revision_no")
+        sentence = f"{what} in revision {revision}." if revision else f"{what}."
+        stated = (said or "").strip()
+        return f"{sentence} {stated}" if stated else sentence
 
     def _trail(
         self,
@@ -1037,7 +1429,11 @@ class FulfilmentBoardService:
             taken: Decimal = _ZERO,
             ahead_qty: Optional[Decimal] = None,
             ahead_lines: Optional[int] = None,
+            ahead: Optional[Sequence[Dict[str, Any]]] = None,
+            ahead_more: int = 0,
+            ahead_by_factor: Optional[Dict[str, int]] = None,
             note: Optional[str] = None,
+            why: Optional[Callable[[str], str]] = None,
             eligible: bool = True,
             offer_only: bool = False,
         ) -> None:
@@ -1063,32 +1459,57 @@ class FulfilmentBoardService:
                     "opening": None if opening is None else qty_text(opening),
                     "ahead_qty": None if ahead_qty is None else qty_text(ahead_qty),
                     "ahead_lines": ahead_lines,
+                    # Who is in that queue, for the one rung that HAS a queue. The numbers said
+                    # 142 lines wanted 18730 and the captain asked "why do the orders stand
+                    # ahead of me? why?" - which is a question about names and reasons, not
+                    # about a total.
+                    "ahead": list(ahead or []),
+                    "ahead_more": ahead_more,
+                    "ahead_by_factor": dict(ahead_by_factor or {}),
                     "offered": qty_text(offered),
                     "taken": qty_text(taken),
                     "remaining_after": qty_text(remaining),
                     "outcome": outcome,
+                    # ONE sentence saying why the rung ended this way, chosen by the outcome the
+                    # arithmetic above just produced. Plain words: the row of numbers beside it
+                    # is what needed explaining, so restating it would explain nothing.
+                    "why": _COVERED_BEFORE if why is None else why(outcome),
                     "note": note,
                 }
             )
 
         # 1. The line's own location, and what the demand ranked ahead of it there had left.
+        own_opening = self._free.get((row.product_id, row.warehouse_id), _ZERO)
+        own_offered = _ZERO if fact.is_hot_selling else fact.available_to_this_line
+        own_taken = took(RESERVE, own_code) if not fact.is_hot_selling else _ZERO
         add(
             "reserve_own",
             location=own_code,
             warehouse_id=row.warehouse_ids.get(own_code),
-            opening=self._free.get((row.product_id, row.warehouse_id), _ZERO),
+            opening=own_opening,
             ahead_qty=fact.so_qty_ahead,
             ahead_lines=fact.lines_ahead,
-            offered=_ZERO if fact.is_hot_selling else fact.available_to_this_line,
-            taken=took(RESERVE, own_code) if not fact.is_hot_selling else _ZERO,
+            ahead=fact.ahead_lines_named,
+            ahead_more=fact.ahead_more,
+            ahead_by_factor=fact.ahead_by_factor,
+            offered=own_offered,
+            taken=own_taken,
             eligible=not fact.is_hot_selling,
             note="hot-selling: pool only" if fact.is_hot_selling else None,
+            why=lambda outcome: self._own_why(
+                fact, outcome, own_code, own_opening, own_offered, own_taken
+            ),
         )
 
         # 2. The shared pool, which a hot-selling product may draw on only above the pool's own
         #    reorder level (PLAN 3.3).
         if not pool_code:
-            add("reserve_pool", eligible=False, note="no shared pool")
+            add(
+                "reserve_pool",
+                eligible=False,
+                note="no shared pool",
+                why=lambda _outcome: "No shared pool for this product.",
+            )
         elif pool_code == own_code:
             add(
                 "reserve_pool",
@@ -1096,34 +1517,40 @@ class FulfilmentBoardService:
                 warehouse_id=row.warehouse_ids.get(pool_code),
                 eligible=False,
                 note="pool is this location",
+                why=lambda _outcome: "The pool is this location, already checked above.",
             )
         else:
             balance = max(_dec(pool_open), _ZERO)
+            pool_offered = max(balance - level, _ZERO) if fact.is_hot_selling else balance
+            pool_taken = took(RESERVE, pool_code)
             add(
                 "reserve_pool",
                 location=pool_code,
                 warehouse_id=row.warehouse_ids.get(pool_code),
                 opening=balance,
-                offered=(
-                    max(balance - level, _ZERO) if fact.is_hot_selling else balance
-                ),
-                taken=took(RESERVE, pool_code),
+                offered=pool_offered,
+                taken=pool_taken,
                 note=(
                     f"capped by reorder level {qty_text(level)}"
                     if fact.is_hot_selling and level > _ZERO
                     else None
                 ),
+                why=lambda outcome: self._pool_why(
+                    fact, outcome, balance, level, pool_offered, pool_taken
+                ),
             )
 
         # 3. Supply already on its way that lands on or before the required date.
+        incoming_taken = took(TIMELY_SPO, own_code)
         add(
             "incoming",
             location=own_code,
             warehouse_id=row.warehouse_ids.get(own_code),
             opening=fact.timely_qty,
             offered=fact.timely_qty,
-            taken=took(TIMELY_SPO, own_code),
+            taken=incoming_taken,
             note=self._incoming_note(fact),
+            why=lambda outcome: self._incoming_why(fact, outcome, incoming_taken),
         )
 
         # 4. Borrow: offered, never proposed. It needs a donor and a reason from a person
@@ -1135,19 +1562,124 @@ class FulfilmentBoardService:
             "borrow",
             opening=donors if row.borrow_candidates else _ZERO,
             offered=donors,
-            note=(
-                f"{len(row.borrow_candidates)} donor"
-                f"{'' if len(row.borrow_candidates) == 1 else 's'}"
-                if row.borrow_candidates
-                else None
-            ),
+            note=self._donor_note(row),
+            why=lambda outcome: self._borrow_why(outcome),
             offer_only=True,
         )
 
         # 5. Whatever is still uncovered.
         residual = row.proposed.get(BUY, _ZERO)
-        add("buy", offered=residual, taken=residual)
+        add(
+            "buy",
+            offered=residual,
+            taken=residual,
+            why=lambda outcome: (
+                "Nothing left to take, so the remainder is bought."
+                if outcome == "took"
+                else _COVERED_BEFORE
+            ),
+        )
         return steps
+
+    # ------------------------------------------------------------------ why, per rung
+
+    def _own_why(
+        self,
+        fact: Any,
+        outcome: str,
+        location: Optional[str],
+        opening: Decimal,
+        offered: Decimal,
+        taken: Decimal,
+    ) -> str:
+        """Why the line's own location ended where it did, in one sentence.
+
+        The captain's own rung read `478 | 18730 across 142 lines | 0 | 0 | 21 | Nothing left`,
+        and his question was "what does this mean? why do the orders stand ahead of me? why?".
+        So the sentence names the queue, what it wants, and WHY those lines rank first - in the
+        planner's words, never in the policy's factor keys.
+        """
+        where = f" at {location}" if location else ""
+        if outcome == "not_eligible":
+            return "Hot-selling item: own-location stock stays for retail, pool only."
+        if outcome == "none_needed":
+            return _COVERED_BEFORE
+        if outcome == "took":
+            if fact.lines_ahead:
+                return (
+                    f"{qty_text(offered)} left after the {fact.lines_ahead} lines ahead; "
+                    f"this line takes {qty_text(taken)}."
+                )
+            return f"First in the queue here; this line takes {qty_text(taken)}."
+        if fact.lines_ahead:
+            return (
+                f"{qty_text(opening)} on hand, but {fact.lines_ahead} lines with "
+                f"{_ahead_phrase(fact.ahead_by_factor)} rank ahead and want "
+                f"{qty_text(fact.so_qty_ahead)} - none is left for this line."
+            )
+        return f"No free stock{where}."
+
+    def _pool_why(
+        self,
+        fact: Any,
+        outcome: str,
+        balance: Decimal,
+        level: Decimal,
+        offered: Decimal,
+        taken: Decimal,
+    ) -> str:
+        if outcome == "none_needed":
+            return _COVERED_BEFORE
+        if outcome == "took":
+            return f"The pool offers {qty_text(offered)}; this line takes {qty_text(taken)}."
+        if fact.is_hot_selling and level > _ZERO and balance > _ZERO:
+            return (
+                f"Pool holds {qty_text(balance)} free, capped by reorder level "
+                f"{qty_text(level)}."
+            )
+        return "No free stock at the pool."
+
+    def _incoming_why(self, fact: Any, outcome: str, taken: Decimal) -> str:
+        if outcome == "none_needed":
+            return _COVERED_BEFORE
+        refs = list(fact.timely_refs or [])
+        if refs:
+            first = refs[0]
+            when = _date_words(first.arrival_date) if first.arrival_date else "an unstated date"
+            more = f" (+{len(refs) - 1} more)" if len(refs) > 1 else ""
+            arriving = f"{first.spo_number} arrives {when}, in time{more}"
+            if outcome == "took":
+                return f"{arriving}; this line takes {qty_text(taken)}."
+            return f"{arriving}."
+        if fact.required_date:
+            return f"No supplier PO arrives by {_date_words(fact.required_date)}."
+        return "No supplier PO is on its way to this location."
+
+    @staticmethod
+    def _borrow_why(outcome: str) -> str:
+        """The answer to "why is the donor offered but I did not take" (the captain, verbatim)."""
+        if outcome == "none_needed":
+            return _COVERED_BEFORE
+        if outcome == "offered":
+            return (
+                "Borrowing is never automatic: a person names the donor and the reason. "
+                "Use Amend to borrow."
+            )
+        return "No other location holds this product free."
+
+    @staticmethod
+    def _donor_note(row: _Row) -> Optional[str]:
+        """Which donors, and how much each holds. Named beats counted: "6 donors" is not a place
+        anybody can go and ask."""
+        candidates = row.borrow_candidates
+        if not candidates:
+            return None
+        shown = " · ".join(
+            f"{candidate['warehouse_code']} {qty_text(_dec(candidate['free_qty']))}"
+            for candidate in candidates[:3]
+        )
+        more = len(candidates) - 3
+        return f"{shown} (+{more} more)" if more > 0 else shown
 
     @staticmethod
     def _incoming_note(fact: Any) -> Optional[str]:
@@ -1288,6 +1820,12 @@ class FulfilmentBoardService:
         """
         first = rows[0]
         key = (first.product_id, first.warehouse_id)
+        # What was still unclaimed when this cell was reached, off the first row that was
+        # actually served: a covered row never draws the pile down, so reading it off the first
+        # row full stop would answer "not stated" for a cell whose first line is decided.
+        free_remaining = next(
+            (row.free_before for row in rows if row.free_before is not None), None
+        )
         on_hand, reserved = self._levels.get(key, (None, None))
         incoming = self._incoming.get(key, [])
         stated = location is not None and first.warehouse_id is not None
@@ -1323,7 +1861,7 @@ class FulfilmentBoardService:
             #: dates draw first, so a December cell can face a smaller pile than the product's
             #: free figure suggests.
             "qty_free_remaining": (
-                qty_text(first.free_before) if stated and first.free_before is not None
+                qty_text(free_remaining) if stated and free_remaining is not None
                 else None
             ),
             #: What confirmed decisions are holding here. On hand, less reserved, less this, IS
@@ -1376,6 +1914,15 @@ class FulfilmentBoardService:
         return {
             "key": row.key,
             "sales_order_id": row.sales_order_id,
+            #: The CORE sales-order line, which is what the pile queue is addressed by
+            #: (`GET .../fulfilment-planning/queue?line_id=`). Addressing only, never rendered.
+            #: Distinct from `project_line_id`, which is the MIRROR and is null until somebody
+            #: adopts the order - a line with no mirror still stands in a queue.
+            "line_id": row.line_id,
+            #: The product, for the same drill-down and by the same rule: two products on the
+            #: live book share the item code `B2155-NL-BLUE`, so a pile looked up by code would
+            #: be the wrong pile. Addressing only, never rendered.
+            "product_id": row.product_id,
             #: The MIRROR line id, which is what `confirm` names a line by
             #: (`lines[].project_line_id`). Null until somebody adopts this sales order, and
             #: null is the honest answer: there is no planning record to confirm against.
@@ -1410,9 +1957,16 @@ class FulfilmentBoardService:
             #: The arithmetic behind the Reserve, in the strip's own vocabulary, so the planner
             #: can check it against the drill-down: "1015 on hand, 1015 owed to 12 lines ranked
             #: ahead, 0 left for this line, so it is bought".
-            "so_qty_ahead": qty_text(row.so_qty_ahead),
+            #: Null on a covered line, which is not in the queue these count (see `covered`).
+            "so_qty_ahead": (
+                None if row.so_qty_ahead is None else qty_text(row.so_qty_ahead)
+            ),
             "lines_ahead": row.lines_ahead,
-            "available_to_this_line": qty_text(row.available_to_this_line),
+            "available_to_this_line": (
+                None
+                if row.available_to_this_line is None
+                else qty_text(row.available_to_this_line)
+            ),
             "qty_borrow_available": qty_text(
                 sum(
                     (_dec(candidate["free_qty"]) for candidate in row.borrow_candidates),
@@ -1431,6 +1985,18 @@ class FulfilmentBoardService:
                     "donor_project_ref": candidate.get("donor_project_ref"),
                     "donor_project_id": candidate.get("donor_project_id"),
                     "free_qty": candidate["free_qty"],
+                    # AutoCount's triple for the DONOR's pile, and the ranking that put this
+                    # row where it is (PLAN 13.11). "Before I decide to borrow, I need to
+                    # know I am not hurting them" is not answerable from a free figure.
+                    "qty_on_hand": candidate.get("qty_on_hand"),
+                    "so_qty": candidate.get("so_qty"),
+                    "spo_qty": candidate.get("spo_qty"),
+                    "available_qty": candidate.get("available_qty"),
+                    "qty_free": candidate.get("qty_free"),
+                    "qty_committed": candidate.get("qty_committed"),
+                    "need_qty": candidate.get("need_qty"),
+                    "available_after_need": candidate.get("available_after_need"),
+                    "recommended": bool(candidate.get("recommended")),
                     "donor_impact": candidate.get("donor_impact"),
                 }
                 for candidate in row.borrow_candidates
@@ -1455,6 +2021,10 @@ class FulfilmentBoardService:
                 {**factor.as_dict(), "raw": row.raw_facts.get(factor.key)}
                 for factor in row.rank_factors
             ],
+            #: An active decision already covers this line, and what it froze. A covered line
+            #: is not proposed for again: everything above states what was DECIDED.
+            "covered": row.covered,
+            "decision": row.decision,
             "sources": row.sources,
             # The ladder, rung by rung, in the order it was walked - including the rungs that
             # gave nothing, because "the pool was checked and had none" is the answer to "how

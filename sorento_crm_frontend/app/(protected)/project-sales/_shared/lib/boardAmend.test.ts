@@ -141,6 +141,15 @@ describe('borrowCandidatesOf: only a donor the confirmation can name', () => {
           warehouse_code: 'BRW-IB',
           warehouse_id: 'wh-ib',
           free_qty: '25',
+          qty_on_hand: '30',
+          so_qty: '10',
+          spo_qty: '5',
+          available_qty: '25',
+          qty_free: '25',
+          qty_committed: '0',
+          need_qty: '10',
+          available_after_need: '15',
+          recommended: true,
           donor_impact: {
             free_before: '25',
             free_after_full_borrow: '0',
@@ -150,6 +159,8 @@ describe('borrowCandidatesOf: only a donor the confirmation can name', () => {
       ],
     });
 
+    // The donor's own position travels whole, including where the server ranked it: the
+    // dialog tabulates it, and a field dropped here is a field the screen cannot show.
     expect(candidates).toEqual([
       {
         source: 'other_location',
@@ -158,6 +169,15 @@ describe('borrowCandidatesOf: only a donor the confirmation can name', () => {
         donor_project_ref: null,
         donor_project_id: null,
         free_qty: '25',
+        qty_on_hand: '30',
+        so_qty: '10',
+        spo_qty: '5',
+        available_qty: '25',
+        qty_free: '25',
+        qty_committed: '0',
+        need_qty: '10',
+        available_after_need: '15',
+        recommended: true,
         donor_impact: {
           free_before: '25',
           free_after_full_borrow: '0',
@@ -165,6 +185,34 @@ describe('borrowCandidatesOf: only a donor the confirmation can name', () => {
         },
       },
     ]);
+  });
+
+  it('states a donor position the server left out as absent, never as zero', () => {
+    const base = contributionOf({});
+
+    expect(
+      borrowCandidatesOf({
+        ...base,
+        borrow_candidates: [
+          {
+            source: 'other_location',
+            warehouse_code: 'BRW-IB',
+            warehouse_id: 'wh-ib',
+            free_qty: '25',
+          },
+        ],
+      })[0],
+    ).toMatchObject({
+      qty_on_hand: null,
+      so_qty: null,
+      spo_qty: null,
+      available_qty: null,
+      qty_free: null,
+      qty_committed: null,
+      need_qty: null,
+      available_after_need: null,
+      recommended: false,
+    });
   });
 
   it('leaves out a donor the server gave no warehouse id for, rather than inventing one', () => {

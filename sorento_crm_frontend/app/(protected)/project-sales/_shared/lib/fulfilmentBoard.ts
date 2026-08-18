@@ -21,7 +21,9 @@ import type {
   BoardCell,
   BoardCommitPreview,
   BoardContribution,
+  BoardDecision,
   BoardDraft,
+  BoardLineDecision,
   BoardOrderStanding,
   BoardRowAxis,
   ConfirmLine,
@@ -69,6 +71,20 @@ export function factorLabel(key: string): string {
 }
 
 /**
+ * Why one line stands in front of another, named.
+ *
+ * The policy's factors, plus the two the TIE-BREAK produces when the policy separated nothing:
+ * an earlier line of the same order, or a lower sales-order number. Those two are not factors
+ * and must not read as if they were - "Required date" beside two lines that share a required
+ * date is the kind of confident wrong answer that stops a screen being believed.
+ */
+export function aheadFactorLabel(key: string): string {
+  if (key === 'line_order') return 'same order';
+  if (key === 'tie_break') return 'tie-break';
+  return factorLabel(key);
+}
+
+/**
  * Which sales order each contribution key belongs to.
  *
  * Accumulated by the panel across every board it has shown, rather than rebuilt from the cells
@@ -99,19 +115,32 @@ export function standingsFor(
   orders: BoardOrderStanding[],
   owners: ContributionOwners,
   draft: BoardDraft,
+  /**
+   * The contributions an ACTIVE decision already covers, accumulated the same way `owners` is.
+   *
+   * A confirmed line IS decided - it is decided in the database rather than in the draft - and
+   * a card reading "0 of 2 lines decided" beside an order whose first line was confirmed
+   * yesterday describes nothing that is true.
+   */
+  covered: ReadonlySet<string> = new Set(),
 ): BoardOrderStanding[] {
   const decided = new Map<string, number>();
   const committing = new Map<string, number>();
-  for (const [key, decision] of Object.entries(draft)) {
+  const counted = new Set<string>();
+  const count = (key: string, commits: boolean) => {
     const salesOrderId = owners.get(key);
-    if (!salesOrderId) continue;
+    // Counted once per LINE: a covered line the planner has amended is one decision, not two.
+    if (!salesOrderId || counted.has(key)) return;
+    counted.add(key);
     decided.set(salesOrderId, (decided.get(salesOrderId) ?? 0) + 1);
+    if (commits) committing.set(salesOrderId, (committing.get(salesOrderId) ?? 0) + 1);
+  };
+  for (const [key, decision] of Object.entries(draft)) {
     // A REJECTED line is decided but not committed: the planner said no, and the confirm body
     // deliberately omits it so it stays undecided and keeps flowing to reorder planning.
-    if (decision.verdict !== 'rejected') {
-      committing.set(salesOrderId, (committing.get(salesOrderId) ?? 0) + 1);
-    }
+    count(key, decision.verdict !== 'rejected');
   }
+  for (const key of covered) count(key, true);
   return [...orders]
     .map((order) => ({
       ...order,
@@ -172,6 +201,16 @@ export function commitPreviewFor(
  *
  * An AMENDMENT moves the difference into Buy. The quantity a planner takes off a Reserve does
  * not evaporate: it is still owed, and somebody still has to buy it.
+ *
+ * THE BODY IS THE UNION (13.4): every line the order's ACTIVE decision already covers is
+ * re-emitted from what was frozen for it, beside the lines being decided now. A confirmation
+ * SUPERSEDES the active revision and writes only the lines it was sent, so a body naming just
+ * the new ones silently un-decides everything confirmed before it - which is precisely what the
+ * board did, while the per-order sheet (which submits every line, seeded from the frozen
+ * decision) got the union for free.
+ *
+ * A confirmation carrying nothing NEW is not sent at all: re-posting the covered lines on their
+ * own would supersede a revision with a copy of itself, which is a decision nobody took.
  */
 export function confirmLinesFor(
   contributions: BoardContribution[],
@@ -179,9 +218,22 @@ export function confirmLinesFor(
   draft: BoardDraft,
 ): ConfirmLine[] {
   const lines: ConfirmLine[] = [];
+  let decidedNow = 0;
   for (const contribution of contributions) {
     if (contribution.sales_order_id !== salesOrderId) continue;
     const decision = draft[contribution.key];
+    if (decision && decision.verdict !== 'rejected') decidedNow += 1;
+
+    // ALREADY CONFIRMED, AND NOT TOUCHED SINCE: posted back exactly as it was frozen. Not
+    // re-derived from the proposal, because there is no proposal - the board proposes nothing
+    // for a covered line, and inventing one would overwrite a person's composition with the
+    // engine's opinion of it.
+    if (contribution.covered && contribution.decision && !isAmendment(decision)) {
+      if (!contribution.project_line_id) continue;
+      lines.push(frozenLineOf(contribution.project_line_id, contribution.decision));
+      continue;
+    }
+
     if (!decision || decision.verdict === 'rejected') continue;
     if (!contribution.project_line_id) continue;
 
@@ -257,7 +309,38 @@ export function confirmLinesFor(
       amend_reason: decision.verdict === 'amended' ? decision.reason : undefined,
     });
   }
-  return lines;
+  // Nothing new was decided, so there is nothing to confirm. The covered lines above are
+  // already in the database.
+  return decidedNow > 0 ? lines : [];
+}
+
+/** An amendment composed in the editor, which replaces whatever was there before. */
+function isAmendment(decision: BoardDecision | undefined): boolean {
+  return decision?.verdict === 'amended';
+}
+
+/** One already-confirmed line, posted back as it was frozen (see `confirmLinesFor`). */
+function frozenLineOf(projectLineId: string, decision: BoardLineDecision): ConfirmLine {
+  return {
+    project_line_id: projectLineId,
+    timely_spo_qty: decision.timely_spo_qty,
+    reserve: decision.reserve
+      .filter((row) => toMinor(row.qty) > 0)
+      .map((row) => ({ warehouse_id: row.warehouse_id, qty: row.qty })),
+    borrow: decision.borrow
+      .filter((row) => toMinor(row.qty) > 0)
+      .map((row) => ({
+        source: row.source,
+        warehouse_id: row.warehouse_id ?? '',
+        donor_project_id: row.donor_project_id ?? null,
+        qty: row.qty,
+        // The person's own reason, kept: the confirmation refuses a Borrow without one, so a
+        // re-post that dropped it would fail the whole body for a line nobody had touched.
+        reason: row.reason,
+      })),
+    buy_qty: decision.buy_qty,
+    amend_reason: decision.amend_reason ?? undefined,
+  };
 }
 
 /** The server's figure when it sent one, else the fallback. Absent is not zero. */

@@ -645,48 +645,33 @@ describe('FulfilmentBoardPanel: the commit rail is selection-scoped, not window-
   });
 });
 
-describe('FulfilmentBoardPanel: the ranking policy (13.5)', () => {
+/**
+ * The ranking policy is NOT stated at the top of the board (13.5, amended 18 August).
+ *
+ * The banner named the rule and listed its weights above every board, and the captain's verdict
+ * was "this text is not needed at the top". It was answering a question nobody had asked, in the
+ * place where the columns and the grid have to be. The name survives where somebody IS asking -
+ * above the factor table in the rank popover - so nothing is lost, it has simply moved to the
+ * moment it is wanted.
+ */
+describe('FulfilmentBoardPanel: no ranking banner at the top (13.5)', () => {
   /** A board with the policy the server actually sends, flag and all. */
   function boardWithPolicy(policy: Partial<BoardPolicy>) {
     const board = boardOf([demand()]);
     return { ...board, policy: { ...board.policy, ...policy } };
   }
 
-  it('names the policy the board ranked by', async () => {
+  it('does not name the policy above the board', async () => {
     getPlanningBoard.mockResolvedValue(boardOf([demand()]));
 
     renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
 
-    expect(await screen.findByText("Today's rule (PO document sequence)")).toBeInTheDocument();
+    expect(screen.queryByText("Today's rule (PO document sequence)")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Ranked by/)).not.toBeInTheDocument();
   });
 
-  /**
-   * Deviation 1: `discriminates_nothing` is the SERVER's verdict, not something the screen
-   * infers from the weights. The server also catches "weighted but constant" - every row on
-   * this board is project-class, so `demand_class` can carry a real weight and still separate
-   * nobody - which no reading of the factor map on this side can see.
-   */
-  it('says the ranking is flat when the SERVER says the policy discriminates nothing', async () => {
-    getPlanningBoard.mockResolvedValue(
-      boardWithPolicy({
-        name: 'Weighted but useless here',
-        // Deliberately non-zero weights: a screen deriving the answer from these would call
-        // this policy healthy and say nothing.
-        factors: { demand_class: 3, need_by_date: 0 },
-        discriminates_nothing: true,
-      }),
-    );
-
-    renderPanel();
-
-    expect(
-      await screen.findByText(
-        'This policy weights nothing that separates these rows, so every one scores the same and the ranking is flat.',
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it('shows the weights, and no warning, when the server says the policy does discriminate', async () => {
+  it('does not print the weights above the board either', async () => {
     getPlanningBoard.mockResolvedValue(
       boardWithPolicy({
         name: 'Fulfilment board preview',
@@ -696,22 +681,49 @@ describe('FulfilmentBoardPanel: the ranking policy (13.5)', () => {
     );
 
     renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
 
-    // In words now, not in column names.
-    expect(await screen.findByText('Required date 3 · Order date 1')).toBeInTheDocument();
-    expect(
-      screen.queryByText(/the ranking is flat/),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText('Required date 3 · Order date 1')).not.toBeInTheDocument();
   });
 
-  it('labels a previewed ranking as not live', async () => {
+  /**
+   * The flatness sentence goes with it. It was written when the live policy weighted only
+   * `po_document_sequence` and ranked nothing at all; the fair policy is live now and STILL
+   * reports `discriminates_nothing` on a single-order board, because customer, order date and
+   * demand class are constant across one order. So the sentence fired on healthy boards, and a
+   * warning that is usually wrong teaches people to ignore warnings. What a cell could not
+   * separate is still said inside the cell, by `rankingNote`, where it is about those rows.
+   */
+  it('does not warn that the ranking is flat, even when the server says it is', async () => {
+    getPlanningBoard.mockResolvedValue(
+      boardWithPolicy({
+        name: 'Weighted but useless here',
+        factors: { demand_class: 3, need_by_date: 0 },
+        discriminates_nothing: true,
+      }),
+    );
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(screen.queryByText(/the ranking is flat/)).not.toBeInTheDocument();
+  });
+
+  it('carries no preview controls at all, in either direction', async () => {
     getPlanningBoard.mockResolvedValue(
       boardWithPolicy({ name: 'Fulfilment board preview', is_preview: true }),
     );
 
     renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
 
-    expect(await screen.findByText('Preview, not live')).toBeInTheDocument();
+    expect(screen.queryByText('Preview, not live')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Back to the live policy' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Preview a fairer weighting' }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -1302,19 +1314,30 @@ describe('FulfilmentBoardPanel: searching the product rows', () => {
 });
 
 /**
- * The policy banner, now that a policy that actually ranks is live.
+ * The board is always fetched against the LIVE policy.
  *
- * It was printing the same raw identifiers the rank chips were told to stop printing
- * ("demand_class 3 · document_age 1 · need_by_date 3"), and offering to preview a fairer
- * weighting when the fair weighting IS the live one.
+ * The what-if existed to show what a fair weighting would do before one was switched on. The
+ * fair policy is the live one now, so the offer was retired, and the banner that carried the way
+ * back went with the banner itself (the captain: "this text is not needed at the top").
  */
-describe('FulfilmentBoardPanel: the policy banner reads as words', () => {
+describe('FulfilmentBoardPanel: the live policy, and only it', () => {
   function withPolicy(policy: Partial<BoardPolicy>) {
     const board = boardOf([demand()]);
     return { ...board, policy: { ...board.policy, ...policy } };
   }
 
-  it('names the weighted factors in plain words, never as database columns', async () => {
+  it('never asks the server for a previewed ranking', async () => {
+    getPlanningBoard.mockResolvedValue(
+      withPolicy({ name: 'Fair weighting', is_preview: false, discriminates_nothing: false }),
+    );
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(getPlanningBoard).toHaveBeenCalledWith(['SO403340'], 'week', false, {});
+  });
+
+  it('prints no policy identifiers anywhere above the grid', async () => {
     getPlanningBoard.mockResolvedValue(
       withPolicy({
         name: 'Fair weighting',
@@ -1324,65 +1347,13 @@ describe('FulfilmentBoardPanel: the policy banner reads as words', () => {
     );
 
     renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
 
-    expect(await screen.findByText('Required date 3 · Order date 1 · Payment terms 1')).toBeInTheDocument();
     expect(screen.queryByText(/need_by_date/)).not.toBeInTheDocument();
     expect(screen.queryByText(/po_document_sequence/)).not.toBeInTheDocument();
-  });
-
-  it('offers no preview when the live policy already ranks these rows', async () => {
-    getPlanningBoard.mockResolvedValue(
-      withPolicy({ name: 'Fair weighting', is_preview: false, discriminates_nothing: false }),
-    );
-
-    renderPanel();
-    await screen.findByTestId('fulfilment-board-matrix');
-
-    // "Preview a fairer weighting" against a policy that IS the fair one is an offer to
-    // nowhere.
     expect(
-      screen.queryByRole('button', { name: 'Preview a fairer weighting' }),
+      screen.queryByText('Required date 3 · Order date 1 · Payment terms 1'),
     ).not.toBeInTheDocument();
-  });
-
-  it('offers no preview even on a flat board, because the fair policy is the live one now', async () => {
-    // Measured on the live stack: the active policy IS "Fair fulfilment priority (delivery
-    // date, document date, customer credit)" and STILL reports discriminates_nothing on a
-    // single-order board, because those factors are constant across one order's lines. So a
-    // flat ranking no longer implies an unfair policy, and "preview a fairer weighting" would
-    // offer the policy that is already running.
-    getPlanningBoard.mockResolvedValue(
-      withPolicy({
-        name: 'Fair fulfilment priority (delivery date, document date, customer credit)',
-        is_preview: false,
-        discriminates_nothing: true,
-      }),
-    );
-
-    renderPanel();
-    await screen.findByTestId('fulfilment-board-matrix');
-
-    expect(
-      screen.queryByRole('button', { name: 'Preview a fairer weighting' }),
-    ).not.toBeInTheDocument();
-    // The flatness itself is still stated - that is a fact about this board.
-    expect(
-      screen.getByText(
-        'This policy weights nothing that separates these rows, so every one scores the same and the ranking is flat.',
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it('offers the way back while a preview is on show', async () => {
-    getPlanningBoard.mockResolvedValue(
-      withPolicy({ is_preview: true, discriminates_nothing: false }),
-    );
-
-    renderPanel();
-
-    expect(
-      await screen.findByRole('button', { name: 'Back to the live policy' }),
-    ).toBeInTheDocument();
   });
 });
 

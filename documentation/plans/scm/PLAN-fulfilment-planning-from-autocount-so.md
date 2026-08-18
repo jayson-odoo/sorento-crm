@@ -2032,6 +2032,52 @@ now posts to the SAME per-order endpoint the sheet uses,
   warning is spent and the destination is a real place to send somebody. The second sentence is
   unchanged, because it is still true.
 
+#### A line the active decision already covers (19 August 2026)
+
+Two defects with one root, both found on SO403765 line 1 after it was confirmed as "borrow 10
+from MWH-IB, buy 33".
+
+**The board went on planning it.** `_demand_rows` kept every open line, including one an active
+decision covers, while `_pile_book` / `_decided_elsewhere` deliberately EXCLUDE such a line from
+the pile's queue - that exclusion is the double-count rule and is correct, because the line's
+claim is already expressed once, as a hold `_free_stock` has taken out. So the covered line asked
+the projection for a share it is not in, got nothing back, and every share field defaulted to
+zero: "First in the queue at BRW-BB - 0 left for this line", a trail whose first rung read "had
+478, offered 0", and a fresh proposal of **Buy 43** beside a decision that had already bought 33.
+
+The fix is not to put it back in the queue. **A covered row is not planned again:**
+
+- `BoardContribution.covered` plus `decision` (`BoardLineDecision`: revision, confirmed at, the
+  whole frozen composition - timely, reserve per warehouse, borrow per donor with the PERSON's
+  reason, buy, amend reason), read off the ACTIVE `so_supply_decisions.line_snapshots` through
+  `ProjectSupplyService.frozen_lines_of`, keyed by `core_line_id` - the same key
+  `_decided_elsewhere` reads, so the two halves of "this line is decided" cannot come apart;
+- its `sources` ARE the frozen composition (`BoardSourceKind` gains `borrow` for it), its
+  `qty_proposed_*` the frozen quantities, its `trail` empty (no ladder was walked) and
+  `contested` false (a decided line competes for nothing);
+- `so_qty_ahead`, `lines_ahead` and `available_to_this_line` are **null, never 0** - they are
+  claims about a contest the line has left - and are therefore Optional on the wire;
+- cell and location aggregates read the frozen numbers, so the balance still closes;
+- the uncovered rows are untouched, and the queue still excludes covered lines.
+
+On screen: a muted `Confirmed rev 1 · Borrow 10 · Buy 33` pill with **Amend as the only verb**
+(Approve approves a decision already taken, Reject and a bulk Reject would silently un-decide it,
+Undo undoes a draft entry that does not exist), no share note, a trail popover reading
+`Confirmed in revision 1 on 18 Aug 2026`, and a source strip that says `Borrow 10 from MWH-IB`
+(from, not at: a borrow is somebody else's stock). Amend opens seeded from the FROZEN decision -
+the borrow that was made, the buy that was confirmed, the reason that was given - because there
+is no proposal to seed from.
+
+**The body is the UNION.** `_write_decision` supersedes the active revision and writes only the
+lines it was sent; `confirmLinesFor` sent only the lines the planner had just decided. So a
+second confirm on the same order silently UN-DECIDED everything confirmed before it - while the
+per-order sheet, which submits every line seeded from the frozen decision, got the union for
+free. `confirmLinesFor` now re-emits every covered line of the order verbatim from its
+`decision` (same warehouse ids, same donors, same reasons, same buy) beside the newly decided
+ones, and a confirmation carrying nothing NEW is not sent at all. The order card counts a
+covered line as decided (`standingsFor` takes the covered keys beside the draft), so an order
+with one confirmed line of two reads "1 of 2 lines decided" rather than "0 of 2".
+
 **The three ids it is built from are live** (18 August 2026): `orders[].project_sales_order_id`
 (the `{pso_id}` to post to, null when nobody has adopted the order - Confirm is then disabled
 with "Nobody has started planning this sales order yet"), `contributions[].project_line_id` (the
@@ -2174,21 +2220,31 @@ selection is already forty product rows tall, and there was no way to narrow it.
 - Cell dialogs, decisions and confirm are untouched: a decision on a filtered board is a decision
   on the same line.
 
-**The policy banner reads as words, and the preview offer is retired.** The banner was printing
-`need_by_date 3 · document_age 1 · customer_credit 1` - the same database identifiers the rank
-chips were told to stop showing - in a banner that now describes a ranking somebody has to trust.
-It goes through the same `factorLabel` map: "Required date 3 · Order date 1 · Payment terms 1".
+**The banner is gone (captain, 18 August): the rank popover carries the policy name and the
+factor table per line.** The banner named the ranking rule and listed its weights across the top
+of every board - first as identifiers, then, after one pass, as words ("Required date 3 · Order
+date 1 · Payment terms 1"). The captain's verdict on the whole block was "this text is not needed
+at the top". It answered a question nobody had asked, in the one place the columns and the grid
+have to be.
 
-The "Preview a fairer weighting" button is gone; only "Back to the live policy" survives, for a
-preview that is on show. It existed to show what a fair weighting would do BEFORE one was
-switched on, and 13.5's sequence ("ship the preview first, then re-weight the active row") has
-now completed: the live policy is `Fair fulfilment priority (delivery date, document date,
-customer credit)`. Offering to preview the policy that is already running is an offer to nowhere.
+Nothing is lost, it has moved to the moment it is wanted: `BoardRankPopover` prints
+`Ranked by <policy name>` above its factor table, so the rule is named where somebody IS asking
+how a rank was arrived at - on a row, with the weights and the arithmetic under it. The whole
+block went with the banner, including "Preview, not live", the way BACK to the live policy, and
+the flatness sentence.
 
-**Measured, and worth knowing: a flat ranking no longer implies an unfair policy.** The live fair
+**The flatness sentence went with it, and that is a fix rather than a loss.** It was written when
+the live policy weighted only `po_document_sequence` and ranked nothing at all. The live fair
 policy still reports `discriminates_nothing: true` on a single-order board, because customer,
-order date and demand class are constant across one order's lines. So the flatness message stays
-(it is a true fact about that board) while the preview offer does not.
+order date and demand class are constant across one order's lines - so the warning fired on
+healthy boards, and a warning that is usually wrong teaches people to ignore warnings. What a
+CELL could not separate is still said inside the cell, by `rankingNote`, where it is a statement
+about those rows rather than about the rule.
+
+The preview offer was already retired (it existed to show what a fair weighting would do BEFORE
+one was switched on, and 13.5's sequence has completed - the live policy is `Fair fulfilment
+priority (delivery date, document date, customer credit)`). With the banner gone there is no
+control either way, and `usePlanningBoard` is called with the live policy, always.
 
 **The board header is title left, actions right** (captain, 18 August 2026, with a screenshot of
 Back overlapping the title): the granularity control and then **Back to the worklist** sit together
@@ -2241,3 +2297,229 @@ on the e2e stack as follow-ups (fix + targeted tests + live evidence, no pipelin
    detail lines table (and its PO-detail mirror) built `useReactTable` without
    `getSortedRowModel`, so the header flipped its arrow and nothing moved. Client-side sort added
    to both; the other `/scm` tables with the same defect are listed in the backlog.
+
+### 13.11 Borrowing on the board: what a donor costs, and what comes back
+
+**The captain, 18 August 2026, on the Borrow add dialog for SO403765 line 2
+(`B2155-NL-BLUE`).** The dialog listed its donors as one sentence each - `MWH-IB 6990 free, 10
+committed. Borrowing all of it leaves 0 free.` / `BRW-IR 3930 free, 0 committed` / `MWH-BB 11000
+free` / `BRW-SMC 12 free` / `BRW-NTC 1117 free` / `BRW-IB 4790 free, 500 committed` - then Quantity
+and Reason. Verbatim:
+
+> "Here is the available donor. Before I decide to borrow, I need to know I am not hurting them, so
+> you need to let me know also what's their available, SO qty, SPO and PO qty, and available
+> quantity, and what's the impact of borrowing. I assume this list is ranked by recommendation, is
+> it? Meaning the highest is the most recommended to borrow. And when borrowed, does it / should it
+> trigger an order back via order inquiries? Because I sort of need to return, right - or we should
+> order back only if the available quantity of the borrowed location is negative?"
+
+Three questions, and the list answered none of them. It was not ranked (the order was
+`sorted(warehouse_ids)`, alphabetical by id), it stated `free` alone - which nets reserved and
+confirmed holds only, so on this book it is very nearly raw on-hand - and nothing came back.
+
+#### The ranking rule, stated once
+
+Donors are ordered by **`available_after_need` descending, then `available_qty` descending, then
+free descending**, where
+
+    available_after_need = (on hand - SO qty + SPO qty) - need
+    need                 = the asking line's residual at the borrow rung (its proposed Buy)
+
+The first row, and only the first, carries `recommended`. The rule is here and not in the UI, per
+the standing ban on feature explanations on screen.
+
+**A donor is never ranked on giving away the whole of its free stock.** That was this section's
+first rule and it recommended the wrong donor on the very screen it was written for: `MWH-BB` held
+11,000 with 140 owed against it and `MWH-IB` held 7,000 with nothing owed, so judged on
+"availability less the donor's whole free stock" MWH-IB scored +10, MWH-BB scored -140, and the
+screen recommended the smaller pile to cover 21 units. Judged on what each keeps once the line is
+met - 10,839 against 6,979 - MWH-BB is plainly the right answer, and it is now the recommended one.
+`need_qty` and `available_after_need` travel on every candidate so the screen states the figure the
+ranking used rather than recomputing it.
+
+The list is **never re-sorted on the client**, including as the quantity is typed. A list that
+reshuffles under the cursor is not a recommendation, and re-deriving the order in the dialog would
+be the second implementation of a ranking this plan already argued down to one (13.5).
+
+#### What each donor row states
+
+`Source | On hand | SO qty | SPO qty | Available | Free | Committed | After borrow`, the same
+AutoCount vocabulary the cell's own stock strip speaks (13.7), with `Available` SIGNED and never
+clamped. `After borrow` opens as the server's `available_after_need` - what each donor keeps once
+this line's residual is met, the figure the ranking used - and switches to the typed quantity once
+there is one, asking the same question of every row at that quantity ("if I take 21, who can afford
+it"). `Free` is what THIS donor can give - a location's free stock, or a
+donor project's own hold - because that is what the borrow draws from; the pile's own free figure
+travels in the payload for reconciliation and is deliberately not a column, since two figures both
+labelled "free" in one row is how a donor list starts lying.
+
+**The quantity box opens on the need**, capped at what the chosen donor can give, falling back to
+that donor's free quantity only when the server stated no need. It used to open on the donor's whole
+free stock, which after this correction would have contradicted the recommendation it sits under
+(11,000 offered to cover 22) and would have hidden the default `After borrow` figure behind a typed
+quantity nobody chose.
+
+Under the table, one impact line for the chosen donor, updating as the quantity is typed:
+`After borrowing 21: available 6969, free 6969.` It turns red and reads
+`After borrowing 30: JB goes short by 20 - an Order Inquiry will be raised for JB on confirm.`
+when `available_after < 0`.
+
+#### Order back: only a donor the borrow leaves SHORT
+
+**Borrowing does not automatically create a return.** On confirmation, a borrow whose donor pile
+ends below zero availability raises ONE Order Inquiry row **at the donor's location** for
+`min(qty borrowed, -available_after)`, so purchasing sees the hole the borrow opened rather than the
+whole quantity that moved. A donor whose availability stays at or above zero raises nothing.
+
+The reasoning is the captain's own second guess, and it is the right one: **the donor's own demand
+is what decides whether the units must come back.** A borrow that leaves the donor still covering
+its book is a plain transfer of stock between locations, and buying against it would order stock
+nobody is short of. A borrow that pushes the donor below zero has taken units their own orders were
+counting on, and somebody has to buy those units back.
+
+The two alternatives, and why each loses:
+
+- **Always order back.** Reads as safe and is not: it treats every borrow as a loan, so a location
+  holding 11,000 with nothing owed against it would generate a purchase every time 20 units left
+  it. Purchasing would learn to ignore the row, which is worse than not raising it.
+- **Never order back.** Correct only while donors are comfortable. The moment a borrow takes from a
+  location the book has already oversold, the hole exists and nobody is told - and the borrow is
+  the one event that created it, so no later reader can attribute it.
+
+**Shape, and why it is not an `ORDER` row.** The row is `verb = BORROW_SHORTFALL`
+(`app/models/project_so.py`), a value in the existing `String(32)` column, so **no migration**. It
+carries the donor's warehouse code as `stock_location`, hangs off the borrowing line
+(`so_line_id`) and the decision (`supply_decision_id`), and its `note` is the sentence purchasing
+reads: `Borrowed 20 for SO403765 line 2; MWH-IB goes short by 10`. It is NOT `IV_ORDER`, and that
+is load-bearing rather than cosmetic: `confirmed_unplaced_buy_rows` joins an ORDER row through the
+borrowing line to that line's product and warehouse, so as an ORDER the quantity would be
+attributed to the WRONG location, and the Buy-residual rules in `refresh_for_decision` would cancel
+or double-count it on the next revision. Its lifecycle is the same as every other row: a
+still-raised one from an earlier revision is cancelled with the revision that replaced it named,
+never edited in place, and one purchasing has actioned stays.
+
+**It is not a second source of SCM demand**, and must not become one. The donor's own outstanding
+demand is already in the book - that is precisely why availability went negative - so feeding the
+shortfall into `scm.committed_v` as well would buy the same units twice. It is a purchasing
+instruction, and it appears where purchasing already works: the **Order Inquiries worklist**
+(Project Sales -> Order Inquiries), with its own `BORROW SHORTFALL` pill and its note.
+
+#### Where it is built
+
+- `ProjectSupplyService._borrow_candidates(fact, need=...)` (enrichment + `_ranked`),
+  `_donor_pile`, `_pile_facts` / `_pile_read` (three reads per request, lazily, only when a donor
+  list is asked for) and `donor_availability` (the confirm path's own read of the same
+  projection). The `need` is stated by the caller that just walked the ladder: the sheet passes
+  its line's proposed Buy from `_serialize_line`, the board passes `bought` (and keys its
+  candidate cache on it). One builder, so the per-order sheet's donor list and the board's are the
+  same list in the same order.
+- `ProjectSupplyService._borrow_shortfalls` aggregates per donor pile - two lines of one order
+  taking from the same location open one hole between them, not two - and
+  `ProjectOrderInquiryService._raise_borrow_shortfalls` writes it inside the same atomic
+  confirmation.
+- FE: `BorrowAddDialog` (the table + the impact line, shared by the sheet's `SupplyLineCard` and the
+  board's `BoardAmendDialog`), `boardAmend.borrowCandidatesOf` (pass-through, order preserved),
+  `OrderInquiryVerbPill` (the new verb).
+- Tests: `tests/test_borrow_donor_ranking.py` (fields, ordering, the `recommended` flag, and that
+  the board hands the ranked donor on whole), `tests/test_so_supply_confirmation.py` (short donor
+  raises one row at the donor's location, comfortable donor raises none, re-confirm does not stack),
+  `BorrowAddDialog.test.tsx` (columns, order, chip, impact copy, short state, Add gated on a
+  reason), `boardAmend.test.ts` (the donor position travels whole).
+
+### 13.12 The trail answers WHY, and the queue behind it is readable in full
+
+**The captain, 18 August 2026 (late evening), on the trail for SO403765 line 2, 21 owed.** The
+popover printed five rungs of arithmetic - `Reserve at BRW-BB | 478 | 18730 across 142 lines | 0 |
+0 | 21 | Nothing left`, then Pool, Incoming, `Borrow | 27839 | - | 27839 | 0 | 21 | Offered (6
+donors)`, then Buy. Verbatim:
+
+> "what does this mean? why do the orders stand ahead of me? why? and why is the donor offered but
+> I did not take, why?"
+
+Then, on being shown the top three of the queue beside the rung:
+
+> "I need to know what is ahead of me to have the visibility, and why they are ahead of me,
+> meaning I need to know their rank also."
+
+Numbers alone answered none of it. Three things landed.
+
+#### 1. Every rung says WHY, in one sentence
+
+`BoardTrailStep.why` is one plain sentence per rung, chosen by the outcome the arithmetic
+produced, written SERVER-side (the side that walked the ladder is the side that knows; a sentence
+assembled on the client would eventually describe a rule the engine no longer applies). It never
+restates the row - the row is what needed explaining:
+
+- own location, nothing left: "478 on hand, but 142 lines with an earlier required date or an
+  older order date rank ahead and want 18730 - none is left for this line."
+- own location, took: "935 left after the 12 lines ahead; this line takes 80." / "First in the
+  queue here; this line takes 80."
+- own location, not eligible: "Hot-selling item: own-location stock stays for retail, pool only."
+- pool: "No free stock at the pool" / "Pool holds 12 free, capped by reorder level 10" / "No
+  shared pool for this product."
+- incoming: "ZZT-SPO-0001 arrives 25 Aug 2026, in time; this line takes 7." / "No supplier PO
+  arrives by 28 Dec 2026."
+- borrow, offered: "Borrowing is never automatic: a person names the donor and the reason. Use
+  Amend to borrow." That is the answer to "why is the donor offered but I did not take" - AC-B09,
+  said where the question is asked. The donors themselves move into `note`, NAMED:
+  `MWH-IB 12000 · BRW 9000 · MWH-BB 500 (+3 more)`, because "6 donors" is not a place anybody can
+  go and ask.
+- buy: "Nothing left to take, so the remainder is bought." Every rung reached after the line was
+  covered says "Fully covered before this rung."
+
+The factor is named in the planner's words, never as a policy key: the phrases match the FE's own
+`factorLabel` map subject for subject.
+
+#### 2. The own-location rung names the queue, and counts the rest by what put them there
+
+`BoardTrailStep` gains `ahead` (the top three of the queue, in rank order), `ahead_more`, and
+`ahead_by_factor` (a count of the WHOLE queue by leading factor). On screen:
+
+    Ahead of this line
+    SO391698 L3 · 120 · due 12 Sep 2026 · 0.95 · Required date
+    SO396351 L1 · 200 · due 12 Sep 2026 · 0.90 · Required date
+    SO403765 L1 · 158 · due 28 Dec 2026 · 0.80 · same order
+    and 139 more (Required date 139 · same order 1)
+
+`leading_factor` is the factor with the largest WEIGHTED difference in that line's favour
+(`weight * (their value - my value)` over the factors both carry a value for) - literally the term
+that made their score the bigger one. When the two scores are EQUAL the policy separated nothing
+and the queue was decided by the tie-break, so it is named for what it was: `line_order` (an
+earlier line of the same order) or `tie_break` (a lower sales-order number). Naming a factor there
+would claim a difference the two lines do not have.
+
+It is recorded where the queue is already being walked in rank order - `_attribution`, from
+`_pile_book` rows that now KEEP the factors they were ranked on - so nothing is ranked twice, and
+only for the lines somebody asked about (`detail_for`), because describing the queue in front of
+all 2000 lines of a crowded pile is quadratic work nobody reads.
+
+#### 3. The whole queue, one press away
+
+`GET /project-sales/fulfilment-planning/queue?product_id=&warehouse_id=&line_id=` returns the pile
+book in full: `position`, the line and its order, customer, qty, `cumulative_ahead_qty` (the
+running sum, so the row where the pile runs out is visible by eye), required date, order date,
+payment terms, `rank_score` with the same `rank_factors` a board row carries, `leading_factor`
+against the asking line, `is_this_line`, and `policy_name`. It is `_pile_book` itself, not a second
+query shaped like it: a queue drawn a second way would eventually disagree with the one the
+proposal was computed from, and then the screen would be arguing with the plan. Pinned by a test
+that the queue's ahead count and sum equal the contribution's `lines_ahead` / `so_qty_ahead`.
+
+A line a confirmed decision covers is ABSENT, for the reason `_pile_book` states (its claim is
+already a hold that came out of the opening stock), and the dialog says so once at the bottom
+rather than per row.
+
+FE: `View the queue (142 ahead)` on the own-location rung opens `PileQueueDialog` - a
+`PanelDataGrid` of `# | Sales order | Line | Customer | Qty | Cumulative | Required | Order date |
+Terms | Score | Ahead because`, the asking row marked and the rows BEHIND it dimmed (they are not
+the answer to "why did I get nothing"), the Score cell opening the same `BoardRankPopover` a board
+row carries. The contribution gained `line_id` and `product_id` (addressing only, never rendered)
+so the queue can be asked for by ids: two products on the live book share the code
+`B2155-NL-BLUE`.
+
+Tests: `tests/test_fulfilment_board.py` (the `why` on every rung, the ahead list and its
+by-factor counts on a seeded pile of five lines ahead plus a same-order sibling, the leading
+factor for a required-date difference and for a tie, the queue route happy path + 403, and the
+queue-equals-the-trail invariant); `BoardCellBreakdownDialog.test.tsx` (why lines, the ahead
+sub-list, "and N more", the borrow why and its donors, the queue button and what it asks for);
+`PileQueueDialog.test.tsx` (loading, error, empty, the header line, the mark, the dimmed rows,
+the per-row factor table).

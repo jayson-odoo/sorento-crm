@@ -77,7 +77,12 @@ export function BoardCellBreakdownDialog({
    * in the Rank column and the sentence at the top of the dialog can never drift apart.
    */
   const ranking = rankingNote(cell);
-  const decided = cell.contributions.filter((entry) => draft[entry.key]).length;
+  // Decided in the draft OR decided in the database: a line an active decision covers is as
+  // decided as a line the planner has just approved, and counting only the draft made a cell of
+  // confirmed lines read "0 decided".
+  const decided = cell.contributions.filter(
+    (entry) => Boolean(draft[entry.key]) || entry.covered,
+  ).length;
   /** The row being amended, if any. One at a time: two open forms is two half-decisions. */
   const [amending, setAmending] = React.useState<BoardContribution | null>(null);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
@@ -111,9 +116,11 @@ export function BoardCellBreakdownDialog({
       // The repo's own select column, the one the users list uses, so the header select-all and
       // its indeterminate state are not a second implementation.
       buildSelectColumn<BoardContribution>({
-        enableRow: (row) => !row.original.unplannable,
-        disabledReason: () =>
-          'This line cannot be decided here: its sales order states no fulfilment location.',
+        enableRow: (row) => !row.original.unplannable && !row.original.covered,
+        disabledReason: (row) =>
+          row.original.covered
+            ? 'This line is already confirmed. Amend it to change what was decided.'
+            : 'This line cannot be decided here: its sales order states no fulfilment location.',
         rowLabel: (row) => `Select ${row.original.so_number} line ${row.original.line_no}`,
       }),
       {
@@ -271,11 +278,7 @@ export function BoardCellBreakdownDialog({
         header: ({ column }) => <DataGridColumnHeader title="Sourced from" column={column} />,
         cell: ({ row }) => {
           const strip = row.original.sources
-            .map((source) =>
-              `${sourceLabel(source.kind)} ${source.qty}${
-                source.location ? ` at ${source.location}` : ''
-              }`,
-            )
+            .map((source) => `${sourceLabel(source.kind)} ${source.qty}${sourceAt(source)}`)
             .join(' · ');
           // The engine's own sentences, reachable on the cell rather than wrapped into the
           // row: `spo_number` and `arrival_date` are always null because the SPO and its date
@@ -438,7 +441,10 @@ export function BoardCellBreakdownDialog({
             sortable
             rowSelection={rowSelection}
             onRowSelectionChange={setRowSelection}
-            enableRowSelection={(row) => !row.original.unplannable}
+            // A covered row is not selectable either: the bulk verbs are Approve and Reject,
+            // and a bulk Reject sweeping up a confirmed line would silently un-decide it,
+            // which is the very defect the covered state exists to stop.
+            enableRowSelection={(row) => !row.original.unplannable && !row.original.covered}
             toolbar={
               selectedKeys.length > 0 ? (
                 <div className="flex flex-wrap items-center gap-2">
@@ -519,6 +525,11 @@ const VERDICT_PALETTE: Record<string, string> = {
  *
  * A line whose sales order states no location gets no verb at all (AC-FP16) - it cannot be
  * planned here, and offering a button that would refuse is worse than offering none.
+ *
+ * A line an active decision COVERS gets one verb, Amend. Approve would approve a decision
+ * already taken, Reject would silently un-decide it (the confirmation supersedes the revision
+ * and writes only what it is sent), and Undo undoes a draft entry that does not exist. The row
+ * states which revision decided it and what that revision froze.
  */
 function DecisionCell({
   contribution,
@@ -546,11 +557,35 @@ function DecisionCell({
     );
   }
 
+  if (!decision && contribution.covered && contribution.decision) {
+    return (
+      <div className="flex min-w-0 flex-wrap items-center gap-1">
+        {/* MUTED, not one of the verdict colours: this is not a verdict the planner gave on
+            this board, it is a decision that is already in the database. */}
+        {/* WRAPS: a composition is as long as it is ("Reserve 20 BRW-BB · Borrow 10 · Buy
+            13"), and a pill that overflows a fixed column silently loses its last term -
+            which on this one is the quantity being bought. */}
+        <span
+          className={`${STATUS_PILL_BASE} max-w-full whitespace-normal break-words text-start normal-case ${statusPillClass(
+            'closed',
+          )}`}
+          title={contribution.decision.amend_reason ?? ''}
+        >
+          {confirmedSummary(contribution.decision)}
+        </span>
+        <Button type="button" size="sm" variant="outline" onClick={onAmend}>
+          <Pencil className="size-4" aria-hidden />
+          Amend
+        </Button>
+      </div>
+    );
+  }
+
   if (decision) {
     return (
       <div className="flex min-w-0 flex-wrap items-center gap-1">
         <span
-          className={`${STATUS_PILL_BASE} normal-case ${statusPillClass(
+          className={`${STATUS_PILL_BASE} max-w-full whitespace-normal break-words text-start normal-case ${statusPillClass(
             VERDICT_PALETTE[decision.verdict],
           )}`}
           title={decision.reason ?? ''}
@@ -637,11 +672,48 @@ function shareNote(contribution: BoardContribution): string | null {
   }`;
 }
 
+/**
+ * What a covered row reads: which revision decided it, and what that revision froze.
+ *
+ * The composition comes from `amendSummary`, the same function an amended row uses, because a
+ * frozen composition and an amended one are the same four kinds in the same order - and two
+ * renderings of one composition is how they come to disagree.
+ */
+function confirmedSummary(decision: NonNullable<BoardContribution['decision']>): string {
+  return `Confirmed rev ${decision.revision_no} · ${amendSummary({
+    verdict: 'amended',
+    timely_spo_qty: decision.timely_spo_qty,
+    reserve: decision.reserve,
+    borrow: decision.borrow.map((row) => ({
+      source: row.source,
+      warehouse_id: row.warehouse_id ?? '',
+      warehouse_code: row.location ?? null,
+      donor_project_id: row.donor_project_id ?? null,
+      qty: row.qty,
+      reason: row.reason,
+    })),
+    buy_qty: decision.buy_qty,
+  })}`;
+}
+
 function sourceLabel(kind: BoardContribution['sources'][number]['kind']): string {
   if (kind === 'reserve') return 'Reserve';
   if (kind === 'timely_spo') return 'Incoming';
   if (kind === 'buy') return 'Buy';
+  // Only ever on a covered row: the engine proposes no Borrow, and a person did.
+  if (kind === 'borrow') return 'Borrow';
   return 'Cannot be sourced';
+}
+
+/**
+ * Where the quantity comes from, in the preposition each kind takes.
+ *
+ * A Reserve is held AT a location; a Borrow comes FROM somebody else's. "Borrow 10 at MWH-IB"
+ * reads as stock this line has there, which is the opposite of what a borrow is.
+ */
+function sourceAt(source: BoardContribution['sources'][number]): string {
+  if (!source.location) return '';
+  return source.kind === 'borrow' ? ` from ${source.location}` : ` at ${source.location}`;
 }
 
 /** The owed quantity: the server's own name for it when it sends one. */
@@ -667,6 +739,10 @@ function sumOf(
  *
  * The captain asked for it there because it is the answer to the question the cell was opened
  * to ask. Under each row it was the same arithmetic said N times and summed by nobody.
+ *
+ * A BORROW term appears only when there is one, and there only ever is on a covered row: the
+ * engine proposes no Borrow, but a confirmed line states the composition a person made, and a
+ * balance that dropped it would not add up to what is owed.
  */
 function cellBalanceLine(cell: BoardCell): string {
   const of = (kind: string) =>
@@ -678,9 +754,13 @@ function cellBalanceLine(cell: BoardCell): string {
     (total, contribution) => total + toMinor(owedOf(contribution)),
     0,
   );
-  return `${fromMinor(owed)} owed = ${fromMinor(of('reserve'))} reserve + ${fromMinor(
-    of('timely_spo'),
-  )} incoming + ${fromMinor(of('buy'))} buy`;
+  const borrowed = of('borrow');
+  return [
+    `${fromMinor(owed)} owed = ${fromMinor(of('reserve'))} reserve`,
+    `${fromMinor(of('timely_spo'))} incoming`,
+    ...(borrowed > 0 ? [`${fromMinor(borrowed)} borrow`] : []),
+    `${fromMinor(of('buy'))} buy`,
+  ].join(' + ');
 }
 
 // The evidence behind the score used to be a `title` sentence built here. It is a table now

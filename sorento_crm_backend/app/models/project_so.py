@@ -697,6 +697,12 @@ IV_CHANGE_SO = "CHANGE_SO"
 IV_CANCEL_BALANCE = "CANCEL_BALANCE"
 IV_PRE_ORDERED = "PRE_ORDERED_DO_NOT_ORDER"
 IV_ALREADY_INBOUND = "ALREADY_INBOUND"
+#: A borrow left the DONOR location oversold, so the hole it opened is buying work
+#: (PLAN-fulfilment-planning-from-autocount-so.md 13.11). Its own verb rather than
+#: `ORDER`, because the quantity belongs to the donor's location and not to the
+#: borrowing line's: counted as ORDER it would be attributed to the wrong warehouse by
+#: `confirmed_unplaced_buy_rows` and cancelled by the Buy-residual rules on re-confirm.
+IV_BORROW_SHORTFALL = "BORROW_SHORTFALL"
 
 
 class OrderInquiry(Base, CompanyScopedMixin):

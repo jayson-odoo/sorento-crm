@@ -24,6 +24,7 @@ import {
   fromMinor,
   lineBalance,
   lineBlockers,
+  toMinor,
   type DraftBorrow,
   type DraftLine,
 } from '../../_shared/lib/supplyComposition';
@@ -65,7 +66,11 @@ export function BoardAmendDialog({
   onCancel: () => void;
 }) {
   const [draft, setDraft] = React.useState<DraftLine>(() => amendDraftFrom(contribution));
-  const [reason, setReason] = React.useState('');
+  // On a line an active decision covers, the reason it was decided for is already written and
+  // is carried forward: it is the sentence that explains the composition in the box, and
+  // making the planner retype it to re-save their own decision is how a mandatory field
+  // becomes a rubber stamp.
+  const [reason, setReason] = React.useState(contribution.decision?.amend_reason ?? '');
   const [adding, setAdding] = React.useState(false);
 
   const candidates = React.useMemo<BorrowCandidate[]>(
@@ -192,7 +197,13 @@ export function BoardAmendDialog({
                       </Button>
                     </div>
                     <p className="text-sm text-muted-foreground break-words">
-                      {`${row.donor_impact.free_before} free before, ${row.donor_impact.free_after_full_borrow} after taking all of it, ${row.donor_impact.committed_qty} committed.`}
+                      {/* A donor's position is a fact about NOW, and a borrow frozen into a
+                          confirmed decision does not carry one - the board only reads donors
+                          for a line it is still proposing a Buy for. All three at zero is that
+                          absence, and printing it as "0 free" would say the donor is empty. */}
+                      {statedImpact(row.donor_impact)
+                        ? `${row.donor_impact.free_before} free before, ${row.donor_impact.free_after_full_borrow} after taking all of it, ${row.donor_impact.committed_qty} committed.`
+                        : "The donor's position is not stated here."}
                     </p>
                     <div className="space-y-1">
                       <label
@@ -322,6 +333,19 @@ export function BoardAmendDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Whether the donor's position is a figure anybody stated.
+ *
+ * Zero on all three is how an UNKNOWN arrives (a borrow read back off a frozen decision, whose
+ * donor the board is not currently offering), because the shape has no room for an absence. A
+ * donor that genuinely held nothing free would never have been offered as a candidate.
+ */
+function statedImpact(impact: DraftBorrow['donor_impact']): boolean {
+  return [impact.free_before, impact.free_after_full_borrow, impact.committed_qty].some(
+    (value) => toMinor(value) !== 0,
   );
 }
 
