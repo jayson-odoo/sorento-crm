@@ -93,11 +93,11 @@ class PendingProduct(NamedTuple):
     The fan-out reads a product's brand once per recipient. Held as ORM instances
     those reads would each be a refresh SELECT (the previous recipient's send
     committed and expired them), so the batch is snapshotted BEFORE the stamp
-    commit and the ORM rows are used only to write the stamp.
+    commit and the ORM rows are used only to write the stamp. The brand is the
+    only column the matching needs: the company is already the batch's own, and
+    the message carries a count rather than the products themselves.
     """
 
-    id: str
-    company_id: Optional[str]
     brand_id: Optional[str]
 
 
@@ -203,11 +203,7 @@ def run_product_discontinued_check(db: Session, task: Any = None) -> dict:
         brand_id = getattr(p, "brand_id", None)
         by_company.setdefault(cid, []).append(p)
         snapshot_by_company.setdefault(cid, []).append(
-            PendingProduct(
-                str(p.id),
-                str(cid) if cid is not None else None,
-                str(brand_id) if brand_id is not None else None,
-            )
+            PendingProduct(str(brand_id) if brand_id is not None else None)
         )
 
     names = {}

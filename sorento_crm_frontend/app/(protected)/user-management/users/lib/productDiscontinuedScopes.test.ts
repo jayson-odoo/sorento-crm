@@ -149,6 +149,19 @@ describe('scopesToRows -> rowsToScopePayload round-trip', () => {
   });
 });
 
+describe('an all-brands company scope survives the round trip as a null brand', () => {
+  it('null brand -> empty brandIds -> null brand again', () => {
+    const scopes: ProductDiscontinuedScope[] = [
+      { company_id: 'co-1', company_name: 'Sorento', brand_id: null },
+    ];
+    const rows = scopesToRows(scopes);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].brandIds).toEqual([]);
+    expect(describeScopeRow(rows[0])).toBe(`Sorento: ${ALL_BRANDS_LABEL}`);
+    expect(rowsToScopePayload(rows)).toEqual([{ company_id: 'co-1', brand_id: null }]);
+  });
+});
+
 describe('describeScopeRow', () => {
   it('describes an all-companies row', () => {
     expect(describeScopeRow(createAllScopeRow())).toBe(

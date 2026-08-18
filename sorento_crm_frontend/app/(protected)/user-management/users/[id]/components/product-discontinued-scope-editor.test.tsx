@@ -54,7 +54,7 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
   }) => (
     <div
       data-testid="brand-multiselect"
-      aria-label={placeholder ?? 'multi-select'}
+      data-placeholder={placeholder ?? 'multi-select'}
       aria-disabled={disabled}
     >
       {options.map((o) => (
@@ -75,6 +75,15 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
           {o.label}
         </label>
       ))}
+      {/* The real control's Select-all affordance, which acts on every loaded option. */}
+      <button
+        type="button"
+        data-testid="brand-select-all"
+        disabled={disabled}
+        onClick={() => onChange(options.map((o) => o.value))}
+      >
+        Select all
+      </button>
     </div>
   ),
 }));
@@ -100,6 +109,7 @@ beforeEach(() => {
       { id: 'br-2', brand_code: 'NOVA', brand_name: 'Nova' },
     ],
     isLoading: false,
+    isError: false,
   });
 });
 
@@ -312,5 +322,79 @@ describe('ProductDiscontinuedScopeEditor - add / remove row', () => {
     const removeButtons = screen.getAllByLabelText('Remove scope');
     fireEvent.click(removeButtons[0]);
     expect(onChange).toHaveBeenCalledWith([rows[1]]);
+  });
+});
+
+
+describe('ProductDiscontinuedScopeEditor - no brand picked means all brands', () => {
+  const companyRow = (brandIds: string[]): ScopeRow[] => [
+    {
+      key: 'k1',
+      companyId: 'co-1',
+      companyName: 'Sorento',
+      brandIds,
+      brandLabels: Object.fromEntries(brandIds.map((id) => [id, id])),
+    },
+  ];
+
+  it('offers only the company\'s own brands, with all-brands as the empty state', () => {
+    renderEditor(companyRow([]));
+    expect(screen.getByLabelText('Mocha')).not.toBeChecked();
+    expect(screen.getByLabelText('Nova')).not.toBeChecked();
+    // No extra option to click for "all": an empty pick already means all brands,
+    // which the trigger says in place of a chip.
+    expect(screen.queryByLabelText('All brands')).not.toBeInTheDocument();
+    expect(screen.getByTestId('brand-multiselect')).toHaveAttribute(
+      'data-placeholder',
+      'All brands',
+    );
+  });
+
+  it('clearing the last brand leaves the row on all brands (empty brandIds)', () => {
+    const { onChange } = renderEditor(companyRow(['br-1']));
+    fireEvent.click(screen.getByLabelText('Mocha'));
+    expect(onChange).toHaveBeenCalledWith([
+      expect.objectContaining({ companyId: 'co-1', brandIds: [], brandLabels: {} }),
+    ]);
+  });
+
+  it('Select all picks every loaded brand rather than collapsing to all-brands', () => {
+    const { onChange } = renderEditor(companyRow([]));
+    fireEvent.click(screen.getByTestId('brand-select-all'));
+    expect(onChange).toHaveBeenCalledWith([
+      expect.objectContaining({
+        companyId: 'co-1',
+        brandIds: ['br-1', 'br-2'],
+        brandLabels: { 'br-1': 'Mocha', 'br-2': 'Nova' },
+      }),
+    ]);
+  });
+});
+
+describe('ProductDiscontinuedScopeEditor - the brand load failed', () => {
+  beforeEach(() => {
+    brandsHook.mockReturnValue({ data: undefined, isLoading: false, isError: true });
+  });
+
+  it('says so and disables the picker, so an empty list is not read as all brands', () => {
+    renderEditor([
+      { key: 'k1', companyId: 'co-1', companyName: 'Sorento', brandIds: [], brandLabels: {} },
+    ]);
+    expect(screen.getByRole('alert')).toHaveTextContent(/brands could not be loaded/i);
+    expect(screen.getByTestId('brand-multiselect')).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByTestId('brand-select-all')).toBeDisabled();
+  });
+
+  it('keeps the brands already saved on the row visible while the load is broken', () => {
+    renderEditor([
+      {
+        key: 'k1',
+        companyId: 'co-1',
+        companyName: 'Sorento',
+        brandIds: ['br-1'],
+        brandLabels: { 'br-1': 'Mocha' },
+      },
+    ]);
+    expect(screen.getByLabelText('Mocha')).toBeChecked();
   });
 });

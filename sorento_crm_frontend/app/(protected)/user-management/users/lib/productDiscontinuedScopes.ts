@@ -9,9 +9,8 @@
  */
 import type { ProductDiscontinuedScope } from '@/app/models/user';
 
-/** Sentinel option values (never sent to the API - they map to null). */
+/** Sentinel option value (never sent to the API - it maps to a null company). */
 export const ALL_COMPANIES_VALUE = '__all_companies__';
-export const ALL_BRANDS_VALUE = '__all_brands__';
 
 export const ALL_COMPANIES_LABEL = 'All companies';
 export const ALL_BRANDS_LABEL = 'All brands';
@@ -23,7 +22,7 @@ export interface ScopeRow {
   companyId: string | null;
   /** Name as saved on the scope, so the read view never has to resolve an id. */
   companyName?: string | null;
-  /** Empty = all brands in the company. */
+  /** Empty = all brands in the company (there is no explicit all-brands value). */
   brandIds: string[];
   /** brand id -> brand name, carried from the saved scopes so chips show names. */
   brandLabels: Record<string, string>;

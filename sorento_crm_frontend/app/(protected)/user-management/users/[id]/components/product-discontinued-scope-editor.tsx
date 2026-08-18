@@ -8,7 +8,6 @@ import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect
 import { useProductDiscontinuedScopeBrands } from '../../hooks/use-product-discontinued-scope-brands';
 import {
   ALL_BRANDS_LABEL,
-  ALL_BRANDS_VALUE,
   ALL_COMPANIES_LABEL,
   ALL_COMPANIES_VALUE,
   createAllScopeRow,
@@ -43,9 +42,11 @@ const ScopeRowFields = ({
   onRemove,
 }: ScopeRowFieldsProps) => {
   const isAllCompanies = row.companyId === null;
-  const { data: brands = [], isLoading } = useProductDiscontinuedScopeBrands(
-    isAllCompanies ? null : row.companyId,
-  );
+  const {
+    data: brands = [],
+    isLoading,
+    isError,
+  } = useProductDiscontinuedScopeBrands(isAllCompanies ? null : row.companyId);
 
   const companyOptions = useMemo(
     () => [
@@ -93,13 +94,8 @@ const ScopeRowFields = ({
         });
       }
     }
-    return [
-      { value: ALL_BRANDS_VALUE, label: ALL_BRANDS_LABEL },
-      ...Array.from(byId.values()),
-    ];
+    return Array.from(byId.values());
   }, [brands, row.brandIds, row.brandLabels]);
-
-  const brandValue = row.brandIds.length ? row.brandIds : [ALL_BRANDS_VALUE];
 
   const handleCompanyChange = (value: string) => {
     const companyId = value === ALL_COMPANIES_VALUE ? null : value;
@@ -114,12 +110,9 @@ const ScopeRowFields = ({
     });
   };
 
-  const handleBrandsChange = (next: string[]) => {
-    const hadAllBrands = brandValue.includes(ALL_BRANDS_VALUE);
-    const picked = next.filter((value) => value !== ALL_BRANDS_VALUE);
-    // Picking "All brands" (or clearing the last brand) collapses back to all.
-    const brandIds =
-      !hadAllBrands && next.includes(ALL_BRANDS_VALUE) ? [] : picked;
+  // No brand picked means every brand in the company, which is the same thing the
+  // API stores as a null brand: there is nothing extra to select for "all".
+  const handleBrandsChange = (brandIds: string[]) => {
     const brandLabels: Record<string, string> = {};
     for (const brandId of brandIds) {
       const option = brandOptions.find((o) => o.value === brandId);
@@ -143,14 +136,19 @@ const ScopeRowFields = ({
       </div>
       <div className="min-w-0 flex-1">
         <SearchableMultiSelect
-          value={isAllCompanies ? [ALL_BRANDS_VALUE] : brandValue}
+          value={isAllCompanies ? [] : row.brandIds}
           onChange={handleBrandsChange}
           options={brandOptions}
-          disabled={disabled || isAllCompanies}
+          disabled={disabled || isAllCompanies || isError}
           placeholder={ALL_BRANDS_LABEL}
           emptyMessage={isLoading ? 'Loading brands...' : 'No brand found.'}
           triggerClassName="w-full"
         />
+        {isError ? (
+          <p role="alert" className="mt-1 text-xs text-destructive">
+            Brands could not be loaded.
+          </p>
+        ) : null}
       </div>
       <Button
         type="button"
