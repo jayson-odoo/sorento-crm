@@ -1777,6 +1777,25 @@ is NULL, never zero, when the sales order states no location, and renders "Stock
 `0 free` means do not look here, nothing stated means nobody said where to look, and those are
 opposite instructions.
 
+**SEARCH names what it searches** (captain: "i should be able to search by product, by sales
+order, by customer, to shrink the dataset i am viewing"). One box, one `query` parameter,
+composing with `review_state`, `project_id`, `sales_order_id`, `sort` and `dir`. The placeholder
+reads **"Search sales order, customer, project or product"** because a planner who types an item
+code into a box labelled "Search" and gets nothing concludes product search is broken, when the
+truth would only be that nobody told them what the box covers.
+
+Two surprises live in the box's own `title` rather than as prose on the page - a hint of the form
+"what happens if I set this" is allowed, a paragraph teaching the feature is not:
+
+- a product match finds ORDERS with an outstanding line for it, so the row still shows the whole
+  order's line count and quantity rather than narrowing to the matching lines;
+- an order whose only matching line is already delivered, closed or covered is not listed, which
+  is deliberate rather than a miss.
+
+Measured live, 18 August 2026: `B2155-NL-BLUE` 147 orders, `OIB CONSTRUCTION` 5, `MYRA DAHLIA` 2,
+`SO391698` 1 - all four kinds, 36 to 75 ms including the round trip, so no loading-state
+gymnastics are needed.
+
 **ADOPT ON CONFIRM (captain, 18 August 2026): "why i cannot confirm the sales order partially?
 like i decided few lines then i should be able to confirm partially right".** They selected nine
 orders, decided lines across several, and every Confirm refused: none had been adopted, so there
