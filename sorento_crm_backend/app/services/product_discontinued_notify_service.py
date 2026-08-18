@@ -75,15 +75,30 @@ def _plural(n: int) -> str:
 class Recipient(NamedTuple):
     """A candidate recipient as plain values, deliberately NOT an ORM ``User``.
 
-    Every company batch commits the stamp before it sends, and a commit expires
-    every instance in the session - so an attribute read on a ``User`` held across
-    that commit is a fresh SELECT, once per recipient, once per batch. Reading the
-    three columns we need at load time is what makes "two queries per run" true.
+    Every company batch commits the stamp before it sends, and every send commits
+    again inside ``create_with_channel_preferences``; a commit expires every
+    instance in the session, so an attribute read on a ``User`` held across one is
+    a fresh SELECT, once per recipient. Reading the three columns we need at load
+    time is what keeps the fan-out free of per-recipient reloads.
     """
 
     id: str
     name: Optional[str]
     email: Optional[str]
+
+
+class PendingProduct(NamedTuple):
+    """One batched product as plain values, for the same reason as ``Recipient``.
+
+    The fan-out reads a product's brand once per recipient. Held as ORM instances
+    those reads would each be a refresh SELECT (the previous recipient's send
+    committed and expired them), so the batch is snapshotted BEFORE the stamp
+    commit and the ORM rows are used only to write the stamp.
+    """
+
+    id: str
+    company_id: Optional[str]
+    brand_id: Optional[str]
 
 
 def _load_recipient_scopes(db: Session) -> tuple[list[Recipient], dict[str, list]]:
@@ -139,6 +154,9 @@ def subset_for_scopes(
 
     A product with no brand therefore reaches only all-brands scopes, which is the
     honest reading of "I look after brand X": an unbranded product is not brand X.
+
+    ``pending`` is a list of ``PendingProduct`` snapshots, not ORM rows: pure values
+    keep this callable once per recipient without touching the database.
     """
     relevant = [s for s in scopes if s[0] is None or s[0] == company_id]
     if not relevant:
@@ -177,8 +195,20 @@ def run_product_discontinued_check(db: Session, task: Any = None) -> dict:
         .all()
     )
     by_company: dict[Optional[str], list[Product]] = {}
+    # Snapshot taken here, before ANY commit: the first company's stamp commit
+    # expires every instance in the session, including the other companies' rows.
+    snapshot_by_company: dict[Optional[str], list[PendingProduct]] = {}
     for p in pending:
-        by_company.setdefault(getattr(p, "company_id", None), []).append(p)
+        cid = getattr(p, "company_id", None)
+        brand_id = getattr(p, "brand_id", None)
+        by_company.setdefault(cid, []).append(p)
+        snapshot_by_company.setdefault(cid, []).append(
+            PendingProduct(
+                str(p.id),
+                str(cid) if cid is not None else None,
+                str(brand_id) if brand_id is not None else None,
+            )
+        )
 
     names = {}
     if by_company:
@@ -195,7 +225,14 @@ def run_product_discontinued_check(db: Session, task: Any = None) -> dict:
 
     runs = [
         _run_for_company(
-            db, cid, names.get(cid), label_with_company, rows, candidates, scopes_by_user
+            db,
+            cid,
+            names.get(cid),
+            label_with_company,
+            rows,
+            snapshot_by_company[cid],
+            candidates,
+            scopes_by_user,
         )
         for cid, rows in by_company.items()
     ]
@@ -217,6 +254,7 @@ def _run_for_company(
     company_name: Optional[str],
     label_with_company: bool,
     pending: list,
+    pending_snapshot: list[PendingProduct],
     candidates: list[Recipient],
     scopes_by_user: dict[str, list],
 ) -> dict:
@@ -241,7 +279,7 @@ def _run_for_company(
     notifier = NotificationService(db)
     for user in candidates:
         subset, brand_ids = subset_for_scopes(
-            scopes_by_user.get(user.id, []), company_id, pending
+            scopes_by_user.get(user.id, []), company_id, pending_snapshot
         )
         # Nothing of theirs in this batch: no in-app row, no delivery, no noise.
         if not subset:

@@ -436,3 +436,50 @@ def test_ac11_scope_row_cascades_on_brand_delete(db):
     assert db.query(UserProductDiscontinuedScope).filter(
         UserProductDiscontinuedScope.id == scope_id
     ).first() is None
+
+
+# --------------------------------------------------------------------------- #
+# The fan-out reads its batch from a snapshot, not from expired ORM rows
+# --------------------------------------------------------------------------- #
+
+
+def test_fanout_does_not_reselect_products_per_recipient(db):
+    """Every send commits, which expires the ORM rows the fan-out matches against.
+
+    Reading brands off those instances cost one refresh SELECT per product per
+    recipient; the snapshot taken before the stamp commit is what keeps the batch
+    query at exactly one, however many recipients there are.
+    """
+    import re
+
+    from sqlalchemy import event
+
+    brand_a = _brand(db, company_id=SORENTO, name="A")
+    brand_b = _brand(db, company_id=SORENTO, name="B")
+    _product(db, code="ZZT-PA", company_id=SORENTO, brand_id=brand_a)
+    _product(db, code="ZZT-PB", company_id=SORENTO, brand_id=brand_b)
+
+    for i in range(3):
+        u = _user(db, email=f"{unique_code(f'scoped{i}')}@zzt.test")
+        _scope(db, u.id, company_id=SORENTO, brand_id=brand_a)
+    db.commit()
+
+    product_selects = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        text = " ".join(statement.split())
+        # The blank-schema fixture qualifies table names, so match the column
+        # prefix the ORM always renders instead of a bare "FROM products".
+        if text.upper().startswith("SELECT") and re.search(r"(?<![\w])products\.", text):
+            product_selects.append(text)
+
+    bind = db.get_bind()
+    event.listen(bind, "before_cursor_execute", _record)
+    try:
+        out = svc.run_product_discontinued_check(db)
+    finally:
+        event.remove(bind, "before_cursor_execute", _record)
+
+    assert out["subscribers"] == 3
+    assert out["notified_users"] == 3
+    assert len(product_selects) == 1, product_selects
