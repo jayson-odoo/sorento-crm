@@ -9,7 +9,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { PackageSearch, Play, Search, X } from 'lucide-react';
+import { LayoutGrid, PackageSearch, Play, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -17,6 +17,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -40,7 +41,17 @@ import {
   planningRowReference,
 } from '../../_shared/lib/fulfilmentPlanningRows';
 import { InfoHint } from '../../[projectId]/components/InfoHint';
+import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { FulfilmentPlanningSheet } from './FulfilmentPlanningSheet';
+
+/**
+ * How many orders may be planned together (PLAN 13.2).
+ *
+ * Not arbitrary: the whole book is 862 distinct products across 349 distinct required dates,
+ * so a board of everything is roughly 300,000 cells and is not a screen. The bound is part of
+ * the design rather than a guard bolted on afterwards.
+ */
+const MAX_BOARD_SELECTION = 50;
 
 const REVIEW_STATE_OPTIONS = [
   { value: 'all', label: 'Any' },
@@ -76,6 +87,8 @@ export function FulfilmentPlanningClient() {
   const [search, setSearch] = React.useState('');
   const [debounced, setDebounced] = React.useState('');
   const [openRow, setOpenRow] = React.useState<FulfilmentPlanningRow | null>(null);
+  const [selected, setSelected] = React.useState<string[]>([]);
+  const [boardOrders, setBoardOrders] = React.useState<string[] | null>(null);
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize: 25,
@@ -131,6 +144,38 @@ export function FulfilmentPlanningClient() {
   // "what is due and what still needs work".
   const columns = React.useMemo<ColumnDef<FulfilmentPlanningRow>[]>(
     () => [
+      {
+        id: 'select',
+        header: '',
+        cell: ({ row }) => {
+          // Only a real, outstanding sales order can go on the board: an authored Project SO
+          // with no core order yet has no core lines to aggregate.
+          const soNumber = row.original.so_number;
+          if (!soNumber) return null;
+          const checked = selected.includes(soNumber);
+          return (
+            <Checkbox
+              checked={checked}
+              aria-label={`Select ${soNumber} for planning`}
+              onClick={(event) => event.stopPropagation()}
+              onCheckedChange={(next) =>
+                setSelected((current) =>
+                  next
+                    ? current.includes(soNumber)
+                      ? current
+                      : [...current, soNumber].slice(0, MAX_BOARD_SELECTION)
+                    : current.filter((entry) => entry !== soNumber),
+                )
+              }
+            />
+          );
+        },
+        size: 44,
+        minSize: 44,
+        enableSorting: false,
+        enableResizing: false,
+        meta: { headerTitle: 'Select', skeleton: <Skeleton className="h-4 w-4" /> },
+      },
       {
         id: 'so_number',
         header: ({ column }) => <DataGridColumnHeader title="Sales order" column={column} />,
@@ -372,7 +417,7 @@ export function FulfilmentPlanningClient() {
         meta: { headerTitle: 'Updated', skeleton: <Skeleton className="h-4 w-20" /> },
       },
     ],
-    [adopt.isPending, startPlanning],
+    [adopt.isPending, startPlanning, selected],
   );
 
   const table = useReactTable({
@@ -390,6 +435,15 @@ export function FulfilmentPlanningClient() {
 
   const filtersActive = reviewState !== 'all' ? 1 : 0;
 
+  // The board replaces the worklist in place rather than sitting under it: they answer the
+  // same question at two grains, and showing both at once would ask the reader which one is
+  // the current subject. Phase 2 puts the selection in the URL so a board can be linked.
+  if (boardOrders) {
+    return (
+      <FulfilmentBoardPanel soNumbers={boardOrders} onBack={() => setBoardOrders(null)} />
+    );
+  }
+
   return (
     <>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -398,6 +452,27 @@ export function FulfilmentPlanningClient() {
           <InfoHint label="About fulfilment planning">
             Outstanding project sales orders, earliest required date first.
           </InfoHint>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {selected.length > 0 && (
+            <Button type="button" variant="ghost" size="sm" onClick={() => setSelected([])}>
+              Clear the selection
+            </Button>
+          )}
+          <Button
+            type="button"
+            size="sm"
+            disabled={selected.length < 2}
+            title={
+              selected.length < 2
+                ? 'Tick two or more sales orders to plan them together'
+                : undefined
+            }
+            onClick={() => setBoardOrders(selected)}
+          >
+            <LayoutGrid className="size-4" aria-hidden />
+            {`Plan together (${selected.length})`}
+          </Button>
         </div>
       </div>
 
