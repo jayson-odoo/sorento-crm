@@ -12,6 +12,7 @@ import {
   commitPreviewFor,
   confirmLinesFor,
   factorLabel,
+  unpostableDecidedFor,
   standingsFor,
 } from './fulfilmentBoard';
 import {
@@ -862,5 +863,136 @@ describe('confirmLinesFor reads the engine’s numbers', () => {
     expect(lines[0].reserve).toEqual([{ warehouse_id: 'wh-BRW-BB', qty: '20' }]);
     // 100 owed, 10 incoming, 20 reserved: the other 70 is bought, not lost.
     expect(lines[0].buy_qty).toBe('70');
+  });
+});
+
+/**
+ * The three ids the confirm body is built from, now that they are live.
+ *
+ * The one that could not have been guessed from the screen: a line can carry TWO reserve
+ * components at two different warehouses (its own location and the pool), and each has to be
+ * addressed by ITS OWN id. A display string like "BRW-BB" cannot carry that, so the warehouse
+ * is read off the SOURCE and never off the location label.
+ */
+describe('confirmLinesFor addresses each reserve to its own warehouse', () => {
+  const board = buildBoard(
+    [line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, qty: '100' })],
+    { today: TODAY },
+  );
+  const base = board.cells[0].contributions[0];
+
+  /** What the engine sends when it covers a line from the location AND the pool. */
+  function twoReserves() {
+    return [
+      {
+        ...base,
+        qty_proposed_reserve: '70',
+        qty_proposed_incoming: '0',
+        qty_proposed_buy: '30',
+        sources: [
+          {
+            kind: 'reserve' as const,
+            qty: '40',
+            location: 'BRW-BB',
+            warehouse_id: 'wh-own',
+            reason: 'Free stock at BRW-BB covers this much.',
+          },
+          {
+            kind: 'reserve' as const,
+            qty: '30',
+            location: 'BRW',
+            warehouse_id: 'wh-pool',
+            reason: 'The dealer pool covers the rest.',
+          },
+          { kind: 'buy' as const, qty: '30', location: null, reason: 'The residual is bought.' },
+        ],
+      },
+    ];
+  }
+
+  it('posts one component per reserve, each with its own warehouse id', () => {
+    const lines = confirmLinesFor(twoReserves(), 'so-a', { [base.key]: { verdict: 'approved' } });
+    expect(lines[0].reserve).toEqual([
+      { warehouse_id: 'wh-own', qty: '40' },
+      { warehouse_id: 'wh-pool', qty: '30' },
+    ]);
+    expect(lines[0].buy_qty).toBe('30');
+  });
+
+  it('takes an amendment off the reserves in order, and moves the difference to Buy', () => {
+    const lines = confirmLinesFor(twoReserves(), 'so-a', {
+      [base.key]: { verdict: 'amended', reserve_qty: '50', reason: 'Holding the pool back.' },
+    });
+    // 50 of the 70 proposed: the own location keeps its 40, the pool gives up 20 of its 30.
+    expect(lines[0].reserve).toEqual([
+      { warehouse_id: 'wh-own', qty: '40' },
+      { warehouse_id: 'wh-pool', qty: '10' },
+    ]);
+    expect(lines[0].buy_qty).toBe('50');
+  });
+
+  it('drops a reserve component the server gave no warehouse for, rather than inventing one', () => {
+    const noWarehouse = [
+      {
+        ...base,
+        qty_proposed_reserve: '40',
+        sources: [
+          { kind: 'reserve' as const, qty: '40', location: 'BRW-BB', reason: 'Covered.' },
+        ],
+      },
+    ];
+    expect(
+      confirmLinesFor(noWarehouse, 'so-a', { [base.key]: { verdict: 'approved' } }),
+    ).toEqual([]);
+  });
+});
+
+/**
+ * Adoption mirrored the order's OPEN lines at the time it ran, so a later upload can add a core
+ * line that has no mirror. Its order is still confirmable; that one line is not.
+ *
+ * The planner may well have approved that row, so it is named rather than silently dropped -
+ * and the fix (re-sync on the sheet) is somewhere else entirely, which is exactly why saying
+ * nothing would be the wrong answer.
+ */
+describe('confirmLinesFor and a line with no mirror', () => {
+  const board = buildBoard(
+    [
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, qty: '10' }),
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 2, qty: '20', item_code: 'TPE-9204' }),
+    ],
+    { today: TODAY },
+  );
+  const contributions = board.cells
+    .flatMap((cell) => cell.contributions)
+    .map((entry) => (entry.line_no === 2 ? { ...entry, project_line_id: null } : entry));
+  const approved = Object.fromEntries(
+    contributions.map((entry) => [entry.key, { verdict: 'approved' as const }]),
+  );
+
+  it('leaves the unmirrored line out of the body', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', approved);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].project_line_id).toBe('pl-so-a-1');
+  });
+
+  it('names the decided lines it had to leave out, so the planner is not told they committed', () => {
+    expect(
+      unpostableDecidedFor(contributions, 'so-a', approved).map(
+        (entry) => `${entry.item_code} line ${entry.line_no}`,
+      ),
+    ).toEqual(['TPE-9204 line 2']);
+  });
+
+  it('counts nothing as unpostable when every decided line has its mirror', () => {
+    const whole = board.cells.flatMap((cell) => cell.contributions);
+    expect(unpostableDecidedFor(whole, 'so-a', approved)).toEqual([]);
+  });
+
+  it('does not count a REJECTED unmirrored line as unpostable: it was never going to post', () => {
+    const rejected = Object.fromEntries(
+      contributions.map((entry) => [entry.key, { verdict: 'rejected' as const, reason: 'No.' }]),
+    );
+    expect(unpostableDecidedFor(contributions, 'so-a', rejected)).toEqual([]);
   });
 });

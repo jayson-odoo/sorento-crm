@@ -130,10 +130,18 @@ export function standingsFor(
  * `leaving_undecided` and named again in `blocked`, because it is undecided for a reason the
  * planner cannot fix on this screen.
  */
-export function commitPreviewFor(standing: BoardOrderStanding): BoardCommitPreview {
+export function commitPreviewFor(
+  standing: BoardOrderStanding,
+  /**
+   * How many lines the body would actually carry. Pass it whenever the body is known: a
+   * decided line with no mirror on the planning record cannot be posted either, and only the
+   * body knows that.
+   */
+  postable?: number,
+): BoardCommitPreview {
   // What would be POSTED, which is not every verdict: a rejection decides a line and commits
   // nothing for it. A button reading "Confirm 2 lines" that posts one is a button that lies.
-  const committing = standing.committing_count ?? standing.decided_count;
+  const committing = postable ?? standing.committing_count ?? standing.decided_count;
   return {
     committing,
     leaving_undecided: standing.line_count - committing,
@@ -229,27 +237,76 @@ function sumSources(contribution: BoardContribution, kind: string): number {
 }
 
 /**
- * The Reserve, against the one warehouse a board row can reserve from.
+ * The Reserve, one component per warehouse the engine drew on.
  *
- * A board row is single-location by construction: allocation runs per (product, location) and
- * the location is the line's own (13.7). So the payload's list has one entry, and the warehouse
- * is the proposal's when there is one and the LINE's when there is not - an amendment that
- * reserves on a line the engine proposed nothing for is exactly the case where the sources
- * carry no warehouse, and reading only the sources would silently drop the planner's quantity.
+ * A line can carry TWO reserve components at two different warehouses - its own location and
+ * the dealer pool - and each has to be addressed by ITS OWN id. This is the part no display
+ * string could have carried: the pill reads "BRW-BB", the payload needs two UUIDs, so the
+ * warehouse is read off the SOURCE and never off the location label.
  *
- * Returns null when the quantity cannot be addressed to any warehouse at all, which the caller
- * treats as "leave this line undecided" rather than posting something the server must refuse.
+ * An AMENDMENT is taken off the components in the order the engine proposed them, each capped
+ * at what it proposed, and anything the planner adds beyond the whole proposal lands on the
+ * first warehouse - the only one we can address it to. Whatever the Reserve does not cover is
+ * Buy, computed by the caller, so a quantity a planner takes off a Reserve is never lost.
+ *
+ * Returns null when a quantity cannot be addressed to any warehouse at all, which the caller
+ * treats as "leave this line out" rather than posting something the server must refuse.
  */
 function reserveWarehouses(
   contribution: BoardContribution,
   reserveQty: number,
 ): ConfirmReserveComponent[] | null {
   if (reserveQty <= 0) return [];
-  const warehouseId =
-    contribution.sources.find((source) => source.kind === 'reserve' && source.warehouse_id)
-      ?.warehouse_id ?? contribution.fulfilment_warehouse_id;
-  if (!warehouseId) return null;
-  return [{ warehouse_id: warehouseId, qty: fromMinor(reserveQty) }];
+  const proposed = contribution.sources.filter((source) => source.kind === 'reserve');
+  // A reserve the server did not address is one we cannot post. Inventing a warehouse from the
+  // location code would be guessing at an id, which is the one thing an id must never be.
+  if (proposed.length === 0 || proposed.some((source) => !source.warehouse_id)) {
+    const fallback = contribution.fulfilment_warehouse_id;
+    if (proposed.length > 0 || !fallback) return null;
+    return [{ warehouse_id: fallback, qty: fromMinor(reserveQty) }];
+  }
+
+  const components: ConfirmReserveComponent[] = [];
+  let left = reserveQty;
+  for (const source of proposed) {
+    if (left <= 0) break;
+    const take = Math.min(left, toMinor(source.qty));
+    components.push({ warehouse_id: source.warehouse_id as string, qty: fromMinor(take) });
+    left -= take;
+  }
+  if (left > 0 && components.length > 0) {
+    // Amended ABOVE the whole proposal: the excess goes to the first warehouse, which is the
+    // only one this side can name. The server rechecks the stock and refuses if it is not there.
+    components[0] = {
+      warehouse_id: components[0].warehouse_id,
+      qty: fromMinor(toMinor(components[0].qty) + left),
+    };
+  }
+  return components;
+}
+
+/**
+ * The lines a planner DECIDED that this confirmation cannot carry, so the screen can say so.
+ *
+ * Adoption mirrored the order's open lines at the time it ran, so a later upload can add a core
+ * line with no mirror: its order stays confirmable and that one contribution has no
+ * `project_line_id`. Posting an invented id is refused outright, and silently dropping the row
+ * would tell a planner they committed something they did not. The fix is a re-sync on the
+ * sheet, which is somewhere else entirely - which is exactly why saying nothing would be wrong.
+ *
+ * A REJECTED line is not counted: it was never going to post, so it is not a loss.
+ */
+export function unpostableDecidedFor(
+  contributions: BoardContribution[],
+  salesOrderId: string,
+  draft: BoardDraft,
+): BoardContribution[] {
+  return contributions.filter((contribution) => {
+    if (contribution.sales_order_id !== salesOrderId) return false;
+    const decision = draft[contribution.key];
+    if (!decision || decision.verdict === 'rejected') return false;
+    return !contribution.project_line_id;
+  });
 }
 
 /**

@@ -24,10 +24,12 @@ import {
   commitPreviewFor,
   confirmLinesFor,
   standingsFor,
+  unpostableDecidedFor,
 } from '../../_shared/lib/fulfilmentBoard';
 import type {
   BoardCell,
   BoardCommitPreview,
+  BoardContribution,
   BoardDecision,
   BoardDraft,
   BoardGranularity,
@@ -211,15 +213,38 @@ export function FulfilmentBoardPanel({
     return standingsFor(board.data.orders, owners.current, draft);
   }, [board.data, draft]);
 
+  /**
+   * What each order's Confirm would actually post, and what it would leave.
+   *
+   * `committing` is the length of the BODY, not the count of verdicts: a decided line whose
+   * sales order has no mirror for it yet cannot be posted, and a button promising to confirm it
+   * would be describing something the body deliberately omits.
+   */
   const previews = React.useMemo<Record<string, BoardCommitPreview>>(() => {
     if (!board.data) return {};
+    const contributions = board.data.cells.flatMap((cell) => cell.contributions);
     return Object.fromEntries(
       standings.map((standing) => [
         standing.sales_order_id,
-        commitPreviewFor(standing),
+        commitPreviewFor(
+          standing,
+          confirmLinesFor(contributions, standing.sales_order_id, draft).length,
+        ),
       ]),
     );
-  }, [standings, board.data]);
+  }, [standings, board.data, draft]);
+
+  /** Decided lines this confirmation cannot carry, per order, named on the rail. */
+  const unpostable = React.useMemo<Record<string, BoardContribution[]>>(() => {
+    if (!board.data) return {};
+    const contributions = board.data.cells.flatMap((cell) => cell.contributions);
+    return Object.fromEntries(
+      standings.map((standing) => [
+        standing.sales_order_id,
+        unpostableDecidedFor(contributions, standing.sales_order_id, draft),
+      ]),
+    );
+  }, [standings, board.data, draft]);
 
   const bucketLabel = React.useMemo(() => {
     const map = new Map<string, string>();
@@ -418,6 +443,7 @@ export function FulfilmentBoardPanel({
                   preview={previews[standing.sales_order_id]}
                   busy={confirming === standing.sales_order_id}
                   refused={refusals[standing.sales_order_id] ?? []}
+                  unpostable={unpostable[standing.sales_order_id] ?? []}
                   onConfirm={() => void confirmOrder(standing)}
                 />
               ))}
@@ -453,6 +479,7 @@ function OrderCommitRow({
   preview,
   busy,
   refused,
+  unpostable,
   onConfirm,
 }: {
   standing: BoardOrderStanding;
@@ -460,6 +487,8 @@ function OrderCommitRow({
   busy: boolean;
   /** The lines the server would not take, kept beside the order that owns them. */
   refused: SupplyFailingLine[];
+  /** Decided lines with no mirror on the planning record, which this confirmation must omit. */
+  unpostable: BoardContribution[];
   onConfirm: () => void;
 }) {
   const committing = preview?.committing ?? 0;
@@ -513,6 +542,21 @@ function OrderCommitRow({
           </Button>
         </div>
       </div>
+
+      {/* A line the planner decided that this confirmation cannot carry. Named, because
+          dropping it silently would tell them they committed something they did not - and the
+          fix is on another screen, so they would have no way to find out. */}
+      {unpostable.length > 0 && (
+        <p className="text-sm text-amber-700 break-words">
+          {`${unpostable
+            .map((entry) => `${entry.item_code} line ${entry.line_no}`)
+            .join(', ')} ${
+            unpostable.length === 1 ? 'is' : 'are'
+          } not on the planning record yet, so this confirmation leaves ${
+            unpostable.length === 1 ? 'it' : 'them'
+          } out. Re-sync the sales order to add ${unpostable.length === 1 ? 'it' : 'them'}.`}
+        </p>
+      )}
 
       {/* A refusal names the lines it refused and why, beside the work that produced them. The
           draft is untouched, so the planner fixes and presses again rather than starting over. */}

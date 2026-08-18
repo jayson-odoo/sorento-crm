@@ -919,6 +919,53 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     expect(screen.queryByRole('link', { name: /order inquir/i })).not.toBeInTheDocument();
   });
 
+  /**
+   * Adoption mirrored the order's open lines when it ran, so a later upload can add a core line
+   * with no mirror. The order is still confirmable; that line is not, and the planner may well
+   * have approved it - so it is NAMED rather than silently dropped.
+   */
+  it('names a decided line that has no mirror, and does not count it in the Confirm', async () => {
+    const board = twoLineOrder();
+    getPlanningBoard.mockResolvedValue({
+      ...board,
+      cells: board.cells.map((cell) => ({
+        ...cell,
+        contributions: cell.contributions.map((entry) =>
+          entry.item_code === 'TPE-9204' ? { ...entry, project_line_id: null } : entry,
+        ),
+      })),
+    });
+    confirmSupply.mockResolvedValue({
+      revision_no: 1,
+      review_state: 'confirmed',
+      inquiry_rows_created: 1,
+      exceptions: [],
+    });
+
+    renderPanel(['SO403340']);
+
+    // Decide BOTH lines, including the one with no mirror.
+    fireEvent.click(await screen.findByRole('button', { name: /WESERP10B, 100 across 1 sales order/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+    closeDialog();
+    fireEvent.click(await screen.findByRole('button', { name: /TPE-9204, 100 across 1 sales order/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+    closeDialog();
+
+    await waitFor(() => expect(screen.getByText('2 of 2 lines decided')).toBeInTheDocument());
+    // Two decided, but only one can be posted, and the button says the number it will post.
+    expect(
+      await screen.findByText(
+        'TPE-9204 line 2 is not on the planning record yet, so this confirmation leaves it out. Re-sync the sales order to add it.',
+      ),
+    ).toBeInTheDocument();
+    const confirm = screen.getByRole('button', { name: 'Confirm 1 line' });
+
+    fireEvent.click(confirm);
+    await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
+    expect(confirmSupply.mock.calls[0][1].lines).toHaveLength(1);
+  });
+
   it('refuses to post an order that has no planning record, and says why', async () => {
     const board = twoLineOrder();
     getPlanningBoard.mockResolvedValue({

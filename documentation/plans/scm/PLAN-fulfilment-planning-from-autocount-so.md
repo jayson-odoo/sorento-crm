@@ -1749,11 +1749,33 @@ now posts to the SAME per-order endpoint the sheet uses,
   from it and **no link is rendered** - a link that opens a list without the thing it promised is
   worse than no link.
 
-**STILL BLOCKED on three server fields** (measured against the live board payload, 18 August
-2026): `orders[].project_sales_order_id`, `contributions[].project_line_id`, and a warehouse id
-for the Reserve (either `sources[].warehouse_id` or `contributions[].fulfilment_warehouse_id`).
-Until they land, Confirm is disabled per order with "Nobody has started planning this sales order
-yet", and `confirmLinesFor` drops any line it cannot address rather than posting a null.
+**The three ids it is built from are live** (18 August 2026): `orders[].project_sales_order_id`
+(the `{pso_id}` to post to, null when nobody has adopted the order - Confirm is then disabled
+with "Nobody has started planning this sales order yet"), `contributions[].project_line_id` (the
+MIRROR line id; the service rejects core line ids outright, so nothing is mapped on this side)
+and `sources[].warehouse_id`.
+
+**A line can carry TWO reserve components at two warehouses** - its own location and the dealer
+pool - and each must be addressed by its own id. That is the part no display string could have
+carried: the pill reads "BRW-BB" while the payload needs two UUIDs, so the warehouse is read off
+the SOURCE, never off the location label. An amendment is taken off those components in the
+order the engine proposed them, each capped at its own proposal.
+
+**The unmirrored line, which is a real state and not an edge case.** Adoption mirrored the
+order's OPEN lines at the time it ran, so a later upload can add a core line that has no mirror:
+the order stays confirmable and that one contribution has `project_line_id: null`. It is left
+OUT of the body (an invented id is refused outright) and NAMED on the rail - "TPE-9204 line 2 is
+not on the planning record yet, so this confirmation leaves it out. Re-sync the sales order to
+add it." - because the planner may well have approved that row, the fix is on another screen,
+and a silent drop would tell them they committed something they did not. It is excluded from the
+Confirm count for the same reason.
+
+**Proven live, 18 August 2026.** SO391698 (planning record `079b4bad`), one cell approved on the
+board, Confirm pressed: `POST /project-sales/sales-orders/079b4bad-.../confirm` returned **200**,
+the active decision came back as revision 1 covering **exactly 1 of the order's 40 lines** (line
+10, B2155-NL-BLUE, 500 open, `reserve 500 at BRW-IB` - the cell that was approved and nothing
+else), `review_state` moved to `confirmed`, the counter returned to "0 of 40 lines decided" as
+the spent verdict left the draft, and the board refetched.
 
 **The worklist gains select-all** (captain: "need to have select all option also at the top left
 of table"), on the repo's own `buildSelectColumn` + `selectedRowIds` with `rowSelection` state, so
