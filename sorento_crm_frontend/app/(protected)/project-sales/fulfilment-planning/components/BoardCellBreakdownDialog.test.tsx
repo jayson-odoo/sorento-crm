@@ -1451,11 +1451,12 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   });
 
   /**
-   * WHY each rung ended that way, and WHO is in the queue.
+   * WHY each rung ended that way, and a press away to WHO is in the queue.
    *
    * The captain, reading the numbers: "what does this mean? why do the orders stand ahead of me?
    * why? and why is the donor offered but I did not take, why?" So every rung carries one plain
-   * sentence, and the rung with a queue names the top of it.
+   * sentence naming the count and the reason; the rung with a queue also opens the whole thing,
+   * because a plain sentence cannot show rank ("why do the orders stand ahead of me?").
    */
   function rankedCell(lines: BoardDemandLine[], freeStock: Record<string, string> = {}) {
     return buildBoard(lines, { today: TODAY, freeStock, policy: PREVIEW_POLICY }).cells[0];
@@ -1507,22 +1508,22 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     );
   });
 
-  it('names the top of the queue ahead of this line, and counts the rest', () => {
+  it('does not repeat the queue as a list - the rung sentence already gave the count', () => {
+    // The captain: "the explanation ... Ahead of this line ... is not needed, cause you already
+    // told me how many lines ahead, that's fine" - the sentence stays, the repeated list goes.
     const cell = rankedCell(queueOfFive(), { 'WESERP10B|BRW-BB': '40' });
     renderCell(cell);
     const last = cell.contributions[cell.contributions.length - 1].key;
     openTrail(last);
 
-    const ahead = screen.getByTestId(`trail-ahead-${last}`);
-    const rows = [...ahead.querySelectorAll('[data-testid^="trail-ahead-line-"]')];
-    expect(rows).toHaveLength(3);
-    expect(rows[0].textContent).toContain('SO400001');
-    expect(rows[0].textContent).toContain('L1');
-    expect(rows[0].textContent).toContain('100');
-    expect(rows[0].textContent).toContain('Required date');
-    // Words, never the policy's own key for the factor.
-    expect(ahead.textContent).not.toContain('need_by_date');
-    expect(ahead.textContent).toContain('and 1 more');
+    const trail = screen.getByTestId(`trail-${last}`);
+    expect(trail.textContent).toContain(
+      '40 on hand, but 4 lines with an earlier required date rank ahead and want 400 - none is left for this line.',
+    );
+    expect(trail.textContent).not.toContain('Ahead of this line');
+    expect(trail.querySelectorAll('[data-testid^="trail-ahead-line-"]')).toHaveLength(0);
+    expect(screen.queryByTestId(`trail-ahead-${last}`)).not.toBeInTheDocument();
+    expect(screen.getByTestId(`trail-queue-${last}`)).toBeInTheDocument();
   });
 
   it('offers the whole queue rather than only the three it names', async () => {

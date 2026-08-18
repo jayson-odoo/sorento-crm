@@ -4,9 +4,7 @@ import * as React from 'react';
 import { ListChecks } from 'lucide-react';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { aheadFactorLabel } from '../../_shared/lib/fulfilmentBoard';
 import type {
-  BoardAheadLine,
   BoardContribution,
   BoardTrailPool,
   BoardTrailStep,
@@ -146,7 +144,7 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
                                 <PoolPile pool={step.pool} contributionKey={contribution.key} />
                               )}
                               {step.kind === 'reserve_own' && (step.ahead?.length ?? 0) > 0 && (
-                                <AheadList
+                                <QueueLink
                                   step={step}
                                   contributionKey={contribution.key}
                                   onOpenQueue={
@@ -300,14 +298,16 @@ function PoolPile({ pool, contributionKey }: { pool: BoardTrailPool; contributio
 }
 
 /**
- * The top of the queue, named, and the rest of it counted by what put them there.
+ * The route to the whole queue - nothing else.
  *
- * The captain read `18730 across 142 lines` and asked "why do the orders stand ahead of me?
- * why?" - which a total cannot answer. Three lines is what fits beside a rung; the whole queue
- * is a press away, because the follow-up was "I need to know what is ahead of me to have the
- * visibility, and why they are ahead of me, meaning I need to know their rank also".
+ * This used to also name the top three lines ahead and count the rest by factor, but the
+ * captain: "the explanation ... Ahead of this line ... is not needed, cause you already told me
+ * how many lines ahead, that's fine" - the rung's own sentence already gives the count and the
+ * reason. What is left is the one thing the sentence cannot be: a press away, because the
+ * follow-up was "I need to know what is ahead of me to have the visibility, and why they are
+ * ahead of me, meaning I need to know their rank also".
  */
-function AheadList({
+function QueueLink({
   step,
   contributionKey,
   onOpenQueue,
@@ -317,57 +317,20 @@ function AheadList({
   /** Absent when the line's order states no location: there is no pile, so there is no queue. */
   onOpenQueue?: () => void;
 }) {
+  if (!onOpenQueue) return null;
   const ahead = step.ahead ?? [];
-  const more = step.ahead_more ?? 0;
-  const byFactor = Object.entries(step.ahead_by_factor ?? {}).sort(
-    (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
-  );
-
   return (
-    <div data-testid={`trail-ahead-${contributionKey}`} className="space-y-0.5 pt-0.5">
-      <p className="text-2xs font-medium text-muted-foreground">Ahead of this line</p>
-      {ahead.map((line, index) => (
-        <p
-          key={`${line.so_number}-${line.line_no ?? index}`}
-          data-testid={`trail-ahead-line-${index}`}
-          className="text-2xs text-muted-foreground tabular-nums"
-        >
-          {aheadLineText(line)}
-        </p>
-      ))}
-      {more > 0 && (
-        <p className="text-2xs text-muted-foreground">
-          {`and ${more} more (${byFactor
-            .map(([key, count]) => `${aheadFactorLabel(key)} ${count}`)
-            .join(' · ')})`}
-        </p>
-      )}
-      {onOpenQueue && (
-        <button
-          type="button"
-          data-testid={`trail-queue-${contributionKey}`}
-          className="text-2xs font-medium text-primary hover:underline"
-          onClick={onOpenQueue}
-        >
-          {`View the queue (${step.ahead_lines ?? ahead.length} ahead)`}
-        </button>
-      )}
+    <div className="pt-0.5">
+      <button
+        type="button"
+        data-testid={`trail-queue-${contributionKey}`}
+        className="text-2xs font-medium text-primary hover:underline"
+        onClick={onOpenQueue}
+      >
+        {`View the queue (${step.ahead_lines ?? ahead.length} ahead)`}
+      </button>
     </div>
   );
-}
-
-/** One queued line on one line: who, how much, when it is due, its rank, and why it is first. */
-function aheadLineText(line: BoardAheadLine): string {
-  const who = line.same_order
-    ? `same order, line ${line.line_no ?? '?'}`
-    : `${line.so_number}${line.line_no ? ` L${line.line_no}` : ''}`;
-  return [
-    who,
-    line.qty,
-    line.required_date ? `due ${formatDateInMalaysia(line.required_date)}` : 'no required date',
-    line.rank_score.toFixed(2),
-    line.leading_factor ? aheadFactorLabel(line.leading_factor) : 'ranked first',
-  ].join(' · ');
 }
 
 /** What the rung is, in the words the source strip already uses. */
