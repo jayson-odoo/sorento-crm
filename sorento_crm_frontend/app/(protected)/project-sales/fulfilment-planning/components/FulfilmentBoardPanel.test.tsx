@@ -203,6 +203,32 @@ describe('FulfilmentBoardPanel: the axes', () => {
     ).toBeInTheDocument();
   });
 
+  /**
+   * The two `is_past` flags answer different questions, and this is the one that catches it:
+   * a line due two days ago sits in the week that CONTAINS as_of, so its bucket is not past
+   * (some of that week is still to come) while the line certainly is. Counting off the bucket
+   * would report zero late lines on a board full of them.
+   */
+  it('counts late LINES, not late buckets, so a line due this week still counts', async () => {
+    getPlanningBoard.mockResolvedValue(
+      boardOf([
+        demand({ line_no: 1, required_date: '2026-08-17' }),
+        demand({ line_no: 2, required_date: '2026-08-20' }),
+      ]),
+    );
+
+    renderPanel();
+
+    const matrix = await screen.findByTestId('fulfilment-board-matrix');
+    // One bucket, the week of as_of, and it is NOT tinted.
+    expect(matrix.querySelector('[data-bucket="2026-08-17"]')?.getAttribute('data-past')).toBe(
+      'false',
+    );
+    expect(
+      screen.getByText('1 of 2 lines are already past their required date'),
+    ).toBeInTheDocument();
+  });
+
   it('states plainly how much of the selection is already past, and explains nothing', async () => {
     getPlanningBoard.mockResolvedValue(
       boardOf([

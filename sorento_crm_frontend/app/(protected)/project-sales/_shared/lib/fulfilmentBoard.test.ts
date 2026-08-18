@@ -287,6 +287,34 @@ describe('buildBoard: the axes', () => {
     expect(board.dateBuckets[0].is_past).toBe(false);
   });
 
+  /**
+   * A line's own lateness is a different question from its bucket's, and only the line-level
+   * one can answer "how many lines are late": a line due two days ago sits in the week that
+   * contains as_of, whose period has NOT ended.
+   */
+  it('marks a line past by its OWN required date, even when its bucket is not', () => {
+    const board = buildBoard(
+      [
+        line({ line_no: 1, required_date: '2026-08-17' }),
+        line({ line_no: 2, required_date: '2026-08-20' }),
+      ],
+      { today: TODAY },
+    );
+    expect(board.dateBuckets[0].is_past).toBe(false);
+    expect(board.cells[0].past_count).toBe(1);
+    expect(
+      board.cells[0].contributions.map((entry) => `${entry.required_date} ${entry.is_past}`).sort(),
+    ).toEqual(['2026-08-17 true', '2026-08-20 false']);
+  });
+
+  it('never calls an undated line past, because nobody said when it was due', () => {
+    const board = buildBoard([line({ required_date: null, fulfilment_location: null })], {
+      today: TODAY,
+    });
+    expect(board.cells[0].past_count).toBe(0);
+    expect(board.cells[0].contributions[0].is_past).toBe(false);
+  });
+
   it('produces NO cell for a product and date nobody owes, so the grid can render blank', () => {
     const board = buildBoard(
       [

@@ -1187,9 +1187,31 @@ class ProjectSOReconciliationService:
         as the filter allows: not at all for `not_started` (which is simply "no planning
         record"), for every planning record when another state is filtered on OR when the
         sort needs it (`_SORT_NEEDS_OUTCOMES`), and for the page alone otherwise. The same
-        rule governs the joined project / customer / PO strip (`_SORT_NEEDS_HEADERS`). Both
-        extra passes are bounded by the number of PLANNING RECORDS, not by the book: 16
-        against 605 core orders on the live data (plan section 12).
+        rule governs the joined project / customer / PO strip (`_SORT_NEEDS_HEADERS`).
+
+        **What that costs, measured rather than assumed** (live `sorento_scm_e2e_stack`,
+        606 subjects, 18 August 2026, page size 25):
+
+        ==============================  ==================  ====================
+        sort                            1 planning record   ALL 605 adopted
+        ==============================  ==================  ====================
+        earliest_required_date / other  25 to 45 ms         80 to 140 ms
+        customer_name / project_label   ~35 ms              ~140 ms
+        review_state                    ~25 ms              **~450 ms**
+        line_count                      ~30 ms              **~484 ms**
+        ==============================  ==================  ====================
+
+        So the header pass is free and the OUTCOME pass is not: it is roughly 0.7 ms per
+        planning record, because deriving a state with no column means reading that record's
+        mirror lines and its core lines. Today (one record) nothing is measurable; if the
+        whole book is ever planned, those two columns cost about half a second.
+
+        The cheap way out was to sort `line_count` on the core arm's own open-line count,
+        which needs no derivation - and is REFUSED here, because for an authored order
+        linked to a core order that number differs from the one the cell prints, and a
+        column that sorts by one number and shows another is the same defect as a sort the
+        server ignored. If it ever bites, the answer is a stored review state or a
+        materialised line count, which is a schema decision for the plan owner.
         """
         page = max(page, 1)
         offset = (page - 1) * limit

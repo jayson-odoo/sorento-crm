@@ -76,9 +76,14 @@ export function FulfilmentBoardPanel({
   /**
    * Move the day window by a whole window at a time.
    *
-   * Anchored on the board's own first dated bucket rather than on a date held here, so the
-   * server stays the one deciding what a window contains and the control cannot drift out of
-   * step with the columns it is scrolling.
+   * The FIRST window is the server's: it opens on the earliest date still to come, falling
+   * back to the earliest owed when everything is past, and nothing here re-anchors it. This
+   * control only moves off whatever is currently rendered, so it cannot drift out of step with
+   * the columns it is scrolling.
+   *
+   * Day is the only granularity with a window. Week and month need none: only periods actually
+   * owed become columns, so the 50-order cap tops out around 57 week or 24 month columns, and
+   * a control to page through them would be a knob for a problem nobody has.
    */
   const shiftWindow = React.useCallback(
     (direction: 1 | -1) => {
@@ -146,23 +151,18 @@ export function FulfilmentBoardPanel({
   }, [openCell, board.data]);
 
   /**
-   * How much of the selection is already past its required date.
+   * How many LINES of the selection are already past their required date.
    *
-   * Counted off the SERVER's `is_past` per bucket, never off a date compared here: the board
-   * spans 2022 to 2030 and the server is the side that decided where each bucket falls
-   * relative to `as_of`. A count derived on this side would disagree with the tint beside it.
+   * Off the server's `past_count`, which counts contributions whose OWN required date is past
+   * - not the buckets that are tinted. The two disagree on purpose: a line due yesterday sits
+   * in the week that contains `as_of`, whose period has not ended, so counting tinted buckets
+   * would report none of this week's late lines. Nothing here compares a date: the server owns
+   * `as_of` and every comparison against it.
    */
   const pastTotal = React.useMemo(() => {
-    const pastBuckets = new Set(
-      (board.data?.dateBuckets ?? [])
-        .filter((bucket) => bucket.is_past)
-        .map((bucket) => bucket.key),
-    );
     const cells = board.data?.cells ?? [];
     return {
-      lines: cells
-        .filter((cell) => pastBuckets.has(cell.bucket_key))
-        .reduce((total, cell) => total + cell.contributions.length, 0),
+      lines: cells.reduce((total, cell) => total + (cell.past_count ?? 0), 0),
       allLines: cells.reduce((total, cell) => total + cell.contributions.length, 0),
     };
   }, [board.data]);

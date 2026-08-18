@@ -390,6 +390,10 @@ export function buildBoard(
       item_code: line.item_code,
       qty: line.qty,
       required_date: line.required_date ?? null,
+      // The LINE's own lateness, which is not its bucket's: a line due yesterday is late while
+      // the week holding it still has days to come. An undated line is never late - nobody
+      // said when it was due.
+      is_past: Boolean(line.required_date && line.required_date < today),
       fulfilment_location: location,
       unplannable: !location,
       priority: line.priority ?? null,
@@ -439,6 +443,7 @@ export function buildBoard(
         contributions,
         unplannable_count: contributions.filter((entry) => entry.unplannable).length,
         contested_count: contributions.filter((entry) => entry.contested).length,
+        past_count: contributions.filter((entry) => entry.is_past).length,
       });
     }
   }

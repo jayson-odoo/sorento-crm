@@ -179,6 +179,27 @@ export interface ReconciliationSummary {
   lines_linked: number;
 }
 
+/**
+ * The columns the server can order the union by, and therefore the only ones the worklist
+ * offers a sort affordance on. A header that toggled a sort the server ignores would look like
+ * a broken control, so the closed set lives here and drives both the grid and the URL.
+ */
+export const FULFILMENT_PLANNING_SORT_FIELDS = [
+  'so_number',
+  'customer_name',
+  'project_label',
+  'earliest_required_date',
+  'outstanding_qty',
+  'line_count',
+  'review_state',
+  'provisional_ref',
+  'po_number',
+  'area_group',
+  'updated_at',
+] as const;
+
+export type FulfilmentPlanningSortField = (typeof FULFILMENT_PLANNING_SORT_FIELDS)[number];
+
 export interface FulfilmentPlanningListParams {
   page?: number;
   limit?: number;
@@ -186,6 +207,9 @@ export interface FulfilmentPlanningListParams {
   review_state?: ReviewState;
   project_id?: string;
   sales_order_id?: string;
+  /** One of `FULFILMENT_PLANNING_SORT_FIELDS`. Omitted leaves the server's own order. */
+  sort?: string;
+  dir?: 'asc' | 'desc';
 }
 
 /**
@@ -439,15 +463,17 @@ export interface BoardDateBucket {
   /** ISO date of the bucket start, for a dated bucket only. Ordering key. */
   start?: string | null;
   /**
-   * This bucket lies entirely before the board's `as_of`, so nothing in it can still be met
-   * on time. The past is TINTED, never merged: the date is the information, and an aggregate
-   * column throws it away.
+   * The bucket's WHOLE period ended before the board's `as_of`, so nothing in it can still be
+   * met on time. The period CONTAINING `as_of` is false - some of its dates are still to come,
+   * and tinting this week as lost would be wrong - and `no_date` is always false.
    *
    * The SERVER's verdict, read and never re-derived, for the same reason
    * `BoardPolicy.discriminates_nothing` is: only the side that did the bucketing knows where a
-   * week or month bucket falls relative to `as_of`, and a tint derived here would disagree
-   * with the columns it is painting. Absent means not past, so a backend that has not shipped
-   * the flag yet renders an untinted board rather than a wrongly tinted one.
+   * week or month falls relative to `as_of`, and a tint derived here would disagree with the
+   * columns it is painting.
+   *
+   * This is the TINT only. The count of late lines comes from `BoardContribution.is_past`,
+   * which is a different question - see there.
    */
   is_past?: boolean;
 }
@@ -472,6 +498,14 @@ export interface BoardContribution {
   qty: string;
   /** The line's REAL required date, not the bucket it landed in. */
   required_date?: string | null;
+  /**
+   * This LINE's own required date is before `as_of`.
+   *
+   * Not the same question as `BoardDateBucket.is_past`, and the difference is the whole reason
+   * both exist: a line due yesterday is late even though the week it sits in has not ended, so
+   * counting late lines off the bucket flag undercounts them.
+   */
+  is_past?: boolean;
   /** The core sales-order line's own warehouse code. Null means the source record is silent. */
   fulfilment_location?: string | null;
   /** The line states no location, so it cannot be planned and blocks its order (AC-FP16). */
@@ -563,6 +597,11 @@ export interface BoardCell {
   unplannable_count: number;
   /** Contributions the default allocation rule could not cover from free stock. */
   contested_count: number;
+  /**
+   * Contributions whose own required date is already past. Sent so the summary can be counted
+   * without walking every contribution of every cell.
+   */
+  past_count?: number;
 }
 
 export interface BoardProductRow {

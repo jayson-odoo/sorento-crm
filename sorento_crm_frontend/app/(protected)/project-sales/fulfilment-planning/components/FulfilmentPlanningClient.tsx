@@ -2,9 +2,11 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
+  SortingState,
   getCoreRowModel,
   getPaginationRowModel,
   useReactTable,
@@ -32,7 +34,10 @@ import type {
   FulfilmentPlanningRow,
   ReviewState,
 } from '../../_shared/types/fulfilmentPlanning.types';
-import { REVIEW_STATE_LABELS } from '../../_shared/types/fulfilmentPlanning.types';
+import {
+  FULFILMENT_PLANNING_SORT_FIELDS,
+  REVIEW_STATE_LABELS,
+} from '../../_shared/types/fulfilmentPlanning.types';
 import {
   formatOutstandingQty,
   isNotStarted,
@@ -53,6 +58,15 @@ import { FulfilmentPlanningSheet } from './FulfilmentPlanningSheet';
  * the design rather than a guard bolted on afterwards.
  */
 const MAX_BOARD_SELECTION = 50;
+
+/** What the server can order by, and so the only columns that offer a sort. */
+const SORTABLE_COLUMNS = new Set<string>(FULFILMENT_PLANNING_SORT_FIELDS);
+
+/**
+ * The order the server ships by default, stated here so the header shows which column is
+ * carrying it rather than leaving the sort invisible until somebody presses something.
+ */
+const DEFAULT_SORTING: SortingState = [{ id: 'earliest_required_date', desc: false }];
 
 const REVIEW_STATE_OPTIONS = [
   { value: 'all', label: 'Any' },
@@ -84,6 +98,9 @@ const REVIEW_STATE_OPTIONS = [
  * confirmed" and "Not started" is a whole-order value.
  */
 export function FulfilmentPlanningClient() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [reviewState, setReviewState] = React.useState('all');
   const [search, setSearch] = React.useState('');
   const [debounced, setDebounced] = React.useState('');
@@ -94,23 +111,48 @@ export function FulfilmentPlanningClient() {
     pageIndex: 0,
     pageSize: 25,
   });
+  // Opened from the URL so a worklist view is shareable, and validated against the closed set:
+  // a `sort` the server cannot honour would leave the header showing an order it is not in.
+  const [sorting, setSorting] = React.useState<SortingState>(() => {
+    const field = searchParams.get('sort');
+    if (!field || !SORTABLE_COLUMNS.has(field)) return DEFAULT_SORTING;
+    return [{ id: field, desc: searchParams.get('dir') === 'desc' }];
+  });
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => setDebounced(search.trim()), 300);
     return () => window.clearTimeout(timer);
   }, [search]);
 
-  // Narrowing the set changes which rows exist, so page 3 of the old set is a page of
-  // nothing in the new one.
+  // Narrowing the set, or re-ordering it, changes which rows are on which page, so page 3 of
+  // the old set is a page of nothing in the new one.
   React.useEffect(() => {
     setPagination((current) => ({ ...current, pageIndex: 0 }));
-  }, [debounced, reviewState]);
+  }, [debounced, reviewState, sorting]);
+
+  // The sort travels in the URL beside whatever else is there, so the view can be linked and
+  // reloaded. `replace`, not `push`: sorting a list is not a place in history to go back to.
+  React.useEffect(() => {
+    const next = new URLSearchParams(searchParams.toString());
+    if (sorting[0]) {
+      next.set('sort', sorting[0].id);
+      next.set('dir', sorting[0].desc ? 'desc' : 'asc');
+    } else {
+      next.delete('sort');
+      next.delete('dir');
+    }
+    const query = next.toString();
+    if (query === searchParams.toString()) return;
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [sorting, pathname, router, searchParams]);
 
   const planning = useFulfilmentPlanning({
     page: pagination.pageIndex + 1,
     limit: pagination.pageSize,
     query: debounced || undefined,
     review_state: reviewState === 'all' ? undefined : (reviewState as ReviewState),
+    sort: sorting[0]?.id,
+    dir: sorting[0] ? (sorting[0].desc ? 'desc' : 'asc') : undefined,
   });
 
   const rows = React.useMemo(() => planning.data?.data ?? [], [planning.data]);
@@ -143,8 +185,8 @@ export function FulfilmentPlanningClient() {
   // project, when it is due, how much is owed, what state it is in, and the one action. The
   // rest is context and can sit past the fold, because a CS scanning the page is answering
   // "what is due and what still needs work".
-  const columns = React.useMemo<ColumnDef<FulfilmentPlanningRow>[]>(
-    () => [
+  const columns = React.useMemo<ColumnDef<FulfilmentPlanningRow>[]>(() => {
+    const defs: ColumnDef<FulfilmentPlanningRow>[] = [
       {
         id: 'select',
         header: '',
@@ -173,7 +215,6 @@ export function FulfilmentPlanningClient() {
         },
         size: 44,
         minSize: 44,
-        enableSorting: false,
         enableResizing: false,
         meta: { headerTitle: 'Select', skeleton: <Skeleton className="h-4 w-4" /> },
       },
@@ -205,7 +246,6 @@ export function FulfilmentPlanningClient() {
         },
         size: 140,
         minSize: 110,
-        enableSorting: false,
         meta: { headerTitle: 'Sales order', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
@@ -221,11 +261,12 @@ export function FulfilmentPlanningClient() {
           ),
         size: 180,
         minSize: 140,
-        enableSorting: false,
         meta: { headerTitle: 'Customer', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
-        id: 'project',
+        // Named for the field the server sorts on, so the grid's column id, the sort key and
+        // the wire field are one word rather than three that have to be kept in step.
+        id: 'project_label',
         header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
         cell: ({ row }) => {
           const label = planningRowProjectLabel(row.original);
@@ -253,7 +294,6 @@ export function FulfilmentPlanningClient() {
         },
         size: 220,
         minSize: 150,
-        enableSorting: false,
         meta: { headerTitle: 'Project', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
@@ -271,7 +311,6 @@ export function FulfilmentPlanningClient() {
           ),
         size: 140,
         minSize: 120,
-        enableSorting: false,
         meta: { headerTitle: 'Earliest required', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
@@ -289,11 +328,10 @@ export function FulfilmentPlanningClient() {
         },
         size: 120,
         minSize: 100,
-        enableSorting: false,
         meta: { headerTitle: 'Outstanding', skeleton: <Skeleton className="h-4 w-14" /> },
       },
       {
-        id: 'lines',
+        id: 'line_count',
         header: ({ column }) => <DataGridColumnHeader title="Lines" column={column} />,
         cell: ({ row }) => {
           // "0 linked / 40" on an order nobody has planned would report a failure that has
@@ -309,7 +347,6 @@ export function FulfilmentPlanningClient() {
         },
         size: 120,
         minSize: 105,
-        enableSorting: false,
         meta: { headerTitle: 'Lines', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
@@ -325,7 +362,6 @@ export function FulfilmentPlanningClient() {
         // exceptions": the count is the instruction, and a truncated one is worse than none.
         size: 275,
         minSize: 200,
-        enableSorting: false,
         meta: { headerTitle: 'Review state', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
@@ -362,7 +398,6 @@ export function FulfilmentPlanningClient() {
           ),
         size: 150,
         minSize: 130,
-        enableSorting: false,
         enableResizing: false,
         meta: { headerTitle: 'Action', skeleton: <Skeleton className="h-7 w-24" /> },
       },
@@ -379,7 +414,6 @@ export function FulfilmentPlanningClient() {
           ),
         size: 150,
         minSize: 120,
-        enableSorting: false,
         meta: { headerTitle: 'Project SO', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
@@ -395,7 +429,6 @@ export function FulfilmentPlanningClient() {
           ),
         size: 130,
         minSize: 110,
-        enableSorting: false,
         meta: { headerTitle: 'Customer PO', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
@@ -411,7 +444,6 @@ export function FulfilmentPlanningClient() {
           ),
         size: 130,
         minSize: 110,
-        enableSorting: false,
         meta: { headerTitle: 'Area group', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
@@ -427,21 +459,42 @@ export function FulfilmentPlanningClient() {
           ),
         size: 130,
         minSize: 100,
-        enableSorting: false,
         meta: { headerTitle: 'Updated', skeleton: <Skeleton className="h-4 w-20" /> },
       },
-    ],
-    [adopt.isPending, startPlanning, selected],
-  );
+    ];
+
+    // Sortability comes from ONE list, applied here, so a column can never offer a sort the
+    // server does not do or hide one it does. The selection and action columns carry no
+    // server field and so render a plain label instead of a header button.
+    return defs.map((column) => {
+      const id = String(column.id);
+      if (!SORTABLE_COLUMNS.has(id)) return { ...column, enableSorting: false };
+      return {
+        ...column,
+        enableSorting: true,
+        // TanStack refuses to sort a column with no accessor, and these are display columns
+        // that read `row.original` in their cell. Every sortable id IS a field of the wire
+        // row, so the accessor is the honest one rather than a stub - nothing sorts on it
+        // here (`manualSorting`), it exists so the header offers the control.
+        accessorFn: (row: FulfilmentPlanningRow) =>
+          (row as unknown as Record<string, unknown>)[id],
+      };
+    });
+  }, [adopt.isPending, startPlanning, selected]);
 
   const table = useReactTable({
     columns,
     data: rows,
     pageCount: Math.ceil((planning.data?.total ?? 0) / pagination.pageSize) || 0,
     getRowId: planningRowKey,
-    state: { pagination },
+    state: { pagination, sorting },
     onPaginationChange: setPagination,
+    onSortingChange: setSorting,
     manualPagination: true,
+    // The sort is the SERVER's and there is deliberately no `getSortedRowModel`: re-sorting
+    // the page here would reorder 25 rows the server picked for page 1 and leave row 26 where
+    // it was, so the screen would disagree with its own pagination.
+    manualSorting: true,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     columnResizeMode: 'onChange',
@@ -501,7 +554,11 @@ export function FulfilmentPlanningClient() {
         // would have to find Columns -> Reset to get the intended reading order. Bumping
         // the id gives everyone the new defaults once, which is the honest answer to "the
         // columns changed"; anyone who had resized this grid sets it again.
-        listingKey="projects.projects.view::project-fulfilment-planning-v2"
+        // v3: two column IDS changed (`project` -> `project_label`, `lines` -> `line_count`)
+        // so that a column's id, its sort key and the wire field are one word. A config saved
+        // against the old ids would order the grid by names that no longer exist, so everyone
+        // takes the new defaults once rather than finding two columns adrift.
+        listingKey="projects.projects.view::project-fulfilment-planning-v3"
         tableLayout={{ width: 'fixed', columnsResizable: true }}
         // A not-started row has no planning record to open, and clicking a row must never
         // be the thing that writes one: Start planning is an explicit press.

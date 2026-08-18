@@ -133,8 +133,10 @@ export async function listFulfilmentPlanning(
     {
       pageIndex: (params.page ?? 1) - 1,
       pageSize: limit,
-      // No `sorting`: the worklist is server-ordered by earliest outstanding required date
-      // and offers no sortable column, so there is no sort to carry.
+      // `sort` + `dir`, exactly as `buildDataGridParams` emits them. The sort is the SERVER's:
+      // the grid never re-sorts the page it was handed, or the order on screen would disagree
+      // with paging the moment there is more than one page.
+      sorting: params.sort ? [{ id: params.sort, desc: params.dir === 'desc' }] : undefined,
       searchQuery: params.query ?? '',
     },
     {

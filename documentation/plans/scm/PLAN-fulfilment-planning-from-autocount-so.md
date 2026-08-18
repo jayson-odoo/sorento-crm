@@ -13,12 +13,21 @@ free: partial confirmation changes the Stage 1C contract (AC-C01) and REQUIRES a
 change, which breaks section 8 invariant 3 and AC-FP24 as written. 13.4 states the cost, recommends
 the cheaper of the two shapes, and lists exactly what changes.
 
+**13.4 is BUILT (backend seam C, 18 August 2026).** Partial confirmation ships as shape (B) - one
+active decision per order, covering the subset of lines the planner chose - and `scm.committed_v`'s
+`decided` CTE is now per LINE (migration `384_committed_v_line_decision`), so an order's undecided
+lines keep flowing to reorder planning while its confirmed lines reach it as Buy. Every contract
+this touched is amended in place: AC-C01 / AC-C02 / AC-C04 / AC-C06 in `UAC-scm-front-planning.md`,
+AC-FP24 and section 8 invariant 3 here. The rest of section 13 (the board itself) is still DESIGN.
+
 **Still open in section 13, and each is named in place:** whether `document_age` means the sales
 order's date or the customer's PO date (13.5); what a `customer_credit` factor may honestly score,
 given the database holds NO receivables at all and `credit_limit` reaches 8 of 11,166 open project
-lines (13.5); whether the board ranks on the ACTIVE policy, which today weights only a factor no
-board row can have (13.5); and how a partially-covering decision records WHICH lines it covers
-(13.4). Phase 1 mocks the shapes; none of this is built until those are settled.
+lines (13.5); and whether the board ranks on the ACTIVE policy, which today weights only a factor no
+board row can have (13.5). Phase 1 mocks the shapes; none of that is built until those are settled.
+**Answered, and no longer open:** how a partially-covering decision records WHICH lines it covers
+(13.4) - it is `line_snapshots`, read through a lateral, measured rather than assumed, and no link
+table was needed.
 
 **Classification:** MIXED, and no new schema location. Core `public.sales_orders` stays exactly as it
 is (finding G5: the core table stays ignorant of the module). Everything this slice adds lives in
@@ -564,9 +573,19 @@ has a project (section 2).
 
 ```text
 GET /project-sales/fulfilment-planning
-    ?page&limit&query&review_state&project_id&sales_order_id
+    ?page&limit&query&review_state&project_id&sales_order_id&sort&dir
     -> ListResponse<FulfilmentPlanningRow>
     review_state closed set: not_started | awaiting_reconciliation | needs_cs_review | confirmed
+    sort closed set (captain, 18 August 2026, "all columns should be sortable"):
+      so_number | customer_name | project_label | earliest_required_date | outstanding_qty
+      | line_count | review_state | provisional_ref | po_number | area_group | updated_at
+    dir: asc | desc, default asc. An unknown sort or dir is a 422, never a silent fallback.
+    Default order is earliest_required_date ascending (AC-FP04), unchanged.
+    NULLS LAST IN BOTH DIRECTIONS on every field, and every sort ends in the same
+      tiebreaker (the human key ascending, then row identity), so it is total and stable
+      across page boundaries. review_state sorts in WORKFLOW order
+      (not_started < awaiting_reconciliation < needs_cs_review < confirmed), not
+      alphabetically. Text sorts case-folded; a blank string counts as absent.
     query matches sales-order number, customer name, the project string, project code and title,
       provisional ref, AutoCount doc no, area group
 
@@ -695,6 +714,17 @@ the seeding moved. **AC-FP25's claim that every Stage 1B test stays green UNTOUC
 wrong as written** for those two, and the index wins over it because AC-FP10 and AC-FP24's
 "one confirmed leg per core order" rest on the index and nothing else.
 
+**3. Sorting, added on the captain's request ("all columns should be sortable").** The closed
+set and the null rule are in the contract block above. Two things a reviewer should know rather
+than discover: `review_state` and `line_count` are DERIVED, so sorting on either forces the
+review-state derivation over every planning record instead of over the page. Measured on the
+live book at 606 subjects: about 25 to 45 ms with one planning record (today), and about 450 to
+485 ms if all 605 orders are ever adopted, against 80 to 140 ms for the other nine columns. The
+cheaper alternative - sorting `line_count` on the core arm's own open-line count - was refused,
+because for an authored order linked to a core order that is a different number from the one the
+cell prints. If the cost ever bites, the answer is a stored review state or a materialised line
+count, which is a schema decision for this plan's owner and not a coder's.
+
 ---
 
 ## 7. Frontend
@@ -711,13 +741,34 @@ service. New selects use `SearchableSelect` with `clearable` where optional.
   `size` per column and `truncate` + `title` on text. Row action on a Not started row is **Start
   planning**; on any other row it is Open, and clicking the row itself opens the sheet only when a
   planning record exists (a row click must never be what writes one).
-- **The `listingKey` stable id is bumped to `...::project-fulfilment-planning-v2`.** Four columns
+- **The identity column links to the sales order** (captain, 18 August 2026: "on click i should be
+  able to view the SO"). The row keeps its existing meaning - it opens the plan - and the Sales
+  order cell becomes the link, which is this repo's listing idiom (the SCM sales-order list and the
+  purchase-order list both make the document number the way in), with `stopPropagation` so following
+  it does not also open the sheet behind it. Per row, in this order: `/scm/sales-orders/{id}` when
+  the row has a core sales order, else `/project-sales/{project_id}/sales-orders/{id}` for an
+  authored record, else PLAIN TEXT - never a link that 404s. The core order wins when a row can
+  reach both: it is the document the number on screen belongs to. Same tab, as every sibling
+  listing does. Helper: `planningRowSalesOrderHref` in `_shared/lib/fulfilmentPlanningRows.ts`.
+- **Every column the server can sort offers a sort** (captain: "all columns should be sortable").
+  The closed set is `FULFILMENT_PLANNING_SORT_FIELDS` in the types file and matches the contract
+  block in section 6 exactly; it drives BOTH `enableSorting` per column and the URL validation, so a
+  header can never toggle a sort the server ignores. Two column IDS changed to match the wire field
+  (`project` -> `project_label`, `lines` -> `line_count`) so a column's id, its sort key and the
+  server field are one word. `manualSorting: true` with no `getSortedRowModel`: the page is rendered
+  in the server's order and never re-sorted here, or 25 rows would reorder while row 26 stayed on
+  page 2. The sort travels in the URL (`?sort=&dir=`, `router.replace`) so a worklist view is
+  shareable, and it survives a filter or search change; an unknown `sort` in the URL falls back to
+  the default rather than showing an order the server is not in.
+- **The `listingKey` stable id is bumped to `...::project-fulfilment-planning-v3`.** Four columns
   are new and one (`autocount_doc_no`) is gone, so this is not the same listing it was: a config
   saved against the old set interleaves the new columns into an order nobody chose. Measured in the
   browser during Phase 1 - the screen came up as Sales order, Project SO, Review state, action,
   Lines with Customer and both dates pushed off to the right, and only Columns -> Reset fixed it.
   Bumping the id hands everyone the new defaults once, which is the honest answer to "the columns
-  changed". Anyone who had resized this grid sets it again; that is the whole cost.
+  changed". Anyone who had resized this grid sets it again; that is the whole cost. **v3** is the
+  same argument for the two renamed column ids above: a config saved against `project` / `lines`
+  names columns that no longer exist.
 - `ReviewStatePill` and `REVIEW_STATE_LABELS` gain `not_started` -> "Not started". The Project SO
   status label / pill maps gain `adopted` -> "Adopted" in the same change (grep the SO status label
   map used by the project's Sales orders panel and the SO detail header; a status with no label
@@ -1029,20 +1080,41 @@ dates**, **114 distinct weeks** and **35 distinct months**, spanning 2022-07-03 
   required date in the selection, with the window moved by the same calendar control (a previous /
   next pair, and a date picker for a jump). Days inside the window with nothing owed still render as
   columns, because a calendar that hides empty days is not a calendar and the gap is the
-  information. Demand outside the window is not lost: it stays in the Overdue column when it is
-  past, and the next-window control is how it is reached when it is future. The window is a
-  DISPLAY bound only, never a filter on what the board planned.
+  information. Demand outside the window is not lost: the previous / next pair is how it is
+  reached, in either direction (see the amendment below - past demand is no longer collected into
+  one column). The window is a DISPLAY bound only, never a filter on what the board planned.
 
-**Overdue is pinned first and No date is pinned last in EVERY granularity**, because neither is a
-bucket of time and neither has a place on a timeline:
+**SUPERSEDED, 18 August 2026 (captain, verbatim): "don't put overdue together, still split by the
+date, don't put under overdue".** There is NO Overdue column. Every dated line buckets by its own
+required date, past or future; **No date is still pinned last**; and the past is TINTED rather than
+merged. Both sides shipped it together:
 
-- **Overdue** absorbs every past required date, whatever it is. **4,183 of the 11,166 open lines are
-  overdue (37 per cent)**, so this is the biggest column on the board rather than an edge case.
-  Splitting it across three years of historical days, weeks or months would push everything anyone
-  can still act on off the right-hand edge behind the past.
-- **No date** holds the 63 lines that state no required date. They are neither dropped nor guessed
-  into a bucket, because a guessed date is the same class of silent wrong answer as a guessed
-  warehouse (section 11, question 2).
+- `BoardBucketKind` is `dated | no_date`. `overdue` is never emitted and is gone from the FE union.
+- `BoardDateBucket.is_past` - the bucket's WHOLE period ended before `as_of`. The period CONTAINING
+  `as_of` is false (some of its dates are still to come, and tinting this week as lost would be
+  wrong); `no_date` is always false. This is the TINT, and the only thing the grid colours on.
+- `BoardContribution.is_past` - that LINE's own `required_date < as_of` - and `BoardCell.past_count`
+  over it. This is what the "N of M lines are already past their required date" summary counts: a
+  line due yesterday is late even though its week has not ended, so counting tinted buckets would
+  under-report it. The FE re-derives neither; `as_of` and every comparison against it are the
+  server's.
+- Nothing in the UI explains the tint. The old banner sentence ("they are held in the Overdue
+  column ... rather than spread back across the dates they were due on") became false and was
+  deleted rather than reworded: a tint that needs a paragraph is a tint that failed, and CLAUDE.md
+  forbids feature explanations in the UI.
+
+Why the original reasoning did not survive contact: it feared that three years of history would push
+the actionable columns off the right-hand edge. What actually happened is worse - one selection of 7
+orders put **160 of 160 lines** in Overdue, so the board showed a single column and lost every date
+it existed to show. The cost of the fix is columns, and it is bounded: only periods actually owed
+become columns, so the 50-order cap tops out around **57 week / 24 month** columns (widest realistic
+selection measured: 50 oldest orders, 2024-12 to 2030-01). **Week and month therefore need no window
+control** and get none. Day keeps its 30-column `day_window`, whose default now opens on the earliest
+date STILL TO COME, falling back to the earliest owed only when everything is past.
+
+**No date** still holds the 63 lines that state no required date. They are neither dropped nor
+guessed into a bucket, because a guessed date is the same class of silent wrong answer as a guessed
+warehouse (section 11, question 2).
 
 Bucketing is a DISPLAY choice and nothing is ever stored bucketed: every breakdown row carries the
 line's own real `required_date`, and the allocation rule sorts on that date, never on the bucket.
@@ -1500,6 +1572,15 @@ takes the same carve-out, with the same three obligations the matrix already mee
 **A blank cell is not a zero**: it means no selected order owes that product by that date. It renders
 blank and stays blank, exactly as the schedule matrix's blank means "this phase does not take this
 product".
+
+**The board header is title left, actions right** (captain, 18 August 2026, with a screenshot of
+Back overlapping the title): the granularity control and then **Back to the worklist** sit together
+in the actions on the right, Back as `ghost` because returning is secondary to the control that
+decides what the board shows. The row is
+`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between` with `min-w-0 break-words` on
+the title and `flex-wrap` on the actions - a plain `items-center justify-between` does not wrap, so
+the controls landed on top of a long title and pushed the page sideways, which is precisely the
+failure the responsive-header rule in CLAUDE.md exists to prevent.
 
 The worklist gains a selection column and a "Plan together (N)" toolbar action; the board is a route
 under the same screen so it can be linked (13.2). The breakdown is a shared `DataGrid` - there the
