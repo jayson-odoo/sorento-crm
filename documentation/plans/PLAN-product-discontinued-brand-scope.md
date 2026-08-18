@@ -1,6 +1,9 @@
 # PLAN - Product-discontinued notification: per-(company, brand) recipient scoping
 
-**Status:** In progress (branch `fm/product-discontinued-brand-scope`).
+**Status:** Implemented 2026-08-18 (branch `fm/product-discontinued-brand-scope`, awaiting PR).
+S1-S4 done; reviewer findings applied (dialog reopen no longer resurrects a cleared scope set,
+scopes sent only when edited, `integration_api_key` principal matched, migration DDL exercised
+by its test). Local prod-copy DB migrated to 375; captain hands-on tested on :3000.
 **Classification:** CORE, `public` schema (extends the existing core notification feature;
 nothing tenant-installable).
 **UAC:** `product-discontinued-brand-scope-acceptance-criteria.md` (the contract).
@@ -158,8 +161,10 @@ current code path (`==`), multiple use `IN` (AC-10).
     unknown brand, or a brand outside the named company - matching the FE contract.
   - The three existing discontinued suites seed their subscribers with the all/all scope
     the migration backfills, since a user with no scope now hears nothing by design.
-- S3 [T, Phase 2]: pytest + vitest suites above.
-- S4 [Review, Phase 3]: reviewer agent + /code-review; evidence run (AC-19).
+- S3 [T, Phase 2]: pytest + vitest suites above. **Done** (5 pytest files, 4 vitest specs).
+- S4 [Review, Phase 3]: reviewer agent + evidence run (AC-19). **Done**; fix-first findings
+  applied in the follow-up commit (see Status). Write-side company gating on `replace_scopes`
+  is a recorded follow-up in the UAC.
 
 ### Out of scope
 

@@ -1,6 +1,8 @@
 # UAC - Product-discontinued notification: per-company AND per-brand recipient scoping
 
-**Status:** Draft (autonomous crewmate run; brief from firstmate is the requirement source).
+**Status:** Implemented 2026-08-18 on `fm/product-discontinued-brand-scope` (autonomous crewmate
+run; brief from firstmate is the requirement source). AC-1..AC-18 pinned by pytest + vitest;
+AC-19 recorded as an agent-browser evidence run in the PLAN.
 Companion plan: `PLAN-product-discontinued-brand-scope.md`. Parent feature:
 `PLAN-product-discontinued-notification.md` (implemented 2026-06-21).
 
