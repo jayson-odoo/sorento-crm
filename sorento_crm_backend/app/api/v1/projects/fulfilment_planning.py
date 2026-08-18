@@ -242,13 +242,15 @@ def confirm_supply(
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
-    """Confirm the whole Project SO in one action (AC-C01).
+    """Confirm the lines the planner has decided, in one action (AC-C01 as amended).
 
-    Every line commits together or none of them does: the service rechecks each line
-    against authoritative facts, and one stale, unbalanced or unmapped line refuses the
-    lot with `failing_lines` naming each by line number and item code. The Order Inquiry
-    handoff runs inside this same transaction, so purchasing can never be told to buy
-    something that was not also promised.
+    Every line IN THIS CONFIRMATION commits together or none of them does: the service
+    rechecks each against authoritative facts, and one stale, unbalanced or unmapped line
+    refuses the lot with `failing_lines` naming each by line number and item code. A line
+    the body does not name is left undecided on purpose (13.4) and keeps counting as
+    demand; a body naming no line at all is refused. The Order Inquiry handoff runs inside
+    this same transaction, so purchasing can never be told to buy something that was not
+    also promised.
     """
     try:
         validate_uuid_path(pso_id, resource="Sales order")

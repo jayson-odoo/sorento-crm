@@ -71,6 +71,7 @@ from app.services.scm.coverage_timeline import (
 )
 from app.services.scm.demand import (
     is_open_demand,
+    is_plan_demand_line,
     is_plan_demand_order,
     qty_of as demand_qty_of,
 )
@@ -393,10 +394,13 @@ class CoverageService:
                 SalesOrderLine.warehouse_id.in_(wh_ids),
                 SalesOrder.status == "open",
                 is_open_demand(),
-                # S13b: project demand exists only where the Order Inquiry created it. The
-                # timeline must eat the same demand as scm.committed_v or the chart
-                # contradicts the plan for reasons nobody can see.
+                # S13b: project demand exists only where the Order Inquiry created it,
+                # and a line CS has already confirmed reaches the plan as its Buy residual
+                # instead (13.4). The timeline must eat the same demand as
+                # scm.committed_v or the chart contradicts the plan for reasons nobody can
+                # see, so it applies BOTH halves of that rule.
                 is_plan_demand_order(),
+                is_plan_demand_line(),
             )
             .all()
         )
@@ -416,6 +420,7 @@ class CoverageService:
                 SalesOrder.status == "open",
                 is_open_demand(),
                 is_plan_demand_order(),
+                is_plan_demand_line(),
             )
             .all()
         )

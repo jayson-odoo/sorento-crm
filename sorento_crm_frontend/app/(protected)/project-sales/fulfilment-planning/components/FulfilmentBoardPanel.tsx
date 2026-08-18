@@ -63,8 +63,36 @@ export function FulfilmentBoardPanel({
   const [draft, setDraft] = React.useState<BoardDraft>({});
   const [openCell, setOpenCell] = React.useState<BoardCell | null>(null);
   const [previewPolicy, setPreviewPolicy] = React.useState(false);
+  /** Which 30-day window the day view is showing. Undefined lets the server choose the first. */
+  const [dayWindow, setDayWindow] = React.useState<string | undefined>(undefined);
 
-  const board = usePlanningBoard(soNumbers, granularity, previewPolicy);
+  const board = usePlanningBoard(
+    soNumbers,
+    granularity,
+    previewPolicy,
+    dayWindow ? { dayWindow } : {},
+  );
+
+  /**
+   * Move the day window by a whole window at a time.
+   *
+   * Anchored on the board's own first dated bucket rather than on a date held here, so the
+   * server stays the one deciding what a window contains and the control cannot drift out of
+   * step with the columns it is scrolling.
+   */
+  const shiftWindow = React.useCallback(
+    (direction: 1 | -1) => {
+      const dated = (board.data?.dateBuckets ?? []).filter(
+        (bucket) => bucket.kind === 'dated' && bucket.start,
+      );
+      const anchor = dated[0]?.start;
+      if (!anchor) return;
+      const next = new Date(`${anchor}T00:00:00Z`);
+      next.setUTCDate(next.getUTCDate() + direction * dated.length);
+      setDayWindow(next.toISOString().slice(0, 10));
+    },
+    [board.data],
+  );
 
   const decide = React.useCallback((key: string, decision: BoardDecision | null) => {
     setDraft((current) => {
@@ -79,24 +107,14 @@ export function FulfilmentBoardPanel({
 
   // Recomputed from the board's own contributions rather than from the raw lines, so the
   // counter and the cells can never disagree about which line is which.
+  // Straight off the board's own contributions, which carry the SERVER's keys. Rebuilding a
+  // key on this side is what makes the counter silently stop at zero (deviation 5).
   const standings = React.useMemo<BoardOrderStanding[]>(() => {
     if (!board.data) return [];
-    const lines = board.data.cells.flatMap((cell) =>
-      cell.contributions.map((contribution) => ({
-        sales_order_id: contribution.sales_order_id,
-        so_number: contribution.so_number,
-        customer_name: contribution.customer_name,
-        line_no: contribution.line_no,
-        item_code: contribution.item_code,
-        qty: contribution.qty,
-        required_date: contribution.required_date,
-        fulfilment_location: contribution.fulfilment_location,
-      })),
+    return standingsFor(
+      board.data.cells.flatMap((cell) => cell.contributions),
+      draft,
     );
-    return standingsFor(lines, draft, {
-      today: board.data.as_of,
-      granularity: board.data.granularity,
-    });
   }, [board.data, draft]);
 
   const previews = React.useMemo<Record<string, BoardCommitPreview>>(() => {
@@ -149,12 +167,29 @@ export function FulfilmentBoardPanel({
             {`Planning ${soNumbers.length} sales orders together`}
           </h2>
         </div>
-        <div className="w-full sm:w-44">
-          <SearchableSelect
-            value={granularity}
-            onChange={(value) => setGranularity(value as BoardGranularity)}
-            options={GRANULARITY_OPTIONS}
-          />
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          {granularity === 'day' && (
+            <>
+              <Button type="button" variant="outline" size="sm" onClick={() => shiftWindow(-1)}>
+                Earlier days
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => shiftWindow(1)}>
+                Later days
+              </Button>
+            </>
+          )}
+          <div className="w-full sm:w-44">
+            <SearchableSelect
+              value={granularity}
+              onChange={(value) => {
+                // A window belongs to the view that scrolled it; carrying it into week or month
+                // would silently pin those to a date the planner never chose.
+                setDayWindow(undefined);
+                setGranularity(value as BoardGranularity);
+              }}
+              options={GRANULARITY_OPTIONS}
+            />
+          </div>
         </div>
       </div>
 
@@ -334,9 +369,9 @@ function PolicyNote({
   previewing: boolean;
   onPreviewChange: (next: boolean) => void;
 }) {
-  const scorable = Object.entries(policy.factors).filter(
-    ([key, weight]) => Number(weight) > 0 && key !== 'po_document_sequence',
-  );
+  // The weights are shown as evidence; whether they SEPARATE anything is the server's verdict
+  // (deviation 1), because a weighted-but-constant factor looks healthy from here.
+  const weights = Object.entries(policy.factors).filter(([, weight]) => Number(weight) > 0);
   return (
     <div className="flex flex-col gap-1 rounded-lg border border-border px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0 text-sm">
@@ -349,14 +384,14 @@ function PolicyNote({
         )}
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-3">
-        {scorable.length === 0 ? (
+        {policy.discriminates_nothing ? (
           <p className="min-w-0 text-sm text-destructive break-words">
-            This policy weights nothing a sales-order line carries, so every row scores the same
+            This policy weights nothing that separates these rows, so every one scores the same
             and the ranking is flat.
           </p>
         ) : (
           <p className="min-w-0 text-sm text-muted-foreground break-words">
-            {scorable.map(([key, weight]) => `${key} ${weight}`).join(' · ')}
+            {weights.map(([key, weight]) => `${key} ${weight}`).join(' · ')}
           </p>
         )}
         {/* A what-if, never an activation: previewing shows what a fair weighting would do to

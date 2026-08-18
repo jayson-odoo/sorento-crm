@@ -204,17 +204,23 @@ export function useReconciliationMutations() {
 export function usePlanningBoard(
   soNumbers: string[],
   granularity: BoardGranularity = 'week',
-  previewPolicy = false,
+  previewPolicy: boolean | string = false,
+  options: { dayWindow?: string; asOf?: string } = {},
   enabled = true,
 ) {
   return useQuery({
+    // The window is part of the key: scrolling the day view asks for a DIFFERENT board, and
+    // sharing a cache entry between two windows would show yesterday's columns under today's
+    // header.
     queryKey: [
       PLANNING_BOARD_KEY,
       [...soNumbers].sort().join(','),
       granularity,
-      previewPolicy ? 'preview' : 'live',
+      typeof previewPolicy === 'string' ? previewPolicy : previewPolicy ? 'preview' : 'live',
+      options.dayWindow ?? '',
+      options.asOf ?? '',
     ],
-    queryFn: () => getPlanningBoard(soNumbers, granularity, previewPolicy),
+    queryFn: () => getPlanningBoard(soNumbers, granularity, previewPolicy, options),
     enabled: enabled && soNumbers.length > 0,
     retry: 1,
     refetchOnWindowFocus: false,

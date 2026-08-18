@@ -614,6 +614,55 @@ longer guaranteed. Both were required in
 `app/(protected)/project-sales/_shared/types/fulfilmentPlanning.types.ts` and must be widened in
 Phase 1.
 
+### Amendments made while building Phase 2 seam B (the board), and the FE swap
+
+Eight, all ADDITIVE to the Phase 1 board contract, folded into the frontend when it came off the
+mock. Recorded here because the mock's shapes were the contract until seam B shipped.
+
+**1. `policy.discriminates_nothing` is a SERVER field.** The Phase 1 screen inferred a flat
+ranking by reading the weights, which can only see a factor weighted at zero. The server also
+catches the case that reading cannot: a factor that is weighted AND CONSTANT. Every row on this
+board is project-class, so `demand_class` can carry weight 3.0, look healthy in the factor map,
+and still separate nobody. The frontend now reads the flag and never re-derives it.
+
+**2. `BoardSource.spo_number` and `arrival_date` are always null.** The SPO and its date live
+inside the engine's own sentence, which is what the cell renders. The fields stay on the wire for
+shape stability; nothing may render a placeholder where they would have gone.
+
+**3. The real board emits `timely_spo` sources, which the Phase 1 fixtures never produced.** It
+renders as "Incoming". Verified against the live shape rather than assumed.
+
+**4. `orders[].decided_count` is always 0 from the server.** Verdicts live in the client draft
+(13.4: the board is a lens and writes nothing), so the count is the frontend's to compute and the
+server's field is deliberately not read.
+
+**5. The contribution key is the server's, and `line_no` is DERIVED.** Core `sales_order_lines`
+carries no line number, so the server derives one and pins the key format
+`${sales_order_id}|${line_no}|${item_code}|${bucket_key}` with a test of its own. The frontend
+used to REBUILD that key to count verdicts, which meant any disagreement about bucketing - a
+different `as_of`, a granularity resolved differently, a timezone - made every rebuilt key miss.
+The failure was silent: the draft kept filling up while the per-order counter sat at zero.
+`standingsFor` now takes the contributions and reads `key` off each one. **This was caught by a
+test written before the wiring, and it had already reached the panel.**
+
+**6. `preview_policy` accepts a policy NAME as well as `1`/`true`** (unknown name 404), so a
+second what-if can exist without another boolean.
+
+**7. The route accepts `day_window` and `as_of`.** `day_window` is now sent when the day view
+scrolls, anchored on the board's own first dated bucket so the control cannot drift out of step
+with the columns; `as_of` is available for a reproducible evidence run.
+
+**8. Board sources are own-location Reserve / timely SPO / Buy / unplannable only.** Pool and
+Borrow stay on the per-order sheet because they cross locations, and the board allocates strictly
+per `(product, location)` (13.7).
+
+**Also on the swap:** `NEXT_PUBLIC_FULFILMENT_MOCK`, its service branch and
+`__mocks__/fulfilmentPlanning.fixtures.ts` are deleted. The Phase 1 board ENGINE survives as
+`_shared/lib/__testsupport__/boardFixture.ts` because the component tests genuinely reuse it to
+build realistic boards; it is imported by no production module, and must not be, since the server
+now owns bucketing, ranking and allocation and a second implementation on the client is the
+defect `app/services/scm/priority.py` exists to warn about.
+
 ### Amendments made while building Phase 2 seam A (adoption, worklist, routes)
 
 Two, both found by the tests and both recorded here rather than left as a difference between

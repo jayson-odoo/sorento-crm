@@ -832,11 +832,20 @@ DECISION_CHALLENGED = "challenged"
 
 
 class SOSupplyDecision(Base, CompanyScopedMixin):
-    """One atomic promise about a whole Project SO (PLAN-scm-front-planning.md 3.1, 6.2).
+    """One atomic promise about a Project SO (PLAN-scm-front-planning.md 3.1, 6.2).
 
-    Confirmation is at SO level and never per line. The sheet is line-oriented because CS
-    inspects each line's composition, but no line carries a durable partial state: one
-    revision covers every line or none of them does, so a stale line rolls back the lot.
+    Confirmation is at SO level and never per line: there is one active revision per order
+    and no line carries a workflow state of its own. What a revision COVERS is the set of
+    lines the planner confirmed, which since
+    ``PLAN-fulfilment-planning-from-autocount-so.md`` 13.4 may be a SUBSET of the order's
+    lines - the planner decides the lines they are sure about and deliberately leaves the
+    rest undecided, so that demand keeps flowing to reorder planning. A stale line among
+    the chosen ones still rolls back the lot, and deciding more lines later is a new
+    revision covering the union, which is what revisions already did.
+
+    A line is covered iff ``line_snapshots`` holds an object for it. That JSONB is
+    therefore load-bearing rather than display evidence: ``scm.committed_v`` reads
+    ``core_line_id`` out of it to decide which sales-order lines have left the sheet leg.
 
     ``line_snapshots`` freezes what was decided, in the words it was decided in: line
     number, the Project and core line ids, product, location, required date, open quantity,

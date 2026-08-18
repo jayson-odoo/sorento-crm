@@ -91,6 +91,12 @@ class SupplyLine(BaseModel):
     advisory_spo: List[SupplySpoRef] = []
     borrow_candidates: List[BorrowCandidate] = []
     frozen: Optional[SupplyFrozenLine] = None
+    #: Covered by the order's active revision (13.4). A confirmation covers the lines the
+    #: planner chose, so `false` here means EXPLICITLY undecided - the line's whole open
+    #: quantity is still demand and still reaches reorder planning. Stated as its own
+    #: field rather than left to be inferred from `frozen`, because "nobody decided this"
+    #: and "decided, and it needed nothing" are different answers.
+    decided: bool = False
 
 
 class SupplyDecisionOut(BaseModel):
@@ -120,6 +126,9 @@ class SupplyProposal(BaseModel):
     status: str
     review_state: Optional[str] = None
     decision: Optional[SupplyDecisionOut] = None
+    #: "4 of 12 lines decided", per order. Information, never a gate (13.4).
+    lines_total: int = 0
+    lines_decided: int = 0
     lines: List[SupplyLine] = []
     failing_lines: Optional[List[SupplyFailingLine]] = None
 
@@ -170,3 +179,7 @@ class ConfirmResult(BaseModel):
     review_state: str = "confirmed"
     inquiry_rows_created: int = 0
     exceptions: List[ConfirmException] = []
+    #: What this revision covers, and what is still open on the order after it (13.4).
+    #: `lines_undecided > 0` is a normal, deliberate outcome, not a warning.
+    lines_decided: int = 0
+    lines_undecided: int = 0

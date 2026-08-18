@@ -16,7 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.services.company_scope_sql import company_sql_predicate
-from app.services.scm.demand import PLAN_DEMAND_ORDER_SQL
+from app.services.scm.demand import PLAN_DEMAND_LINE_SQL, PLAN_DEMAND_ORDER_SQL
 
 # The same filter `scm.committed_v` applies, so the count is of exactly the demand the plan
 # would have used had it carried a location. Restated rather than read from the view because
@@ -26,9 +26,11 @@ _OPEN_LINE = (
     "AND sol.purchasing_status <> 'covered' "
     "AND GREATEST(COALESCE(sol.qty_required, sol.qty_ordered) "
     "             - COALESCE(sol.qty_delivered, 0), 0) > 0 "
-    # S13b: the same order-level rule committed_v applies, restated for the same reason
-    # the line-level rule already is - this reports the demand the plan WOULD have used.
-    f"AND {PLAN_DEMAND_ORDER_SQL}"
+    # S13b plus front planning 13.4: the same order-level AND line-level rules
+    # committed_v applies, restated for the same reason the open-line rule already is -
+    # this reports the demand the plan WOULD have used, so a line CS has already decided
+    # is no more part of it here than it is there.
+    f"AND {PLAN_DEMAND_ORDER_SQL} AND {PLAN_DEMAND_LINE_SQL}"
 )
 _OPEN_QTY = ("GREATEST(COALESCE(sol.qty_required, sol.qty_ordered) "
              "         - COALESCE(sol.qty_delivered, 0), 0)")

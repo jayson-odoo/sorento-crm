@@ -13,13 +13,6 @@ import type {
   SupplyFailingLine,
   SupplyProposal,
 } from '../types/fulfilmentPlanning.types';
-import {
-  mockAdopt,
-  mockPlanningBoard,
-  mockReconciliation,
-  mockSupply,
-  mockWorklist,
-} from './__mocks__/fulfilmentPlanning.fixtures';
 
 /**
  * Fulfilment Planning: the worklist of everything that needs planning, the reconciliation
@@ -95,14 +88,11 @@ import {
  * The confirm POST is not a retry of a partial write: it either commits every line or
  * writes nothing at all.
  *
- * PHASE 1. `NEXT_PUBLIC_FULFILMENT_MOCK=1` serves `__mocks__/fulfilmentPlanning.fixtures.ts`
- * instead of calling any of the above, which is how the worklist union, the Not started
- * pill, Start planning and the adopted sheet are clickable while their backend is still
- * being written. The same switch idiom as `NEXT_PUBLIC_PROJECT_SO_MOCK`. Unset (the
- * default), every function below is the real call and nothing changes. Both the flag branch
- * and the fixtures are deleted when Phase 2 lands.
+ * PHASE 2, and the mock is GONE. Seams A and B are live, so every function below is the
+ * real call; there is no switch left to turn on and no fixture served from here. The Phase 1
+ * fixtures survive only as test support, which is the whole of what "throwaway by design"
+ * meant.
  */
-export const FULFILMENT_MOCK = process.env.NEXT_PUBLIC_FULFILMENT_MOCK === '1';
 
 const BASE = '/api/v1/project-sales';
 
@@ -138,7 +128,6 @@ function normaliseEnvelope(
 export async function listFulfilmentPlanning(
   params: FulfilmentPlanningListParams = {},
 ): Promise<FulfilmentPlanningListEnvelope> {
-  if (FULFILMENT_MOCK) return mockWorklist(params);
   const limit = params.limit ?? 25;
   const search = buildDataGridParams(
     {
@@ -170,7 +159,6 @@ export async function listFulfilmentPlanning(
  * is safe to press twice and safe for two people to press at once.
  */
 export async function adoptSalesOrder(salesOrderId: string): Promise<AdoptSalesOrderResult> {
-  if (FULFILMENT_MOCK) return mockAdopt(salesOrderId);
   const response = await apiFetch(`${BASE}/fulfilment-planning/adopt`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -183,7 +171,6 @@ export async function adoptSalesOrder(salesOrderId: string): Promise<AdoptSalesO
 
 /** What reconciliation currently makes of one order. A pure read: it writes nothing. */
 export async function getReconciliation(psoId: string): Promise<ReconciliationSummary> {
-  if (FULFILMENT_MOCK) return mockReconciliation(psoId);
   const response = await apiFetch(`${BASE}/sales-orders/${psoId}/reconciliation`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the reconciliation'));
@@ -196,7 +183,6 @@ export async function getReconciliation(psoId: string): Promise<ReconciliationSu
  * number). Idempotent, so the button is safe to press on an order that is already clean.
  */
 export async function rerunReconciliation(psoId: string): Promise<ReconciliationSummary> {
-  if (FULFILMENT_MOCK) return mockReconciliation(psoId);
   const response = await apiFetch(`${BASE}/sales-orders/${psoId}/reconcile`, {
     method: 'POST',
   });
@@ -210,7 +196,6 @@ export async function rerunReconciliation(psoId: string): Promise<Reconciliation
  * decision when one exists. A pure read: opening the sheet claims no stock.
  */
 export async function getSupply(psoId: string): Promise<SupplyProposal> {
-  if (FULFILMENT_MOCK) return mockSupply(psoId);
   const response = await apiFetch(`${BASE}/sales-orders/${psoId}/supply`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the supply composition'));
@@ -306,15 +291,26 @@ export async function getPlanningBoard(
   /**
    * Rank by a what-if policy instead of the live one (13.5, recommendation 3). Read-only: a
    * previewed ranking is labelled on screen and may never be committed against.
+   *
+   * `true` asks for the server's default preview; a STRING asks for a policy by name, which is
+   * what lets a second what-if exist without another boolean.
    */
-  previewPolicy = false,
+  previewPolicy: boolean | string = false,
+  options: {
+    /** First day of the day-granularity window. Only meaningful at day granularity. */
+    dayWindow?: string;
+    /** Pin the board to a date, so "overdue" is reproducible in an evidence run. */
+    asOf?: string;
+  } = {},
 ): Promise<PlanningBoard> {
-  if (FULFILMENT_MOCK) return mockPlanningBoard(soNumbers, { granularity, previewPolicy });
-  const search = new URLSearchParams({
-    orders: soNumbers.join(','),
-    granularity,
-    ...(previewPolicy ? { preview_policy: '1' } : {}),
-  });
+  const search = new URLSearchParams({ orders: soNumbers.join(','), granularity });
+  // Omitted rather than sent empty: the route reads presence, and `preview_policy=` would be
+  // an unknown policy NAME rather than "no preview" (404, per the route's contract).
+  if (previewPolicy) {
+    search.set('preview_policy', previewPolicy === true ? '1' : previewPolicy);
+  }
+  if (options.dayWindow) search.set('day_window', options.dayWindow);
+  if (options.asOf) search.set('as_of', options.asOf);
   const response = await apiFetch(`${BASE}/fulfilment-planning/board?${search.toString()}`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the planning board'));

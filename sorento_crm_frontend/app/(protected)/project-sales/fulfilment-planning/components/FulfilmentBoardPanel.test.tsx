@@ -55,11 +55,8 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 }));
 
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
-import {
-  buildBoard,
-  PREVIEW_POLICY,
-  type BoardDemandLine,
-} from '../../_shared/lib/fulfilmentBoard';
+import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
+import type { BoardPolicy } from '../../_shared/types/fulfilmentPlanning.types';
 
 const TODAY = '2026-08-18';
 
@@ -331,6 +328,12 @@ describe('FulfilmentBoardPanel: the commit rail (13.4)', () => {
 });
 
 describe('FulfilmentBoardPanel: the ranking policy (13.5)', () => {
+  /** A board with the policy the server actually sends, flag and all. */
+  function boardWithPolicy(policy: Partial<BoardPolicy>) {
+    const board = boardOf([demand()]);
+    return { ...board, policy: { ...board.policy, ...policy } };
+  }
+
   it('names the policy the board ranked by', async () => {
     getPlanningBoard.mockResolvedValue(boardOf([demand()]));
 
@@ -339,25 +342,53 @@ describe('FulfilmentBoardPanel: the ranking policy (13.5)', () => {
     expect(await screen.findByText("Today's rule (PO document sequence)")).toBeInTheDocument();
   });
 
-  it('says plainly when the policy can rank nothing, rather than showing a plausible order', async () => {
-    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+  /**
+   * Deviation 1: `discriminates_nothing` is the SERVER's verdict, not something the screen
+   * infers from the weights. The server also catches "weighted but constant" - every row on
+   * this board is project-class, so `demand_class` can carry a real weight and still separate
+   * nobody - which no reading of the factor map on this side can see.
+   */
+  it('says the ranking is flat when the SERVER says the policy discriminates nothing', async () => {
+    getPlanningBoard.mockResolvedValue(
+      boardWithPolicy({
+        name: 'Weighted but useless here',
+        // Deliberately non-zero weights: a screen deriving the answer from these would call
+        // this policy healthy and say nothing.
+        factors: { demand_class: 3, need_by_date: 0 },
+        discriminates_nothing: true,
+      }),
+    );
 
     renderPanel();
 
     expect(
       await screen.findByText(
-        'This policy weights nothing a sales-order line carries, so every row scores the same and the ranking is flat.',
+        'This policy weights nothing that separates these rows, so every one scores the same and the ranking is flat.',
       ),
     ).toBeInTheDocument();
   });
 
+  it('shows the weights, and no warning, when the server says the policy does discriminate', async () => {
+    getPlanningBoard.mockResolvedValue(
+      boardWithPolicy({
+        name: 'Fulfilment board preview',
+        factors: { need_by_date: 3, document_age: 1 },
+        discriminates_nothing: false,
+      }),
+    );
+
+    renderPanel();
+
+    expect(await screen.findByText('need_by_date 3 · document_age 1')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/the ranking is flat/),
+    ).not.toBeInTheDocument();
+  });
+
   it('labels a previewed ranking as not live', async () => {
-    const board = buildBoard([demand()], {
-      today: TODAY,
-      freeStock: {},
-      policy: PREVIEW_POLICY,
-    });
-    getPlanningBoard.mockResolvedValue(board);
+    getPlanningBoard.mockResolvedValue(
+      boardWithPolicy({ name: 'Fulfilment board preview', is_preview: true }),
+    );
 
     renderPanel();
 
@@ -386,7 +417,34 @@ describe('FulfilmentBoardPanel: the calendar control (13.3)', () => {
     fireEvent.change(screen.getByLabelText('granularity'), { target: { value: 'month' } });
 
     await waitFor(() =>
-      expect(getPlanningBoard).toHaveBeenCalledWith(['SO403340'], 'month', false),
+      expect(getPlanningBoard).toHaveBeenCalledWith(['SO403340'], 'month', false, {}),
+    );
+  });
+
+  /** Deviation 7: the day view scrolls a 30-day window, and the server is told which one. */
+  it('offers a window to scroll only at day granularity, and sends it', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(screen.queryByRole('button', { name: 'Later days' })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('granularity'), { target: { value: 'day' } });
+    // Wait for the day board to land before scrolling: the window is anchored on the board's
+    // own first dated bucket, so scrolling a board that has not arrived anchors on nothing.
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenCalledWith(['SO403340'], 'day', false, {}),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Later days' }));
+
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenCalledWith(
+        ['SO403340'],
+        'day',
+        false,
+        expect.objectContaining({ dayWindow: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) }),
+      ),
     );
   });
 
@@ -399,7 +457,7 @@ describe('FulfilmentBoardPanel: the calendar control (13.3)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Preview a fairer weighting' }));
 
     await waitFor(() =>
-      expect(getPlanningBoard).toHaveBeenCalledWith(['SO403340'], 'week', true),
+      expect(getPlanningBoard).toHaveBeenCalledWith(['SO403340'], 'week', true, {}),
     );
   });
 });

@@ -12,10 +12,22 @@ shared, what is rechecked at commit, and what is written.
 
 Four ideas run through the whole file.
 
-**Confirmation is at SO level and never per line** (3.1). The sheet is line-oriented
-because CS inspects each line's composition, but there is no durable partial state: one
-stale, unbalanced or unmapped line rolls back the whole transaction, and the refusal names
-every failing line by line number and item code. No UUID ever appears in a message.
+**Confirmation is one decision per SO, covering the lines the planner chose** (3.1, as
+amended by PLAN-fulfilment-planning-from-autocount-so.md 13.4). It was atomic over every
+line of the order; it is now atomic over every line of THIS confirmation:
+
+> "we shouldn't block the confirm when the decision for the order are incomplete yet, we
+>  might want to flow a few product to reorder planning first"   (captain)
+
+One stale, unbalanced or unmapped line among the chosen ones still rolls back the whole
+transaction, and the refusal still names every failing line by line number and item code.
+No UUID ever appears in a message. What changed is that a line the planner did not choose
+is EXPLICITLY UNDECIDED (`decided: false`, no snapshot, no allocation, no inquiry row) -
+never implicitly zero and never implicitly covered - so its full open quantity keeps
+counting as demand for reorder planning. That is the whole reason the captain wanted this,
+and the per-line half of `scm.committed_v` (`app/services/scm/demand.py`) is what makes it
+true rather than merely intended. There is still no per-line workflow STATE: a line is
+covered by the order's one active revision or it is not.
 
 **Every fact is re-read at commit** (AC-C03). The sheet may have been open for an hour, and
 the stock behind it moves. The payload is a proposal, not an instruction: open quantity, the
@@ -348,6 +360,11 @@ class ProjectSupplyService:
 
         header = self._header_fields(order)
         return {
+            "lines_total": len(payload_lines),
+            # How much of the order carries a verdict (13.4). The pill stays a whole-order
+            # value (AC-A03) and this is the sentence beside it, so "Confirmed" on an order
+            # with four of twelve lines decided is not read as a finished order.
+            "lines_decided": sum(1 for line in payload_lines if line["decided"]),
             "project_sales_order_id": str(order.id),
             "provisional_ref": order.provisional_ref,
             "autocount_doc_no": order.autocount_doc_no,
@@ -391,6 +408,10 @@ class ProjectSupplyService:
             "advisory_spo": [self._serialize_spo(ref) for ref in fact.advisory_refs],
             "borrow_candidates": self._borrow_candidates(fact),
             "frozen": frozen,
+            # Covered by the order's active revision, or explicitly not (13.4). Never
+            # inferred from `frozen` being absent by whoever reads this next: an undecided
+            # line and a line decided to nothing would look identical if it were.
+            "decided": frozen is not None,
         }
 
     def _serialize_component(
@@ -566,11 +587,11 @@ class ProjectSupplyService:
             ):
                 reason = f"Line {line.line_no}'s required date has changed."
                 break
-        if len(snapshots) != len(rows) and reason is None:
-            reason = (
-                "This sales order no longer has the same lines the confirmed revision "
-                "covered."
-            )
+        # A revision covering FEWER lines than the order has is not drift: since 13.4 a
+        # confirmation covers the subset the planner chose, and the remainder is
+        # deliberately undecided. Counting the two sets and challenging on a mismatch
+        # would flip every partial decision to `challenged` the instant it was written.
+        # A line the revision DID cover and that has since gone is caught above, by name.
         if reason is None:
             return None
 
@@ -589,7 +610,13 @@ class ProjectSupplyService:
         *,
         actor_user_id: str,
     ) -> Dict[str, Any]:
-        """One transaction, every line, or nothing (PLAN 3.1, AC-C01).
+        """One transaction, every CHOSEN line, or nothing (PLAN 3.1, AC-C01 as amended
+        by PLAN-fulfilment-planning-from-autocount-so.md 13.4).
+
+        The payload names the lines being confirmed. They commit together or not at all;
+        the lines it does not name stay undecided and keep flowing to reorder planning.
+        A payload naming NO line is refused, because superseding the revision that is
+        holding stock and putting nothing in its place is not a decision anybody made.
 
         The caller owns the commit. Everything here runs inside it, including the Order
         Inquiry refresh, so purchasing can never be told to buy something that was not
@@ -615,6 +642,15 @@ class ProjectSupplyService:
         lines = self.lines_of(str(order.id))
         by_id = {str(line.id): line for line in lines}
         payload_lines = list(getattr(payload, "lines", []) or [])
+        if not payload_lines:
+            raise AppException(
+                status_code=422,
+                message=(
+                    "Nothing was chosen to confirm. Pick at least one line, or leave the "
+                    "sales order as it is."
+                ),
+                code="supply_nothing_to_confirm",
+            )
         self._lock_stock(payload_lines, lines)
 
         facts = self._facts_for(order, lines)
@@ -657,18 +693,9 @@ class ProjectSupplyService:
             checked.append((line, entry, fact))
             self._check_line(entry, fact, pool_left, borrow_left, stale, invalid)
 
-        for line in lines:
-            if str(line.id) not in seen:
-                invalid.append(
-                    {
-                        "line_no": line.line_no,
-                        "item_code": item_codes.get(str(line.id)),
-                        "reason": (
-                            "This line has no composition. Every line is confirmed "
-                            "together or none of them is."
-                        ),
-                    }
-                )
+        # A line the payload does not name is NOT a failure any more (13.4). It is
+        # undecided, deliberately, and its demand goes on flowing to reorder planning
+        # untouched. What is still refused is a confirmation of nothing at all, below.
 
         if invalid or stale:
             failing = invalid + stale
@@ -1007,12 +1034,17 @@ class ProjectSupplyService:
         handoff = ProjectOrderInquiryService(self.db).refresh_for_decision(
             order, decision, buy_lines, actor_user_id=actor_user_id
         )
+        decided = len(checked)
         return {
             "revision_no": decision.revision_no,
             "confirmed_at": decision.confirmed_at,
             "review_state": "confirmed",
             "inquiry_rows_created": handoff["created"],
             "exceptions": handoff["exceptions"],
+            # Information, not a gate (13.4): the planner is told what is still open on
+            # this order rather than being stopped from committing what is not.
+            "lines_decided": decided,
+            "lines_undecided": max(len(self.lines_of(str(order.id))) - decided, 0),
         }
 
     def _snapshot(

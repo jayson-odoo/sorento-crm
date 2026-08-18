@@ -238,3 +238,143 @@ describe('fulfilmentPlanningService', () => {
     expect(error.failingLines).toEqual([]);
   });
 });
+
+/**
+ * Phase 2: off the mock and onto the real endpoints.
+ *
+ * These are written BEFORE the wiring and run red first, because the copy defects earlier in
+ * this feature shipped with green tests written against the wrong wording. A test that is
+ * authored after the code it checks tends to describe the code rather than the contract.
+ */
+describe('fulfilmentPlanningService, wired to the real backend', () => {
+  const apiFetch = vi.fn();
+
+  function ok(body: unknown) {
+    return { ok: true, json: async () => body } as Response;
+  }
+
+  async function loadService() {
+    vi.doMock('@/lib/api', () => ({ apiFetch: (...args: unknown[]) => apiFetch(...args) }));
+    vi.doMock('@/lib/api-client', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/lib/api-client')>();
+      return { ...actual, extractApiError: vi.fn(async () => 'Backend said no') };
+    });
+    return import('./fulfilmentPlanningService');
+  }
+
+  /** The URL of the last apiFetch call, as a URL object so params can be read by name. */
+  function lastUrl(): URL {
+    const raw = String(apiFetch.mock.calls[apiFetch.mock.calls.length - 1][0]);
+    return new URL(raw, 'http://test.local');
+  }
+
+  it('serves NO fixtures: there is no mock switch left to turn on', async () => {
+    const service = await loadService();
+    expect(service).not.toHaveProperty('FULFILMENT_MOCK');
+  });
+
+  it('reaches the network for the worklist even when the old mock flag is set', async () => {
+    vi.stubEnv('NEXT_PUBLIC_FULFILMENT_MOCK', '1');
+    apiFetch.mockResolvedValue(ok({ data: [], pagination: { total: 0, page: 1, limit: 25 } }));
+    const { listFulfilmentPlanning } = await loadService();
+
+    await listFulfilmentPlanning({});
+
+    expect(apiFetch).toHaveBeenCalled();
+    vi.unstubAllEnvs();
+  });
+
+  it('adopts through the documented POST, carrying the sales order id as a body', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        project_sales_order_id: 'pso-1',
+        so_number: 'SO345418',
+        review_state: 'needs_cs_review',
+        already_adopted: false,
+      }),
+    );
+    const { adoptSalesOrder } = await loadService();
+
+    const result = await adoptSalesOrder('6ef019e2-1405-4e2e-821c-b550882963d4');
+
+    const [url, init] = apiFetch.mock.calls[0];
+    expect(url).toBe('/api/v1/project-sales/fulfilment-planning/adopt');
+    expect(init).toMatchObject({ method: 'POST' });
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      sales_order_id: '6ef019e2-1405-4e2e-821c-b550882963d4',
+    });
+    expect(result.already_adopted).toBe(false);
+  });
+
+  it('asks the board route for sales-order NUMBERS and the granularity', async () => {
+    apiFetch.mockResolvedValue(ok({ cells: [] }));
+    const { getPlanningBoard } = await loadService();
+
+    await getPlanningBoard(['SO391698', 'SO324265'], 'month');
+
+    const url = lastUrl();
+    expect(url.pathname).toBe('/api/v1/project-sales/fulfilment-planning/board');
+    expect(url.searchParams.get('orders')).toBe('SO391698,SO324265');
+    expect(url.searchParams.get('granularity')).toBe('month');
+  });
+
+  it('omits preview_policy entirely when the live policy is wanted', async () => {
+    apiFetch.mockResolvedValue(ok({ cells: [] }));
+    const { getPlanningBoard } = await loadService();
+
+    await getPlanningBoard(['SO391698'], 'week');
+
+    expect(lastUrl().searchParams.has('preview_policy')).toBe(false);
+  });
+
+  it('asks for the preview policy by flag', async () => {
+    apiFetch.mockResolvedValue(ok({ cells: [] }));
+    const { getPlanningBoard } = await loadService();
+
+    await getPlanningBoard(['SO391698'], 'week', true);
+
+    expect(lastUrl().searchParams.get('preview_policy')).toBe('1');
+  });
+
+  /** Deviation 6: the route takes a policy NAME as well as 1/true. */
+  it('asks for a named policy when one is given, rather than the bare flag', async () => {
+    apiFetch.mockResolvedValue(ok({ cells: [] }));
+    const { getPlanningBoard } = await loadService();
+
+    await getPlanningBoard(['SO391698'], 'week', 'Fulfilment board preview');
+
+    expect(lastUrl().searchParams.get('preview_policy')).toBe('Fulfilment board preview');
+  });
+
+  /** Deviation 7: the route accepts day_window and as_of; the day view needs the first. */
+  it('sends day_window when the day view is scrolled, and never otherwise', async () => {
+    apiFetch.mockResolvedValue(ok({ cells: [] }));
+    const { getPlanningBoard } = await loadService();
+
+    await getPlanningBoard(['SO391698'], 'day', false, { dayWindow: '2026-09-01' });
+    expect(lastUrl().searchParams.get('day_window')).toBe('2026-09-01');
+
+    await getPlanningBoard(['SO391698'], 'week');
+    expect(lastUrl().searchParams.has('day_window')).toBe(false);
+  });
+
+  it('pins the board to a date when one is asked for, so a run is reproducible', async () => {
+    apiFetch.mockResolvedValue(ok({ cells: [] }));
+    const { getPlanningBoard } = await loadService();
+
+    await getPlanningBoard(['SO391698'], 'week', false, { asOf: '2026-08-18' });
+
+    expect(lastUrl().searchParams.get('as_of')).toBe('2026-08-18');
+  });
+
+  it('reports a board failure through the shared extractor', async () => {
+    apiFetch.mockResolvedValue({
+      ok: false,
+      headers: { get: () => 'application/json' },
+      json: async () => ({}),
+    } as unknown as Response);
+    const { getPlanningBoard } = await loadService();
+
+    await expect(getPlanningBoard(['SO391698'])).rejects.toThrow('Backend said no');
+  });
+});

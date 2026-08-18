@@ -63,6 +63,7 @@ def test_migration_bodies_are_frozen_not_imported():
         "374_so_supply_decisions",
         "374_uom_decimal_places",
         "376_scm_channel_read_model",
+        "384_committed_v_line_decision",
     ):
         source = (_VERSIONS / f"{name}.py").read_text()
         assert "from app.services" not in source, (
@@ -75,17 +76,30 @@ def test_migration_bodies_are_frozen_not_imported():
 def test_newest_view_migration_matches_the_live_body():
     """Edit COMMITTED_V_SQL -> this goes red -> write a NEW migration with the new body.
 
-    The newest one is `376_scm_channel_read_model` (the channel split), which runs after
-    Stage 1C's `374_so_supply_decisions` by `depends_on` and replaces the body 374
-    installed. 374's own freeze is checked below, as 346's is: a superseded body stays
-    exactly as it shipped, which is the whole point of the guard.
+    The newest one is `384_committed_v_line_decision` (the per-LINE `decided` CTE that
+    partial confirmation needs), which replaces the body `376_scm_channel_read_model`
+    installed. Every superseded freeze stays exactly as it shipped, which is the whole
+    point of the guard, so 376's and 374's are checked below rather than updated here.
     """
-    m376 = _load("376_scm_channel_read_model")
-    assert _normalize(m376._AS_OF_376) == _normalize(COMMITTED_V_SQL), (
-        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 376; "
-        "add a new migration that freezes the new body (376's pattern), so a from-zero "
+    m384 = _load("384_committed_v_line_decision")
+    assert _normalize(m384._AS_OF_384) == _normalize(COMMITTED_V_SQL), (
+        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 384; "
+        "add a new migration that freezes the new body (384's pattern), so a from-zero "
         "replay stays true to history."
     )
+
+
+@requires_pg
+def test_376_still_freezes_the_body_it_shipped_with():
+    """The channel split's body is history now, and history does not move.
+
+    Pinned by its distinguishing feature in both directions: 376 excludes a whole ORDER
+    the moment any decision exists, which is exactly what 384 replaces, and it must not
+    quietly acquire the line-level rule.
+    """
+    m376 = _load("376_scm_channel_read_model")
+    assert "dd.sales_order_id = so.id" in m376._AS_OF_376
+    assert "core_line_id" not in m376._AS_OF_376
 
 
 @requires_pg
@@ -107,15 +121,54 @@ def test_every_downgrade_copy_matches_the_revision_it_restores():
 
     Each view migration keeps its own frozen copy of the body it replaced, so the copies
     have to be pinned equal to the originals or a downgrade quietly installs a body nobody
-    wrote. Two links in the chain now: 374 restores 346, and 376 restores 374 (`depends_on`
-    puts 374 directly beneath it, so 346 would be a step too far back).
+    wrote. Three links in the chain now: 374 restores 346, 376 restores 374 (`depends_on`
+    puts 374 directly beneath it, so 346 would be a step too far back), and 384 restores
+    376 for the same reason.
     """
     m346 = _load("346_scm_demand_origin_split")
     m374 = _load("374_so_supply_decisions")
     m376 = _load("376_scm_channel_read_model")
+    m384 = _load("384_committed_v_line_decision")
 
     assert _normalize(m374._AS_OF_346) == _normalize(m346._AS_OF_346)
     assert _normalize(m376._AS_OF_374) == _normalize(m374._AS_OF_374)
+    assert _normalize(m384._AS_OF_376) == _normalize(m376._AS_OF_376)
+
+
+@requires_pg
+def test_384_installs_the_line_rule_and_its_downgrade_puts_376_back():
+    """Both directions, against a real database, inside a rolled-back transaction.
+
+    A downgrade that leaves the newer body in place is worse than one that fails: the
+    database would then be stamped at 376 while answering 384's question.
+    """
+    with blank_session() as db:
+        db.execute(text("CREATE SCHEMA IF NOT EXISTS scm"))
+        db.execute(text("DROP VIEW IF EXISTS scm.committed_v CASCADE"))
+
+        m376 = _load("376_scm_channel_read_model")
+        m384 = _load("384_committed_v_line_decision")
+        db.execute(text(m376._AS_OF_376))
+
+        conn = db.connection()
+        ops = Operations(MigrationContext.configure(conn))
+        import alembic.op as op_module
+
+        op_module._proxy = ops
+        m384.upgrade()
+        definition = db.execute(text(
+            "SELECT definition FROM pg_views "
+            "WHERE schemaname = 'scm' AND viewname = 'committed_v'"
+        )).scalar()
+        assert definition and "core_line_id" in definition
+
+        m384.downgrade()
+        restored = db.execute(text(
+            "SELECT definition FROM pg_views "
+            "WHERE schemaname = 'scm' AND viewname = 'committed_v'"
+        )).scalar()
+        assert restored and "core_line_id" not in restored
+        assert "dd.sales_order_id = so.id" in restored
 
 
 @requires_pg

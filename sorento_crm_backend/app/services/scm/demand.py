@@ -58,64 +58,106 @@ PROJECT_CLASS = "project"
 #: aside is counted by `demand_source_service.set_aside_project_demand`, never silently
 #: dropped.
 #:
-#: Front planning section 4 narrows the sheet leg once more: it counts only while the core
-#: SO has NO active confirmed supply decision. After CS confirms, the confirmed Buy
-#: residual in `projects.order_inquiry_rows` IS the project demand, and leaving the sheet
-#: leg on would count the same requirement twice - once as the quantity the sheet named
-#: and once as the quantity CS decided still had to be bought. The join is through
-#: `projects.sales_orders.so_id`, never a reference, a document number or an item.
+#: The rule is in TWO halves because the decision it defers to is now per LINE. This half
+#: is the ORDER-level one above, unchanged since S13b. The line-level half is
+#: `PLAN_DEMAND_LINE_SQL` below, and every reader applies BOTH - `scm.committed_v`,
+#: `demand_breakdown_service` and `unplanned_demand_service` all alias
+#: `sales_order_lines AS sol`, which is what lets the second half be a plain string too.
 PLAN_DEMAND_ORDER_SQL = (
     "(so.demand_class IS DISTINCT FROM 'project' "
-    "OR (so.demand_origin = 'scm_order_inquiry' "
-    "    AND NOT EXISTS ("
-    "        SELECT 1 FROM projects.sales_orders pso "
-    "        JOIN projects.so_supply_decisions d "
-    "          ON d.project_sales_order_id = pso.id "
-    "        WHERE pso.so_id = so.id AND d.state = 'active')))"
+    "OR so.demand_origin = 'scm_order_inquiry')"
+)
+
+#: Front planning section 4 narrows the sheet leg once more: a line counts only while it
+#: has NOT been confirmed. After CS confirms it, the confirmed Buy residual in
+#: `projects.order_inquiry_rows` IS that line's project demand, and leaving the sheet leg
+#: on would count the same requirement twice - once as the quantity the sheet named and
+#: once as the quantity CS decided still had to be bought.
+#:
+#: PER LINE, and that is the whole point (PLAN-fulfilment-planning-from-autocount-so.md
+#: 13.4). It used to be per ORDER, joining `projects.sales_orders.so_id` to any active
+#: decision, which was exact while a confirmation had to cover every line of its order.
+#: Partial confirmation ended that: confirming one line of a twelve-line order would have
+#: dropped all twelve from the sheet leg while only the confirmed line's Buy came back
+#: through the confirmed leg, so the other eleven became demand nobody could see. The
+#: captain's reason for wanting partial confirmation is precisely that those eleven keep
+#: flowing to reorder planning.
+#:
+#: Which lines a decision COVERS is read out of `line_snapshots`, because that JSONB is
+#: where it is recorded: one object per covered line, each carrying its `core_line_id`
+#: (`ProjectSupplyService._snapshot`). No new table, no new column - 13.4's open
+#: sub-question, answered by measuring the lateral rather than by adding a link table.
+#: The match is on the core sales-order line id and never on a reference, a document
+#: number or an item code.
+PLAN_DEMAND_LINE_SQL = (
+    "NOT EXISTS ("
+    "    SELECT 1 FROM projects.so_supply_decisions d "
+    "    CROSS JOIN LATERAL jsonb_array_elements(d.line_snapshots) AS snap "
+    "    WHERE d.state = 'active' "
+    "      AND (snap->>'core_line_id')::uuid = sol.id)"
 )
 
 
-def _decided_sales_order_ids():
-    """The core sales orders CS has already confirmed a supply decision for.
+def _decided_core_line_ids():
+    """The core sales-order LINES an active supply decision already covers.
 
     UNCORRELATED on purpose, and that is the whole reason it is a list rather than the
     `NOT EXISTS` the view uses. Callers reach this predicate with `sales_order_lines`
     aliased (the coverage timeline reads `sales_order_lines AS sales_order_lines_1`), and
-    a correlated sub-select then renders a reference to an alias of `sales_orders` that
-    the enclosing query never made - `missing FROM-clause entry for table
-    "sales_orders_1"`, every demand read in the system. A subquery that names nothing
-    outside itself cannot be adapted wrongly, and `SalesOrder.id` beside it is an ordinary
-    outer column exactly like `SalesOrder.demand_class`. The view keeps its `NOT EXISTS`,
-    which is the same set: raw SQL has no aliasing to get wrong.
+    a correlated sub-select then renders a reference to an alias the enclosing query never
+    made - `missing FROM-clause entry for table "sales_order_lines_1"`, every demand read
+    in the system. A subquery that names nothing outside itself cannot be adapted wrongly,
+    and `SalesOrderLine.id` beside it is an ordinary outer column exactly like
+    `SalesOrderLine.line_status`. The view keeps its `NOT EXISTS`, which is the same set:
+    raw SQL has no aliasing to get wrong.
 
-    `so_id IS NOT NULL` is load-bearing, not tidiness: a NULL in a `NOT IN` list makes the
-    whole predicate NULL, which would silently drop EVERY sheet-leg order from planning.
+    The `IS NOT NULL` filter is load-bearing, not tidiness: a NULL in a `NOT IN` list makes
+    the whole predicate NULL, which would silently drop EVERY sheet-leg line from planning.
+    A snapshot with no `core_line_id` cannot happen through the confirmation path (a line
+    with no reconciled core line is refused), and the filter means a hand-written one
+    could not take the plan down with it either.
 
-    Built over the TABLES rather than the mapped classes so the company-scope loader
-    criteria cannot rewrite a sub-select whose only job is to answer "which orders are
-    decided": the scoping that matters is the caller's, on `sales_orders` itself.
+    Built over the TABLE rather than the mapped class so the company-scope loader criteria
+    cannot rewrite a sub-select whose only job is to answer "which lines are decided": the
+    scoping that matters is the caller's, on `sales_order_lines` itself.
     """
-    from app.models.project_so import (
-        DECISION_ACTIVE,
-        ProjectSalesOrder,
-        SOSupplyDecision,
-    )
+    from sqlalchemy import cast, literal_column
+    from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
-    pso = ProjectSalesOrder.__table__
+    from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+
     decision = SOSupplyDecision.__table__
+    snapshots = (
+        func.jsonb_array_elements(decision.c.line_snapshots)
+        .table_valued("value")
+        .render_derived(name="snap")
+        .lateral()
+    )
+    core_line_id = cast(
+        snapshots.c.value.op("->>")(literal_column("'core_line_id'")),
+        PG_UUID(as_uuid=False),
+    )
     return (
-        select(pso.c.so_id)
-        .select_from(pso.join(decision, decision.c.project_sales_order_id == pso.c.id))
-        .where(decision.c.state == DECISION_ACTIVE, pso.c.so_id.isnot(None))
+        select(core_line_id)
+        .select_from(decision.join(snapshots, literal_column("true")))
+        .where(decision.c.state == DECISION_ACTIVE, core_line_id.isnot(None))
     )
 
 
 def is_plan_demand_order():
     """`PLAN_DEMAND_ORDER_SQL`, as a SQLAlchemy expression over `sales_orders`."""
     return SalesOrder.demand_class.is_distinct_from(PROJECT_CLASS) | (
-        (SalesOrder.demand_origin == ORDER_INQUIRY_ORIGIN)
-        & SalesOrder.id.notin_(_decided_sales_order_ids())
+        SalesOrder.demand_origin == ORDER_INQUIRY_ORIGIN
     )
+
+
+def is_plan_demand_line():
+    """`PLAN_DEMAND_LINE_SQL`, as a SQLAlchemy expression over `sales_order_lines`.
+
+    Applied BESIDE `is_plan_demand_order()`, never instead of it: one says which orders
+    the sheet speaks for, the other which of their lines CS has already decided.
+    """
+    return SalesOrderLine.id.notin_(_decided_core_line_ids())
 
 
 def demand_qty():
@@ -164,14 +206,23 @@ ACTIVE_DECISION_STATE = "active"
 #: commitment came from, which is what makes a Project total firm and a Retail total
 #: nettable without a second read model.
 #:
-#: Two legs supply Project demand, and they are mutually exclusive by design (plan 4):
+#: Two legs supply Project demand, and they are mutually exclusive PER LINE by design
+#: (plan 4, PLAN-fulfilment-planning-from-autocount-so.md 13.4):
 #:
 #: * the CONFIRMED leg - current unplaced Buy on `projects.order_inquiry_rows` pointing at
 #:   an ACTIVE `projects.so_supply_decisions` row, landed at the location of the reconciled
 #:   core SO line. This is CS's own decision and it passes through unnetted.
-#: * the SHEET leg - a `demand_origin = 'scm_order_inquiry'` order, counted ONLY while its
-#:   SO has no active decision. The moment CS confirms, the confirmed Buy residual replaces
-#:   the sheet quantity, so a sheet-named SO that is later confirmed counts exactly once.
+#: * the SHEET leg - a line of a `demand_origin = 'scm_order_inquiry'` order, counted ONLY
+#:   while no active decision COVERS THAT LINE. The moment CS confirms it, the confirmed
+#:   Buy residual replaces its sheet quantity, so a sheet-named line that is later
+#:   confirmed counts exactly once.
+#:
+#: The exclusion is per line and not per order because a confirmation now covers the
+#: subset of lines the planner chose (13.4). Under the old per-order rule, confirming one
+#: line of a twelve-line order removed all twelve from the sheet leg while only the
+#: confirmed line came back through the confirmed leg: eleven lines of uncovered demand,
+#: invisible to the reorder engine. Undecided lines keep counting, at their full
+#: outstanding quantity, which is the entire reason partial confirmation was asked for.
 #:
 #: A project-class order with neither (the normal book, no decision) is still set aside -
 #: unchanged behaviour, now provably absent from all four columns rather than just from the
@@ -188,12 +239,14 @@ ACTIVE_DECISION_STATE = "active"
 COMMITTED_V_SQL = """
 CREATE OR REPLACE VIEW scm.committed_v AS
 WITH decided AS (
-    SELECT DISTINCT pso.so_id AS sales_order_id
-    FROM projects.sales_orders pso
-    JOIN projects.so_supply_decisions d
-      ON d.project_sales_order_id = pso.id
-     AND d.state = 'active'
-    WHERE pso.so_id IS NOT NULL
+    -- The core sales-order LINES an active decision covers, read out of the snapshot
+    -- that records them. Per line, not per order: a confirmation covers the subset the
+    -- planner chose, and the lines it left undecided must go on counting below.
+    SELECT DISTINCT (snap->>'core_line_id')::uuid AS core_line_id
+    FROM projects.so_supply_decisions d
+    CROSS JOIN LATERAL jsonb_array_elements(d.line_snapshots) AS snap
+    WHERE d.state = 'active'
+      AND snap->>'core_line_id' IS NOT NULL
 ),
 legs AS (
     SELECT sol.product_id,
@@ -221,12 +274,13 @@ legs AS (
       AND GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
                    - COALESCE(sol.qty_delivered, 0), 0) > 0
       -- S13b: project demand comes from the Order Inquiry; the book supplies the rest.
-      -- Front planning narrows the sheet leg further: once CS has confirmed a decision
-      -- for the order, its confirmed Buy residual below is the only Project reading.
+      -- Front planning narrows the sheet leg further: once CS has confirmed a LINE, its
+      -- confirmed Buy residual below is the only Project reading of that line. Its
+      -- undecided siblings are untouched and keep counting here.
       AND (so.demand_class IS DISTINCT FROM 'project'
            OR (so.demand_origin = 'scm_order_inquiry'
                AND NOT EXISTS (SELECT 1 FROM decided dd
-                               WHERE dd.sales_order_id = so.id)))
+                               WHERE dd.core_line_id = sol.id)))
     UNION ALL
     -- The confirmed leg: what CS decided must be bought, at the reconciled core line's
     -- product and fulfilment location. Never matched on provisional_ref, autocount_doc_no

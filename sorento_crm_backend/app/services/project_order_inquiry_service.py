@@ -211,6 +211,14 @@ class ProjectOrderInquiryService:
           service does not get to rewrite history;
         * when the new need is lower than what was already placed, the difference becomes a
           `CANCEL_BALANCE` exception row stating both figures, so somebody answers it.
+
+        Since partial confirmation (PLAN-fulfilment-planning-from-autocount-so.md 13.4) a
+        revision covers the lines the planner chose, so a line the PREVIOUS revision
+        covered can be absent from this one. That line is undecided again and its whole
+        open quantity goes back to counting as demand, so a still-raised Buy row from the
+        old revision would be the same requirement told to purchasing twice. Those rows
+        are cancelled below, by the same rule and with the same words as any other
+        superseded row - never deleted, because they are what purchasing was told.
         """
         inquiry = self._existing(order.id, None)
         if inquiry is None:
@@ -298,10 +306,40 @@ class ProjectOrderInquiryService:
                         "message": message,
                     }
                 )
+
+        self._retire_uncovered_rows(inquiry, decision, buy_lines)
         self.db.flush()
         if created and self.task_for(inquiry.id) is None:
             self._hand_to_purchasing(order, inquiry, created)
         return {"inquiry": inquiry, "created": created, "exceptions": exceptions}
+
+    def _retire_uncovered_rows(
+        self, inquiry: OrderInquiry, decision: Any, buy_lines: Sequence[Dict[str, Any]]
+    ) -> None:
+        """Cancel still-raised rows of an EARLIER revision on lines this one dropped.
+
+        Scoped to rows that carry a `supply_decision_id` other than this decision's: a row
+        with none belongs to the amendment path, which is a different instruction to
+        purchasing and is not this method's to touch. An `actioned` row stays, exactly as
+        it does on a covered line - placed supply is in the ledger.
+        """
+        covered = {str(entry["line"].id) for entry in buy_lines}
+        stale = (
+            self.db.query(OrderInquiryRow)
+            .filter(
+                OrderInquiryRow.order_inquiry_id == inquiry.id,
+                OrderInquiryRow.state == INQUIRY_RAISED,
+                OrderInquiryRow.verb.in_((IV_ORDER, IV_CANCEL_BALANCE)),
+                OrderInquiryRow.supply_decision_id.isnot(None),
+                OrderInquiryRow.supply_decision_id != decision.id,
+            )
+            .all()
+        )
+        for row in stale:
+            if str(row.so_line_id) in covered:
+                continue
+            row.state = INQUIRY_CANCELLED
+            row.note = f"Superseded by revision {decision.revision_no}"
 
     def derive_for_amendment(
         self, amendment: SOAmendment, *, actor_user_id: Optional[str] = None

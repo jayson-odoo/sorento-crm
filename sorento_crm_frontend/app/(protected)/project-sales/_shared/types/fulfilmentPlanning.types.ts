@@ -510,6 +510,14 @@ export interface BoardPolicy {
    * A previewed ranking is labelled and cannot be committed against (13.5).
    */
   is_preview: boolean;
+  /**
+   * The SERVER's verdict that this policy separates none of these rows, so the ranking is flat.
+   *
+   * Read, never re-derived. The screen can see a weight of zero, but it cannot see a factor
+   * that is weighted and CONSTANT - every row on this board is project-class, so `demand_class`
+   * can carry weight 3.0 and still order nobody. Only the side that scored the rows knows that.
+   */
+  discriminates_nothing: boolean;
 }
 
 export interface BoardSource {

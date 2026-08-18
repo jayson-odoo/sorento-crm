@@ -14,8 +14,11 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
-import { buildBoard, type BoardDemandLine } from '../../_shared/lib/fulfilmentBoard';
-import type { BoardDraft } from '../../_shared/types/fulfilmentPlanning.types';
+import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
+import type {
+  BoardContribution,
+  BoardDraft,
+} from '../../_shared/types/fulfilmentPlanning.types';
 
 const TODAY = '2026-08-18';
 
@@ -231,5 +234,86 @@ describe('BoardCellBreakdownDialog: a line with no location (AC-FP16)', () => {
     const owed = within(dialog).getByText('owed').closest('div');
     expect(owed?.textContent).toBe('24 owed');
     expect(within(dialog).getByText('No location · 24')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Phase 2 deviations 2, 3 and 8, checked against the shapes the real board actually emits.
+ */
+describe('BoardCellBreakdownDialog: the real board’s sources', () => {
+  /** A contribution built by hand, in exactly the shape seam B returns. */
+  function serverCell(sources: BoardContribution['sources']) {
+    const cell = cellOf([demand({ qty: '15' })]);
+    return {
+      ...cell,
+      contributions: [{ ...cell.contributions[0], sources }],
+    };
+  }
+
+  function renderServerCell(sources: BoardContribution['sources']) {
+    render(
+      <BoardCellBreakdownDialog
+        cell={serverCell(sources)}
+        bucketLabel="w/c 28 Sep 2026"
+        draft={{}}
+        onDecide={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+  }
+
+  /**
+   * Deviation 3: the real board emits `timely_spo`, which the Phase 1 fixtures never produced.
+   * It has to read as incoming stock rather than falling through to a bare code.
+   */
+  it('renders a timely SPO source as Incoming', () => {
+    renderServerCell([
+      {
+        kind: 'timely_spo',
+        qty: '15',
+        location: 'BRW-BB',
+        reason: 'SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the required date.',
+        spo_number: null,
+        arrival_date: null,
+      },
+    ]);
+
+    expect(screen.getByText(/Incoming/)).toBeInTheDocument();
+  });
+
+  /**
+   * Deviation 2: `spo_number` and `arrival_date` are always null, because the SPO and its date
+   * are inside the engine's own sentence. So the sentence is what must be shown, and nothing
+   * may render a placeholder where the null fields would have gone.
+   */
+  it('shows the engine’s sentence, and never a blank where the null SPO fields were', () => {
+    renderServerCell([
+      {
+        kind: 'timely_spo',
+        qty: '15',
+        location: 'BRW-BB',
+        reason: 'SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the required date.',
+        spo_number: null,
+        arrival_date: null,
+      },
+    ]);
+
+    expect(
+      screen.getByText(
+        'SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the required date.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('null')).not.toBeInTheDocument();
+    expect(screen.queryByText('undefined')).not.toBeInTheDocument();
+  });
+
+  /** Deviation 8: Pool and Borrow never reach the board; they cross locations. */
+  it('counts a timely SPO into the balance line as incoming, not as reserve', () => {
+    renderServerCell([
+      { kind: 'timely_spo', qty: '10', location: 'BRW-BB', reason: 'Incoming covers 10.' },
+      { kind: 'buy', qty: '5', location: null, reason: 'The residual is bought.' },
+    ]);
+
+    expect(screen.getByText('15 owed = 0 reserve + 10 incoming + 5 buy')).toBeInTheDocument();
   });
 });
