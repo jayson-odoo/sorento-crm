@@ -67,6 +67,78 @@ class OrderInquirySummary(BaseModel):
     cancelled: int = 0
 
 
+class OrderInquiryWorklistRow(BaseModel):
+    """One instruction on purchasing's own list, in the spreadsheet's columns.
+
+    Same vocabulary as the per-project row above - the sales order NUMBER, the item CODE,
+    a quantity as a string - plus the three facts the cross-project view needs and the
+    per-project one does not: which document to open (a core sales order for an adopted
+    record, the project document for an authored one), who it is for when there is no
+    project to name, and whether anybody has placed it yet.
+    """
+
+    id: str
+    so_date: Optional[date] = None
+    so_number: Optional[str] = None
+    item_code: Optional[str] = None
+    product_name: Optional[str] = None
+    qty: str
+    delivery_date: Optional[date] = None
+    project_customer: Optional[str] = None
+    # Blank until the row traces to a placed purchase order. Never a guess at who would
+    # supply it: purchasing reads a filled cell as a statement that an order exists.
+    supplier: Optional[str] = None
+    supplier_id: Optional[str] = None
+    po_number: Optional[str] = None
+    state: str
+    raised_at: Optional[datetime] = None
+    verb: str
+    note: Optional[str] = None
+
+    # Addressing only, never rendered.
+    project_id: Optional[str] = None
+    project_sales_order_id: Optional[str] = None
+    core_sales_order_id: Optional[str] = None
+    is_adopted: bool = False
+
+
+class OrderInquiryMonthTotal(BaseModel):
+    month: str
+    #: `JAN 26`, spelled the way their sheet tab is.
+    label: str
+    rows: int = 0
+    qty: str = "0"
+
+
+class OrderInquiryFacet(BaseModel):
+    id: str
+    label: str
+    rows: int = 0
+
+
+class OrderInquiryStateCounts(BaseModel):
+    raised: int = 0
+    actioned: int = 0
+    cancelled: int = 0
+    total: int = 0
+
+
+class OrderInquiryWorklistSummary(BaseModel):
+    """The strip above the list, and the three controls beside it.
+
+    The totals honour every filter, the month included, because they describe what is on
+    screen. The three axes each drop their OWN filter, because a control that empties
+    itself the moment it is used cannot be used a second time.
+    """
+
+    total_rows: int = 0
+    total_qty: str = "0"
+    by_state: OrderInquiryStateCounts = OrderInquiryStateCounts()
+    by_month: List[OrderInquiryMonthTotal] = []
+    suppliers: List[OrderInquiryFacet] = []
+    projects: List[OrderInquiryFacet] = []
+
+
 class MarkInquiryRowsRequest(BaseModel):
     row_ids: List[str] = Field(..., min_length=1)
     state: str = Field(..., description="raised, actioned or cancelled")

@@ -43,7 +43,7 @@ import {
   OrderInquiryStatePill,
   OrderInquiryVerbPill,
   VERB_LABEL,
-} from './OrderInquiryVerbPill';
+} from '../../../_shared/components/OrderInquiryVerbPill';
 
 const VERB_OPTIONS = Object.entries(VERB_LABEL).map(([value, label]) => ({ value, label }));
 

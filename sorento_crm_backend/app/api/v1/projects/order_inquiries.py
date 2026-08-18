@@ -12,7 +12,7 @@ publishes, which is the only moment the instruction is true.
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
@@ -25,9 +25,12 @@ from app.schemas.project_order_inquiry import (
     OrderInquiryDetail,
     OrderInquiryRowOut,
     OrderInquirySummary,
+    OrderInquiryWorklistRow,
+    OrderInquiryWorklistSummary,
 )
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
+from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 from app.services.uuid_path_param import validate_uuid_path
 
@@ -37,6 +40,158 @@ router = APIRouter()
 
 VIEW = "projects.projects.view"
 ACTION = "projects.order_inquiry.action"
+
+#: The sort set the list accepts, declared here as a `Literal` because FastAPI cannot
+#: build one from a runtime set. It MUST equal `SORTABLE_FIELDS` in the service, and a
+#: test asserts the two agree.
+WorklistSort = Literal[
+    "so_date",
+    "so_number",
+    "item_code",
+    "product_name",
+    "qty",
+    "delivery_date",
+    "project_customer",
+    "supplier",
+    "po_number",
+    "state",
+    "raised_at",
+]
+
+WORKLIST_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _worklist_filters(
+    query: Optional[str],
+    delivery_month: Optional[str],
+    raised_date: Optional[str],
+    state: Optional[str],
+    project_id: Optional[str],
+    supplier_id: Optional[str],
+) -> dict:
+    if project_id:
+        validate_uuid_path(project_id, resource="Project")
+    if supplier_id:
+        validate_uuid_path(supplier_id, resource="Supplier")
+    return {
+        "query": query,
+        "delivery_month": delivery_month,
+        "raised_date": raised_date,
+        "state": state,
+        "project_id": project_id,
+        "supplier_id": supplier_id,
+    }
+
+
+@router.get("/order-inquiries", response_model=ListResponse[OrderInquiryWorklistRow])
+def list_order_inquiry_worklist(
+    query: Optional[str] = Query(
+        None,
+        description=(
+            "One box. Matches the sales-order number, the item code, the product name or "
+            "code, the customer and the project."
+        ),
+    ),
+    delivery_month: Optional[str] = Query(
+        None, description="`YYYY-MM`. The sheet tab purchasing works a month at a time."
+    ),
+    raised_date: Optional[str] = Query(
+        None, description="`YYYY-MM-DD`. What was raised on one day, their per-day tab."
+    ),
+    # A closed set for the same reason `sort` is: a filter nothing can equal reads on
+    # screen as "no work to do" when the truth is "that is not a state".
+    state: Optional[Literal["raised", "actioned", "cancelled"]] = Query(None),
+    project_id: Optional[str] = Query(None),
+    supplier_id: Optional[str] = Query(None),
+    sort: Optional[WorklistSort] = Query(
+        None, description="Defaults to delivery_date. Nulls always last."
+    ),
+    direction: Optional[Literal["asc", "desc"]] = Query(
+        "asc",
+        alias="dir",
+        description="Nulls sort last in BOTH directions, never first on desc.",
+    ),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Everything purchasing has been told to buy, whoever it belongs to.
+
+    Cross-project because purchasing is: an order ADOPTED from the AutoCount book has no
+    project registration at all, so its rows appear on no per-project list and were
+    reachable only from the one sales order that raised them.
+
+    Plain ``def``, so FastAPI runs the whole handler in a threadpool: it is synchronous
+    SQLAlchemy over a page of rows, and on the event loop it holds up every other request
+    the worker is serving.
+    """
+    try:
+        return OrderInquiryWorklistService(db).list_rows(
+            page=page,
+            limit=limit,
+            sort=sort,
+            direction=direction,
+            **_worklist_filters(
+                query, delivery_month, raised_date, state, project_id, supplier_id
+            ),
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/order-inquiries/summary", response_model=OrderInquiryWorklistSummary)
+def order_inquiry_worklist_summary(
+    query: Optional[str] = Query(None),
+    delivery_month: Optional[str] = Query(None),
+    raised_date: Optional[str] = Query(None),
+    state: Optional[Literal["raised", "actioned", "cancelled"]] = Query(None),
+    project_id: Optional[str] = Query(None),
+    supplier_id: Optional[str] = Query(None),
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The strip above the list, and the month / supplier / project controls beside it."""
+    try:
+        return OrderInquiryWorklistService(db).summary(
+            **_worklist_filters(
+                query, delivery_month, raised_date, state, project_id, supplier_id
+            )
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/order-inquiries/export")
+def export_order_inquiry_worklist(
+    query: Optional[str] = Query(None),
+    delivery_month: Optional[str] = Query(None),
+    raised_date: Optional[str] = Query(None),
+    state: Optional[Literal["raised", "actioned", "cancelled"]] = Query(None),
+    project_id: Optional[str] = Query(None),
+    supplier_id: Optional[str] = Query(None),
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The filtered set as the workbook purchasing already reads: a sheet per month.
+
+    Generated per request rather than stored, exactly as the per-project export is: a
+    stored file goes stale the moment supply is reconfirmed, and a stale instruction is
+    the thing this replaces.
+    """
+    try:
+        filename, body = OrderInquiryWorklistService(db).export_xlsx(
+            **_worklist_filters(
+                query, delivery_month, raised_date, state, project_id, supplier_id
+            )
+        )
+        return Response(
+            content=body,
+            media_type=WORKLIST_XLSX,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
 @router.get(

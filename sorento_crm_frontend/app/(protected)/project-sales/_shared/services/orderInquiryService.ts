@@ -6,6 +6,10 @@ import type {
   OrderInquiryListParams,
   OrderInquiryRow,
   OrderInquirySummary,
+  OrderInquiryWorklistEnvelope,
+  OrderInquiryWorklistParams,
+  OrderInquiryWorklistRow,
+  OrderInquiryWorklistSummary,
 } from '../types/orderInquiry.types';
 
 const BASE = '/api/v1/project-sales';
@@ -95,6 +99,117 @@ export async function markOrderInquiryRows(
   return response.json();
 }
 
+/* ------------------------------------------------ the cross-project worklist
+ *
+ * API CONTRACT. Written in Phase 1 against a fixture, before any backend existed, and
+ * this is what the routes were then built to satisfy.
+ *
+ *   GET  {BASE}/order-inquiries
+ *        query, delivery_month=YYYY-MM, raised_date=YYYY-MM-DD, state, project_id,
+ *        supplier_id, page, limit, sort, dir
+ *        -> { data: OrderInquiryWorklistRow[], pagination: {total,page,limit}, empty }
+ *        sort is a CLOSED set - so_date, so_number, item_code, product_name, qty,
+ *        delivery_date, project_customer, supplier, po_number, state, raised_at - and an
+ *        unknown value is a 422, never a silent fall back to the default.
+ *
+ *   GET  {BASE}/order-inquiries/summary
+ *        the same filters, no paging
+ *        -> { total_rows, total_qty, by_state,
+ *             by_month: [{month,label,rows,qty}], suppliers: [], projects: [] }
+ *        The totals honour every filter. The three AXES each ignore their own filter on
+ *        purpose: they are the screen's controls, and a control that empties itself the
+ *        moment it is used cannot be used a second time.
+ *
+ *   GET  {BASE}/order-inquiries/export
+ *        the same filters, no paging -> xlsx, one sheet per delivery month.
+ *
+ * Rows come from EVERY project and from every adopted AutoCount order, which belongs to
+ * no project at all. Permission is `projects.projects.view`, the same read the module
+ * already grants.
+ */
+
+function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
+  return buildDataGridParams(
+    {
+      pageIndex: (params.page ?? 1) - 1,
+      pageSize: limit,
+      sorting: params.sort ? [{ id: params.sort, desc: params.dir === 'desc' }] : [],
+      searchQuery: params.query ?? '',
+    },
+    {
+      delivery_month: params.delivery_month,
+      raised_date: params.raised_date,
+      state: params.state,
+      project_id: params.project_id,
+      supplier_id: params.supplier_id,
+    },
+  );
+}
+
+/** Everything purchasing has been told to buy, across every project and adopted order. */
+export async function listOrderInquiryWorklist(
+  params: OrderInquiryWorklistParams = {},
+): Promise<OrderInquiryWorklistEnvelope> {
+  const limit = params.limit ?? 25;
+  const search = worklistParams(params, limit);
+  const response = await apiFetch(`${BASE}/order-inquiries?${search.toString()}`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the order inquiry'));
+  const body = (await response.json()) as {
+    data?: OrderInquiryWorklistRow[];
+    pagination?: { total?: number; page?: number; limit?: number };
+  };
+  const rows = Array.isArray(body.data) ? body.data : [];
+  return {
+    data: rows,
+    total: body.pagination?.total ?? rows.length,
+    page: body.pagination?.page ?? 1,
+    limit: body.pagination?.limit ?? limit,
+  };
+}
+
+/** The month strip and the state counts behind the list. */
+export async function getOrderInquiryWorklistSummary(
+  params: OrderInquiryWorklistParams = {},
+): Promise<OrderInquiryWorklistSummary> {
+  const search = worklistParams(params, 25);
+  search.delete('page');
+  search.delete('limit');
+  search.delete('sort');
+  search.delete('dir');
+  const qs = search.toString();
+  const response = await apiFetch(
+    `${BASE}/order-inquiries/summary${qs ? `?${qs}` : ''}`,
+  );
+  if (!response.ok)
+    throw new Error(
+      await extractApiError(response, 'Failed to load the order inquiry totals'),
+    );
+  return response.json();
+}
+
+/**
+ * The whole filtered set as the workbook purchasing already reads: one sheet per
+ * delivery month, their headings, their column order.
+ *
+ * Paging is dropped for the same reason the per-project export drops it: an export of
+ * page two of a filtered set is a file nobody can use.
+ */
+export async function downloadOrderInquiryWorklistXlsx(
+  params: OrderInquiryWorklistParams = {},
+): Promise<Blob> {
+  const search = worklistParams(params, 25);
+  search.delete('page');
+  search.delete('limit');
+  search.delete('sort');
+  search.delete('dir');
+  const qs = search.toString();
+  const response = await apiFetch(`${BASE}/order-inquiries/export${qs ? `?${qs}` : ''}`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to export the order inquiry'));
+  return response.blob();
+}
+
 /**
  * The same rows as the list, as the spreadsheet purchasing already reads (AC-I5).
  *
@@ -117,3 +232,4 @@ export async function downloadOrderInquiryXlsx(
     throw new Error(await extractApiError(response, 'Failed to export the order inquiry'));
   return response.blob();
 }
+

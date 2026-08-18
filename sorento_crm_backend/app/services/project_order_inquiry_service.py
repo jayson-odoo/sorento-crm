@@ -49,7 +49,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
-from app.models.order import Customer, SalesOrderLine
+from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import InboundShipment, SPOAllocation
 from app.models.product import Product
 from app.models.project_so import (
@@ -162,6 +162,28 @@ def _dec(value: Any, default: Decimal = _ZERO) -> Decimal:
 def _qty_str(value: Decimal) -> str:
     """`600`, not `600.0000`. ``normalize()`` alone turns 100 into `1E+2`."""
     return format(_dec(value).normalize(), "f")
+
+
+def project_customer_label(
+    customer_name: Optional[str],
+    project_title: Optional[str],
+    is_pre_order: Optional[bool] = False,
+) -> Optional[str]:
+    """`BUIMACO / TUJU RESIDENCE`, the way purchasing reads the column.
+
+    The billed party first because that is who the document is against, then the project,
+    then the parking note when the order is a pre-order rather than a real commercial
+    commitment (D18).
+
+    A module-level function rather than a method because TWO screens print this column -
+    the per-project inquiry and purchasing's cross-project worklist - and two screens
+    spelling the same customer differently is a support call. Each supplies the three
+    facts its own query already has; the rule for turning them into words lives here.
+    """
+    parts = [part for part in (customer_name, project_title) if part]
+    if is_pre_order:
+        parts.append("PRE-ORDER")
+    return " / ".join(parts) if parts else None
 
 
 def _as_date(value: Any) -> Optional[date]:
@@ -985,12 +1007,15 @@ class ProjectOrderInquiryService:
             for row in rows
         }
 
-    def _project_customer_labels(self, pso_ids: set) -> Dict[str, str]:
-        """`BUIMACO / TUJU RESIDENCE`, the way purchasing reads the column.
+    def _project_customer_labels(self, pso_ids: set) -> Dict[str, Optional[str]]:
+        """`BUIMACO / TUJU RESIDENCE` per sales order, via `project_customer_label`.
 
-        The billed party first because that is who the document is against, then the
-        project, then the parking note when the order is a pre-order rather than a real
-        commercial commitment (D18).
+        The join to `Project` is OUTER, and that is a fix rather than a style choice: an
+        order ADOPTED from the AutoCount book has no project registration by design, so an
+        inner join answered nothing for it and the column came back blank on a row that
+        plainly has a customer. When there is no project party to bill, the CORE sales
+        order's own customer is that customer - it is the same document, read through the
+        table it was imported into.
         """
         if not pso_ids:
             return {}
@@ -1001,23 +1026,28 @@ class ProjectOrderInquiryService:
                 Project.title,
                 Customer.customer_name,
             )
-            .join(Project, Project.id == ProjectSalesOrder.project_id)
+            .outerjoin(Project, Project.id == ProjectSalesOrder.project_id)
             .outerjoin(
                 ProjectPurchaseOrder,
                 ProjectPurchaseOrder.id == ProjectSalesOrder.purchase_order_id,
             )
             .outerjoin(ProjectParty, ProjectParty.id == ProjectPurchaseOrder.issuing_party_id)
-            .outerjoin(Customer, Customer.id == ProjectParty.customer_id)
+            .outerjoin(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
+            # ONE join through a coalesce rather than two aliases of `customers`: the
+            # company-scope listener emits an UNALIASED `customers.company_id` into an
+            # aliased ON clause, which Postgres refuses outright.
+            .outerjoin(
+                Customer,
+                Customer.id
+                == func.coalesce(ProjectParty.customer_id, SalesOrder.customer_id),
+            )
             .filter(ProjectSalesOrder.id.in_(list(pso_ids)))
             .all()
         )
-        out: Dict[str, str] = {}
-        for pso_id, is_pre_order, title, customer_name in rows:
-            parts = [part for part in (customer_name, title) if part]
-            if is_pre_order:
-                parts.append("PRE-ORDER")
-            out[pso_id] = " / ".join(parts)
-        return out
+        return {
+            pso_id: project_customer_label(customer_name, title, is_pre_order)
+            for pso_id, is_pre_order, title, customer_name in rows
+        }
 
     def _remark(self, row: OrderInquiryRow) -> str:
         """The REMARK column, spelled the way the client's own file spells it.
