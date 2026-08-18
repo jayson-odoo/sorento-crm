@@ -79,6 +79,9 @@ from app.models.projects import (
 )
 from app.models.user import User
 from app.services.error_handler import AppException
+from app.services.project_so_reconciliation_service import (
+    ProjectSOReconciliationService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -323,8 +326,11 @@ class ProjectSODraftService:
             reusable_refs=reusable_refs,
         )
         self.db.flush()
+        states = self.review_states_for(orders)
         return {
-            "data": [self.serialize_row(order) for order in orders],
+            "data": [
+                self.serialize_row(order, review_states=states) for order in orders
+            ],
             "replaced_drafts": replaced,
             "skipped_published": skipped,
         }
@@ -2419,7 +2425,25 @@ class ProjectSODraftService:
             for version, schedule in rows
         ]
 
-    def serialize_row(self, order: ProjectSalesOrder) -> Dict[str, Any]:
+    def review_states_for(
+        self, orders: Sequence[ProjectSalesOrder]
+    ) -> Dict[str, Dict[str, Any]]:
+        """The Stage 1B review state for a whole page, so a list is not N evaluations."""
+        return ProjectSOReconciliationService(self.db).review_states_for(
+            [order.id for order in orders]
+        )
+
+    def serialize_row(
+        self,
+        order: ProjectSalesOrder,
+        *,
+        review_states: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """``review_states`` is the caller's page-wide answer from ``review_states_for``.
+
+        Passed in rather than derived per row because deriving it here for a 50-row list
+        would run the line mapping fifty times over; omitted, one order derives its own.
+        """
         lines = self._lines_of(order.id)
         findings = (
             self.db.query(SODraftFinding.severity, func.count(SODraftFinding.id))
@@ -2447,6 +2471,15 @@ class ProjectSODraftService:
             if po and po.issuing_party_id
             else None
         )
+        states = (
+            review_states
+            if review_states is not None
+            else self.review_states_for([order])
+        )
+        # Absent from the map means the order has no review state at all: a draft or a
+        # blocked order is reconciled against nothing, so it reads as no state rather
+        # than an "awaiting reconciliation" it has not earned (AC-A03).
+        state = states.get(str(order.id), {"review_state": None, "exception_count": 0})
         return {
             "id": order.id,
             "provisional_ref": order.provisional_ref,
@@ -2486,10 +2519,21 @@ class ProjectSODraftService:
             # Both this and the schema field are needed: a manual dict builder drops
             # anything not listed here, whatever the schema inherits.
             "updated_at": order.updated_at,
+            # Stage 1B. Derived, never a column: the whole SO's one pre-confirmation state
+            # (AC-A03) and how many exceptions stand between it and Needs CS review, so the
+            # project's SO list and the SO detail header read what Fulfilment Planning does.
+            # Null until the order is published or amended - see above.
+            "review_state": state["review_state"],
+            "exception_count": state["exception_count"],
         }
 
-    def serialize_detail(self, order: ProjectSalesOrder) -> Dict[str, Any]:
-        body = self.serialize_row(order)
+    def serialize_detail(
+        self,
+        order: ProjectSalesOrder,
+        *,
+        review_states: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        body = self.serialize_row(order, review_states=review_states)
         po = (
             self.db.query(ProjectPurchaseOrder)
             .filter(ProjectPurchaseOrder.id == order.purchase_order_id)

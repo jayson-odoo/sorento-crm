@@ -181,8 +181,11 @@ async def list_project_sales_orders(
             sort=sort,
             direction=dir,
         )
+        # One derivation for the whole page: the review state is computed, not stored, and
+        # asking per row would run the line mapping once per sales order.
+        states = service.review_states_for(rows)
         return {
-            "data": [service.serialize_row(row) for row in rows],
+            "data": [service.serialize_row(row, review_states=states) for row in rows],
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
@@ -199,7 +202,12 @@ async def get_sales_order(
     try:
         validate_uuid_path(pso_id, resource="Sales order")
         service = ProjectSODraftService(db)
-        return service.serialize_detail(service.get_order(pso_id))
+        order = service.get_order(pso_id)
+        # The one-order map, passed in rather than left to the row serializer's fallback,
+        # so the detail derives its review state exactly once.
+        return service.serialize_detail(
+            order, review_states=service.review_states_for([order])
+        )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -267,7 +275,9 @@ async def update_sales_order_line(
         service.update_line(order, line_id, payload.model_dump(exclude_unset=True))
         db.commit()
         db.refresh(order)
-        detail = service.serialize_detail(order)
+        detail = service.serialize_detail(
+            order, review_states=service.review_states_for([order])
+        )
         body = next((row for row in detail["lines"] if row["id"] == line_id), None)
         if body is None:
             raise AppException(
@@ -294,7 +304,8 @@ async def regroup_sales_order(
         orders = service.regroup(
             order, [group.model_dump() for group in payload.groups]
         )
-        rows = [service.serialize_row(row) for row in orders]
+        states = service.review_states_for(orders)
+        rows = [service.serialize_row(row, review_states=states) for row in orders]
         db.commit()
         return rows
     except Exception as exc:
@@ -352,7 +363,9 @@ async def build_sponsorship_sales_order(
         projects.assert_can_edit_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
-        body = service.serialize_detail(order)
+        body = service.serialize_detail(
+            order, review_states=service.review_states_for([order])
+        )
         db.commit()
         return body
     except Exception as exc:
@@ -372,7 +385,9 @@ async def confirm_sales_order_costing(
     try:
         service, order = _order_for_edit(db, pso_id, current_user)
         service.confirm_costing(order, actor_user_id=current_user["id"])
-        body = service.serialize_detail(order)
+        body = service.serialize_detail(
+            order, review_states=service.review_states_for([order])
+        )
         db.commit()
         return body
     except Exception as exc:

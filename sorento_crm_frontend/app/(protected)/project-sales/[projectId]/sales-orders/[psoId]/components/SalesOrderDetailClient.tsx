@@ -34,6 +34,7 @@ import {
   GROUPING_ORIGIN_LABEL,
   SalesOrderStatusPill,
 } from '../../../components/SalesOrderStatusPill';
+import { ReviewStatePill } from '../../../../_shared/components/ReviewStatePill';
 import { AllocationPanel } from './AllocationPanel';
 
 /**
@@ -125,6 +126,10 @@ export function SalesOrderDetailClient({
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-semibold break-words">{reference}</h1>
             <SalesOrderStatusPill status={so.status} />
+            {/* Beside the status rather than folded into it: an order can be published AND
+                still awaiting reconciliation, and the header has to be able to say both.
+                Renders nothing until the backend derives the state. */}
+            <ReviewStatePill state={so.review_state} exceptionCount={so.exception_count} />
             {so.is_pre_order && (
               <Badge variant="secondary" appearance="light">
                 Pre-order

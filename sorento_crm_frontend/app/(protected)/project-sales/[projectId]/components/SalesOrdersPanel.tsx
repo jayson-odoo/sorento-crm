@@ -28,6 +28,7 @@ import {
 import type { Project } from '../../_shared/types/project.types';
 import type { ProjectSalesOrderRow } from '../../_shared/types/projectSalesOrder.types';
 import { formatMoney, sumMoney } from './SalesOrderMoney';
+import { ReviewStatePill } from '../../_shared/components/ReviewStatePill';
 import { GroupingOriginNote, SalesOrderStatusPill } from './SalesOrderStatusPill';
 import { SalesOrderBuildDialog } from './SalesOrderBuildDialog';
 
@@ -117,9 +118,19 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
       {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
-        cell: ({ row }) => <SalesOrderStatusPill status={row.original.status} />,
-        size: 120,
-        minSize: 100,
+        // The review state sits under the status rather than in a column of its own: it is
+        // absent on every order that has not been published, and an empty column reads as a
+        // broken one. Renders nothing until the backend derives it.
+        cell: ({ row }) => (
+          <div className="flex min-w-0 flex-col items-start gap-1">
+            <SalesOrderStatusPill status={row.original.status} />
+            {/* No exception count here: the count is the fulfilment planning worklist's
+                instruction, and it does not fit beside a status in this grid. */}
+            <ReviewStatePill state={row.original.review_state} />
+          </div>
+        ),
+        size: 200,
+        minSize: 120,
         meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {

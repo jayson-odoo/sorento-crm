@@ -102,6 +102,12 @@ class ProjectSalesOrderRow(BaseModel):
     project_title: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    # Stage 1B. The whole order's one pre-confirmation state and how many exceptions stand
+    # between it and Needs CS review (AC-A03). Derived from the AutoCount reconciliation
+    # rather than stored, so the project's SO list, the SO detail header and Fulfilment
+    # Planning read the same answer.
+    review_state: Optional[str] = None
+    exception_count: int = 0
 
 
 class ProjectSalesOrderLineRow(BaseModel):
