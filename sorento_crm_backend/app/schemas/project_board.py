@@ -72,6 +72,10 @@ class BoardSource(BaseModel):
     qty: str
     #: Warehouse code for a Reserve; null for Buy, which has no location by definition.
     location: Optional[str] = None
+    #: Addressing only, never rendered: `POST /sales-orders/{pso_id}/confirm` names a Reserve
+    #: component's warehouse by ID (`lines[].reserve[].warehouse_id`) while the screen names it
+    #: by code, so the pair has to travel together. Null for Buy and for an unplannable row.
+    warehouse_id: Optional[str] = None
     #: The sentence the rule wrote, shown beside the quantity. Never a bare code.
     reason: str
     spo_number: Optional[str] = None
@@ -85,6 +89,11 @@ class BoardContribution(BaseModel):
     #: `${sales_order_id}|${line_no}|${item_code}|${bucket_key}`. Addressing only.
     key: str
     sales_order_id: str
+    #: The MIRROR line id, which is how `confirm` names a line (`lines[].project_line_id`):
+    #: the service builds its index from the planning record's own lines and refuses anything
+    #: else. NULL until somebody adopts this sales order - there is no planning record yet, and
+    #: a null is the honest answer rather than an absent key the screen has to interpret.
+    project_line_id: Optional[str] = None
     so_number: str
     customer_name: Optional[str] = None
     project_label: Optional[str] = None
@@ -194,6 +203,10 @@ class BoardProductRow(BaseModel):
 
 class BoardOrderStanding(BaseModel):
     sales_order_id: str
+    #: The planning record this order's confirmation posts to
+    #: (`POST /project-sales/sales-orders/{pso_id}/confirm`). NULL when nobody has adopted the
+    #: sales order yet, which is what lets the screen state that rather than guess it.
+    project_sales_order_id: Optional[str] = None
     so_number: str
     customer_name: Optional[str] = None
     line_count: int

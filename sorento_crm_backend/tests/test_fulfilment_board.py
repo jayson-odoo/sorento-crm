@@ -43,6 +43,7 @@ from ._pg_fixture import blank_session
 MARKER = "zzt-board"
 BASE = "/api/v1/project-sales"
 VIEW = "projects.projects.view"
+EDIT = "projects.projects.edit"
 
 TODAY = date(2026, 8, 18)
 
@@ -1543,3 +1544,202 @@ def test_equal_ranks_are_never_described_as_one_outranking_the_other():
         assert "outranks" not in buy["reason"], buy["reason"]
         assert "ZZT-SO-TIE1" in buy["reason"]
         assert "rank" in buy["reason"].lower() and "sales order number" in buy["reason"]
+
+
+# --------------------------------------------------------------------------- #
+# addressing: the board must be able to reach the confirm endpoint
+#
+# `POST /project-sales/sales-orders/{pso_id}/confirm` names its subject twice over, and
+# neither name was on the board payload:
+#   * `{pso_id}` is the PLANNING RECORD id (`projects.sales_orders.id`), not the core sales
+#     order's - `ProjectSupplyService.get_order` looks it up by that id;
+#   * `lines[].project_line_id` is the MIRROR line id (`projects.sales_order_lines.id`) -
+#     `confirm` builds `by_id` from `lines_of(order.id)` and refuses anything else with
+#     "That line is not on this sales order any more.";
+#   * `lines[].reserve[].warehouse_id` is a warehouse UUID, checked against the line's
+#     reserve reach (own location, or the pool, or the pool alone when hot-selling).
+#
+# So the test below is the contract: it builds the whole body from FIELDS PRESENT ON THE
+# BOARD RESPONSE and nothing else. If it can be written, the frontend can do it.
+# --------------------------------------------------------------------------- #
+
+
+def _adopt(db, sales_order_id: str) -> str:
+    from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+    result = ProjectSOAdoptionService(db).adopt(sales_order_id)
+    db.flush()
+    return result["project_sales_order_id"]
+
+
+def test_a_confirmation_can_be_built_from_the_board_payload_alone():
+    from app.models.base import company_scope
+    from app.models.project_so import SOSupplyDecision
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        actor = _user(db, f"{MARKER} Eling")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _pooled_warehouses(db)
+        _stock(db, product, own, on_hand=3)
+        _stock(db, product, pool, on_hand=4)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+        _adopt(db, str(order.id))
+        db.commit()
+
+        client, originals = _client(db, actor, [VIEW, EDIT])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                board = client.get(
+                    f"{BASE}/fulfilment-planning/board",
+                    params={"orders": order.so_number, "granularity": "week"},
+                ).json()
+
+                # --- everything below comes off the board response, nothing else ---
+                standing = board["orders"][0]
+                pso_id = standing["project_sales_order_id"]
+                assert pso_id, "the board must name the record the confirmation posts to"
+
+                lines = []
+                for cell in board["cells"]:
+                    for contribution in cell["contributions"]:
+                        lines.append(
+                            {
+                                "project_line_id": contribution["project_line_id"],
+                                "timely_spo_qty": contribution["qty_proposed_incoming"],
+                                "reserve": [
+                                    {
+                                        "warehouse_id": source["warehouse_id"],
+                                        "qty": source["qty"],
+                                    }
+                                    for source in contribution["sources"]
+                                    if source["kind"] == "reserve"
+                                ],
+                                "buy_qty": contribution["qty_proposed_buy"],
+                            }
+                        )
+
+                response = client.post(
+                    f"{BASE}/sales-orders/{pso_id}/confirm", json={"lines": lines}
+                )
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["revision_no"] == 1
+        assert body["review_state"] == "confirmed"
+
+        decision = (
+            db.query(SOSupplyDecision)
+            .filter(SOSupplyDecision.project_sales_order_id == pso_id)
+            .first()
+        )
+        covered = {
+            snapshot["project_line_id"] for snapshot in decision.line_snapshots
+        }
+        assert covered == {line["project_line_id"] for line in lines}
+        # Two Reserve components at two different warehouses were addressed by id, which is
+        # the part a display code could never have carried.
+        assert len(lines[0]["reserve"]) == 2
+
+
+def test_an_unadopted_sales_order_says_so_with_a_null_rather_than_a_placeholder():
+    """A board row nobody has started planning has no record to confirm against.
+
+    Null, not absent and not an invented id: that IS the state of a not-started row, and it
+    is what lets the screen say "Nobody has started planning this sales order yet" as a fact
+    rather than as a guess about a missing field.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=warehouse)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        standing = board["orders"][0]
+        assert "project_sales_order_id" in standing
+        assert standing["project_sales_order_id"] is None
+        contribution = board["cells"][0]["contributions"][0]
+        assert "project_line_id" in contribution
+        assert contribution["project_line_id"] is None
+
+
+def test_an_adopted_order_addresses_every_one_of_its_lines():
+    with blank_session() as db:
+        product_a = _product(db, f"ZZT-{_uid()[:6]}")
+        product_b = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product_a, qty="4", required_date=date(2026, 9, 3), warehouse=warehouse)
+        _line(db, order, product_b, qty="6", required_date=date(2026, 12, 1), warehouse=warehouse)
+        pso_id = _adopt(db, str(order.id))
+
+        board = _service(db).build([order.so_number], granularity="month", as_of=TODAY)
+
+        assert board["orders"][0]["project_sales_order_id"] == pso_id
+        line_ids = {
+            contribution["project_line_id"]
+            for cell in board["cells"]
+            for contribution in cell["contributions"]
+        }
+        assert None not in line_ids
+        assert len(line_ids) == 2, "one mirror line per contributing core line, all named"
+
+
+def test_a_reserve_source_carries_the_warehouse_by_id_and_the_pool_names_the_pool():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _pooled_warehouses(db)
+        _stock(db, product, own, on_hand=3)
+        _stock(db, product, pool, on_hand=50)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        sources = _cell(board, product.product_code, "2026-08-31")["contributions"][0][
+            "sources"
+        ]
+        assert [(s["kind"], s["qty"], s["warehouse_id"]) for s in sources] == [
+            ("reserve", "3", str(own.id)),
+            ("reserve", "7", str(pool.id)),
+        ]
+        # A Buy is not held anywhere, so it names no warehouse.
+        buy_only = [s for s in sources if s["kind"] == "buy"]
+        assert all(s["warehouse_id"] is None for s in buy_only)
+
+
+def test_a_core_line_added_since_adoption_is_named_null_while_its_order_is_addressable():
+    """The one state where the two ids disagree, and the frontend has to handle it.
+
+    Adoption mirrors the order's open lines at the time it runs; next week's upload can add a
+    core line that has no mirror yet. Its order is still confirmable, so
+    `orders[].project_sales_order_id` is set - but that LINE cannot be named to the confirm
+    endpoint, so its `project_line_id` is null and it must be left out of the body. Re-sync on
+    the sheet is what fixes it; inventing an id here would post a line the service would refuse
+    with "That line is not on this sales order any more."
+    """
+    with blank_session() as db:
+        product_a = _product(db, f"ZZT-{_uid()[:6]}")
+        product_b = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product_a, qty="4", required_date=date(2026, 9, 3), warehouse=warehouse)
+        pso_id = _adopt(db, str(order.id))
+        # The upload lands, and it carries a line adoption never saw.
+        _line(db, order, product_b, qty="6", required_date=date(2026, 9, 3), warehouse=warehouse)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        assert board["orders"][0]["project_sales_order_id"] == pso_id
+        named = {
+            contribution["item_code"]: contribution["project_line_id"]
+            for cell in board["cells"]
+            for contribution in cell["contributions"]
+        }
+        assert named[product_a.product_code] is not None
+        assert named[product_b.product_code] is None

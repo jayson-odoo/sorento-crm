@@ -50,7 +50,7 @@ from sqlalchemy.orm import Session
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product
-from app.models.project_so import ProjectSalesOrderLine
+from app.models.project_so import ProjectSalesOrder, ProjectSalesOrderLine
 from app.services.error_handler import AppException
 from app.services.project_supply_service import ProjectSupplyService, _dec, _open_of
 from app.services.scm import priority
@@ -178,6 +178,7 @@ class _Row:
         "payment_terms_days", "bucket_key", "is_past", "rank_score", "rank_factors",
         "sources", "contested", "qty_ordered", "qty_delivered", "proposed", "free_before",
         "raw_facts", "taken_before", "last_taker", "borrow_candidates",
+        "project_sales_order_id", "project_line_id", "warehouse_ids",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -198,6 +199,10 @@ class _Row:
         self.taken_before = None
         self.last_taker = None
         self.borrow_candidates = []
+        # Warehouse CODE -> id, for the locations this line's Reserve may name. A confirm
+        # component addresses a warehouse by id and the screen reads a code, so the pair has
+        # to travel together (the same reason `SupplyComponent.source_warehouse_id` exists).
+        self.warehouse_ids = {}
 
     @property
     def unplannable(self) -> bool:
@@ -227,6 +232,8 @@ class FulfilmentBoardService:
         self._free: Dict[Tuple[str, str], Decimal] = {}
         self._levels: Dict[Tuple[str, str], Tuple[Decimal, Decimal]] = {}
         self._incoming: Dict[Tuple[str, str], List[Any]] = {}
+        # Core line id -> how the confirm endpoint names it (planning record, mirror line).
+        self._addressing: Dict[str, Dict[str, Any]] = {}
 
     # ----------------------------------------------------------------- public
 
@@ -458,6 +465,9 @@ class FulfilmentBoardService:
             {str(order.customer_id) for _l, order, _p, _w in records if order.customer_id}
         )
         terms = priority.payment_terms_by_customer(self.db, list(customers.keys()))
+        # How the confirm endpoint names these lines, when their order has been adopted.
+        # Resolved before the line numbers, which prefer the mirror's own numbering.
+        self._addressing = self._mirror_addressing([str(line.id) for line, *_r in records])
         line_numbers = self._line_numbers(records)
 
         rows: List[_Row] = []
@@ -485,6 +495,12 @@ class FulfilmentBoardService:
                 priority=line.priority,
                 demand_class=order.demand_class,
             )
+            addressing = self._addressing.get(str(line.id), {})
+            # Null when nobody has adopted this sales order: there is no record to confirm
+            # against, and that IS the state of a not-started row. An invented id or an
+            # absent key would both make the screen guess.
+            row.project_sales_order_id = addressing.get("project_sales_order_id")
+            row.project_line_id = addressing.get("project_line_id")
             row.payment_terms_days = terms.get(customer_id or "")
             rows.append(row)
         return rows
@@ -522,7 +538,11 @@ class FulfilmentBoardService:
             for index, entry in enumerate(sorted(entries), start=1):
                 derived[entry[3]] = index
 
-        mirrored = self._mirror_line_numbers([str(line.id) for line, *_rest in records])
+        mirrored = {
+            core_id: entry["line_no"]
+            for core_id, entry in self._addressing.items()
+            if entry.get("line_no")
+        }
         for entries in by_order.values():
             ids = [entry[3] for entry in entries]
             numbers = [mirrored.get(line_id) for line_id in ids]
@@ -531,25 +551,52 @@ class FulfilmentBoardService:
                     derived[line_id] = int(number)
         return derived
 
-    def _mirror_line_numbers(self, core_line_ids: Sequence[str]) -> Dict[str, int]:
+    def _mirror_addressing(
+        self, core_line_ids: Sequence[str]
+    ) -> Dict[str, Dict[str, Any]]:
+        """How the confirm endpoint names each core line, when anybody has adopted its order.
+
+        `POST /sales-orders/{pso_id}/confirm` addresses a planning RECORD and its own mirror
+        LINES (`ProjectSupplyService.confirm` builds `by_id` from `lines_of(order.id)`), so a
+        board that returned only core ids could not reach it and the frontend would have to
+        map between two id spaces to get there.
+
+        Scoped to the record that HOLDS the core order (`projects.sales_orders.so_id`), which
+        a partial unique index makes at most one. An authored Project SO that happens to
+        mirror the same core line is a different subject and must not be confirmed by
+        accident, so it is not offered here.
+        """
         if not core_line_ids:
             return {}
         rows = (
             self.db.query(
                 ProjectSalesOrderLine.core_sales_order_line_id,
+                ProjectSalesOrderLine.id,
                 ProjectSalesOrderLine.line_no,
+                ProjectSalesOrder.id,
+                ProjectSalesOrder.so_id,
             )
-            .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(list(core_line_ids)))
+            .join(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == ProjectSalesOrderLine.project_sales_order_id,
+            )
+            .filter(
+                ProjectSalesOrderLine.core_sales_order_line_id.in_(list(core_line_ids)),
+                ProjectSalesOrder.so_id.isnot(None),
+            )
             .all()
         )
-        seen: Dict[str, int] = {}
-        for core_id, line_no in rows:
-            if core_id is None or line_no is None:
+        out: Dict[str, Dict[str, Any]] = {}
+        for core_id, line_id, line_no, pso_id, so_id in rows:
+            if core_id is None:
                 continue
-            # A core line claimed by two planning records cannot name one number; leave it to
-            # the derived ordinal rather than picking a winner.
-            seen[str(core_id)] = -1 if str(core_id) in seen else int(line_no)
-        return {k: v for k, v in seen.items() if v > 0}
+            out[str(core_id)] = {
+                "project_sales_order_id": str(pso_id),
+                "project_line_id": str(line_id),
+                "line_no": int(line_no) if line_no is not None else None,
+                "sales_order_id": str(so_id),
+            }
+        return out
 
     # -------------------------------------------------------------- sourcing
 
@@ -586,6 +633,7 @@ class FulfilmentBoardService:
                         "kind": "unplannable",
                         "qty": qty_text(row.qty),
                         "location": None,
+                        "warehouse_id": None,
                         "reason": (
                             "No fulfilment location on the sales order line, so nothing can "
                             "be sourced for it."
@@ -681,6 +729,16 @@ class FulfilmentBoardService:
             pool_key = fact.pool_key
             if pool_key and pool_key not in pool_left:
                 pool_left[pool_key] = fact.pool_free
+            # A Reserve component names its location by CODE and the confirmation addresses a
+            # warehouse by ID, so the pair is captured here where both are in hand.
+            row.warehouse_ids = {
+                code: warehouse_id
+                for code, warehouse_id in (
+                    (fact.own_code, str(fact.warehouse.id) if fact.warehouse else None),
+                    (fact.pool_code, str(fact.pool.id) if fact.pool else None),
+                )
+                if code and warehouse_id
+            }
             components = self.supply.compose_line(
                 fact, pool_free_left=pool_left.get(pool_key, _ZERO) if pool_key else None
             )
@@ -780,6 +838,10 @@ class FulfilmentBoardService:
             "kind": component.kind,
             "qty": qty_text(component.qty),
             "location": component.source_location,
+            #: Addressing only, never rendered: a Reserve component of the confirmation names
+            #: its warehouse by id while the screen names it by code. Null for a Buy, which is
+            #: not held anywhere, and for the unplannable row, which has no location at all.
+            "warehouse_id": row.warehouse_ids.get(component.source_location),
             "reason": reason,
             # The SPO number and its date are IN the engine's sentence ("SPO 202703-S0011
             # arrives on 2027-03-01"), which is what the cell shows. Parsing them back out of
@@ -879,6 +941,10 @@ class FulfilmentBoardService:
         return {
             "key": row.key,
             "sales_order_id": row.sales_order_id,
+            #: The MIRROR line id, which is what `confirm` names a line by
+            #: (`lines[].project_line_id`). Null until somebody adopts this sales order, and
+            #: null is the honest answer: there is no planning record to confirm against.
+            "project_line_id": row.project_line_id,
             "so_number": row.so_number,
             "customer_name": row.customer_name,
             "project_label": row.project_label,
@@ -1044,6 +1110,10 @@ class FulfilmentBoardService:
                 row.sales_order_id,
                 {
                     "sales_order_id": row.sales_order_id,
+                    #: The planning record this order's confirmation posts to
+                    #: (`POST /sales-orders/{pso_id}/confirm`). NULL when nobody has adopted
+                    #: the sales order yet - the screen then says so instead of guessing.
+                    "project_sales_order_id": row.project_sales_order_id,
                     "so_number": row.so_number,
                     "customer_name": row.customer_name,
                     "line_count": 0,
