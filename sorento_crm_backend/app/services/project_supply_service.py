@@ -111,10 +111,6 @@ _ZERO = Decimal("0")
 #: restated, or the two would drift the next time a status is added.
 CONFIRMABLE_STATUSES = LIVE_SO_STATUSES
 
-#: The warehouse segment the hot-selling test is about (PLAN 3.3). Stored on the warehouse
-#: row, never parsed out of a code.
-DEALER_SEGMENT = "dealer"
-
 #: The product a hold is keyed by: the CORE line's when the mirror line is reconciled to
 #: one, else the mirror's own. Free stock is read against the core product (`_facts_for`
 #: prefers it on a remap), so the hold must net out of that pile and not the mirror's.
@@ -317,10 +313,23 @@ class _LineFacts:
     pool_claimed_qty: Decimal = _ZERO
     pool_claimed_lines: int = 0
     pool_reorder_level: Decimal = _ZERO
-    is_hot_selling: bool = False
-    #: The dealer locations holding this item as ABC A, by code - the evidence behind
-    #: `is_hot_selling`, so the verdict can be checked rather than trusted.
-    hot_selling_where: List[str] = field(default_factory=list)
+    #: ABC A on RETAIL (dealer)-classed demand at an active, available warehouse (PLAN 3.3,
+    #: amended 19 August 2026: the demand class the ABC figure was computed against decides
+    #: hot-selling now, not the warehouse's own segment). Gates the shared pool to nothing.
+    is_dealer_hot_selling: bool = False
+    #: The locations holding it as ABC A on retail demand, by code - the evidence behind
+    #: `is_dealer_hot_selling`, so the verdict can be checked rather than trusted.
+    dealer_hot_selling_where: List[str] = field(default_factory=list)
+    #: ABC A on PROJECT-classed demand at an active, available warehouse. Gates the shared
+    #: pool to its own signed availability (`pool_available`) rather than removing it.
+    is_project_hot_selling: bool = False
+    #: The locations holding it as ABC A on project demand, by code.
+    project_hot_selling_where: List[str] = field(default_factory=list)
+    #: The shared pool's own signed availability - `on hand - SO qty + SPO qty` - the figure
+    #: a project hot-selling line's pool draw is capped against. Unsigned `pool_free` above
+    #: is what THIS line's queue left of it; this is the pool's whole position, and can be
+    #: negative (an oversold pool offers nothing, never a floor of zero read as "some").
+    pool_available: Decimal = _ZERO
     classification_unavailable: bool = False
     is_discontinued: bool = False
     timely_qty: Decimal = _ZERO
@@ -348,10 +357,6 @@ class _LineFacts:
         same SO would read the first product's remaining headroom as its own.
         """
         return f"{self.product_id}:{self.pool.id}" if self.pool else ""
-
-    @property
-    def pool_cap(self) -> Decimal:
-        return max(self.pool_free - self.pool_reorder_level, _ZERO)
 
 
 class _BorrowLedger:
@@ -602,12 +607,11 @@ class ProjectSupplyService:
             line_no=fact.line.line_no if fact.line is not None else None,
             required_date=fact.required_date,
             fulfilment_location=fact.own_code,
-            is_dealer_hot_selling=fact.is_hot_selling,
+            is_dealer_hot_selling=fact.is_dealer_hot_selling,
+            is_project_hot_selling=fact.is_project_hot_selling,
             free_stock=free_stock,
             pool_location=fact.pool_code,
-            reorder_levels=(
-                {fact.pool_code: fact.pool_reorder_level} if fact.pool_code else {}
-            ),
+            pool_available=fact.pool_available,
             timely_spo_qty=fact.timely_qty,
             timely_spo_refs=[
                 {
@@ -686,7 +690,12 @@ class ProjectSupplyService:
         self._free_cache = self._free_stock(product_ids, exclude_line_ids=None)
         self._holds_cache = self._holds_by_project(product_ids, exclude_line_ids=None)
         self._pile_cache = None
-        hot, unavailable, hot_where = self._classification(product_ids)
+        # Eager, not lazy: a project hot-selling line's pool draw is capped against the
+        # pool's signed availability on every read, not only when a donor list is asked for.
+        pool_piles = self._pile_facts()
+        dealer_hot, project_hot, unavailable, dealer_where, project_where = (
+            self._classification(product_ids)
+        )
         levels = self._reorder_levels(product_ids, pool_ids)
         discontinued = self._discontinued(product_ids)
         spo = self._spo_rows(product_ids, warehouse_ids)
@@ -762,6 +771,7 @@ class ProjectSupplyService:
             )
             claim = pool_ahead.get(str(row["key"]), {})
             claimed = _dec(claim.get("qty"))
+            pool_triple = pool_piles.get((product_id, str(pool.id))) if pool and product_id else None
             facts[str(row["key"])] = _LineFacts(
                 item_code=row.get("item_code"),
                 product_id=product_id,
@@ -791,8 +801,15 @@ class ProjectSupplyService:
                 pool_reorder_level=levels.get(
                     (product_id or "", str(pool.id) if pool else ""), _ZERO
                 ),
-                is_hot_selling=(product_id or "") in hot,
-                hot_selling_where=list(hot_where.get(product_id or "", [])),
+                is_dealer_hot_selling=(product_id or "") in dealer_hot,
+                dealer_hot_selling_where=list(dealer_where.get(product_id or "", [])),
+                is_project_hot_selling=(product_id or "") in project_hot,
+                project_hot_selling_where=list(project_where.get(product_id or "", [])),
+                pool_available=(
+                    pool_triple["on_hand"] - pool_triple["so_qty"] + pool_triple["spo_qty"]
+                    if pool_triple
+                    else _ZERO
+                ),
                 classification_unavailable=(product_id or "") in unavailable,
                 is_discontinued=(product_id or "") in discontinued,
                 timely_refs=timely_refs,
@@ -816,11 +833,16 @@ class ProjectSupplyService:
             "open_qty": qty_text(fact.open_qty),
             "required_date": fact.required_date,
             "fulfilment_location": fact.own_code,
-            "is_dealer_hot_selling": fact.is_hot_selling,
+            "is_dealer_hot_selling": fact.is_dealer_hot_selling,
+            "is_project_hot_selling": fact.is_project_hot_selling,
             "classification_unavailable": fact.classification_unavailable,
             "is_discontinued": fact.is_discontinued,
             "pool_location": fact.pool_code,
-            "pool_cap": qty_text(fact.pool_cap) if fact.pool_code else None,
+            # The old reorder-level cap never applied above own-location Reserve and it no
+            # longer applies to the pool either (19 August 2026): dealer hot-selling offers
+            # the pool nothing, project hot-selling caps it by availability instead. Null,
+            # never a number a limit nobody set would read as.
+            "pool_cap": None,
             "pool_reorder_level": (
                 qty_text(fact.pool_reorder_level) if fact.pool_code else None
             ),
@@ -1315,13 +1337,12 @@ class ProjectSupplyService:
         capacity = {
             location: qty
             for location, qty, _reason in reserve_capacity(
-                is_dealer_hot_selling=fact.is_hot_selling,
+                is_dealer_hot_selling=fact.is_dealer_hot_selling,
+                is_project_hot_selling=fact.is_project_hot_selling,
                 fulfilment_location=fact.own_code,
                 pool_location=fact.pool_code,
                 free_stock=self._free_for(fact, pool_left),
-                reorder_levels=(
-                    {fact.pool_code: fact.pool_reorder_level} if fact.pool_code else {}
-                ),
+                pool_available=fact.pool_available,
             )
         }
         allowed = " or ".join([code for code in (fact.own_code, fact.pool_code) if code])
@@ -1407,15 +1428,12 @@ class ProjectSupplyService:
     def _reserve_location_ids(self, fact: _LineFacts) -> set:
         """The warehouses Reserve MAY draw this line from (PLAN 3.3), by id.
 
-        Structural, not "wherever there happens to be stock": for a dealer hot-selling
-        product it is the shared pool and nothing else, so the line's OWN dealer location
-        is outside Reserve and is therefore a legitimate BORROW source - which is exactly
-        what 3.3 means by "Borrow may still deliberately use a non-Reserve source,
-        including dealer stock". For every other product it is the fulfilment location and
-        the pool.
+        Structural, not "wherever there happens to be stock": the fulfilment location and
+        the shared pool, always - hot-selling no longer removes either from Reserve's reach
+        (captain, 19 August 2026: own-location Reserve is always eligible, hot-selling or
+        not). What hot-selling gates is how much the POOL contributes, not whether the own
+        location is inside Reserve at all, so it is never offered as a Borrow source either.
         """
-        if fact.is_hot_selling:
-            return {str(fact.pool.id)} if fact.pool else set()
         ids = set()
         if fact.warehouse:
             ids.add(str(fact.warehouse.id))
@@ -1852,10 +1870,11 @@ class ProjectSupplyService:
             "buy_qty": qty_text(_dec(entry.buy_qty)),
             "components": components,
             "suggestion_basis": {
-                "is_dealer_hot_selling": fact.is_hot_selling,
+                "is_dealer_hot_selling": fact.is_dealer_hot_selling,
+                "is_project_hot_selling": fact.is_project_hot_selling,
                 "classification_unavailable": fact.classification_unavailable,
                 "pool_location": fact.pool_code,
-                "pool_cap": qty_text(fact.pool_cap) if fact.pool_code else None,
+                "pool_cap": None,
                 "pool_reorder_level": (
                     qty_text(fact.pool_reorder_level) if fact.pool_code else None
                 ),
@@ -1873,13 +1892,12 @@ class ProjectSupplyService:
 
     def _reserve_reason(self, fact: _LineFacts, location: Optional[str]) -> str:
         for candidate, _qty, reason in reserve_capacity(
-            is_dealer_hot_selling=fact.is_hot_selling,
+            is_dealer_hot_selling=fact.is_dealer_hot_selling,
+            is_project_hot_selling=fact.is_project_hot_selling,
             fulfilment_location=fact.own_code,
             pool_location=fact.pool_code,
             free_stock=self._free_for(fact, {}),
-            reorder_levels=(
-                {fact.pool_code: fact.pool_reorder_level} if fact.pool_code else {}
-            ),
+            pool_available=fact.pool_available,
         ):
             if candidate == location:
                 return reason
@@ -2187,6 +2205,9 @@ class ProjectSupplyService:
         self._free_cache = self._free_stock(product_ids, exclude_line_ids=replaced)
         self._holds_cache = self._holds_by_project(product_ids, exclude_line_ids=replaced)
         self._pile_cache = None
+        # Eager, not lazy: a project hot-selling line's pool draw is capped against the
+        # pool's signed availability on every read, not only when a donor list is asked for.
+        pool_piles = self._pile_facts()
         # The core sales orders behind the lines, for the SAME factor values the board hands
         # `pool_claims` for a member: document date, demand class, payment terms, and the
         # sales-order number the tie-break sorts on. Passing None for them scored the asking
@@ -2244,7 +2265,9 @@ class ProjectSupplyService:
         pool_ahead = self.pool_claims(
             product_ids, pool_ids, exclude_line_ids=replaced, members=members
         )
-        hot, unavailable, hot_where = self._classification(product_ids)
+        dealer_hot, project_hot, unavailable, dealer_where, project_where = (
+            self._classification(product_ids)
+        )
         levels = self._reorder_levels(product_ids, pool_ids)
         discontinued = self._discontinued(product_ids)
         spo = self._spo_rows(product_ids, warehouse_ids)
@@ -2288,6 +2311,7 @@ class ProjectSupplyService:
             ]
             claim = pool_ahead.get(str(line.id), {})
             claimed = _dec(claim.get("qty"))
+            pool_triple = pool_piles.get((product_id, str(pool.id))) if pool and product_id else None
             facts[str(line.id)] = _LineFacts(
                 line=line,
                 core=core,
@@ -2311,8 +2335,15 @@ class ProjectSupplyService:
                 pool_reorder_level=levels.get(
                     (product_id or "", str(pool.id) if pool else ""), _ZERO
                 ),
-                is_hot_selling=(product_id or "") in hot,
-                hot_selling_where=list(hot_where.get(product_id or "", [])),
+                is_dealer_hot_selling=(product_id or "") in dealer_hot,
+                dealer_hot_selling_where=list(dealer_where.get(product_id or "", [])),
+                is_project_hot_selling=(product_id or "") in project_hot,
+                project_hot_selling_where=list(project_where.get(product_id or "", [])),
+                pool_available=(
+                    pool_triple["on_hand"] - pool_triple["so_qty"] + pool_triple["spo_qty"]
+                    if pool_triple
+                    else _ZERO
+                ),
                 classification_unavailable=(product_id or "") in unavailable,
                 is_discontinued=(product_id or "") in discontinued,
                 timely_qty=shares.get(TIMELY_SPO, _ZERO),
@@ -2656,43 +2687,76 @@ class ProjectSupplyService:
 
     def _classification(
         self, product_ids: Iterable[str]
-    ) -> Tuple[set, set, Dict[str, List[str]]]:
-        """PLAN 3.3's dealer hot-selling predicate, and the "no evidence" case.
+    ) -> Tuple[set, set, set, Dict[str, List[str]], Dict[str, List[str]]]:
+        """PLAN 3.3's hot-selling predicate, per demand class, and the "no evidence" case.
+
+        Amended 19 August 2026 (the captain): "you should do the demand over project classed
+        demand to judge project hot selling, same for dealer" - hot-selling is read off the
+        DEMAND CLASS the ABC figure was computed against (`abc_class_retail` for dealer,
+        `abc_class_project` for project), not off the warehouse's own segment. The demand
+        class already states who bought it, so a warehouse's segment plays no further part
+        and `Warehouse.segment == DEALER_SEGMENT` is dropped. The ranking itself is BY
+        QUANTITY delivered in that class, not by value ("hot selling is by quantity, not
+        related to money") - unlike the reorder engine's own value-based `abc_class`, which
+        this predicate does not read.
 
         `computed_at` is display evidence, never a freshness gate: the existing ABC facts
         are the test, and adding an age threshold would be a new knob this contract forbids.
 
-        Returns the hot set, the unclassified set, and WHERE each hot product earned it - the
-        dealer locations holding it as ABC A, by code and sorted. The captain, reading a trail
-        that never mentioned it: "where is the consideration of dealer hot selling?" A bare
-        boolean would be something to take on trust; "ABC A at BRW" is something to check.
+        Returns the dealer-hot set, the project-hot set, the unclassified set, and WHERE each
+        hot verdict earned it - the locations holding it as ABC A by quantity on that demand
+        class, by code and sorted. The captain, reading a trail that never mentioned it:
+        "where is the consideration of dealer hot selling?" A bare boolean would be something
+        to take on trust; "ABC A at BRW" is something to check.
+
+        "Unclassified" means no NON-NULL letter in EITHER column, not merely "a row exists".
+        A NULL letter means no DELIVERED demand of that class in the trailing-12mo window -
+        "unknown", never a computed verdict of "not hot". Reading that as "seen, therefore
+        cold" would print a false "Not dealer hot-selling" for an item nobody has actually
+        judged, which is the whole book today: every row is NULL in both columns because
+        nothing has been delivered against them yet.
         """
         ids = [pid for pid in product_ids if pid]
         if not ids:
-            return set(), set(), {}
+            return set(), set(), set(), {}, {}
         rows = (
             self.db.query(
                 ItemClassification.product_id,
-                ItemClassification.abc_class,
+                ItemClassification.abc_class_project,
+                ItemClassification.abc_class_retail,
                 Warehouse.warehouse_code,
             )
             .join(Warehouse, Warehouse.id == ItemClassification.warehouse_id)
             .filter(
                 ItemClassification.product_id.in_(ids),
-                Warehouse.segment == DEALER_SEGMENT,
                 Warehouse.is_active.is_(True),
                 Warehouse.counts_as_available.is_(True),
             )
             .all()
         )
-        seen = {str(product_id) for product_id, _abc, _code in rows}
-        where: Dict[str, List[str]] = {}
-        for product_id, abc, code in rows:
-            if (abc or "").upper() == "A":
-                where.setdefault(str(product_id), []).append(code or "")
-        for codes in where.values():
+        seen = {
+            str(product_id)
+            for product_id, abc_project, abc_retail, _code in rows
+            if abc_project is not None or abc_retail is not None
+        }
+        dealer_where: Dict[str, List[str]] = {}
+        project_where: Dict[str, List[str]] = {}
+        for product_id, abc_project, abc_retail, code in rows:
+            if (abc_retail or "").upper() == "A":
+                dealer_where.setdefault(str(product_id), []).append(code or "")
+            if (abc_project or "").upper() == "A":
+                project_where.setdefault(str(product_id), []).append(code or "")
+        for codes in dealer_where.values():
             codes.sort()
-        return set(where), {pid for pid in ids if pid not in seen}, where
+        for codes in project_where.values():
+            codes.sort()
+        return (
+            set(dealer_where),
+            set(project_where),
+            {pid for pid in ids if pid not in seen},
+            dealer_where,
+            project_where,
+        )
 
     def _reorder_levels(
         self, product_ids: Iterable[str], warehouse_ids: Iterable[str]

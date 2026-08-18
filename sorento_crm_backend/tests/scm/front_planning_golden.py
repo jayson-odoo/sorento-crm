@@ -155,18 +155,20 @@ class AttributionCase:
 
 HOT_SELLING_WORKED_CASE = ProposalCase(
     ac="AC-B08",
-    title="hot-selling product: dealer stock is untouchable and BRW keeps its floor",
+    title=(
+        "dealer hot-selling product: own-location Reserve is eligible in full, the "
+        "shared pool contributes nothing at all (amended 19 August 2026, PLAN 3.3a)"
+    ),
     inputs={
         "open_qty": Decimal("70"),
         "line_no": 10,
         "required_date": REQUIRED_DATE,
         "fulfilment_location": DEALER_LOCATION,
         "is_dealer_hot_selling": True,
-        # Free unclaimed stock by location, as PLAN section 3.3's worked example states it.
+        # Free unclaimed stock by location.
         "free_stock": {DEALER_LOCATION: Decimal("50"), POOL_LOCATION: Decimal("120")},
         "pool_location": POOL_LOCATION,
-        # BRW's own per-location reorder level. `120 - 80 = 40` is the whole cap.
-        "reorder_levels": {POOL_LOCATION: Decimal("80")},
+        "pool_available": Decimal("120"),
         # No SPO arrives by the required date, so timely coverage is zero and is not
         # proposed at all.
         "timely_spo_qty": Decimal("0"),
@@ -175,10 +177,46 @@ HOT_SELLING_WORKED_CASE = ProposalCase(
     components=(
         Component(
             kind=RESERVE,
+            qty=Decimal("50"),
+            reason="free stock at DLR-KL covers the need by the required date",
+            source_location=DEALER_LOCATION,
+        ),
+        Component(
+            kind=BUY,
+            qty=Decimal("20"),
+            reason="remaining uncovered need",
+        ),
+    ),
+)
+
+
+PROJECT_HOT_SELLING_WORKED_CASE = ProposalCase(
+    ac="AC-B08",
+    title=(
+        "project hot-selling product: the shared pool is drawn only while its own signed "
+        "availability stays positive (PLAN 3.3a)"
+    ),
+    inputs={
+        "open_qty": Decimal("70"),
+        "line_no": 12,
+        "required_date": REQUIRED_DATE,
+        "fulfilment_location": OWN_LOCATION,
+        "is_project_hot_selling": True,
+        "free_stock": {OWN_LOCATION: Decimal("0"), POOL_LOCATION: Decimal("120")},
+        "pool_location": POOL_LOCATION,
+        # The pool's own signed availability (on hand - SO qty + SPO qty) is thinner than
+        # its free balance, and the draw stops there.
+        "pool_available": Decimal("40"),
+        "timely_spo_qty": Decimal("0"),
+        "is_discontinued": False,
+    },
+    components=(
+        Component(
+            kind=RESERVE,
             qty=Decimal("40"),
             reason=(
-                "free stock in the shared BRW pool above its reorder level of 80 covers "
-                "the need by the required date"
+                "free stock in the shared BRW pool covers the need by the required date, "
+                "drawn while its availability stays positive (40 available)"
             ),
             source_location=POOL_LOCATION,
         ),
@@ -206,7 +244,6 @@ BALANCE_INVARIANT_CASE = ProposalCase(
         # Nothing free at the fulfilment location; ten units in the shared pool.
         "free_stock": {OWN_LOCATION: Decimal("0"), POOL_LOCATION: Decimal("10")},
         "pool_location": POOL_LOCATION,
-        "reorder_levels": {},
         "timely_spo_qty": Decimal("0"),
         "is_discontinued": False,
     },
@@ -363,5 +400,9 @@ CONFIRMED_COVER_RETAIL_KEY = ("SO-201", 10)
 CONFIRMED_COVER_RETAIL_NEED = Decimal("10")
 
 
-PROPOSAL_CASES = (HOT_SELLING_WORKED_CASE, BALANCE_INVARIANT_CASE)
+PROPOSAL_CASES = (
+    HOT_SELLING_WORKED_CASE,
+    PROJECT_HOT_SELLING_WORKED_CASE,
+    BALANCE_INVARIANT_CASE,
+)
 ATTRIBUTION_CASES = (TWO_LINE_ATTRIBUTION_CASE, CONFIRMED_COVER_CASE)

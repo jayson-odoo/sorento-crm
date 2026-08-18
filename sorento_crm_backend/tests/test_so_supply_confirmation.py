@@ -189,11 +189,22 @@ def _project_line(db, order, *, line_no, product: Product, core_line):
     return line
 
 
-def _classification(db, product: Product, warehouse: Warehouse, *, abc_class="A"):
+def _classification(
+    db,
+    product: Product,
+    warehouse: Warehouse,
+    *,
+    abc_class_retail: str | None = "A",
+    abc_class_project: str | None = None,
+):
     from app.models.scm import ItemClassification
 
     row = ItemClassification(
-        id=_uid(), product_id=product.id, warehouse_id=warehouse.id, abc_class=abc_class
+        id=_uid(),
+        product_id=product.id,
+        warehouse_id=warehouse.id,
+        abc_class_retail=abc_class_retail,
+        abc_class_project=abc_class_project,
     )
     db.add(row)
     db.flush()
@@ -1592,19 +1603,54 @@ def test_a_donor_hole_counts_what_other_confirmed_borrows_already_hold_there(api
     assert "short by 20" in rows[0].note
 
 
-def test_a_hot_selling_line_borrowing_from_its_own_location_opens_no_hole_of_its_own(api):
-    """F4(b). A dealer hot-selling product may only Reserve from the pool, so its own
-    location is a legitimate Borrow source. But that location's SO qty already contains
-    THIS line's demand, so a shortfall judged from `on hand - SO qty` counts the line
-    twice: once as the demand and once as the take. Own location holds 10 and owes this
-    line 20; the line borrows the 10 and buys 10. Purchasing is told about the 10 to buy,
-    and about no hole - the pool-reserve branch already guards its own location the same
-    way."""
+def test_a_dealer_hot_selling_line_reserves_its_own_location_and_opens_no_hole_of_its_own(api):
+    """F4(b), re-expressed for the 19 August 2026 amendment: own-location Reserve is
+    always eligible now, so a dealer hot-selling line's own stock is a Reserve source, not
+    a Borrow source - `_check_borrow` refuses a Borrow named there ("Reserve it rather
+    than borrowing it"). A Reserve at the line's own location is never a hole either way:
+    that location's demand IS this line, already inside its own SO qty. Own location holds
+    10 and owes this line 20; the line Reserves the 10 and buys 10. Purchasing is told
+    about the 10 to buy, and about no hole."""
     from app.models.project_so import IV_BORROW_SHORTFALL, IV_ORDER, OrderInquiryRow
 
     client, world = api
     db = world.db
-    _classification(db, world.product, world.pool_wh, abc_class="A")
+    _classification(db, world.product, world.pool_wh, abc_class_retail="A")
+    _stock(db, world.product, world.own_wh, on_hand=10)
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id,
+                    reserve=[{"warehouse_id": world.own_wh.id, "qty": "10"}],
+                    buy_qty="10",
+                )
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["inquiry_rows_created"] == 1, "the Buy, and nothing else"
+
+    rows = db.query(OrderInquiryRow).all()
+    assert [row.verb for row in rows] == [IV_ORDER]
+    assert not [row for row in rows if row.verb == IV_BORROW_SHORTFALL]
+
+
+def test_a_dealer_hot_selling_line_may_not_borrow_its_own_location_it_must_reserve(api):
+    """The other half of the same amendment: naming the line's OWN location as a Borrow
+    source is refused, because it is now inside Reserve's reach - "Reserve it rather than
+    borrowing it" - never silently accepted as a Borrow the way it used to be."""
+    client, world = api
+    db = world.db
+    _classification(db, world.product, world.pool_wh, abc_class_retail="A")
     _stock(db, world.product, world.own_wh, on_hand=10)
 
     order = _project_so(db, world.project)
@@ -1632,12 +1678,12 @@ def test_a_hot_selling_line_borrowing_from_its_own_location_opens_no_hole_of_its
             ]
         },
     )
-    assert response.status_code == 200, response.text
-    assert response.json()["inquiry_rows_created"] == 1, "the Buy, and nothing else"
-
-    rows = db.query(OrderInquiryRow).all()
-    assert [row.verb for row in rows] == [IV_ORDER]
-    assert not [row for row in rows if row.verb == IV_BORROW_SHORTFALL]
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert any(
+        "Reserve it rather than borrowing it" in (row.get("reason") or "")
+        for row in body["failing_lines"]
+    )
 
 
 # ---------------------------------------------- a placed shortfall is not raised again

@@ -118,28 +118,37 @@ export function SupplyLineCard({
             <span className="text-destructive">Not on the sales order line</span>
           )}
         </Fact>
-        <Fact label="Retail classification">
+        {/* Own-location Reserve is always eligible regardless of this fact (PLAN 3.3a); it
+            names what the SHARED POOL below is offered against. */}
+        <Fact label="Hot-selling">
           {line.classification_unavailable ? (
             <span
               className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('unknown')}`}
-              title="Retail classification unavailable"
+              title="No ABC classification for this item (no delivered demand of either class in the last year)"
             >
-              Unavailable
+              Unclassified
             </span>
           ) : line.is_dealer_hot_selling ? (
             <span
               className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('pending')}`}
-              title="Hot selling at a dealer location"
+              title="ABC A by quantity on retail demand: the shared pool is not offered"
             >
-              Hot selling
+              Dealer hot-selling
+            </span>
+          ) : line.is_project_hot_selling ? (
+            <span
+              className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('pending')}`}
+              title="ABC A by quantity on project demand: the shared pool is capped by its own availability"
+            >
+              Project hot-selling
             </span>
           ) : (
-            <Muted>Not hot selling</Muted>
+            <Muted>Not hot-selling</Muted>
           )}
         </Fact>
       </div>
 
-      {/* Reserve evidence: the pool, its level and the cap the two produce. Rendered on
+      {/* Reserve evidence: the pool and what hot-selling (if any) offers of it. Rendered on
           every line, so "no reorder level is set" is stated rather than left blank. */}
       <div className="border-b border-border px-3 py-2.5 text-sm">
         <div className="text-2xs uppercase tracking-wide text-muted-foreground">
@@ -152,8 +161,10 @@ export function SupplyLineCard({
               ? `, reorder level ${line.pool_reorder_level}`
               : ', no reorder level set'}
             {line.is_dealer_hot_selling
-              ? `. Dealer stock is out; the pool draw stops at ${line.pool_cap ?? '0'}.`
-              : '.'}
+              ? '. Dealer hot-selling: the pool is not offered.'
+              : line.is_project_hot_selling
+                ? '. Project hot-selling: the pool is offered while it stays available.'
+                : '.'}
           </p>
         ) : (
           <Muted>No pool is configured for this location.</Muted>

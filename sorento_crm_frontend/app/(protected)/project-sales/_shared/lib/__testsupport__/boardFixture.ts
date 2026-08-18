@@ -396,6 +396,8 @@ function allocate(
     contribution.item_flags = {
       dealer_hot_selling: false,
       dealer_hot_selling_where: [],
+      project_hot_selling: false,
+      project_hot_selling_where: [],
       discontinued: false,
       retail_classification_available: true,
     };
@@ -485,9 +487,6 @@ function applyFrozen(contribution: BoardContribution): void {
  * are always empty - which is exactly the case worth having in the tests, because "checked and
  * had nothing" is the reading the screen must not silently drop.
  */
-/** What rung 1 opens with for an ordinary item, in the server's own words. */
-export const OWN_ELIGIBLE = 'Not dealer hot-selling, so own-location stock is eligible.';
-
 function trailFor(input: {
   location: string;
   opening: number;
@@ -547,16 +546,16 @@ function trailFor(input: {
     ahead_by_factor: byFactor,
     offered: input.offered,
     taken: input.reserved,
-    // The flag the rung was judged on comes first, in words, exactly as the server says it.
-    why: `${OWN_ELIGIBLE} ${
+    // No hot-selling clause here (19 August 2026, PLAN 3.3a): own-location Reserve is
+    // always eligible, so this rung reads exactly as it does for an ordinary item.
+    why:
       input.reserved > 0
         ? input.ahead.lines > 0
           ? `${fromMinor(input.offered)} left after the ${input.ahead.lines} lines ahead; this line takes ${fromMinor(input.reserved)}.`
           : `First in the queue here; this line takes ${fromMinor(input.reserved)}.`
         : input.ahead.lines > 0
           ? `${fromMinor(input.opening)} on hand, but ${input.ahead.lines} lines with ${aheadPhraseOf(byFactor)} rank ahead and want ${fromMinor(input.ahead.qty)} - none is left for this line.`
-          : `No free stock at ${input.location}.`
-    }`,
+          : `No free stock at ${input.location}.`,
   });
   add('reserve_pool', {
     offered: 0,

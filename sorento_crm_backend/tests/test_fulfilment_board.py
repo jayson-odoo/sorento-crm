@@ -1387,30 +1387,21 @@ def test_the_board_covers_a_shortfall_from_the_pool_instead_of_buying_it():
         assert contribution["qty_proposed_buy"] == "0"
 
 
-def test_a_dealer_hot_selling_product_may_not_take_its_own_stock_on_the_board_either():
-    """PLAN 3.3, which the board was skipping entirely: hot-selling protects dealer stock.
-
-    Dealer-facing free stock contributes nothing and the pool contributes only above its own
-    reorder level, so the answer is a Buy for a REASON rather than a Buy because the ladder was
-    never walked.
+def test_a_dealer_hot_selling_product_reserves_its_own_stock_but_no_pool_on_the_board():
+    """PLAN 3.3a (amended 19 August 2026): own-location Reserve is always eligible, so the
+    board reserves the dealer's own 20 units just as it would for an ordinary item; the
+    shared pool is what dealer hot-selling gates, and it contributes nothing at all.
     """
-    from app.models.scm import ItemClassification, ReorderLevel
+    from app.models.scm import ItemClassification
 
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
         own, pool = _pooled_warehouses(db)
-        own.segment = "dealer"
-        db.flush()
         _stock(db, product, own, on_hand=20)
         _stock(db, product, pool, on_hand=12)
         db.add(
             ItemClassification(
-                id=_uid(), product_id=product.id, warehouse_id=own.id, abc_class="A"
-            )
-        )
-        db.add(
-            ReorderLevel(
-                id=_uid(), product_id=product.id, warehouse_id=pool.id, level=10
+                id=_uid(), product_id=product.id, warehouse_id=own.id, abc_class_retail="A"
             )
         )
         db.flush()
@@ -1421,11 +1412,11 @@ def test_a_dealer_hot_selling_product_may_not_take_its_own_stock_on_the_board_ei
 
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
         kinds = [(s["kind"], s["qty"], s["location"]) for s in contribution["sources"]]
-        # Only the pool's headroom above its reorder level (12 - 10), never the dealer stock.
+        # The dealer's own stock reserves in full; the pool contributes nothing.
         assert kinds == [
-            ("reserve", "2", pool.warehouse_code),
-            ("buy", "8", None),
+            ("reserve", "10", own.warehouse_code),
         ]
+        assert not any(s["location"] == pool.warehouse_code for s in contribution["sources"])
 
 
 def test_the_board_proposes_exactly_what_the_sheet_proposes_for_the_same_line():
@@ -3018,23 +3009,22 @@ def test_a_line_covered_before_the_buy_step_says_the_buy_was_not_needed():
             assert step["remaining_after"] == "0"
 
 
-def test_the_trail_says_a_hot_selling_line_may_not_touch_its_own_location():
-    """PLAN 3.3 stated as a step rather than as a missing one."""
-    from app.models.scm import ItemClassification, ReorderLevel
+def test_the_trail_says_a_hot_selling_line_reserves_its_own_location_and_no_pool():
+    """PLAN 3.3a stated as steps rather than as a missing one - own-location Reserve is
+    always eligible, and the pool is what dealer hot-selling gates (19 August 2026)."""
+    from app.models.scm import ItemClassification
 
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
         own, pool = _pooled_warehouses(db)
-        own.segment = "dealer"
         db.flush()
         _stock(db, product, own, on_hand=20)
         _stock(db, product, pool, on_hand=12)
         db.add(
             ItemClassification(
-                id=_uid(), product_id=product.id, warehouse_id=own.id, abc_class="A"
+                id=_uid(), product_id=product.id, warehouse_id=own.id, abc_class_retail="A"
             )
         )
-        db.add(ReorderLevel(id=_uid(), product_id=product.id, warehouse_id=pool.id, level=10))
         db.flush()
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
         _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
@@ -3043,17 +3033,16 @@ def test_the_trail_says_a_hot_selling_line_may_not_touch_its_own_location():
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
 
         step = _step(contribution, "reserve_own")
-        assert step["outcome"] == "not_eligible"
-        assert step["taken"] == "0"
-        assert "hot-selling" in (step["note"] or "")
+        assert step["outcome"] == "took"
+        assert step["taken"] == "10"
+        assert step["note"] is None
 
         pool_step = _step(contribution, "reserve_pool")
         assert pool_step["location"] == pool.warehouse_code
         assert pool_step["opening"] == "12"
-        # Only the headroom above the pool's own reorder level is ever offered.
-        assert pool_step["offered"] == "2"
-        assert pool_step["taken"] == "2"
-        assert "10" in (pool_step["note"] or "")
+        assert pool_step["offered"] == "0"
+        assert pool_step["taken"] == "0"
+        assert pool_step["note"] == "dealer hot-selling: pool not offered"
 
 
 def test_the_pool_step_is_walked_even_where_there_is_no_pool():
@@ -3252,19 +3241,21 @@ def test_the_borrow_rung_says_borrowing_is_a_persons_decision_and_names_the_dono
         )
 
 
-def test_a_hot_selling_rung_says_why_its_own_location_was_off_limits():
+def test_a_hot_selling_rung_says_why_the_pool_was_off_limits_not_its_own_location():
+    """The sentence that used to sit on the own rung moved to the pool rung (19 August
+    2026): own-location Reserve is always eligible, so it just takes; the pool is what
+    dealer hot-selling gates, and it says so."""
     from app.models.scm import ItemClassification
 
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
         own, pool = _pooled_warehouses(db)
-        own.segment = "dealer"
         db.flush()
         _stock(db, product, own, on_hand=20)
         _stock(db, product, pool, on_hand=0)
         db.add(
             ItemClassification(
-                id=_uid(), product_id=product.id, warehouse_id=own.id, abc_class="A"
+                id=_uid(), product_id=product.id, warehouse_id=own.id, abc_class_retail="A"
             )
         )
         db.flush()
@@ -3275,11 +3266,11 @@ def test_a_hot_selling_rung_says_why_its_own_location_was_off_limits():
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
 
         assert _step(contribution, "reserve_own")["why"] == (
-            f"Dealer hot-selling (ABC A at {own.warehouse_code}): own-location stock is "
-            "kept for retail, pool only."
+            "First in the queue here; this line takes 10."
         )
         assert _step(contribution, "reserve_pool")["why"] == (
-            f"No stock at {pool.warehouse_code}."
+            f"Dealer hot-selling (ABC A by quantity on retail demand at {own.warehouse_code}"
+            f"): {pool.warehouse_code} is kept for retail, so the pool is not offered."
         )
 
 
@@ -3723,6 +3714,8 @@ def test_a_line_an_active_decision_covers_says_so_and_carries_what_was_frozen():
         assert contribution["item_flags"] == {
             "dealer_hot_selling": False,
             "dealer_hot_selling_where": [],
+            "project_hot_selling": False,
+            "project_hot_selling_where": [],
             "discontinued": False,
             "retail_classification_available": False,
         }
@@ -3916,22 +3909,34 @@ def _flags(contribution) -> dict:
     return contribution["item_flags"]
 
 
-def _dealer_pool(db, product, *, abc_class: str = "A", level: int | None = None):
-    """A project location whose pool is a DEALER warehouse the item is classified at.
+def _dealer_pool(
+    db,
+    product,
+    *,
+    abc_class_retail: str | None = "A",
+    abc_class_project: str | None = None,
+    level: int | None = None,
+):
+    """A project location whose pool warehouse the item is classified at, by demand class.
 
-    The live shape: BRW-BB fulfils, BRW is the shared pool, and the ABC class that decides
-    hot-selling is read at the dealer location (PLAN-scm-front-planning 3.3).
+    The live shape: BRW-BB fulfils, BRW is the shared pool, and hot-selling is read off the
+    DEMAND CLASS the ABC figure was computed against - `abc_class_retail` for dealer,
+    `abc_class_project` for project (PLAN-scm-front-planning 3.3a, amended 19 August 2026) -
+    never the warehouse's own segment.
     """
     from app.models.scm import ItemClassification, ReorderLevel
 
     pool = _warehouse(db, f"ZZTP{_uid()[:6]}"[:20])
     own = _warehouse(db, f"ZZTO{_uid()[:6]}"[:20])
-    pool.segment = "dealer"
     own.pool_warehouse_id = pool.id
     db.flush()
     db.add(
         ItemClassification(
-            id=_uid(), product_id=product.id, warehouse_id=pool.id, abc_class=abc_class
+            id=_uid(),
+            product_id=product.id,
+            warehouse_id=pool.id,
+            abc_class_retail=abc_class_retail,
+            abc_class_project=abc_class_project,
         )
     )
     if level is not None:
@@ -3946,7 +3951,7 @@ def test_a_contribution_states_the_flags_the_ladder_judged_the_item_on():
     """Not hot-selling, not discontinued, and classified - each said, none implied."""
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
-        own, pool = _dealer_pool(db, product, abc_class="B")
+        own, pool = _dealer_pool(db, product, abc_class_retail="B")
         _stock(db, product, own, on_hand=10)
         _stock(db, product, pool, on_hand=10)
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
@@ -3958,6 +3963,8 @@ def test_a_contribution_states_the_flags_the_ladder_judged_the_item_on():
         assert _flags(contribution) == {
             "dealer_hot_selling": False,
             "dealer_hot_selling_where": [],
+            "project_hot_selling": False,
+            "project_hot_selling_where": [],
             "discontinued": False,
             "retail_classification_available": True,
         }
@@ -3983,11 +3990,46 @@ def test_an_item_nobody_has_classified_says_so_rather_than_reading_as_cold():
         assert flags["dealer_hot_selling"] is False
 
 
+def test_a_row_with_both_letters_null_is_unclassified_not_cold_and_the_pool_offers_as_normal():
+    """A row EXISTS (the classification job ran) but both `abc_class_project` and
+    `abc_class_retail` are NULL - no delivered demand of either class in the trailing-12mo
+    window, "unknown", never a computed "not hot". This is the whole book today: reading
+    "row present" as "seen, therefore cold" would print a false "Not dealer hot-selling"
+    for stock nobody has actually judged (captain, 19 August 2026). The pool rung offers
+    the pool as it would for a classified, non-hot item, and says why in words.
+    """
+    with blank_session() as db:
+        _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _dealer_pool(db, product, abc_class_retail=None, abc_class_project=None)
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, pool, on_hand=6)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="4", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        flags = _flags(contribution)
+        assert flags["retail_classification_available"] is False
+        assert flags["dealer_hot_selling"] is False
+        assert flags["project_hot_selling"] is False
+
+        pool_step = _step(contribution, "reserve_pool")
+        assert pool_step["offered"] == "6", "the pool offers its balance as for a non-hot item"
+        assert pool_step["taken"] == "4"
+        assert pool_step["why"] == (
+            "No ABC classification for this item (no delivered demand of that class in "
+            f"the last year), so {pool.warehouse_code} is offered as for a non-hot item. "
+            "This line takes 4."
+        )
+
+
 def test_a_hot_selling_item_names_the_dealer_locations_that_made_it_hot():
     """"ABC A at BRW" is checkable; a bare boolean is something to take on trust."""
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
-        own, pool = _dealer_pool(db, product, abc_class="A")
+        own, pool = _dealer_pool(db, product, abc_class_retail="A")
         _stock(db, product, own, on_hand=20)
         _stock(db, product, pool, on_hand=12)
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
@@ -4000,12 +4042,12 @@ def test_a_hot_selling_item_names_the_dealer_locations_that_made_it_hot():
         assert flags["dealer_hot_selling_where"] == [pool.warehouse_code]
 
 
-def test_the_own_rung_says_the_item_is_not_hot_selling_so_its_stock_is_eligible():
-    """The captain: "where is the consideration of dealer hot selling ... to see if we can
-    take from BRW?" It was considered; it was never said."""
+def test_the_own_rung_never_states_a_hot_selling_verdict_a_classified_item_earned():
+    """Amended 19 August 2026: own-location Reserve is always eligible, so this rung reads
+    exactly as it does for an ordinary item - no flag prefix, hot-selling or not."""
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
-        own, pool = _dealer_pool(db, product, abc_class="B")
+        own, pool = _dealer_pool(db, product, abc_class_retail="B")
         _stock(db, product, own, on_hand=10)
         _stock(db, product, pool, on_hand=10)
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
@@ -4017,15 +4059,16 @@ def test_the_own_rung_says_the_item_is_not_hot_selling_so_its_stock_is_eligible(
             _cell(board, product.product_code, "2026-08-31")["contributions"][0],
             "reserve_own",
         )["why"]
-        assert why.startswith("Not dealer hot-selling, so own-location stock is eligible.")
-        # And the rest of the sentence is still the one the queue earned.
-        assert "this line takes 4" in why
+        assert why == "First in the queue here; this line takes 4."
 
 
-def test_the_own_rung_names_the_classification_that_kept_the_stock_for_retail():
+def test_the_own_rung_reserves_a_dealer_hot_selling_items_own_stock_without_saying_so():
+    """The captain: "reserve can always reserve regardless of dealer hot selling or not."
+    A dealer hot-selling item's own rung reads IDENTICALLY to a cold item's - the sentence
+    that used to name the flag here now belongs to the POOL rung instead."""
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
-        own, pool = _dealer_pool(db, product, abc_class="A", level=10)
+        own, pool = _dealer_pool(db, product, abc_class_retail="A", level=10)
         _stock(db, product, own, on_hand=20)
         _stock(db, product, pool, on_hand=12)
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
@@ -4037,10 +4080,33 @@ def test_the_own_rung_names_the_classification_that_kept_the_stock_for_retail():
             _cell(board, product.product_code, "2026-08-31")["contributions"][0],
             "reserve_own",
         )
+        assert step["outcome"] == "took"
+        assert step["taken"] == "4"
+        assert step["why"] == "First in the queue here; this line takes 4."
+
+
+def test_the_pool_rung_names_the_classification_that_keeps_the_pool_for_retail():
+    """The sentence that used to sit on rung 1 moved to rung 2 (PLAN 3.3a): the pool is
+    what dealer hot-selling gates now, and it names the evidence."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _dealer_pool(db, product, abc_class_retail="A")
+        _stock(db, product, own, on_hand=20)
+        _stock(db, product, pool, on_hand=12)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="4", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        step = _step(
+            _cell(board, product.product_code, "2026-08-31")["contributions"][0],
+            "reserve_pool",
+        )
         assert step["outcome"] == "not_eligible"
+        assert step["offered"] == "0"
         assert step["why"] == (
-            f"Dealer hot-selling (ABC A at {pool.warehouse_code}): own-location stock is "
-            "kept for retail, pool only."
+            f"Dealer hot-selling (ABC A by quantity on retail demand at {pool.warehouse_code}"
+            f"): {pool.warehouse_code} is kept for retail, so the pool is not offered."
         )
 
 
@@ -4091,7 +4157,7 @@ def test_the_pool_rung_carries_the_piles_own_autocount_triple():
     with blank_session() as db:
         _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
         product = _product(db, f"ZZT-{_uid()[:6]}")
-        own, pool = _dealer_pool(db, product, abc_class="B")
+        own, pool = _dealer_pool(db, product, abc_class_retail="B")
         _stock(db, product, own, on_hand=0)
         _stock(db, product, pool, on_hand=1)
         # The pool's OWN book: one dealer line owed at BRW, due before ours.
@@ -4131,7 +4197,7 @@ def test_the_pool_rung_says_in_words_why_the_pile_had_stock_and_the_line_got_non
     with blank_session() as db:
         _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
         product = _product(db, f"ZZT-{_uid()[:6]}")
-        own, pool = _dealer_pool(db, product, abc_class="B")
+        own, pool = _dealer_pool(db, product, abc_class_retail="B")
         _stock(db, product, own, on_hand=0)
         _stock(db, product, pool, on_hand=1)
         theirs = _order(db, so_number=f"ZZT-SO-A{_uid()[:6]}", order_date=date(2026, 1, 1))
@@ -4157,7 +4223,7 @@ def test_the_pool_rung_says_what_was_left_and_what_this_line_took():
     with blank_session() as db:
         _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
         product = _product(db, f"ZZT-{_uid()[:6]}")
-        own, pool = _dealer_pool(db, product, abc_class="B")
+        own, pool = _dealer_pool(db, product, abc_class_retail="B")
         _stock(db, product, own, on_hand=0)
         _stock(db, product, pool, on_hand=4)
         ours = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
@@ -4178,10 +4244,13 @@ def test_the_pool_rung_says_what_was_left_and_what_this_line_took():
         )
 
 
-def test_a_hot_selling_pool_rung_names_the_reorder_level_that_capped_it():
+def test_a_dealer_hot_selling_pool_rung_never_states_a_cap_it_offers_nothing_at_all():
+    """The old reorder-level cap is gone (19 August 2026): dealer hot-selling offers the
+    pool nothing at all, `cap` stays null on the wire, and the reorder level is still
+    shown as evidence even though it no longer drives the arithmetic."""
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
-        own, pool = _dealer_pool(db, product, abc_class="A", level=10)
+        own, pool = _dealer_pool(db, product, abc_class_retail="A", level=10)
         _stock(db, product, own, on_hand=20)
         _stock(db, product, pool, on_hand=12)
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
@@ -4194,10 +4263,79 @@ def test_a_hot_selling_pool_rung_names_the_reorder_level_that_capped_it():
         )
 
         assert step["pool"]["reorder_level"] == "10"
-        assert step["pool"]["cap"] == "2"
-        assert step["taken"] == "2"
-        assert (
-            f"capped above {pool.warehouse_code}'s reorder level 10: 2 left" in step["why"]
+        assert step["pool"]["cap"] is None
+        assert step["offered"] == "0"
+        assert step["taken"] == "0"
+        assert step["why"] == (
+            f"Dealer hot-selling (ABC A by quantity on retail demand at {pool.warehouse_code}"
+            f"): {pool.warehouse_code} is kept for retail, so the pool is not offered."
+        )
+
+
+def test_a_project_hot_selling_pool_rung_caps_the_draw_at_the_pools_availability():
+    """PLAN 3.3a: project hot-selling draws the pool only up to its own SIGNED
+    availability (`on hand - SO qty + SPO qty`). Another order's demand sitting directly
+    at the pool - ranked BEHIND ours, so it claims nothing in the queue-ahead sense -
+    still shrinks the pool's own position, and the draw stops there rather than at the
+    higher balance THIS line's own queue would otherwise leave.
+    """
+    with blank_session() as db:
+        _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _dealer_pool(db, product, abc_class_retail=None, abc_class_project="A")
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, pool, on_hand=12)
+        ours = _order(db, so_number=f"ZZT-SO-A{_uid()[:6]}", order_date=date(2026, 1, 1))
+        _line(db, ours, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+        theirs = _order(db, so_number=f"ZZT-SO-B{_uid()[:6]}", order_date=date(2026, 1, 1))
+        _line(db, theirs, product, qty="2", required_date=date(2026, 9, 10), warehouse=pool)
+
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+        step = _step(
+            _cell(board, product.product_code, "2026-08-31")["contributions"][0],
+            "reserve_pool",
+        )
+
+        assert step["pool"]["on_hand"] == "12"
+        assert step["pool"]["so_qty"] == "2"
+        assert step["pool"]["available"] == "10"
+        assert step["opening"] == "12", "nothing of theirs ranks ahead of ours at the pool"
+        assert step["offered"] == "10", "capped at the pool's own availability, not its balance"
+        assert step["taken"] == "10"
+        assert step["why"] == (
+            "Project hot-selling (ABC A by quantity on project demand at "
+            f"{pool.warehouse_code}): {pool.warehouse_code} may be drawn while its "
+            "availability stays positive - 10 available, 10 offered. This line takes 10."
+        )
+
+
+def test_a_project_hot_selling_pool_rung_offers_nothing_when_availability_is_not_positive():
+    """The other side of the boundary: an oversold pool (signed availability <= 0) offers
+    nothing at all, never a floor read as "some" (PLAN 3.3a)."""
+    with blank_session() as db:
+        _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _dealer_pool(db, product, abc_class_retail=None, abc_class_project="A")
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, pool, on_hand=4)
+        theirs = _order(db, so_number=f"ZZT-SO-A{_uid()[:6]}", order_date=date(2026, 1, 1))
+        _line(db, theirs, product, qty="9", required_date=date(2026, 9, 10), warehouse=pool)
+        ours = _order(db, so_number=f"ZZT-SO-B{_uid()[:6]}", order_date=date(2026, 1, 1))
+        _line(db, ours, product, qty="5", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+        step = _step(
+            _cell(board, product.product_code, "2026-08-31")["contributions"][0],
+            "reserve_pool",
+        )
+
+        assert step["pool"]["available"] == "-5"
+        assert step["offered"] == "0"
+        assert step["taken"] == "0"
+        assert step["why"] == (
+            "Project hot-selling (ABC A by quantity on project demand at "
+            f"{pool.warehouse_code}): {pool.warehouse_code}'s availability is -5, so "
+            "nothing is offered."
         )
 
 
@@ -4206,7 +4344,7 @@ def test_the_pool_rung_never_offers_more_than_the_pile_had_left():
     with blank_session() as db:
         _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
         product = _product(db, f"ZZT-{_uid()[:6]}")
-        own, pool = _dealer_pool(db, product, abc_class="B")
+        own, pool = _dealer_pool(db, product, abc_class_retail="B")
         _stock(db, product, own, on_hand=0)
         _stock(db, product, pool, on_hand=6)
         theirs = _order(db, so_number=f"ZZT-SO-A{_uid()[:6]}", order_date=date(2026, 1, 1))
@@ -4252,7 +4390,7 @@ def test_the_flags_and_the_pool_facts_reach_the_wire():
     with blank_session() as db:
         company_id = _sorento(db)
         product = _product(db, "ZZT-WIRE-FLAGS")
-        own, pool = _dealer_pool(db, product, abc_class="A", level=10)
+        own, pool = _dealer_pool(db, product, abc_class_retail="A", level=10)
         _stock(db, product, own, on_hand=20)
         _stock(db, product, pool, on_hand=12)
         order = _order(db, so_number="ZZT-SO-FLAGS", order_date=date(2026, 1, 1))
@@ -4278,9 +4416,14 @@ def test_the_flags_and_the_pool_facts_reach_the_wire():
         assert contribution["item_flags"]["dealer_hot_selling_where"] == [
             pool.warehouse_code
         ]
+        assert contribution["item_flags"]["project_hot_selling"] is False
+        assert contribution["item_flags"]["project_hot_selling_where"] == []
         pile = _step(contribution, "reserve_pool")["pool"]
         assert pile["on_hand"] == "12"
         assert pile["reorder_level"] == "10"
+        assert pile["cap"] is None
+        reserve_own = _step(contribution, "reserve_own")
+        assert reserve_own["taken"] == "10"
 
 
 # --------------------------------------------------------------------------- #
@@ -4299,24 +4442,27 @@ def test_the_flags_and_the_pool_facts_reach_the_wire():
 
 
 def _self_pool_dealer(db, product, *, level: int):
-    """A dealer location that is its own pool, holding the item as ABC A."""
+    """A dealer location that is its own pool, holding the item as ABC A on retail demand."""
     from app.models.scm import ItemClassification, ReorderLevel
 
     own = _warehouse(db, f"ZZTS{_uid()[:6]}"[:20])
-    own.segment = "dealer"
     own.pool_warehouse_id = own.id
     db.flush()
     db.add(
-        ItemClassification(id=_uid(), product_id=product.id, warehouse_id=own.id, abc_class="A")
+        ItemClassification(
+            id=_uid(), product_id=product.id, warehouse_id=own.id, abc_class_retail="A"
+        )
     )
     db.add(ReorderLevel(id=_uid(), product_id=product.id, warehouse_id=own.id, level=level))
     db.flush()
     return own
 
 
-def test_a_hot_selling_line_at_its_own_pool_takes_the_reserve_on_the_pool_rung():
-    """F3. 15 on hand, reorder level 10, 3 owed: Reserve 3 above the level, and the trail
-    says so on rung 2, so the rungs add up to the proposal and end at 0."""
+def test_a_hot_selling_line_at_its_own_pool_reserves_in_full_on_the_own_rung():
+    """F3, restated for the 19 August 2026 amendment: own-location Reserve is always
+    eligible, so a location that is its own pool reserves in full on rung 1 regardless of
+    dealer hot-selling, and rung 2 says only that the pool is this location, already
+    checked above - the old reorder-level cap plays no part any more."""
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
         own = _self_pool_dealer(db, product, level=10)
@@ -4331,22 +4477,15 @@ def test_a_hot_selling_line_at_its_own_pool_takes_the_reserve_on_the_pool_rung()
         assert contribution["qty_proposed_buy"] == "0"
 
         own_step = _step(contribution, "reserve_own")
-        assert own_step["outcome"] == "not_eligible"
-        assert own_step["taken"] == "0"
+        assert own_step["outcome"] == "took"
+        assert own_step["taken"] == "3"
+        assert own_step["why"] == "First in the queue here; this line takes 3."
 
         pool_step = _step(contribution, "reserve_pool")
         assert pool_step["location"] == own.warehouse_code
-        assert pool_step["opening"] == "15"
-        assert pool_step["offered"] == "5", "only the headroom above the reorder level"
-        assert pool_step["taken"] == "3"
-        assert pool_step["outcome"] == "took"
-        assert pool_step["remaining_after"] == "0"
-        assert pool_step["pool"] is not None
-        assert pool_step["pool"]["reorder_level"] == "10"
-        assert pool_step["why"] == (
-            f"{own.warehouse_code} is this line's own location and the shared pool: 5 left "
-            "above the reorder level 10; this line takes 3."
-        )
+        assert pool_step["outcome"] == "not_eligible"
+        assert pool_step["taken"] == "0"
+        assert pool_step["why"] == "The pool is this location, already checked above."
 
         reserved = sum(
             Decimal(step["taken"])
@@ -4357,31 +4496,6 @@ def test_a_hot_selling_line_at_its_own_pool_takes_the_reserve_on_the_pool_rung()
         assert _trail(contribution)[-1]["remaining_after"] == "0"
         for kind in ("incoming", "borrow", "buy"):
             assert _step(contribution, kind)["outcome"] == "none_needed", kind
-
-
-def test_a_hot_selling_line_at_its_own_pool_says_when_the_level_leaves_nothing():
-    """F3, the other outcome: 8 on hand under a level of 10 leaves nothing above it."""
-    with blank_session() as db:
-        product = _product(db, f"ZZT-{_uid()[:6]}")
-        own = _self_pool_dealer(db, product, level=10)
-        _stock(db, product, own, on_hand=8)
-        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
-        _line(db, order, product, qty="3", required_date=date(2026, 9, 3), warehouse=own)
-
-        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
-        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
-
-        pool_step = _step(contribution, "reserve_pool")
-        assert pool_step["location"] == own.warehouse_code
-        assert pool_step["opening"] == "8"
-        assert pool_step["offered"] == "0"
-        assert pool_step["taken"] == "0"
-        assert pool_step["outcome"] == "nothing_left"
-        assert pool_step["why"] == (
-            f"{own.warehouse_code} is this line's own location and the shared pool: 0 left "
-            "above the reorder level 10."
-        )
-        assert contribution["qty_proposed_buy"] == "3"
 
 
 def test_a_cold_line_at_its_own_pool_still_reserves_on_the_own_rung_and_not_twice():

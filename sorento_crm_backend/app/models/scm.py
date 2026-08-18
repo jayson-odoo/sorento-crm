@@ -157,6 +157,16 @@ class ItemClassification(Base):
     abc_class = Column(String(1), nullable=True)
     xyz_class = Column(String(1), nullable=True)
     annual_value = Column(Numeric, nullable=True)
+    # Migration 389 (captain, 19 Aug 2026): hot-selling is judged by delivered QUANTITY
+    # per demand class (project vs retail/dealer, see app.services.scm.demand_class),
+    # never money - unlike `abc_class`/`annual_value` above (the reorder engine's
+    # inventory-value lens), which stay unchanged. A SKU can be A for a project customer
+    # and C for the dealer channel. NULL = no demand of that class in the trailing-12mo
+    # window (unknown), never a computed C.
+    abc_class_project = Column(String(1), nullable=True)
+    abc_class_retail = Column(String(1), nullable=True)
+    annual_qty_project = Column(Numeric, nullable=True)
+    annual_qty_retail = Column(Numeric, nullable=True)
     demand_cv = Column(Numeric, nullable=True)
     computed_at = Column(DateTime(timezone=False), nullable=True)
     source_system = Column(String, nullable=True)

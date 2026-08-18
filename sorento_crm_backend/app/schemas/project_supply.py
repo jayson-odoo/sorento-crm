@@ -110,9 +110,13 @@ class SupplyLine(BaseModel):
     required_date: Optional[date] = None
     fulfilment_location: Optional[str] = None
     is_dealer_hot_selling: bool = False
+    is_project_hot_selling: bool = False
     classification_unavailable: bool = False
     is_discontinued: bool = False
     pool_location: Optional[str] = None
+    #: The old reorder-level cap for a hot-selling line. Always null now (19 August 2026):
+    #: dealer hot-selling offers the pool nothing and project hot-selling caps it by the
+    #: pool's own availability instead. Kept for wire compatibility, never a number again.
     pool_cap: Optional[str] = None
     pool_reorder_level: Optional[str] = None
     components: List[SupplyComponent] = []

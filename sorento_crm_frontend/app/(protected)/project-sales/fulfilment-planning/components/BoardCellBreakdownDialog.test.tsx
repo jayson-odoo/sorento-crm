@@ -36,7 +36,6 @@ import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { boardAxis } from '../../_shared/lib/fulfilmentBoard';
 import {
   buildBoard,
-  OWN_ELIGIBLE,
   PREVIEW_POLICY,
   type BoardDemandLine,
 } from '../../_shared/lib/__testsupport__/boardFixture';
@@ -1586,14 +1585,14 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
    * selling / discontinued, to see if we can take from BRW?" - and, on `Pool BRW | Had 0` beside
    * an Inventory screen showing `Available 1`: "why it shows 0?"
    */
-  it('opens the own rung with the hot-selling verdict in words, and shows no chip for an ordinary item', () => {
+  it('opens the own rung with no hot-selling verdict in words, and shows no chip for an ordinary item', () => {
     const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
     const key = cell.contributions[0].key;
     openTrail(key);
 
     expect(screen.getByTestId(`trail-why-${key}-reserve_own`).textContent).toBe(
-      `${OWN_ELIGIBLE} First in the queue here; this line takes 40.`,
+      'First in the queue here; this line takes 40.',
     );
     // An unflagged item is the ordinary case: no badge saying so.
     expect(screen.queryByTestId(`trail-flags-${key}`)).not.toBeInTheDocument();
@@ -1605,6 +1604,8 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     contribution.item_flags = {
       dealer_hot_selling: true,
       dealer_hot_selling_where: ['BRW', 'BRW-IB'],
+      project_hot_selling: false,
+      project_hot_selling_where: [],
       discontinued: true,
       retail_classification_available: true,
     };
@@ -1612,20 +1613,44 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     openTrail(contribution.key);
 
     const chips = screen.getByTestId(`trail-flags-${contribution.key}`);
-    expect(chips.textContent).toBe('hot-sellingdiscontinued');
-    expect(screen.getByTestId(`trail-flag-${contribution.key}-hot-selling`)).toHaveAttribute(
+    expect(chips.textContent).toBe('dealer hot-sellingdiscontinued');
+    expect(
+      screen.getByTestId(`trail-flag-${contribution.key}-dealer-hot-selling`),
+    ).toHaveAttribute(
       'title',
-      'Dealer hot-selling: ABC A at BRW, BRW-IB. Own-location stock is kept for retail; pool only.',
+      'Dealer hot-selling: ABC A by quantity on retail demand at BRW, BRW-IB. The shared pool is kept for retail, not offered.',
     );
-    expect(screen.queryByTestId(`trail-flag-${contribution.key}-no-retail-classification`)).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId(`trail-flag-${contribution.key}-no-classification`),
+    ).not.toBeInTheDocument();
   });
 
-  it('says "no retail classification" rather than reading an unclassified item as cold', () => {
+  it('shows a project hot-selling chip alongside the dealer one when both flags are set', () => {
+    const cell = cellOf([demand({ qty: '100' })]);
+    const contribution = cell.contributions[0];
+    contribution.item_flags = {
+      dealer_hot_selling: true,
+      dealer_hot_selling_where: ['BRW'],
+      project_hot_selling: true,
+      project_hot_selling_where: ['BRW-BB'],
+      discontinued: false,
+      retail_classification_available: true,
+    };
+    renderCell(cell);
+    openTrail(contribution.key);
+
+    const chips = screen.getByTestId(`trail-flags-${contribution.key}`);
+    expect(chips.textContent).toBe('dealer hot-sellingproject hot-selling');
+  });
+
+  it('says "no classification" rather than reading an unclassified item as cold', () => {
     const cell = cellOf([demand({ qty: '100' })]);
     const contribution = cell.contributions[0];
     contribution.item_flags = {
       dealer_hot_selling: false,
       dealer_hot_selling_where: [],
+      project_hot_selling: false,
+      project_hot_selling_where: [],
       discontinued: false,
       retail_classification_available: false,
     };
@@ -1633,7 +1658,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     openTrail(contribution.key);
 
     expect(screen.getByTestId(`trail-flags-${contribution.key}`).textContent).toBe(
-      'no retail classification',
+      'no classification',
     );
   });
 

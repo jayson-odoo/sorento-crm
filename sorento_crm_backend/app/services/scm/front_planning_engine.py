@@ -90,10 +90,11 @@ def _own_reason(location: str) -> str:
     return f"free stock at {location} covers the need by the required date"
 
 
-def _pool_reason_with_level(pool_location: str, level: Decimal) -> str:
+def _pool_reason_project_hot(pool_location: str, available: Decimal) -> str:
     return (
-        f"free stock in the shared {pool_location} pool above its reorder level of "
-        f"{qty_text(level)} covers the need by the required date"
+        f"free stock in the shared {pool_location} pool covers the need by the required "
+        f"date, drawn while its availability stays positive ({qty_text(available)} "
+        "available)"
     )
 
 
@@ -110,39 +111,59 @@ def _spo_reason(spo_number: str, arrival_date: Optional[date]) -> str:
 def reserve_capacity(
     *,
     is_dealer_hot_selling: bool,
+    is_project_hot_selling: bool = False,
     fulfilment_location: Optional[str],
     pool_location: Optional[str],
     free_stock: Mapping[str, Any],
-    reorder_levels: Mapping[str, Any],
+    pool_available: Any = None,
 ) -> List[Tuple[str, Decimal, str]]:
     """How much Reserve each location may contribute, in draw order, with its reason.
 
     Shared by the proposal and by the confirmation recheck, so the sheet cannot offer a
     Reserve the commit would refuse.
 
-    * **Dealer hot-selling**: dealer-facing free stock contributes nothing, and the pool
-      contributes only above its own per-location reorder level -
-      ``max(pool free - coalesce(level, 0), 0)``. An absent or NULL level is 0 (Q7).
-    * **Otherwise**: the line's own fulfilment location first, then the shared pool, with
-      no floor on either.
+    Amended 19 August 2026 (the captain): **the line's own fulfilment location is ALWAYS
+    Reserve-eligible**, hot-selling or not - "reserve can always reserve regardless of
+    dealer hot selling or not ... cause own location like BRW-BB is memang for project
+    only". What hot-selling gates is the SHARED POOL, by demand class:
+
+    * **Dealer hot-selling**: the pool contributes nothing at all - it is kept for retail.
+    * **Project hot-selling** (and not dealer hot-selling): the pool contributes only while
+      its own SIGNED availability (``on hand - SO qty + SPO qty``, `pool_available`) stays
+      positive - ``max(min(pool free, pool_available), 0)``.
+    * **Neither**: the pool contributes its whole free balance, uncapped.
+
+    Dealer wins when a product is hot-selling on both demand classes at once.
+
+    When the pool location IS the fulfilment location (a warehouse that is its own pool),
+    only the own contribution is added - a second entry for the same location would double
+    it.
     """
     out: List[Tuple[str, Decimal, str]] = []
-    pool_free = max(_dec(free_stock.get(pool_location)) if pool_location else ZERO, ZERO)
-
-    if is_dealer_hot_selling:
-        if not pool_location:
-            return out
-        level = max(_dec(reorder_levels.get(pool_location)), ZERO)
-        cap = max(pool_free - level, ZERO)
-        if cap > ZERO:
-            out.append((pool_location, cap, _pool_reason_with_level(pool_location, level)))
-        return out
 
     if fulfilment_location:
         own_free = max(_dec(free_stock.get(fulfilment_location)), ZERO)
         if own_free > ZERO:
             out.append((fulfilment_location, own_free, _own_reason(fulfilment_location)))
-    if pool_location and pool_location != fulfilment_location and pool_free > ZERO:
+
+    if not pool_location or pool_location == fulfilment_location:
+        return out
+
+    pool_free = max(_dec(free_stock.get(pool_location)), ZERO)
+
+    if is_dealer_hot_selling:
+        return out
+
+    if is_project_hot_selling:
+        available = _dec(pool_available)
+        offered = max(min(pool_free, available), ZERO)
+        if offered > ZERO:
+            out.append(
+                (pool_location, offered, _pool_reason_project_hot(pool_location, available))
+            )
+        return out
+
+    if pool_free > ZERO:
         out.append((pool_location, pool_free, _own_reason(pool_location)))
     return out
 
@@ -159,9 +180,10 @@ def propose_line(
     required_date: Optional[date] = None,
     fulfilment_location: Optional[str] = None,
     is_dealer_hot_selling: bool = False,
+    is_project_hot_selling: bool = False,
     free_stock: Optional[Mapping[str, Any]] = None,
     pool_location: Optional[str] = None,
-    reorder_levels: Optional[Mapping[str, Any]] = None,
+    pool_available: Any = None,
     timely_spo_qty: Any = ZERO,
     timely_spo_refs: Optional[Sequence[Mapping[str, Any]]] = None,
     is_discontinued: bool = False,
@@ -189,10 +211,11 @@ def propose_line(
 
     for location, capacity, reason in reserve_capacity(
         is_dealer_hot_selling=is_dealer_hot_selling,
+        is_project_hot_selling=is_project_hot_selling,
         fulfilment_location=fulfilment_location,
         pool_location=pool_location,
         free_stock=free_stock or {},
-        reorder_levels=reorder_levels or {},
+        pool_available=pool_available,
     ):
         if remaining <= ZERO:
             break

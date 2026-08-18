@@ -52,6 +52,7 @@ function line(overrides: Partial<SupplyLine> = {}): SupplyLine {
     required_date: '2026-09-01',
     fulfilment_location: 'BRW-BB',
     is_dealer_hot_selling: false,
+    is_project_hot_selling: false,
     classification_unavailable: false,
     is_discontinued: false,
     pool_location: 'BRW-BB',
@@ -284,34 +285,49 @@ describe('SupplyLineCard', () => {
     ).toBeInTheDocument();
   });
 
-  it('shows the hot-selling cap evidence: the pool, its level and where the draw stops', () => {
+  it('shows dealer hot-selling evidence: the pool, its level, and that it is not offered', () => {
     renderCard(
       line({
         is_dealer_hot_selling: true,
-        pool_cap: '40',
+        pool_cap: null,
         pool_reorder_level: '80',
       }),
     );
 
-    expect(screen.getByText('Hot selling')).toBeInTheDocument();
+    expect(screen.getByText('Dealer hot-selling')).toBeInTheDocument();
+    expect(
+      screen.getByText('BRW-BB, reorder level 80. Dealer hot-selling: the pool is not offered.'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows project hot-selling evidence: the pool is offered while it stays available', () => {
+    renderCard(
+      line({
+        is_project_hot_selling: true,
+        pool_cap: null,
+        pool_reorder_level: '80',
+      }),
+    );
+
+    expect(screen.getByText('Project hot-selling')).toBeInTheDocument();
     expect(
       screen.getByText(
-        'BRW-BB, reorder level 80. Dealer stock is out; the pool draw stops at 40.',
+        'BRW-BB, reorder level 80. Project hot-selling: the pool is offered while it stays available.',
       ),
     ).toBeInTheDocument();
   });
 
-  it('says the retail classification is unavailable rather than reading as not hot selling', () => {
+  it('says the item is unclassified rather than reading as not hot selling', () => {
     renderCard(line({ classification_unavailable: true }));
 
-    expect(screen.getByText('Unavailable')).toBeInTheDocument();
-    expect(screen.queryByText('Not hot selling')).not.toBeInTheDocument();
+    expect(screen.getByText('Unclassified')).toBeInTheDocument();
+    expect(screen.queryByText('Not hot-selling')).not.toBeInTheDocument();
   });
 
-  it('says a line with a classification and no A class is not hot selling', () => {
+  it('says a line with a classification and no A class on either demand class is not hot-selling', () => {
     renderCard(line());
 
-    expect(screen.getByText('Not hot selling')).toBeInTheDocument();
+    expect(screen.getByText('Not hot-selling')).toBeInTheDocument();
   });
 
   // -------------------------------------------------------------- the editing

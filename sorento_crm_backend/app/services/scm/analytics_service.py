@@ -11,7 +11,12 @@ One entry point ``run_analytics(db, scope, config)`` computes, over a shared win
      must not be trimmed to a zero baseline. ``avg_daily_demand = baseline_total / window_days``.
   2. **Classification** (``scm.item_classification``) — ABC by cumulative trailing-12mo
      annual value (qty*cost) over ALL costed keys (A<=80% / B<=95% / C=rest); null-cost
-     keys => abc_class NULL (unknown). XYZ by demand CV (X<=0.5 / Y<=1.0 / Z>1.0).
+     keys => abc_class NULL (unknown). Ranked again, independently, within project-classed
+     demand only (``abc_class_project``) and retail/dealer-classed demand only
+     (``abc_class_retail``), each on their own trailing-12mo delivered QUANTITY — hot-
+     selling is by quantity, never money (captain, 19 Aug 2026), so these two ignore cost
+     entirely and a null-cost SKU still earns a letter. A SKU can be A for a project
+     customer and C for the dealer channel. XYZ by demand CV (X<=0.5 / Y<=1.0 / Z>1.0).
   3. **Supplier performance** (``scm.supplier_performance``, supplier x product) — from
      PO -> GR (picking) pairs the way ``scm.receipt_lead_v`` reads them: on_time
      (receipt <= expected + grace), avg_lead_time from the COMPLETING receipt,
@@ -38,6 +43,7 @@ from sqlalchemy.orm import Session
 
 from app.models.base import get_company_scope
 from app.services.company_scope import DEFAULT_COMPANY_ID, resolve_write_company_id
+from app.services.scm.demand_class import PROJECT_SEGMENTS
 
 # --- locked engine constants (see PLAN/UAC M2 + golden derivation) -----------
 WINDOW_DAYS = 90
@@ -65,6 +71,16 @@ DEFAULT_GRACE_DAYS = 2
 DEFAULT_MIN_SAMPLE_SIZE = 3
 
 _SEED = "engine"
+
+# Same substring match as `demand_class.class_of` (project vs retail/dealer), built from
+# `PROJECT_SEGMENTS` itself so the SQL and the Python vocabulary cannot drift apart. A
+# customer with no stated segment (or one matching neither word) is retail here, mirroring
+# the `class_of(...) or DEFAULT_DEMAND_CLASS` pattern callers use elsewhere — "nobody said"
+# is not withheld from ranking, it just does not count as a project.
+_PROJECT_SEGMENT_MATCH_SQL = " OR ".join(
+    f"lower(trim(coalesce(c.market_segment_code, ''))) LIKE '%{seg}%'"
+    for seg in sorted(PROJECT_SEGMENTS)
+)
 
 
 # ---------------------------------------------------------------------------
@@ -374,12 +390,23 @@ def _json(obj) -> str:
 # Stage 2 — classification (ABC always ranked over the full costed universe)
 # ---------------------------------------------------------------------------
 
-def _abc_map(db: Session, as_of: date, policy: dict) -> dict:
-    """(product_id, warehouse_id) -> abc_class, ranked GLOBALLY by trailing-12mo value.
+def _rank_and_classify(totals: dict[tuple, float], policy: dict) -> dict[tuple, dict]:
+    """Rank one partition's (product_id, warehouse_id) -> value totals and apply the
+    shared ABC cut points, independently of any other partition."""
+    ranked = sorted(
+        ((v, pid, wid) for (pid, wid), v in totals.items()),
+        key=lambda t: (-t[0], str(t[1]), str(t[2] or "")),
+    )
+    letters = abc_classify([v for v, _, _ in ranked], policy["a"], policy["b"])
+    return {(pid, wid): {"abc": abc, "value": v} for (v, pid, wid), abc in zip(ranked, letters)}
 
-    Always spans the whole costed universe (independent of scope) so a scoped run
-    yields the same class a full run would. Null-cost keys are simply absent here
-    (=> classified 'unknown'/NULL by the caller).
+
+def _abc_value_totals(db: Session, as_of: date) -> dict[tuple, float]:
+    """(product_id, warehouse_id) -> trailing-12mo annual COST value, costed keys only.
+
+    Unchanged from before the project/retail split — this is the reorder engine's
+    inventory-value lens (`abc_class`/`annual_value`), and the captain's 19 Aug 2026 ruling
+    ("hot-selling is by quantity, not money") does not touch it.
     """
     lo = as_of - timedelta(days=ANNUAL_DAYS)
     rows = db.execute(text("""
@@ -391,18 +418,110 @@ def _abc_map(db: Session, as_of: date, policy: dict) -> dict:
           AND p.cost_price IS NOT NULL AND p.cost_price > 0
         GROUP BY ol.product_id, ol.warehouse_id
     """), {"lo": lo, "as_of": as_of}).fetchall()
-    ranked = sorted(
-        ((float(r.annual_value), r.product_id, r.warehouse_id) for r in rows),
-        key=lambda t: (-t[0], str(t[1]), str(t[2] or "")),
-    )
-    letters = abc_classify([v for v, _, _ in ranked], policy["a"], policy["b"])
+    return {(r.product_id, r.warehouse_id): float(r.annual_value) for r in rows}
+
+
+def _abc_class_qty_totals(db: Session, as_of: date) -> tuple[dict[tuple, float], dict[tuple, float]]:
+    """(project_totals, retail_totals): (product_id, warehouse_id) -> trailing-12mo
+    delivered QUANTITY, split the SAME source of truth `outstanding_import_service`
+    reads (the 4 Aug 2026 amendment): the SALESPERSON master's `sales_agents.demand_class`
+    first, `customers.market_segment_code` only as a fallback when the agent is
+    unclassified. No cost join/filter — hot-selling is by quantity, so a null-cost
+    product still earns a letter (captain, 19 Aug 2026).
+
+    `sales_agents` is matched the same case/whitespace-insensitive way
+    `sales_agent_service._lookup` does, on `orders.agent` falling back to
+    `orders.salesman` when blank — a delivery order carries no separate "agent" concept,
+    those two text columns are it. No `company_id` join condition: `_lookup` itself does
+    not filter by company (every row is a shared master today), so this does not either.
+
+    `sales_agents.demand_class` needs no extra pass through `demand_class.class_of` —
+    its own check constraint (`ck_sales_agents_demand_class`, built from the identical
+    `DEMAND_CLASSES` vocabulary) already guarantees NULL / 'project' / 'retail' and
+    nothing else.
+
+    Silence is NOT retail (S3, `outstanding_import_service._segment_of`/
+    `_demand_class_for` docstrings): a key whose demand_class resolves to neither
+    (unclassified agent AND no/blank market segment) is dropped from BOTH partitions in
+    Python below — unknown counts for neither letter, never a computed retail default.
+    """
+    lo = as_of - timedelta(days=ANNUAL_DAYS)
+    # A CTE so the outer GROUP BY can reference the plain output name `demand_class`
+    # unambiguously — grouping directly by that alias over the raw join would instead
+    # resolve to the INPUT column `sales_agents.demand_class` (Postgres prefers an
+    # input column of the same name over the output alias), silently dropping
+    # `market_segment_code` out of the grouping key and raising "must appear in the
+    # GROUP BY clause". Once `demand_class` is the CTE's own column, no such collision.
+    rows = db.execute(text(f"""
+        WITH classified AS (
+            SELECT ol.product_id, ol.warehouse_id, ol.quantity,
+                   COALESCE(
+                       sa.demand_class,
+                       CASE
+                           WHEN {_PROJECT_SEGMENT_MATCH_SQL} THEN 'project'
+                           WHEN c.market_segment_code IS NOT NULL AND trim(c.market_segment_code) <> ''
+                               THEN 'retail'
+                       END
+                   ) AS demand_class
+            FROM order_lines ol JOIN orders o ON o.id = ol.order_id
+            LEFT JOIN customers c ON c.id = o.customer_id
+            LEFT JOIN sales_agents sa
+              ON upper(trim(sa.sales_agent)) = upper(trim(COALESCE(NULLIF(o.agent, ''), o.salesman)))
+            WHERE o.is_cancelled = false AND o.order_date >= :lo AND o.order_date < :as_of
+        )
+        SELECT product_id, warehouse_id, demand_class, SUM(quantity) AS qty
+        FROM classified
+        GROUP BY product_id, warehouse_id, demand_class
+    """), {"lo": lo, "as_of": as_of}).fetchall()
+
+    project_totals: dict[tuple, float] = {}
+    retail_totals: dict[tuple, float] = {}
+    for r in rows:
+        if r.demand_class is None:  # neither the agent nor the segment said anything
+            continue
+        key = (r.product_id, r.warehouse_id)
+        bucket = project_totals if r.demand_class == "project" else retail_totals
+        bucket[key] = bucket.get(key, 0.0) + float(r.qty)
+    return project_totals, retail_totals
+
+
+def _abc_map(db: Session, as_of: date, policy: dict) -> dict:
+    """(product_id, warehouse_id) -> abc_class (cost value, all demand) + the
+    project/retail split (delivered QUANTITY, each ranked GLOBALLY WITHIN its own
+    partition — AC captain 19 Aug 2026: hot-selling is by quantity, never money).
+
+    Always spans the whole universe (independent of scope) so a scoped run yields the
+    same class a full run would. `abc_class`/`annual_value` keep the cost-value, costed-
+    only universe exactly as before the split. `abc_class_project`/`abc_class_retail`
+    rank over EVERY product with delivered quantity in the window, cost or no cost — a
+    key absent from a partition (no demand of that class) gets NULL there, never a
+    computed 'C'.
+    """
+    all_totals = _abc_value_totals(db, as_of)
+    project_totals, retail_totals = _abc_class_qty_totals(db, as_of)
+
+    all_map = _rank_and_classify(all_totals, policy)
+    project_map = _rank_and_classify(project_totals, policy)
+    retail_map = _rank_and_classify(retail_totals, policy)
+
     out: dict[tuple, dict] = {}
-    for (value, pid, wid), abc in zip(ranked, letters):
-        out[_k(pid, wid)] = {"abc": abc, "annual_value": value}
+    for key in set(all_map) | set(project_map) | set(retail_map):
+        pid, wid = key
+        a, proj, ret = all_map.get(key), project_map.get(key), retail_map.get(key)
+        out[_k(pid, wid)] = {
+            "abc": a["abc"] if a else None,
+            "annual_value": a["value"] if a else None,
+            "abc_project": proj["abc"] if proj else None,
+            "annual_qty_project": proj["value"] if proj else None,
+            "abc_retail": ret["abc"] if ret else None,
+            "annual_qty_retail": ret["value"] if ret else None,
+        }
     return out
 
 
-def _upsert_classification(db: Session, key, abc, xyz, annual_value, cv, now):
+def _upsert_classification(db: Session, key, abc, xyz, annual_value, cv, now,
+                           abc_class_project=None, annual_qty_project=None,
+                           abc_class_retail=None, annual_qty_retail=None):
     # Delete-then-insert per key so network-level (warehouse_id IS NULL) rows stay
     # idempotent across re-runs — see _upsert_demand_stat for why ON CONFLICT can't
     # dedupe a nullable warehouse_id (S2).
@@ -413,10 +532,14 @@ def _upsert_classification(db: Session, key, abc, xyz, annual_value, cv, now):
     db.execute(text("""
         INSERT INTO scm.item_classification
           (id, product_id, warehouse_id, abc_class, xyz_class, annual_value, demand_cv,
+           abc_class_project, annual_qty_project, abc_class_retail, annual_qty_retail,
            computed_at, source_system, source_ref, created_at)
-        VALUES (:id, :pid, :wid, :abc, :xyz, :av, :cv, :now, :src, 'run', now())
+        VALUES (:id, :pid, :wid, :abc, :xyz, :av, :cv, :abc_p, :aq_p, :abc_r, :aq_r,
+                :now, :src, 'run', now())
     """), {"id": str(uuid.uuid4()), "pid": key[0], "wid": key[1], "abc": abc,
-           "xyz": xyz, "av": annual_value, "cv": cv, "now": now, "src": _SEED})
+           "xyz": xyz, "av": annual_value, "cv": cv, "now": now, "src": _SEED,
+           "abc_p": abc_class_project, "aq_p": annual_qty_project,
+           "abc_r": abc_class_retail, "aq_r": annual_qty_retail})
 
 
 # ---------------------------------------------------------------------------
@@ -766,7 +889,13 @@ def run_analytics(db: Session, scope: Optional[dict] = None,
             abc = abc_entry["abc"] if abc_entry else None  # null-cost -> unknown
             annual_value = abc_entry["annual_value"] if abc_entry else None
             xyz = xyz_class(cv, abc_policy["x"], abc_policy["y"])
-            _upsert_classification(db, key, abc, xyz, annual_value, cv, now)
+            _upsert_classification(
+                db, key, abc, xyz, annual_value, cv, now,
+                abc_class_project=abc_entry["abc_project"] if abc_entry else None,
+                annual_qty_project=abc_entry["annual_qty_project"] if abc_entry else None,
+                abc_class_retail=abc_entry["abc_retail"] if abc_entry else None,
+                annual_qty_retail=abc_entry["annual_qty_retail"] if abc_entry else None,
+            )
             class_count += 1
 
         # --- supplier performance ---
