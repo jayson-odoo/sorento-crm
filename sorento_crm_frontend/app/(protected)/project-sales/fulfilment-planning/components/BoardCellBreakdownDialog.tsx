@@ -287,9 +287,24 @@ export function BoardCellBreakdownDialog({
           // are INSIDE the sentence (deviation 2), so the sentence is the only place the fact
           // exists and it may never be dropped.
           const why = row.original.sources.map((source) => source.reason).join(' ');
+          const share = shareNote(row.original);
           return (
             <div className="min-w-0" title={why}>
               <span className="block truncate text-sm tabular-nums">{strip}</span>
+              {share && (
+                // WRAPS rather than truncates, unlike the strip above it. Measured in the
+                // browser at the column's saved width: "1 line ahead wanting 60 · 955 lef..."
+                // cut off at the figure the sentence exists to state, and a saved column width
+                // means widening the default would not reach anybody who already has one. Two
+                // short lines inside a fixed-width cell overlap nothing.
+                <span
+                  data-testid={`share-note-${row.original.key}`}
+                  className="mt-0.5 block whitespace-normal break-words text-xs leading-snug tabular-nums text-muted-foreground"
+                  title={share}
+                >
+                  {share}
+                </span>
+              )}
               {row.original.contested && (
                 <span className="mt-0.5 inline-flex items-center gap-1 rounded bg-amber-100 px-1 text-[10px] font-medium text-amber-800">
                   <AlertTriangle className="size-3" aria-hidden />
@@ -721,6 +736,39 @@ function locationTitle(entry: BoardCellLocation): string {
     );
   }
   return parts.length > 0 ? parts.join('. ') : locationStrip(entry);
+}
+
+/**
+ * Why this line's Reserve is the size it is: who was ahead of it at its OWN location, and what
+ * was left when it was reached (PLAN 13.7, the fair-share amendment).
+ *
+ * The captain's card, live: pile Available -8013 at BRW-BB, and yet a Reserve of 80 stands -
+ * because 6 lines ahead wanted 388 of the 1015 on hand and 627 remained for this line. The strip
+ * above states the pile; this states the line. THEY ARE DIFFERENT NUMBERS AND NEITHER IS EVER
+ * PRINTED UNDER THE OTHER'S LABEL: "Available" is the whole pile, "left for this line" is this
+ * line's share at its own location.
+ *
+ * It says what remained and claims NOTHING about what may be reserved. `qty_proposed_reserve` can
+ * exceed this figure, because the shared pool is a second source with its own queue - a live line
+ * reading "0 left for this line" still reserved 9 from the pool, and the source strip beside it
+ * already says "Reserve 9 at BRW".
+ *
+ * Absent is absent: a line the server sent no share for, and a line whose sales order states no
+ * location (it has no pile to be queued at), get no sentence rather than a 0.
+ */
+function shareNote(contribution: BoardContribution): string | null {
+  if (contribution.unplannable) return null;
+  if (!present(contribution.available_to_this_line)) return null;
+  const left = contribution.available_to_this_line;
+  const at = contribution.fulfilment_location;
+  const lines = contribution.lines_ahead ?? 0;
+  if (lines === 0) {
+    return `First in the queue${at ? ` at ${at}` : ''} · ${left} left for this line`;
+  }
+  const wanted = present(contribution.so_qty_ahead) ? contribution.so_qty_ahead : '0';
+  return `${lines} line${lines === 1 ? '' : 's'} ahead wanting ${wanted} · ${left} left for this line${
+    at ? ` at ${at}` : ''
+  }`;
 }
 
 function sourceLabel(kind: BoardContribution['sources'][number]['kind']): string {

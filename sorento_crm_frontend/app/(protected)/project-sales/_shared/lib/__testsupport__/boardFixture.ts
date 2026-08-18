@@ -303,6 +303,17 @@ function allocate(
   /** How much has actually been taken at each `${item}|${location}` so far, board-wide. */
   consumed: Record<string, number>,
 ): void {
+  // What each pile held when this cell was reached, and what the lines served before this one
+  // still want out of it - the fair share the server states per contribution (PLAN 13.7). The
+  // server queues the whole book; this queues the cell, which is as much as a fixture can see.
+  const opening: Record<string, number> = {};
+  const ahead: Record<string, { lines: number; qty: number }> = {};
+  for (const contribution of contributions) {
+    if (contribution.unplannable) continue;
+    const stockKey = `${contribution.item_code}|${contribution.fulfilment_location}`;
+    if (!(stockKey in opening)) opening[stockKey] = remaining[stockKey] ?? 0;
+  }
+
   for (const contribution of contributions) {
     if (contribution.unplannable) {
       contribution.sources = [
@@ -318,6 +329,15 @@ function allocate(
     const location = contribution.fulfilment_location as string;
     const stockKey = `${contribution.item_code}|${location}`;
     const need = toMinor(contribution.qty);
+    const queue = ahead[stockKey] ?? { lines: 0, qty: 0 };
+    contribution.so_qty_ahead = fromMinor(queue.qty);
+    contribution.lines_ahead = queue.lines;
+    // Never negative: a pile the queue has already over-claimed has nothing left, which is not
+    // the same as owing the queue something.
+    contribution.available_to_this_line = fromMinor(
+      Math.max((opening[stockKey] ?? 0) - queue.qty, 0),
+    );
+    ahead[stockKey] = { lines: queue.lines + 1, qty: queue.qty + need };
     const free = remaining[stockKey] ?? 0;
     const reserved = Math.min(free, need);
     remaining[stockKey] = free - reserved;

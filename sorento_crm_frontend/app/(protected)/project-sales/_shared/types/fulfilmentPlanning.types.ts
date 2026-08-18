@@ -535,6 +535,29 @@ export interface BoardContribution {
   qty_proposed_reserve?: string | null;
   qty_proposed_incoming?: string | null;
   qty_proposed_buy?: string | null;
+  /**
+   * WHY the Reserve is the size it is, in the strip's vocabulary (PLAN 13.7, fair share).
+   *
+   * A line may reserve from its own location only what is left after the demand the active
+   * policy ranks ahead of it there. `so_qty_ahead` is what those lines still want and
+   * `lines_ahead` is how many they are - the active policy decides the order, required date is
+   * the tie-break.
+   */
+  so_qty_ahead?: string | null;
+  lines_ahead?: number | null;
+  /**
+   * What was LEFT AT THIS LINE'S OWN LOCATION when it was reached: on hand, less reserved, less
+   * what confirmed decisions hold, less `so_qty_ahead`.
+   *
+   * THREE NUMBERS LIVE NEAR EACH OTHER AND NONE MAY BE PRINTED AS ANOTHER:
+   *   - `BoardCellLocation.available_qty` is the WHOLE pile's position, signed, as AutoCount
+   *     states it (on hand - all SO + all SPO). It is about the pile, not about any line;
+   *   - this is what was left for THIS line at its own location;
+   *   - `qty_proposed_reserve` is what the line actually TOOK, and it may EXCEED this one,
+   *     because the shared pool is a second source with a queue of its own. A live card reads
+   *     "0 left for this line" beside a Reserve of 9 drawn from the pool, and both are true.
+   */
+  available_to_this_line?: string | null;
   /** How much could be borrowed for this line, across the donors below. */
   qty_borrow_available?: string | null;
   borrow_candidates?: BoardBorrowCandidate[];

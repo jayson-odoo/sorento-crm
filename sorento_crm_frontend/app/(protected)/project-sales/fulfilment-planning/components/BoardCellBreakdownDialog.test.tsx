@@ -778,6 +778,204 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
 });
 
 /**
+ * WHY the Reserve is the size it is (PLAN 13.7, the fair-share amendment).
+ *
+ * A line may reserve from its own location only what is left after the demand the active policy
+ * ranks ahead of it there, so the row has to say who was ahead and what remained. Three numbers
+ * live near each other and NONE may be printed as another: the strip's `available_qty` is the
+ * whole pile's position, `available_to_this_line` is what was left for THIS line at its own
+ * location, and `qty_proposed_reserve` is what it actually took - which can exceed the second,
+ * because the shared pool is a second source with a queue of its own.
+ */
+describe('BoardCellBreakdownDialog: what was left for this line', () => {
+  /** The captain's own card, live: B2154-NL at BRW-BB on SO369758. */
+  function captainsCell(overrides: Partial<BoardContribution> = {}) {
+    const cell = cellOf([demand()]);
+    return {
+      ...cell,
+      contributions: [
+        {
+          ...cell.contributions[0],
+          fulfilment_location: 'BRW-BB',
+          so_qty_ahead: '388',
+          lines_ahead: 6,
+          available_to_this_line: '627',
+          sources: [
+            {
+              kind: 'reserve' as const,
+              qty: '80',
+              location: 'BRW-BB',
+              warehouse_id: 'wh-BRW-BB',
+              reason: 'Free unclaimed stock at BRW-BB covers this much by the required date.',
+            },
+          ],
+          ...overrides,
+        },
+      ],
+    };
+  }
+
+  function renderCell(cell: BoardCell) {
+    render(
+      <BoardCellBreakdownDialog
+        cell={cell}
+        bucketLabel="31 Aug 2026"
+        draft={{}}
+        onDecide={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+  }
+
+  function shareNoteOf(cell: BoardCell): string {
+    return (
+      screen.getByTestId(`share-note-${cell.contributions[0].key}`).textContent ?? ''
+    );
+  }
+
+  it('says how many lines were ahead, what they wanted, and what was left here', () => {
+    const cell = captainsCell();
+    renderCell(cell);
+
+    expect(shareNoteOf(cell)).toBe('6 lines ahead wanting 388 · 627 left for this line at BRW-BB');
+  });
+
+  it('says the line was first in the queue when nothing was ahead of it', () => {
+    const cell = captainsCell({
+      so_qty_ahead: '0',
+      lines_ahead: 0,
+      available_to_this_line: '1015',
+    });
+    renderCell(cell);
+
+    expect(shareNoteOf(cell)).toBe('First in the queue at BRW-BB · 1015 left for this line');
+  });
+
+  it('counts a single line ahead in the singular', () => {
+    const cell = captainsCell({ so_qty_ahead: '60', lines_ahead: 1, available_to_this_line: '40' });
+    renderCell(cell);
+
+    expect(shareNoteOf(cell)).toBe('1 line ahead wanting 60 · 40 left for this line at BRW-BB');
+  });
+
+  /**
+   * The reserve MAY exceed what was left at the line's own location, because the shared pool is a
+   * second source with its own queue. Live: a line reading "0 left for it" still reserved 9 from
+   * the pool. So the sentence states what remained and claims nothing about what may be taken.
+   */
+  it('states both when the reserve exceeds what was left at this line’s own location', () => {
+    const cell = captainsCell({
+      so_qty_ahead: '1015',
+      lines_ahead: 12,
+      available_to_this_line: '0',
+      sources: [
+        {
+          kind: 'reserve',
+          qty: '9',
+          location: 'BRW',
+          warehouse_id: 'wh-BRW',
+          reason: 'The shared pool at BRW covers this much within its cap.',
+        },
+      ],
+    });
+    renderCell(cell);
+
+    expect(screen.getByText(/Reserve 9 at BRW/)).toBeInTheDocument();
+    expect(shareNoteOf(cell)).toBe(
+      '12 lines ahead wanting 1015 · 0 left for this line at BRW-BB',
+    );
+    // Never a verdict on the reserve: the pool is a second source, so "0 left" does not mean
+    // nothing may be reserved.
+    expect(shareNoteOf(cell)).not.toContain('Reserve');
+    expect(shareNoteOf(cell)).not.toContain('cannot');
+  });
+
+  /**
+   * The whole pile and this line's share are different numbers and are never shown under one
+   * label - the captain's card reads Available -8013 at BRW-BB and 627 left for this line.
+   */
+  it('never prints the pile’s Available as the line’s share, or the other way round', () => {
+    const cell = {
+      ...captainsCell(),
+      locations: [
+        {
+          location: 'BRW-BB',
+          qty: '100',
+          qty_on_hand: '1015',
+          so_qty: '9028',
+          spo_qty: '0',
+          available_qty: '-8013',
+        },
+      ],
+    };
+    renderCell(cell);
+
+    const strip = screen.getByTestId('cell-location-BRW-BB').textContent ?? '';
+    expect(strip).toContain('Available -8013');
+    expect(strip).not.toContain('627');
+    expect(strip).not.toContain('left for this line');
+
+    expect(shareNoteOf(cell)).toContain('627 left for this line');
+    expect(shareNoteOf(cell)).not.toContain('Available');
+    expect(shareNoteOf(cell)).not.toContain('-8013');
+  });
+
+  /** Absent is absent: a line the server said nothing about gets no sentence, never a 0. */
+  it('says nothing at all when the server sent no share for the line', () => {
+    const cell = captainsCell({
+      so_qty_ahead: undefined,
+      lines_ahead: undefined,
+      available_to_this_line: undefined,
+    });
+    renderCell(cell);
+
+    expect(
+      screen.queryByTestId(`share-note-${cell.contributions[0].key}`),
+    ).not.toBeInTheDocument();
+  });
+
+  /** A line with no location has no own pile to be queued at, so it has nothing to say here. */
+  it('says nothing for a line whose sales order states no location', () => {
+    const cell = cellOf([demand({ fulfilment_location: null })]);
+    const unplannable = {
+      ...cell,
+      contributions: [
+        {
+          ...cell.contributions[0],
+          so_qty_ahead: '0',
+          lines_ahead: 0,
+          available_to_this_line: '0',
+        },
+      ],
+    };
+    renderCell(unplannable);
+
+    expect(
+      screen.queryByTestId(`share-note-${cell.contributions[0].key}`),
+    ).not.toBeInTheDocument();
+  });
+
+  /** The fixture emits the same three fields, queued the way the server queues them. */
+  it('reads the queue the board fixture built, line by line', () => {
+    const cell = cellOf(
+      [
+        demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a', qty: '60' }),
+        demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b', qty: '40' }),
+      ],
+      { 'WESERP10B|BRW-BB': '100' },
+    );
+    renderCell(cell);
+
+    expect(
+      screen.getByTestId(`share-note-${cell.contributions[0].key}`).textContent,
+    ).toBe('First in the queue at BRW-BB · 100 left for this line');
+    expect(
+      screen.getByTestId(`share-note-${cell.contributions[1].key}`).textContent,
+    ).toBe('1 line ahead wanting 60 · 40 left for this line at BRW-BB');
+  });
+});
+
+/**
  * Bulk decisions (the captain, pointing at the users list: "I should have a bulk decision
  * function ... so I can bulk approve / reject, like I can select all then approve / reject").
  *
