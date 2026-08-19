@@ -80,15 +80,15 @@ export function POIntakeConfirmClient({
     if (line.page_no) setPage(line.page_no);
   }, []);
 
-  const focusLineNo = React.useCallback(
-    (lineNo: number) => {
-      const line = version?.lines.find((item) => item.line_no === lineNo);
-      if (!line) return;
-      gridRef.current?.focusLine(line.id);
-      if (line.page_no) setPage(line.page_no);
-    },
-    [version],
-  );
+  // "Review them" reaches whichever surface still has something unreviewed: a note naming a
+  // line first (that is most of them), and only when none is left does it fall back to the
+  // document notes card below the grid.
+  const reviewNextNote = React.useCallback(() => {
+    const foundOnALine = gridRef.current?.focusFirstUnreviewedAnnotation();
+    if (!foundOnALine) {
+      notesRef.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+    }
+  }, []);
 
   // Same predicate the grid's filter and its count use, so "the first problem line" is the
   // first of exactly the lines the grid says need attention.
@@ -134,6 +134,13 @@ export function POIntakeConfirmClient({
   };
 
   const unreviewed = version.annotations.filter((note) => note.state === 'proposed');
+  // A note naming a line lives on that line now (P5 inline review); this card only ever
+  // holds what names none, so the confirm gate stays keyed on ALL of them while the card
+  // itself is scoped to its own leftover slice.
+  const documentAnnotations = version.annotations.filter(
+    (note) => note.refers_to_lines.length === 0,
+  );
+  const documentUnreviewed = documentAnnotations.filter((note) => note.state === 'proposed');
   const confirmed = Boolean(version.confirmed_at);
   const readOnly = !canEdit || confirmed;
 
@@ -193,12 +200,7 @@ export function POIntakeConfirmClient({
                     variant="link"
                     size="sm"
                     className="h-auto p-0 text-xs"
-                    onClick={() =>
-                      notesRef.current?.scrollIntoView?.({
-                        block: 'start',
-                        behavior: 'smooth',
-                      })
-                    }
+                    onClick={reviewNextNote}
                   >
                     Review them
                   </Button>
@@ -312,6 +314,12 @@ export function POIntakeConfirmClient({
                       focusedLineId={focusedLineId}
                       onFocusLine={focusLine}
                       onUpdateLine={intake.updateLine}
+                      annotations={version.annotations}
+                      savingAnnotationIds={intake.savingAnnotationIds}
+                      onShowPage={showPage}
+                      onAcceptAnnotation={intake.acceptAnnotation}
+                      onEditAnnotation={intake.editAnnotation}
+                      onRejectAnnotation={intake.rejectAnnotation}
                     />
                   )}
                 </CardContent>
@@ -320,19 +328,17 @@ export function POIntakeConfirmClient({
               <div ref={notesRef} className="min-w-0">
                 <Card>
                   <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <CardTitle className="text-sm">Handwriting</CardTitle>
-                    {unreviewed.length > 0 && (
-                      <Badge variant="warning">{`${unreviewed.length} to review`}</Badge>
+                    <CardTitle className="text-sm">Document notes</CardTitle>
+                    {documentUnreviewed.length > 0 && (
+                      <Badge variant="warning">{`${documentUnreviewed.length} to review`}</Badge>
                     )}
                   </CardHeader>
                   <CardContent>
                     <POIntakeAnnotationsGrid
-                      annotations={version.annotations}
-                      lines={version.lines}
+                      annotations={documentAnnotations}
                       readOnly={readOnly}
                       savingAnnotationIds={intake.savingAnnotationIds}
                       onShowPage={showPage}
-                      onFocusLineNo={focusLineNo}
                       onAccept={intake.acceptAnnotation}
                       onEdit={intake.editAnnotation}
                       onReject={intake.rejectAnnotation}

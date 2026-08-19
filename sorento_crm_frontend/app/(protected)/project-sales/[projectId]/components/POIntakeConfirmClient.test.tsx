@@ -277,7 +277,13 @@ describe('POIntakeConfirmClient', () => {
     expect(screen.getByRole('button', { name: /Confirm this PO/i })).toBeDisabled();
   });
 
-  it('puts the header, the lines and the handwriting on one screen', async () => {
+  /**
+   * 19 Aug follow-up: a note naming a line lives on that line now, not scrolled to
+   * separately, so the fixture's cancel_line note (naming line 1) shows inline. The
+   * document-level card renders too, with its own empty state, per the CRUD standard that
+   * every section always renders.
+   */
+  it('puts the header, the lines and each note on its own line on one screen', async () => {
     getPOVersion.mockResolvedValue(version({ annotations: [annotation()] }));
 
     renderConfirm();
@@ -286,9 +292,15 @@ describe('POIntakeConfirmClient', () => {
     expect(screen.getByLabelText('PO number')).toHaveValue('HQ/26/01/041');
     expect(screen.getByLabelText('Filing reference')).toHaveValue('PS26-0143');
     expect(screen.getByLabelText('Quantity on line 1')).toHaveValue('927');
+    // The note names line 1, so it shows there, not in a separate card scrolled to.
+    expect(screen.getByText('1 line with handwriting to review')).toBeInTheDocument();
     expect(
-      screen.getByText('Handwriting', { selector: '[data-slot="card-title"]' }),
+      screen.getByText('cancel item (7), refer to new P/O HQ/26/05/087'),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText('Document notes', { selector: '[data-slot="card-title"]' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('No document-level notes')).toBeInTheDocument();
     expect(screen.getByTitle('Purchase order page 1')).toBeInTheDocument();
   });
 
@@ -373,7 +385,7 @@ describe('POIntakeConfirmClient', () => {
     expect(screen.queryByLabelText('Amount on line 1')).toBeNull();
   });
 
-  it('refuses to confirm while a note is unreviewed, and says so beside the button', async () => {
+  it('refuses to confirm while a note is unreviewed, and "Review them" reaches its line', async () => {
     getPOVersion.mockResolvedValue(version({ annotations: [annotation()] }));
 
     renderConfirm();
@@ -382,8 +394,12 @@ describe('POIntakeConfirmClient', () => {
     expect(
       screen.getByText('1 handwritten note still unreviewed'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Review them/i })).toBeInTheDocument();
-    expect(screen.getByText('1 to review')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Review them/i }));
+
+    // The note names line 1, so "Review them" lands on the line, not on the (empty)
+    // document-level card below.
+    expect(screen.getByText('Line 1 in focus')).toBeInTheDocument();
   });
 
   it('confirms once every note has been looked at', async () => {
