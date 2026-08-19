@@ -40,6 +40,7 @@ from app.models.project_so import (
     IV_DELAY,
     IV_ORDER,
     IV_PRE_ORDERED,
+    IV_RELEASE,
     IV_RESERVE_AND_ORDER,
 )
 
@@ -53,6 +54,9 @@ CHANGE_QTY_DECREASE = "qty_decrease"
 CHANGE_DATE_LATER = "date_later"
 CHANGE_DATE_EARLIER = "date_earlier"
 CHANGE_REPOINT = "repoint"
+#: A planning-change batch released a line's whole claim (PLAN-so-book-diff-replanning.md
+#: section 6). Informational, like the two date changes: it never consumes a pool.
+CHANGE_RELEASE = "release"
 
 # Only these two ask purchasing to buy something, so only these two consume a pool.
 BUYING_CHANGES = (CHANGE_NEW, CHANGE_QTY_INCREASE)
@@ -154,6 +158,8 @@ def verb_for(
         return IV_CANCEL_BALANCE
     if change == CHANGE_REPOINT:
         return IV_CHANGE_SO
+    if change == CHANGE_RELEASE:
+        return IV_RELEASE
     if coverage == COVERAGE_PRE_ORDER:
         return IV_PRE_ORDERED
     if coverage == COVERAGE_INBOUND:

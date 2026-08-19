@@ -13,7 +13,9 @@
  *        -> flat { data, total, page, limit } (DataGrid contract, NOT the nested envelope)
  *   GET  /api/v1/project-sales/planning-changes/{batch_id}                   (AC-R02)
  *   PUT  /api/v1/project-sales/planning-changes/{batch_id}/rows/{row_id}     (AC-R04)
- *        body UpdatePlanningChangeRowBody { decision }
+ *        body UpdatePlanningChangeRowBody { decision, composition? }
+ *        `composition` is REQUIRED when `decision === 'amend'` (422 otherwise); `confirm`
+ *        derives its own composition from the row's `proposal` server-side.
  *   POST /api/v1/project-sales/planning-changes/{batch_id}/apply             (AC-R05)
  *        -> ApplyPlanningChangesResult { applied_orders, failed_orders, already_applied }
  *

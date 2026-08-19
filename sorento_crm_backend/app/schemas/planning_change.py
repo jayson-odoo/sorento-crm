@@ -15,10 +15,14 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 from app.schemas.project_board import BoardContribution
+from app.schemas.project_supply import ConfirmLine
 
 PlanningChangeKind = Literal["delayed", "advanced", "qty_up", "qty_down", "closed", "added"]
 PlanningChangeReaction = Literal["keep", "release", "replan", "reduce", "retire"]
-PlanningChangeDecision = Optional[Literal["accept", "keep", "board"]]
+#: `confirm`/`amend` apply only to a row carrying a `proposal` (`replan`/`qty_up`), the
+#: captain's "I can't really amend also right to set the borrow, clicking accept here has
+#: no effect" - `accept` alone recorded a decision Apply never executed for such a row.
+PlanningChangeDecision = Optional[Literal["accept", "keep", "board", "confirm", "amend"]]
 PlanningChangeAppliedState = Literal["pending", "applied", "failed", "superseded"]
 PlanningChangeSourceKind = Literal["so_book_upload"]
 
@@ -99,6 +103,9 @@ class PlanningChangeRow(BaseModel):
     proposal: Optional[BoardContribution] = None
     inquiry_rows: List[PlanningChangeInquiryRow] = Field(default_factory=list)
     decision: PlanningChangeDecision = None
+    #: What Apply will post for this line, set only by `confirm`/`amend`. Read back so the
+    #: batch page can show "Amended: Reserve 40 at BRW-BB ..." without recomputing it.
+    composition: Optional[ConfirmLine] = None
     applied_state: PlanningChangeAppliedState = "pending"
     applied_reason: Optional[str] = None
     board_link: str
@@ -130,6 +137,9 @@ class PlanningChangeResult(BaseModel):
     orders_failed: List[Dict[str, Any]] = Field(default_factory=list)
     inquiry_rows_changed: List[Dict[str, Any]] = Field(default_factory=list)
     lines_replanned: int = 0
+    #: Rows decided `confirm`/`amend` that Apply actually wrote (accepted alone never did -
+    #: the captain's own complaint this counter answers).
+    lines_confirmed: int = 0
     purchasing_notified: bool = False
 
 
@@ -172,6 +182,9 @@ class PlanningChangeListEnvelope(BaseModel):
 
 class UpdatePlanningChangeRowBody(BaseModel):
     decision: PlanningChangeDecision = None
+    #: Required when `decision == 'amend'` (422 otherwise); ignored for every other
+    #: decision - `confirm` derives its own composition from the row's `proposal` server-side.
+    composition: Optional[ConfirmLine] = None
 
 
 class ApplyPlanningChangesResult(BaseModel):

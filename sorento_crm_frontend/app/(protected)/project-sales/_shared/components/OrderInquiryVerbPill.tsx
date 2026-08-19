@@ -19,6 +19,7 @@ export const VERB_LABEL: Record<string, string> = {
   PRE_ORDERED_DO_NOT_ORDER: 'PRE-ORDERED, DO NOT ORDER',
   ALREADY_INBOUND: 'ALREADY INBOUND',
   BORROW_SHORTFALL: 'BORROW SHORTFALL',
+  RELEASE: 'RELEASE',
 };
 
 /**
@@ -37,6 +38,10 @@ const PALETTE_KEY: Record<string, string> = {
   CANCEL_BALANCE: 'rejected',
   // Money about to be spent, like an ORDER: the donor is short and somebody must buy it.
   BORROW_SHORTFALL: 'pending',
+  // A planning-change release moved the Buy off this line's own location onto the pool -
+  // still money about to be spent, just no longer for this line (PLAN-so-book-diff
+  // -replanning.md section 6).
+  RELEASE: 'pending',
 };
 
 /**

@@ -24,7 +24,13 @@ export type OrderInquiryVerb =
    * buying work at that location (PLAN-fulfilment-planning 13.11). Its own verb: the
    * quantity belongs to the donor's location, not to the borrowing line's.
    */
-  | 'BORROW_SHORTFALL';
+  | 'BORROW_SHORTFALL'
+  /**
+   * A planning-change batch released a line's whole claim: the reserve freed at its own
+   * location, and this Buy is no longer for this line - it is now for the pool
+   * (PLAN-so-book-diff-replanning.md section 6). Informational, like DELAY/ADVANCE.
+   */
+  | 'RELEASE';
 
 export type OrderInquiryState = 'raised' | 'actioned' | 'cancelled';
 

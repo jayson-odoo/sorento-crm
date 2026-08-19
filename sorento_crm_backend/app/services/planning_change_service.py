@@ -17,9 +17,16 @@ the next read AND its incoming/Buy parts are not carried either - they are re-pr
 the line is next confirmed. `_check_line` permits no partial cover (a line named in a
 `ConfirmLine` must sum to exactly its open quantity), so a "keep Buy, drop only Reserve"
 composition has no seam without touching `project_supply_service.py`'s validation itself; a
-real partial-cover seam is a follow-up, not this slice. AC-R08: release touches no Order
-Inquiry row (a reserve is not a purchase) - existing rows are left exactly as
-`refresh_for_decision` will find and revise them on the line's next confirmation.
+real partial-cover seam is a follow-up, not this slice.
+
+**`release` = releasing the project's claim ENTIRELY** (captain, 19 August 2026, correcting
+the first cut of AC-R08): the reserve frees at its own location AND the Buy this line was
+holding is no longer a purchase FOR this line - it becomes a POOL purchase. So a release is
+not silent on Order Inquiry after all: every non-`actioned` OI row the line already raised
+moves its `stock_location` to the line's pool (an `actioned` one keeps its location, already
+bought, and gets the note only), and a `RELEASE` change row makes the same true in the
+worklist the way a `DELAY` row does. Only the RESERVE side is silent - it is not a purchase,
+so it raises nothing new.
 
 Two further deliberate simplifications, flagged here because a future slice will want them
 fixed properly rather than rediscovered by reading a bug report:
@@ -192,9 +199,9 @@ def suggest(kind: str, held: Optional[dict], facts: dict) -> Tuple[str, str]:
             where = ", ".join(dealer.get("where") or []) or locations
             return (
                 "release",
-                f"Dealer hot-selling at {where}: retail needs the pool stock now, so "
-                "the reserve is released back to the pool whatever the size of the "
-                "delay - back on the board.",
+                f"Dealer hot-selling at {where}: retail needs the pool stock now; "
+                "the reserve is released and the purchase is for the pool - back on "
+                "the board.",
             )
         if window.get("value"):
             return (
@@ -206,8 +213,8 @@ def suggest(kind: str, held: Optional[dict], facts: dict) -> Tuple[str, str]:
         return (
             "release",
             f"New date is {days_moved} days out, beyond the {window_days}-day reserve "
-            f"window; the reserve is released back to {locations or 'its location'} "
-            "rather than sitting idle for months - back on the board.",
+            f"window; the reserve is released and the purchase is for the pool - back "
+            "on the board.",
         )
 
     # No reserve: only Buy (or nothing measurable) is held.
@@ -689,7 +696,10 @@ def _build_row(
         suggested=suggested,
         why=why,
         proposal_json=proposal,
-        decision=(None if held is None else "accept"),
+        # A `replan` row (it always carries a `proposal`) defaults to undecided - `Leave on
+        # the board` - not `accept`: `accept` alone never executed anything for it (the
+        # captain's own fix); the planner picks `Confirm as proposed` or `Amend` instead.
+        decision=(None if held is None or suggested == "replan" else "accept"),
         applied_state=PLANNING_CHANGE_STATE_PENDING,
         board_link=board_link,
     )
@@ -771,6 +781,7 @@ def row_out(db: Session, row: PlanningChangeRow) -> dict:
         "proposal": row.proposal_json,
         "inquiry_rows": row.inquiry_rows_json or [],
         "decision": row.decision,
+        "composition": row.composition_json,
         "applied_state": applied_state,
         "applied_reason": row.applied_reason,
         "board_link": row.board_link,
@@ -906,8 +917,150 @@ def list_batches(
     }
 
 
+def _row_open_qty(row: PlanningChangeRow) -> Decimal:
+    """What the line's composition must sum to - the SAME figure the board's own editor
+    balances against (`amendDraftFrom`'s `open_qty`): the proposal's own outstanding
+    quantity when there is one, else the row's own new quantity."""
+    proposal = row.proposal_json or {}
+    if proposal.get("qty_outstanding") is not None:
+        return _dec(proposal.get("qty_outstanding"))
+    if proposal.get("qty") is not None:
+        return _dec(proposal.get("qty"))
+    return _dec((row.to_json or {}).get("qty"))
+
+
+def composition_from_proposal(proposal: Optional[dict]) -> dict:
+    """The board's own proposal for a row (`proposal_json`, a `BoardContribution`), turned
+    into a `ConfirmLine`-shaped composition - the same reading the board's own Confirm gives
+    an untouched proposal (`fulfilmentBoard.ts`'s `lineFor`, the non-amended branch): the
+    engine's own Reserve/incoming/Buy figures, addressed to the warehouses it proposed them
+    against. Pure; no I/O. `{}` when there is nothing to compose (no proposal, or one with
+    no line to post against)."""
+    if not proposal:
+        return {}
+    project_line_id = proposal.get("project_line_id")
+    if not project_line_id:
+        return {}
+    sources = proposal.get("sources") or []
+    incoming = _proposal_qty(proposal.get("qty_proposed_incoming"), sources, "timely_spo")
+    reserve_qty = _proposal_qty(proposal.get("qty_proposed_reserve"), sources, "reserve")
+    owed = _dec(
+        proposal.get("qty_outstanding")
+        if proposal.get("qty_outstanding") is not None
+        else proposal.get("qty")
+    )
+    buy_raw = proposal.get("qty_proposed_buy")
+    buy = _dec(buy_raw) if buy_raw is not None else max(owed - incoming - reserve_qty, _ZERO)
+    return {
+        "project_line_id": project_line_id,
+        "timely_spo_qty": qty_text(incoming),
+        "reserve": _reserve_components_from_sources(sources, reserve_qty),
+        # The board never proposes a Borrow (it allocates per product/location only); one
+        # composed by hand takes the `amend` path, which posts what the planner built.
+        "borrow": [],
+        "buy_qty": qty_text(buy),
+        "buy_reason": None,
+        "amend_reason": None,
+    }
+
+
+def _proposal_qty(value: Any, sources: List[dict], kind: str) -> Decimal:
+    if value is not None:
+        return _dec(value)
+    return sum((_dec(s.get("qty")) for s in sources if s.get("kind") == kind), _ZERO)
+
+
+def _reserve_components_from_sources(sources: List[dict], reserve_qty: Decimal) -> List[dict]:
+    reserve_sources = [s for s in sources if s.get("kind") == "reserve" and s.get("warehouse_id")]
+    out: List[dict] = []
+    remaining = reserve_qty
+    for s in reserve_sources:
+        if remaining <= _ZERO:
+            break
+        take = min(_dec(s.get("qty")), remaining)
+        if take > _ZERO:
+            out.append({"warehouse_id": s["warehouse_id"], "qty": qty_text(take)})
+            remaining -= take
+    # Whatever the sources could not address (the proposal rounded, or asked for more than
+    # any one source stated) lands on the last addressable warehouse - the only one this
+    # side can name it against.
+    if remaining > _ZERO and out:
+        out[-1]["qty"] = qty_text(_dec(out[-1]["qty"]) + remaining)
+    return out
+
+
+def _validate_composition_shape(
+    composition: dict, row: PlanningChangeRow, open_qty: Decimal
+) -> dict:
+    """The PUT-time check (module docstring, PLAN section 1): shape + total == open quantity,
+    mirroring the board editor's own `lineBalance`/`lineBlockers`. `_check_line` runs the FULL
+    recheck (stock, donor reasons, discontinued reason) at Apply, against live facts - this is
+    only the shape a composition must have to be storable at all."""
+
+    def fail(message: str, code: str) -> None:
+        raise AppException(status_code=422, message=message, code=code)
+
+    if not isinstance(composition, dict) or not composition.get("project_line_id"):
+        fail("This composition needs a line.", "planning_change_composition_invalid")
+    if row.project_line_id and str(composition.get("project_line_id")) != str(row.project_line_id):
+        fail(
+            "This composition is for a different line.",
+            "planning_change_composition_wrong_line",
+        )
+    reserve = composition.get("reserve") or []
+    borrow = composition.get("borrow") or []
+    timely = _dec(composition.get("timely_spo_qty"))
+    buy = _dec(composition.get("buy_qty"))
+    quantities = [timely, buy]
+    for item in reserve:
+        if not item.get("warehouse_id"):
+            fail("Every Reserve component needs a warehouse.", "planning_change_composition_invalid")
+        quantities.append(_dec(item.get("qty")))
+    for item in borrow:
+        if not item.get("warehouse_id"):
+            fail("Every Borrow component needs a warehouse.", "planning_change_composition_invalid")
+        quantities.append(_dec(item.get("qty")))
+    if min(quantities, default=_ZERO) < _ZERO:
+        fail("A component quantity is negative.", "planning_change_composition_invalid")
+
+    total = timely + sum((_dec(i.get("qty")) for i in reserve), _ZERO) + \
+        sum((_dec(i.get("qty")) for i in borrow), _ZERO) + buy
+    if total != open_qty:
+        fail(
+            f"The components add up to {qty_text(total)} and the line is open for "
+            f"{qty_text(open_qty)}.",
+            "planning_change_composition_mismatch",
+        )
+
+    return {
+        "project_line_id": str(composition.get("project_line_id")),
+        "timely_spo_qty": qty_text(timely),
+        "reserve": [
+            {"warehouse_id": i["warehouse_id"], "qty": qty_text(_dec(i.get("qty")))}
+            for i in reserve
+        ],
+        "borrow": [
+            {
+                "source": i.get("source"),
+                "warehouse_id": i["warehouse_id"],
+                "donor_project_id": i.get("donor_project_id"),
+                "qty": qty_text(_dec(i.get("qty"))),
+                "reason": i.get("reason") or "",
+            }
+            for i in borrow
+        ],
+        "buy_qty": qty_text(buy),
+        "buy_reason": composition.get("buy_reason"),
+        "amend_reason": composition.get("amend_reason"),
+    }
+
+
 def set_row_decision(
-    db: Session, batch_id: str, row_id: str, decision: Optional[str]
+    db: Session,
+    batch_id: str,
+    row_id: str,
+    decision: Optional[str],
+    composition: Optional[dict] = None,
 ) -> dict:
     batch = _batch_or_404(db, batch_id)
     if batch.applied_at is not None:
@@ -927,7 +1080,10 @@ def set_row_decision(
             message="This row could not be found.",
             code="planning_change_row_not_found",
         )
-    if row.held_json is None and decision is not None:
+    # `accept`/`keep`/`board` act on an EXISTING decision (AC-R04); `confirm`/`amend`
+    # compose a fresh one from the proposal, which a row with no active decision (AC-R03,
+    # always `replan`) has just as much as a covered one advancing/qty_up (section 0).
+    if decision in ("accept", "keep", "board") and row.held_json is None:
         raise AppException(
             status_code=422,
             message=(
@@ -936,7 +1092,7 @@ def set_row_decision(
             ),
             code="planning_change_row_no_decision",
         )
-    if decision == "accept" and _row_is_superseded(db, row):
+    if decision in ("accept", "confirm", "amend") and _row_is_superseded(db, row):
         raise AppException(
             status_code=409,
             message=(
@@ -945,6 +1101,35 @@ def set_row_decision(
             ),
             code="planning_change_row_superseded",
         )
+
+    if decision in ("confirm", "amend"):
+        if not row.project_line_id:
+            raise AppException(
+                status_code=422,
+                message="This line has no planning record yet, so there is nothing to confirm.",
+                code="planning_change_row_no_line",
+            )
+        open_qty = _row_open_qty(row)
+        if decision == "confirm":
+            if not row.proposal_json:
+                raise AppException(
+                    status_code=422,
+                    message="This row has no proposal to confirm.",
+                    code="planning_change_row_no_proposal",
+                )
+            composed = composition_from_proposal(row.proposal_json)
+        else:
+            if not composition:
+                raise AppException(
+                    status_code=422,
+                    message="An amendment needs a composition.",
+                    code="planning_change_composition_required",
+                )
+            composed = composition
+        row.composition_json = _validate_composition_shape(composed, row, open_qty)
+    else:
+        row.composition_json = None
+
     row.decision = decision
     db.flush()
     return row_out(db, row)
@@ -1067,13 +1252,77 @@ def _to_confirm_line(payload: dict):
     )
 
 
+def _pool_code_for_core_line(
+    db: Session, core_line_id: Optional[str], _cache: Dict[str, Optional[str]]
+) -> Optional[str]:
+    """The line's OWN fulfilment warehouse's pool, by the same `pool_warehouse_id` hop
+    the ladder resolves everywhere else (`ProjectSupplyService`'s `_LineFacts.pool_code`).
+    `None` when the line states no warehouse, or that warehouse has no pool."""
+    if not core_line_id:
+        return None
+    if core_line_id in _cache:
+        return _cache[core_line_id]
+    own_id = (
+        db.query(SalesOrderLine.warehouse_id)
+        .filter(SalesOrderLine.id == core_line_id)
+        .scalar()
+    )
+    code = None
+    if own_id:
+        pool_id = (
+            db.query(Warehouse.pool_warehouse_id).filter(Warehouse.id == own_id).scalar()
+        )
+        if pool_id:
+            code = (
+                db.query(Warehouse.warehouse_code).filter(Warehouse.id == pool_id).scalar()
+            )
+    _cache[core_line_id] = code
+    return code
+
+
+def _release_note(so_number: str, line_no: Optional[int], from_date, to_date, pool_code) -> str:
+    moved = (
+        f"delivery moved {from_date} -> {to_date}"
+        if (from_date and to_date)
+        else "delivery date moved"
+    )
+    note = f"Released from {so_number} line {line_no or '?'} ({moved})"
+    return f"{note}; buy for {pool_code}" if pool_code else note
+
+
+def _release_inquiry_rows(
+    db: Session, project_line_id: Optional[str], note: str, pool_code: Optional[str]
+) -> int:
+    """Every non-cancelled OI row the released line already raised: a non-`actioned` one
+    moves to the pool location (it is no longer bought for this line); an `actioned` one
+    (already bought) keeps its location and gets the note only."""
+    if not project_line_id:
+        return 0
+    rows = (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id == project_line_id,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+        .all()
+    )
+    count = 0
+    for row in rows:
+        row.note = f"{row.note}\n{note}" if row.note else note
+        if row.state != INQUIRY_ACTIONED and pool_code:
+            row.stock_location = pool_code
+        count += 1
+    return count
+
+
 def _oi_demand_rows(
-    db: Session, live_rows: Sequence[PlanningChangeRow]
+    db: Session, live_rows: Sequence[PlanningChangeRow], so_number: str
 ) -> Tuple[List[dict], Dict[str, int]]:
     from app.services.project_order_inquiry_engine import (
         CHANGE_DATE_EARLIER,
         CHANGE_DATE_LATER,
         CHANGE_QTY_DECREASE,
+        CHANGE_RELEASE,
     )
 
     core_ids = [r.core_line_id for r in live_rows if r.core_line_id]
@@ -1086,13 +1335,11 @@ def _oi_demand_rows(
         ):
             product_by_core[str(cid)] = str(pid) if pid else None
 
+    pool_cache: Dict[str, Optional[str]] = {}
     out: List[dict] = []
     counts: Dict[str, int] = {}
     for r in live_rows:
         if not r.project_line_id:
-            continue
-        # AC-R08: a Release is not a purchasing instruction - the reserve simply frees.
-        if r.suggested == "release":
             continue
         held = r.held_json or {}
         location = None
@@ -1100,6 +1347,38 @@ def _oi_demand_rows(
         if reserve:
             location = reserve[0].get("location")
         product_id = product_by_core.get(r.core_line_id or "")
+
+        if r.suggested == "release":
+            # A released line's claim is given up entirely (module docstring, section 6):
+            # the reserve simply frees, no OI row for that; the Buy it held is no longer
+            # bought FOR THIS LINE, so the OI rows it already raised move to the pool and
+            # a RELEASE change row makes that visible in the worklist, the way a DELAY row
+            # does. Only a `delayed`/`advanced` release ever HAD an OI row to touch; a
+            # `qty_up`/`added` line never reaches `release` (section 0's table).
+            if r.kind not in ("delayed", "advanced") or not r.inquiry_rows_json:
+                continue
+            pool_code = _pool_code_for_core_line(db, r.core_line_id, pool_cache)
+            from_date = (r.from_json or {}).get("required_date")
+            to_date = (r.to_json or {}).get("required_date")
+            note = _release_note(so_number, r.line_no, from_date, to_date, pool_code)
+            _release_inquiry_rows(db, r.project_line_id, note, pool_code)
+            buy_qty = _dec(held.get("buy_qty"))
+            if buy_qty <= _ZERO:
+                continue
+            out.append(
+                {
+                    "line_id": r.project_line_id,
+                    "product_id": product_id,
+                    "item_code": r.item_code,
+                    "qty": buy_qty,
+                    "delivery_date": _as_date(to_date),
+                    "stock_location": pool_code or location,
+                    "change": CHANGE_RELEASE,
+                    "note": note,
+                }
+            )
+            counts["RELEASE"] = counts.get("RELEASE", 0) + 1
+            continue
 
         if r.kind in ("delayed", "advanced"):
             qty = _dec((r.to_json or {}).get("qty"))
@@ -1224,12 +1503,14 @@ def _apply_one_order(
     accepted = [
         r
         for r in order_rows
-        if r.decision == "accept" and r.applied_state == PLANNING_CHANGE_STATE_PENDING
+        if r.decision in ("accept", "confirm", "amend")
+        and r.applied_state == PLANNING_CHANGE_STATE_PENDING
     ]
     empty_result = {
         "revised": False,
         "revision_no": current_revision,
         "lines_replanned": 0,
+        "lines_confirmed": 0,
         "inquiry_counts": {},
         "notified": False,
     }
@@ -1254,10 +1535,20 @@ def _apply_one_order(
     confirm_lines: List[dict] = []
     replanned = 0
     retired = 0
+    confirmed = 0
+    handled_line_ids: set = set()
     for line_id, frozen_entry in frozen.items():
         row = by_line_id.get(line_id)
         if row is None:
             confirm_lines.append(_confirm_payload(line_id, frozen_entry))
+            continue
+        handled_line_ids.add(line_id)
+        # A `confirm`/`amend` decision composes the line NOW, whatever `suggested` says -
+        # the captain's own fix: `accept` on a `replan` row used to record a decision Apply
+        # never executed. `composition_json` is what `set_row_decision` already validated.
+        if row.decision in ("confirm", "amend") and row.composition_json:
+            confirm_lines.append(row.composition_json)
+            confirmed += 1
             continue
         if row.suggested in ("replan", "release"):
             # AC-R06 (release): the WHOLE line returns to the board, not just the reserve
@@ -1278,6 +1569,16 @@ def _apply_one_order(
             continue
         confirm_lines.append(_confirm_payload(line_id, frozen_entry))  # keep
 
+    # A `confirm`/`amend` row whose line NO active decision covers - AC-R03's "Not
+    # decided", the common case a `replan` row starts in - never appears in `frozen`
+    # above; compose it here, or accepting it is once again a no-op.
+    for row in live:
+        if not row.project_line_id or row.project_line_id in handled_line_ids:
+            continue
+        if row.decision in ("confirm", "amend") and row.composition_json:
+            confirm_lines.append(row.composition_json)
+            confirmed += 1
+
     revised = False
     revision_no = current_revision
     if confirm_lines:
@@ -1292,7 +1593,7 @@ def _apply_one_order(
         )
         revised = True
 
-    demand_rows, inquiry_counts = _oi_demand_rows(db, live)
+    demand_rows, inquiry_counts = _oi_demand_rows(db, live, so_number)
     if demand_rows:
         ProjectOrderInquiryService(db).derive_for_book_change(
             order, demand_rows, batch_id=str(batch.id), actor_user_id=actor
@@ -1300,7 +1601,9 @@ def _apply_one_order(
 
     for r in live:
         r.applied_state = PLANNING_CHANGE_STATE_APPLIED
-        if r.suggested == "release":
+        if r.decision in ("confirm", "amend") and r.composition_json:
+            r.result_json = {"board_link": r.board_link, "confirmed": True}
+        elif r.suggested == "release":
             r.result_json = {
                 "board_link": r.board_link,
                 "released": _released_reserve(r.held_json),
@@ -1315,6 +1618,7 @@ def _apply_one_order(
         "revised": revised,
         "revision_no": revision_no,
         "lines_replanned": replanned,
+        "lines_confirmed": confirmed,
         "inquiry_counts": inquiry_counts,
         "notified": notified,
     }
@@ -1359,6 +1663,7 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
     orders_revised: List[dict] = []
     inquiry_counts: Dict[str, int] = {}
     lines_replanned = 0
+    lines_confirmed = 0
     purchasing_notified = False
 
     for pso_id, order_rows in by_order.items():
@@ -1367,7 +1672,10 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
         if order is None:
             reason = "This sales order no longer exists."
             for r in order_rows:
-                if r.decision == "accept" and r.applied_state == PLANNING_CHANGE_STATE_PENDING:
+                if (
+                    r.decision in ("accept", "confirm", "amend")
+                    and r.applied_state == PLANNING_CHANGE_STATE_PENDING
+                ):
                     r.applied_state = PLANNING_CHANGE_STATE_FAILED
                     r.applied_reason = reason
             failed_orders.append({"so_number": so_number, "reason": reason})
@@ -1382,7 +1690,10 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
             reason = _exc_message(exc)
             logger.exception("planning change apply failed for order %s", so_number)
             for r in order_rows:
-                if r.decision == "accept" and r.applied_state == PLANNING_CHANGE_STATE_PENDING:
+                if (
+                    r.decision in ("accept", "confirm", "amend")
+                    and r.applied_state == PLANNING_CHANGE_STATE_PENDING
+                ):
                     r.applied_state = PLANNING_CHANGE_STATE_FAILED
                     r.applied_reason = reason
             failed_orders.append({"so_number": so_number, "reason": reason})
@@ -1392,6 +1703,7 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
         if outcome["revised"]:
             orders_revised.append({"so_number": so_number, "revision_no": outcome["revision_no"]})
         lines_replanned += outcome["lines_replanned"]
+        lines_confirmed += outcome["lines_confirmed"]
         for verb, count in outcome["inquiry_counts"].items():
             inquiry_counts[verb] = inquiry_counts.get(verb, 0) + count
         purchasing_notified = purchasing_notified or outcome["notified"]
@@ -1418,6 +1730,7 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
                 {"verb": verb, "count": count} for verb, count in inquiry_counts.items()
             ],
             "lines_replanned": lines_replanned,
+            "lines_confirmed": lines_confirmed,
             "purchasing_notified": purchasing_notified,
         }
     db.flush()

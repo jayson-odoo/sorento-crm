@@ -4,6 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { ColumnDef } from '@tanstack/react-table';
 import { ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { toast } from 'sonner';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,6 +24,7 @@ import { FactChip } from '../../_shared/components/FactChip';
 import { ReactionPill } from '../../_shared/components/PlanningChangeReactionPill';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { usePlanningChangeBatch, usePlanningChangeMutations } from '../../_shared/hooks/usePlanningChanges';
+import type { ConfirmLine } from '../../_shared/types/fulfilmentPlanning.types';
 import {
   PLANNING_CHANGE_SOURCE_KIND_LABEL,
   type PlanningChangeBatch,
@@ -46,6 +48,32 @@ export function PlanningChangeBatchClient({ batchId }: { batchId: string }) {
   const batch = usePlanningChangeBatch(batchId);
   const { updateDecision, apply } = usePlanningChangeMutations(batchId);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const resultStripRef = React.useRef<HTMLDivElement | null>(null);
+  const [resultHighlighted, setResultHighlighted] = React.useState(false);
+  const announcedAppliedAt = React.useRef<string | null | undefined>(undefined);
+  const seenFirstLoad = React.useRef(false);
+
+  // Apply's own consequence used to be easy to miss - a badge changing colour above the
+  // fold. The moment the result strip actually has something NEW to say (a fresh
+  // `applied_at`, seen only after this page has already shown a prior state - never on the
+  // very first load of an already-applied batch), scroll to it, flash it, and say the
+  // summary out loud too.
+  React.useEffect(() => {
+    if (!batch.data) return;
+    const appliedAt = batch.data.applied_at ?? null;
+    if (!seenFirstLoad.current) {
+      seenFirstLoad.current = true;
+      announcedAppliedAt.current = appliedAt;
+      return;
+    }
+    if (!appliedAt || appliedAt === announcedAppliedAt.current) return;
+    announcedAppliedAt.current = appliedAt;
+    resultStripRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    setResultHighlighted(true);
+    toast.success(resultSummary(batch.data));
+    const timer = setTimeout(() => setResultHighlighted(false), 2500);
+    return () => clearTimeout(timer);
+  }, [batch.data]);
 
   const acceptedCount = React.useMemo(() => {
     if (!batch.data) return 0;
@@ -53,7 +81,9 @@ export function PlanningChangeBatchClient({ batchId }: { batchId: string }) {
       (total, order) =>
         total +
         order.rows.filter(
-          (row) => row.decision === 'accept' && row.applied_state === 'pending',
+          (row) =>
+            ['accept', 'confirm', 'amend'].includes(row.decision ?? '') &&
+            row.applied_state === 'pending',
         ).length,
       0,
     );
@@ -111,7 +141,18 @@ export function PlanningChangeBatchClient({ batchId }: { batchId: string }) {
         <div className="min-w-0 break-words">
           <h1 className="text-xl font-semibold">{data.source.file_name}</h1>
           <BatchMetaStrip batch={data} />
-          {data.result && <BatchResultStrip batch={data} />}
+          {data.result && (
+            <div
+              ref={resultStripRef}
+              className={
+                resultHighlighted
+                  ? 'rounded-md ring-2 ring-primary/60 transition-shadow duration-300'
+                  : 'transition-shadow duration-300'
+              }
+            >
+              <BatchResultStrip batch={data} />
+            </div>
+          )}
           <div className="mt-2">
             <AppliedStateBadge
               appliedAt={data.applied_at}
@@ -133,8 +174,8 @@ export function PlanningChangeBatchClient({ batchId }: { batchId: string }) {
         <OrderSection
           key={order.project_sales_order_id}
           order={order}
-          onDecide={(rowId, decision) =>
-            updateDecision.mutate({ rowId, decision })
+          onDecide={(rowId, decision, composition) =>
+            updateDecision.mutate({ rowId, decision, composition })
           }
           pendingRowId={
             updateDecision.isPending ? updateDecision.variables?.rowId : undefined
@@ -204,6 +245,27 @@ function AppliedStateBadge({
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
+ * The toast a planner reads the instant Apply finishes: `SO346436 revised to rev 1 · 1 line
+ * back on the board`. Short on purpose - `BatchResultStrip` already says the rest, and this is
+ * just what makes sure they see it happened at all.
+ */
+function resultSummary(batch?: PlanningChangeBatch): string {
+  const result = batch?.result;
+  if (!result) return 'Applied.';
+  const parts: string[] = [];
+  if (result.orders_revised.length > 0) {
+    parts.push(
+      result.orders_revised
+        .map((order) => `${order.so_number} revised to rev ${order.revision_no}`)
+        .join(', '),
+    );
+  }
+  if (result.lines_replanned > 0) parts.push(`${plural(result.lines_replanned, 'line')} back on the board`);
+  if (result.orders_failed.length > 0) parts.push(`${plural(result.orders_failed.length, 'order')} failed`);
+  return parts.length > 0 ? parts.join(' · ') : 'Applied.';
+}
+
+/**
  * What triggered the batch (AC-R02's "nothing is inferred") - the upload, when, and by whom,
  * plus how many lines it moved and how many are still undecided. The file name links to the
  * import job it ran as, so "what got uploaded to cause this" is one click, not a question.
@@ -264,6 +326,9 @@ function BatchResultStrip({ batch }: { batch: PlanningChangeBatch }) {
   if (result.orders_failed.length > 0) {
     parts.push(`${plural(result.orders_failed.length, 'order')} failed`);
   }
+  if (result.lines_confirmed > 0) {
+    parts.push(`${plural(result.lines_confirmed, 'line')} confirmed`);
+  }
   const inquiryTotal = result.inquiry_rows_changed.reduce((total, entry) => total + entry.count, 0);
   if (inquiryTotal > 0) {
     parts.push(
@@ -314,7 +379,11 @@ function OrderSection({
   pendingRowId,
 }: {
   order: PlanningChangeOrder;
-  onDecide: (rowId: string, decision: PlanningChangeRow['decision']) => void;
+  onDecide: (
+    rowId: string,
+    decision: PlanningChangeRow['decision'],
+    composition?: ConfirmLine,
+  ) => void;
   pendingRowId?: string;
 }) {
   const columns = React.useMemo<ColumnDef<PlanningChangeRow>[]>(
@@ -417,7 +486,9 @@ function OrderSection({
         cell: ({ row }) => (
           <PlanningChangeDecisionControl
             row={row.original}
-            onChange={(decision) => onDecide(row.original.id, decision)}
+            onChange={(decision, composition) =>
+              onDecide(row.original.id, decision, composition)
+            }
             pending={pendingRowId === row.original.id}
             boardHref={row.original.board_link}
           />

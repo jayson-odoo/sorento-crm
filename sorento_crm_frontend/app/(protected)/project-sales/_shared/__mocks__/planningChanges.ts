@@ -425,6 +425,12 @@ const ROW_7: PlanningChangeRow = {
     buyQty: '20',
   }),
   inquiry_rows: [{ id: 'oi-7', verb: 'ORDER', qty: '40', state: 'raised' }],
+  // NOTE: the real backend now defaults a `replan` row's decision to `null` ("Leave on the
+  // board") rather than `accept` - `accept` never executed anything for it (the captain's
+  // own fix, 19 August 2026). Left as `accept` here only to avoid perturbing this fixture's
+  // other counts (`BatchMetaStrip`'s "N lines with a decision"), which several existing
+  // Phase 1 tests assert on by exact figure; the FE control itself does not read this value
+  // to decide whether `Confirm`/`Amend`/`Leave on the board` is clickable.
   decision: 'accept',
   applied_state: 'pending',
   board_link: '/project-sales/fulfilment-planning?orders=SO400875&cell=CB231SS-NL|2027-02-04',
@@ -668,6 +674,7 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
     ],
     inquiry_rows_changed: [{ verb: 'CANCEL_BALANCE', count: 1 }],
     lines_replanned: 1,
+    lines_confirmed: 0,
     purchasing_notified: true,
   },
   orders: [
