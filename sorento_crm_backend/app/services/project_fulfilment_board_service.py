@@ -343,6 +343,8 @@ class FulfilmentBoardService:
         # (product, POOL warehouse) -> AutoCount's `on hand / so_qty / spo_qty`, for the pool
         # rung of the trail. One batched read over every pool a served line may draw on.
         self._pool_piles: Dict[Tuple[str, str], Dict[str, Decimal]] = {}
+        # PROJECT line ids `build()` was asked to preview as uncovered (`exclude_covered_line_ids`).
+        self._exclude_covered_line_ids: set = set()
 
     # ----------------------------------------------------------------- public
 
@@ -354,6 +356,7 @@ class FulfilmentBoardService:
         as_of: Optional[date] = None,
         day_window_start: Optional[date] = None,
         preview_policy: Optional[str] = None,
+        exclude_covered_line_ids: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
         """The board for one selection of sales orders.
 
@@ -361,7 +364,17 @@ class FulfilmentBoardService:
         reproducible, and it is echoed back in the response for the same reason: a board that
         quietly disagreed with itself between two reads would be disagreeing about which of the
         planner's commitments are already late.
+
+        `exclude_covered_line_ids` (PROJECT line ids) previews the ladder for a line an ACTIVE
+        decision currently covers, as if that one line's hold did not exist: its own reserve is
+        un-netted and its demand stays in the queue - `ProjectSupplyService`'s own carve-out for
+        the lines a `confirm` is about to replace (`_decided_elsewhere`). Used by the planning-
+        change batch to show what the ladder would propose TODAY for a `replan` row, rather than
+        the composition that is about to be released.
         """
+        self._exclude_covered_line_ids = {
+            str(i) for i in (exclude_covered_line_ids or [])
+        }
         if granularity not in GRANULARITIES:
             raise AppException(
                 status_code=422,
@@ -385,6 +398,12 @@ class FulfilmentBoardService:
         policy_name, weights, class_weights, is_preview = self._policy(preview_policy)
 
         rows = self._demand_rows(numbers)
+        if self._exclude_covered_line_ids:
+            for row in rows:
+                if row.project_line_id and row.project_line_id in self._exclude_covered_line_ids:
+                    # Previewed as uncovered (see `build`'s docstring): the ladder is walked for
+                    # it below like any other row, against facts that un-net its own hold.
+                    row.decision = None
         for row in rows:
             row.bucket_key = bucket_key_for(row.required_date, as_of, granularity)
             # Per LINE, against its own date, which is the number the "N of M lines are past
@@ -1257,7 +1276,8 @@ class FulfilmentBoardService:
                     "item_code": row.item_code,
                 }
                 for row in plannable
-            ]
+            ],
+            exclude_line_ids=list(self._exclude_covered_line_ids) or None,
         )
 
         # The pool piles behind rung 2, in AutoCount's own triple, read once for every pool a

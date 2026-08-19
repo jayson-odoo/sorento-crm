@@ -43,14 +43,21 @@ export interface SalesOrderListQuery {
   outstanding?: boolean;
 }
 
-/** Strip the display-only `uom` from each line - the BE derives it. */
+/**
+ * Strip the display-only `uom` from each line - the BE derives it.
+ *
+ * `lines` rides through only when the caller sent it. Omitted (not `[]`, not present
+ * with the key at all - `JSON.stringify` drops an `undefined` property), an update PUT
+ * leaves the order's lines untouched on the BE; sending it, even unchanged, would
+ * replace every line and drop whatever warehouse each was assigned.
+ */
 function toWritePayload(data: SalesOrderFormData) {
   return {
     order_type: data.order_type,
     customer_code: data.customer_code,
     priority: data.priority,
     requested_delivery_date: data.requested_delivery_date ?? null,
-    lines: data.lines.map((l) => ({ sku: l.sku, qty_ordered: l.qty_ordered })),
+    lines: data.lines?.map((l) => ({ sku: l.sku, qty_ordered: l.qty_ordered })),
   };
 }
 

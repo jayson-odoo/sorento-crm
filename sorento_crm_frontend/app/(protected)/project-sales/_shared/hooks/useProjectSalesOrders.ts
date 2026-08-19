@@ -11,8 +11,10 @@ import { projectKey } from './useProjects';
 import { allocationsKey } from './useProjectAllocations';
 import {
   acknowledgeFinding,
+  acknowledgeScheduleFinding,
   buildSalesOrders,
   bulkDeleteProjectSalesOrders,
+  bulkSetLinesStockLocation,
   createAmendment,
   deleteProjectSalesOrder,
   downloadAmendmentAutocountChangeListXlsx,
@@ -23,13 +25,16 @@ import {
   getSalesOrderWorksheet,
   listPoVersions,
   listProjectSalesOrders,
+  listScheduleFindings,
   listScheduleVersions,
   previewAmendment,
   publishAmendment,
   publishSalesOrder,
   regroupSalesOrder,
+  reorderSalesOrderLines,
   salesOrderNeighboursPath,
   saveSalesOrderDocument,
+  unpublishSalesOrder,
   updateAmendmentRowDecisions,
   updateSalesOrderLine,
 } from '../services/projectSalesOrderService';
@@ -38,6 +43,7 @@ import type {
   AmendmentDetail,
   AmendmentPreviewBody,
   AmendmentRowDecisionInput,
+  ProjectSalesOrderDetail,
   ProjectSalesOrderListParams,
   SalesOrderDocumentSaveBody,
   SalesOrderLineUpdateBody,
@@ -50,6 +56,7 @@ export const SALES_ORDERS_KEY = 'project-sales-orders';
 export const SALES_ORDER_KEY = 'project-sales-order';
 export const SALES_ORDER_WORKSHEET_KEY = 'project-sales-order-worksheet';
 export const SCHEDULE_VERSIONS_KEY = 'project-schedule-versions';
+export const SCHEDULE_FINDINGS_KEY = 'project-schedule-findings';
 export const PO_VERSIONS_KEY = 'project-po-versions';
 export const AMENDMENT_KEY = 'project-so-amendment';
 
@@ -123,6 +130,40 @@ export function usePoVersions(poId: string | undefined) {
     queryKey: [PO_VERSIONS_KEY, poId],
     queryFn: () => listPoVersions(poId as string),
     enabled: Boolean(poId),
+  });
+}
+
+/**
+ * The (PO, schedule) pair's own findings - a finding naming no PO line, so belonging to
+ * no one order the pair drafted. Read alongside an order's detail page rather than
+ * per-order, because it is the same list whichever sibling order is open.
+ */
+export function useScheduleFindings(
+  poId: string | null | undefined,
+  scheduleVersionId: string | null | undefined,
+) {
+  return useQuery({
+    queryKey: [SCHEDULE_FINDINGS_KEY, poId, scheduleVersionId],
+    queryFn: () => listScheduleFindings(poId as string, scheduleVersionId as string),
+    enabled: Boolean(poId && scheduleVersionId),
+  });
+}
+
+export function useAcknowledgeScheduleFinding(
+  poId: string | null | undefined,
+  scheduleVersionId: string | null | undefined,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ findingId, reason }: { findingId: string; reason: string }) =>
+      acknowledgeScheduleFinding(poId as string, findingId, reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: [SCHEDULE_FINDINGS_KEY, poId, scheduleVersionId],
+      });
+      toast.success('Reason recorded');
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 }
 
@@ -247,7 +288,81 @@ export function useSalesOrderMutations(projectId: string, psoId: string) {
     onSuccess: () => invalidate(),
   });
 
-  return { acknowledge, save, updateLine, regroup, publish };
+  /**
+   * Back to draft, experimental (captain, 19 Aug 2026). The confirm dialog names the order
+   * and states the consequence, so this raises no toast of its own beyond the error - the
+   * 200 response speaks for itself once the status pill flips.
+   */
+  const unpublish = useMutation({
+    mutationFn: () => unpublishSalesOrder(psoId),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Sales order returned to draft');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  /**
+   * A hand drag: the row moves the instant it is dropped, before the server confirms it.
+   * `onMutate` writes the new `line_no` order straight into the cached order so the table
+   * never snaps back to the old position while the request is in flight; `onError` puts the
+   * cached order back exactly as it was and says why. No success toast - the row landing
+   * where it was dropped is the confirmation.
+   */
+  const reorderLines = useMutation({
+    mutationFn: (lineIds: string[]) => reorderSalesOrderLines(psoId, lineIds),
+    onMutate: async (lineIds: string[]) => {
+      await queryClient.cancelQueries({ queryKey: salesOrderKey(psoId) });
+      const previous = queryClient.getQueryData<ProjectSalesOrderDetail>(salesOrderKey(psoId));
+      if (previous) {
+        const byId = new Map(previous.lines.map((line) => [line.id, line]));
+        const reordered = lineIds
+          .map((id, index) => {
+            const line = byId.get(id);
+            return line ? { ...line, line_no: index + 1 } : null;
+          })
+          .filter((line): line is ProjectSalesOrderDetail['lines'][number] => line !== null);
+        queryClient.setQueryData<ProjectSalesOrderDetail>(salesOrderKey(psoId), {
+          ...previous,
+          lines: reordered,
+        });
+      }
+      return { previous };
+    },
+    onError: (error: Error, _lineIds, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(salesOrderKey(psoId), context.previous);
+      }
+      toast.error(error.message);
+    },
+    onSettled: () => invalidate(),
+  });
+
+  return { acknowledge, save, updateLine, regroup, publish, unpublish, reorderLines };
+}
+
+/**
+ * One warehouse code on every line of one order, in one confirmed action.
+ *
+ * A standalone control rather than something staged inside the header's edit session: like
+ * "Move lines" beside it, it acts immediately on the order as it is STORED, so it needs no
+ * Save afterwards and works whether or not an edit session happens to be open.
+ */
+export function useBulkSetLinesStockLocation(projectId: string, psoId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ lineIds, stockLocation }: { lineIds: string[]; stockLocation: string | null }) =>
+      bulkSetLinesStockLocation(psoId, lineIds, stockLocation),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: salesOrderKey(psoId) });
+      queryClient.invalidateQueries({ queryKey: [SALES_ORDERS_KEY, projectId] });
+      toast.success(
+        `Stock location set on ${result.applied} line${result.applied === 1 ? '' : 's'}`,
+      );
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 }
 
 /**

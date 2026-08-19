@@ -1761,3 +1761,164 @@ def test_a_shortfall_purchasing_already_placed_is_netted_off_the_next_revision(a
     rows = shortfall_rows()
     assert [row.state for row in rows] == [INQUIRY_ACTIONED, "raised"]
     assert str(rows[1].qty) in ("5", "5.0000")
+
+
+# ------------------------------------------------------- carried holds (defect A)
+#
+# PLAN-so-book-diff-replanning.md section 10, defect A: a re-confirm names every covered
+# line verbatim (there is no un-decide verb), and `_facts_for` un-nets a NAMED line's own
+# hold so the composition can be re-judged. That un-netting used to put the WHOLE
+# resubmitted quantity back in the queue, so a component this order already held could
+# lose to demand that only showed up after the hold was taken - "BRW has nothing free for
+# this line now" against stock the order itself was still sitting on. `_check_line` now
+# credits back what this order's own active (or just-superseded) revision already held for
+# that exact (line, kind, location[, donor]) before checking the rest against free stock.
+
+
+def test_re_confirming_an_unchanged_reserve_survives_a_rival_taking_the_rest_of_the_location(api):
+    """(a) Reserve 10 at W holds it. Something else then claims every unit of W that was
+    freed by un-netting this order's own hold for the recheck - simulating a rival that
+    only appeared after revision 1 was confirmed. Resubmitting the SAME 10 is not a new
+    ask, so it must not be refused for "nothing free", and the hold must still read 10."""
+    client, world = api
+    db = world.db
+    stock = _stock(db, world.product, world.own_wh, on_hand=10)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    first = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "10"}])]},
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["revision_no"] == 1
+
+    # A rival claims the location dry - everything this order's own un-netted hold would
+    # otherwise have shown as free.
+    stock.quantity_reserved = 10
+    db.commit()
+
+    second = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "10"}])]},
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["revision_no"] == 2
+
+    from app.models.project_so import SOLineAllocation, SOSupplyDecision
+
+    active = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id, SOSupplyDecision.state == "active")
+        .one()
+    )
+    allocations = (
+        db.query(SOLineAllocation)
+        .filter(SOLineAllocation.decision_id == active.id, SOLineAllocation.so_line_id == line.id)
+        .all()
+    )
+    assert len(allocations) == 1
+    assert allocations[0].qty == Decimal("10")
+
+
+def test_re_confirming_a_larger_reserve_only_the_increase_competes_and_is_named_in_the_refusal(api):
+    """(b) Revision 1 holds Reserve 10 of an open qty of 12 (the other 2 bought). The
+    location then has only 1 unit free for anyone beyond this order's own carried 10.
+    Asking for 12 (an increase of 2) is refused - but only the 2 is checked and named, not
+    the 12 the order is resubmitting."""
+    client, world = api
+    db = world.db
+    stock = _stock(db, world.product, world.own_wh, on_hand=10)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="12")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    first = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id,
+                    reserve=[{"warehouse_id": world.own_wh.id, "qty": "10"}],
+                    buy_qty="2",
+                )
+            ]
+        },
+    )
+    assert first.status_code == 200, first.text
+
+    # Only 1 unit is free beyond this order's own carried 10 - not enough for the 2-unit
+    # increase.
+    stock.quantity_reserved = 9
+    db.commit()
+
+    second = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id,
+                    reserve=[{"warehouse_id": world.own_wh.id, "qty": "12"}],
+                )
+            ]
+        },
+    )
+    assert second.status_code in (409, 422), second.text
+    body = second.json()
+    failing = body["failing_lines"]
+    assert len(failing) == 1 and failing[0]["line_no"] == 10
+    assert "2" in failing[0]["reason"]
+    assert "12" not in failing[0]["reason"]
+
+    from app.models.project_so import SOSupplyDecision
+
+    decisions = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .all()
+    )
+    assert len(decisions) == 1 and decisions[0].revision_no == 1  # nothing written
+
+
+def test_re_confirming_the_reserve_at_a_different_location_competes_fully(api):
+    """(c) Moving an already-held Reserve from its own location to the (empty) pool is a
+    real new ask there - the carried credit is keyed by (line, kind, WAREHOUSE), so it
+    carries nothing to a location this order never held, and it is refused for nothing
+    being free exactly as an ordinary first ask would be."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=10)
+    # world.pool_wh (already linked as world.own_wh's pool) has no stock at all.
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    first = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "10"}])]},
+    )
+    assert first.status_code == 200, first.text
+
+    second = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "10"}])]},
+    )
+    assert second.status_code in (409, 422), second.text
+    body = second.json()
+    assert any(row["line_no"] == 10 for row in body["failing_lines"])
+
+    from app.models.project_so import SOSupplyDecision
+
+    decisions = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .all()
+    )
+    assert len(decisions) == 1 and decisions[0].revision_no == 1  # nothing written

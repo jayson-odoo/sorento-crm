@@ -18,6 +18,8 @@ import type {
 const getProjectSalesOrder = vi.fn();
 const acknowledgeFinding = vi.fn();
 const publishSalesOrder = vi.fn();
+const unpublishSalesOrder = vi.fn();
+const bulkSetLinesStockLocation = vi.fn();
 const regroupSalesOrder = vi.fn();
 const downloadSalesOrderImportFile = vi.fn();
 const saveBlobAs = vi.fn();
@@ -62,6 +64,8 @@ vi.mock('../../../../_shared/services/projectSalesOrderService', () => ({
   updateSalesOrderLine: vi.fn(),
   regroupSalesOrder: (...args: unknown[]) => regroupSalesOrder(...args),
   publishSalesOrder: (...args: unknown[]) => publishSalesOrder(...args),
+  unpublishSalesOrder: (...args: unknown[]) => unpublishSalesOrder(...args),
+  bulkSetLinesStockLocation: (...args: unknown[]) => bulkSetLinesStockLocation(...args),
   downloadSalesOrderImportFile: (...args: unknown[]) => downloadSalesOrderImportFile(...args),
   previewAmendment: vi.fn(),
   createAmendment: vi.fn(),
@@ -480,6 +484,38 @@ describe('SalesOrderDetailClient', () => {
     expect(gear.queryByRole('menuitem', { name: /Move lines/ })).not.toBeInTheDocument();
     // The export survives publication - it is how the order reaches AutoCount.
     expect(gear.getByRole('menuitem', { name: /Import file/ })).toBeInTheDocument();
+  });
+
+  it('offers Unpublish on a published order, and it is absent from a draft', async () => {
+    getProjectSalesOrder.mockResolvedValue(detail({ status: 'draft' }));
+    renderDetail();
+    let gear = await openGear();
+    expect(gear.queryByRole('menuitem', { name: 'Unpublish' })).not.toBeInTheDocument();
+
+    getProjectSalesOrder.mockResolvedValue(
+      detail({ status: 'published', autocount_doc_no: 'SO397450' }),
+    );
+    renderDetail();
+    gear = await openGear();
+    expect(gear.getByRole('menuitem', { name: 'Unpublish' })).toBeInTheDocument();
+  });
+
+  it('unpublishes an order once the confirm dialog is accepted, and names it in the ask', async () => {
+    getProjectSalesOrder.mockResolvedValue(
+      detail({ status: 'published', autocount_doc_no: 'SO397450' }),
+    );
+    unpublishSalesOrder.mockResolvedValue({ status: 'draft', provisional_ref: 'PSO-000123' });
+
+    renderDetail();
+    const gear = await openGear();
+    fireEvent.click(gear.getByRole('menuitem', { name: 'Unpublish' }));
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('Unpublish SO397450?')).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Unpublish' }));
+
+    await waitFor(() => expect(unpublishSalesOrder).toHaveBeenCalledWith('so-1'));
   });
 
   it('refuses the import file the server has not cleared, whatever the url says', async () => {

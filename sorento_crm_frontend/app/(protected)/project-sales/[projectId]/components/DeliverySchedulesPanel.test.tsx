@@ -41,6 +41,7 @@ vi.mock('next/navigation', () => ({
 
 const listDeliverySchedules = vi.fn();
 const listDeliveryScheduleVersions = vi.fn();
+const deleteDeliverySchedule = vi.fn();
 vi.mock('../../_shared/services/deliveryScheduleService', () => ({
   listDeliverySchedules: (...args: unknown[]) => listDeliverySchedules(...args),
   listDeliveryScheduleVersions: (...args: unknown[]) =>
@@ -50,6 +51,8 @@ vi.mock('../../_shared/services/deliveryScheduleService', () => ({
   saveDeliveryScheduleCells: vi.fn(),
   resolveDeliveryScheduleProduct: vi.fn(),
   confirmDeliveryScheduleVersion: vi.fn(),
+  deleteDeliverySchedule: (...args: unknown[]) => deleteDeliverySchedule(...args),
+  deleteDeliveryScheduleVersion: vi.fn(),
 }));
 
 const listPurchaseOrders = vi.fn();
@@ -140,6 +143,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   listDeliverySchedules.mockResolvedValue([]);
   listDeliveryScheduleVersions.mockResolvedValue([versionSummary()]);
+  deleteDeliverySchedule.mockResolvedValue(undefined);
   listPurchaseOrders.mockResolvedValue([
     {
       id: 'po1',
@@ -248,6 +252,7 @@ describe('DeliverySchedulesPanel', () => {
 
     await screen.findByText('v2 of 2');
     expect(screen.queryByRole('button', { name: /Upload a schedule/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Delete/i })).toBeNull();
   });
 
   it('opens the upload dialog from the header', async () => {
@@ -262,5 +267,40 @@ describe('DeliverySchedulesPanel', () => {
     expect(await screen.findByText('Upload a delivery schedule')).toBeInTheDocument();
     // A revision is a version of the SAME schedule, so the existing one is offerable.
     expect(screen.getByLabelText(/Revision of/i)).toBeInTheDocument();
+  });
+
+  it('confirms before deleting a schedule, naming the PO and the version count', async () => {
+    listDeliverySchedules.mockResolvedValue([schedule()]);
+    renderPanel();
+
+    const trigger = await screen.findByRole('button', { name: /^Delete HQ\/26\/01\/121/ });
+    fireEvent.click(trigger);
+
+    expect(await screen.findByText('Confirm delete')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Delete delivery schedule HQ/26/01/121 and its 2 versions? This action cannot be undone.',
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(deleteDeliverySchedule).toHaveBeenCalledWith('s1'));
+    // The dialog closes on success.
+    await waitFor(() => expect(screen.queryByText('Confirm delete')).toBeNull());
+  });
+
+  it('cancels without calling the delete service', async () => {
+    listDeliverySchedules.mockResolvedValue([schedule()]);
+    renderPanel();
+
+    const trigger = await screen.findByRole('button', { name: /^Delete HQ\/26\/01\/121/ });
+    fireEvent.click(trigger);
+    await screen.findByText('Confirm delete');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(screen.queryByText('Confirm delete')).toBeNull());
+    expect(deleteDeliverySchedule).not.toHaveBeenCalled();
   });
 });

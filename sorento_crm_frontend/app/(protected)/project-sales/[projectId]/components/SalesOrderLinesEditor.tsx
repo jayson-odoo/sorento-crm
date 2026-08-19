@@ -4,6 +4,7 @@ import * as React from 'react';
 import { Badge } from '@/components/ui/badge';
 import { useUOMSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query';
 import { getProductsForVariantSelect } from '@/app/(protected)/master-data-management/products/services/productService';
+import { fetchWarehouseOptions } from '../../_shared/services/warehouseSelectService';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   InlineLineTable,
@@ -253,17 +254,11 @@ export function SalesOrderLinesEditor({
       {
         key: 'delivery_date',
         header: 'Delivery',
-        width: 130,
-        // Text rather than a date picker: the stored value is an ISO date string and the
-        // shared table has no date cell. Typing one is checked per cell, so a wrong shape is
-        // marked where it was typed instead of coming back as a 422.
-        kind: 'text',
-        placeholder: 'YYYY-MM-DD',
-        maxLength: 10,
-        validate: (value) =>
-          value.trim() === '' || /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
-            ? null
-            : 'Use YYYY-MM-DD',
+        width: 160,
+        // The shared date picker: dd/mm/yyyy display and typed entry, calendar popover to
+        // pick instead. The draft still holds the ISO `YYYY-MM-DD` string the API wants.
+        kind: 'date',
+        placeholder: 'DD/MM/YYYY',
         formatReadOnly: (value) => formatDateInMalaysia(value),
       },
       {
@@ -288,10 +283,17 @@ export function SalesOrderLinesEditor({
       {
         key: 'stock_location',
         header: 'Stock location',
-        width: 150,
-        kind: 'text',
+        width: 200,
+        // A warehouse picker rather than free text (captain, 19 Aug 2026): the line has no
+        // `warehouse_id` column (D17's `stock_location` is a bare string), so what is
+        // written and read back is the warehouse CODE the option carries as its value.
+        kind: 'searchable-select',
         placeholder: 'Where it ships from',
-        maxLength: 80,
+        fetchOptions: fetchWarehouseOptions,
+        resolveSelected: (_row, draft) =>
+          draft.stock_location
+            ? { value: draft.stock_location, label: draft.stock_location }
+            : undefined,
       },
     ],
     [fetchProducts, findingsByLine, uomOptions],

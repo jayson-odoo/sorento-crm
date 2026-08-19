@@ -254,3 +254,36 @@ export async function confirmDeliveryScheduleVersion(
     throw new Error(await extractApiError(response, 'Failed to confirm the schedule'));
   return response.json();
 }
+
+/**
+ * Hard delete: every version, its cells and its document, then the schedule. The
+ * purchase order it was checked against is untouched.
+ *
+ * `DELETE /delivery-schedules/{schedule_id}` -> `{ success, deleted }`. 409, naming the
+ * blocker, when a confirmed version is a live commitment (built into a published/amended
+ * sales order, or named by a published amendment).
+ */
+export async function deleteDeliverySchedule(scheduleId: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/delivery-schedules/${scheduleId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to delete this schedule'));
+}
+
+/**
+ * One version, and its cells and document. The schedule and its other versions are
+ * untouched.
+ *
+ * `DELETE /delivery-schedule-versions/{version_id}` -> `{ success, deleted }`. 409
+ * `schedule_version_last` on the only version of a schedule (delete the schedule
+ * instead); 409 on a confirmed version that is a live commitment, same rule as the
+ * schedule delete.
+ */
+export async function deleteDeliveryScheduleVersion(versionId: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/delivery-schedule-versions/${versionId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to delete this version'));
+}

@@ -239,6 +239,14 @@ class _PendingFinding:
     # that PO line, so the screen can point at something the reader can see.
     source_po_line_no: Optional[int] = None
     area_group: Optional[str] = None
+    # True for the handful of findings that name no PO line and so belong to no drafted
+    # order: a schedule column for a product not on the PO at all, a phase from another
+    # project, an un-mapped schedule column, the whole-document total mismatch. Attaching
+    # one of these to every order the build happened to produce (the old behaviour) put a
+    # finding about a product an order does not even carry on that order's own page, and
+    # blocked its publish over something it cannot fix. `_attach_findings` writes these ONCE,
+    # against the (purchase_order, schedule_version) pair, never against a specific order.
+    batch_level: bool = False
 
 
 def _dec(value: Any, default: Decimal = _ZERO) -> Decimal:
@@ -264,6 +272,48 @@ def _qty_str(value: Decimal) -> str:
     what keeps it plain.
     """
     return format(value.normalize(), "f")
+
+
+def _qty_fmt(value: Decimal) -> str:
+    """A quantity for a sentence a person reads: no trailing zeros, thousands grouped."""
+    text = _qty_str(value)
+    whole, _, frac = text.partition(".")
+    sign = ""
+    if whole.startswith("-"):
+        sign, whole = "-", whole[1:]
+    grouped = f"{int(whole or '0'):,}"
+    return f"{sign}{grouped}.{frac}" if frac else f"{sign}{grouped}"
+
+
+def _date_fmt(value: Optional[date]) -> str:
+    return value.strftime("%d/%m/%Y") if value else "an unknown date"
+
+
+def _missing_delivery_date_detail(
+    *,
+    label: str,
+    po_qty: Decimal,
+    scheduled_qty: Decimal,
+    left_qty: Decimal,
+    line_ref: Optional[str],
+) -> str:
+    """Both parts of the story, not just the unscheduled remainder.
+
+    A reader who sees a scheduled draft line for this PO line right above this warning
+    reads a bare "X is not on the delivery schedule" as a contradiction. Naming what IS
+    scheduled, and where, closes that gap.
+    """
+    if scheduled_qty <= _ZERO:
+        return (
+            f"PO {label}: none of its {_qty_fmt(po_qty)} is on the delivery schedule, so "
+            "those units have no delivery date."
+        )
+    suffix = f" ({line_ref})" if line_ref else ""
+    return (
+        f"PO {label}: {_qty_fmt(scheduled_qty)} of {_qty_fmt(po_qty)} are on the "
+        f"delivery schedule{suffix}; the other {_qty_fmt(left_qty)} are not, so they have "
+        "no delivery date."
+    )
 
 
 def month_end(year: int, month: int) -> date:
@@ -390,6 +440,51 @@ class ProjectSODraftService:
             "replaced_drafts": replaced,
             "skipped_published": skipped,
         }
+
+    def refresh_batch_findings(self, purchase_order_id: str, schedule_version_id: str) -> int:
+        """Recompute the batch-level findings for a (PO, schedule version) pair, and
+        nothing else.
+
+        `build()` gets this right on a fresh draft; this is the lighter repair for a pair
+        whose orders and lines are already correct and only the (PO, schedule) findings
+        need to catch up -- e.g. after a bug in how they used to be attached. Reads the
+        same PO lines and schedule cells `build()` would, but never touches a
+        `ProjectSalesOrder` or a `ProjectSalesOrderLine`. Returns how many batch-level
+        findings now stand.
+        """
+        po = self._po_or_404(purchase_order_id)
+        schedule_version = self._schedule_version_or_404(schedule_version_id)
+        self._assert_schedule_belongs_to_po(schedule_version, po)
+        po_version = self._po_version_for(po, schedule_version)
+        source_lines = self._source_lines(po, po_version)
+
+        findings: List[_PendingFinding] = []
+        findings.extend(self._document_findings(source_lines, po_version))
+        # `_spread_across_phases` also appends order-scoped findings (schedule_short,
+        # missing_delivery_date, ...) to this same list as a side effect of walking the
+        # cells -- harmless to compute again since only the `batch_level` subset below is
+        # ever written here, and neither call writes to the database.
+        self._spread_across_phases(
+            po=po, schedule_version=schedule_version, source_lines=source_lines, findings=findings
+        )
+
+        batch = [finding for finding in findings if finding.batch_level]
+        self._clear_batch_findings(po.id, schedule_version.id)
+        for finding in batch:
+            self.db.add(
+                SODraftFinding(
+                    company_id=po.company_id,
+                    project_sales_order_id=None,
+                    purchase_order_id=po.id,
+                    schedule_version_id=schedule_version.id,
+                    severity=finding.severity,
+                    code=finding.code,
+                    detail=finding.detail,
+                    detail_json=finding.detail_json or None,
+                )
+            )
+        self.db.flush()
+        return len(batch)
 
     # ------------------------------------------------------- reading the sources
 
@@ -608,6 +703,9 @@ class ProjectSODraftService:
                             "extracted_total": str(printed),
                             "difference": str(_money(lines_total - printed)),
                         },
+                        # The whole document's total against what it prints -- not a fact
+                        # about any one line, so not a fact about any one drafted order.
+                        batch_level=True,
                     )
                 )
         return out
@@ -656,6 +754,8 @@ class ProjectSODraftService:
                             "draft."
                         ),
                         detail_json={"area_group": phase.area_group, "sequence": phase.sequence},
+                        # Not this project's phase, so not any drafted order's business.
+                        batch_level=True,
                     )
                 )
                 continue
@@ -666,7 +766,7 @@ class ProjectSODraftService:
                         code="unresolved_product",
                         detail=(
                             f"The schedule column '{cell.customer_code_raw or 'unnamed'}' "
-                            f"carries {_dec(cell.qty)} against "
+                            f"carries {_qty_fmt(_dec(cell.qty))} against "
                             f"'{phase.label or phase.area_group}' but is not mapped to a "
                             "product. Map the customer's code before publishing."
                         ),
@@ -676,6 +776,9 @@ class ProjectSODraftService:
                             "area_group": phase.area_group,
                             "sequence": phase.sequence,
                         },
+                        # No product means no PO line either, so no drafted order carries
+                        # this column.
+                        batch_level=True,
                     )
                 )
                 continue
@@ -721,15 +824,29 @@ class ProjectSODraftService:
                 left = remaining[id(line)]
                 if left > _ZERO:
                     slices.append((line, None, left))
+                    scheduled_qty = line.qty - left
                     findings.append(
                         _PendingFinding(
                             severity=SEVERITY_WARN,
                             code="missing_delivery_date",
-                            detail=(
-                                f"{left} of PO {line.label} is not on the delivery "
-                                "schedule, so those units have no delivery date."
+                            # No draft line numbers exist yet at this point in the build
+                            # (``_write_lines`` assigns them later), so this is the
+                            # fallback text. ``_attach_findings`` rebuilds it per order
+                            # once the real draft lines and their dates are known.
+                            detail=_missing_delivery_date_detail(
+                                label=line.label,
+                                po_qty=line.qty,
+                                scheduled_qty=scheduled_qty,
+                                left_qty=left,
+                                line_ref=None,
                             ),
-                            detail_json={"line_no": line.line_no, "qty": str(left)},
+                            detail_json={
+                                "line_no": line.line_no,
+                                "qty": str(left),
+                                "po_qty": str(line.qty),
+                                "scheduled_qty": str(scheduled_qty),
+                                "label": line.label,
+                            },
                             source_po_line_no=line.line_no,
                         )
                     )
@@ -745,11 +862,13 @@ class ProjectSODraftService:
                     severity=SEVERITY_HARD,
                     code="schedule_over",
                     detail=(
-                        f"The schedule asks for {total} of {code}, which is not on this "
-                        "purchase order at all. Fix the column or the PO before "
+                        f"The schedule asks for {_qty_fmt(total)} of {code}, which is not "
+                        "on this purchase order at all. Fix the column or the PO before "
                         "publishing."
                     ),
                     detail_json={"product_code": code, "scheduled": str(total), "po_qty": "0"},
+                    # No PO line ordered this product, so no drafted order carries it either.
+                    batch_level=True,
                 )
             )
 
@@ -1338,6 +1457,11 @@ class ProjectSODraftService:
                 continue
             grouped.setdefault(key, []).append(draft)
         if not grouped and committed_areas:
+            # Nothing left to draft -- every group is already published -- but a stale
+            # batch-level finding from a schedule since fixed must not survive this re-run
+            # just because no new order came out of it.
+            self._clear_batch_findings(po.id, schedule_version.id)
+            self.db.flush()
             return []
         if not grouped:
             # Every line cancelled by handwriting, or nothing left to draft. Refusing is
@@ -1385,21 +1509,23 @@ class ProjectSODraftService:
         # order's value against the limit, and a total of None reads as a free order.
         for order in orders:
             self._recompute_total(order)
-        self._attach_findings(orders, findings)
+        self._attach_findings(orders, findings, po=po, schedule_version=schedule_version)
         for order in orders:
             self._refresh_status(order)
         self.db.flush()
         return orders
 
     def _write_lines(self, order: ProjectSalesOrder, drafts: Sequence[_LineDraft]) -> None:
-        ordered = sorted(
-            drafts,
-            key=lambda draft: (
-                draft.delivery_date or date.max,
-                draft.source_po_line_no,
-                draft.product_code or "",
-            ),
-        )
+        # Grouped by PO line, not by date: a set exploded from PO line 1 into twelve phase
+        # slices used to scatter across the whole order (1, 23, 40, 57, 77, ...) because the
+        # old key sorted on delivery date first. `drafts` arrives in delivery-date order
+        # (from `_spread_across_phases`'s own sort, then components appended per slice in
+        # explosion order), so within any one PO line its slices are still phase-chronological
+        # and its components are still in split order. Python's sort is stable, so keying on
+        # `source_po_line_no` alone regroups by PO line -- PO line order, then phase order,
+        # then component order within a set -- without disturbing that inner order. See
+        # `renumber_draft_lines` for applying the same order to an existing draft.
+        ordered = sorted(drafts, key=lambda draft: draft.source_po_line_no)
         for index, draft in enumerate(ordered, start=1):
             row = ProjectSalesOrderLine(
                 company_id=order.company_id,
@@ -1424,17 +1550,54 @@ class ProjectSODraftService:
             # first sales order line that came out of it.
             setattr(row, "_source_po_line_no", draft.source_po_line_no)
 
+    def _clear_batch_findings(self, po_id: str, schedule_version_id: str) -> None:
+        """Every batch-level finding this (PO, schedule version) pair carried before.
+
+        Unlike an order's own findings, these are not deleted by cascade when a draft is
+        rebuilt or removed (they are attached to no order at all), so a rebuild has to
+        clear them itself before writing the current set -- otherwise a fixed schedule
+        column would leave its old warning behind forever.
+        """
+        self.db.query(SODraftFinding).filter(
+            SODraftFinding.purchase_order_id == po_id,
+            SODraftFinding.schedule_version_id == schedule_version_id,
+            SODraftFinding.project_sales_order_id.is_(None),
+        ).delete(synchronize_session=False)
+
     def _attach_findings(
-        self, orders: Sequence[ProjectSalesOrder], findings: Sequence[_PendingFinding]
+        self,
+        orders: Sequence[ProjectSalesOrder],
+        findings: Sequence[_PendingFinding],
+        *,
+        po: ProjectPurchaseOrder,
+        schedule_version: DeliveryScheduleVersion,
     ) -> None:
         """Point every finding at a line somebody can see, on every order it affects.
 
         A PO line that is short-scheduled or fails its own arithmetic reaches EVERY sales
         order that carries a slice of it, because each of those orders has its own publish
         gate: recording the problem on one sibling only would let the other one publish
-        half a broken PO. A finding with no line at all lands on every order in the build,
-        for the same reason.
+        half a broken PO. `finding.batch_level` is the other case -- naming no PO line, so
+        belonging to no order at all - and is written once, keyed by (PO, schedule
+        version), never against any order (see `SODraftFinding`'s own docstring).
         """
+        batch_level = [finding for finding in findings if finding.batch_level]
+        self._clear_batch_findings(po.id, schedule_version.id)
+        for finding in batch_level:
+            self.db.add(
+                SODraftFinding(
+                    company_id=po.company_id,
+                    project_sales_order_id=None,
+                    purchase_order_id=po.id,
+                    schedule_version_id=schedule_version.id,
+                    severity=finding.severity,
+                    code=finding.code,
+                    detail=finding.detail,
+                    detail_json=finding.detail_json or None,
+                )
+            )
+        self.db.flush()
+
         if not orders:
             return
         first_line_by_po_line: Dict[int, List[Tuple[ProjectSalesOrder, ProjectSalesOrderLine]]] = {}
@@ -1448,10 +1611,17 @@ class ProjectSODraftService:
                 first_line_by_po_line.setdefault(key, []).append((order, line))
 
         for finding in findings:
+            if finding.batch_level:
+                continue
             targets = first_line_by_po_line.get(finding.source_po_line_no or -1)
             if not targets:
                 targets = [(order, None) for order in orders]
             for order, line in targets:
+                detail = finding.detail
+                if finding.code == "missing_delivery_date" and finding.source_po_line_no is not None:
+                    detail = self._missing_delivery_date_detail_for_order(
+                        order, finding
+                    )
                 self.db.add(
                     SODraftFinding(
                         company_id=order.company_id,
@@ -1459,7 +1629,7 @@ class ProjectSODraftService:
                         line_id=line.id if line is not None else None,
                         severity=finding.severity,
                         code=finding.code,
-                        detail=finding.detail,
+                        detail=detail,
                         detail_json=finding.detail_json or None,
                     )
                 )
@@ -1469,6 +1639,48 @@ class ProjectSODraftService:
             self._credit_finding(order)
             self._pre_order_finding(order)
         self.db.flush()
+
+    def _missing_delivery_date_detail_for_order(
+        self, order: ProjectSalesOrder, finding: "_PendingFinding"
+    ) -> str:
+        """Re-render the warning against the ACTUAL draft lines this order now holds.
+
+        Draft line numbers only exist after ``_write_lines`` runs, so the version built at
+        finding time is a fallback with no line reference. Here we can name the exact
+        line(s) that carry the schedule for this PO line, scoped to this order -- a PO
+        line's phases can land in different orders (grouped by area), so each order only
+        speaks to what it can show.
+        """
+        payload = finding.detail_json or {}
+        label = payload.get("label") or f"line {finding.source_po_line_no}"
+        po_qty = _dec(payload.get("po_qty"))
+        left_qty = _dec(payload.get("qty"))
+        dated = sorted(
+            (
+                line
+                for line in self._lines_of(order.id)
+                if self._source_line_no(line) == finding.source_po_line_no
+                and line.delivery_date is not None
+            ),
+            key=lambda line: line.line_no,
+        )
+        if not dated:
+            scheduled_qty = _ZERO
+            line_ref = None
+        elif len(dated) == 1:
+            scheduled_qty = _dec(dated[0].qty)
+            line_ref = f"draft line {dated[0].line_no}, {_date_fmt(dated[0].delivery_date)}"
+        else:
+            scheduled_qty = sum((_dec(line.qty) for line in dated), _ZERO)
+            first_date = min(line.delivery_date for line in dated)
+            line_ref = f"{_qty_fmt(scheduled_qty)} on {len(dated)} lines, first {_date_fmt(first_date)}"
+        return _missing_delivery_date_detail(
+            label=label,
+            po_qty=po_qty,
+            scheduled_qty=scheduled_qty,
+            left_qty=po_qty - scheduled_qty if scheduled_qty > _ZERO else left_qty,
+            line_ref=line_ref,
+        )
 
     def _source_line_no(self, line: ProjectSalesOrderLine) -> Optional[int]:
         cached = getattr(line, "_source_po_line_no", None)
@@ -1678,9 +1890,52 @@ class ProjectSODraftService:
         finding.acknowledged_reason = cleaned
         self.db.flush()
 
-        order = self._order_or_404(finding.project_sales_order_id)
-        self._recompute(order)
+        # A batch-level finding (see `SODraftFinding`'s docstring) has no order to
+        # recompute -- it never blocked one, so acknowledging it changes no order's status.
+        if finding.project_sales_order_id:
+            order = self._order_or_404(finding.project_sales_order_id)
+            self._recompute(order)
         return finding
+
+    def list_schedule_findings(
+        self, po_id: str, schedule_version_id: str
+    ) -> List[SODraftFinding]:
+        """The batch-level findings for one (PO, schedule version) pair (D9's other half).
+
+        Nothing here ever blocked a publish -- see `SODraftFinding`'s own docstring for why
+        these belong to no order -- so this is read-only context, not a gate.
+        """
+        return (
+            self.db.query(SODraftFinding)
+            .filter(
+                SODraftFinding.purchase_order_id == po_id,
+                SODraftFinding.schedule_version_id == schedule_version_id,
+                SODraftFinding.project_sales_order_id.is_(None),
+            )
+            .order_by(SODraftFinding.created_at.asc())
+            .all()
+        )
+
+    def serialize_schedule_finding(self, finding: SODraftFinding) -> Dict[str, Any]:
+        """A batch-level finding, in the same shape `serialize_findings` gives an order's
+        own -- so the read view (and the acknowledge flow beside it) is the one shape the
+        screen already knows how to draw, whichever kind it is looking at."""
+        name = None
+        if finding.acknowledged_by:
+            user = self.db.query(User).filter(User.id == finding.acknowledged_by).first()
+            name = user.name if user else None
+        return {
+            "id": finding.id,
+            "severity": finding.severity,
+            "code": finding.code,
+            "detail": finding.detail,
+            "detail_json": finding.detail_json,
+            "line_id": None,
+            "line_no": None,
+            "acknowledged_by_name": name,
+            "acknowledged_reason": finding.acknowledged_reason,
+            "acknowledged_at": finding.acknowledged_at,
+        }
 
     def blocking_findings(self, order: ProjectSalesOrder) -> List[SODraftFinding]:
         return (
@@ -2231,6 +2486,108 @@ class ProjectSODraftService:
         for index, line in enumerate(ordered, start=1):
             line.line_no = index
         self.db.flush()
+
+    def _draft_stage_order(self, pso_id: str) -> ProjectSalesOrder:
+        """The order, only once it is confirmed still editable.
+
+        "Draft" here means any pre-publish status (draft, blocked on a finding, or ready
+        to publish) -- the same set `_build_siblings` treats as still-editable. Only
+        `published` / `amended` / `awaiting_costing` have printed line numbers.
+        """
+        order = self.db.query(ProjectSalesOrder).filter(ProjectSalesOrder.id == pso_id).first()
+        if order is None:
+            raise AppException(
+                status_code=404, message="Sales order not found.", code="so_not_found"
+            )
+        if order.status not in (SO_STATUS_DRAFT, SO_STATUS_BLOCKED, SO_STATUS_READY):
+            raise AppException(
+                status_code=409,
+                message=(
+                    "Only a draft's lines can be reordered; this order is past that stage."
+                ),
+                code="so_not_draft",
+            )
+        return order
+
+    def _apply_line_order(self, ordered: Sequence[ProjectSalesOrderLine]) -> int:
+        """The writer both the auto-grouped renumber and a manual drag reorder share."""
+        changed = 0
+        for index, line in enumerate(ordered, start=1):
+            if line.line_no != index:
+                changed += 1
+            line.line_no = index
+        self.db.flush()
+        return changed
+
+    def renumber_draft_lines(self, pso_id: str) -> int:
+        """Bring an EXISTING draft's line numbers back to the order the screen groups them in.
+
+        `_write_lines` gets this right for a fresh build; this is the repair for a draft
+        built before that fix (or otherwise scrambled). PO line order first, then the
+        phase order within that PO line (its own delivery dates, ascending). Neither this
+        row's `product_code` nor its explosion order survive a reload (they are computed,
+        not stored), so components that still tie on both PO line and phase fall back to
+        the product id and then the row's own OLD line_no -- deterministic, if not
+        guaranteed to reproduce a scrambled set's original split order.
+
+        Only a draft's numbers move: a published order's lines are printed, so recompute
+        it instead through an amendment. Returns how many lines actually moved, so a
+        one-off run can report something other than "it didn't crash".
+        """
+        order = self._draft_stage_order(pso_id)
+        lines = self._lines_of(order.id)
+        if not lines:
+            return 0
+
+        phase_ids = {line.phase_id for line in lines if line.phase_id}
+        phase_sequence: Dict[str, int] = {}
+        if phase_ids:
+            for phase_id, sequence in (
+                self.db.query(ProjectDeliveryPhase.id, ProjectDeliveryPhase.sequence)
+                .filter(ProjectDeliveryPhase.id.in_(phase_ids))
+                .all()
+            ):
+                phase_sequence[phase_id] = sequence or 0
+
+        no_po_line = 1 << 30  # sorts after every real PO line number
+        no_phase = 1 << 30  # a line with no phase sorts after every phased one
+
+        def sort_key(line: ProjectSalesOrderLine) -> Tuple[int, int, str, int]:
+            po_line_no = self._source_line_no(line)
+            return (
+                po_line_no if po_line_no is not None else no_po_line,
+                phase_sequence.get(line.phase_id, no_phase) if line.phase_id else no_phase,
+                line.product_id or "",
+                line.line_no,
+            )
+
+        ordered = sorted(lines, key=sort_key)
+        return self._apply_line_order(ordered)
+
+    def reorder_lines(self, pso_id: str, line_ids: Sequence[str]) -> int:
+        """A hand drag, taken at its word: the given order, verbatim, becomes `line_no` 1..N.
+
+        The read view groups lines by their PO line and set, which a drag cannot honour
+        (a row dropped mid-table would visually snap back to its own PO line's cluster no
+        matter where it landed) -- so dragging is only offered against the FLAT view, and
+        this call trusts that view completely rather than re-deriving an order of its own.
+
+        422 when `line_ids` is not exactly the draft's current line set: a drag that raced
+        a save, or a stale screen, must not silently drop or duplicate a line.
+        """
+        order = self._draft_stage_order(pso_id)
+        lines = self._lines_of(order.id)
+        by_id = {line.id: line for line in lines}
+        if set(line_ids) != set(by_id.keys()) or len(line_ids) != len(lines):
+            raise AppException(
+                status_code=422,
+                message=(
+                    "The given line order does not match this draft's current lines."
+                ),
+                code="so_lines_mismatch",
+            )
+        ordered = [by_id[line_id] for line_id in line_ids]
+        return self._apply_line_order(ordered)
 
     # ---------------------------------------------------------------- publish
 
@@ -3046,6 +3403,10 @@ class ProjectSODraftService:
             # can still be fetched from days later. A draft has no import file on purpose:
             # nothing uncommitted should be importable into AutoCount.
             "purchase_order_id": order.purchase_order_id,
+            # Both this and `purchase_order_id`, so the screen can read the batch-level
+            # (schedule/PO) findings for this order's own (PO, schedule) pair without a
+            # second round trip to resolve one from the other.
+            "schedule_version_id": order.schedule_version_id,
             "import_file_url": (
                 f"/api/v1/project-sales/sales-orders/{order.id}/import-file"
                 if order.status in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED)
@@ -3262,4 +3623,94 @@ class ProjectSODraftService:
             }
             for row in rows
         ]
+
+    # ------------------------------------------------------------------ unpublish
+    #
+    # Captain, 19 Aug 2026: "a published (or amended) project SO can go back to draft at
+    # this experimental stage." Refused whenever something already ACTED on the published
+    # state, because those things assumed the order would stay published: an active supply
+    # decision, a published amendment, or a planning-change row this order's re-upload
+    # already applied. Publishing itself raises no Order Inquiry (see the comment in
+    # `publish` above), so there is nothing of that kind to retire here.
+
+    def unpublish(self, order: ProjectSalesOrder, *, actor_user_id: str) -> Dict[str, Any]:
+        """Send a published or amended order back to draft.
+
+        Lines and versions are untouched; only the publish stamp goes. The generic audit
+        listener (`ProjectSalesOrder.__audit_track__`) records the status and timestamp
+        changes on its own, so nothing here writes a second trail by hand.
+        """
+        if order.status not in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED):
+            raise AppException(
+                status_code=409,
+                message=f"{order.provisional_ref} is not published.",
+                code="so_not_published",
+            )
+
+        from app.services.project_supply_service import ProjectSupplyService
+
+        decision = ProjectSupplyService(self.db).active_decision(order.id)
+        if decision is not None:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{order.provisional_ref} already has an active supply decision. "
+                    "Unpublishing would leave that decision pointing at an order that is "
+                    "no longer committed."
+                ),
+                code="so_unpublish_supply_active",
+            )
+
+        published_amendment = (
+            self.db.query(SOAmendment)
+            .filter(
+                SOAmendment.project_sales_order_id == order.id,
+                SOAmendment.status == AMENDMENT_PUBLISHED,
+            )
+            .first()
+        )
+        if published_amendment is not None:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{order.provisional_ref} carries a published amendment. Its order "
+                    "change notice already assumes the order stayed published."
+                ),
+                code="so_unpublish_amendment_published",
+            )
+
+        from app.models.planning_change import (
+            PLANNING_CHANGE_STATE_APPLIED,
+            PlanningChangeRow,
+        )
+
+        applied_change = (
+            self.db.query(PlanningChangeRow)
+            .filter(
+                PlanningChangeRow.project_sales_order_id == order.id,
+                PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_APPLIED,
+            )
+            .first()
+        )
+        if applied_change is not None:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{order.provisional_ref} already had a planning change applied "
+                    "against it. That row acted on the order while it was published."
+                ),
+                code="so_unpublish_planning_change_applied",
+            )
+
+        order.status = SO_STATUS_DRAFT
+        order.published_at = None
+        order.published_by = None
+        self.db.flush()
+        self._refresh_status(order)
+        self.db.flush()
+
+        return {
+            "status": order.status,
+            "provisional_ref": order.provisional_ref,
+        }
 

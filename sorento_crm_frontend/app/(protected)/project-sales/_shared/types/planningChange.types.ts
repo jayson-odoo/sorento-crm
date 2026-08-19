@@ -11,7 +11,7 @@
  * this module is (see `fulfilmentPlanning.types.ts`): a float round trip loses the tail of a
  * quantity the customer signed for.
  */
-import type { BoardContribution } from './fulfilmentPlanning.types';
+import type { BoardContribution, ConfirmLine } from './fulfilmentPlanning.types';
 
 /** What changed on the line, exactly as the book's own diff names it (AC-R02). */
 export type PlanningChangeKind = 'delayed' | 'advanced' | 'qty_up' | 'qty_down' | 'closed' | 'added';
@@ -20,11 +20,17 @@ export type PlanningChangeKind = 'delayed' | 'advanced' | 'qty_up' | 'qty_down' 
 export type PlanningChangeReaction = 'keep' | 'release' | 'replan' | 'reduce' | 'retire';
 
 /**
- * The one decision per row (AC-R04). `null` on a row with no active decision (AC-R03): such a
- * row shows `Not decided` and offers no control at all, because there is nothing to accept or
- * keep - it simply enters the board at its new date/quantity.
+ * The one decision per row (AC-R04). `null` on a row with no active decision (AC-R03), or on
+ * a `replan`/`qty_up` row nobody has composed yet (it defaults to `null` too - "Leave on the
+ * board"): such a row offers no `accept`/`keep`, because there is nothing to accept - it simply
+ * enters the board at its new date/quantity until composed or opened there.
+ *
+ * `confirm`/`amend` apply only to a row carrying a `proposal`: `confirm` takes the board's own
+ * proposal as it stands (turned into a composition server-side); `amend` takes the composition
+ * the planner built in the reused `BoardAmendDialog`. Recording either is what makes accepting
+ * a replan row actually DO something at Apply, rather than a decision Apply never executes.
  */
-export type PlanningChangeDecision = 'accept' | 'keep' | 'board' | null;
+export type PlanningChangeDecision = 'accept' | 'keep' | 'board' | 'confirm' | 'amend' | null;
 
 /**
  * What Apply did to this row (AC-R05, R06, R07, R11). `pending` before Apply is pressed;
@@ -154,6 +160,8 @@ export interface PlanningChangeRow {
   proposal?: BoardContribution | null;
   inquiry_rows: PlanningChangeInquiryRow[];
   decision: PlanningChangeDecision;
+  /** What Apply will post for this line - set only by `confirm`/`amend`. */
+  composition?: ConfirmLine | null;
   applied_state: PlanningChangeAppliedState;
   applied_reason?: string | null;
   /** Deep link to the cell of this line on the board (AC-R04's "Open on the board"). */
@@ -212,6 +220,8 @@ export interface PlanningChangeResult {
   inquiry_rows_changed: { verb: string; count: number }[];
   /** Lines that left the batch and re-entered the fulfilment planning board. */
   lines_replanned: number;
+  /** Rows decided `confirm`/`amend` that Apply actually wrote. */
+  lines_confirmed: number;
   purchasing_notified: boolean;
 }
 
@@ -265,6 +275,8 @@ export interface PlanningChangeListEnvelope {
 /** `PUT /project-sales/planning-changes/{batch_id}/rows/{row_id}` body. */
 export interface UpdatePlanningChangeRowBody {
   decision: PlanningChangeDecision;
+  /** Required when `decision === 'amend'`; ignored otherwise. */
+  composition?: ConfirmLine;
 }
 
 /** `POST /project-sales/planning-changes/{batch_id}/apply` response. */

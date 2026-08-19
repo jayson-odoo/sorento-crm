@@ -94,6 +94,7 @@ class ProjectSalesOrderRow(BaseModel):
     status: str
     grouping_origin: Optional[str] = None
     purchase_order_id: Optional[str] = None
+    schedule_version_id: Optional[str] = None
     # Present only once the order is committed: nothing uncommitted should be importable
     # into AutoCount, and a published order the user comes back to still needs its file.
     import_file_url: Optional[str] = None
@@ -399,6 +400,25 @@ class PublishResponse(BaseModel):
     # How many hard findings this publish waved through. Zero on the ordinary path, so an
     # existing caller reading the response is unaffected.
     acknowledged_findings: int = 0
+
+
+class UnpublishResponse(BaseModel):
+    """Captain, 19 Aug 2026: an experimental way back to draft from published/amended."""
+
+    status: str
+    provisional_ref: str
+
+
+class RenumberLinesResponse(BaseModel):
+    """The repair for a draft numbered before the grouped-order fix, or scrambled since."""
+
+    changed: int
+
+
+class ReorderLinesRequest(BaseModel):
+    """Every line id of the draft, in the order a drag left them."""
+
+    line_ids: List[str] = Field(..., min_length=1)
 
 
 # ------------------------------------------------------------------------ delta

@@ -425,6 +425,12 @@ const ROW_7: PlanningChangeRow = {
     buyQty: '20',
   }),
   inquiry_rows: [{ id: 'oi-7', verb: 'ORDER', qty: '40', state: 'raised' }],
+  // NOTE: the real backend now defaults a `replan` row's decision to `null` ("Leave on the
+  // board") rather than `accept` - `accept` never executed anything for it (the captain's
+  // own fix, 19 August 2026). Left as `accept` here only to avoid perturbing this fixture's
+  // other counts (`BatchMetaStrip`'s "N lines with a decision"), which several existing
+  // Phase 1 tests assert on by exact figure; the FE control itself does not read this value
+  // to decide whether `Confirm`/`Amend`/`Leave on the board` is clickable.
   decision: 'accept',
   applied_state: 'pending',
   board_link: '/project-sales/fulfilment-planning?orders=SO400875&cell=CB231SS-NL|2027-02-04',
@@ -480,13 +486,13 @@ const ROW_9: PlanningChangeRow = {
   item_code: 'B2155-NL-BLUE',
   product_name: 'Basin mixer 2155 blue',
   kind: 'qty_down',
-  from: { required_date: '2027-01-15', qty: '66', status: 'open' },
-  to: { required_date: '2027-01-15', qty: '50', status: 'open' },
+  from: { required_date: '2027-01-15', qty: '72', status: 'open' },
+  to: { required_date: '2027-01-15', qty: '66', status: 'open' },
   days_moved: 0,
   held: {
-    reserve: [{ location: 'BRW-BB', warehouse_id: 'wh-BRW-BB', qty: '50' }],
+    reserve: [{ location: 'BRW-BB', warehouse_id: 'wh-BRW-BB', qty: '66' }],
     borrow: [],
-    buy_qty: '16',
+    buy_qty: '6',
     timely_spo_qty: '0',
     revision_no: 2,
   },
@@ -499,9 +505,9 @@ const ROW_9: PlanningChangeRow = {
     buy_actioned: buyActionedFact(false),
   },
   suggested: 'reduce',
-  why: 'Qty dropped from 66 to 50; the reserve of 50 stays, the Buy of 16 is reduced to nothing, and the inquiry row is cancelled for the drop.',
+  why: 'Qty dropped from 72 to 66; the reserve of 66 stays, the Buy of 6 is reduced to nothing, and the inquiry row is cancelled for the drop.',
   proposal: null,
-  inquiry_rows: [{ id: 'oi-9', verb: 'ORDER', qty: '16', state: 'raised' }],
+  inquiry_rows: [{ id: 'oi-9', verb: 'ORDER', qty: '6', state: 'raised' }],
   decision: 'accept',
   applied_state: 'pending',
   board_link: '/project-sales/fulfilment-planning?orders=SO400875&cell=B2155-NL-BLUE|2027-01-15',
@@ -668,6 +674,7 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
     ],
     inquiry_rows_changed: [{ verb: 'CANCEL_BALANCE', count: 1 }],
     lines_replanned: 1,
+    lines_confirmed: 0,
     purchasing_notified: true,
   },
   orders: [

@@ -324,7 +324,13 @@ export interface SalesOrderFormData {
   customer_code: string;
   priority: SalesOrderPriority;
   requested_delivery_date?: string | null;
-  lines: { sku: string; qty_ordered: number; uom: string }[];
+  /**
+   * Omitted entirely on an update where the person never touched a line - a header-only
+   * edit (order type, customer, dates) must not resend lines, because the BE's update
+   * path fully replaces whatever `lines` it is given, dropping any warehouse assignment
+   * a line held. Always present (non-empty) on create.
+   */
+  lines?: { sku: string; qty_ordered: number; uom: string }[];
 }
 
 // ---------------------------------------------------------------------------

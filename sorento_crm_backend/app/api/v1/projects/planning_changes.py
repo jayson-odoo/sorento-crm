@@ -79,11 +79,15 @@ def update_planning_change_row(
     _user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
-    """The one decision per row (AC-R04). Writes nothing else."""
+    """The one decision per row (AC-R04). `confirm`/`amend` also freeze the composition
+    Apply will post for the line - everything else writes nothing but the decision."""
     try:
         validate_uuid_path(batch_id, resource="Planning change batch")
         validate_uuid_path(row_id, resource="Planning change row")
-        row = planning_change_service.set_row_decision(db, batch_id, row_id, body.decision)
+        composition = body.composition.model_dump() if body.composition else None
+        row = planning_change_service.set_row_decision(
+            db, batch_id, row_id, body.decision, composition
+        )
         db.commit()
         return row
     except Exception as exc:

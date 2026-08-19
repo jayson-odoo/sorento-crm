@@ -11,6 +11,8 @@ import {
   acceptRevisionProposal,
   confirmDeliveryScheduleVersion,
   DELIVERY_SCHEDULE_VERSION_NEIGHBOURS_PATH,
+  deleteDeliverySchedule,
+  deleteDeliveryScheduleVersion,
   dismissDeliveryScheduleColumn,
   getDeliveryScheduleVersion,
   listDeliverySchedules,
@@ -132,6 +134,12 @@ export function useDeliverySchedulePriorVersion(
 /**
  * Upload invalidates the PROJECT too: the schedule binds delivery phases to it, so the
  * header and the phase list downstream both change once extraction lands.
+ *
+ * Delete does the same, for the same reason in reverse: removing a schedule (or the
+ * version that bound them) can take delivery phases with it.
+ *
+ * `ConfirmDeleteDialog` raises the toast for both deletes, so neither mutation raises its
+ * own - a second notification for one press is noise.
  */
 export function useDeliveryScheduleMutations(projectId: string) {
   const queryClient = useQueryClient();
@@ -152,7 +160,17 @@ export function useDeliveryScheduleMutations(projectId: string) {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { upload };
+  const remove = useMutation({
+    mutationFn: (scheduleId: string) => deleteDeliverySchedule(scheduleId),
+    onSuccess: invalidate,
+  });
+
+  const removeVersion = useMutation({
+    mutationFn: (versionId: string) => deleteDeliveryScheduleVersion(versionId),
+    onSuccess: invalidate,
+  });
+
+  return { upload, remove, removeVersion };
 }
 
 /**

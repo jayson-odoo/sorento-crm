@@ -8,6 +8,7 @@ import {
   listPlanningChangeBatches,
   updatePlanningChangeRow,
 } from '../services/planningChangeService';
+import type { ConfirmLine } from '../types/fulfilmentPlanning.types';
 import type {
   PlanningChangeDecision,
   PlanningChangeListParams,
@@ -54,9 +55,21 @@ export function usePlanningChangeMutations(batchId: string) {
   };
 
   const updateDecision = useMutation({
-    mutationFn: ({ rowId, decision }: { rowId: string; decision: PlanningChangeDecision }) =>
-      updatePlanningChangeRow(batchId, rowId, { decision }),
-    onSuccess: () => invalidate(),
+    mutationFn: ({
+      rowId,
+      decision,
+      composition,
+    }: {
+      rowId: string;
+      decision: PlanningChangeDecision;
+      composition?: ConfirmLine;
+    }) => updatePlanningChangeRow(batchId, rowId, { decision, composition }),
+    onSuccess: () => {
+      invalidate();
+      // The write is otherwise invisible: the captain's own complaint was a decision that
+      // recorded but did nothing at Apply. Every write says so, right away.
+      toast.success('Saved - applied when you press Apply');
+    },
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -79,17 +92,17 @@ export function usePlanningChangeMutations(batchId: string) {
         toast.success('This batch was already applied.');
         return;
       }
-      if (result.failed_orders.length > 0) {
+      if (result.failed_orders.length > 0 && result.applied_orders.length === 0) {
         toast.warning(
           `Applied, but ${result.failed_orders.length} order${
             result.failed_orders.length === 1 ? '' : 's'
           } could not be written.`,
         );
-        return;
       }
-      toast.success(`Applied ${result.applied_orders.length} order${
-        result.applied_orders.length === 1 ? '' : 's'
-      }.`);
+      // The successful case's own toast + scroll-to-highlight is `PlanningChangeBatchClient`'s
+      // job, once the refetch this `invalidate()` triggers lands with the real per-order
+      // revision numbers (`SO346436 revised to rev 1 · 1 line back on the board`) - this
+      // mutation only knows `applied_orders`/`failed_orders`, not what actually got written.
     },
     onError: (error: Error) => toast.error(error.message),
   });

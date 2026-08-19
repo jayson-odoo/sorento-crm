@@ -787,8 +787,9 @@ describe('FulfilmentPlanningClient: select all', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows on this page' }));
 
     // Only the row that HAS a core sales order can go on the board: an authored Project SO
-    // with no core order has no core lines to aggregate.
-    expect(screen.getByRole('button', { name: /Plan together \(1\)/ })).toBeInTheDocument();
+    // with no core order has no core lines to aggregate. One selected order names the order,
+    // not the count.
+    expect(screen.getByRole('button', { name: /Plan SO100001/ })).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: 'Select row' })).toBeDisabled();
     expect(
       screen.getByTitle('Only a sales order from the AutoCount book can go on the board.'),
@@ -881,7 +882,7 @@ describe('FulfilmentPlanningClient: ticking across searches', () => {
     );
     await screen.findByText('SO100002');
     // The first order is off the page now, and still ticked.
-    expect(screen.getByRole('button', { name: /Plan together \(1\)/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Plan SO100001/ })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select SO100002 for planning' }));
     expect(screen.getByRole('button', { name: /Plan together \(2\)/ })).toBeEnabled();

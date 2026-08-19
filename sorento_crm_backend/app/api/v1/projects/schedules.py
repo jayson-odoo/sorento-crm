@@ -22,6 +22,7 @@ from app.database import get_db
 from app.dependencies import require_permission
 from app.schemas.common import ListResponse
 from app.schemas.project_schedule import (
+    DeliveryScheduleDeleteResponse,
     DeliveryScheduleListRow,
     DeliveryScheduleUploadResponse,
     DeliveryScheduleVersionListRow,
@@ -61,6 +62,19 @@ def _envelope(data: list) -> dict:
         "pagination": {"total": len(data), "page": 1, "limit": max(len(data), 1)},
         "empty": not data,
     }
+
+
+def _schedule_for_edit(db: Session, schedule_id: str, current_user: dict):
+    """Same rights as the version routes: whoever may work the pursuit may remove a
+    schedule that came out of it."""
+    validate_uuid_path(schedule_id, resource="Delivery schedule")
+    service = _service(db)
+    schedule = service.get_schedule(schedule_id)
+    project = projects.get_project_or_404(db, schedule.project_id)
+    projects.assert_can_edit_project(
+        db, project, current_user["id"], permission_slugs(db, current_user["id"])
+    )
+    return schedule
 
 
 def _version_for_edit(db: Session, version_id: str, current_user: dict):
@@ -444,6 +458,60 @@ async def reject_revision_proposal(
         )
         db.commit()
         return service.get_version_detail(version_id)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.delete(
+    "/delivery-schedules/{schedule_id}",
+    response_model=DeliveryScheduleDeleteResponse,
+)
+async def delete_delivery_schedule(
+    schedule_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Hard delete: every version, its cells and its document, then the schedule. The
+    purchase order it was checked against is untouched.
+
+    409, naming the blocker, when a CONFIRMED version is a live commitment - built into a
+    published/amended sales order, or named by a published amendment's delta. Everything
+    else the client marks confirmed may still be deleted: this is still the experimental
+    phase (captain's call).
+    """
+    try:
+        service = _service(db)
+        schedule = _schedule_for_edit(db, schedule_id, current_user)
+        deleted = service.delete_schedule(schedule.id)
+        db.commit()
+        return {"success": True, "deleted": deleted}
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.delete(
+    "/delivery-schedule-versions/{version_id}",
+    response_model=DeliveryScheduleDeleteResponse,
+)
+async def delete_delivery_schedule_version(
+    version_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """One version, and its cells and document.
+
+    409 ``schedule_version_last`` on the LAST version of a schedule - delete the schedule
+    instead, which is what actually removes it - and the same live-commitment refusal
+    ``DELETE /delivery-schedules/{schedule_id}`` runs, scoped to this one version.
+    """
+    try:
+        version = _version_for_edit(db, version_id, current_user)
+        service = _service(db)
+        deleted = service.delete_schedule_version(version.id)
+        db.commit()
+        return {"success": True, "deleted": deleted}
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

@@ -3,13 +3,18 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
+import { Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { useDeliveryScheduleVersions } from '../../_shared/hooks/useDeliverySchedules';
+import {
+  useDeliveryScheduleMutations,
+  useDeliveryScheduleVersions,
+} from '../../_shared/hooks/useDeliverySchedules';
 import type {
   DeliverySchedule,
   DeliveryScheduleVersionSummary,
@@ -30,12 +35,17 @@ import { ReconciliationBadge } from './DeliverySchedulesPanel';
 export function DeliveryScheduleVersionsGrid({
   projectId,
   schedule,
+  canEdit = false,
 }: {
   projectId: string;
   schedule: DeliverySchedule;
+  canEdit?: boolean;
 }) {
   const demo = useDemoScheduleState();
   const live = useDeliveryScheduleVersions(demo ? undefined : schedule.id);
+  const { removeVersion } = useDeliveryScheduleMutations(projectId);
+  const [pendingDelete, setPendingDelete] =
+    React.useState<DeliveryScheduleVersionSummary | null>(null);
 
   const rows = React.useMemo<DeliveryScheduleVersionSummary[]>(
     () => (demo ? demoVersionSummaries() : (live.data ?? [])),
@@ -105,20 +115,35 @@ export function DeliveryScheduleVersionsGrid({
       },
       {
         id: 'open',
-        header: () => <span className="sr-only">Open</span>,
+        header: () => <span className="sr-only">Actions</span>,
         cell: ({ row }) => (
-          <Button asChild size="sm" variant="outline">
-            <Link
-              href={`/project-sales/${projectId}/delivery-schedules/${row.original.id}`}
-            >
-              Open
-            </Link>
-          </Button>
+          <div className="flex justify-end gap-1">
+            <Button asChild size="sm" variant="outline">
+              <Link
+                href={`/project-sales/${projectId}/delivery-schedules/${row.original.id}`}
+              >
+                Open
+              </Link>
+            </Button>
+            {canEdit && (
+              <Button
+                type="button"
+                mode="icon"
+                variant="ghost"
+                size="sm"
+                aria-label={`Delete version ${row.original.version_no}`}
+                title="Delete this version"
+                onClick={() => setPendingDelete(row.original)}
+              >
+                <Trash2 className="size-3.5 text-destructive" />
+              </Button>
+            )}
+          </div>
         ),
-        size: 90,
+        size: canEdit ? 130 : 90,
       },
     ],
-    [projectId],
+    [projectId, canEdit],
   );
 
   const table = useReactTable({
@@ -146,16 +171,37 @@ export function DeliveryScheduleVersionsGrid({
   }
 
   return (
-    <DataGrid
-      table={table}
-      recordCount={rows.length}
-      isLoading={isLoading}
-      tableLayout={{ width: 'fixed', columnsResizable: true }}
-    >
-      <ScrollArea className="w-full">
-        <DataGridTable />
-        <ScrollBar orientation="horizontal" />
-      </ScrollArea>
-    </DataGrid>
+    <>
+      <DataGrid
+        table={table}
+        recordCount={rows.length}
+        isLoading={isLoading}
+        tableLayout={{ width: 'fixed', columnsResizable: true }}
+      >
+        <ScrollArea className="w-full">
+          <DataGridTable />
+          <ScrollBar orientation="horizontal" />
+        </ScrollArea>
+      </DataGrid>
+
+      <ConfirmDeleteDialog
+        open={Boolean(pendingDelete)}
+        onOpenChange={(next) => !next && setPendingDelete(null)}
+        title="Confirm delete"
+        description={
+          pendingDelete
+            ? `Delete version ${pendingDelete.version_no}${
+                pendingDelete.revision_label ? ` (${pendingDelete.revision_label})` : ''
+              }? This action cannot be undone.`
+            : ''
+        }
+        onDelete={async () => {
+          if (!pendingDelete) return;
+          await removeVersion.mutateAsync(pendingDelete.id);
+        }}
+        onSuccess={() => setPendingDelete(null)}
+        successMessage="Schedule version deleted"
+      />
+    </>
   );
 }

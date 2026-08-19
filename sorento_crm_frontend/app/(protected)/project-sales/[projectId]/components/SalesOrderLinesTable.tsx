@@ -8,7 +8,9 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { ChevronDown, ChevronRight, CornerDownRight, X } from 'lucide-react';
+import type { DragEndEvent } from '@dnd-kit/core';
+import { arrayMove } from '@dnd-kit/sortable';
+import { Check, ChevronDown, ChevronRight, CornerDownRight, GripVertical, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -16,6 +18,10 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import {
+  DataGridTableDndRowHandle,
+  DataGridTableDndRows,
+} from '@/components/ui/data-grid-table-dnd-rows';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -105,11 +111,14 @@ function LinesSectionHeader({
   explodedSets,
   focused,
   onClearFocus,
+  trailing,
 }: {
   lineCount: number;
   explodedSets: number;
   focused: boolean;
   onClearFocus?: () => void;
+  /** An extra header action beside "Show all lines" - the reorder toggle, for instance. */
+  trailing?: React.ReactNode;
 }) {
   return (
     <CardHeader className="block space-y-3">
@@ -124,15 +133,24 @@ function LinesSectionHeader({
             }`}
           </p>
         </div>
-        {focused && (
-          <Button type="button" variant="outline" size="sm" onClick={onClearFocus}>
-            <X className="size-4" aria-hidden />
-            Show all lines
-          </Button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {focused && (
+            <Button type="button" variant="outline" size="sm" onClick={onClearFocus}>
+              <X className="size-4" aria-hidden />
+              Show all lines
+            </Button>
+          )}
+          {trailing}
+        </div>
       </div>
     </CardHeader>
   );
+}
+
+export interface SalesOrderLinesReorder {
+  /** Only a draft's lines may move; the caller decides from the order's own status. */
+  enabled: boolean;
+  onReorder: (lineIds: string[]) => void;
 }
 
 export function SalesOrderLinesTable({
@@ -142,6 +160,7 @@ export function SalesOrderLinesTable({
   onClearFocus,
   editing,
   reference,
+  reorder,
 }: {
   lines: ProjectSalesOrderLine[];
   findings?: ProjectSalesOrderFinding[];
@@ -155,6 +174,15 @@ export function SalesOrderLinesTable({
   editing?: SalesOrderLinesEditing | null;
   /** The order's reference, for the editor's row labels. */
   reference?: string;
+  /**
+   * A drag handle per row, saved immediately on drop. Offered as a FLAT list ordered by
+   * `line_no`, not the grouped read below: a set's components are clustered by their shared
+   * `source_po_line_no`, so a row dropped mid-table would visually snap back to its own
+   * cluster no matter where it landed - the flat view is what makes drag position and
+   * display position the same thing. The existing "From PO line" column stays as the row's
+   * context, standing in for a chip.
+   */
+  reorder?: SalesOrderLinesReorder;
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -162,6 +190,13 @@ export function SalesOrderLinesTable({
   });
   const [collapsed, setCollapsed] = React.useState<Record<string, boolean>>({});
   const containerRef = React.useRef<HTMLDivElement>(null);
+  // Opt-in: the grouped read stays the default (it is what a finding's "Show line N" narrows,
+  // and what a set collapses), and reordering swaps to the flat view only while pressed on.
+  const [reordering, setReordering] = React.useState(false);
+  const reorderAvailable = Boolean(reorder?.enabled);
+  React.useEffect(() => {
+    if (!reorderAvailable) setReordering(false);
+  }, [reorderAvailable]);
 
   const groups = React.useMemo(() => groupExplodedLines(lines), [lines]);
 
@@ -415,6 +450,60 @@ export function SalesOrderLinesTable({
     columnResizeMode: 'onChange',
   });
 
+  // Reorder mode's own flat rows, in the order the draft currently holds them - not grouped,
+  // and not paged: "drop anywhere in the table" means every line has to be on screen and a
+  // drop position has to mean what it looks like.
+  const flatRows = React.useMemo<DisplayRow[]>(
+    () =>
+      [...lines]
+        .sort((a, b) => a.line_no - b.line_no)
+        .map((line) => ({
+          line,
+          groupKey: line.id,
+          isCompanion: false,
+          companionCount: 0,
+          sourcePoLineNo: line.source_po_line_no ?? null,
+        })),
+    [lines],
+  );
+
+  const dragHandleColumn = React.useMemo<ColumnDef<DisplayRow>>(
+    () => ({
+      id: 'drag_handle',
+      header: () => <span className="sr-only">Reorder</span>,
+      cell: ({ row }) => <DataGridTableDndRowHandle rowId={row.original.line.id} />,
+      size: 44,
+      minSize: 44,
+      meta: { headerTitle: 'Reorder', skeleton: <Skeleton className="size-7" /> },
+    }),
+    [],
+  );
+  const dragColumns = React.useMemo(
+    () => [dragHandleColumn, ...columns],
+    [columns, dragHandleColumn],
+  );
+
+  const dragTable = useReactTable({
+    columns: dragColumns,
+    data: flatRows,
+    getRowId: (row) => row.line.id,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
+  });
+
+  const handleRowDragEnd = React.useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || !reorder || active.id === over.id) return;
+      const ids = flatRows.map((row) => row.line.id);
+      const oldIndex = ids.indexOf(String(active.id));
+      const newIndex = ids.indexOf(String(over.id));
+      if (oldIndex === -1 || newIndex === -1) return;
+      reorder.onReorder(arrayMove(ids, oldIndex, newIndex));
+    },
+    [flatRows, reorder],
+  );
+
   const explodedSets = groups.filter((group) => group.companions.length > 0).length;
 
   /**
@@ -483,6 +572,75 @@ export function SalesOrderLinesTable({
     );
   }
 
+  const reorderToggle = reorderAvailable ? (
+    <Button
+      type="button"
+      variant={reordering ? 'primary' : 'outline'}
+      size="sm"
+      onClick={() => setReordering((current) => !current)}
+    >
+      {reordering ? (
+        <>
+          <Check className="size-4" aria-hidden />
+          Done reordering
+        </>
+      ) : (
+        <>
+          <GripVertical className="size-4" aria-hidden />
+          Reorder lines
+        </>
+      )}
+    </Button>
+  ) : null;
+
+  /**
+   * Reorder mode: the same section, but flat and draggable, pressed on from the toggle
+   * above. Not the grouped read below - see `reorder`'s own doc comment for why a set's
+   * cluster and a free drag cannot share a view - and not paginated, because a drop target
+   * has to be reachable on screen.
+   */
+  if (reordering) {
+    return (
+      <div ref={containerRef}>
+        <DataGrid
+          table={dragTable}
+          recordCount={flatRows.length}
+          isLoading={false}
+          listingKey="projects.projects.view::project-sales-order-lines"
+          tableLayout={{ width: 'fixed', columnsResizable: true }}
+        >
+          <Card>
+            <LinesSectionHeader
+              lineCount={lines.length}
+              explodedSets={explodedSets}
+              focused={false}
+              trailing={reorderToggle}
+            />
+
+            <CardTable>
+              {lines.length === 0 ? (
+                <div className="px-6 py-10 text-center">
+                  <h3 className="text-sm font-semibold">This draft has no lines</h3>
+                  <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                    Rebuild it from the purchase order and its delivery schedule.
+                  </p>
+                </div>
+              ) : (
+                <ScrollArea>
+                  <DataGridTableDndRows
+                    handleDragEnd={handleRowDragEnd}
+                    dataIds={flatRows.map((row) => row.line.id)}
+                  />
+                  <ScrollBar orientation="horizontal" />
+                </ScrollArea>
+              )}
+            </CardTable>
+          </Card>
+        </DataGrid>
+      </div>
+    );
+  }
+
   return (
     <div ref={containerRef}>
       <DataGrid
@@ -499,6 +657,7 @@ export function SalesOrderLinesTable({
             explodedSets={explodedSets}
             focused={Boolean(focusedGroupKey)}
             onClearFocus={onClearFocus}
+            trailing={reorderToggle}
           />
 
           <CardTable>

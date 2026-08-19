@@ -307,3 +307,15 @@ class ScheduleColumnDismiss(BaseModel):
 class ScheduleConfirmRequest(BaseModel):
     acknowledge_unreconciled: bool = False
     reason: Optional[str] = None
+
+
+class DeliveryScheduleDeleteResponse(BaseModel):
+    """What a hard delete actually removed, keyed by ``schema.table``.
+
+    Same shape as `SalesOrderDeleteResponse`: the counts are reported rather than
+    swallowed, so an operator (or a test) reading the result sees what was CONSIDERED,
+    not only that something happened.
+    """
+
+    success: bool = True
+    deleted: Dict[str, int] = {}

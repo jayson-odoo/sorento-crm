@@ -282,6 +282,11 @@ upload).
 - **Release (Phase 2, 19 August 2026):** a released line returns WHOLE to the board rather than
   keeping its buy parts frozen - `_check_line` permits no partial cover; a partial-cover seam is
   a follow-up.
+- **Release, corrected (captain, 19 August 2026):** `release` gives up the project's claim
+  ENTIRELY, not just the reserve - the reserve frees at its own location AND the Buy this line
+  held is no longer a purchase for this line; it becomes a POOL purchase (the line's non-`actioned`
+  OI rows move to the pool location with a note, and a `RELEASE` change row makes that visible in
+  the worklist the way a `DELAY` row does).
 
 ## 7. Risks
 
@@ -535,6 +540,17 @@ the planner can correct course (e.g. accept the suggested Release instead of Kee
 retry. Separately, `project_supply_service.confirm()`'s free-stock computation for a **named,
 unchanged** line should credit back that same order's own currently-active reserve on that exact
 line before checking availability, rather than validating it as fresh demand.
+
+**Defect A fixed 19 August 2026:** `_check_line`/`_check_borrow` now credit back, per component
+(line, kind, location[, donor]), whatever this order's own active-or-just-superseded revision
+already held there; a resubmitted amount up to that carry is exempt from the recheck entirely
+(the increase alone, if any, still competes against the same free-stock figure a fresh ask
+would). Defect B (`applied_at` stamped on a wholly-failed apply) was already fixed separately -
+see `test_apply_stamps_applied_at_only_when_something_actually_applied`. Tests:
+`tests/test_so_supply_confirmation.py` (re-confirm survives a rival, a genuine increase still
+competes and is refused by the delta only, a move to a different location competes fully) and
+`tests/test_planning_changes.py::test_apply_carries_a_kept_lines_own_reserve_past_a_rival_that_moved_in`
+(the section-10 scenario end to end via `apply()`).
 
 ### Board and Order Inquiries (unchanged, as the failure predicts)
 

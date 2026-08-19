@@ -48,7 +48,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -64,6 +64,7 @@ from app.models.project_so import (
     ProjectPOLine,
     ProjectPOVersion,
     ProjectSalesOrder,
+    SOAmendment,
 )
 from app.models.projects import (
     Project,
@@ -2264,6 +2265,185 @@ class ProjectScheduleService:
             version_id, index, state=PROPOSAL_REJECTED,
             actor_user_id=actor_user_id, apply_overrides=False,
         )
+
+    # ------------------------------------------------------------------- delete
+
+    def get_schedule(self, schedule_id: str) -> DeliverySchedule:
+        schedule = self.db.get(DeliverySchedule, schedule_id)
+        if schedule is None:
+            raise AppException(
+                status_code=404,
+                message="Delivery schedule not found.",
+                code="delivery_schedule_not_found",
+            )
+        return schedule
+
+    def _describe_version(self, version: DeliveryScheduleVersion) -> str:
+        return version.revision_label or f"version {version.version_no}"
+
+    def _delete_blockers(self, version: DeliveryScheduleVersion) -> List[str]:
+        """Why THIS version may not be deleted, or an empty list.
+
+        This is still the experimental phase (captain's call): CONFIRMING a version does
+        not by itself block a delete. Only a confirmed version that is a LIVE commitment
+        does -- built into a published or amended sales order (``schedule_version_id``),
+        or named as either end of a published amendment's delta. An unconfirmed version is
+        always free to go, and a confirmed one nobody built on is too.
+        """
+        if version.confirmed_at is None:
+            return []
+        blockers: List[str] = []
+        orders = (
+            self.db.query(ProjectSalesOrder)
+            .filter(
+                ProjectSalesOrder.schedule_version_id == version.id,
+                ProjectSalesOrder.status.in_(AUTHORED_LIVE_STATUSES),
+            )
+            .all()
+        )
+        for order in orders:
+            blockers.append(f"{order.provisional_ref} was built from it")
+        amendments = (
+            self.db.query(SOAmendment)
+            .filter(
+                SOAmendment.from_version_kind == "schedule",
+                or_(
+                    SOAmendment.from_version_id == version.id,
+                    SOAmendment.to_version_id == version.id,
+                ),
+            )
+            .all()
+        )
+        for amendment in amendments:
+            order = self.db.get(ProjectSalesOrder, amendment.project_sales_order_id)
+            reference = order.provisional_ref if order is not None else "an order"
+            blockers.append(f"an amendment on {reference} names it")
+        return blockers
+
+    def _delete_version_document(
+        self, version: DeliveryScheduleVersion, deleted: Dict[str, int]
+    ) -> None:
+        """The link row, then the attachment itself -- both, or the delete leaves an
+        orphaned upload the Files admin can never see again. Storage bytes are best-effort
+        (`delete_object_best_effort`, same as every other delete in this codebase): a
+        failed object delete must never turn a schedule that WAS removed into a 500."""
+        from app.models.resources import Attachment
+        from app.services.entity_attachment_service import EntityAttachmentService
+        from app.services.storage_router import delete_object_best_effort, extract_key
+
+        EntityAttachmentService(self.db).delete_links_for_entity(
+            ATTACHMENT_ENTITY_TYPE, str(version.id)
+        )
+        if not version.attachment_id:
+            return
+        attachment = self.db.get(Attachment, version.attachment_id)
+        if attachment is None:
+            return
+        key = extract_key(attachment.file_path) if attachment.file_path else None
+        if key:
+            delete_object_best_effort(attachment.storage_provider, key)
+        self.db.delete(attachment)
+        label = Attachment.__table__.fullname
+        deleted[label] = deleted.get(label, 0) + 1
+
+    def _delete_version_rows(
+        self, version: DeliveryScheduleVersion, deleted: Dict[str, int]
+    ) -> None:
+        """Cells, the stored document, then the version row itself.
+
+        ``ProjectDeliveryPhase.source_version_id`` is SET NULL on delete (same reasoning as
+        ``delete_order`` leaving ``sales_order_lines.phase_id`` alone): the phase is the
+        PROJECT's record, and this version merely wrote it once.
+        """
+
+        def _wipe(model, predicate) -> None:
+            label = model.__table__.fullname
+            removed = self.db.query(model).filter(predicate).delete(synchronize_session=False)
+            deleted[label] = deleted.get(label, 0) + int(removed or 0)
+
+        _wipe(DeliveryScheduleCell, DeliveryScheduleCell.version_id == version.id)
+        self._delete_version_document(version, deleted)
+        _wipe(DeliveryScheduleVersion, DeliveryScheduleVersion.id == version.id)
+
+    def delete_schedule(self, schedule_id: str) -> Dict[str, int]:
+        """Hard delete: every version, its cells and its document, then the schedule
+        itself. The purchase order this schedule was checked against is untouched.
+
+        Refused, 409, naming the blocker, when any version is a live commitment (see
+        ``_delete_blockers``). Every version is checked before anything is deleted, so the
+        refusal never leaves the schedule half gone.
+
+        Returns counts keyed by ``schema.table``, the same shape
+        ``ProjectSODraftService.delete_order`` reports.
+        """
+        schedule = self.get_schedule(schedule_id)
+        versions = (
+            self.db.query(DeliveryScheduleVersion)
+            .filter(DeliveryScheduleVersion.delivery_schedule_id == schedule.id)
+            .order_by(DeliveryScheduleVersion.version_no.asc())
+            .all()
+        )
+        blockers = [
+            f"{self._describe_version(version)}: {reason}"
+            for version in versions
+            for reason in self._delete_blockers(version)
+        ]
+        if blockers:
+            raise AppException(
+                status_code=409,
+                message=f"This schedule cannot be deleted: {'; '.join(blockers)}.",
+                code="schedule_has_live_commitments",
+            )
+        deleted: Dict[str, int] = {}
+        for version in versions:
+            self._delete_version_rows(version, deleted)
+        removed = (
+            self.db.query(DeliverySchedule)
+            .filter(DeliverySchedule.id == schedule.id)
+            .delete(synchronize_session=False)
+        )
+        deleted[DeliverySchedule.__table__.fullname] = removed
+        self.db.flush()
+        return deleted
+
+    def delete_schedule_version(self, version_id: str) -> Dict[str, int]:
+        """Hard delete: one version's cells and document, then the version row.
+
+        Refuses the LAST version of a schedule (409 ``schedule_version_last``) -- delete
+        the schedule instead, which is what actually removes it -- and runs the same
+        live-commitment check ``delete_schedule`` does, scoped to this one version.
+        """
+        version = self.get_version(version_id)
+        schedule = self.schedule_for(version)
+        sibling_count = (
+            self.db.query(func.count(DeliveryScheduleVersion.id))
+            .filter(DeliveryScheduleVersion.delivery_schedule_id == schedule.id)
+            .scalar()
+            or 0
+        )
+        if sibling_count <= 1:
+            raise AppException(
+                status_code=409,
+                message=(
+                    "This is the only version of this schedule. Delete the schedule "
+                    "instead."
+                ),
+                code="schedule_version_last",
+            )
+        reasons = self._delete_blockers(version)
+        if reasons:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{self._describe_version(version)} cannot be deleted: "
+                    f"{'; '.join(reasons)}."
+                ),
+                code="schedule_version_has_live_commitments",
+            )
+        deleted: Dict[str, int] = {}
+        self._delete_version_rows(version, deleted)
+        self.db.flush()
+        return deleted
 
     # --------------------------------------------------------------- serialising
 

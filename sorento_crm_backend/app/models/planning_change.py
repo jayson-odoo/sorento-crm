@@ -38,6 +38,14 @@ PLANNING_CHANGE_SOURCE_SO_BOOK_UPLOAD = "so_book_upload"
 PLANNING_CHANGE_DECISION_ACCEPT = "accept"
 PLANNING_CHANGE_DECISION_KEEP = "keep"
 PLANNING_CHANGE_DECISION_BOARD = "board"
+# A `replan`/`qty_up` row (one carrying a `proposal`) can be composed rather than merely
+# accepted (captain, 19 August 2026: "I can't really amend also right to set the borrow,
+# clicking accept here has no effect" - `accept` on a replan row recorded a decision Apply
+# never executed). `confirm` takes the board's own proposal AS IS, turned into a
+# composition server-side (`composition_from_proposal`); `amend` takes the planner's own
+# composition, built the same way `BoardAmendDialog` builds one, and requires it.
+PLANNING_CHANGE_DECISION_CONFIRM = "confirm"
+PLANNING_CHANGE_DECISION_AMEND = "amend"
 
 # `PlanningChangeRow.applied_state`.
 PLANNING_CHANGE_STATE_PENDING = "pending"
@@ -156,6 +164,10 @@ class PlanningChangeRow(Base, CompanyScopedMixin):
     # the board itself renders, so the row and the board never show two different answers.
     proposal_json = Column(JSONB, nullable=True)
     decision = Column(String(16), nullable=True)
+    # The `ConfirmLine` body this row would post at Apply, for `confirm`/`amend` only -
+    # `confirm` derives it from `proposal_json` server-side, `amend` stores what the planner
+    # composed in the reused `BoardAmendDialog`. `null` for every other decision.
+    composition_json = Column(JSONB, nullable=True)
     applied_state = Column(
         String(16), nullable=False, server_default=PLANNING_CHANGE_STATE_PENDING
     )

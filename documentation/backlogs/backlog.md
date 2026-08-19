@@ -43,3 +43,5 @@ Format: `ID · Title · Source plan · Priority · Status`. IDs are `BL-<NNN>`, 
 > Seeded 2026-07-13 from in-flight work at the time of the documentation restructure. Historical
 > plans predating this register carry their own inline "Deferred / follow-ups" sections; migrate
 > those into rows here as each is next touched (going-forward, not a bulk sweep).
+
+- **BL-032** (2026-08-19): `ReorderLevelUploadDialog.test.tsx` "applies on confirm and reports what actually happened" flakes in CI - asserts the Confirm button is gone while it is still in its loading state (spinner). Passes locally. Fix: `waitFor` the mutation to settle before the not-in-document assertion. Cost one rerun on PR #224.
