@@ -11,6 +11,7 @@ would otherwise silently become a SKU that gets planned and purchased.
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -1036,7 +1037,8 @@ def _record_rows_never_written(read: ReadResult, resolved: _Resolved,
 
 def apply(db: Session, file_data: bytes, doc_type: str = SO,
           actor: Optional[str] = None, outcome: Optional[ImportOutcome] = None,
-          on_total_rows: Optional[Callable[[int], None]] = None) -> dict:
+          on_total_rows: Optional[Callable[[int], None]] = None,
+          file_name: Optional[str] = None) -> dict:
     """Write the upload. Returns the same counts the preview showed.
 
     Closing is `line_status = 'closed'`, not a delete. The line existed and was planned
@@ -1189,6 +1191,12 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         order_ids[number] = header.id
 
     applied = {"added": 0, "updated": 0, "closed": 0, "unchanged": 0}
+    # The CORE line id each change actually wrote, keyed by the change object's identity
+    # (stable for the life of this call: `diff.changes` is never rebuilt below). Best-effort
+    # readers downstream - `planning_change_service.build_batch` - need this because an
+    # ADDED change's own `row_ref` is the source ROW NUMBER, not a line id: there is no id
+    # to have until the insert below runs.
+    applied_line_ids: dict[int, str] = {}
     for c in diff.changes:
         source_row = (int(c.after.row_ref)
                       if c.after is not None and (c.after.row_ref or "").isdigit() else None)
@@ -1208,6 +1216,7 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                 outcome.updated(code=oc.LINE_CLOSED, identity=identity,
                                 value=c.doc_number, entity_type="order_line",
                                 entity_id=c.before.row_ref)
+                applied_line_ids[id(c)] = str(c.before.row_ref)
             continue
 
         if c.kind == ADDED:
@@ -1229,11 +1238,18 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                 setattr(revived, bind.date, c.after.required_date)
                 _refresh_money(revived, extra, bind)
                 applied["added"] += 1
+                applied_line_ids[id(c)] = str(revived.id)
                 outcome.success(row=source_row, code=oc.CREATED, identity=identity,
                                 value=c.doc_number, entity_type="order_line",
                                 entity_id=revived.id)
                 continue
+            # An explicit id, not the column's own default: `planning_change_service`
+            # (called after this function flushes) needs the CORE line id an ADDED change
+            # wrote, and that default is a client-side callable SQLAlchemy would not
+            # resolve onto this instance until the flush at the end of this loop.
+            new_line_id = str(uuid.uuid4())
             fields = {
+                "id": new_line_id,
                 bind.header_fk: order_ids[c.doc_number],
                 "product_id": product_id,
                 "warehouse_id": warehouse_id,
@@ -1246,6 +1262,7 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                 fields[col] = extra.get(key)
             db.add(bind.line(**fields))
             applied["added"] += 1
+            applied_line_ids[id(c)] = new_line_id
             outcome.success(row=source_row, code=oc.CREATED, identity=identity,
                             value=c.doc_number)
             continue
@@ -1287,6 +1304,7 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         setattr(line, bind.date, c.after.required_date)
         _refresh_money(line, read.extras.get(str(c.after.row_ref), {}), bind)
         applied["updated"] += 1
+        applied_line_ids[id(c)] = str(line.id)
         outcome.updated(row=source_row, identity=identity, value=c.doc_number,
                         entity_type="order_line", entity_id=line.id)
 
@@ -1325,9 +1343,38 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         except Exception:  # pragma: no cover - defensive, see above
             logger.exception("plan exception batch failed for a confirmed SO upload")
 
+    # PLAN-so-book-diff-replanning.md section 2: the SO book's own reaction. Best-effort
+    # for the same reason the exception batch above is - the upload has already succeeded,
+    # and a defect in the reaction must cost the operator a batch the next upload produces
+    # again, never the upload itself. Only the SO channel plans against a project; a PO
+    # book has nothing to react to here.
+    planning_change_batch = None
+    if doc_type == SO and diff.has_material_change:
+        try:
+            from app.services import planning_change_service
+
+            batch = planning_change_service.build_batch(
+                db,
+                diff,
+                applied_line_ids=applied_line_ids,
+                order_ids=order_ids,
+                actor=actor,
+                import_job_id=getattr(outcome, "import_job_id", None),
+                file_name=file_name,
+            )
+            if batch is not None:
+                planning_change_batch = {
+                    "id": str(batch.id),
+                    "order_count": batch.order_count,
+                    "line_count": batch.line_count,
+                }
+        except Exception:  # pragma: no cover - defensive, see above
+            logger.exception("planning change batch failed for a confirmed SO upload")
+
     return {
         "ok": True,
         "exception_batch_id": exception_batch_id,
+        "planning_change_batch": planning_change_batch,
         # Everything this upload accounted for: every non-blank row of the file, plus the
         # lines it closed by absence. One outcome per unit, so processed reaches total exactly.
         "total_rows": total_rows,

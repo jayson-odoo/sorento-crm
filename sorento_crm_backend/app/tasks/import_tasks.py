@@ -3615,7 +3615,7 @@ def process_outstanding_import(db_job_id: str, file_data: bytes, filename: str,
         entity_type="sales_order" if doc_type == "outstanding_so" else "purchase_order",
         apply_fn=lambda db, outcome, on_total: outstanding_import_service.apply(
             db, file_data, doc_type, actor=user_id, outcome=outcome,
-            on_total_rows=on_total,
+            on_total_rows=on_total, file_name=filename,
         ),
         unreadable_message=_missing_columns_message,
         written_rows=lambda r: sum(

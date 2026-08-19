@@ -279,6 +279,9 @@ upload).
 - Advance replan is proposed, never auto-confirmed (captain: "user confirm").
 - Whether an authored (non-adopted) project SO's lines are also "planned lines" here: yes if the
   order has a planning record; the batch does not care how the record was born.
+- **Release (Phase 2, 19 August 2026):** a released line returns WHOLE to the board rather than
+  keeping its buy parts frozen - `_check_line` permits no partial cover; a partial-cover seam is
+  a follow-up.
 
 ## 7. Risks
 
