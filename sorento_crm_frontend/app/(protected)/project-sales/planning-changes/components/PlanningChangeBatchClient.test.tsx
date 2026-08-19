@@ -103,34 +103,58 @@ describe('PlanningChangeBatchClient - every order section renders', () => {
   it('shows the source file, when and by whom, and every order incl. the all-not-decided one', async () => {
     renderClient();
 
-    expect(await screen.findByText('JAN - DEC 2026 ORDER.xlsx')).toBeInTheDocument();
-    expect(screen.getByText(/Uploaded .* by Aina/)).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'JAN - DEC 2026 ORDER.xlsx' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Source: AutoCount SO book upload/)).toBeInTheDocument();
+    expect(screen.getByText(/· 19\/08\/2026, 4:42 pm · Aina/)).toBeInTheDocument();
+    expect(
+      screen.getByText('Scope: 12 planned lines on 3 orders moved · 10 lines with a decision · 2 lines not decided'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Pending review')).toBeInTheDocument();
 
-    expect(screen.getByText(/SO403765 · BATHE CODE SDN BHD · rev 4/)).toBeInTheDocument();
-    expect(screen.getByText(/SO400875 · MATRIX EXCELCON · rev 2/)).toBeInTheDocument();
+    // The SO number is its own link (AC-R04); the rest of the heading sits beside it.
+    expect(screen.getByRole('link', { name: 'SO403765' })).toBeInTheDocument();
+    expect(screen.getByText(/· BATHE CODE SDN BHD · rev 4/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'SO400875' })).toBeInTheDocument();
+    expect(screen.getByText(/· MATRIX EXCELCON · rev 2/)).toBeInTheDocument();
     // The order whose rows are ALL "Not decided" (AC section-4 "every section renders").
-    expect(
-      screen.getByText(/SO401220 · GREENFIELD DEVELOPMENT SDN BHD · rev 1/),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'SO401220' })).toBeInTheDocument();
+    expect(screen.getByText(/· GREENFIELD DEVELOPMENT SDN BHD · rev 1/)).toBeInTheDocument();
     const notDecided = screen.getAllByText('Not decided');
     // held-column "Not decided" AND the decision-column "Not decided" both use the same
     // words, so this order alone contributes at least its two rows' decision cells.
     expect(notDecided.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('links the SO number to its own document, by kind (adopted vs authored)', async () => {
+    renderClient();
+    await screen.findByRole('heading', { name: 'JAN - DEC 2026 ORDER.xlsx' });
+
+    // SO403765 is adopted (mirror of the AutoCount book) -> the core sales order.
+    expect(screen.getByRole('link', { name: 'SO403765' })).toHaveAttribute(
+      'href',
+      '/scm/sales-orders/core-403765',
+    );
+    // SO400875 is an authored project SO -> the project's own sales-order page.
+    expect(screen.getByRole('link', { name: 'SO400875' })).toHaveAttribute(
+      'href',
+      '/project-sales/proj-matrix-excelcon/sales-orders/pso-400875',
+    );
+  });
+
   it('states the change, held today, facts, the verb and the reason on a row', async () => {
     renderClient();
-    await screen.findByText('JAN - DEC 2026 ORDER.xlsx');
+    await screen.findByRole('heading', { name: 'JAN - DEC 2026 ORDER.xlsx' });
 
     // Row 1: delay within window, reserve held -> keep. Scoped to its own row: "in window"
     // and "+14 d" chips, and the "Keep" pill, all repeat on several other rows.
     const changeCell = screen.getByText(
-      /Required 20\/08\/2026 -> 03\/09\/2026 \(\+14 d\)/,
+      /Delivery date 20\/08\/2026 -> 03\/09\/2026 \(\+14 d\)/,
     );
     const row = changeCell.closest('tr') as HTMLElement;
     expect(within(row).getByText('Reserve 66 at BRW-BB · Buy 6')).toBeInTheDocument();
-    expect(within(row).getByText('in window')).toBeInTheDocument();
+    expect(within(row).getByText('in window · 60 d')).toBeInTheDocument();
     expect(within(row).getByText('+14 d')).toBeInTheDocument();
     expect(within(row).getAllByTitle('Keep').length).toBeGreaterThan(0);
     expect(
@@ -140,20 +164,30 @@ describe('PlanningChangeBatchClient - every order section renders', () => {
     ).toBeInTheDocument();
   });
 
-  it('shows dealer hot-selling and discontinued chips where the facts say so', async () => {
+  it('shows dealer hot-selling, project hot-selling and discontinued chips with their proof', async () => {
     renderClient();
-    await screen.findByText('JAN - DEC 2026 ORDER.xlsx');
+    await screen.findByRole('heading', { name: 'JAN - DEC 2026 ORDER.xlsx' });
 
-    expect(screen.getByText('hot-selling')).toBeInTheDocument();
+    const dealerChip = screen.getByText('dealer hot-selling · ABC A at BRW, BRW-IB');
+    expect(dealerChip).toHaveAttribute(
+      'title',
+      'ABC A by delivered quantity on retail (dealer) demand in the last 365 days at BRW, BRW-IB.',
+    );
+    const projectChip = screen.getByText('project hot-selling · ABC A at BRW-BB');
+    expect(projectChip).toHaveAttribute(
+      'title',
+      'ABC A by delivered quantity on project demand in the last 365 days at BRW-BB.',
+    );
     expect(screen.getByText('discontinued')).toBeInTheDocument();
-    // "PO placed" is on both the buy-actioned row and the closed row that kept an
-    // already-actioned inquiry row (AC-R08) - so at least one, not exactly one.
-    expect(screen.getAllByText('PO placed').length).toBeGreaterThan(0);
+    // One PO placed on the buy-actioned row, another on the closed row that kept an
+    // already-actioned inquiry row (AC-R08) - different PO numbers, both named.
+    expect(screen.getByText('PO placed · PO2026-0412')).toBeInTheDocument();
+    expect(screen.getByText('PO placed · PO2026-0398')).toBeInTheDocument();
   });
 
   it('shows the fresh proposal for a replan row', async () => {
     renderClient();
-    await screen.findByText('JAN - DEC 2026 ORDER.xlsx');
+    await screen.findByRole('heading', { name: 'JAN - DEC 2026 ORDER.xlsx' });
 
     expect(screen.getByText('Reserve 40 at BRW-BB · Buy 20')).toBeInTheDocument();
     expect(screen.getByTestId('trail-info-pcb-1-so400875-l2-advance')).toBeInTheDocument();
@@ -163,7 +197,7 @@ describe('PlanningChangeBatchClient - every order section renders', () => {
 describe('PlanningChangeBatchClient - switching a decision', () => {
   it('writes the new decision via the stub PUT', async () => {
     renderClient();
-    await screen.findByText('JAN - DEC 2026 ORDER.xlsx');
+    await screen.findByRole('heading', { name: 'JAN - DEC 2026 ORDER.xlsx' });
 
     const keepAsIsButtons = screen.getAllByRole('button', { name: 'Keep as is' });
     fireEvent.click(keepAsIsButtons[0]);
@@ -179,7 +213,7 @@ describe('PlanningChangeBatchClient - switching a decision', () => {
 describe('PlanningChangeBatchClient - Apply', () => {
   it('Apply is disabled with 0 accepted rows and opens a confirm dialog otherwise', async () => {
     renderClient();
-    await screen.findByText('JAN - DEC 2026 ORDER.xlsx');
+    await screen.findByRole('heading', { name: 'JAN - DEC 2026 ORDER.xlsx' });
 
     const applyButton = screen.getByRole('button', { name: /Apply \d+ changes?/ });
     expect(applyButton).toBeEnabled();
@@ -190,7 +224,7 @@ describe('PlanningChangeBatchClient - Apply', () => {
 
   it('applies the accepted rows on confirm', async () => {
     renderClient();
-    await screen.findByText('JAN - DEC 2026 ORDER.xlsx');
+    await screen.findByRole('heading', { name: 'JAN - DEC 2026 ORDER.xlsx' });
 
     fireEvent.click(screen.getByRole('button', { name: /Apply \d+ changes?/ }));
     await screen.findByText('Apply planning changes');
@@ -205,7 +239,9 @@ describe('PlanningChangeBatchClient - already applied result states', () => {
     getPlanningChangeBatch.mockResolvedValue(structuredClone(MOCK_PLANNING_CHANGE_BATCH_APPLIED));
     renderClient('pcb-0');
 
-    expect(await screen.findByText('JUN - DEC 2026 REVISION.xlsx')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'JUN - DEC 2026 REVISION.xlsx' }),
+    ).toBeInTheDocument();
     // The two rows that wrote successfully (pcr-a1, pcr-a2) plus the header's own Apply button,
     // which already reads "Applied" once a batch has an `applied_at`.
     expect(screen.getAllByText('Applied').length).toBeGreaterThanOrEqual(2);
@@ -216,7 +252,7 @@ describe('PlanningChangeBatchClient - already applied result states', () => {
     getPlanningChangeBatch.mockResolvedValue(structuredClone(MOCK_PLANNING_CHANGE_BATCH_APPLIED));
     renderClient('pcb-0');
 
-    await screen.findByText('JUN - DEC 2026 REVISION.xlsx');
+    await screen.findByRole('heading', { name: 'JUN - DEC 2026 REVISION.xlsx' });
     expect(screen.getByText(/Partly failed/)).toBeInTheDocument();
     const failed = screen.getAllByText('Failed');
     expect(failed.length).toBeGreaterThan(0);
@@ -230,12 +266,44 @@ describe('PlanningChangeBatchClient - already applied result states', () => {
     getPlanningChangeBatch.mockResolvedValue(structuredClone(MOCK_PLANNING_CHANGE_BATCH_APPLIED));
     renderClient('pcb-0');
 
-    await screen.findByText('JUN - DEC 2026 REVISION.xlsx');
+    await screen.findByRole('heading', { name: 'JUN - DEC 2026 REVISION.xlsx' });
     const superseded = screen.getByText('Superseded on the board');
     expect(superseded).toBeInTheDocument();
     expect(superseded).toHaveAttribute(
       'title',
       'The board confirmed revision 6 on this line after this batch was built, so this suggestion no longer applies.',
     );
+  });
+});
+
+describe('PlanningChangeBatchClient - what Apply did (result strip)', () => {
+  it('states the revision, the failure, the inquiry rows, the board and purchasing, with links', async () => {
+    getPlanningChangeBatch.mockResolvedValue(structuredClone(MOCK_PLANNING_CHANGE_BATCH_APPLIED));
+    renderClient('pcb-0');
+
+    await screen.findByRole('heading', { name: 'JUN - DEC 2026 REVISION.xlsx' });
+    const strip = screen.getByTestId('planning-change-result-strip');
+    expect(strip.textContent).toContain('Applied 10/08/2026, 6:05 pm by Aina');
+    expect(strip.textContent).toContain('1 order revised (SO398800 rev 5)');
+    expect(strip.textContent).toContain('1 order failed');
+    expect(strip.textContent).toContain('1 Order Inquiry row changed (1 CANCEL_BALANCE)');
+    expect(strip.textContent).toContain('1 line back on the board');
+    expect(strip.textContent).toContain('purchasing notified');
+
+    expect(within(strip).getByRole('link', { name: 'Open on the board' })).toHaveAttribute(
+      'href',
+      '/project-sales/fulfilment-planning?orders=SO398800',
+    );
+    expect(within(strip).getByRole('link', { name: 'Order Inquiries' })).toHaveAttribute(
+      'href',
+      '/project-sales/order-inquiries',
+    );
+  });
+
+  it('renders no result strip before Apply has run', async () => {
+    renderClient();
+    await screen.findByRole('heading', { name: 'JAN - DEC 2026 ORDER.xlsx' });
+
+    expect(screen.queryByTestId('planning-change-result-strip')).not.toBeInTheDocument();
   });
 });

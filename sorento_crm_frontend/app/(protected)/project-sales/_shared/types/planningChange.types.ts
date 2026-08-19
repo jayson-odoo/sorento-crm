@@ -32,7 +32,12 @@ export type PlanningChangeDecision = 'accept' | 'keep' | 'board' | null;
  */
 export type PlanningChangeAppliedState = 'pending' | 'applied' | 'failed' | 'superseded';
 
-/** The line's state at one side of the change: what it was, or what it is now. */
+/**
+ * The line's state at one side of the change: what it was, or what it is now.
+ *
+ * `required_date` is the wire field name (matches the AutoCount book's own column); the UI
+ * never says "Required" - Sorento's own screens call it "Delivery date" throughout.
+ */
 export interface PlanningChangeFromTo {
   required_date?: string | null;
   qty?: string | null;
@@ -68,14 +73,52 @@ export interface PlanningChangeHeld {
 }
 
 /**
+ * A yes/no fact with its evidence: WHERE it was found, so a chip can be hovered rather than
+ * taken on faith. `where` is a list of location codes, e.g. `['BRW', 'BRW-IB']`.
+ */
+export interface PlanningChangeEvidencedFact {
+  value: boolean;
+  where: string[];
+}
+
+/**
+ * Whether the new date still lands inside the reserve window, and the window itself - not
+ * just the verdict, so "beyond window" can say WHICH window and by how much.
+ */
+export interface PlanningChangeReserveWindowFact {
+  value: boolean;
+  /** The window's length in days (currently a flat 60). */
+  window_days: number;
+  /** The line's new delivery date - what the window is being checked against. */
+  new_date: string;
+  /** The window's own end date, measured from the line's previous delivery date. */
+  window_end: string;
+}
+
+/** Whether purchasing already placed the Buy this line holds, and which PO it landed on. */
+export interface PlanningChangeBuyActionedFact {
+  value: boolean;
+  po_number: string | null;
+}
+
+/**
  * The facts the rule used to choose the verb (AC-R02): "nothing is inferred by the reader; the
- * row says which fact chose the verb."
+ * row says which fact chose the verb, and the fact carries its own proof."
+ *
+ * `dealer_hot_selling` is retail (dealer) demand: this item is an ABC-A mover by delivered
+ * quantity on dealer orders in the last 365 days, at the locations named. `project_hot_selling`
+ * is the same classification read against PROJECT demand instead - a different demand pool, so
+ * a line can be hot on one, the other, both, or neither. Both are proof-carrying so "hot
+ * selling" is never asserted without saying which demand and where.
  */
 export interface PlanningChangeFacts {
-  dealer_hot_selling: boolean;
+  dealer_hot_selling: PlanningChangeEvidencedFact;
+  project_hot_selling: PlanningChangeEvidencedFact;
   discontinued: boolean;
-  within_reserve_window: boolean;
-  buy_actioned: boolean;
+  /** How many days the delivery date moved, negative for an advance. Mirrors the row's own. */
+  days_moved: number;
+  within_reserve_window: PlanningChangeReserveWindowFact;
+  buy_actioned: PlanningChangeBuyActionedFact;
 }
 
 /** One Order Inquiry row this line already raised, as purchasing sees it today. */
@@ -125,6 +168,48 @@ export interface PlanningChangeOrder {
   project_label?: string | null;
   revision_no: number;
   rows: PlanningChangeRow[];
+
+  /**
+   * Addressing only, never rendered: how the SO number reaches its own document (AC-R04's
+   * "click the SO number"). An adopted order (mirror of the AutoCount book) opens
+   * `/scm/sales-orders/{core_sales_order_id}`; an authored project SO opens
+   * `/project-sales/{project_id}/sales-orders/{project_sales_order_id}`.
+   */
+  is_adopted: boolean;
+  core_sales_order_id?: string | null;
+  project_id?: string | null;
+}
+
+/** The kind of upload/event that raised a batch. One kind exists today; kept as a union. */
+export type PlanningChangeSourceKind = 'so_book_upload';
+
+export const PLANNING_CHANGE_SOURCE_KIND_LABEL: Record<PlanningChangeSourceKind, string> = {
+  so_book_upload: 'SO book upload',
+};
+
+/** What raised the batch - the trigger, said as data rather than left to be inferred. */
+export interface PlanningChangeBatchSource {
+  upload_id: string;
+  file_name: string;
+  kind: PlanningChangeSourceKind;
+  /** The import job this upload ran as - `/system-management/import-jobs/{import_job_id}`. */
+  import_job_id: string;
+}
+
+/**
+ * What Apply did, across the whole batch (AC-R05, AC-R06) - the "what happens next" a planner
+ * asks after pressing Apply, read back as data: which orders got a new revision, which did
+ * not and why, what purchasing's Order Inquiry list picked up, how many lines re-entered the
+ * board, and whether purchasing was told.
+ */
+export interface PlanningChangeResult {
+  orders_revised: { so_number: string; revision_no: number }[];
+  orders_failed: { so_number: string; reason: string }[];
+  /** One entry per Order Inquiry verb Apply raised or changed, e.g. `{ verb: 'DELAY', count: 2 }`. */
+  inquiry_rows_changed: { verb: string; count: number }[];
+  /** Lines that left the batch and re-entered the fulfilment planning board. */
+  lines_replanned: number;
+  purchasing_notified: boolean;
 }
 
 /** `GET /project-sales/planning-changes/{batch_id}`. */
@@ -132,9 +217,11 @@ export interface PlanningChangeBatch {
   id: string;
   created_at: string;
   created_by_name: string;
-  source: { upload_id: string; file_name: string };
+  source: PlanningChangeBatchSource;
   applied_at?: string | null;
   applied_by_name?: string | null;
+  /** `null` until Apply has run. */
+  result?: PlanningChangeResult | null;
   orders: PlanningChangeOrder[];
 }
 
@@ -143,7 +230,7 @@ export interface PlanningChangeBatchSummary {
   id: string;
   created_at: string;
   created_by_name: string;
-  source: { upload_id: string; file_name: string };
+  source: PlanningChangeBatchSource;
   order_count: number;
   line_count: number;
   /** Rows still pending a decision or an Apply. */

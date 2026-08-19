@@ -18,12 +18,15 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { FactChip } from '../../_shared/components/FactChip';
 import { ReactionPill } from '../../_shared/components/PlanningChangeReactionPill';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { usePlanningChangeBatch, usePlanningChangeMutations } from '../../_shared/hooks/usePlanningChanges';
-import type {
-  PlanningChangeOrder,
-  PlanningChangeRow,
+import {
+  PLANNING_CHANGE_SOURCE_KIND_LABEL,
+  type PlanningChangeBatch,
+  type PlanningChangeOrder,
+  type PlanningChangeRow,
 } from '../../_shared/types/planningChange.types';
 import { BoardTrailPopover } from '../../fulfilment-planning/components/BoardTrailPopover';
 import { sourceAt, sourceLabel } from '../../fulfilment-planning/components/BoardCellBreakdownDialog';
@@ -106,9 +109,8 @@ export function PlanningChangeBatchClient({ batchId }: { batchId: string }) {
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 break-words">
           <h1 className="text-xl font-semibold">{data.source.file_name}</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            {`Uploaded ${formatDateTimeInMalaysia(data.created_at)} by ${data.created_by_name}`}
-          </p>
+          <BatchMetaStrip batch={data} />
+          {data.result && <BatchResultStrip batch={data} />}
           <div className="mt-2">
             <AppliedStateBadge
               appliedAt={data.applied_at}
@@ -195,6 +197,113 @@ function AppliedStateBadge({
       <CheckCircle2 className="size-3.5" aria-hidden />
       {`Applied ${formatDateTimeInMalaysia(appliedAt)}${appliedByName ? ` by ${appliedByName}` : ''}`}
     </Badge>
+  );
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/**
+ * What triggered the batch (AC-R02's "nothing is inferred") - the upload, when, and by whom,
+ * plus how many lines it moved and how many are still undecided. The file name links to the
+ * import job it ran as, so "what got uploaded to cause this" is one click, not a question.
+ */
+function BatchMetaStrip({ batch }: { batch: PlanningChangeBatch }) {
+  const lineCount = batch.orders.reduce((total, order) => total + order.rows.length, 0);
+  const orderCount = batch.orders.length;
+  const decidedCount = batch.orders.reduce(
+    (total, order) => total + order.rows.filter((row) => row.decision !== null).length,
+    0,
+  );
+  const notDecidedCount = lineCount - decidedCount;
+
+  return (
+    <div className="mt-1 space-y-0.5 text-sm text-muted-foreground">
+      <p>
+        {`Source: AutoCount ${PLANNING_CHANGE_SOURCE_KIND_LABEL[batch.source.kind]} · `}
+        <Link
+          href={`/system-management/import-jobs/${batch.source.import_job_id}`}
+          className="text-primary hover:underline"
+        >
+          {batch.source.file_name}
+        </Link>
+        {` · ${formatDateTimeInMalaysia(batch.created_at)} · ${batch.created_by_name}`}
+      </p>
+      <p>
+        {`Scope: ${plural(lineCount, 'planned line')} on ${plural(orderCount, 'order')} moved · `}
+        {`${plural(decidedCount, 'line')} with a decision · ${plural(notDecidedCount, 'line')} not decided`}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * What Apply did (AC-R05, AC-R06) - the "what happens next" a planner asks right after
+ * pressing Apply, said as data: revisions written, failures and why, Order Inquiry rows
+ * purchasing now sees, lines back on the board, and whether purchasing was told.
+ */
+function BatchResultStrip({ batch }: { batch: PlanningChangeBatch }) {
+  const result = batch.result;
+  if (!result) return null;
+
+  const parts: React.ReactNode[] = [];
+  if (batch.applied_at) {
+    parts.push(
+      `Applied ${formatDateTimeInMalaysia(batch.applied_at)}${
+        batch.applied_by_name ? ` by ${batch.applied_by_name}` : ''
+      }`,
+    );
+  }
+  if (result.orders_revised.length > 0) {
+    parts.push(
+      `${plural(result.orders_revised.length, 'order')} revised (${result.orders_revised
+        .map((order) => `${order.so_number} rev ${order.revision_no}`)
+        .join(', ')})`,
+    );
+  }
+  if (result.orders_failed.length > 0) {
+    parts.push(`${plural(result.orders_failed.length, 'order')} failed`);
+  }
+  const inquiryTotal = result.inquiry_rows_changed.reduce((total, entry) => total + entry.count, 0);
+  if (inquiryTotal > 0) {
+    parts.push(
+      `${plural(inquiryTotal, 'Order Inquiry row')} changed (${result.inquiry_rows_changed
+        .map((entry) => `${entry.count} ${entry.verb}`)
+        .join(', ')})`,
+    );
+  }
+  parts.push(`${plural(result.lines_replanned, 'line')} back on the board`);
+  if (result.purchasing_notified) parts.push('purchasing notified');
+
+  const boardOrders = result.orders_revised.map((order) => order.so_number).join(',');
+
+  return (
+    <p className="mt-1 text-sm text-muted-foreground" data-testid="planning-change-result-strip">
+      {parts.map((part, index) => (
+        <React.Fragment key={index}>
+          {index > 0 && ' · '}
+          {part}
+        </React.Fragment>
+      ))}
+      {boardOrders && (
+        <>
+          {' · '}
+          <Link
+            href={`/project-sales/fulfilment-planning?orders=${boardOrders}`}
+            className="text-primary hover:underline"
+          >
+            Open on the board
+          </Link>
+        </>
+      )}
+      {inquiryTotal > 0 && (
+        <>
+          {' · '}
+          <Link href="/project-sales/order-inquiries" className="text-primary hover:underline">
+            Order Inquiries
+          </Link>
+        </>
+      )}
+    </p>
   );
 }
 
@@ -314,7 +423,14 @@ function OrderSection({
 
   return (
     <PanelDataGrid<PlanningChangeRow>
-      title={`${order.so_number} · ${order.customer_name ?? 'No customer'} · rev ${order.revision_no}`}
+      title={
+        <>
+          <Link href={orderHref(order)} className="text-primary hover:underline">
+            {order.so_number}
+          </Link>
+          {` · ${order.customer_name ?? 'No customer'} · rev ${order.revision_no}`}
+        </>
+      }
       columns={columns}
       rows={order.rows}
       getRowId={(row) => row.id}
@@ -327,7 +443,15 @@ function OrderSection({
 
 // ── cell content helpers ─────────────────────────────────────────────────────
 
-/** `Required 04 Feb 2027 -> 18 Feb 2027 (+14 d)`, `Qty 72 -> 66`, `Closed`, `New line`. */
+/** How the order's SO number reaches its own document, by kind (AC-R04). */
+function orderHref(order: PlanningChangeOrder): string {
+  if (order.is_adopted && order.core_sales_order_id) {
+    return `/scm/sales-orders/${order.core_sales_order_id}`;
+  }
+  return `/project-sales/${order.project_id}/sales-orders/${order.project_sales_order_id}`;
+}
+
+/** `Delivery date 04 Feb 2027 -> 18 Feb 2027 (+14 d)`, `Qty 72 -> 66`, `Closed`, `New line`. */
 function changeText(row: PlanningChangeRow): string {
   if (row.kind === 'closed') return 'Closed';
   if (row.kind === 'added') return 'New line';
@@ -336,7 +460,7 @@ function changeText(row: PlanningChangeRow): string {
     const to = row.to.required_date ? formatDateInMalaysia(row.to.required_date) : '-';
     const days = row.days_moved ?? 0;
     const sign = days > 0 ? '+' : '';
-    return `Required ${from} -> ${to} (${sign}${days} d)`;
+    return `Delivery date ${from} -> ${to} (${sign}${days} d)`;
   }
   // qty_up / qty_down
   return `Qty ${row.from.qty ?? '-'} -> ${row.to.qty ?? '-'}`;
@@ -362,15 +486,30 @@ function heldText(row: PlanningChangeRow): string {
   return parts.length > 0 ? parts.join(' · ') : 'Nothing held';
 }
 
-/** `hot-selling`, `discontinued`, `+14 d` / `-14 d`, `PO placed`, `in window` / `beyond window`. */
+/**
+ * Every chip carries its own proof (AC-R02): `dealer hot-selling · ABC A at BRW, BRW-IB`,
+ * `project hot-selling · ABC A at BRW-BB`, `discontinued`, `+14 d`, `beyond window · 60 d` /
+ * `in window · 60 d`, `PO placed · PO2026-0412` - the label names what and where, `title`
+ * carries the full sentence.
+ */
 function FactChips({ row }: { row: PlanningChangeRow }) {
   const facts = row.facts;
   const chips: Array<{ key: string; label: string; title: string }> = [];
-  if (facts.dealer_hot_selling) {
+
+  if (facts.dealer_hot_selling.value) {
+    const where = facts.dealer_hot_selling.where.join(', ');
     chips.push({
-      key: 'hot-selling',
-      label: 'hot-selling',
-      title: 'Dealer hot-selling: BRW stock is kept for retail.',
+      key: 'dealer-hot-selling',
+      label: `dealer hot-selling · ABC A at ${where}`,
+      title: `ABC A by delivered quantity on retail (dealer) demand in the last 365 days at ${where}.`,
+    });
+  }
+  if (facts.project_hot_selling.value) {
+    const where = facts.project_hot_selling.where.join(', ');
+    chips.push({
+      key: 'project-hot-selling',
+      label: `project hot-selling · ABC A at ${where}`,
+      title: `ABC A by delivered quantity on project demand in the last 365 days at ${where}.`,
     });
   }
   if (facts.discontinued) {
@@ -380,31 +519,41 @@ function FactChips({ row }: { row: PlanningChangeRow }) {
       title: 'Discontinued: it cannot be bought again.',
     });
   }
-  if (row.days_moved) {
-    const sign = row.days_moved > 0 ? '+' : '';
+  if (facts.days_moved) {
+    const sign = facts.days_moved > 0 ? '+' : '';
+    const from = row.from.required_date ? formatDateInMalaysia(row.from.required_date) : '-';
+    const to = row.to.required_date ? formatDateInMalaysia(row.to.required_date) : '-';
     chips.push({
       key: 'days-moved',
-      label: `${sign}${row.days_moved} d`,
-      title: `The required date moved by ${Math.abs(row.days_moved)} day${
-        Math.abs(row.days_moved) === 1 ? '' : 's'
-      }.`,
+      label: `${sign}${facts.days_moved} d`,
+      title: `Delivery date moved ${from} -> ${to}.`,
     });
   }
-  if (facts.buy_actioned) {
-    chips.push({ key: 'po-placed', label: 'PO placed', title: 'Purchasing already placed this Buy.' });
+  if (facts.buy_actioned.value) {
+    const poNumber = facts.buy_actioned.po_number;
+    chips.push({
+      key: 'po-placed',
+      label: poNumber ? `PO placed · ${poNumber}` : 'PO placed',
+      title: poNumber
+        ? `Purchasing already placed this Buy: ${poNumber}.`
+        : 'Purchasing already placed this Buy.',
+    });
   }
   if (row.kind === 'delayed' || row.kind === 'advanced') {
+    const window = facts.within_reserve_window;
+    const newDate = formatDateInMalaysia(window.new_date);
+    const windowEnd = formatDateInMalaysia(window.window_end);
     chips.push(
-      facts.within_reserve_window
+      window.value
         ? {
             key: 'in-window',
-            label: 'in window',
-            title: 'The new date is inside the reserve window.',
+            label: `in window · ${window.window_days} d`,
+            title: `${newDate} is within the reserve window, which ends ${windowEnd}.`,
           }
         : {
             key: 'beyond-window',
-            label: 'beyond window',
-            title: 'The new date is beyond the reserve window.',
+            label: `beyond window · ${window.window_days} d`,
+            title: `${newDate} is past the reserve window, which ends ${windowEnd}.`,
           },
     );
   }
@@ -412,13 +561,7 @@ function FactChips({ row }: { row: PlanningChangeRow }) {
   return (
     <span className="inline-flex flex-wrap gap-1">
       {chips.map((chip) => (
-        <span
-          key={chip.key}
-          title={chip.title}
-          className="inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-2xs font-medium text-amber-800"
-        >
-          {chip.label}
-        </span>
+        <FactChip key={chip.key} label={chip.label} title={chip.title} />
       ))}
     </span>
   );
