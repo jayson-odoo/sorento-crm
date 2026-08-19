@@ -340,6 +340,8 @@ describe('BoardAmendDialog: buying a discontinued product', () => {
     dealer_hot_selling_where: [],
     project_hot_selling: false,
     project_hot_selling_where: [],
+    dealer_classified: false,
+    project_classified: false,
     discontinued: true,
     retail_classification_available: true,
   };

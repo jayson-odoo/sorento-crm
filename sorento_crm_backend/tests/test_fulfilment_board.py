@@ -3269,8 +3269,8 @@ def test_a_hot_selling_rung_says_why_the_pool_was_off_limits_not_its_own_locatio
             "First in the queue here; this line takes 10."
         )
         assert _step(contribution, "reserve_pool")["why"] == (
-            f"Dealer hot-selling (ABC A by quantity on retail demand at {own.warehouse_code}"
-            f"): {pool.warehouse_code} is kept for retail, so the pool is not offered."
+            f"Dealer hot-selling at {own.warehouse_code}: {pool.warehouse_code} is kept for "
+            "retail, so the pool is not offered."
         )
 
 
@@ -3716,6 +3716,8 @@ def test_a_line_an_active_decision_covers_says_so_and_carries_what_was_frozen():
             "dealer_hot_selling_where": [],
             "project_hot_selling": False,
             "project_hot_selling_where": [],
+            "dealer_classified": False,
+            "project_classified": False,
             "discontinued": False,
             "retail_classification_available": False,
         }
@@ -3965,6 +3967,8 @@ def test_a_contribution_states_the_flags_the_ladder_judged_the_item_on():
             "dealer_hot_selling_where": [],
             "project_hot_selling": False,
             "project_hot_selling_where": [],
+            "dealer_classified": True,
+            "project_classified": False,
             "discontinued": False,
             "retail_classification_available": True,
         }
@@ -4019,9 +4023,9 @@ def test_a_row_with_both_letters_null_is_unclassified_not_cold_and_the_pool_offe
         assert pool_step["offered"] == "6", "the pool offers its balance as for a non-hot item"
         assert pool_step["taken"] == "4"
         assert pool_step["why"] == (
-            "No ABC classification for this item (no delivered demand of that class in "
-            f"the last year), so {pool.warehouse_code} is offered as for a non-hot item. "
-            "This line takes 4."
+            "Not classified (no retail or project deliveries of this item in the last 12 "
+            f"months), so {pool.warehouse_code} is offered as for a cold item. This line "
+            "takes 4."
         )
 
 
@@ -4105,8 +4109,8 @@ def test_the_pool_rung_names_the_classification_that_keeps_the_pool_for_retail()
         assert step["outcome"] == "not_eligible"
         assert step["offered"] == "0"
         assert step["why"] == (
-            f"Dealer hot-selling (ABC A by quantity on retail demand at {pool.warehouse_code}"
-            f"): {pool.warehouse_code} is kept for retail, so the pool is not offered."
+            f"Dealer hot-selling at {pool.warehouse_code}: {pool.warehouse_code} is kept "
+            "for retail, so the pool is not offered."
         )
 
 
@@ -4213,8 +4217,8 @@ def test_the_pool_rung_says_in_words_why_the_pile_had_stock_and_the_line_got_non
 
         code = pool.warehouse_code
         assert step["why"] == (
-            f"{code} holds 1 on hand (Available 1 in stock), but {code}'s own orders ranked "
-            f"ahead of this line claim 1, so 0 is left."
+            f"Cold at retail, so {code} is offered. {code} holds 1 on hand (Available 1 in "
+            f"stock), but {code}'s own orders ranked ahead of this line claim 1, so 0 is left."
         )
 
 
@@ -4239,8 +4243,8 @@ def test_the_pool_rung_says_what_was_left_and_what_this_line_took():
         assert step["pool"]["claimed_ahead_qty"] == "0"
         assert step["pool"]["claimed_ahead_lines"] == 0
         assert step["why"] == (
-            f"{pool.warehouse_code}: 4 left after its own queue ahead of this line; this "
-            "line takes 4."
+            f"Cold at retail, so {pool.warehouse_code} is offered: 4 left after its own "
+            "queue ahead of this line; this line takes 4."
         )
 
 
@@ -4267,8 +4271,8 @@ def test_a_dealer_hot_selling_pool_rung_never_states_a_cap_it_offers_nothing_at_
         assert step["offered"] == "0"
         assert step["taken"] == "0"
         assert step["why"] == (
-            f"Dealer hot-selling (ABC A by quantity on retail demand at {pool.warehouse_code}"
-            f"): {pool.warehouse_code} is kept for retail, so the pool is not offered."
+            f"Dealer hot-selling at {pool.warehouse_code}: {pool.warehouse_code} is kept "
+            "for retail, so the pool is not offered."
         )
 
 
@@ -4303,9 +4307,9 @@ def test_a_project_hot_selling_pool_rung_caps_the_draw_at_the_pools_availability
         assert step["offered"] == "10", "capped at the pool's own availability, not its balance"
         assert step["taken"] == "10"
         assert step["why"] == (
-            "Project hot-selling (ABC A by quantity on project demand at "
-            f"{pool.warehouse_code}): {pool.warehouse_code} may be drawn while its "
-            "availability stays positive - 10 available, 10 offered. This line takes 10."
+            f"Project hot-selling at {pool.warehouse_code}: {pool.warehouse_code} may be "
+            "drawn while its availability stays positive - 10 available, 10 offered. This "
+            "line takes 10."
         )
 
 
@@ -4333,9 +4337,8 @@ def test_a_project_hot_selling_pool_rung_offers_nothing_when_availability_is_not
         assert step["offered"] == "0"
         assert step["taken"] == "0"
         assert step["why"] == (
-            "Project hot-selling (ABC A by quantity on project demand at "
-            f"{pool.warehouse_code}): {pool.warehouse_code}'s availability is -5, so "
-            "nothing is offered."
+            f"Project hot-selling at {pool.warehouse_code}: {pool.warehouse_code}'s "
+            "availability is -5, so nothing is offered."
         )
 
 

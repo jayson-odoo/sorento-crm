@@ -5,6 +5,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { toast } from 'sonner';
 import {
   adoptSalesOrder,
+  getClassificationEvidence,
   getPileQueue,
   getPlanningBoard,
   confirmSupply,
@@ -31,6 +32,7 @@ import { SALES_ORDERS_KEY, SALES_ORDER_KEY } from './useProjectSalesOrders';
 export const FULFILMENT_PLANNING_KEY = 'project-fulfilment-planning';
 export const PLANNING_BOARD_KEY = 'project-fulfilment-board';
 export const PILE_QUEUE_KEY = 'project-pile-queue';
+export const CLASSIFICATION_EVIDENCE_KEY = 'project-classification-evidence';
 export const STOCK_DETAIL_KEY = 'project-stock-detail';
 export const RECONCILIATION_KEY = 'project-so-reconciliation';
 export const SUPPLY_KEY = 'project-so-supply';
@@ -264,6 +266,22 @@ export function usePileQueue(
     queryKey: [PILE_QUEUE_KEY, productId ?? '', warehouseId ?? '', lineId ?? ''],
     queryFn: () => getPileQueue(productId as string, warehouseId as string, lineId),
     enabled: enabled && Boolean(productId) && Boolean(warehouseId),
+    retry: 1,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/**
+ * The Proof button: the ranked evidence behind one product's hot/cold verdict.
+ *
+ * `enabled` only once the popover is open - the ranking is a live window-function read over
+ * the whole network, and nobody has asked for it until the button is pressed.
+ */
+export function useClassificationEvidence(productId?: string | null, enabled = true) {
+  return useQuery({
+    queryKey: [CLASSIFICATION_EVIDENCE_KEY, productId ?? ''],
+    queryFn: () => getClassificationEvidence(productId as string),
+    enabled: enabled && Boolean(productId),
     retry: 1,
     refetchOnWindowFocus: false,
   });

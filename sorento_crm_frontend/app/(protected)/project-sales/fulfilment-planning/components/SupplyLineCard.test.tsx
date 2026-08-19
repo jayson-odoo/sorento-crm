@@ -12,6 +12,7 @@
  */
 import React from 'react';
 import { fireEvent, render, screen, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupplyLine } from '../../_shared/types/fulfilmentPlanning.types';
 import { draftFromLine, type DraftLine } from '../../_shared/lib/supplyComposition';
@@ -53,6 +54,8 @@ function line(overrides: Partial<SupplyLine> = {}): SupplyLine {
     fulfilment_location: 'BRW-BB',
     is_dealer_hot_selling: false,
     is_project_hot_selling: false,
+    dealer_classified: false,
+    project_classified: false,
     classification_unavailable: false,
     is_discontinued: false,
     pool_location: 'BRW-BB',
@@ -110,13 +113,18 @@ function renderCard(
   options: { frozen?: boolean; draft?: DraftLine } = {},
 ) {
   const draft = options.draft ?? draftFromLine(source);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
+  });
   return render(
-    <SupplyLineCard
-      line={source}
-      draft={draft}
-      frozen={options.frozen ?? false}
-      onChange={onChange}
-    />,
+    <QueryClientProvider client={client}>
+      <SupplyLineCard
+        line={source}
+        draft={draft}
+        frozen={options.frozen ?? false}
+        onChange={onChange}
+      />
+    </QueryClientProvider>,
   );
 }
 
@@ -317,10 +325,10 @@ describe('SupplyLineCard', () => {
     ).toBeInTheDocument();
   });
 
-  it('says the item is unclassified rather than reading as not hot selling', () => {
+  it('says the item is not classified rather than reading as not hot selling', () => {
     renderCard(line({ classification_unavailable: true }));
 
-    expect(screen.getByText('Unclassified')).toBeInTheDocument();
+    expect(screen.getByText('Not classified')).toBeInTheDocument();
     expect(screen.queryByText('Not hot-selling')).not.toBeInTheDocument();
   });
 
@@ -328,6 +336,26 @@ describe('SupplyLineCard', () => {
     renderCard(line());
 
     expect(screen.getByText('Not hot-selling')).toBeInTheDocument();
+  });
+
+  it('says cold at retail for a classified, non-hot retail letter', () => {
+    renderCard(line({ dealer_classified: true }));
+
+    expect(screen.getByText('Cold at retail')).toBeInTheDocument();
+    expect(screen.queryByText('Dealer hot-selling')).not.toBeInTheDocument();
+  });
+
+  it('says cold at project for a classified, non-hot project letter', () => {
+    renderCard(line({ project_classified: true }));
+
+    expect(screen.getByText('Cold at project')).toBeInTheDocument();
+    expect(screen.queryByText('Project hot-selling')).not.toBeInTheDocument();
+  });
+
+  it('never prints the word ABC or classification jargon anywhere on the card', () => {
+    const { container } = renderCard(line({ dealer_classified: true }));
+
+    expect(container.textContent).not.toMatch(/ABC/);
   });
 
   // -------------------------------------------------------------- the editing

@@ -175,6 +175,8 @@ function boardProposal(overrides: {
       dealer_hot_selling_where: [],
       project_hot_selling: false,
       project_hot_selling_where: [],
+      dealer_classified: false,
+      project_classified: false,
       discontinued: false,
       retail_classification_available: true,
     },

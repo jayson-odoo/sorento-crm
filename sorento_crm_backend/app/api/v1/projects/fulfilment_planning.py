@@ -35,9 +35,15 @@ from app.schemas.project_so_reconciliation import (
     FulfilmentPlanningRow,
     ReconciliationSummary,
 )
-from app.schemas.project_supply import ConfirmResult, ConfirmSupplyBody, SupplyProposal
+from app.schemas.project_supply import (
+    ClassificationEvidence,
+    ConfirmResult,
+    ConfirmSupplyBody,
+    SupplyProposal,
+)
 from app.services import project_service as projects
 from app.services.error_handler import handle_internal_error
+from app.services.project_classification_evidence import classification_evidence
 from app.services.project_fulfilment_board_service import FulfilmentBoardService
 from app.services.project_so_adoption_service import ProjectSOAdoptionService
 from app.services.project_so_draft_service import ProjectSODraftService
@@ -292,6 +298,32 @@ def get_pile_queue(
         if line_id:
             validate_uuid_path(line_id, resource="Sales order line")
         return FulfilmentBoardService(db).pile_queue(product_id, warehouse_id, line_id)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/fulfilment-planning/classification", response_model=ClassificationEvidence
+)
+def get_classification_evidence(
+    product_id: str = Query(..., description="Addressing only; the board's chip carries it."),
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The Proof button: the ranked evidence behind one product's hot/cold verdict.
+
+    The captain, reading the trail: "don't give me jargon like abc classification, just tell
+    me hot selling or cold selling, at project or retail, with some button for me to view
+    detail as a proof". This is that detail - which location, delivered how much, ranked
+    where out of how many, and what share of the class that is - read live over the same
+    rows the board's own hot-selling predicate reads. A pure read.
+
+    Plain ``def``, so FastAPI runs it in a threadpool: it is synchronous SQLAlchemy over one
+    product's classification rows.
+    """
+    try:
+        validate_uuid_path(product_id, resource="Product")
+        return classification_evidence(db, product_id)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

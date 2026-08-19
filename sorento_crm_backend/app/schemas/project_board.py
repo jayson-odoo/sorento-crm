@@ -175,6 +175,11 @@ class BoardItemFlags(BaseModel):
     project_hot_selling: bool = False
     #: The locations where it earned that, by code.
     project_hot_selling_where: List[str] = []
+    #: Classified (a non-null letter on that class, at an active location) but not hot -
+    #: "Cold at retail" / "Cold at project" in the UI's own words. `False` while the class
+    #: is hot too - the hot flag above already covers it.
+    dealer_classified: bool = False
+    project_classified: bool = False
     #: `products.is_discontinued`: a Buy for it needs a reason at confirm, nothing more.
     discontinued: bool = False
     #: Somebody has classified this item - a NON-NULL letter on EITHER demand class - at all.
