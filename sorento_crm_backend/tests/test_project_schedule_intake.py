@@ -30,6 +30,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.config import settings as app_settings
 from app.models.notification import Notification
 from app.models.order import Customer
 from app.models.product import Product, ProductCategory, UnitOfMeasure
@@ -46,8 +47,10 @@ from app.models.project_so import (
 )
 from app.models.projects import ProjectParty
 from app.models.user import User
-from app.services import project_seed_service
+from app.services import document_extraction, project_schedule_service, project_seed_service
+from app.services.document_extraction import RenderedPage
 from app.services.error_handler import AppException
+from app.services.llm_provider import ChatResult
 from app.services.project_schedule_service import (
     ProjectScheduleService,
     _parse_date,
@@ -460,6 +463,54 @@ def test_polling_a_version_that_has_not_been_read_writes_nothing(scenario):
     assert stored.reconciliation_json is None
 
 
+def test_run_extraction_commits_progress_once_per_page(scenario, monkeypatch):
+    """B3 (19 Aug follow-up): the schedule reader wires ``on_page`` the same way the
+    PO reader does. Proved by counting commits: without a per-page commit there are
+    exactly two (the RUNNING stamp, the final write); with it there is one more per
+    page that actually answered.
+    """
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+
+    monkeypatch.setattr(
+        ProjectScheduleService, "_document_bytes",
+        lambda self, version: (b"ZZT", "application/pdf"),
+    )
+    monkeypatch.setattr(project_schedule_service, "parse_text_matrix", lambda *a, **k: {})
+    monkeypatch.setattr(
+        document_extraction, "_render_pages_rich",
+        lambda *a, **k: [RenderedPage(image_b64="i", image_mime="image/jpeg") for _ in range(3)],
+    )
+
+    class _StubProvider:
+        name = "stub"
+
+        def chat(self, messages, **kwargs):
+            return ChatResult(
+                content="{}", prompt_tokens=1, completion_tokens=1, total_tokens=2
+            )
+
+    monkeypatch.setattr(document_extraction, "get_provider", lambda *a, **k: _StubProvider())
+    monkeypatch.setattr(app_settings, "document_ai_provider", "gemini", raising=False)
+    monkeypatch.setattr(app_settings, "gemini_api_key", "ZZT-key", raising=False)
+    monkeypatch.setattr(app_settings, "document_ai_page_concurrency", 3, raising=False)
+
+    commit_count = {"n": 0}
+    original_commit = db.commit
+
+    def counting_commit(*args, **kwargs):
+        commit_count["n"] += 1
+        return original_commit(*args, **kwargs)
+
+    db.commit = counting_commit
+
+    result = service.run_extraction(scenario["version"].id)
+
+    assert result["status"] in ("done", "partial")
+    # RUNNING stamp + 3 page commits + the final persist_pages commit.
+    assert commit_count["n"] >= 5
+
+
 def test_reading_a_confirmed_version_refreshes_the_display_and_writes_nothing(scenario):
     """What was agreed is the record. A confirmed version reports the current reading of
     its numbers, and the row it was bound as stays exactly as it was bound."""
@@ -798,6 +849,72 @@ def test_a_column_resolves_from_the_code_inside_the_customers_own(scenario):
     column = service.get_version_detail(scenario["version"].id)["products"][0]
     assert column["product_id"] == scenario["wc"].id
     assert column["resolution_source"] == "code"
+
+
+def test_an_unresolved_column_falls_through_to_trigram_similarity(scenario):
+    """Neither the map nor an embedded code places `SRTWC8613-RX` (a typo of the real
+    `SRTWC8613-RL`, no `BUI-HB-` prefix to peel), so it is the fuzzy tier or nothing."""
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    page = _page(
+        products=[{"col": 1, "customer_code": "SRTWC8613-RX", "code": None,
+                   "name": "One-Piece WC (typo)"}],
+        phases=[{"row": 1, "area_group": "TOWER", "label": "Level 2 & 7",
+                 "delivery_date": "2026-07-01"}],
+        cells=[{"row": 1, "col": 1, "qty": 200}],
+        totals=[{"col": 1, "qty": 200}],
+    )
+    service.persist_pages(scenario["version"], [(1, page)])
+    db.flush()
+
+    column = service.get_version_detail(scenario["version"].id)["products"][0]
+    assert column["product_id"] == scenario["wc"].id
+    assert column["resolution_source"] == "trigram"
+
+
+def test_the_trigram_match_is_batched_into_one_query(scenario):
+    """B4 (19 Aug follow-up): every column left over after the exact tiers used to run
+    its OWN `ORDER BY similarity(...) DESC` query. Two columns here both miss the exact
+    tiers and both want the fuzzy one; only ONE statement naming `unnest` - the batched
+    query's own signature - may run, and both must still resolve to the right product.
+    """
+    db = scenario["db"]
+    hose = _product(db, "SRTFH1520-CR", "Flexible Hose")
+    hose.company_id = scenario["wc"].company_id
+    db.flush()
+
+    page = _page(
+        products=[
+            {"col": 1, "customer_code": "SRTWC8613-RX", "code": None, "name": "WC typo"},
+            {"col": 2, "customer_code": "SRTFH1520-CX", "code": None, "name": "Hose typo"},
+        ],
+        phases=[{"row": 1, "area_group": "TOWER", "label": "Level 2 & 7",
+                 "delivery_date": "2026-07-01"}],
+        cells=[{"row": 1, "col": 1, "qty": 200}, {"row": 1, "col": 2, "qty": 50}],
+        totals=[{"col": 1, "qty": 200}, {"col": 2, "qty": 50}],
+    )
+    service = ProjectScheduleService(db)
+
+    calls: list[str] = []
+    original_execute = db.execute
+
+    def counting(statement, *args, **kwargs):
+        calls.append(str(statement))
+        return original_execute(statement, *args, **kwargs)
+
+    db.execute = counting
+    service.persist_pages(scenario["version"], [(1, page)])
+    db.flush()
+
+    trigram_selects = [c for c in calls if "unnest" in c]
+    assert len(trigram_selects) == 1, trigram_selects
+
+    columns = service.get_version_detail(scenario["version"].id)["products"]
+    by_code = {c["customer_code_raw"]: c for c in columns}
+    assert by_code["SRTWC8613-RX"]["product_id"] == scenario["wc"].id
+    assert by_code["SRTWC8613-RX"]["resolution_source"] == "trigram"
+    assert by_code["SRTFH1520-CX"]["product_id"] == hose.id
+    assert by_code["SRTFH1520-CX"]["resolution_source"] == "trigram"
 
 
 # --------------------------------------------------------------- addressing a column

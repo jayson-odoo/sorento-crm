@@ -454,6 +454,17 @@ def _po_extractor_fallback() -> str:
         "You are reading ONE PAGE of a scanned customer PURCHASE ORDER sent to Sorento "
         "Sdn Bhd. This is page {{page_no}} of {{page_count}}.\n"
         "\n"
+        "The page's own text layer, when the file has one (blank for a scanned image):\n"
+        "---\n"
+        "{{page_text}}\n"
+        "---\n"
+        "The text layer is AUTHORITATIVE for codes, numbers and spellings: it is the\n"
+        "document's own characters, not a reading of them. The image is AUTHORITATIVE for\n"
+        "everything the text layer cannot show - strike-throughs, handwriting, highlights,\n"
+        "and layout (which row a number sits on, which cell a note points at). When the two\n"
+        "disagree on a digit, prefer the text layer UNLESS the image shows a handwritten\n"
+        "correction over it, in which case the correction wins.\n"
+        "\n"
         "Return STRICT JSON only, no prose, no markdown fence:\n"
         "\n"
         "{\n"
@@ -541,6 +552,17 @@ def _schedule_extractor_fallback() -> str:
     return (
         "This is ONE PAGE of a customer DELIVERY SCHEDULE sent to Sorento Sdn Bhd. "
         "This is page {{page_no}} of {{page_count}}.\n"
+        "\n"
+        "The page's own text layer, when the file has one (blank for a scanned image):\n"
+        "---\n"
+        "{{page_text}}\n"
+        "---\n"
+        "The text layer is AUTHORITATIVE for codes, numbers and spellings: it is the\n"
+        "document's own characters, not a reading of them. The image is AUTHORITATIVE for\n"
+        "everything the text layer cannot show - strike-throughs, handwriting, highlighted\n"
+        "cell fills, and layout (which row a quantity sits on). When the two disagree on a\n"
+        "digit, prefer the text layer UNLESS the image shows a handwritten correction over\n"
+        "it, in which case the correction wins.\n"
         "\n"
         "It is a MATRIX. Rows are delivery phases (a label such as \"Level 2 & 7\", plus a "
         "delivery date). Columns are products, each headed by a product name that contains "
@@ -725,7 +747,10 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         role="PO extractor — scanned customer purchase order to lines and handwriting",
         active=True,
         activates_in=None,
-        variables=["page_no", "page_count"],
+        # page_text (19 Aug follow-up, "text + image together"): the page's own PDF text
+        # layer, blank for a scanned image. Always supplied, even as "" - see
+        # `document_extraction._render_page_prompt`.
+        variables=["page_no", "page_count", "page_text"],
         fallback=_po_extractor_fallback,
     ),
     "schedule_extractor": PromptKeySpec(
@@ -733,7 +758,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         role="Schedule extractor — delivery schedule matrix to phase by product quantities",
         active=True,
         activates_in=None,
-        variables=["page_no", "page_count"],
+        variables=["page_no", "page_count", "page_text"],
         fallback=_schedule_extractor_fallback,
     ),
     # --- Superseded by semantic_parser (M0). Rows kept for trace history +

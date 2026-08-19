@@ -152,6 +152,12 @@ class Settings(BaseSettings):
     document_ai_model: str = "gemini-2.5-flash"             # DOCUMENT_AI_MODEL
     document_ai_render_dpi: int = 170                       # DOCUMENT_AI_RENDER_DPI
     document_ai_page_limit: int = 40                        # DOCUMENT_AI_PAGE_LIMIT
+    # How many pages read concurrently (19 Aug follow-up: "make it absolutely the
+    # fastest"). The model call is a synchronous HTTP round trip per page and the
+    # provider holds no shared mutable state, so a bounded thread pool is the whole
+    # change; 8 is generous headroom over the 40-page ceiling above without opening
+    # that many sockets to the provider at once.
+    document_ai_page_concurrency: int = 8                    # DOCUMENT_AI_PAGE_CONCURRENCY
 
     # Project sales allocation (P9). The master location a sales order line is
     # sourced from first. Held as a warehouse CODE, not an id, because it is the

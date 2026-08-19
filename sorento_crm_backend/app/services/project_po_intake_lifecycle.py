@@ -496,8 +496,31 @@ class POIntakeLifecycleMixin:
                 version, f"The stored document could not be read back ({str(exc)[:200]})."
             )
 
+        def _on_page(page) -> None:
+            """Progress, visible mid-read: reuses the exact shape ``persist_pages``
+            writes at the end, so ``serialize_version``'s ``pages_extracted`` count
+            (already computed from ``extracted_json.pages``) climbs while the version
+            still says RUNNING, with no new column and no new FE contract. Pages can
+            land out of order under the page pool below; that is fine for a counter and
+            corrected the moment ``persist_pages`` overwrites this with the full,
+            ordered set.
+            """
+            blobs = list((version.extracted_json or {}).get("pages") or [])
+            blobs.append({"page_no": page.page_no, "data": page.data or None, "error": page.error})
+            version.extracted_json = {**(version.extracted_json or {}), "pages": blobs}
+            try:
+                self.db.commit()
+            except Exception:  # noqa: BLE001 - progress reporting is best effort
+                logger.warning(
+                    "could not record extraction progress for PO version %s page %s",
+                    version.id, page.page_no, exc_info=True,
+                )
+                self.db.rollback()
+
         try:
-            result = extract_document(self.db, content, mime, prompt_key="po_extractor")
+            result = extract_document(
+                self.db, content, mime, prompt_key="po_extractor", on_page=_on_page
+            )
         except ExtractionUnavailable as exc:
             return self._fail(version, str(exc))
         except Exception as exc:  # noqa: BLE001
@@ -646,7 +669,6 @@ class POIntakeLifecycleMixin:
                         if last_line.description_raw
                         else fragment
                     )
-                    self.db.flush()
                     continue
                 line = self._line_from_payload(
                     version, item, used_line_nos=used_line_nos
@@ -854,8 +876,11 @@ class POIntakeLifecycleMixin:
             # card (D11); this is the one place that rule could be broken silently.
             is_cancelled=False,
         )
+        # Not flushed here (a PO can run to 50+ lines, autoflush is off, and nothing in
+        # this loop reads the row back before the page loop ends). The flush at the end
+        # of `persist_pages`, before `_lines()`/`_annotations()` are queried, sends every
+        # line in one round trip instead of one insert per line.
         self.db.add(line)
-        self.db.flush()
         return line
 
     def _line_pages(self, version: ProjectPOVersion) -> Dict[str, Optional[int]]:
@@ -925,30 +950,29 @@ class POIntakeLifecycleMixin:
         # product is meant, and stop rather than guess when more than one could be.
         return self._resolve_product_loosely(code, candidates, company_id=company_id)
 
-    def _resolve_product_loosely(
-        self, code: str, description_codes: List[str], *, company_id: Optional[str] = None
-    ) -> Tuple[Optional[str], Optional[str]]:
-        """Match the way a person reads a code, not the way a string comparison does.
+    def _catalogue_index(
+        self, company_id: Optional[str] = None
+    ) -> Tuple[Dict[str, Dict[str, str]], Dict[frozenset, Dict[str, str]]]:
+        """The catalogue's squashed/token shapes, memoised per company for the life of
+        this service instance.
 
-        Three things the customer's paper does that an equality test cannot survive,
-        all taken from their real purchase order:
-
-        * punctuation drifts. They write `SRTFH15CR`, the catalogue says `SRTFH15-CR`.
-        * the tokens get reordered. They write `B2155-BLUE-NL`, we stock `B2155-NL-BLUE`.
-        * their stock-code column is narrow and TRUNCATES, so `SRTWC8613-RL` prints as
-          `SRTWC86` and the rest of the code survives only in the description.
-
-        None of these is ambiguity, they are the same product spelled differently, and a
-        person resolves them in a second. What IS ambiguity is a relaxed form matching
-        more than one catalogue code, and every tier below refuses in that case rather
-        than picking a winner. On a 1.8 million ringgit order the cost of quietly
-        attaching the wrong product is far higher than the cost of asking.
+        This used to run inside ``_resolve_product_loosely`` itself: a fresh SELECT of
+        every product plus rebuilding both dicts, on EVERY unmatched line. A PO with
+        several dozen lines the exact-match tiers could not place re-scanned the whole
+        catalogue that many times over. One instance of this service reads exactly one
+        document, so the catalogue cannot change under it mid-run - memoising per
+        ``company_id`` (a version's lines are all one company; the annotation-review
+        path can touch a second company via a successor PO) is free.
         """
         from app.models.product import Product
 
-        wanted = [c for c in ([code] if code else []) + list(description_codes) if c]
-        if not wanted:
-            return None, None
+        cache: Dict[str, Tuple[Dict[str, Dict[str, str]], Dict[frozenset, Dict[str, str]]]] = (
+            getattr(self, "_po_catalogue_cache", None) or {}
+        )
+        key = company_id or ""
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
 
         # One pass over the catalogue's shapes. `product_code` is indexed but none of
         # these comparisons can use that index, so the work is done in Python against a
@@ -969,6 +993,35 @@ class POIntakeLifecycleMixin:
                 continue
             by_squashed.setdefault(_squash(raw), {}).setdefault(raw, product_id)
             by_tokens.setdefault(frozenset(_code_tokens(raw)), {}).setdefault(raw, product_id)
+
+        cache[key] = (by_squashed, by_tokens)
+        self._po_catalogue_cache = cache
+        return by_squashed, by_tokens
+
+    def _resolve_product_loosely(
+        self, code: str, description_codes: List[str], *, company_id: Optional[str] = None
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Match the way a person reads a code, not the way a string comparison does.
+
+        Three things the customer's paper does that an equality test cannot survive,
+        all taken from their real purchase order:
+
+        * punctuation drifts. They write `SRTFH15CR`, the catalogue says `SRTFH15-CR`.
+        * the tokens get reordered. They write `B2155-BLUE-NL`, we stock `B2155-NL-BLUE`.
+        * their stock-code column is narrow and TRUNCATES, so `SRTWC8613-RL` prints as
+          `SRTWC86` and the rest of the code survives only in the description.
+
+        None of these is ambiguity, they are the same product spelled differently, and a
+        person resolves them in a second. What IS ambiguity is a relaxed form matching
+        more than one catalogue code, and every tier below refuses in that case rather
+        than picking a winner. On a 1.8 million ringgit order the cost of quietly
+        attaching the wrong product is far higher than the cost of asking.
+        """
+        wanted = [c for c in ([code] if code else []) + list(description_codes) if c]
+        if not wanted:
+            return None, None
+
+        by_squashed, by_tokens = self._catalogue_index(company_id)
 
         def _only(bucket: Optional[Dict[str, str]]) -> Optional[str]:
             """One code is an answer. Two different codes is a question for a person."""

@@ -36,6 +36,16 @@ export function POIntakeSkeleton() {
 export function POIntakeExtractionProgress({ version }: { version: POVersion }) {
   const running = version.extraction_state === 'running';
   const waitingFor = describeWaitingFor(version.extraction_started_at);
+  const read = version.pages_extracted;
+  const total = version.page_count;
+  // Pages land as they finish (the reader runs several at once), so this counts up
+  // while running rather than sitting still until the whole document is done.
+  const pageDetail =
+    running && typeof read === 'number' && typeof total === 'number' && total > 0
+      ? `Page ${Math.min(read + 1, total)} of ${total}`
+      : total
+        ? `${total} page${total === 1 ? '' : 's'}`
+        : null;
   return (
     <Card>
       <CardHeader className="block">
@@ -44,10 +54,8 @@ export function POIntakeExtractionProgress({ version }: { version: POVersion }) 
           <p className="text-sm font-medium">
             {running ? 'Reading the document' : 'Waiting to be read'}
           </p>
-          {version.page_count ? (
-            <span className="text-xs text-muted-foreground">
-              {`${version.page_count} page${version.page_count === 1 ? '' : 's'}`}
-            </span>
+          {pageDetail ? (
+            <span className="text-xs text-muted-foreground">{pageDetail}</span>
           ) : null}
           {waitingFor ? (
             <span className="text-xs text-muted-foreground">{waitingFor}</span>

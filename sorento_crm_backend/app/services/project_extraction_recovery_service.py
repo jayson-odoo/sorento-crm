@@ -29,11 +29,20 @@ thing for ``import_jobs`` and for the same reason.
 
 The rule that keeps this safe
 -----------------------------
-**Never decide from the clock while there is a job to ask about.** Extraction is one vision
-call per page, sequentially: ten pages measured at 166 seconds, so a forty page PO
-legitimately runs for over ten minutes. A reconciler that calls a live job dead is a worse
-bug than the one it fixes. RQ's answer wins, always; time is consulted only when there is
-no job id at all, and then only well past the point RQ would itself have killed the horse.
+**Never decide from the clock while there is a job to ask about.** Extraction runs
+``document_ai_page_concurrency`` pages at once (default 8) rather than strictly one at a
+time (19 Aug follow-up, "make the read absolutely the fastest"; PLAN-demo-followups-19aug-
+ladder-v2.md workstream B). Measured 19 August 2026 against the golden documents on the
+live stack: the client's 10-page PO read in 12.5s and the 7-page schedule in 16.0s (both
+``gemini-2.5-flash``, text layer + image together), down from roughly 72s and 90-120s
+sequential the same day before that change - this docstring previously pinned "ten pages
+at 166 seconds", which was already stale by the time it was replaced (see the lesson on
+stale measured numbers in the root ``CLAUDE.md``). A document past the page pool's width
+still queues in waves, so a forty page PO is still minutes, not seconds, and a slow
+provider response or a cold connection stretches that further - a reconciler that calls a
+live job dead is a worse bug than the one it fixes. RQ's answer wins, always; time is
+consulted only when there is no job id at all, and then only well past the point RQ would
+itself have killed the horse.
 """
 from __future__ import annotations
 

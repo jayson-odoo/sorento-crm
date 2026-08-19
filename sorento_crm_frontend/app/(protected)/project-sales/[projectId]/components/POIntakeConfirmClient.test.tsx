@@ -324,6 +324,27 @@ describe('POIntakeConfirmClient', () => {
     expect(screen.queryByText(/read in/i)).toBeNull();
   });
 
+  /**
+   * B3 (19 Aug follow-up): pages land as they finish rather than all at once at the
+   * end, so the progress card counts up instead of sitting on a static page total for
+   * the whole read.
+   */
+  it('shows which page is being read as pages land, not just the total', async () => {
+    getPOVersion.mockResolvedValue(
+      version({
+        extraction_state: 'running',
+        pages_extracted: 3,
+        lines: [],
+        annotations: [],
+      }),
+    );
+
+    renderConfirm();
+
+    expect(await screen.findByText('Reading the document')).toBeInTheDocument();
+    expect(screen.getByText('Page 4 of 10')).toBeInTheDocument();
+  });
+
   it('counts the exceptions once, on the lines card, and still reaches them', async () => {
     getPOVersion.mockResolvedValue(
       version({
