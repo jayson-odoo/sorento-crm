@@ -233,6 +233,12 @@ class PreviewResult:
     # Agent codes in this file that carry no demand class, so the client can see which of his
     # master rows still need one. Same key on both responses, same reason as above.
     unmapped_agents: list[AgentNotice] = field(default_factory=list)
+    # Additive safety notices that do not map to a single row or document - today, only
+    # "N rows carry a date the reader could not read". The operator reads `row_problems`
+    # for WHICH rows; this is the one-line summary that says the write will leave those
+    # rows' dates exactly as they already are, rather than the operator having to infer
+    # that from the per-row reasons.
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -252,6 +258,7 @@ class PreviewResult:
             "samples": self.samples,
             "activated_documents": list(self.activated_documents),
             "unmapped_agents": [asdict(a) for a in self.unmapped_agents],
+            "warnings": self.warnings,
         }
 
 
@@ -868,6 +875,21 @@ def _affected_product_ids(plan: _Plan) -> list[str]:
     )
 
 
+def _unreadable_date_warning(problems: list[RowProblem]) -> list[str]:
+    """AC-safety: a file whose dates the reader could not parse must say so ONCE, up front,
+    in plain language - not leave the operator to count "could not read the date" rows in
+    the per-row list and infer the consequence themselves. Additive: `row_problems` keeps
+    every one of those rows, this just states what happens to them."""
+    n = sum(1 for p in problems if "could not read the date" in p.reason)
+    if not n:
+        return []
+    row = "row" if n == 1 else "rows"
+    return [
+        f"{n} {row} carry a date the reader could not read; those dates will be left as "
+        "they are"
+    ]
+
+
 def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
     """What this upload would change. Writes nothing."""
     plan = _build(db, file_data, doc_type)
@@ -877,7 +899,9 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
             doc_type=doc_type, scope_documents=(), counts={}, total_rows=read.total_rows,
             unmapped_headers=read.unmapped_headers, missing_columns=read.missing_columns,
             row_problems=read.problems,
+            warnings=_unreadable_date_warning(read.problems),
         )
+    row_problems = read.problems + plan.problems
     return PreviewResult(
         doc_type=doc_type,
         scope_documents=diff.scope_documents,
@@ -885,11 +909,12 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
         total_rows=read.total_rows,
         unmapped_headers=read.unmapped_headers,
         missing_columns=read.missing_columns,
-        row_problems=read.problems + plan.problems,
+        row_problems=row_problems,
         resolution_issues=plan.issues,
         samples=_samples(diff),
         activated_documents=plan.activate,
         unmapped_agents=plan.agent_notices,
+        warnings=_unreadable_date_warning(row_problems),
     )
 
 
@@ -987,6 +1012,20 @@ def _refresh_money(line, extra: dict, bind: _Binding) -> None:
         value = extra.get(key)
         if value is not None:
             setattr(line, col, value)
+
+
+def _write_date(change_after: Optional[Line], fallback: Optional[date]) -> Optional[date]:
+    """The date to WRITE for a changed line: the incoming date, unless the reader could not
+    read it - in which case the stored date must not be overwritten with `None`.
+
+    `change_after.required_date` is already `None` for both a genuinely blank cell and an
+    unreadable one; `date_unreadable` is what tells them apart. `fallback` is whatever the
+    line already holds (the diff's own `before.required_date` for an update, or `None` for
+    a brand-new line, which has nothing to fall back to).
+    """
+    if change_after is not None and change_after.date_unreadable:
+        return fallback
+    return change_after.required_date if change_after is not None else fallback
 
 
 def _identity(doc_number: str, item_code: str, location: str) -> dict:
@@ -1235,7 +1274,7 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                 already = float(getattr(revived, bind.fulfilled) or 0)
                 revived.line_status = "open"
                 revived.qty_ordered = already + c.after.qty
-                setattr(revived, bind.date, c.after.required_date)
+                setattr(revived, bind.date, _write_date(c.after, getattr(revived, bind.date)))
                 _refresh_money(revived, extra, bind)
                 applied["added"] += 1
                 applied_line_ids[id(c)] = str(revived.id)
@@ -1301,7 +1340,12 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         # booked receipt and leave the goods counted as still at sea.
         already = float(getattr(line, bind.fulfilled) or 0)
         line.qty_ordered = already + c.after.qty
-        setattr(line, bind.date, c.after.required_date)
+        # `c.kind` reaches here for QTY_CHANGED too, not only a real date move: an
+        # unreadable incoming date leaves `_classify` reading the date as unchanged, but
+        # the row still lands in this branch on the quantity alone, and a straight
+        # `c.after.required_date` would still write the `None` `_classify` was built to
+        # avoid. `_write_date` keeps the line's own stored date in that case.
+        setattr(line, bind.date, _write_date(c.after, c.before.required_date))
         _refresh_money(line, read.extras.get(str(c.after.row_ref), {}), bind)
         applied["updated"] += 1
         applied_line_ids[id(c)] = str(line.id)

@@ -226,6 +226,24 @@ def suggest(kind: str, held: Optional[dict], facts: dict) -> Tuple[str, str]:
     )
 
 
+def _is_null_anchored_date_move(c) -> bool:
+    """A DATE_MOVED / DATE_AND_QTY_CHANGED change whose FROM or TO date is `None`.
+
+    `days_moved` cannot be measured against a missing endpoint (`outstanding_diff.Change
+    .days_moved` already returns `None` for exactly this), so there is no delay/advance to
+    react to - a line getting its FIRST-EVER date, or one an upload wiped, is not a
+    schedule move and must not manufacture a reaction (the 19 Aug 2026 incident: a reader
+    that could not parse a serial date nulled `required_date` on 14,128 lines, and every
+    one of them would otherwise have built a spurious `advanced`/`delayed` batch row).
+    A pure QTY change on the same line is unaffected - only DATE-kind changes are checked.
+    """
+    if c.kind not in (DATE_MOVED, DATE_AND_QTY_CHANGED):
+        return False
+    before_date = c.before.required_date if c.before else None
+    after_date = c.after.required_date if c.after else None
+    return before_date is None or after_date is None
+
+
 def _map_kind(c) -> str:
     if c.kind == CLOSED:
         return "closed"
@@ -295,7 +313,17 @@ def build_batch(
     from app.services.project_fulfilment_board_service import FulfilmentBoardService
     from app.services.project_supply_service import ProjectSupplyService
 
-    changed = [c for c in diff.changes if c.kind not in ("unchanged",)]
+    changed = []
+    for c in diff.changes:
+        if c.kind == "unchanged":
+            continue
+        if _is_null_anchored_date_move(c):
+            logger.debug(
+                "planning change: skipping %s on %s / %s - a null-anchored date move "
+                "builds no reaction", c.kind, c.doc_number, c.item_code,
+            )
+            continue
+        changed.append(c)
     if not changed:
         return None
 
@@ -1368,17 +1396,30 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
             inquiry_counts[verb] = inquiry_counts.get(verb, 0) + count
         purchasing_notified = purchasing_notified or outcome["notified"]
 
-    batch.applied_at = datetime.utcnow()
-    batch.applied_by = actor
-    batch.result_json = {
-        "orders_revised": orders_revised,
-        "orders_failed": failed_orders,
-        "inquiry_rows_changed": [
-            {"verb": verb, "count": count} for verb, count in inquiry_counts.items()
-        ],
-        "lines_replanned": lines_replanned,
-        "purchasing_notified": purchasing_notified,
-    }
+    # A batch is DONE only once it has written something. Stamping `applied_at` when
+    # `orders_revised` is empty - nothing was actually written, whether because every
+    # order failed or because a retry found nothing left `pending` to act on - locked the
+    # batch forever: the row decision PUT and a retry of this same POST both gate on
+    # `applied_at is not None` (PLAN section 10), so the planner could neither correct a
+    # row's decision nor apply again, with `pending: 2` on the list beside `Applied ...`
+    # on the same row. `applied_orders` alone is not enough to gate on - an order that hit
+    # `_apply_one_order`'s early return (nothing left `pending` to accept) lands in
+    # `applied_orders` without writing anything, so a batch stuck failing would flip to
+    # "done" on nothing more than a harmless retry. Left pending instead, the rows keep
+    # their `failed` state and reasons, decisions stay editable, and this same call can
+    # simply be retried once the cause is fixed.
+    if orders_revised:
+        batch.applied_at = datetime.utcnow()
+        batch.applied_by = actor
+        batch.result_json = {
+            "orders_revised": orders_revised,
+            "orders_failed": failed_orders,
+            "inquiry_rows_changed": [
+                {"verb": verb, "count": count} for verb, count in inquiry_counts.items()
+            ],
+            "lines_replanned": lines_replanned,
+            "purchasing_notified": purchasing_notified,
+        }
     db.flush()
 
     return {

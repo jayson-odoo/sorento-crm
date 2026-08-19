@@ -70,6 +70,12 @@ class Line:
     required_date: Optional[date] = None
     row_ref: Optional[str] = None          # source row number, or DB line id
     label: str = ""                        # customer / supplier, for display only
+    # True when `required_date` is None NOT because the file left the cell blank, but
+    # because the reader could not parse whatever was in it (`outstanding_reader`'s
+    # "could not read the date" problem). A blank cell states nothing and a moved-to-None
+    # date is real; an unreadable one states nothing USABLE, and must not be classified or
+    # written as a move - see `_classify` and `outstanding_import_service._write_date`.
+    date_unreadable: bool = False
 
     @property
     def group(self) -> tuple[str, str, str]:
@@ -131,7 +137,10 @@ def _sort_key(line: Line) -> tuple:
 
 
 def _classify(before: Line, after: Line) -> str:
-    date_moved = before.required_date != after.required_date
+    # An unreadable incoming date states nothing usable about the date, so it is never a
+    # move - the line's date is read as whatever it already was (`_write_date` writes it
+    # that way too). Only the quantity can still change on such a row.
+    date_moved = (not after.date_unreadable) and before.required_date != after.required_date
     qty_changed = abs(after.qty - before.qty) > _QTY_EPSILON
     if date_moved and qty_changed:
         return DATE_AND_QTY_CHANGED

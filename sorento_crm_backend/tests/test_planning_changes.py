@@ -439,6 +439,67 @@ def test_build_batch_covers_only_planned_lines_and_is_none_when_nothing_planned_
     assert no_batch is None
 
 
+def test_build_batch_skips_a_date_move_anchored_on_a_null_date(api):
+    """PLAN section 10 / the 19 Aug 2026 incident: a date change with no FROM or no TO
+    builds no reaction - a first-time date, or one an unreadable cell wiped, is not a
+    delay or an advance."""
+    _client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="72",
+                            required_date=date(2026, 8, 20))
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    null_from = _diff_change(
+        DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
+        location=world.own_wh.warehouse_code, old_date=None,
+        new_date=date(2026, 9, 3), old_qty="72", new_qty="72",
+    )
+    no_batch = planning_change_service.build_batch(
+        db, Diff(scope_documents=(core_so.so_number,), changes=[null_from]),
+        applied_line_ids={id(null_from): str(core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="test.xlsx",
+    )
+    assert no_batch is None
+
+    null_to = _diff_change(
+        DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
+        location=world.own_wh.warehouse_code, old_date=date(2026, 8, 20),
+        new_date=None, old_qty="72", new_qty="72",
+    )
+    no_batch_2 = planning_change_service.build_batch(
+        db, Diff(scope_documents=(core_so.so_number,), changes=[null_to]),
+        applied_line_ids={id(null_to): str(core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="test.xlsx",
+    )
+    assert no_batch_2 is None
+
+    # A real move alongside a null-anchored one still builds a batch, with only the real
+    # move as a row - the null-anchored one is silently dropped, not merely unclassified.
+    real_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+                            required_date=date(2026, 8, 20))
+    _project_line(db, order, line_no=2, product=world.product, core_line=real_line)
+    db.commit()
+    real_move = _diff_change(
+        DATE_MOVED, real_line, doc_number=core_so.so_number, item_code="ZZT-ITEM-2",
+        location=world.own_wh.warehouse_code, old_date=date(2026, 8, 20),
+        new_date=date(2026, 9, 3), old_qty="10", new_qty="10",
+    )
+    batch = planning_change_service.build_batch(
+        db, Diff(scope_documents=(core_so.so_number,), changes=[null_from, real_move]),
+        applied_line_ids={id(null_from): str(core_line.id), id(real_move): str(real_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="test.xlsx",
+    )
+    db.commit()
+    assert batch is not None
+    assert batch.line_count == 1
+
+
 def test_build_batch_row_shape_has_facts_and_why_and_ac_r03_no_decision(api):
     _client, world = api
     db = world.db
@@ -815,6 +876,71 @@ def test_set_row_decision_refuses_accept_on_a_superseded_row(api):
     with pytest.raises(Exception) as excinfo:
         planning_change_service.set_row_decision(db, str(batch.id), row_id, "accept")
     assert getattr(excinfo.value, "status_code", None) == 409
+
+
+def test_apply_stamps_applied_at_only_when_something_actually_applied(api):
+    """PLAN section 10, defect B: a batch every one of whose orders fails must stay
+    pending - not `applied_at` stamped with nothing written, which locked the row
+    decisions AND a retry both behind the "already applied" gate."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=100)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="40",
+                            required_date=date(2026, 8, 25))
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "40"}]),
+    ]})
+
+    # A 14-day move, within the reserve window: `suggest()` returns "keep", not
+    # "replan"/"release" - those two skip `confirm()` entirely via
+    # `supersede_for_material_change`, which does not gate on order status, so the
+    # failure below needs a row that actually reaches `confirm()`.
+    changed = _diff_change(
+        DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
+        location=world.own_wh.warehouse_code, old_date=date(2026, 8, 25),
+        new_date=date(2026, 9, 8), old_qty="40", new_qty="40",
+    )
+    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed])
+    batch = planning_change_service.build_batch(
+        db, diff, applied_line_ids={id(changed): str(core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    out = planning_change_service.get_batch(db, str(batch.id))
+    row_id = out["orders"][0]["rows"][0]["id"]
+    assert out["orders"][0]["rows"][0]["suggested"] == "keep"
+    planning_change_service.set_row_decision(db, str(batch.id), row_id, "accept")
+
+    # A guaranteed, fix-independent failure: the order is no longer confirmable.
+    order.status = "draft"
+    db.commit()
+
+    result = planning_change_service.apply(db, str(batch.id), world.actor)
+    db.commit()
+    assert result["applied_orders"] == []
+    assert len(result["failed_orders"]) == 1
+    assert result["already_applied"] is False
+
+    from app.models.planning_change import PlanningChangeBatch as PlanningChangeBatchModel
+
+    stored = db.query(PlanningChangeBatchModel).filter(
+        PlanningChangeBatchModel.id == batch.id
+    ).one()
+    assert stored.applied_at is None  # left pending, not falsely marked done
+
+    # Re-apply is not blocked by an "already applied" no-op, and the row decision is
+    # still editable - the two consequences PLAN section 10 named.
+    again = planning_change_service.apply(db, str(batch.id), world.actor)
+    db.commit()
+    assert again["already_applied"] is False
+
+    updated = planning_change_service.set_row_decision(db, str(batch.id), row_id, "keep")
+    assert updated["decision"] == "keep"
 
 
 # ============================================================================
