@@ -406,7 +406,7 @@ export function POIntakeAnnotationsGrid({
           <AlertDialogHeader>
             <AlertDialogTitle>Accept this note?</AlertDialogTitle>
             <AlertDialogDescription>
-              {accepting ? describeAnnotationEffect(accepting, []) : ''}
+              {accepting ? describeAnnotationEffect(accepting) : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -492,7 +492,10 @@ function Muted({ children }: { children: React.ReactNode }) {
 /** What accepting this note will do, in the line numbers and money on this document. */
 export function describeAnnotationEffect(
   annotation: POAnnotation,
-  lines: POVersionLine[],
+  // Defaults to none: this file only ever shows notes that name no line (that is what
+  // routes a note here rather than onto a row in the lines grid), so its own call sites
+  // never have a `lines` array to pass. `POIntakeLinesGrid` still passes the real one.
+  lines: POVersionLine[] = [],
 ): string {
   const json = (annotation.interpretation_json ?? {}) as Record<string, unknown>;
   const lineNos = Array.isArray(json.line_nos)

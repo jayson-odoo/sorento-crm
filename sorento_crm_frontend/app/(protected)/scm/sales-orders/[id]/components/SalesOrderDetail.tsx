@@ -196,6 +196,15 @@ export function SalesOrderDetail({ id }: { id: string }) {
   const productOptions = useProductOptions();
   const agentOptions = useSalesAgentOptions();
   const warehouseOptions = useWarehouseOptions();
+  // Code review nit: the read view's Location cell shows the code (`row.original.warehouse_code`,
+  // below), and `getWarehouseOptions` labels each option with the NAME - so the same value read
+  // as "BRW" and edited as "Bandar Rawang Warehouse". Prefix the code onto the label here so the
+  // edit select reads the same value the view does, without changing the shared option list every
+  // other SCM picker (filter bar, planning modal, preview card) also uses.
+  const warehouseSelectOptions = useMemo(
+    () => (warehouseOptions.data ?? []).map((o) => ({ ...o, label: `${o.value} - ${o.label}` })),
+    [warehouseOptions.data],
+  );
 
   const [isEditing, setIsEditing] = useState(false);
   const [orderType, setOrderType] = useState('');
@@ -402,7 +411,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
                       [row.original.id]: { ...draftOrRow(prev, row.original), warehouse_code: v },
                     }))
                   }
-                  options={warehouseOptions.data ?? []}
+                  options={warehouseSelectOptions}
                   placeholder="No location"
                   clearable
                   size="sm"
@@ -490,7 +499,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
         meta: { headerTitle: 'Status' },
       },
     ],
-    [isEditing, lineDrafts, mergedProductOptions, warehouseOptions.data],
+    [isEditing, lineDrafts, mergedProductOptions, warehouseSelectOptions],
   );
 
   const table = useReactTable({

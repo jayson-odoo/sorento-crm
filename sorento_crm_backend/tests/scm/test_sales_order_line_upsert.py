@@ -369,6 +369,30 @@ def test_explicit_null_clears_location_date_and_uom(db, world):
     assert row.uom is None
 
 
+def test_a_malformed_required_date_is_a_422_not_a_db_error(db, world):
+    """Code review finding S11: `date.fromisoformat` raising `ValueError` on a bad date
+    string must read as a 422 the caller can fix, not a raw 500."""
+    so, line = _uploaded_order(db, world)
+
+    with pytest.raises(AppException) as exc:
+        SalesOrderService(db).update(
+            so.id,
+            SalesOrderUpdate(lines=[{
+                "id": line.id,
+                "sku": world["product_a"].product_code,
+                "qty_ordered": 10,
+                "required_date": "not-a-date",
+            }]),
+            user_id=None,
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "INVALID_DATE"
+
+    db.expire_all()
+    row = db.get(SalesOrderLine, line.id)
+    assert row.required_date is None, "the refused write must not half-apply"
+
+
 def test_editing_a_line_with_an_unknown_warehouse_code_is_a_404(db, world):
     so, line = _uploaded_order(db, world)
 

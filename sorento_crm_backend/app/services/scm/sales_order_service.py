@@ -168,6 +168,19 @@ class SalesOrderService:
             raise AppException(404, f"Warehouse not found: {code}", code="WAREHOUSE_NOT_FOUND")
         return wh
 
+    @staticmethod
+    def _parse_date(value: str, field_label: str) -> date:
+        # A malformed ISO date (bad format, out-of-range day, ...) must read as a 422 the
+        # caller can fix, not a raw `ValueError` out of `date.fromisoformat` bubbling up
+        # as a 500 - same family as `_agent`'s UUID guard above.
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            raise AppException(
+                422, f"Invalid {field_label}: {value!r} (expected YYYY-MM-DD)",
+                code="INVALID_DATE",
+            )
+
     def _order_type_label(self, order_type: Optional[str]) -> str:
         if not order_type:
             return ""
@@ -455,7 +468,7 @@ class SalesOrderService:
             sales_agent_id=agent_id,
             order_date=date.today(),
             requested_delivery_date=(
-                date.fromisoformat(data.requested_delivery_date)
+                self._parse_date(data.requested_delivery_date, "requested_delivery_date")
                 if data.requested_delivery_date else None
             ),
             order_type=data.order_type,
@@ -503,7 +516,7 @@ class SalesOrderService:
             so.sales_agent_id = self._agent(data.sales_agent_id).id if data.sales_agent_id else None
         if data.requested_delivery_date is not None:
             so.requested_delivery_date = (
-                date.fromisoformat(data.requested_delivery_date)
+                self._parse_date(data.requested_delivery_date, "requested_delivery_date")
                 if data.requested_delivery_date else None
             )
         if data.lines is not None:
@@ -562,7 +575,7 @@ class SalesOrderService:
                 self._warehouse(ln.warehouse_code).id if ln.warehouse_code else None
             ) if "warehouse_code" in fields_set else None
             required_date = (
-                date.fromisoformat(ln.required_date) if ln.required_date else None
+                self._parse_date(ln.required_date, "required_date") if ln.required_date else None
             ) if "required_date" in fields_set else None
             uom = (ln.uom or None) if "uom" in fields_set else None
             if target is not None:

@@ -485,4 +485,33 @@ describe('POIntakeLinesGrid, handwriting reviewed on the line itself', () => {
     expect(screen.queryByText(/lines? with handwriting to review/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Next unreviewed' })).toBeNull();
   });
+
+  it('shows a still-pending note as a muted badge in read-only, not hidden', async () => {
+    renderGrid(threeLines(), {
+      readOnly: true,
+      annotations: [annotation({ id: 'a1', refers_to_lines: [2] })],
+    });
+
+    expect(await screen.findByText('Pending: Cancel line')).toBeInTheDocument();
+    // Muted, no action panel: a viewer without edit rights has nothing to click here.
+    expect(screen.queryByRole('button', { name: /^Accept/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Reject/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Edit/ })).toBeNull();
+  });
+
+  it('does not let Enter on a focused panel button also fire Accept on the row (S9)', async () => {
+    renderGrid(threeLines(), {
+      annotations: [annotation({ id: 'a1', refers_to_lines: [2] })],
+    });
+
+    const rejectButton = await screen.findByRole('button', {
+      name: 'Reject the note on line 2',
+    });
+    // The button already answers its own Enter (native activation). Before the guard,
+    // this keydown also bubbled to the panel's own handler and opened the Accept dialog
+    // on top of whatever Reject itself was doing.
+    fireEvent.keyDown(rejectButton, { key: 'Enter', bubbles: true });
+
+    expect(screen.queryByText('Accept this note?')).toBeNull();
+  });
 });

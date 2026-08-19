@@ -46,11 +46,13 @@ export const SCOPE_TYPE_OPTIONS: { value: Exclude<ScopeType, 'global'>; label: s
   { value: 'abc_xyz_cell', label: 'ABC-XYZ cell' },
 ];
 
+// `reorder_level` is deliberately absent: it is set by the planning-mode switch
+// (Auto/Manual), never chosen as a create option here. It still has a label above,
+// for the grid and preview to read when a row already carries it.
 export const POLICY_TYPE_OPTIONS: { value: PolicyType; label: string }[] = [
   { value: 'reorder_point', label: 'Reorder point' },
   { value: 'periodic_review', label: 'Periodic review' },
   { value: 'min_max', label: 'Min-max' },
-  { value: 'reorder_level', label: 'Reorder level' },
 ];
 
 export const SAFETY_METHOD_OPTIONS: { value: SafetyStockMethod; label: string }[] = [

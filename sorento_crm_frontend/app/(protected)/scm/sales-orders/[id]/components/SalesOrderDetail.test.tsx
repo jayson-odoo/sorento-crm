@@ -572,7 +572,10 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
     const locationCombo = screen.getByRole('combobox', { name: 'Location on CW-BASIN-450' });
-    expect(locationCombo).toHaveTextContent('Brickworks Batu Berendam');
+    // Code-first, same as the read view's Location cell (`BRW-BB` above) - a code review
+    // nit found this select's option label was the bare warehouse NAME, so the same value
+    // read as a code in view and a name in edit.
+    expect(locationCombo).toHaveTextContent('BRW-BB - Brickworks Batu Berendam');
     // Same clear affordance the Agent select already carries - a location, once picked,
     // must be unsettable, not just re-pickable.
     expect(within(locationCombo).getByRole('button', { name: 'Clear selection' }))
@@ -586,7 +589,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
 
     fireEvent.click(screen.getByRole('combobox', { name: 'Location on CW-BASIN-450' }));
-    fireEvent.click(await screen.findByRole('option', { name: 'Brickworks Iskandar' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'BRW-IB - Brickworks Iskandar' }));
 
     fireEvent.change(screen.getByLabelText('Delivery date on CW-BASIN-450'), {
       target: { value: '2026-10-05' },

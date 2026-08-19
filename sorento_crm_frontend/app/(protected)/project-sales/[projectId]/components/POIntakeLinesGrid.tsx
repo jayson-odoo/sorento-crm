@@ -549,20 +549,24 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
                   </Badge>
                 )}
                 {readOnly
-                  ? lineNotes
-                      .filter((note) => note.state !== 'proposed')
-                      .map((note) => (
-                        <Badge
-                          key={note.id}
-                          variant="secondary"
-                          className="text-[11px] opacity-70"
-                          title={note.raw_text ?? undefined}
-                        >
-                          {note.state === 'rejected'
-                            ? `Rejected: ${annotationBadgeLabel(note)}`
+                  ? // A viewer without edit rights gets no action panel (there is
+                    // nothing for them to do about it), but a note still awaiting
+                    // review must still show here, muted - otherwise a read-only
+                    // viewer sees no pending handwriting at all.
+                    lineNotes.map((note) => (
+                      <Badge
+                        key={note.id}
+                        variant="secondary"
+                        className="text-[11px] opacity-70"
+                        title={note.raw_text ?? undefined}
+                      >
+                        {note.state === 'rejected'
+                          ? `Rejected: ${annotationBadgeLabel(note)}`
+                          : note.state === 'proposed'
+                            ? `Pending: ${annotationBadgeLabel(note)}`
                             : annotationBadgeLabel(note)}
-                        </Badge>
-                      ))
+                      </Badge>
+                    ))
                   : lineNotes
                       .filter((note) => note.state === 'proposed')
                       .map((note) => (
@@ -1054,6 +1058,13 @@ function LineAnnotationPanel({
     <div
       className="space-y-2 border-t border-amber-500/30 bg-amber-50/60 px-4 py-3 dark:bg-amber-950/20"
       onKeyDown={(event) => {
+        // A button inside this panel (Accept / Edit / Reject / Page N / Skip) already
+        // answers Enter itself - the native activate. Without this guard the keydown
+        // still bubbles up here afterwards, so pressing Enter on the focused Reject
+        // button both rejects it AND calls `onAccept(notes[0])`, opening the accept
+        // dialog on top of whatever the button's own click just did.
+        const target = event.target as HTMLElement;
+        if (target.closest('button')) return;
         if (event.key === 'Enter') {
           event.preventDefault();
           onAccept(notes[0]);
