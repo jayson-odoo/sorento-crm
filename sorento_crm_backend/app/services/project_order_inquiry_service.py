@@ -53,6 +53,7 @@ from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import InboundShipment, SPOAllocation
 from app.models.product import Product
 from app.models.project_so import (
+    AMENDMENT_PUBLISHED,
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
     INQUIRY_RAISED,
@@ -507,6 +508,66 @@ class ProjectOrderInquiryService:
                     note=self._change_note(change, row),
                 )
             )
+        return self._write(order, amendment, demand, actor_user_id=actor_user_id)
+
+    def derive_for_book_change(
+        self,
+        order: ProjectSalesOrder,
+        rows: Sequence[Dict[str, Any]],
+        *,
+        batch_id: str,
+        actor_user_id: Optional[str] = None,
+    ) -> Optional[OrderInquiry]:
+        """A planning-change batch's accepted reactions, in purchasing's own verbs
+        (`PLAN-so-book-diff-replanning.md` AC-R08).
+
+        `rows` is one already-resolved demand row per accepted line: `{line_id, product_id,
+        item_code, qty, delivery_date, stock_location, change, note}` - the caller
+        (`planning_change_service.apply`) is the one that knows which reaction happened and
+        what the previous value was, so this stays as thin a wrapper over `net_demand` as
+        `derive_for_amendment` is.
+
+        Written under its OWN `SOAmendment` row rather than the order's `amendment_id IS
+        NULL` inquiry `refresh_for_decision` owns: the two are different instructions (a
+        confirmed Buy residual vs a reaction to what changed) and the DB-level singleton on
+        `amendment_id IS NULL` would otherwise collide with whatever `confirm()` just wrote
+        earlier in the same apply. `from_version_kind='planning_change_batch'` names where
+        this one came from; nothing reads that column back for routing, so it costs no
+        contract anywhere else.
+        """
+        demand: List[DemandRow] = []
+        verb_summary: Dict[str, int] = {}
+        for row in rows:
+            qty = _dec(row.get("qty"))
+            if qty <= _ZERO:
+                continue
+            change = str(row.get("change") or "")
+            demand.append(
+                DemandRow(
+                    line_id=str(row.get("line_id") or ""),
+                    product_id=str(row.get("product_id") or ""),
+                    item_code=row.get("item_code") or "",
+                    qty=qty,
+                    delivery_date=row.get("delivery_date"),
+                    stock_location=row.get("stock_location"),
+                    change=change,
+                    note=row.get("note"),
+                )
+            )
+            verb_summary[change] = verb_summary.get(change, 0) + 1
+        if not demand:
+            return None
+        amendment = SOAmendment(
+            company_id=order.company_id,
+            project_sales_order_id=order.id,
+            from_version_kind="planning_change_batch",
+            from_version_id=batch_id,
+            verb_summary=verb_summary,
+            status=AMENDMENT_PUBLISHED,
+            published_at=datetime.utcnow(),
+        )
+        self.db.add(amendment)
+        self.db.flush()
         return self._write(order, amendment, demand, actor_user_id=actor_user_id)
 
     def _change_note(self, change: str, row: Dict[str, Any]) -> Optional[str]:

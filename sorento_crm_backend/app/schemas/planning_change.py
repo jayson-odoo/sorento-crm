@@ -1,0 +1,180 @@
+"""Planning changes wire shapes (`documentation/plans/scm/PLAN-so-book-diff-replanning.md`
+section 3), transcribed field for field from
+`sorento_crm_frontend/app/(protected)/project-sales/_shared/types/planningChange.types.ts`,
+the Phase 1 contract this Phase 2 build matches exactly.
+
+Quantities are decimal STRINGS, the same convention `project_supply.py` and
+`project_board.py` use throughout: a float round trip loses the tail of a quantity the
+customer signed for.
+"""
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Dict, List, Literal, Optional
+
+from pydantic import BaseModel, Field
+
+from app.schemas.project_board import BoardContribution
+
+PlanningChangeKind = Literal["delayed", "advanced", "qty_up", "qty_down", "closed", "added"]
+PlanningChangeReaction = Literal["keep", "release", "replan", "reduce", "retire"]
+PlanningChangeDecision = Optional[Literal["accept", "keep", "board"]]
+PlanningChangeAppliedState = Literal["pending", "applied", "failed", "superseded"]
+PlanningChangeSourceKind = Literal["so_book_upload"]
+
+
+class PlanningChangeFromTo(BaseModel):
+    required_date: Optional[str] = None
+    qty: Optional[str] = None
+    status: Optional[str] = None
+
+
+class PlanningChangeHeldReserve(BaseModel):
+    location: str
+    warehouse_id: Optional[str] = None
+    qty: str
+
+
+class PlanningChangeHeldBorrow(BaseModel):
+    location: str
+    warehouse_id: Optional[str] = None
+    qty: str
+    source: Optional[str] = None
+
+
+class PlanningChangeHeld(BaseModel):
+    reserve: List[PlanningChangeHeldReserve] = Field(default_factory=list)
+    borrow: List[PlanningChangeHeldBorrow] = Field(default_factory=list)
+    buy_qty: str = "0"
+    timely_spo_qty: str = "0"
+    revision_no: int
+
+
+class PlanningChangeEvidencedFact(BaseModel):
+    value: bool
+    where: List[str] = Field(default_factory=list)
+
+
+class PlanningChangeReserveWindowFact(BaseModel):
+    value: bool
+    window_days: int
+    new_date: str
+    window_end: str
+
+
+class PlanningChangeBuyActionedFact(BaseModel):
+    value: bool
+    po_number: Optional[str] = None
+
+
+class PlanningChangeFacts(BaseModel):
+    dealer_hot_selling: PlanningChangeEvidencedFact
+    project_hot_selling: PlanningChangeEvidencedFact
+    discontinued: bool
+    days_moved: int
+    within_reserve_window: PlanningChangeReserveWindowFact
+    buy_actioned: PlanningChangeBuyActionedFact
+
+
+class PlanningChangeInquiryRow(BaseModel):
+    id: str
+    verb: str
+    qty: str
+    state: str
+
+
+class PlanningChangeRow(BaseModel):
+    id: str
+    line_no: int
+    item_code: str
+    product_name: Optional[str] = None
+    kind: PlanningChangeKind
+    from_: PlanningChangeFromTo = Field(alias="from")
+    to: PlanningChangeFromTo
+    days_moved: Optional[int] = None
+    held: Optional[PlanningChangeHeld] = None
+    facts: PlanningChangeFacts
+    suggested: PlanningChangeReaction
+    why: str
+    proposal: Optional[BoardContribution] = None
+    inquiry_rows: List[PlanningChangeInquiryRow] = Field(default_factory=list)
+    decision: PlanningChangeDecision = None
+    applied_state: PlanningChangeAppliedState = "pending"
+    applied_reason: Optional[str] = None
+    board_link: str
+
+    model_config = {"populate_by_name": True}
+
+
+class PlanningChangeOrder(BaseModel):
+    project_sales_order_id: str
+    so_number: str
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
+    revision_no: int
+    rows: List[PlanningChangeRow] = Field(default_factory=list)
+    is_adopted: bool
+    core_sales_order_id: Optional[str] = None
+    project_id: Optional[str] = None
+
+
+class PlanningChangeBatchSource(BaseModel):
+    upload_id: str
+    file_name: str
+    kind: PlanningChangeSourceKind
+    import_job_id: Optional[str] = None
+
+
+class PlanningChangeResult(BaseModel):
+    orders_revised: List[Dict[str, Any]] = Field(default_factory=list)
+    orders_failed: List[Dict[str, Any]] = Field(default_factory=list)
+    inquiry_rows_changed: List[Dict[str, Any]] = Field(default_factory=list)
+    lines_replanned: int = 0
+    purchasing_notified: bool = False
+
+
+class PlanningChangeBatch(BaseModel):
+    id: str
+    created_at: datetime
+    created_by_name: Optional[str] = None
+    source: PlanningChangeBatchSource
+    applied_at: Optional[datetime] = None
+    applied_by_name: Optional[str] = None
+    result: Optional[PlanningChangeResult] = None
+    orders: List[PlanningChangeOrder] = Field(default_factory=list)
+
+
+class PlanningChangeBatchSummary(BaseModel):
+    id: str
+    created_at: datetime
+    created_by_name: Optional[str] = None
+    source: PlanningChangeBatchSource
+    order_count: int
+    line_count: int
+    pending_count: int
+    failed_count: int
+    applied_at: Optional[datetime] = None
+    applied_by_name: Optional[str] = None
+
+
+class PlanningChangeListEnvelope(BaseModel):
+    """Flat `{ data, total, page, limit }`, exactly as the FE contract states it (section 3)
+    - deliberately NOT the shared `ListResponse[T]` envelope (nested `pagination`), because
+    the Phase 1 mock service (`planningChangeService.ts`) was built against this flat shape
+    and the contract says Phase 2 must match it, not the other way round.
+    """
+
+    data: List[PlanningChangeBatchSummary] = Field(default_factory=list)
+    total: int
+    page: int
+    limit: int
+
+
+class UpdatePlanningChangeRowBody(BaseModel):
+    decision: PlanningChangeDecision = None
+
+
+class ApplyPlanningChangesResult(BaseModel):
+    applied_orders: List[str] = Field(default_factory=list)
+    failed_orders: List[Dict[str, Any]] = Field(default_factory=list)
+    already_applied: bool = False
