@@ -92,8 +92,8 @@ export function PlanningChangesListClient() {
         size: 140,
         meta: { headerTitle: 'Uploaded by' },
         cell: ({ row }) => (
-          <span className="block truncate" title={row.original.created_by_name}>
-            {row.original.created_by_name}
+          <span className="block truncate" title={row.original.created_by_name ?? undefined}>
+            {row.original.created_by_name ?? '-'}
           </span>
         ),
       },
