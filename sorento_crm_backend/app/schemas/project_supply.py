@@ -249,6 +249,13 @@ class ClassificationEvidenceLocation(BaseModel):
     qty_delivered: str
     rank: int
     of: int
+    #: This row's OWN share of the class's total quantity - qty / sum(qty) over the whole
+    #: window. "Its share" in the popover; kept separate from `cumulative_share_pct` so a
+    #: thin ranking's high cumulative figure is never read as this row's own weight (captain,
+    #: 19 Aug 2026: "Share: top 93.6%" read as good on a row that held almost nothing).
+    share_pct: Optional[float] = None
+    #: The running share INCLUDING this row - "Ranked above it" in the popover is this minus
+    #: `share_pct`.
     cumulative_share_pct: Optional[float] = None
     #: A/B/C, or absent when the class ranking never reached this row (should not happen -
     #: every ranked row carries a letter).

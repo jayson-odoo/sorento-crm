@@ -133,16 +133,26 @@ def classification_evidence(db: Session, product_id: str) -> Dict[str, Any]:
             letter = (row.letter or "").upper() or None
             hot = letter == "A"
             any_hot = any_hot or hot
+            qty = Decimal(str(row.qty))
             total = Decimal(str(row.total_qty)) if row.total_qty is not None else None
             running = Decimal(str(row.running_qty)) if row.running_qty is not None else None
-            share = float(running / total * 100) if total else None
+            cumulative_share = float(running / total * 100) if total else None
+            # This row's OWN share of the class's total quantity - "Its share" in the popover.
+            # Captain, 19 Aug 2026, reading a cumulative "Share: top 93.6%": "read as good" -
+            # a single small row can sit at the top of a thin ranking and look impressive read
+            # as a percentage of the WHOLE, so the row now states its own weight plainly and
+            # leaves the cumulative figure to "Ranked above it" (FE: cumulative minus this).
+            own_share = float(qty / total * 100) if total else None
             locations.append(
                 {
                     "warehouse_code": row.warehouse_code,
-                    "qty_delivered": qty_text(Decimal(str(row.qty))),
+                    "qty_delivered": qty_text(qty),
                     "rank": int(row.rnk),
                     "of": int(row.of_count),
-                    "cumulative_share_pct": round(share, 1) if share is not None else None,
+                    "share_pct": round(own_share, 2) if own_share is not None else None,
+                    "cumulative_share_pct": (
+                        round(cumulative_share, 1) if cumulative_share is not None else None
+                    ),
                     "letter": letter,
                     "hot": hot,
                 }

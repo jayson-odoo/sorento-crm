@@ -6,7 +6,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { useClassificationEvidence } from '../../_shared/hooks/useFulfilmentPlanning';
-import type { ClassificationEvidenceClass } from '../../_shared/types/fulfilmentPlanning.types';
+import type {
+  ClassificationEvidenceClass,
+  ClassificationEvidenceLocation,
+} from '../../_shared/types/fulfilmentPlanning.types';
 
 /**
  * The Proof button: the ranked evidence behind one item's hot/cold verdict.
@@ -128,7 +131,8 @@ function ClassSection({
                   Delivered last 12 months
                 </th>
                 <th className="pe-2 text-end font-medium uppercase tracking-wide">Rank</th>
-                <th className="text-end font-medium uppercase tracking-wide">Share</th>
+                <th className="pe-2 text-end font-medium uppercase tracking-wide">Its share</th>
+                <th className="text-end font-medium uppercase tracking-wide">Ranked above it</th>
               </tr>
             </thead>
             <tbody>
@@ -139,23 +143,42 @@ function ClassSection({
                     {Number(location.qty_delivered).toLocaleString()}
                   </td>
                   <td className="pe-2 py-0.5 text-end">{`${location.rank} of ${location.of}`}</td>
-                  <td className="py-0.5 text-end">
-                    {location.cumulative_share_pct != null
-                      ? `top ${location.cumulative_share_pct}%`
-                      : '-'}
+                  <td className="pe-2 py-0.5 text-end">
+                    {location.share_pct != null ? `${location.share_pct}%` : '-'}
                   </td>
+                  <td className="py-0.5 text-end">{rankedAboveText(location, cls.demand_class)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
           <p className="mt-1.5 text-2xs text-muted-foreground">
-            {`Hot = inside the top ${hotCutPct}% of quantity delivered to ${cls.demand_class} `}
-            {`customers, over every item at every location${computedText}.`}
+            {`Hot = among the items that together make the first ${hotCutPct}% of quantity `}
+            {`delivered to ${cls.demand_class} customers at that location${computedText}.`}
           </p>
         </>
       )}
     </div>
   );
+}
+
+/**
+ * "93.6% of retail quantity" - the share held by every row ranked ahead of this one, so the
+ * captain reads a thin ranking's row for what it is instead of mistaking its own cumulative
+ * position ("Share: top 93.6%") for its own weight. `cumulative_share_pct` already includes
+ * this row; subtracting `share_pct` leaves only what came before it.
+ */
+function rankedAboveText(
+  location: ClassificationEvidenceLocation,
+  demandClass: 'retail' | 'project',
+): string {
+  if (location.cumulative_share_pct == null || location.share_pct == null) return '-';
+  // Independently-rounded inputs (cumulative to 1dp, its own share to 2dp) can leave a
+  // hairline negative for the very top row; clamped, never a "-0%" the reader has to parse.
+  const above = Math.max(
+    0,
+    Math.round((location.cumulative_share_pct - location.share_pct) * 10) / 10,
+  );
+  return `${above}% of ${demandClass} quantity`;
 }
 
 export default ClassificationProofPopover;
