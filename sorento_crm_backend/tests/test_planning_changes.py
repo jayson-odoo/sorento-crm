@@ -1511,3 +1511,57 @@ def test_apply_uncovers_a_replan_line_instead_of_letting_confirm_carry_it_forwar
     # what it had raised - the same behaviour a genuinely-undecided line already gets.
     db.refresh(buy_row_b)
     assert buy_row_b.state == INQUIRY_CANCELLED
+
+
+def test_build_batch_proposal_for_a_covered_replan_row_is_the_boards_full_contribution(api):
+    """Captain, 19 August 2026: the trail popover on an `advanced` row showed nothing - the
+    row's `proposal_json` had one source and `trail: []`. Root cause: the ACTIVE decision
+    still covers the line when `build_batch` builds its proposal (Apply is what excludes it,
+    and Apply has not run yet), so a plain board build found it `covered` and handed back the
+    FROZEN composition (`_apply_frozen`: one source, no trail, no `rank_factors`) instead of
+    running the ladder fresh. `_proposal_for` now previews this one line as uncovered
+    (`FulfilmentBoardService.build(..., exclude_covered_line_ids=[project_line_id])`), so the
+    proposal is the board's own full `BoardContribution` - sources, a 5-rung trail,
+    `rank_factors`, and `item_flags` - the same shape `BoardTrailPopover` / `BoardAmendDialog`
+    already render off the live board."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=500)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="432",
+                            required_date=date(2026, 8, 25))
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    # Covered today by a plain Buy - the "Buy 432" the captain read with nothing under it.
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line.id, buy_qty="432", buy_reason="Nothing free elsewhere."),
+    ]})
+
+    changed = _diff_change(
+        DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ADV",
+        location=world.own_wh.warehouse_code, old_date=date(2026, 8, 25),
+        new_date=date(2026, 8, 25) - timedelta(days=14), old_qty="432", new_qty="432",
+    )
+    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed])
+    batch = planning_change_service.build_batch(
+        db, diff,
+        applied_line_ids={id(changed): str(core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    out = planning_change_service.get_batch(db, str(batch.id))
+    row = out["orders"][0]["rows"][0]
+    assert row["suggested"] == "replan"  # advanced - rule 7, unconditional
+
+    proposal = row["proposal"]
+    assert proposal is not None
+    assert [step["step"] for step in proposal["trail"]] == [1, 2, 3, 4, 5]
+    assert proposal["rank_factors"]
+    assert proposal["sources"]
+    assert proposal["item_flags"] is not None
+    # Now free at its own location, so the fresh ladder proposes a Reserve rather than
+    # repeating the stale frozen Buy - the tell that the ladder was actually walked.
+    assert Decimal(proposal["qty_proposed_reserve"]) == Decimal("432")

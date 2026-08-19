@@ -423,7 +423,8 @@ def build_batch(
     db.flush()
 
     supply = ProjectSupplyService(db)
-    board_cache: Dict[str, dict] = {}
+    # Keyed `(so_number, project_line_id)`, not just `so_number` - see `_proposal_for`.
+    board_cache: Dict[Tuple[str, Optional[str]], dict] = {}
 
     for pso_id, group in by_order.items():
         order = group[0]["order"]
@@ -590,19 +591,38 @@ def _inquiry_rows_and_buy_actioned(
 
 
 def _proposal_for(
-    db: Session, board_cache: Dict[str, dict], so_number: str, core_line_id: str,
-    project_line_id: Optional[str],
+    db: Session, board_cache: Dict[Tuple[str, Optional[str]], dict], so_number: str,
+    core_line_id: str, project_line_id: Optional[str],
 ) -> Optional[dict]:
+    """The board's own contribution for this line - the FULL `BoardContribution` a `replan`
+    row shows its ladder from, not a slimmed-down copy of it.
+
+    An active decision still covers most `replan` lines (their own hold has not been touched
+    yet - Apply is what excludes them), so a plain `build()` would find them `covered` and
+    hand back the FROZEN composition (one source, no trail) rather than the fresh proposal
+    the row's own `why` promises. `exclude_covered_line_ids` previews this ONE line as if that
+    hold did not exist, the same carve-out `confirm` gives a line it is about to replace, so
+    the ladder is actually walked and the trail/sources/rank_factors are the real ones.
+
+    Cached per `(so_number, project_line_id)` rather than per `so_number` alone: two different
+    `replan` lines on the same order need two different builds, each excluding only its OWN
+    line - every other line of the order stays covered by its real, undisturbed hold.
+    """
     from app.services.project_fulfilment_board_service import FulfilmentBoardService
 
-    board = board_cache.get(so_number)
+    cache_key = (so_number, project_line_id)
+    board = board_cache.get(cache_key)
     if board is None:
         try:
-            board = FulfilmentBoardService(db).build([so_number], granularity="week")
+            board = FulfilmentBoardService(db).build(
+                [so_number],
+                granularity="week",
+                exclude_covered_line_ids=[project_line_id] if project_line_id else None,
+            )
         except Exception:  # noqa: BLE001 - a proposal is a nicety, never a build blocker
             logger.exception("planning change proposal build failed for %s", so_number)
             board = {}
-        board_cache[so_number] = board
+        board_cache[cache_key] = board
     for cell in board.get("cells", []) or []:
         for contribution in cell.get("contributions", []) or []:
             if contribution.get("line_id") == core_line_id or (
@@ -623,7 +643,7 @@ def _build_row(
     project_where: Dict[str, List[str]],
     discontinued_ids: set,
     product_names: Dict[str, str],
-    board_cache: Dict[str, dict],
+    board_cache: Dict[Tuple[str, Optional[str]], dict],
     so_number: str,
 ) -> PlanningChangeRow:
     c = entry["change"]

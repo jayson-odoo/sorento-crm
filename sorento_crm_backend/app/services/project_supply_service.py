@@ -669,7 +669,10 @@ class ProjectSupplyService:
         )
 
     def demand_facts(
-        self, rows: Sequence[Dict[str, Any]]
+        self,
+        rows: Sequence[Dict[str, Any]],
+        *,
+        exclude_line_ids: Optional[Sequence[str]] = None,
     ) -> Dict[str, _LineFacts]:
         """`_LineFacts` for arbitrary CORE demand rows, keyed by the caller's own `key`.
 
@@ -684,6 +687,11 @@ class ProjectSupplyService:
         to be left for the caller, from when the board ran a contest of its own among the
         selected orders - which is exactly how it came to propose Reserves the confirmation
         refused.
+
+        `exclude_line_ids` (PROJECT line ids, `confirm`'s own `replaced` shape) un-nets a
+        line's own hold and keeps its demand in the queue - the same carve-out `confirm` gives
+        the lines it is about to replace - so a covered line can be asked "what would the
+        ladder propose today", as the planning-change batch does for a `replan` row.
         """
         product_ids = {str(r["product_id"]) for r in rows if r.get("product_id")}
         warehouse_ids = {str(r["warehouse_id"]) for r in rows if r.get("warehouse_id")}
@@ -693,8 +701,10 @@ class ProjectSupplyService:
         }
         warehouses.update(self._warehouses(pool_ids - set(warehouses)))
 
-        self._free_cache = self._free_stock(product_ids, exclude_line_ids=None)
-        self._holds_cache = self._holds_by_project(product_ids, exclude_line_ids=None)
+        self._free_cache = self._free_stock(product_ids, exclude_line_ids=exclude_line_ids)
+        self._holds_cache = self._holds_by_project(
+            product_ids, exclude_line_ids=exclude_line_ids
+        )
         self._pile_cache = None
         # Eager, not lazy: a project hot-selling line's pool draw is capped against the
         # pool's signed availability on every read, not only when a donor list is asked for.
@@ -712,6 +722,7 @@ class ProjectSupplyService:
             warehouse_ids,
             warehouses,
             self._spo_rows(product_ids, warehouse_ids),
+            exclude_line_ids=exclude_line_ids,
             # Only these lines are asking, so only these lines' queues are described. Every
             # other line of the pile still counts toward them - it is named, not counted, that
             # is being narrowed here.
@@ -750,6 +761,7 @@ class ProjectSupplyService:
                 and str(row["warehouse_id"]) in warehouses
                 and warehouses[str(row["warehouse_id"])].pool_warehouse_id
             ],
+            exclude_line_ids=exclude_line_ids,
         )
 
         facts: Dict[str, _LineFacts] = {}
