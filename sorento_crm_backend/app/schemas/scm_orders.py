@@ -123,6 +123,20 @@ class CreateDoResponse(BaseModel):
     do_number: str
 
 
+class SalesAgentOption(BaseModel):
+    """One `sales_agents` row, for the Agent filter and the detail page's Agent select.
+
+    Served under `scm.dashboard.view` rather than `master_data.sales_agents.view` - the
+    master's own CRUD permission - because a purchasing/SCM operator role can hold the
+    former without the latter, and this route only ever reads.
+    """
+
+    id: str
+    sales_agent: str
+    person_label: Optional[str] = None
+    location_group: Optional[str] = None
+
+
 # --- purchase orders (read-only at M1) --------------------------------------
 
 class PurchaseOrderLine(BaseModel):

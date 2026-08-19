@@ -9,7 +9,11 @@ write-able. This covers the three things the plan asks the backend for:
 * `update()` can both SET and CLEAR the agent - clearing needs `model_fields_set`, not a
   plain `is not None` check, because an omitted field and an explicit `null` both arrive as
   `None` on the Pydantic model;
-* the list can be narrowed to one agent's orders.
+* the list can be narrowed to one agent's orders;
+* `list_agents()` - the options source for the FE's Agent filter/select, added when a
+  Purchasing-only role (holds `scm.dashboard.view`, not `master_data.sales_agents.view`)
+  turned out unable to load the master's own select route - active rows, ordered by code,
+  optionally narrowed by a code/label substring.
 
 Postgres only (`tests/_pg_fixture.py`), rolled back - every row this file creates is its own,
 marker-prefixed with `unique_code`, never a borrowed `LIMIT 1` row.
@@ -194,3 +198,57 @@ def test_the_list_can_be_narrowed_to_one_agent(db, world):
     assert numbers == {mine.so_number}
     assert theirs.so_number not in numbers
     assert unassigned.so_number not in numbers
+
+
+# --------------------------------------------------------------------------- #
+# list_agents — GET /scm/sales-orders/agents (PLAN-demo-followups-19aug-ladder-v2 follow-up)
+#
+# A Purchasing-only SCM user holds `scm.dashboard.view` but not the sales-agents master's
+# own `master_data.sales_agents.view`, so the Agent filter/select is served off this route
+# rather than `GET /master-data/sales-agents/`.
+# --------------------------------------------------------------------------- #
+
+def test_list_agents_returns_active_agents_with_code_and_label(db, world):
+    out = SalesOrderService(db).list_agents()
+    by_code = {a["sales_agent"]: a for a in out}
+
+    assert world["jeremy"].sales_agent in by_code
+    assert by_code[world["jeremy"].sales_agent]["id"] == world["jeremy"].id
+    assert by_code[world["jeremy"].sales_agent]["person_label"] == "JEREMY"
+    assert world["cindy"].sales_agent in by_code
+
+
+def test_list_agents_is_ordered_by_code_ascending(db, world):
+    out = SalesOrderService(db).list_agents()
+    codes = [a["sales_agent"] for a in out]
+
+    assert codes == sorted(codes)
+
+
+def test_list_agents_excludes_inactive_rows(db, world):
+    world["jeremy"].is_active = False
+    db.flush()
+
+    out = SalesOrderService(db).list_agents()
+    codes = {a["sales_agent"] for a in out}
+
+    assert world["jeremy"].sales_agent not in codes
+    assert world["cindy"].sales_agent in codes
+
+
+def test_list_agents_filters_by_code_substring(db, world):
+    out = SalesOrderService(db).list_agents(query=world["jeremy"].sales_agent)
+    codes = {a["sales_agent"] for a in out}
+
+    assert codes == {world["jeremy"].sales_agent}
+
+
+def test_list_agents_filters_by_person_label_substring(db, world):
+    # `query` runs unscoped over the whole shared master (real production agents included on
+    # the local prod-copy DB), so this asserts membership rather than set equality - a full
+    # equality check would be a flaky assertion about data this file does not own.
+    out = SalesOrderService(db).list_agents(query="cindy lee")
+    ids = {a["id"] for a in out}
+
+    assert world["cindy"].id in ids
+    assert world["jeremy"].id not in ids

@@ -10,6 +10,11 @@
  *
  *   GET    /sales-orders            list (page/limit/sort/dir/query/status/priority/source,
                                    date_from/date_to/customer_id/outstanding/sales_agent_id)
+ *   GET    /sales-orders/agents     sales-agent options for the Agent filter/select. Gated on
+ *                                   `scm.dashboard.view` - the same read permission as this
+ *                                   whole router - rather than the sales-agents master's own
+ *                                   `master_data.sales_agents.view`, which a role like
+ *                                   Purchasing does not hold.
  *   GET    /sales-orders/{id}       single
  *   POST   /sales-orders            create (order_type, customer_code, priority,
  *                                   requested_delivery_date?, sales_agent_id?,
@@ -131,6 +136,28 @@ export async function updateSalesOrder(
 export async function deleteSalesOrder(id: string): Promise<void> {
   const res = await apiFetch(`${BASE}/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete sales order'));
+}
+
+/** One `sales_agents` row, as `GET /sales-orders/agents` serves it. */
+export interface SalesOrderAgent {
+  id: string;
+  sales_agent: string;
+  person_label: string | null;
+  location_group: string | null;
+}
+
+/**
+ * Active sales agents, for the list's Agent filter and the detail page's Agent select.
+ *
+ * Served off THIS router (`scm.dashboard.view`) rather than the sales-agents master's own
+ * `GET /master-data/sales-agents/` (`master_data.sales_agents.view`) - a role that can read
+ * SCM sales orders does not necessarily hold the master-data permission too, and would
+ * otherwise 403 on this select alone.
+ */
+export async function getSalesOrderAgents(): Promise<SalesOrderAgent[]> {
+  const res = await apiFetch(`${BASE}/agents`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load sales agents'));
+  return res.json();
 }
 
 export async function createDoFromSalesOrder(

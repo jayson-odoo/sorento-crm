@@ -6,6 +6,7 @@ import {
   createSalesOrder,
   deleteSalesOrder,
   getSalesOrder,
+  getSalesOrderAgents,
   getSalesOrders,
   updateSalesOrder,
 } from '../services/salesOrderService';
@@ -61,6 +62,17 @@ export function useSalesOrder(id: string | null) {
     queryFn: () => getSalesOrder(id as string),
     enabled: !!id,
     staleTime: 5_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+/** Active sales agents, for the Agent filter and the detail page's Agent select. */
+export function useSalesOrderAgents() {
+  return useQuery({
+    queryKey: ['scm', 'sales-order-agents'],
+    queryFn: getSalesOrderAgents,
+    staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
     retry: 1,
   });

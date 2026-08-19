@@ -1,15 +1,16 @@
 import { useMemo } from 'react';
-import { useSalesAgents } from '@/app/(protected)/master-data-management/sales-agents/hooks/useSalesAgents';
+import { useSalesOrderAgents } from '../../hooks/useSalesOrders';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 
 /**
  * Every sales agent as a `SearchableSelect` option, for the two places on this screen that
  * need to pick one: the list's Agent filter and the detail page's Agent field.
  *
- * Reuses the sales-agents master's own `useSalesAgents` (per ARCHITECTURE-RULES: user/agent
- * selects go through the one shared source, never a per-feature duplicate). That hook is
- * paginated for its own list page; 200 is comfortably above the ~55 codes the master holds
- * today, so this reads as "every agent" without adding a second, options-shaped endpoint.
+ * Reads `GET /scm/sales-orders/agents` (`useSalesOrderAgents`) rather than the sales-agents
+ * master's own `useSalesAgents` (`master_data.sales_agents.view`): a role that can read SCM
+ * sales orders - e.g. Purchasing, gated on `scm.dashboard.view` - does not necessarily hold
+ * the master-data permission too, and 403'd on this select alone when it did. The sales
+ * order router serves the same rows under its own read gate instead.
  *
  * `value` is the id - never shown, only used to address the write. `label` is the code a
  * document actually states, with the person it has been annotated to alongside it when
@@ -17,10 +18,10 @@ import type { SearchableSelectOption } from '@/components/common/SearchableSelec
  * memorised.
  */
 export function useSalesAgentOptions() {
-  const agents = useSalesAgents({ pageIndex: 0, pageSize: 200, sorting: [], searchQuery: '' });
+  const agents = useSalesOrderAgents();
   const options = useMemo<SearchableSelectOption[]>(
     () =>
-      (agents.data?.data ?? [])
+      (agents.data ?? [])
         .slice()
         .sort((a, b) => a.sales_agent.localeCompare(b.sales_agent))
         .map((a) => ({

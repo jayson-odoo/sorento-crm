@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import func, text
+from sqlalchemy import func, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -112,6 +112,32 @@ class SalesOrderService:
         if not agent:
             raise AppException(404, "Sales agent not found", code="SALES_AGENT_NOT_FOUND")
         return agent
+
+    def list_agents(self, query: Optional[str] = None) -> list[dict]:
+        """Every active sales agent, for the Agent filter and the detail page's Agent select.
+
+        `sales_agents` is a shared master (no `CompanyScopedMixin`, see
+        `app/models/sales_agent.py`) - unscoped, same as `_agent` above and
+        `sales_agent_service.resolve`. `query` is an optional substring match on the code
+        or the person label, for the searchable select; omitted, every active row comes
+        back (~55 today, comfortably below a page).
+        """
+        qs = self.db.query(SalesAgent).filter(SalesAgent.is_active.is_(True))
+        if query:
+            like = f"%{query.strip()}%"
+            qs = qs.filter(
+                or_(SalesAgent.sales_agent.ilike(like), SalesAgent.person_label.ilike(like))
+            )
+        rows = qs.order_by(SalesAgent.sales_agent.asc()).all()
+        return [
+            {
+                "id": a.id,
+                "sales_agent": a.sales_agent,
+                "person_label": a.person_label,
+                "location_group": a.location_group,
+            }
+            for a in rows
+        ]
 
     def _product(self, sku: str) -> Product:
         prod = (

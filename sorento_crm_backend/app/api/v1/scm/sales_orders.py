@@ -15,6 +15,7 @@ from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.scm_orders import (
     CreateDoResponse,
+    SalesAgentOption,
     SalesOrder,
     SalesOrderFormData,
     SalesOrderListResponse,
@@ -75,6 +76,25 @@ def list_sales_orders(
     )
     out["data"] = svc.with_links(out["data"])
     return out
+
+
+@router.get("/sales-orders/agents", response_model=list[SalesAgentOption])
+def list_sales_order_agents(
+    q: Optional[str] = Query(
+        None, description="Substring match on the agent code or person label."
+    ),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_READ),
+):
+    """Every active sales agent, for the list's Agent filter and the detail page's Agent
+    select. Declared before `/{so_id}` so `agents` never parses as a SO id.
+
+    Gated on `scm.dashboard.view` (this router's read permission) rather than
+    `master_data.sales_agents.view` - the sales-agents master's own CRUD permission - since
+    a role that can read SCM sales orders (e.g. Purchasing) does not necessarily hold the
+    master-data one, and would otherwise 403 on this select alone.
+    """
+    return SalesOrderService(db).list_agents(q)
 
 
 @router.get("/sales-orders/{so_id}", response_model=SalesOrder)

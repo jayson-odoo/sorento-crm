@@ -67,6 +67,7 @@ vi.mock('../../hooks/useSalesOrders', () => ({
     isFetching: false,
     refetch: vi.fn(),
   }),
+  useSalesOrderAgents: () => ({ data: [], isLoading: false }),
   useCreateSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),

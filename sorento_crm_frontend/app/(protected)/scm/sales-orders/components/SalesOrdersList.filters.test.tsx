@@ -74,6 +74,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 const useSalesOrders = vi.fn();
 vi.mock('../../hooks/useSalesOrders', () => ({
   useSalesOrders: (...a: unknown[]) => useSalesOrders(...a),
+  useSalesOrderAgents: () => ({ data: [], isLoading: false }),
   useCreateSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
