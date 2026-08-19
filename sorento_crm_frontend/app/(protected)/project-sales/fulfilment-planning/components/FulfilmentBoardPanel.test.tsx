@@ -29,6 +29,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 const getPlanningBoard = vi.fn();
 const confirmSupply = vi.fn();
 const adoptSalesOrder = vi.fn();
+const confirmMany = vi.fn();
 
 vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   getPlanningBoard: (...args: unknown[]) => getPlanningBoard(...args),
@@ -38,6 +39,7 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   adoptSalesOrder: (...args: unknown[]) => adoptSalesOrder(...args),
   getSupply: vi.fn(),
   confirmSupply: (...args: unknown[]) => confirmSupply(...args),
+  confirmMany: (...args: unknown[]) => confirmMany(...args),
   // Declared INSIDE the factory: `vi.mock` is hoisted above every top-level binding, so a
   // class declared outside it is not initialised yet when the factory runs.
   ConfirmSupplyError: class ConfirmSupplyError extends Error {
@@ -1771,5 +1773,125 @@ describe('FulfilmentBoardPanel: pivoting the rows', () => {
 
     await waitFor(() => expect(rowHeaders()).toEqual(['SO000002']));
     expect(screen.getByText('1 of 2 sales orders')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Approve all / Confirm all approved (D3, PLAN-demo-followups-19aug-ladder-v2).
+ *
+ * Two orders, one undecided approvable line each: Approve all fills both blanks in the
+ * draft (never a decision already taken), Confirm all approved asks before it writes
+ * anything ("Confirm N decisions across M orders?"), and the write is ONE
+ * `confirmMany` call grouped per order - never one call per order from the panel.
+ */
+describe('FulfilmentBoardPanel: Approve all / Confirm all approved', () => {
+  function twoUndecidedOrders() {
+    return boardOf([
+      demand({
+        sales_order_id: 'so-a',
+        so_number: 'SO403340',
+        line_no: 1,
+        item_code: 'WESERP10B',
+      }),
+      demand({
+        sales_order_id: 'so-b',
+        so_number: 'SO398322',
+        line_no: 1,
+        item_code: 'WESERP20B',
+      }),
+    ]);
+  }
+
+  it('flips every undecided approvable line when Approve all is pressed', async () => {
+    getPlanningBoard.mockResolvedValue(twoUndecidedOrders());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(screen.getByText('0 approved · 2 undecided')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve all' }));
+
+    expect(screen.getByText('2 approved · 0 undecided')).toBeInTheDocument();
+  });
+
+  it('opens the confirm dialog naming how many decisions across how many orders', async () => {
+    getPlanningBoard.mockResolvedValue(twoUndecidedOrders());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'Approve all' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm all approved' }));
+
+    expect(
+      await screen.findByText('Confirm 2 decisions across 2 orders?'),
+    ).toBeInTheDocument();
+  });
+
+  it('posts ONE confirm-all call grouped per order, and renders each order its own result', async () => {
+    getPlanningBoard.mockResolvedValue(twoUndecidedOrders());
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: 1,
+          inquiry_rows_created: 0,
+          lines_decided: 1,
+          lines_undecided: 0,
+        },
+        {
+          pso_id: 'pso-so-b',
+          ok: false,
+          error: 'This line is not on this sales order any more.',
+        },
+      ],
+    });
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'Approve all' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm all approved' }));
+    await screen.findByText('Confirm 2 decisions across 2 orders?');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const body = confirmMany.mock.calls[0][0] as {
+      orders: { pso_id: string; lines: { project_line_id: string }[] }[];
+    };
+    expect(body.orders).toHaveLength(2);
+    const byPsoId = new Map(body.orders.map((order) => [order.pso_id, order]));
+    expect(byPsoId.get('pso-so-a')?.lines.map((line) => line.project_line_id)).toEqual([
+      'pl-so-a-1',
+    ]);
+    expect(byPsoId.get('pso-so-b')?.lines.map((line) => line.project_line_id)).toEqual([
+      'pl-so-b-1',
+    ]);
+
+    expect(
+      await screen.findByText('Confirm all: 1 of 2 orders confirmed'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('SO403340: confirmed as revision 1 (0 purchase rows handed over)'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('SO398322: This line is not on this sales order any more.'),
+    ).toBeInTheDocument();
+  });
+
+  it('leaves Approve all and Confirm all approved disabled with nothing to act on', async () => {
+    getPlanningBoard.mockResolvedValue(twoUndecidedOrders());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(screen.getByRole('button', { name: 'Confirm all approved' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve all' }));
+
+    expect(screen.getByRole('button', { name: 'Approve all' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Confirm all approved' })).not.toBeDisabled();
   });
 });
