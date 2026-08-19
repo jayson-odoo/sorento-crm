@@ -419,6 +419,51 @@ describe('SupplyLineCard', () => {
     expect((onChange.mock.calls[0][0] as DraftLine).borrow[0].qty).toBe('30');
   });
 
+  it('carries a group-borrow donor’s identity through Add a borrow into the draft (ladder v2 section E.4)', () => {
+    // Gap the ladder v2 coder disclosed: the dialog already names the donor SO and its
+    // agent, but the card's own `onAdd` used to drop those fields on the floor, so the
+    // confirm payload never named the donor and no order-back was raised for it.
+    const DONOR_LINE = 'd4000000-0000-4000-8000-000000000001';
+    const source = line({
+      open_qty: '100',
+      components: [{ kind: 'buy', qty: '100', reason: 'Remaining uncovered need.' }],
+      borrow_candidates: [
+        {
+          source: 'other_location',
+          warehouse_code: 'BRW-BB',
+          warehouse_id: WH_BRW,
+          free_qty: '40',
+          donor_impact: { free_before: '40', free_after_full_borrow: '0', committed_qty: '40' },
+          rung: 'group_borrow',
+          donor_so_number: 'SO371334',
+          donor_line_no: 2,
+          donor_agent_code: 'JEREMY',
+          donor_core_line_id: DONOR_LINE,
+          same_agent: false,
+        },
+      ],
+    });
+    renderCard(source);
+
+    fireEvent.click(screen.getByRole('button', { name: /add a borrow/i }));
+    expect(screen.getByText('SO371334 line 2')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '40' } });
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Group borrow, auto-proposed.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
+
+    const added = (onChange.mock.calls[0][0] as DraftLine).borrow[0];
+    expect(added).toMatchObject({
+      donor_core_line_id: DONOR_LINE,
+      donor_so_number: 'SO371334',
+      donor_line_no: 2,
+      donor_agent_code: 'JEREMY',
+      same_agent: false,
+    });
+  });
+
   it('removes a borrow from the line', () => {
     const source = line({
       open_qty: '40',

@@ -162,6 +162,18 @@ def _dec(value: Any, default: Decimal = _ZERO) -> Decimal:
         return default
 
 
+def _parse_date(value: Any) -> Optional[date]:
+    """A frozen snapshot's date fields are ISO strings (JSON has no date type); a carried
+    line reads them back off `SOSupplyDecision.line_snapshots` and needs the `date` this
+    class's other readers already expect."""
+    if value is None or isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
 #: How many of the queue in front of a line are NAMED beside it. The captain's question is "why
 #: do the orders stand ahead of me", and 142 rows is not an answer to it: three named lines plus
 #: a count of the rest BY WHAT PUT THEM THERE is. The whole queue is a click away (`pile_queue`).
@@ -448,12 +460,27 @@ class _BorrowLedger:
 class _FrozenComponent:
     """One component read back off a frozen snapshot, in the shape the payload's own
     components have (`.warehouse_id`, `.qty`, and for a borrow `.source`), so the shortfall
-    arithmetic can walk a carried line and a named line with one loop."""
+    arithmetic can walk a carried line and a named line with one loop.
+
+    Ladder v2 group borrow (section E.4) also needs the donor fields carried through: a
+    carried `group_borrow` component still holds another sales order's own committed
+    quantity, and `_borrow_shortfalls` names that donor and raises its order-back off
+    `donor_core_line_id` / `donor_so_number` / `donor_line_no` regardless of whether the
+    line was just named or is riding along carried forward. Without these, a reconfirm
+    that carries a group-borrow line silently drops that line's order-back.
+    """
 
     warehouse_id: Optional[str]
     qty: Decimal
     source: Optional[str] = None
     donor_project_id: Optional[str] = None
+    donor_core_line_id: Optional[str] = None
+    donor_so_number: Optional[str] = None
+    donor_line_no: Optional[int] = None
+    donor_agent_code: Optional[str] = None
+    same_agent: bool = False
+    order_back_qty: Optional[str] = None
+    donor_required_date: Optional[date] = None
 
 
 @dataclass
@@ -476,6 +503,13 @@ class _CarriedLine:
                 qty=_dec(component.get("qty")),
                 source=component.get("source"),
                 donor_project_id=component.get("donor_project_id"),
+                donor_core_line_id=component.get("donor_core_line_id"),
+                donor_so_number=component.get("donor_so_number"),
+                donor_line_no=component.get("donor_line_no"),
+                donor_agent_code=component.get("donor_agent_code"),
+                same_agent=bool(component.get("same_agent")),
+                order_back_qty=component.get("order_back_qty"),
+                donor_required_date=_parse_date(component.get("donor_required_date")),
             )
             for component in (self.snapshot.get("components") or [])
             if component.get("kind") == kind
