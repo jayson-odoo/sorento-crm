@@ -26,10 +26,13 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 const getStockDetail = vi.fn();
 /** Only reached when the trail's own "View the queue" is pressed. */
 const getPileQueue = vi.fn();
+/** Only reached when a chip's Proof button is pressed - nothing in this file does. */
+const getClassificationEvidence = vi.fn();
 
 vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   getStockDetail: (...args: unknown[]) => getStockDetail(...args),
   getPileQueue: (...args: unknown[]) => getPileQueue(...args),
+  getClassificationEvidence: (...args: unknown[]) => getClassificationEvidence(...args),
 }));
 
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
@@ -74,14 +77,22 @@ function renderDialog(
   draft: BoardDraft = {},
 ) {
   const onDecide = vi.fn();
+  // A client is needed even here (nothing in this describe block opens a query itself): every
+  // item-flag chip now carries a Proof button (`ClassificationProofPopover`), and `useQuery`
+  // requires a provider in the tree to mount at all, whether or not it is `enabled`.
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
   render(
-    <BoardCellBreakdownDialog
-      cell={cellOf(lines, freeStock)}
-      bucketLabel="31 Aug 2026"
-      draft={draft}
-      onDecide={onDecide}
-      onClose={vi.fn()}
-    />,
+    <QueryClientProvider client={client}>
+      <BoardCellBreakdownDialog
+        cell={cellOf(lines, freeStock)}
+        bucketLabel="31 Aug 2026"
+        draft={draft}
+        onDecide={onDecide}
+        onClose={vi.fn()}
+      />
+    </QueryClientProvider>,
   );
   return { onDecide };
 }
@@ -1606,6 +1617,8 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       dealer_hot_selling_where: ['BRW', 'BRW-IB'],
       project_hot_selling: false,
       project_hot_selling_where: [],
+      dealer_classified: true,
+      project_classified: false,
       discontinued: true,
       retail_classification_available: true,
     };
@@ -1613,16 +1626,17 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     openTrail(contribution.key);
 
     const chips = screen.getByTestId(`trail-flags-${contribution.key}`);
-    expect(chips.textContent).toBe('dealer hot-sellingdiscontinued');
+    expect(chips.textContent).toBe('Dealer hot-sellingDiscontinued');
     expect(
       screen.getByTestId(`trail-flag-${contribution.key}-dealer-hot-selling`),
     ).toHaveAttribute(
       'title',
-      'Dealer hot-selling: ABC A by quantity on retail demand at BRW, BRW-IB. The shared pool is kept for retail, not offered.',
+      'Dealer hot-selling at BRW, BRW-IB. The shared pool is kept for retail, not offered.',
     );
     expect(
-      screen.queryByTestId(`trail-flag-${contribution.key}-no-classification`),
+      screen.queryByTestId(`trail-flag-${contribution.key}-not-classified`),
     ).not.toBeInTheDocument();
+    expect(chips.textContent).not.toMatch(/ABC/);
   });
 
   it('shows a project hot-selling chip alongside the dealer one when both flags are set', () => {
@@ -1633,6 +1647,8 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       dealer_hot_selling_where: ['BRW'],
       project_hot_selling: true,
       project_hot_selling_where: ['BRW-BB'],
+      dealer_classified: true,
+      project_classified: true,
       discontinued: false,
       retail_classification_available: true,
     };
@@ -1640,10 +1656,10 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     openTrail(contribution.key);
 
     const chips = screen.getByTestId(`trail-flags-${contribution.key}`);
-    expect(chips.textContent).toBe('dealer hot-sellingproject hot-selling');
+    expect(chips.textContent).toBe('Dealer hot-sellingProject hot-selling');
   });
 
-  it('says "no classification" rather than reading an unclassified item as cold', () => {
+  it('shows a "Cold at" chip for a class that is classified but never ranked A', () => {
     const cell = cellOf([demand({ qty: '100' })]);
     const contribution = cell.contributions[0];
     contribution.item_flags = {
@@ -1651,6 +1667,28 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       dealer_hot_selling_where: [],
       project_hot_selling: false,
       project_hot_selling_where: [],
+      dealer_classified: true,
+      project_classified: true,
+      discontinued: false,
+      retail_classification_available: true,
+    };
+    renderCell(cell);
+    openTrail(contribution.key);
+
+    const chips = screen.getByTestId(`trail-flags-${contribution.key}`);
+    expect(chips.textContent).toBe('Cold at retailCold at project');
+  });
+
+  it('says "Not classified" rather than reading an unclassified item as cold', () => {
+    const cell = cellOf([demand({ qty: '100' })]);
+    const contribution = cell.contributions[0];
+    contribution.item_flags = {
+      dealer_hot_selling: false,
+      dealer_hot_selling_where: [],
+      project_hot_selling: false,
+      project_hot_selling_where: [],
+      dealer_classified: false,
+      project_classified: false,
       discontinued: false,
       retail_classification_available: false,
     };
@@ -1658,7 +1696,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     openTrail(contribution.key);
 
     expect(screen.getByTestId(`trail-flags-${contribution.key}`).textContent).toBe(
-      'no classification',
+      'Not classified',
     );
   });
 

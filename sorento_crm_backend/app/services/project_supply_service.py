@@ -325,6 +325,11 @@ class _LineFacts:
     is_project_hot_selling: bool = False
     #: The locations holding it as ABC A on project demand, by code.
     project_hot_selling_where: List[str] = field(default_factory=list)
+    #: Classified (a non-null letter exists on that column, at an active location) but not
+    #: hot - "Cold at retail" / "Cold at project", the plain word for a real, non-A letter.
+    #: `False` while the class is hot too; the hot flag above already covers that case.
+    dealer_classified: bool = False
+    project_classified: bool = False
     #: The shared pool's own signed availability - `on hand - SO qty + SPO qty` - the figure
     #: a project hot-selling line's pool draw is capped against. Unsigned `pool_free` above
     #: is what THIS line's queue left of it; this is the pool's whole position, and can be
@@ -693,9 +698,10 @@ class ProjectSupplyService:
         # Eager, not lazy: a project hot-selling line's pool draw is capped against the
         # pool's signed availability on every read, not only when a donor list is asked for.
         pool_piles = self._pile_facts()
-        dealer_hot, project_hot, unavailable, dealer_where, project_where = (
-            self._classification(product_ids)
-        )
+        (
+            dealer_hot, project_hot, unavailable, dealer_where, project_where,
+            dealer_classified_set, project_classified_set,
+        ) = self._classification(product_ids)
         levels = self._reorder_levels(product_ids, pool_ids)
         discontinued = self._discontinued(product_ids)
         spo = self._spo_rows(product_ids, warehouse_ids)
@@ -805,6 +811,8 @@ class ProjectSupplyService:
                 dealer_hot_selling_where=list(dealer_where.get(product_id or "", [])),
                 is_project_hot_selling=(product_id or "") in project_hot,
                 project_hot_selling_where=list(project_where.get(product_id or "", [])),
+                dealer_classified=(product_id or "") in dealer_classified_set,
+                project_classified=(product_id or "") in project_classified_set,
                 pool_available=(
                     pool_triple["on_hand"] - pool_triple["so_qty"] + pool_triple["spo_qty"]
                     if pool_triple
@@ -828,6 +836,7 @@ class ProjectSupplyService:
             "project_line_id": str(line.id),
             "line_no": line.line_no,
             "item_code": fact.item_code,
+            "product_id": fact.product_id,
             "description": line.description,
             "uom": line.uom,
             "open_qty": qty_text(fact.open_qty),
@@ -835,6 +844,8 @@ class ProjectSupplyService:
             "fulfilment_location": fact.own_code,
             "is_dealer_hot_selling": fact.is_dealer_hot_selling,
             "is_project_hot_selling": fact.is_project_hot_selling,
+            "dealer_classified": fact.dealer_classified,
+            "project_classified": fact.project_classified,
             "classification_unavailable": fact.classification_unavailable,
             "is_discontinued": fact.is_discontinued,
             "pool_location": fact.pool_code,
@@ -2265,9 +2276,10 @@ class ProjectSupplyService:
         pool_ahead = self.pool_claims(
             product_ids, pool_ids, exclude_line_ids=replaced, members=members
         )
-        dealer_hot, project_hot, unavailable, dealer_where, project_where = (
-            self._classification(product_ids)
-        )
+        (
+            dealer_hot, project_hot, unavailable, dealer_where, project_where,
+            dealer_classified_set, project_classified_set,
+        ) = self._classification(product_ids)
         levels = self._reorder_levels(product_ids, pool_ids)
         discontinued = self._discontinued(product_ids)
         spo = self._spo_rows(product_ids, warehouse_ids)
@@ -2339,6 +2351,8 @@ class ProjectSupplyService:
                 dealer_hot_selling_where=list(dealer_where.get(product_id or "", [])),
                 is_project_hot_selling=(product_id or "") in project_hot,
                 project_hot_selling_where=list(project_where.get(product_id or "", [])),
+                dealer_classified=(product_id or "") in dealer_classified_set,
+                project_classified=(product_id or "") in project_classified_set,
                 pool_available=(
                     pool_triple["on_hand"] - pool_triple["so_qty"] + pool_triple["spo_qty"]
                     if pool_triple
@@ -2687,7 +2701,7 @@ class ProjectSupplyService:
 
     def _classification(
         self, product_ids: Iterable[str]
-    ) -> Tuple[set, set, set, Dict[str, List[str]], Dict[str, List[str]]]:
+    ) -> Tuple[set, set, set, Dict[str, List[str]], Dict[str, List[str]], set, set]:
         """PLAN 3.3's hot-selling predicate, per demand class, and the "no evidence" case.
 
         Amended 19 August 2026 (the captain): "you should do the demand over project classed
@@ -2703,11 +2717,15 @@ class ProjectSupplyService:
         `computed_at` is display evidence, never a freshness gate: the existing ABC facts
         are the test, and adding an age threshold would be a new knob this contract forbids.
 
-        Returns the dealer-hot set, the project-hot set, the unclassified set, and WHERE each
-        hot verdict earned it - the locations holding it as ABC A by quantity on that demand
-        class, by code and sorted. The captain, reading a trail that never mentioned it:
-        "where is the consideration of dealer hot selling?" A bare boolean would be something
-        to take on trust; "ABC A at BRW" is something to check.
+        Returns the dealer-hot set, the project-hot set, the unclassified set, WHERE each hot
+        verdict earned it - the locations holding it as ABC A by quantity on that demand
+        class, by code and sorted - and finally the dealer-classified / project-classified
+        sets: every product carrying a NON-NULL letter on that column ANYWHERE, hot or not.
+        The captain, reading a trail that never mentioned it: "where is the consideration of
+        dealer hot selling?" A bare boolean would be something to take on trust; "ABC A at
+        BRW" is something to check. The classified sets are what a "Cold at retail" / "Cold
+        at project" chip is told apart from "no evidence of that class at all" with - a
+        product can carry a real, non-A letter and still not be hot.
 
         "Unclassified" means no NON-NULL letter in EITHER column, not merely "a row exists".
         A NULL letter means no DELIVERED demand of that class in the trailing-12mo window -
@@ -2718,7 +2736,7 @@ class ProjectSupplyService:
         """
         ids = [pid for pid in product_ids if pid]
         if not ids:
-            return set(), set(), set(), {}, {}
+            return set(), set(), set(), {}, {}, set(), set()
         rows = (
             self.db.query(
                 ItemClassification.product_id,
@@ -2734,28 +2752,33 @@ class ProjectSupplyService:
             )
             .all()
         )
-        seen = {
-            str(product_id)
-            for product_id, abc_project, abc_retail, _code in rows
-            if abc_project is not None or abc_retail is not None
-        }
+        dealer_classified: set = set()
+        project_classified: set = set()
         dealer_where: Dict[str, List[str]] = {}
         project_where: Dict[str, List[str]] = {}
         for product_id, abc_project, abc_retail, code in rows:
+            pid = str(product_id)
+            if abc_retail is not None:
+                dealer_classified.add(pid)
+            if abc_project is not None:
+                project_classified.add(pid)
             if (abc_retail or "").upper() == "A":
-                dealer_where.setdefault(str(product_id), []).append(code or "")
+                dealer_where.setdefault(pid, []).append(code or "")
             if (abc_project or "").upper() == "A":
-                project_where.setdefault(str(product_id), []).append(code or "")
+                project_where.setdefault(pid, []).append(code or "")
         for codes in dealer_where.values():
             codes.sort()
         for codes in project_where.values():
             codes.sort()
+        seen = dealer_classified | project_classified
         return (
             set(dealer_where),
             set(project_where),
             {pid for pid in ids if pid not in seen},
             dealer_where,
             project_where,
+            dealer_classified,
+            project_classified,
         )
 
     def _reorder_levels(

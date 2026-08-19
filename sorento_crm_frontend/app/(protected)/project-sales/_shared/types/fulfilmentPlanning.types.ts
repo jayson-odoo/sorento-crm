@@ -332,6 +332,9 @@ export interface SupplyLine {
   project_line_id: string;
   line_no: number;
   item_code?: string | null;
+  /** Addressing only, never rendered - what the Proof button asks the classification
+   * evidence endpoint with. */
+  product_id?: string | null;
   description?: string | null;
   uom?: string | null;
   /** The core line's current open fulfilment quantity (AC-B01), in the line UOM. */
@@ -360,6 +363,10 @@ export interface SupplyLine {
   is_dealer_hot_selling: boolean;
   /** ABC A by quantity on project demand (3.3a): the pool is capped by its own availability. */
   is_project_hot_selling: boolean;
+  /** Classified (a non-null letter on that class, at an active location) but not hot -
+   * "Cold at retail" / "Cold at project". `false` while the class is hot too. */
+  dealer_classified: boolean;
+  project_classified: boolean;
   /** No non-null ABC letter in either demand class (AC-B05, amended 3.3a). */
   classification_unavailable: boolean;
   is_discontinued: boolean;
@@ -664,6 +671,10 @@ export interface BoardItemFlags {
   project_hot_selling: boolean;
   /** The locations where it earned that, by code. */
   project_hot_selling_where: string[];
+  /** Classified (a non-null letter on that class, at an active location) but not hot -
+   * "Cold at retail" / "Cold at project". `false` while the class is hot too. */
+  dealer_classified: boolean;
+  project_classified: boolean;
   discontinued: boolean;
   retail_classification_available: boolean;
 }
@@ -1363,4 +1374,40 @@ export interface PileQueue {
   /** The rule that produced this order, named. Always the LIVE policy. */
   policy_name: string;
   lines: PileQueueLine[];
+}
+
+/**
+ * One location's contribution to a demand class's ranking - the Proof popover's own row.
+ *
+ * The captain, reading the trail: "don't give me jargon like abc classification, just tell
+ * me hot selling or cold selling, at project or retail, with some button for me to view
+ * detail as a proof". This is that proof.
+ */
+export interface ClassificationEvidenceLocation {
+  warehouse_code: string;
+  qty_delivered: string;
+  rank: number;
+  of: number;
+  cumulative_share_pct?: number | null;
+  /** A/B/C. */
+  letter?: string | null;
+  hot: boolean;
+}
+
+export interface ClassificationEvidenceClass {
+  demand_class: 'retail' | 'project';
+  /** "Dealer" (retail customers) or "Project" - the word the captain asked for. */
+  label: string;
+  verdict: 'hot' | 'cold' | 'unclassified';
+  locations: ClassificationEvidenceLocation[];
+}
+
+/** `GET .../fulfilment-planning/classification?product_id=...` - the Proof button's payload. */
+export interface ClassificationEvidence {
+  product_id: string;
+  item_code?: string | null;
+  computed_at?: string | null;
+  window_days: number;
+  hot_cut_pct: number;
+  classes: ClassificationEvidenceClass[];
 }

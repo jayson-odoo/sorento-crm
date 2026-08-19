@@ -23,6 +23,7 @@ import {
   type DraftLine,
 } from '../../_shared/lib/supplyComposition';
 import { BorrowAddDialog } from './BorrowAddDialog';
+import { ClassificationProofPopover } from './ClassificationProofPopover';
 
 /**
  * One line's composition (journey steps 1 and 2).
@@ -121,30 +122,13 @@ export function SupplyLineCard({
         {/* Own-location Reserve is always eligible regardless of this fact (PLAN 3.3a); it
             names what the SHARED POOL below is offered against. */}
         <Fact label="Hot-selling">
-          {line.classification_unavailable ? (
-            <span
-              className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('unknown')}`}
-              title="No ABC classification for this item (no delivered demand of either class in the last year)"
-            >
-              Unclassified
-            </span>
-          ) : line.is_dealer_hot_selling ? (
-            <span
-              className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('pending')}`}
-              title="ABC A by quantity on retail demand: the shared pool is not offered"
-            >
-              Dealer hot-selling
-            </span>
-          ) : line.is_project_hot_selling ? (
-            <span
-              className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('pending')}`}
-              title="ABC A by quantity on project demand: the shared pool is capped by its own availability"
-            >
-              Project hot-selling
-            </span>
-          ) : (
-            <Muted>Not hot-selling</Muted>
-          )}
+          <div className="flex flex-wrap items-center gap-1">
+            <HotSellingPills line={line} />
+            <ClassificationProofPopover
+              productId={line.product_id}
+              testId={line.project_line_id}
+            />
+          </div>
         </Fact>
       </div>
 
@@ -563,4 +547,68 @@ function Reason({ children }: { children: React.ReactNode }) {
 /** Block, not inline: two empty states in one section must not run into one sentence. */
 function Muted({ children }: { children: React.ReactNode }) {
   return <span className="block text-sm text-muted-foreground">{children}</span>;
+}
+
+/**
+ * Hot, cold or not classified, in the plain words the captain asked for (19 August 2026:
+ * "don't give me jargon like abc classification, just tell me hot selling or cold selling,
+ * at project or retail"). Up to two pills - one per demand class - the same vocabulary the
+ * board's flag chips use (`BoardTrailPopover.ItemFlagChips`).
+ */
+function HotSellingPills({ line }: { line: SupplyLine }) {
+  if (line.classification_unavailable) {
+    return (
+      <span
+        className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('unknown')}`}
+        title="No retail or project deliveries of this item in the last 12 months"
+      >
+        Not classified
+      </span>
+    );
+  }
+  const pills: Array<{ key: string; label: string; title: string; tone: string }> = [];
+  if (line.is_dealer_hot_selling) {
+    pills.push({
+      key: 'dealer-hot',
+      label: 'Dealer hot-selling',
+      title: 'Dealer hot-selling: the shared pool is not offered',
+      tone: 'pending',
+    });
+  } else if (line.dealer_classified) {
+    pills.push({
+      key: 'dealer-cold',
+      label: 'Cold at retail',
+      title: 'Cold at retail: the shared pool is offered as it is for any ordinary item',
+      tone: 'draft',
+    });
+  }
+  if (line.is_project_hot_selling) {
+    pills.push({
+      key: 'project-hot',
+      label: 'Project hot-selling',
+      title: 'Project hot-selling: the shared pool is offered while it stays available',
+      tone: 'pending',
+    });
+  } else if (line.project_classified) {
+    pills.push({
+      key: 'project-cold',
+      label: 'Cold at project',
+      title: 'Cold at project: the shared pool is offered as it is for any ordinary item',
+      tone: 'draft',
+    });
+  }
+  if (pills.length === 0) return <Muted>Not hot-selling</Muted>;
+  return (
+    <>
+      {pills.map((pill) => (
+        <span
+          key={pill.key}
+          className={`${STATUS_PILL_BASE} normal-case ${statusPillClass(pill.tone)}`}
+          title={pill.title}
+        >
+          {pill.label}
+        </span>
+      ))}
+    </>
+  );
 }

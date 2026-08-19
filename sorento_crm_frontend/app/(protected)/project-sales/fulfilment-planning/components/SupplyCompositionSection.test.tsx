@@ -73,6 +73,8 @@ function line(overrides: Partial<SupplyLine> = {}): SupplyLine {
     fulfilment_location: 'BRW-BB',
     is_dealer_hot_selling: false,
     is_project_hot_selling: false,
+    dealer_classified: false,
+    project_classified: false,
     classification_unavailable: false,
     is_discontinued: false,
     pool_location: 'BRW-BB',

@@ -3,6 +3,7 @@ import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   AdoptSalesOrderResult,
   BoardGranularity,
+  ClassificationEvidence,
   PlanningBoard,
   ConfirmResult,
   ConfirmSupplyBody,
@@ -365,5 +366,26 @@ export async function getPileQueue(
   const response = await apiFetch(`${BASE}/fulfilment-planning/queue?${search.toString()}`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the queue'));
+  return response.json();
+}
+
+/**
+ * The Proof button: the ranked evidence behind one product's hot/cold verdict.
+ *
+ *   GET /project-sales/fulfilment-planning/classification?product_id=
+ *
+ * The captain, reading the trail: "don't give me jargon like abc classification, just tell
+ * me hot selling or cold selling, at project or retail, with some button for me to view
+ * detail as a proof". This is that button's data.
+ */
+export async function getClassificationEvidence(
+  productId: string,
+): Promise<ClassificationEvidence> {
+  const search = new URLSearchParams({ product_id: productId });
+  const response = await apiFetch(
+    `${BASE}/fulfilment-planning/classification?${search.toString()}`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the evidence'));
   return response.json();
 }

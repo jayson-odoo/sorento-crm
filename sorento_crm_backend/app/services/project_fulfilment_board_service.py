@@ -1367,6 +1367,8 @@ class FulfilmentBoardService:
                 "dealer_hot_selling_where": list(fact.dealer_hot_selling_where or []),
                 "project_hot_selling": bool(fact.is_project_hot_selling),
                 "project_hot_selling_where": list(fact.project_hot_selling_where or []),
+                "dealer_classified": bool(fact.dealer_classified),
+                "project_classified": bool(fact.project_classified),
                 "discontinued": bool(fact.is_discontinued),
                 "retail_classification_available": not fact.classification_unavailable,
             }
@@ -1389,6 +1391,8 @@ class FulfilmentBoardService:
                 "dealer_hot_selling_where": list(fact.dealer_hot_selling_where or []),
                 "project_hot_selling": bool(fact.is_project_hot_selling),
                 "project_hot_selling_where": list(fact.project_hot_selling_where or []),
+                "dealer_classified": bool(fact.dealer_classified),
+                "project_classified": bool(fact.project_classified),
                 "discontinued": bool(fact.is_discontinued),
                 "retail_classification_available": not fact.classification_unavailable,
             }
@@ -1766,15 +1770,33 @@ class FulfilmentBoardService:
 
     @staticmethod
     def _hot_prefix(fact: Any, *, dealer: bool) -> str:
-        """"Dealer hot-selling (ABC A by quantity on retail demand at ...)" or the project
-        equivalent - the evidence sentence the pool rung leads with (PLAN 3.3a)."""
+        """"Dealer hot-selling at BRW" or the project equivalent - the evidence sentence the
+        pool rung leads with (PLAN 3.3a).
+
+        The captain: "don't give me jargon like abc classification, just tell me hot selling
+        or cold selling, at project or retail" (19 August 2026) - so this names the class and
+        the location, never the letter or the word behind it. The number itself (which rank,
+        out of how many, what share) is a press away on the trail's Proof button
+        (`GET .../fulfilment-planning/classification`).
+        """
         if dealer:
             where = ", ".join(fact.dealer_hot_selling_where or [])
-            evidence = f" (ABC A by quantity on retail demand at {where})" if where else ""
-            return f"Dealer hot-selling{evidence}"
+            return f"Dealer hot-selling at {where}" if where else "Dealer hot-selling"
         where = ", ".join(fact.project_hot_selling_where or [])
-        evidence = f" (ABC A by quantity on project demand at {where})" if where else ""
-        return f"Project hot-selling{evidence}"
+        return f"Project hot-selling at {where}" if where else "Project hot-selling"
+
+    @staticmethod
+    def _cold_prefix(fact: Any) -> str:
+        """"Cold at retail and project" or the one class that carries evidence - the plain
+        word for "classified, but never ranked A", read off `dealer_classified` /
+        `project_classified` rather than off `classification_unavailable`, which only
+        answers "any evidence at all", not which class it was."""
+        classes = []
+        if fact.dealer_classified:
+            classes.append("retail")
+        if fact.project_classified:
+            classes.append("project")
+        return f"Cold at {' and '.join(classes)}"
 
     # ------------------------------------------------------------------ why, per rung
 
@@ -1833,9 +1855,18 @@ class FulfilmentBoardService:
         its own orders ranked ahead of this line claim, said together.
 
         Amended 19 August 2026 (PLAN 3.3a): hot-selling is what gates the pool now, by demand
-        class - dealer wins when both flags are set, and each has its own sentence. An
-        unclassified item (no delivered demand of either class, ever) is offered the pool as
-        for a non-hot item, and says so rather than silently reading as "not hot-selling".
+        class - dealer wins when both flags are set, and each has its own sentence. A
+        classified-but-not-hot item ("Cold at retail" / "Cold at project" / both) is offered
+        the pool as it would be for any ordinary item, said in those words; an unclassified
+        item (no delivered demand of either class, ever) is offered the same way and says so
+        too - "Not classified" is a different answer from "cold" and must not print as it.
+
+        Amended again the same day: the captain, reading the trail, asked for the plain word
+        instead of the classification jargon - "don't give me jargon like abc classification,
+        just tell me hot selling or cold selling, at project or retail". Every sentence below
+        now names hot/cold/not-classified and never the letter or the word "ABC"; the ranked
+        number behind each verdict is the trail's Proof button
+        (`GET .../fulfilment-planning/classification`), not this sentence.
         """
         code = fact.pool_code
         if outcome == "none_needed":
@@ -1861,10 +1892,11 @@ class FulfilmentBoardService:
             return f"{base} This line takes {qty_text(taken)}." if outcome == "took" else base
         if fact.classification_unavailable:
             base = (
-                "No ABC classification for this item (no delivered demand of that class in "
-                f"the last year), so {code} is offered as for a non-hot item."
+                "Not classified (no retail or project deliveries of this item in the last "
+                f"12 months), so {code} is offered as for a cold item."
             )
             return f"{base} This line takes {qty_text(taken)}." if outcome == "took" else base
+        prefix = self._cold_prefix(fact)
         on_hand = _dec(pile.get("on_hand"))
         # The "Available" the captain was holding the rung against is the Inventory screen's
         # (on hand less reserved), so that is the figure the sentence quotes; AutoCount's
@@ -1872,22 +1904,25 @@ class FulfilmentBoardService:
         on_hand_available = on_hand - _dec(pile.get("reserved"))
         claimed = _dec(pile.get("claimed_ahead_qty"))
         left = (
-            f"{code}: {qty_text(balance)} left after its own queue ahead of this line"
+            f"{prefix}, so {code} is offered: {qty_text(balance)} left after its own queue "
+            "ahead of this line"
         )
         if outcome == "took":
             return f"{left}; this line takes {qty_text(taken)}."
         if claimed > _ZERO:
             return (
-                f"{code} holds {qty_text(on_hand)} on hand (Available "
-                f"{qty_text(on_hand_available)} in stock), but {code}'s own orders ranked "
-                f"ahead of this line claim {qty_text(claimed)}, so {qty_text(balance)} is left."
+                f"{prefix}, so {code} is offered. {code} holds {qty_text(on_hand)} on hand "
+                f"(Available {qty_text(on_hand_available)} in stock), but {code}'s own orders "
+                f"ranked ahead of this line claim {qty_text(claimed)}, so {qty_text(balance)} "
+                "is left."
             )
         if on_hand > _ZERO:
             return (
-                f"{code} holds {qty_text(on_hand)} on hand (Available "
-                f"{qty_text(on_hand_available)} in stock), but none is left for this line."
+                f"{prefix}, so {code} is offered. {code} holds {qty_text(on_hand)} on hand "
+                f"(Available {qty_text(on_hand_available)} in stock), but none is left for "
+                "this line."
             )
-        return f"No stock at {code}."
+        return f"{prefix}, so {code} is offered, but there is no stock at {code}."
 
     @staticmethod
     def _buy_why(fact: Any, outcome: str) -> str:
