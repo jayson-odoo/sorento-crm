@@ -405,3 +405,49 @@ def test_the_contact_response_dict_carries_the_flag():
         contact = _contact(db, requires_project=True)
         body = ContactService.contact_to_response_dict(contact)
         assert body["requires_registered_project"] is True
+
+
+# ------------------------------------------------- free text is not a project id
+
+
+def test_free_text_in_the_project_field_is_refused_not_a_500():
+    """`purchase_requests.project_id` is a UUID FK. A portal payload carrying typed text
+    (the picker used to accept free text, and the browser is not a trust boundary anyway)
+    reached Postgres as an id and came back an internal server error, which tells the
+    submitter nothing. It is refused at the boundary instead, with the action in the
+    message."""
+    from app.models.procurement import PurchaseRequestHeader
+    from app.services.portal_service import PortalService
+
+    with blank_session() as db:
+        row = PurchaseRequestHeader(id=_uid(), request_type="sponsorship_form")
+
+        with pytest.raises(AppException) as excinfo:
+            PortalService(db)._apply_payload(
+                "sponsorship_form", row, {"project_id": "PO received"}
+            )
+
+        # 400, the same client-error shape every other payload guard here raises.
+        assert excinfo.value.status_code == 400
+        assert "list" in _message(excinfo.value).lower()
+        assert getattr(row, "project_id", None) is None
+
+
+def test_a_real_project_id_still_applies():
+    """The guard has to pass a genuine id through untouched, or it would break the
+    flagged-contact flow it is meant to protect."""
+    from app.models.procurement import PurchaseRequestHeader
+    from app.services.portal_service import PortalService
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        owner = _user(db, f"{MARKER} Siti")
+        project = _project(db, company_id, owner)
+        row = PurchaseRequestHeader(id=_uid(), request_type="sponsorship_form")
+
+        PortalService(db)._apply_payload(
+            "sponsorship_form", row, {"project_id": str(project.id)}
+        )
+
+        assert str(row.project_id) == str(project.id)

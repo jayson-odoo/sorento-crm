@@ -22,6 +22,7 @@ import secrets
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
+from uuid import UUID
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
@@ -1287,6 +1288,17 @@ class PortalService:
                             )
                     except (TypeError, ValueError):
                         pass  # legacy free-text values pass through
+                if field == "project_id" and value not in (None, ""):
+                    # The column is a UUID FK, so anything typed rather than picked
+                    # would reach Postgres as an id and come back a 500 on flush. Say
+                    # what to do instead, at the boundary, as a 422.
+                    try:
+                        value = str(UUID(str(value).strip()))
+                    except (TypeError, ValueError):
+                        raise handle_validation_error(
+                            "Pick a registered project from the list - the project field "
+                            "does not take free text."
+                        )
                 setattr(row, field, value)
         if requestor_field and requestor_field in payload:
             self._apply_requestor_contact(kind, row, payload.get(requestor_field))

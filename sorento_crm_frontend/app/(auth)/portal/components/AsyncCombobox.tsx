@@ -15,6 +15,13 @@ export interface AsyncComboboxProps<T> {
   placeholder?: string;
   disabled?: boolean;
   allowFreeText?: boolean;
+  /**
+   * Human-readable text for the CURRENT `value` when the two differ - a picker whose
+   * `optionValue` is an id (project) rather than the label itself. Without it a reloaded
+   * form would show the raw id, which is never what the user picked. Values chosen in
+   * this session are remembered from the option, so this only has to cover the reload.
+   */
+  displayValue?: string;
   id?: string;
   /**
    * When true, renders the input as an auto-growing `<textarea>` so long
@@ -30,7 +37,8 @@ export interface AsyncComboboxProps<T> {
  * - Debounced 300ms search-on-input.
  * - Keyboard: ArrowUp/ArrowDown/Enter/Escape.
  * - When `allowFreeText` (default true), blurring keeps the typed value
- *   as free-text if no option is selected.
+ *   as free-text if no option is selected. With it off, typing that matched
+ *   nothing is discarded on blur, so the caller only ever gets a real option.
  */
 export function AsyncCombobox<T>({
   value,
@@ -42,10 +50,22 @@ export function AsyncCombobox<T>({
   placeholder,
   disabled,
   allowFreeText = true,
+  displayValue,
   id,
   multiline,
 }: AsyncComboboxProps<T>) {
-  const [text, setText] = useState(value);
+  /** Label of the option picked in THIS session, so the sync-from-parent effect
+   *  below does not overwrite it with the id that selection just wrote. */
+  const pickedRef = useRef<{ value: string; label: string } | null>(null);
+  const displayFor = useCallback(
+    (v: string) => {
+      if (!v) return '';
+      if (pickedRef.current?.value === v) return pickedRef.current.label;
+      return displayValue || v;
+    },
+    [displayValue],
+  );
+  const [text, setText] = useState(() => displayFor(value));
   const [open, setOpen] = useState(false);
   const [options, setOptions] = useState<T[]>([]);
   const [loading, setLoading] = useState(false);
@@ -78,8 +98,8 @@ export function AsyncCombobox<T>({
 
   // Keep input in sync if parent changes value externally
   useEffect(() => {
-    setText(value);
-  }, [value]);
+    setText(displayFor(value));
+  }, [value, displayFor]);
 
   const runFetch = useCallback(
     async (q: string) => {
@@ -129,7 +149,9 @@ export function AsyncCombobox<T>({
 
   const commitSelection = (item: T) => {
     const v = optionValue(item);
-    setText(v);
+    const label = optionLabel(item);
+    pickedRef.current = { value: v, label };
+    setText(label);
     setOpen(false);
     onChange(v, item);
   };
@@ -178,9 +200,19 @@ export function AsyncCombobox<T>({
       if (!containerRef.current) return;
       if (containerRef.current.contains(document.activeElement)) return;
       setOpen(false);
-      if (allowFreeText && text !== value) {
-        onChange(text);
+      if (allowFreeText) {
+        if (text !== value) onChange(text);
+        return;
       }
+      // Free text is not a value here, so typing that matched no option is thrown
+      // away rather than sent on as if it were an id. Emptying the box still clears
+      // the selection - that is a deliberate act, not an unmatched search.
+      if (!text.trim()) {
+        pickedRef.current = null;
+        if (value) onChange('');
+        return;
+      }
+      setText(displayFor(value));
     }, 150);
   };
 

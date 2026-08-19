@@ -286,3 +286,32 @@ describe('SubmissionForm - portal record navigation', () => {
     expect(push).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * AC-F4: the registered-project picker belongs to flagged contacts only. An unflagged
+ * contact keeps the free-text project title and never sees the field - the promise the
+ * flag's own hint in the contact dialog makes.
+ */
+describe('SubmissionForm - sponsorship registered-project field', () => {
+  it('hides the picker for a contact without requires_registered_project', async () => {
+    (fetchMe as ReturnType<typeof vi.fn>).mockResolvedValue(CONTACT);
+    render(<SubmissionForm kind="sponsorship_form" />);
+    await waitForLoaded();
+
+    expect(screen.getByText('Project title')).toBeInTheDocument();
+    expect(screen.queryByText('Registered project')).toBeNull();
+  });
+
+  it('shows the picker, marked required, for a flagged contact', async () => {
+    (fetchMe as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...CONTACT,
+      requires_registered_project: true,
+    } satisfies PortalContact);
+    render(<SubmissionForm kind="sponsorship_form" />);
+    await waitForLoaded();
+
+    const label = await screen.findByText('Registered project');
+    expect(label).toBeInTheDocument();
+    expect(label.textContent).toContain('*');
+  });
+});
