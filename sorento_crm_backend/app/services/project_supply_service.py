@@ -86,6 +86,7 @@ from app.services.error_handler import AppException
 from app.services.scm import priority
 from app.services.scm.demand import demand_qty, is_open_demand
 from app.services.scm.front_planning_engine import (
+    BORROW,
     BUY,
     RESERVE,
     TIMELY_SPO,
@@ -1153,6 +1154,15 @@ class ProjectSupplyService:
                 ),
                 code="supply_nothing_to_confirm",
             )
+        # What the order's OWN active revision already holds per line, read before the
+        # drift check below can flip it to `challenged` (PLAN-so-book-diff-replanning.md
+        # section 10, defect A). A resubmitted component this order already holds is not a
+        # new ask, challenged or not: the challenge is about the SNAPSHOT (dates/quantities
+        # having moved), not about whether the physical hold behind an unrelated component
+        # is still this order's own. `_check_line` credits it back so re-affirming a hold
+        # this order has held all along does not compete in the queue against itself, or
+        # lose to a rival that only appeared after the hold was taken.
+        carried_holds = self._frozen_by_line(self.active_decision(str(order.id)))
         # The same drift check the sheet runs, BEFORE the active revision is read for the
         # carry: a revision whose frozen facts have moved is challenged here exactly as it
         # would be on the next read, so its snapshots and holds are not carried verbatim
@@ -1206,7 +1216,9 @@ class ProjectSupplyService:
             seen.add(str(line.id))
             fact = facts[str(line.id)]
             checked.append((line, entry, fact))
-            self._check_line(entry, fact, pool_left, borrow_left, stale, invalid)
+            self._check_line(
+                entry, fact, pool_left, borrow_left, stale, invalid, carried_holds
+            )
 
         # A line the payload does not name is NOT a failure any more (13.4). It is
         # undecided, deliberately, and its demand goes on flowing to reorder planning
@@ -1301,6 +1313,37 @@ class ProjectSupplyService:
             .all()
         )
 
+    def _carried_component_qty(
+        self,
+        carried_holds: Dict[str, Dict[str, Any]],
+        line_id: str,
+        kind: str,
+        warehouse_id: str,
+        *,
+        donor_project_id: Optional[str] = None,
+    ) -> Decimal:
+        """What this order's own active (or just-challenged) revision already held here.
+
+        Read off the frozen snapshot taken before this `confirm()` call, by exact
+        (line, kind, location[, donor]) - not a total, so a component moved to a
+        different location or a different donor carries nothing and competes fresh
+        (PLAN-so-book-diff-replanning.md section 10, defect A). `kind`/`source_warehouse_id`
+        /`donor_project_id` are the same keys `_snapshot` freezes a component under.
+        """
+        components = (carried_holds.get(line_id) or {}).get("components") or []
+        total = _ZERO
+        for component in components:
+            if str(component.get("kind") or "") != kind:
+                continue
+            if str(component.get("source_warehouse_id") or "") != warehouse_id:
+                continue
+            if kind == BORROW and str(
+                component.get("donor_project_id") or ""
+            ) != (donor_project_id or ""):
+                continue
+            total += _dec(component.get("qty"))
+        return total
+
     def _check_line(
         self,
         entry: Any,
@@ -1309,6 +1352,7 @@ class ProjectSupplyService:
         borrow_left: "_BorrowLedger",
         stale: List[Dict[str, Any]],
         invalid: List[Dict[str, Any]],
+        carried_holds: Dict[str, Dict[str, Any]],
     ) -> None:
         """Recheck one line against authoritative facts (PLAN 3.1 steps 3 to 5)."""
         line = fact.line
@@ -1375,6 +1419,22 @@ class ProjectSupplyService:
                     "order's own sheet, which records who it came from and why.",
                 )
                 continue
+            # What this order's own active revision already holds here, resubmitted:
+            # not a new ask, so it is exempt from the recheck entirely - `capacity` is
+            # computed from a ZERO baseline for this line (`_facts_for`'s un-netting), so
+            # an increase still has to clear the SAME capacity a first-time ask of that
+            # total would (PLAN-so-book-diff-replanning.md section 10, defect A). Only the
+            # exemption for an unchanged-or-smaller ask is new; the arithmetic for a real
+            # increase is untouched, so a genuinely competing sibling hold (another line's
+            # own Reserve, never excluded) still refuses it exactly as it always has
+            # (`test_a_hold_the_same_order_carries_forward_is_netted_by_the_confirm_as_
+            # the_board_nets_it`).
+            carried = self._carried_component_qty(
+                carried_holds, str(line.id), RESERVE, str(item.warehouse_id)
+            )
+            ask = qty - carried if qty > carried else _ZERO
+            if ask <= _ZERO:
+                continue
             if warehouse not in capacity:
                 # The location IS this line's own or its pool; it simply has nothing left for
                 # this line. `reserve_capacity` omits a location contributing zero, so this
@@ -1384,15 +1444,20 @@ class ProjectSupplyService:
                 refuse(
                     stale,
                     f"{warehouse} has nothing free for this line now, so none of the "
-                    f"{qty_text(qty)} asked for can be reserved from it. Buy that quantity "
+                    f"{qty_text(ask)} asked for can be reserved from it. Buy that quantity "
                     "instead, or borrow it on the order's own sheet.",
                 )
                 continue
             if qty > capacity[warehouse]:
+                # Named for the INCREASE, not the whole resubmitted quantity: `capacity`
+                # never had the carried part subtracted from it (it was excluded, not
+                # credited), so what remains for the increase alone is `capacity` less
+                # what this line already carries.
+                room = capacity[warehouse] - carried
                 refuse(
                     stale,
-                    f"{warehouse} now has {qty_text(capacity[warehouse])} free for this "
-                    f"line, and {qty_text(qty)} was asked for.",
+                    f"{warehouse} now has {qty_text(room if room > _ZERO else _ZERO)} free "
+                    f"for this line, and {qty_text(ask)} was asked for.",
                 )
                 continue
             capacity[warehouse] -= qty
@@ -1402,7 +1467,7 @@ class ProjectSupplyService:
                 )
 
         for item in entry.borrow or []:
-            self._check_borrow(item, fact, borrow_left, refuse, stale, invalid)
+            self._check_borrow(item, fact, borrow_left, refuse, stale, invalid, carried_holds)
 
         if fact.is_discontinued and buy > _ZERO and not (entry.buy_reason or "").strip():
             refuse(
@@ -1460,6 +1525,7 @@ class ProjectSupplyService:
         refuse,
         stale: List[Dict[str, Any]],
         invalid: List[Dict[str, Any]],
+        carried_holds: Dict[str, Dict[str, Any]],
     ) -> None:
         qty = _dec(item.qty)
         if not (item.reason or "").strip():
@@ -1481,14 +1547,24 @@ class ProjectSupplyService:
                     "Reserve it rather than borrowing it.",
                 )
                 return
+            # What this order's own active revision already holds here, resubmitted:
+            # not a new ask - same "zero baseline" reasoning as the Reserve check above
+            # (PLAN-so-book-diff-replanning.md section 10, defect A).
+            carried = self._carried_component_qty(
+                carried_holds, str(fact.line.id), BORROW, str(warehouse.id)
+            )
+            ask = qty - carried if qty > carried else _ZERO
+            if ask <= _ZERO:
+                return
             available = borrow_left.free(
                 fact.product_id, str(warehouse.id), self._free_at
             )
             if qty > available:
+                room = available - carried
                 refuse(
                     stale,
-                    f"{warehouse.warehouse_code} has {qty_text(available)} free, and "
-                    f"{qty_text(qty)} was asked for.",
+                    f"{warehouse.warehouse_code} has {qty_text(room if room > _ZERO else _ZERO)} "
+                    f"free, and {qty_text(ask)} was asked for.",
                 )
                 return
             borrow_left.take_free(fact.product_id, str(warehouse.id), qty)
@@ -1523,11 +1599,24 @@ class ProjectSupplyService:
             fact.product_id, str(warehouse.id), str(donor.id), self._held_at
         )
         free = borrow_left.free(fact.product_id, str(warehouse.id), self._free_at)
+        # What this order's own active revision already holds here FROM THIS SAME donor,
+        # resubmitted: not a new ask (PLAN-so-book-diff-replanning.md section 10, defect A).
+        carried = self._carried_component_qty(
+            carried_holds,
+            str(fact.line.id),
+            BORROW,
+            str(warehouse.id),
+            donor_project_id=str(donor.id),
+        )
+        ask = qty - carried if qty > carried else _ZERO
+        if ask <= _ZERO:
+            return
         if qty > held + free:
+            room = held + free - carried
             refuse(
                 stale,
-                f"{donor.project_code} has {qty_text(held + free)} at "
-                f"{warehouse.warehouse_code}, and {qty_text(qty)} was asked for.",
+                f"{donor.project_code} has {qty_text(room if room > _ZERO else _ZERO)} at "
+                f"{warehouse.warehouse_code}, and {qty_text(ask)} was asked for.",
             )
             return
         from_hold = min(qty, held)
