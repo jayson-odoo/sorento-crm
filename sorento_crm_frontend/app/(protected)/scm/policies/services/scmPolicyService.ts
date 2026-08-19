@@ -47,9 +47,11 @@
  *  PUT    /api/v1/scm/policies/fulfilment-priority   body FulfilmentPriorityWrite
  *    → FulfilmentPriorityPolicy
  *    The single active `scm.priority_policy` row - ranking factor weights, demand-class
- *    weights, and the ladder-v2 horizon/cross-group-borrow settings (PLAN-demo-followups-
- *    19aug-ladder-v2.md C1/C2). A PUT writes a NEW revision and activates it; the previous
- *    row is kept, deactivated. Gated `scm.policy.manage`, same as every other policy family.
+ *    weights, and the ladder-v2 reorder-coverage-date/cross-group-borrow settings
+ *    (PLAN-demo-followups-19aug-ladder-v2.md C1/C2). `reorder_coverage_until` is a calendar
+ *    date (`YYYY-MM-DD` or `null`), not a rolling day count. A PUT writes a NEW revision and
+ *    activates it; the previous row is kept, deactivated. Gated `scm.policy.manage`, same as
+ *    every other policy family.
  *
  * Server-authoritative validation (mirrored client-side for UX) - AC-VAL-*,
  * AC-CFG-2, AC-SUP-2 - returns 422 via the global AppException handler.

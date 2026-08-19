@@ -97,6 +97,29 @@ def test_list_global_row_label_em_dash(scm_app):
     assert globals_ and all(r["scope_label"] == "—" for r in globals_)
 
 
+def test_list_a_reorder_level_row_returns_200(scm_app):
+    """`reorder_level` is the manual-planning basis the GLOBAL row carries whenever S1's
+    planning-mode switch is set to "manual" (migration 356). A tenant with that switch on
+    was 500ing `GET /scm/policies` because the response schema's `PolicyType` did not know
+    the value - reproduced here by seeding a row exactly the way the planning-mode PUT does
+    (raw `policy_type`, bypassing `ReorderPolicyWrite`)."""
+    app, db = _client(scm_app, "purchasing")
+    pid, _code, _cat = _a_product(db)
+    rid = str(_uuid.uuid4())
+    db.execute(text(
+        "INSERT INTO scm.reorder_policy "
+        "(id, scope_type, scope_ref, policy_type, priority, is_active, "
+        " source_system, source_ref, created_at, updated_at) "
+        "VALUES (:id, 'sku', :pid, 'reorder_level', 0, true, 'test', 'test', now(), now())"
+    ), {"id": rid, "pid": pid})
+    db.flush()
+    with TestClient(app) as c:
+        res = c.get(f"{BASE}?page=1&limit=200")
+    assert res.status_code == 200, res.text
+    mine = [r for r in res.json()["data"] if r["id"] == rid]
+    assert mine and mine[0]["policy_type"] == "reorder_level"
+
+
 # --- create each scope (AC-EDIT-1) ------------------------------------------
 
 def test_create_sku_override(scm_app):

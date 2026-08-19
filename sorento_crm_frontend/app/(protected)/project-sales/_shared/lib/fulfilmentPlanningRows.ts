@@ -121,3 +121,22 @@ export function planRowHref(row: PlanRow): string | null {
   if (row.sales_order_id) return `/scm/sales-orders/${row.sales_order_id}`;
   return null;
 }
+
+/**
+ * Where a Plans page row's second action, "Open on board", links to: the Fulfilment
+ * Planning board filtered to the order the decision was made on (19 Aug follow-up).
+ *
+ * The captain wants to revisit the board he planned on, not just re-read the sheet
+ * `planRowHref` opens - the board is where a decided line shows as "Confirmed rev N"
+ * beside whatever changed since. Same `?orders=<so_number>` contract the rest of the
+ * app already uses to deep-link into the board (planning-changes' "Open on the board",
+ * a cell drawer's `board_link`): sales-order NUMBERS, never ids.
+ *
+ * A row with no `so_number` at all has nothing to filter the board to, so this answers
+ * null rather than linking to the whole unfiltered board under an action that reads
+ * "open on board" - that promise is specific to THIS order.
+ */
+export function planBoardHref(row: PlanRow): string | null {
+  if (!row.so_number) return null;
+  return `/project-sales/fulfilment-planning?orders=${encodeURIComponent(row.so_number)}`;
+}

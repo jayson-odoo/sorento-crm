@@ -26,7 +26,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { STATUS_PILL_BASE } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { usePlans } from '../../_shared/hooks/useFulfilmentPlanning';
-import { planRowHref } from '../../_shared/lib/fulfilmentPlanningRows';
+import { planBoardHref, planRowHref } from '../../_shared/lib/fulfilmentPlanningRows';
 import { PLAN_SORT_FIELDS, type PlanRow, type PlanState } from '../../_shared/types/fulfilmentPlanning.types';
 import { InfoHint } from '../../[projectId]/components/InfoHint';
 
@@ -262,16 +262,23 @@ export function PlansClient() {
         enableSorting: false,
         cell: ({ row }) => {
           const href = planRowHref(row.original);
-          return href ? (
-            <Button asChild type="button" size="sm" variant="ghost">
-              <Link href={href}>Open</Link>
-            </Button>
-          ) : (
-            <span className="text-sm text-muted-foreground">Not linked</span>
+          const boardHref = planBoardHref(row.original);
+          if (!href) return <span className="text-sm text-muted-foreground">Not linked</span>;
+          return (
+            <div className="flex items-center gap-1">
+              <Button asChild type="button" size="sm" variant="ghost">
+                <Link href={href}>Open</Link>
+              </Button>
+              {boardHref ? (
+                <Button asChild type="button" size="sm" variant="ghost">
+                  <Link href={boardHref}>Open on board</Link>
+                </Button>
+              ) : null}
+            </div>
           );
         },
-        size: 100,
-        minSize: 90,
+        size: 190,
+        minSize: 100,
         enableResizing: false,
         meta: { headerTitle: 'Action', skeleton: <Skeleton className="h-7 w-16" /> },
       },

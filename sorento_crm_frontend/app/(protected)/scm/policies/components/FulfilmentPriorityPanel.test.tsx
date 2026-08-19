@@ -24,7 +24,7 @@ const DATA = {
     customer_credit: 1,
   },
   demand_class_weights: { project: 1, retail: 0.4 },
-  buy_all_horizon_days: 180,
+  reorder_coverage_until: '2026-10-31',
   cross_group_borrow_max_qty: 50,
   cross_group_borrow_max_pct: 10,
   exists: true,
@@ -71,7 +71,7 @@ describe('FulfilmentPriorityPanel', () => {
     expect(screen.getByLabelText('Purchase order sequence')).toHaveValue(1);
     expect(screen.getByLabelText('Project')).toHaveValue(1);
     expect(screen.getByLabelText('Retail')).toHaveValue(0.4);
-    expect(screen.getByLabelText(/Buy-all horizon/i)).toHaveValue(180);
+    expect(screen.getByLabelText(/Purchasing covers demand until/i)).toHaveValue('2026-10-31');
     expect(screen.getByLabelText(/borrow cap \(qty\)/i)).toHaveValue(50);
     expect(screen.getByLabelText(/borrow cap \(%\)/i)).toHaveValue(10);
   });
@@ -81,7 +81,9 @@ describe('FulfilmentPriorityPanel', () => {
     render(<FulfilmentPriorityPanel />);
 
     fireEvent.change(screen.getByLabelText('Delivery date'), { target: { value: '5' } });
-    fireEvent.change(screen.getByLabelText(/Buy-all horizon/i), { target: { value: '90' } });
+    fireEvent.change(screen.getByLabelText(/Purchasing covers demand until/i), {
+      target: { value: '2026-12-01' },
+    });
     fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
@@ -94,10 +96,22 @@ describe('FulfilmentPriorityPanel', () => {
         customer_credit: 1,
       },
       demand_class_weights: { project: 1, retail: 0.4 },
-      buy_all_horizon_days: 90,
+      reorder_coverage_until: '2026-12-01',
       cross_group_borrow_max_qty: 50,
       cross_group_borrow_max_pct: 10,
     });
+  });
+
+  it('save with the date cleared sends null, not an empty string', async () => {
+    hooks.useFulfilmentPriority.mockReturnValue({ data: DATA, isLoading: false, isError: false });
+    render(<FulfilmentPriorityPanel />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    const payload = mutateAsync.mock.calls[0][0];
+    expect(payload.reorder_coverage_until).toBeNull();
   });
 
   it('blocks a save with a negative weight (client mirror of the backend validation)', () => {

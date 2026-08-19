@@ -17,6 +17,8 @@ Same fixture family as `test_policy_config.py` (real Postgres, rolled-back savep
 """
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
@@ -49,7 +51,7 @@ def _write(**overrides) -> dict:
             "customer_credit": 1.0,
         },
         "demand_class_weights": {"project": 1.0, "retail": 0.4},
-        "buy_all_horizon_days": 180,
+        "reorder_coverage_until": "2026-10-31",
         "cross_group_borrow_max_qty": 50,
         "cross_group_borrow_max_pct": 10.0,
     }
@@ -61,7 +63,7 @@ def _active_row(db) -> dict:
     row = db.execute(
         text(
             "SELECT id, name, is_active, factors, demand_class_weights, "
-            "buy_all_horizon_days, cross_group_borrow_max_qty, cross_group_borrow_max_pct "
+            "reorder_coverage_until, cross_group_borrow_max_qty, cross_group_borrow_max_pct "
             "FROM scm.priority_policy WHERE is_active = true"
         )
     ).mappings().first()
@@ -80,7 +82,8 @@ def test_get_returns_the_seeded_fair_policy(scm_app):
     assert body["name"] == seeded["name"]
     assert body["factors"] == seeded["factors"]
     assert body["demand_class_weights"] == seeded["demand_class_weights"]
-    assert body["buy_all_horizon_days"] == seeded["buy_all_horizon_days"]
+    seeded_until = seeded["reorder_coverage_until"]
+    assert body["reorder_coverage_until"] == (seeded_until.isoformat() if seeded_until else None)
     assert body["cross_group_borrow_max_qty"] == seeded["cross_group_borrow_max_qty"]
     assert float(body["cross_group_borrow_max_pct"]) == float(
         seeded["cross_group_borrow_max_pct"]
@@ -101,7 +104,7 @@ def test_put_creates_a_revision_and_the_board_sees_it(scm_app):
             "document_age": 0.5,
             "customer_credit": 0.5,
         },
-        buy_all_horizon_days=90,
+        reorder_coverage_until="2026-11-15",
         cross_group_borrow_max_qty=25,
         cross_group_borrow_max_pct=5.0,
     )
@@ -111,14 +114,14 @@ def test_put_creates_a_revision_and_the_board_sees_it(scm_app):
         body = put.json()
 
     assert body["factors"]["need_by_date"] == 5.0
-    assert body["buy_all_horizon_days"] == 90
+    assert body["reorder_coverage_until"] == "2026-11-15"
 
     after_count = db.execute(text("SELECT count(*) FROM scm.priority_policy")).scalar()
     assert after_count == before_count + 1  # a NEW row, the old one kept
 
     active = _active_row(db)
     assert active["factors"]["need_by_date"] == 5.0
-    assert active["buy_all_horizon_days"] == 90
+    assert active["reorder_coverage_until"] == date(2026, 11, 15)
     assert active["cross_group_borrow_max_qty"] == 25
 
     # The board's own read (`priority.active_policy`) resolves to the same row.
@@ -133,17 +136,17 @@ def test_put_never_mutates_the_row_it_replaces(scm_app):
     before = _active_row(db)
 
     with TestClient(app) as c:
-        c.put(BASE, json=_write(buy_all_horizon_days=30))
+        c.put(BASE, json=_write(reorder_coverage_until="2026-09-01"))
 
     old_row = db.execute(
         text(
-            "SELECT is_active, buy_all_horizon_days FROM scm.priority_policy WHERE id = :id"
+            "SELECT is_active, reorder_coverage_until FROM scm.priority_policy WHERE id = :id"
         ),
         {"id": before["id"]},
     ).mappings().first()
     assert old_row["is_active"] is False
     # The row this test started with is untouched - the PUT deactivated it, not rewrote it.
-    assert old_row["buy_all_horizon_days"] == before["buy_all_horizon_days"]
+    assert old_row["reorder_coverage_until"] == before["reorder_coverage_until"]
 
 
 def test_negative_factor_weight_is_refused(scm_app):
@@ -169,10 +172,34 @@ def test_negative_class_weight_is_refused(scm_app):
     assert res.status_code == 422, res.text
 
 
-def test_horizon_must_be_positive(scm_app):
-    app, _db = _client(scm_app, "purchasing")
+def test_reorder_coverage_until_round_trips_a_date(scm_app):
+    """The captain's "purchasing reorders until October" is a calendar date, not a rolling
+    day count - a PUT carrying one comes back unchanged on the very next GET."""
+    app, db = _client(scm_app, "purchasing")
     with TestClient(app) as c:
-        assert c.put(BASE, json=_write(buy_all_horizon_days=0)).status_code == 422
+        put = c.put(BASE, json=_write(reorder_coverage_until="2026-10-31"))
+        assert put.status_code == 200, put.text
+        assert put.json()["reorder_coverage_until"] == "2026-10-31"
+
+        got = c.get(BASE)
+    assert got.json()["reorder_coverage_until"] == "2026-10-31"
+    active = _active_row(db)
+    assert active["reorder_coverage_until"] == date(2026, 10, 31)
+
+
+def test_reorder_coverage_until_null_clears_it(scm_app):
+    """A PUT with no date at all is "no coverage limit", not "keep whatever was there"."""
+    app, db = _client(scm_app, "purchasing")
+    with TestClient(app) as c:
+        c.put(BASE, json=_write(reorder_coverage_until="2026-10-31"))
+        cleared = c.put(BASE, json=_write(reorder_coverage_until=None))
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["reorder_coverage_until"] is None
+
+        got = c.get(BASE)
+    assert got.json()["reorder_coverage_until"] is None
+    active = _active_row(db)
+    assert active["reorder_coverage_until"] is None
 
 
 def test_cross_group_borrow_qty_must_not_be_negative(scm_app):
@@ -231,7 +258,7 @@ def test_a_uniqueness_conflict_on_activation_is_a_409_not_a_500(scm_app):
                 name="ZZT conflict test",
                 factors={"po_document_sequence": 1.0},
                 demand_class_weights={},
-                buy_all_horizon_days=180,
+                reorder_coverage_until=None,
                 cross_group_borrow_max_qty=50,
                 cross_group_borrow_max_pct=10.0,
             )

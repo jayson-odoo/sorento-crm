@@ -22,6 +22,8 @@ export const POLICY_TYPE_LABEL: Record<PolicyType, string> = {
   reorder_point: 'Reorder point',
   periodic_review: 'Periodic review',
   min_max: 'Min-max',
+  // Set by the planning-mode switch (Auto/Manual), never chosen here directly.
+  reorder_level: 'Reorder level',
 };
 
 export const SAFETY_METHOD_LABEL: Record<SafetyStockMethod, string> = {
@@ -48,6 +50,7 @@ export const POLICY_TYPE_OPTIONS: { value: PolicyType; label: string }[] = [
   { value: 'reorder_point', label: 'Reorder point' },
   { value: 'periodic_review', label: 'Periodic review' },
   { value: 'min_max', label: 'Min-max' },
+  { value: 'reorder_level', label: 'Reorder level' },
 ];
 
 export const SAFETY_METHOD_OPTIONS: { value: SafetyStockMethod; label: string }[] = [

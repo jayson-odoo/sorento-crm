@@ -174,13 +174,14 @@ def policy_weights(policy: Optional[PriorityPolicy]) -> tuple[dict, dict]:
 # Fulfilment policy admin (PLAN-demo-followups-19aug-ladder-v2.md C1/C2)
 # --------------------------------------------------------------------------- #
 
-#: What `buy_all_horizon_days` / `cross_group_borrow_max_qty` / `cross_group_borrow_max_pct`
-#: answer for a policy-less database - the same literals migration `ed706a98ddc6` seeds as
-#: `server_default`, kept here (not imported) for the same "migrations stay standalone"
-#: reason 385 states. The ladder (workstream E) is the eventual reader; this slice only
-#: stores and surfaces them.
+#: What `reorder_coverage_until` / `cross_group_borrow_max_qty` / `cross_group_borrow_max_pct`
+#: answer for a policy-less database. `reorder_coverage_until` defaults to None - a fresh
+#: install has no coverage limit set, never a guessed date. `cross_group_borrow_max_*` mirror
+#: the literals migration `ed706a98ddc6` seeds as `server_default`, kept here (not imported)
+#: for the same "migrations stay standalone" reason 385 states. The ladder (workstream E) is
+#: the eventual reader; this slice only stores and surfaces them.
 FULFILMENT_SETTINGS_DEFAULTS = {
-    "buy_all_horizon_days": 180,
+    "reorder_coverage_until": None,
     "cross_group_borrow_max_qty": 50,
     "cross_group_borrow_max_pct": 10.0,
 }
@@ -194,14 +195,14 @@ _NO_POLICY_NAME = "Fulfilment priority (no policy activated yet)"
 
 
 def fulfilment_settings(policy: Optional[PriorityPolicy]) -> dict:
-    """`{buy_all_horizon_days, cross_group_borrow_max_qty, cross_group_borrow_max_pct}` for a
-    policy, or the documented default. A sibling of `policy_weights` for the fields C2 added:
-    this slice does not wire them into scoring (that is workstream E), but the admin screen -
-    and later the ladder - both need one place to read them off the active row."""
+    """`{reorder_coverage_until, cross_group_borrow_max_qty, cross_group_borrow_max_pct}` for
+    a policy, or the documented default. A sibling of `policy_weights` for the fields C2
+    added: this slice does not wire them into scoring (that is workstream E), but the admin
+    screen - and later the ladder - both need one place to read them off the active row."""
     if policy is None:
         return dict(FULFILMENT_SETTINGS_DEFAULTS)
     return {
-        "buy_all_horizon_days": int(policy.buy_all_horizon_days),
+        "reorder_coverage_until": policy.reorder_coverage_until,
         "cross_group_borrow_max_qty": int(policy.cross_group_borrow_max_qty),
         "cross_group_borrow_max_pct": float(policy.cross_group_borrow_max_pct),
     }
@@ -231,7 +232,7 @@ def create_revision(
     name: str,
     factors: Mapping[str, float],
     demand_class_weights: Mapping[str, float],
-    buy_all_horizon_days: int,
+    reorder_coverage_until: Optional[date],
     cross_group_borrow_max_qty: int,
     cross_group_borrow_max_pct: float,
     notes: Optional[str] = None,
@@ -266,7 +267,7 @@ def create_revision(
         is_active=True,
         factors=dict(factors),
         demand_class_weights=dict(demand_class_weights),
-        buy_all_horizon_days=int(buy_all_horizon_days),
+        reorder_coverage_until=reorder_coverage_until,
         cross_group_borrow_max_qty=int(cross_group_borrow_max_qty),
         cross_group_borrow_max_pct=cross_group_borrow_max_pct,
         notes=notes,

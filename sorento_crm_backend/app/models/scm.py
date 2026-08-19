@@ -615,10 +615,12 @@ class PriorityPolicy(Base):
     # activated as a whole, so a planner tuning "how far out is Buy all" cannot leave the
     # weights and the horizon pointing at two different revisions.
     #
-    # A line due further out than this many days is `Buy all`, untouched - no reservation,
-    # no borrow attempted.
-    buy_all_horizon_days = Column(Integer, nullable=False, default=180,
-                                  server_default=text("180"))
+    # A CALENDAR DATE, not a rolling day count (19 Aug follow-up, migration
+    # 394_reorder_coverage_until, replacing `buy_all_horizon_days`): the captain's own
+    # framing was "purchasing reorders until October" - a fixed date, not "N days from
+    # today". A line required AFTER this date is proposed as `Buy now`, untouched - no
+    # reservation, no borrow attempted. NULL means no coverage limit is set.
+    reorder_coverage_until = Column(Date, nullable=True)
     # A cross-OWNERSHIP-GROUP borrow (e.g. a BB line borrowing from an HP location) is only
     # proposed under a small-quantity cap - either absolute qty or a percentage of the line,
     # whichever the ladder decides to apply. Both are stored; which one gates is the ladder's

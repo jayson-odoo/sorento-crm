@@ -105,7 +105,7 @@ def put_fulfilment_priority(
         name=current.name if current is not None else priority_svc.FAIR_POLICY_NAME,
         factors=body.factors,
         demand_class_weights=body.demand_class_weights,
-        buy_all_horizon_days=body.buy_all_horizon_days,
+        reorder_coverage_until=body.reorder_coverage_until,
         cross_group_borrow_max_qty=body.cross_group_borrow_max_qty,
         cross_group_borrow_max_pct=body.cross_group_borrow_max_pct,
         notes=current.notes if current is not None else None,

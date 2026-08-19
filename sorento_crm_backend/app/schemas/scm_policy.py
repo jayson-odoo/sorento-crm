@@ -17,12 +17,18 @@ rendered: ``scope_label`` is always human-readable (AC-NAV-4).
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, model_validator
 
 ScopeType = Literal["sku", "product_class", "abc_xyz_cell", "global"]
-PolicyType = Literal["reorder_point", "periodic_review", "min_max"]
+# "reorder_level" is the manual-planning basis (`app.services.scm.reorder_policy`'s
+# `_MANUAL_POLICY_TYPE`, migration 356) - the GLOBAL row carries it whenever S1's
+# planning-mode switch is set to "manual". Missing here is the AC-3025 bug: the seeded
+# global row can legitimately hold it, and `GET /scm/policies` 500'd serializing that
+# row through this Literal.
+PolicyType = Literal["reorder_point", "periodic_review", "min_max", "reorder_level"]
 SafetyStockMethod = Literal["fixed_days", "statistical", "manual"]
 SupplierSelection = Literal["primary", "best_score", "lowest_cost"]
 # Where a plan row may cover a shortage from before it buys. `own_pool` is the default
@@ -187,7 +193,10 @@ class FulfilmentPriorityWrite(BaseModel):
     factors: Dict[str, float]
     demand_class_weights: Dict[str, float]
     # Ladder v2 (E) settings this slice stores but does not yet wire into scoring.
-    buy_all_horizon_days: int
+    # A CALENDAR DATE (19 Aug follow-up, replacing the rolling `buy_all_horizon_days`
+    # day count): a line required after this date is proposed as `Buy now`, untouched.
+    # None clears the setting - no coverage limit is in force.
+    reorder_coverage_until: Optional[date] = None
     cross_group_borrow_max_qty: int
     cross_group_borrow_max_pct: float
 
@@ -199,8 +208,6 @@ class FulfilmentPriorityWrite(BaseModel):
         for key, value in self.demand_class_weights.items():
             if value < 0:
                 raise ValueError(f"the demand-class weight for {key!r} must be >= 0")
-        if self.buy_all_horizon_days <= 0:
-            raise ValueError("buy_all_horizon_days must be greater than 0")
         if self.cross_group_borrow_max_qty < 0:
             raise ValueError("cross_group_borrow_max_qty must be >= 0")
         if not (0 <= self.cross_group_borrow_max_pct <= 100):

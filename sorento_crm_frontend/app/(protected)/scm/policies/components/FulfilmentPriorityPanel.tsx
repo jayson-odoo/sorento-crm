@@ -20,8 +20,12 @@ import { useFulfilmentPriority, useSaveFulfilmentPriority } from '../hooks/usePo
  * The ranking that decides both what goes in a container and which purchase-order line
  * arriving stock is assigned to (AC-H5) - one policy, tuned here. Ranking factors weigh a
  * demand row against its competitors; demand-class weights say how much a project order
- * outranks a retail one; the last three settings are the ladder's horizon and cross-
- * ownership-group borrow caps (PLAN-demo-followups-19aug-ladder-v2.md C1/C2).
+ * outranks a retail one; the last three settings are the ladder's reorder-coverage date and
+ * cross-ownership-group borrow caps (PLAN-demo-followups-19aug-ladder-v2.md C1/C2).
+ *
+ * `reorder_coverage_until` is a CALENDAR DATE (19 Aug follow-up), not a rolling day count -
+ * the captain's own framing was "purchasing reorders until October". A line required after
+ * this date is proposed as Buy now, untouched; clearing it means no coverage limit is set.
  *
  * Read and edit are the same layout - every value is always an input, the way the other
  * policy panels on this page already work; Save writes a NEW policy revision and activates
@@ -33,7 +37,7 @@ export function FulfilmentPriorityPanel() {
 
   const [factors, setFactors] = useState<Record<string, string>>({});
   const [classWeights, setClassWeights] = useState<Record<string, string>>({});
-  const [horizonDays, setHorizonDays] = useState('');
+  const [reorderCoverageUntil, setReorderCoverageUntil] = useState('');
   const [borrowMaxQty, setBorrowMaxQty] = useState('');
   const [borrowMaxPct, setBorrowMaxPct] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -62,7 +66,7 @@ export function FulfilmentPriorityPanel() {
     }
     setClassWeights(nextClasses);
 
-    setHorizonDays(String(data.buy_all_horizon_days));
+    setReorderCoverageUntil(data.reorder_coverage_until ?? '');
     setBorrowMaxQty(String(data.cross_group_borrow_max_qty));
     setBorrowMaxPct(String(data.cross_group_borrow_max_pct));
   }, [data]);
@@ -100,11 +104,6 @@ export function FulfilmentPriorityPanel() {
       if (Number.isFinite(value)) parsedClasses[key] = value;
     }
 
-    const horizon = Number(horizonDays);
-    if (!Number.isInteger(horizon) || horizon <= 0) {
-      setFormError('The Buy-all horizon must be a whole number of days greater than 0.');
-      return;
-    }
     const maxQty = Number(borrowMaxQty);
     if (!Number.isInteger(maxQty) || maxQty < 0) {
       setFormError('The cross-group borrow quantity cap must be 0 or a whole number more.');
@@ -120,7 +119,7 @@ export function FulfilmentPriorityPanel() {
       await save.mutateAsync({
         factors: parsedFactors,
         demand_class_weights: parsedClasses,
-        buy_all_horizon_days: horizon,
+        reorder_coverage_until: reorderCoverageUntil || null,
         cross_group_borrow_max_qty: maxQty,
         cross_group_borrow_max_pct: maxPct,
       });
@@ -218,22 +217,33 @@ export function FulfilmentPriorityPanel() {
             </div>
 
             <div>
-              <h4 className="mb-3 text-sm font-medium">Buy-all horizon &amp; cross-group borrow</h4>
+              <h4 className="mb-3 text-sm font-medium">Reorder coverage &amp; cross-group borrow</h4>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div>
-                  <Label htmlFor="fulfilment-horizon" className="mb-1 block">
-                    Buy-all horizon (days)
+                  <Label htmlFor="fulfilment-coverage-until" className="mb-1 block">
+                    Purchasing covers demand until
                   </Label>
-                  <Input
-                    id="fulfilment-horizon"
-                    type="number"
-                    min={1}
-                    inputMode="numeric"
-                    value={horizonDays}
-                    onChange={(e) => setHorizonDays(e.target.value)}
-                  />
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="fulfilment-coverage-until"
+                      type="date"
+                      value={reorderCoverageUntil}
+                      onChange={(e) => setReorderCoverageUntil(e.target.value)}
+                      className="w-full"
+                    />
+                    {reorderCoverageUntil ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setReorderCoverageUntil('')}
+                      >
+                        Clear
+                      </Button>
+                    ) : null}
+                  </div>
                   <p className="mt-1 text-2xs text-muted-foreground">
-                    A line due further out than this is Buy all - no stock is touched.
+                    Lines required after this date are proposed as Buy now.
                   </p>
                 </div>
                 <div>

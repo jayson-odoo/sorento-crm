@@ -150,7 +150,7 @@ describe('PlansClient', () => {
 
     // The project SO sheet, not the plain SCM document: it carries the supply composition
     // and Amend, which is what a row on this page is for.
-    const link = await screen.findByRole('link', { name: /open/i });
+    const link = await screen.findByRole('link', { name: 'Open' });
     expect(link).toHaveAttribute('href', '/project-sales/p1/sales-orders/pso-1');
   });
 
@@ -158,8 +158,27 @@ describe('PlansClient', () => {
     listPlans.mockResolvedValue(envelope([row({ project_id: null })]));
     renderClient();
 
-    const link = await screen.findByRole('link', { name: /open/i });
+    const link = await screen.findByRole('link', { name: 'Open' });
     expect(link).toHaveAttribute('href', '/scm/sales-orders/so-1');
+  });
+
+  it('offers a second "Open on board" action linking to the board filtered to the order', async () => {
+    listPlans.mockResolvedValue(envelope([row()]));
+    renderClient();
+
+    const link = await screen.findByRole('link', { name: /open on board/i });
+    expect(link).toHaveAttribute(
+      'href',
+      '/project-sales/fulfilment-planning?orders=SO397450',
+    );
+  });
+
+  it('omits "Open on board" when the row has no sales order number to filter to', async () => {
+    listPlans.mockResolvedValue(envelope([row({ so_number: null })]));
+    renderClient();
+
+    await screen.findByRole('link', { name: 'Open' });
+    expect(screen.queryByRole('link', { name: /open on board/i })).not.toBeInTheDocument();
   });
 
   it('shows the empty state with a CTA back to Fulfilment Planning when nothing is confirmed', async () => {

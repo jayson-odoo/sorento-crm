@@ -17,7 +17,13 @@
 /** Precedence order: sku > abc_xyz_cell > product_class > global. */
 export type ScopeType = 'sku' | 'product_class' | 'abc_xyz_cell' | 'global';
 
-export type PolicyType = 'reorder_point' | 'periodic_review' | 'min_max';
+/**
+ * `reorder_level` is the manual-planning basis - the GLOBAL row carries it whenever S1's
+ * planning-mode switch is set to "manual" (backend migration 356). It is set through the
+ * planning-mode switch, not created here, but the grid must still be able to LIST and EDIT
+ * a row that carries it without falling over on an unrecognised enum value.
+ */
+export type PolicyType = 'reorder_point' | 'periodic_review' | 'min_max' | 'reorder_level';
 
 export type SafetyStockMethod = 'fixed_days' | 'statistical' | 'manual';
 
@@ -146,8 +152,9 @@ export interface FulfilmentPriorityPolicy {
   factors: Record<string, number>;
   /** Demand-class weights, keyed by `project` / `retail`. */
   demand_class_weights: Record<string, number>;
-  /** A line due further out than this many days is `Buy all`, untouched. */
-  buy_all_horizon_days: number;
+  /** A line required AFTER this calendar date is proposed as `Buy now`, untouched -
+   *  the captain's "purchasing reorders until October". `null` = no coverage limit set. */
+  reorder_coverage_until: string | null;
   /** A cross-ownership-group borrow is only offered under this quantity... */
   cross_group_borrow_max_qty: number;
   /** ...or this percentage of the line, whichever the ladder applies. */
