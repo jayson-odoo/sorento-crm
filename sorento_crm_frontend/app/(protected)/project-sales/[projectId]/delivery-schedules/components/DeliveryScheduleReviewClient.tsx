@@ -38,6 +38,7 @@ import {
 } from '../_demo/scheduleDemo';
 import {
   buildCellMap,
+  buildCellMetaMap,
   buildColumnStates,
   cellMapKey,
   groupPhasesByArea,
@@ -49,9 +50,11 @@ import { DeliveryScheduleColumnCards } from './DeliveryScheduleColumnCards';
 import { DeliveryScheduleConfirmDialog } from './DeliveryScheduleConfirmDialog';
 import { DeliveryScheduleMatrix } from './DeliveryScheduleMatrix';
 import type { ColumnFocusRequest, ScheduleGridController } from './DeliveryScheduleMatrix';
+import { DeliveryScheduleNotes } from './DeliveryScheduleNotes';
 import { poProductOptions } from './DeliveryScheduleProductPicker';
 import { DeliveryScheduleReconciliationList } from './DeliveryScheduleReconciliationList';
 import { DeliveryScheduleRevisionDiff } from './DeliveryScheduleRevisionDiff';
+import { DeliveryScheduleRevisionProposals } from './DeliveryScheduleRevisionProposals';
 
 /**
  * Reviewing one version of a delivery schedule.
@@ -80,8 +83,17 @@ export function DeliveryScheduleReviewClient({
       ? describeReadingTime(version.extraction_elapsed_ms)
       : null;
 
-  const { saveCells, resolveProduct, dismissColumn, confirm, retryExtraction } =
-    useDeliveryScheduleVersionMutations(projectId, versionId);
+  const {
+    saveCells,
+    resolveProduct,
+    dismissColumn,
+    confirm,
+    retryExtraction,
+    acceptProposal,
+    rejectProposal,
+  } = useDeliveryScheduleVersionMutations(projectId, versionId);
+  /** Which proposal a request is in flight for, so only its own card shows pending. */
+  const [pendingProposalIndex, setPendingProposalIndex] = React.useState<number | null>(null);
   // The demo screen has no server behind it, so it has no neighbours to ask for either.
   const neighbours = useDeliveryScheduleVersionNeighbours(versionId, { enabled: !demo });
   // The version this one revises, for the was -> now diff. No-op on a version 1 or on demo.
@@ -128,6 +140,10 @@ export function DeliveryScheduleReviewClient({
 
   const storedCells = React.useMemo(
     () => buildCellMap(version?.cells ?? []),
+    [version?.cells],
+  );
+  const cellMeta = React.useMemo(
+    () => buildCellMetaMap(version?.cells ?? []),
     [version?.cells],
   );
 
@@ -318,6 +334,7 @@ export function DeliveryScheduleReviewClient({
     learnedColumns,
     registerColumnRef,
     focusRequest,
+    metaFor: (phaseId, columnKey) => cellMeta.get(cellMapKey(phaseId, columnKey)),
   };
 
   /**
@@ -542,6 +559,28 @@ export function DeliveryScheduleReviewClient({
 
       {!readingNow && columns.length > 0 && (
         <>
+          <DeliveryScheduleNotes notes={version.notes ?? []} />
+
+          <DeliveryScheduleRevisionProposals
+            proposals={version.revision_proposals ?? []}
+            canDecide={canEdit}
+            pendingIndex={pendingProposalIndex}
+            onAccept={(index) => {
+              if (demo) return;
+              setPendingProposalIndex(index);
+              acceptProposal.mutate(index, {
+                onSettled: () => setPendingProposalIndex(null),
+              });
+            }}
+            onReject={(index) => {
+              if (demo) return;
+              setPendingProposalIndex(index);
+              rejectProposal.mutate(index, {
+                onSettled: () => setPendingProposalIndex(null),
+              });
+            }}
+          />
+
           {version.version_no > 1 && (
             <DeliveryScheduleRevisionDiff
               version={version}

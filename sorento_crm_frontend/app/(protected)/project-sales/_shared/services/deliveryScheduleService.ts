@@ -201,6 +201,43 @@ export async function retryDeliveryScheduleExtraction(
  * Promotes the phases onto the project. 409 while any column is unreconciled unless the
  * caller sends `acknowledge_unreconciled` with a reason.
  */
+/**
+ * Writes the override for every cell this proposal names (section 9.7c). 409 when the
+ * proposal was already decided, or the version is confirmed.
+ *
+ * `POST /delivery-schedule-versions/{id}/revision-proposals/{index}/accept` -> the whole
+ * version, same shape as every other write on this screen.
+ */
+export async function acceptRevisionProposal(
+  versionId: string,
+  index: number,
+): Promise<DeliveryScheduleVersion> {
+  const response = await apiFetch(
+    `${BASE}/delivery-schedule-versions/${versionId}/revision-proposals/${index}/accept`,
+    { method: 'POST' },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to accept this proposal'));
+  return response.json();
+}
+
+/**
+ * Marks the proposal rejected. Writes no override; the note and the highlighted cells stay
+ * exactly as read. Same 409s as accept.
+ */
+export async function rejectRevisionProposal(
+  versionId: string,
+  index: number,
+): Promise<DeliveryScheduleVersion> {
+  const response = await apiFetch(
+    `${BASE}/delivery-schedule-versions/${versionId}/revision-proposals/${index}/reject`,
+    { method: 'POST' },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to reject this proposal'));
+  return response.json();
+}
+
 export async function confirmDeliveryScheduleVersion(
   versionId: string,
   body: DeliveryScheduleConfirmBody = {},

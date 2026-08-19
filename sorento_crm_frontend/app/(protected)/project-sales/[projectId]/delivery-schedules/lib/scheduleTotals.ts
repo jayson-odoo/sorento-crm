@@ -247,6 +247,36 @@ export function buildCellMap(cells: CellLike[]): CellMap {
   return map;
 }
 
+/** What the document itself marked on one cell: a tint, or a date this cell now overrides. */
+export interface CellMeta {
+  highlight: string | null;
+  deliveryDateOverride: string | null;
+}
+
+interface CellMetaLike extends CellLike {
+  highlight?: string | null;
+  delivery_date_override?: string | null;
+}
+
+/**
+ * `phaseId|columnKey` -> what the document marked on that cell (section 9.7a/c). Separate
+ * from `buildCellMap`: the qty map is read on every keystroke, this one only by cells that
+ * actually carry a tint or an accepted override, which on a real document is a handful.
+ */
+export function buildCellMetaMap(cells: CellMetaLike[]): Map<string, CellMeta> {
+  const map = new Map<string, CellMeta>();
+  for (const cell of cells) {
+    if (!cell.highlight && !cell.delivery_date_override) continue;
+    const key = cellColumnKey(cell);
+    if (!key) continue;
+    map.set(cellMapKey(cell.phase_id, key), {
+      highlight: cell.highlight ?? null,
+      deliveryDateOverride: cell.delivery_date_override ?? null,
+    });
+  }
+  return map;
+}
+
 /**
  * The three numbers per column, and whether they agree.
  *
@@ -476,7 +506,7 @@ export interface PhaseDateMove {
   deltaDays: number | null;
 }
 
-function diffDaysIso(a: string, b: string): number | null {
+export function diffDaysIso(a: string, b: string): number | null {
   const from = Date.parse(`${a}T00:00:00Z`);
   const to = Date.parse(`${b}T00:00:00Z`);
   if (Number.isNaN(from) || Number.isNaN(to)) return null;
@@ -643,4 +673,22 @@ export function diffScheduleQuantities(
   }
 
   return { changes, unchangedCount };
+}
+
+// ------------------------------------------------------------------ revision proposals (9.7b)
+
+/**
+ * The words for a proposal's own cadence: "fortnight" when the document's gaps between the
+ * highlighted phases all agree, else the honest fallback that names nothing it cannot show.
+ * Each later cell keeps its ORIGINAL gap (the service's own rule), so the old-date gaps and
+ * the new-date gaps always agree - either is a fair thing to compare.
+ */
+export function proposalCadenceLabel(cells: { old_date: string | null }[]): string {
+  const dates = cells.map((cell) => cell.old_date).filter((value): value is string => Boolean(value));
+  if (dates.length < 2) return "keeping the document's own gaps";
+  const gaps = dates.slice(1).map((date, index) => diffDaysIso(dates[index], date));
+  if (gaps.some((gap) => gap === null)) return "keeping the document's own gaps";
+  const [first, ...rest] = gaps;
+  const allEqual = rest.every((gap) => gap === first);
+  return allEqual ? 'keeping the fortnight cadence' : "keeping the document's own gaps";
 }

@@ -8,12 +8,14 @@ import {
   type RecordNeighboursResult,
 } from '@/hooks/useRecordNeighbours';
 import {
+  acceptRevisionProposal,
   confirmDeliveryScheduleVersion,
   DELIVERY_SCHEDULE_VERSION_NEIGHBOURS_PATH,
   dismissDeliveryScheduleColumn,
   getDeliveryScheduleVersion,
   listDeliverySchedules,
   listDeliveryScheduleVersions,
+  rejectRevisionProposal,
   resolveDeliveryScheduleProduct,
   retryDeliveryScheduleExtraction,
   saveDeliveryScheduleCells,
@@ -248,5 +250,36 @@ export function useDeliveryScheduleVersionMutations(
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { saveCells, resolveProduct, dismissColumn, confirm, retryExtraction };
+  /**
+   * Accept writes the override for every cell the proposal names; reject writes nothing and
+   * only marks the state. Both toast on success AND failure - unlike the cell/product saves
+   * above, this is a whole re-date decision, not a keystroke.
+   */
+  const acceptProposal = useMutation({
+    mutationFn: (index: number) => acceptRevisionProposal(versionId, index),
+    onSuccess: (version) => {
+      adopt(version);
+      toast.success('Proposal accepted. The dates are written onto the schedule.');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const rejectProposal = useMutation({
+    mutationFn: (index: number) => rejectRevisionProposal(versionId, index),
+    onSuccess: (version) => {
+      adopt(version);
+      toast.success('Proposal rejected.');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return {
+    saveCells,
+    resolveProduct,
+    dismissColumn,
+    confirm,
+    retryExtraction,
+    acceptProposal,
+    rejectProposal,
+  };
 }

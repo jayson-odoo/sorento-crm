@@ -84,6 +84,7 @@ function controller(overrides: Partial<ScheduleGridController> = {}): ScheduleGr
     learnedColumns: [],
     registerColumnRef: vi.fn(),
     focusRequest: null,
+    metaFor: () => undefined,
     ...overrides,
   };
 }
