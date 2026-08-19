@@ -115,6 +115,10 @@ def test_the_hot_product_is_ranked_first_with_the_share_and_the_letter_it_earned
                 "qty_delivered": "100",
                 "rank": 1,
                 "of": 2,
+                # This row's OWN weight (100 of the 150 total), not the running "everyone at
+                # or above me" figure - the two read the same on a rank-1 row of a THIN
+                # ranking, which is exactly the case the captain misread as impressive.
+                "share_pct": pytest.approx(66.67, abs=0.01),
                 "cumulative_share_pct": pytest.approx(66.7, abs=0.1),
                 "letter": "A",
                 "hot": True,
@@ -145,11 +149,17 @@ def test_a_real_non_a_letter_is_cold_not_hot():
                 "qty_delivered": "50",
                 "rank": 2,
                 "of": 2,
+                "share_pct": pytest.approx(33.33, abs=0.01),
                 "cumulative_share_pct": 100.0,
                 "letter": "B",
                 "hot": False,
             }
         ]
+        # "Ranked above it" (the popover's own subtraction): 100.0 - 33.33 -> the row ranked
+        # first held the rest.
+        assert retail["locations"][0]["cumulative_share_pct"] - retail["locations"][0][
+            "share_pct"
+        ] == pytest.approx(66.67, abs=0.01)
 
 
 def test_a_product_with_no_row_at_all_is_unclassified_on_both_classes():
@@ -184,6 +194,7 @@ def test_an_inactive_or_unavailable_warehouse_never_counts_toward_rank_or_verdic
         assert retail["verdict"] == "cold", "the two A rows sit at locations that don't count"
         assert [loc["warehouse_code"] for loc in retail["locations"]] == [live.warehouse_code]
         assert retail["locations"][0]["of"] == 1
+        assert retail["locations"][0]["share_pct"] == 100.0, "the only counted row is the whole"
 
 
 def test_an_unknown_product_is_a_404_not_an_empty_answer():

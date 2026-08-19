@@ -36,10 +36,11 @@ function evidence(overrides: Partial<ClassificationEvidence> = {}): Classificati
         locations: [
           {
             warehouse_code: 'BRW',
-            qty_delivered: '2987',
-            rank: 12,
-            of: 2196,
-            cumulative_share_pct: 41,
+            qty_delivered: '10',
+            rank: 836,
+            of: 1901,
+            share_pct: 0.02,
+            cumulative_share_pct: 93.62,
             letter: 'A',
             hot: true,
           },
@@ -120,7 +121,7 @@ describe('ClassificationProofPopover', () => {
     expect(await screen.findByText('Could not load the evidence for this item.')).toBeInTheDocument();
   });
 
-  it('renders the hot row with location, quantity, rank and share', async () => {
+  it('renders the hot row with location, quantity, rank, its own share, and what ranked above it', async () => {
     getClassificationEvidence.mockResolvedValue(evidence());
 
     renderPopover();
@@ -130,11 +131,14 @@ describe('ClassificationProofPopover', () => {
     await waitFor(() => expect(content).toHaveTextContent('Dealer (retail customers)'));
     expect(content).toHaveTextContent('Hot');
     expect(content).toHaveTextContent('BRW');
-    expect(content).toHaveTextContent('2,987');
-    expect(content).toHaveTextContent('12 of 2196');
-    expect(content).toHaveTextContent('top 41%');
+    expect(content).toHaveTextContent('10');
+    expect(content).toHaveTextContent('836 of 1901');
+    // Its own weight, never the cumulative figure a thin ranking's top row could be misread
+    // as (the captain: "Share: top 93.6%" read as good on a row that held almost nothing).
+    expect(content).toHaveTextContent('0.02%');
+    expect(content).toHaveTextContent('93.6% of retail quantity');
     expect(content).toHaveTextContent(
-      'Hot = inside the top 80% of quantity delivered to retail customers',
+      'Hot = among the items that together make the first 80% of quantity delivered to retail customers at that location',
     );
   });
 

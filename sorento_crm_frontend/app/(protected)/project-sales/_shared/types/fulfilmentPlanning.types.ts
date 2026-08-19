@@ -1388,6 +1388,9 @@ export interface ClassificationEvidenceLocation {
   qty_delivered: string;
   rank: number;
   of: number;
+  /** This row's OWN share of the class's total quantity - "Its share" in the popover. */
+  share_pct?: number | null;
+  /** The running share INCLUDING this row - "Ranked above it" is this minus `share_pct`. */
   cumulative_share_pct?: number | null;
   /** A/B/C. */
   letter?: string | null;
