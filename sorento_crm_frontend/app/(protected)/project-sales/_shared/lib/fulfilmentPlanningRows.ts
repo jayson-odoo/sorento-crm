@@ -103,16 +103,21 @@ export function sortByEarliestRequired(
 /**
  * Where a Plans page row's identity column links to: the sales order it decided (D1).
  *
- * The SAME rule `planningRowSalesOrderHref` follows, over the Plans row's own two id fields:
- * the CORE sales order when the decision's order has one (it always does by the time a
- * decision exists - `CONFIRMABLE_STATUSES` requires published/amended/adopted, and every one
- * of those sets `so_id`), else the project SO sheet when the order is registered to a
- * project. A row with neither renders plain text rather than a link that 404s.
+ * The PROJECT SO sheet wins when the decision's order has one - that page is the composition
+ * itself and the one Amend lives on, which is what a row on this page is FOR. The plain SCM
+ * document is the fallback, for the decisions this page also lists that belong to an order
+ * nobody has registered to a project. A row with neither renders plain text rather than a link
+ * that 404s.
+ *
+ * Deliberately the opposite priority from `planningRowSalesOrderHref`: that helper serves the
+ * worklist, where the identity column's whole job is "open the underlying document" and the
+ * core order is the more useful destination for a not-yet-planned row. Here the row already
+ * IS a decision, so the sheet that shows its composition and its Amend is the more useful one.
  */
 export function planRowHref(row: PlanRow): string | null {
-  if (row.sales_order_id) return `/scm/sales-orders/${row.sales_order_id}`;
   if (row.project_id && row.project_sales_order_id) {
     return `/project-sales/${row.project_id}/sales-orders/${row.project_sales_order_id}`;
   }
+  if (row.sales_order_id) return `/scm/sales-orders/${row.sales_order_id}`;
   return null;
 }

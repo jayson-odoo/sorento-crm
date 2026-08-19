@@ -175,8 +175,9 @@ describe('OrderInquiryClient', () => {
 
     expect(await screen.findByText('SO397450')).toBeInTheDocument();
     expect(screen.getByText('CB6633')).toBeInTheDocument();
-    // The Qty column, and the same figure again beside the verb pill in Instruction (A3).
-    expect(screen.getAllByText('600').length).toBeGreaterThan(0);
+    // The Qty column only: the Instruction cell drops its own copy of the figure (it duplicated
+    // the Qty column rather than adding to it) and shows the verb pill and info icon alone.
+    expect(screen.getByText('600')).toBeInTheDocument();
     expect(screen.getByText('BRW-BB')).toBeInTheDocument();
     expect(screen.getByText('ORDER')).toBeInTheDocument();
     expect(screen.getByText('Raised')).toBeInTheDocument();

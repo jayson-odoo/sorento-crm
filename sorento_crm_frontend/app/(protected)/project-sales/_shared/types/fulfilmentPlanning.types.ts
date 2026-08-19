@@ -1188,6 +1188,14 @@ export interface PlanningBoard {
   productRows: BoardProductRow[];
   cells: BoardCell[];
   /**
+   * Every contributing line of the SELECTION, in the same shape a cell's own `contributions`
+   * carry, but NEVER windowed: `cells` only exists for a bucket that made it onto screen, and
+   * at day granularity that is a 30-day window, not the whole selection. Approve all, the
+   * "N approved / M undecided" strip, the List view and Confirm all approved all read THIS
+   * list - flattening `cells[].contributions` silently drops every line outside the window.
+   */
+  contributions: BoardContribution[];
+  /**
    * One standing per selected order, built from ALL its rows rather than the displayed ones.
    * `decided_count` is always 0 here (deviation 4) and is overlaid from the client draft.
    */

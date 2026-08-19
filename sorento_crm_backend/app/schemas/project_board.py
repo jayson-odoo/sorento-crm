@@ -719,6 +719,14 @@ class PlanningBoard(BaseModel):
     product_rows: List[BoardProductRow] = Field(default=[], alias="productRows")
     cells: List[BoardCell] = []
     orders: List[BoardOrderStanding] = []
+    #: Every contributing line of the SELECTION, in the same `BoardContribution` shape a cell
+    #: carries, but never windowed: at day granularity `cells` only covers the 30 days on
+    #: screen (`DAY_WINDOW_COLUMNS`), and a line outside that window is still fully proposed
+    #: (allocation runs over the whole selection - see `build`'s docstring) even though no cell
+    #: shows it. Approve all, the "N approved - M undecided" strip, the List view and the
+    #: confirm-all call all need EVERY decidable line, not only the ones currently rendered in
+    #: the grid, so they read this list rather than flattening `cells`.
+    contributions: List[BoardContribution] = []
 
     # ---- selection-scoped totals -------------------------------------------------
     #

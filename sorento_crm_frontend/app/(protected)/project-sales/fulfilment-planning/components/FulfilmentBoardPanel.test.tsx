@@ -93,8 +93,10 @@ import { ConfirmSupplyError } from '../../_shared/services/fulfilmentPlanningSer
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
 import type {
+  BoardContribution,
   BoardGranularity,
   BoardPolicy,
+  PlanningBoard,
 } from '../../_shared/types/fulfilmentPlanning.types';
 
 const TODAY = '2026-08-18';
@@ -121,6 +123,26 @@ function boardOf(
   granularity: BoardGranularity = 'week',
 ) {
   return buildBoard(lines, { today: TODAY, freeStock, granularity });
+}
+
+/**
+ * Applies `transform` to every matching contribution across BOTH `cells[].contributions` and
+ * the board's own top-level `contributions` (the review finding's fix): Confirm, the previews,
+ * the unpostable-line detection and Approve all all read the top-level list now, never the
+ * cells, so a test simulating a server-stated fact on one contribution has to state it on both
+ * copies or the mutation is invisible to half the component.
+ */
+function withContribution(
+  board: PlanningBoard,
+  match: (entry: BoardContribution) => boolean,
+  transform: (entry: BoardContribution) => BoardContribution,
+): PlanningBoard {
+  const apply = (entry: BoardContribution) => (match(entry) ? transform(entry) : entry);
+  return {
+    ...board,
+    cells: board.cells.map((cell) => ({ ...cell, contributions: cell.contributions.map(apply) })),
+    contributions: board.contributions.map(apply),
+  };
 }
 
 function renderPanel(soNumbers = ['SO403340', 'SO398322'], onBack: () => void = vi.fn()) {
@@ -1042,15 +1064,13 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
    */
   it('names a decided line that has no mirror, and does not count it in the Confirm', async () => {
     const board = twoLineOrder();
-    getPlanningBoard.mockResolvedValue({
-      ...board,
-      cells: board.cells.map((cell) => ({
-        ...cell,
-        contributions: cell.contributions.map((entry) =>
-          entry.item_code === 'TPE-9204' ? { ...entry, project_line_id: null } : entry,
-        ),
-      })),
-    });
+    getPlanningBoard.mockResolvedValue(
+      withContribution(
+        board,
+        (entry) => entry.item_code === 'TPE-9204',
+        (entry) => ({ ...entry, project_line_id: null }),
+      ),
+    );
     confirmSupply.mockResolvedValue({
       revision_no: 1,
       review_state: 'confirmed',
@@ -1089,24 +1109,20 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
    */
   it('names a decided line whose Reserve the board cannot address, and does not count it', async () => {
     const board = twoLineOrder();
-    getPlanningBoard.mockResolvedValue({
-      ...board,
-      cells: board.cells.map((cell) => ({
-        ...cell,
-        contributions: cell.contributions.map((entry) =>
-          entry.item_code === 'TPE-9204'
-            ? {
-                ...entry,
-                qty_proposed_reserve: '100',
-                qty_proposed_buy: '0',
-                sources: [
-                  { kind: 'reserve' as const, qty: '100', location: 'BRW-BB', reason: 'Covered.' },
-                ],
-              }
-            : entry,
-        ),
-      })),
-    });
+    getPlanningBoard.mockResolvedValue(
+      withContribution(
+        board,
+        (entry) => entry.item_code === 'TPE-9204',
+        (entry) => ({
+          ...entry,
+          qty_proposed_reserve: '100',
+          qty_proposed_buy: '0',
+          sources: [
+            { kind: 'reserve' as const, qty: '100', location: 'BRW-BB', reason: 'Covered.' },
+          ],
+        }),
+      ),
+    );
 
     renderPanel(['SO403340']);
 
@@ -1128,25 +1144,25 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
 
   it('names an approved Buy of a discontinued product that carries no reason, and does not count it', async () => {
     const board = twoLineOrder();
-    getPlanningBoard.mockResolvedValue({
-      ...board,
-      cells: board.cells.map((cell) => ({
-        ...cell,
-        contributions: cell.contributions.map((entry) =>
-          entry.item_code === 'TPE-9204'
-            ? {
-                ...entry,
-                item_flags: {
-                  dealer_hot_selling: false,
-                  dealer_hot_selling_where: [],
-                  discontinued: true,
-                  retail_classification_available: true,
-                },
-              }
-            : entry,
-        ),
-      })),
-    });
+    getPlanningBoard.mockResolvedValue(
+      withContribution(
+        board,
+        (entry) => entry.item_code === 'TPE-9204',
+        (entry) => ({
+          ...entry,
+          item_flags: {
+            dealer_hot_selling: false,
+            dealer_hot_selling_where: [],
+            project_hot_selling: false,
+            project_hot_selling_where: [],
+            dealer_classified: false,
+            project_classified: false,
+            discontinued: true,
+            retail_classification_available: true,
+          },
+        }),
+      ),
+    );
 
     renderPanel(['SO403340']);
 
@@ -1189,14 +1205,11 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
       demand({ line_no: 1, item_code: 'WESERP10B' }),
       demand({ line_no: 2, item_code: 'TPE-9204' }),
     ]);
-    return {
-      ...board,
-      orders: board.orders.map((order) => ({ ...order, project_sales_order_id: null })),
-      cells: board.cells.map((cell) => ({
-        ...cell,
-        contributions: cell.contributions.map((entry) => ({ ...entry, project_line_id: null })),
-      })),
-    };
+    return withContribution(
+      { ...board, orders: board.orders.map((order) => ({ ...order, project_sales_order_id: null })) },
+      () => true,
+      (entry) => ({ ...entry, project_line_id: null }),
+    );
   }
 
   function adopted() {
@@ -1893,5 +1906,56 @@ describe('FulfilmentBoardPanel: Approve all / Confirm all approved', () => {
 
     expect(screen.getByRole('button', { name: 'Approve all' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Confirm all approved' })).not.toBeDisabled();
+  });
+
+  /**
+   * BLOCKER (review): at day granularity `cells` only covers the visible 30-day window
+   * (`DAY_WINDOW_COLUMNS`), so a line dated outside it used to be invisible to `allContributions`
+   * (it flattened `cells`), and Approve all, the strip and Confirm all approved all silently
+   * skipped it. The server's top-level `contributions` carries every line of the selection
+   * regardless of the window; the panel must read that, not the cells.
+   */
+  it('approves and confirms a line the day window has scrolled away from, not only the ones on screen', async () => {
+    const board = buildBoard(
+      [
+        demand({
+          sales_order_id: 'so-a',
+          so_number: 'SO403340',
+          line_no: 1,
+          item_code: 'WESERP10B',
+          required_date: '2026-09-04',
+        }),
+        // Outside the 30-day window that opens on the earliest future date (2026-09-04): no
+        // cell is emitted for this line, but it is still a real, decidable line of the
+        // selection.
+        demand({
+          sales_order_id: 'so-b',
+          so_number: 'SO398322',
+          line_no: 1,
+          item_code: 'WESERP20B',
+          required_date: '2028-01-01',
+        }),
+      ],
+      { today: TODAY, granularity: 'day' },
+    );
+    // The window really did leave one line off screen, so the assertions below mean something.
+    expect(board.cells).toHaveLength(1);
+    expect(board.contributions).toHaveLength(2);
+    getPlanningBoard.mockResolvedValue(board);
+    currentSearchParams = new URLSearchParams('granularity=day');
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    // The strip counts both lines, not only the one the window shows.
+    expect(screen.getByText('0 approved · 2 undecided')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve all' }));
+    expect(screen.getByText('2 approved · 0 undecided')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm all approved' }));
+    expect(
+      await screen.findByText('Confirm 2 decisions across 2 orders?'),
+    ).toBeInTheDocument();
   });
 });

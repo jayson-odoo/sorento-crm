@@ -1059,6 +1059,48 @@ def test_a_line_outside_the_day_window_is_still_served_from_its_pile():
         assert far["contested_line_count"] == 1, "and the contest is still reported"
 
 
+def test_top_level_contributions_carry_every_line_even_outside_the_day_window():
+    """`board["contributions"]` is the unwindowed population Approve all and the List view act
+    on (review finding, PLAN 13.5's own reasoning applied to a NEW field).
+
+    Two lines outside a day window that opens far away: `cells` (dated) is empty for them, but
+    `contributions` still carries both - full proposals included, since `_allocate` already ran
+    over every bucket regardless of what the window shows. Week and month need no window at all,
+    so their `contributions` list is the same set either way.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=10)
+        order = _order(db, so_number="ZZT-SO-CONTRIB1", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="4", required_date=date(2026, 9, 1), warehouse=warehouse)
+        _line(db, order, product, qty="6", required_date=date(2026, 9, 4), warehouse=warehouse)
+
+        week = _service(db).build(["ZZT-SO-CONTRIB1"], granularity="week", as_of=TODAY)
+        day = _service(db).build(
+            ["ZZT-SO-CONTRIB1"],
+            granularity="day",
+            as_of=TODAY,
+            day_window_start=date(2029, 1, 1),
+        )
+
+        # The window shows nothing of the timeline...
+        assert [c for c in day["cells"] if c["bucket_key"] != "no_date"] == []
+        # ...but both lines are still in the unwindowed list, fully proposed.
+        assert len(day["contributions"]) == 2
+        assert {c["qty"] for c in day["contributions"]} == {"4", "6"}
+        assert all(c["sources"] for c in day["contributions"]), (
+            "allocation ran over the whole selection, not only the window"
+        )
+
+        # Week has no window at all, so the same LINES come back either way - compared by the
+        # line id rather than the draft key, whose bucket half differs between day and week.
+        week_lines = {c["line_id"] for c in week["contributions"]}
+        day_lines = {c["line_id"] for c in day["contributions"]}
+        assert week_lines == day_lines
+        assert len(week_lines) == 2
+
+
 def test_each_orders_standing_counts_the_whole_order_not_the_window():
     """`orders[]` is the other place the window could lie, and it must not.
 

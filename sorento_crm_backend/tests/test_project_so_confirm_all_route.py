@@ -123,6 +123,60 @@ def test_confirm_all_commits_the_good_order_and_reports_the_bad_one_without_writ
     ), "nothing from the failing order may be written"
 
 
+# --------------------------------------------------------------------------- malformed id
+
+
+def test_confirm_all_names_a_malformed_pso_id_plainly_instead_of_a_database_error(api):
+    """A `pso_id` that is not a UUID at all must never reach `get_order`'s query: Postgres
+    would raise its own message for it, and that message would surface verbatim as this
+    entry's `error` - a database internal leaking to the planner. Caught before the query,
+    same guard the single-order route applies via `validate_uuid_path`, and reported as a
+    plain per-entry refusal rather than aborting the whole batch."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=50)
+
+    order = _project_so(db, world.project)
+    core = _core_so(db, world.company_id)
+    core_line = _core_line(db, core, world.product, world.own_wh, qty_ordered="50")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    payload = {
+        "orders": [
+            {"pso_id": "not-a-uuid", "lines": []},
+            {
+                "pso_id": order.id,
+                "lines": [
+                    _line_payload(
+                        line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "50"}]
+                    )
+                ],
+            },
+        ]
+    }
+    response = client.post(f"{BASE}/fulfilment-planning/confirm-all", json=payload)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    results = {row["pso_id"]: row for row in body["results"]}
+    assert len(body["results"]) == 2
+
+    bad = results["not-a-uuid"]
+    assert bad["ok"] is False, bad
+    assert bad["error"] == "Not a valid sales order id."
+    assert bad.get("failing_lines") is None
+
+    # The malformed entry never touches the good one alongside it.
+    good = results[order.id]
+    assert good["ok"] is True, good
+    assert (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .count()
+        == 1
+    )
+
+
 # --------------------------------------------------------------------------- empty body
 
 

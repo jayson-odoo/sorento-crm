@@ -6,7 +6,11 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BoardContribution, BoardDraft } from '../../_shared/types/fulfilmentPlanning.types';
+import type {
+  BoardContribution,
+  BoardDecision,
+  BoardDraft,
+} from '../../_shared/types/fulfilmentPlanning.types';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -57,7 +61,7 @@ function renderView(
   overrides: {
     contributions?: BoardContribution[];
     draft?: BoardDraft;
-    onDecide?: (key: string, decision: unknown) => void;
+    onDecide?: (key: string, decision: BoardDecision | null) => void;
     isLoading?: boolean;
   } = {},
 ) {
@@ -66,7 +70,7 @@ function renderView(
     <FulfilmentBoardListView
       contributions={overrides.contributions ?? [contribution()]}
       draft={overrides.draft ?? {}}
-      onDecide={onDecide as (key: string, decision: never) => void}
+      onDecide={onDecide}
       isLoading={overrides.isLoading}
     />,
   );

@@ -266,7 +266,7 @@ export function FulfilmentBoardPanel({
       setRefusals((current) => ({ ...current, [standing.sales_order_id]: [] }));
 
       let psoId = standing.project_sales_order_id ?? null;
-      let contributions = board.data.cells.flatMap((cell) => cell.contributions);
+      let contributions = board.data.contributions;
 
       try {
         // ADOPT FIRST when there is no planning record. Deciding lines and pressing Confirm is
@@ -304,7 +304,7 @@ export function FulfilmentBoardPanel({
             }));
             return;
           }
-          contributions = fresh.data.cells.flatMap((cell) => cell.contributions);
+          contributions = fresh.data.contributions;
         }
 
         const lines = confirmLinesFor(contributions, standing.sales_order_id, draft);
@@ -380,12 +380,10 @@ export function FulfilmentBoardPanel({
    */
   const ownership = React.useMemo(() => {
     const { owners, covered } = ledger.current;
-    for (const cell of board.data?.cells ?? []) {
-      for (const contribution of cell.contributions) {
-        owners.set(contribution.key, contribution.sales_order_id);
-        if (contribution.covered) covered.add(contribution.key);
-        else covered.delete(contribution.key);
-      }
+    for (const contribution of board.data?.contributions ?? []) {
+      owners.set(contribution.key, contribution.sales_order_id);
+      if (contribution.covered) covered.add(contribution.key);
+      else covered.delete(contribution.key);
     }
     return { owners, covered, board: board.data };
   }, [board.data]);
@@ -412,7 +410,7 @@ export function FulfilmentBoardPanel({
    */
   const previews = React.useMemo<Record<string, BoardCommitPreview>>(() => {
     if (!board.data) return {};
-    const contributions = board.data.cells.flatMap((cell) => cell.contributions);
+    const contributions = board.data.contributions;
     return Object.fromEntries(
       standings.map((standing) => [
         standing.sales_order_id,
@@ -431,7 +429,7 @@ export function FulfilmentBoardPanel({
   /** Decided lines this confirmation cannot carry, per order, named on the rail with why. */
   const unpostable = React.useMemo<Record<string, UnpostableLine[]>>(() => {
     if (!board.data) return {};
-    const contributions = board.data.cells.flatMap((cell) => cell.contributions);
+    const contributions = board.data.contributions;
     return Object.fromEntries(
       standings.map((standing) => [
         standing.sales_order_id,
@@ -447,12 +445,15 @@ export function FulfilmentBoardPanel({
 
   /**
    * Every contributing line of the WHOLE selection, unwindowed - the same population "Approve
-   * all" and the List view (D2) act on. Never `axis.cells`: those are the pivoted/filtered
-   * rows on screen, and a day window shows only 30 days of them (13.5's own reason `standings`
-   * reads `board.orders` instead of the cells).
+   * all" and the List view (D2) act on. The server's own top-level `contributions`, never
+   * `cells[].contributions`: a cell only exists for a bucket that made it onto screen, and at
+   * day granularity that is the 30-day window (`DAY_WINDOW_COLUMNS`), not the whole selection -
+   * flattening the cells silently dropped every line outside it, so "Approve all" and the
+   * confirm-all dialog undercounted (13.5's own reason `standings` reads `board.orders` instead
+   * of the cells).
    */
   const allContributions = React.useMemo<BoardContribution[]>(
-    () => board.data?.cells.flatMap((cell) => cell.contributions) ?? [],
+    () => board.data?.contributions ?? [],
     [board.data],
   );
 
@@ -550,7 +551,7 @@ export function FulfilmentBoardPanel({
         const fresh = await board.refetch();
         if (fresh.data) {
           liveBoard = fresh.data;
-          contributions = liveBoard.cells.flatMap((cell) => cell.contributions);
+          contributions = liveBoard.contributions;
         }
       }
 
@@ -593,6 +594,9 @@ export function FulfilmentBoardPanel({
         }
         return next;
       });
+    } catch {
+      // The mutation's own `onError` already toasted the message; nothing here is left to say.
+      // Caught only so the rejection does not float unhandled past this async click handler.
     } finally {
       setConfirmingAll(false);
     }

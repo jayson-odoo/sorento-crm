@@ -144,8 +144,18 @@ describe('PlansClient', () => {
     expect(screen.getByText('Farah')).toBeInTheDocument();
   });
 
-  it('links Open to the sales order the revision belongs to', async () => {
+  it('links Open to the project SO sheet the decision was made on', async () => {
     listPlans.mockResolvedValue(envelope([row()]));
+    renderClient();
+
+    // The project SO sheet, not the plain SCM document: it carries the supply composition
+    // and Amend, which is what a row on this page is for.
+    const link = await screen.findByRole('link', { name: /open/i });
+    expect(link).toHaveAttribute('href', '/project-sales/p1/sales-orders/pso-1');
+  });
+
+  it('falls back to the SCM sales order when the decision has no project registered', async () => {
+    listPlans.mockResolvedValue(envelope([row({ project_id: null })]));
     renderClient();
 
     const link = await screen.findByRole('link', { name: /open/i });

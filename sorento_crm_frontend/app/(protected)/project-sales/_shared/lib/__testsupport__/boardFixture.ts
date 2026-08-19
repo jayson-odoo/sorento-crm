@@ -802,6 +802,12 @@ export function buildBoard(
     dateBuckets,
     productRows,
     cells,
+    // Unwindowed, exactly like `cells` deliberately is NOT: `everyContribution` already carries
+    // every bucket in the selection, allocated above BEFORE the window narrowed which cells are
+    // emitted (see the comment on `allBuckets`) - the same thing the real board's top-level
+    // `contributions` states for the reason a day window must not change what Approve all or
+    // the List view act on.
+    contributions: everyContribution,
     orders: ordersFor(everyContribution),
   };
 }

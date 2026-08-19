@@ -250,12 +250,11 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
         // The server's own sentence ("Borrowed N for SOxxx line n; CODE goes short by q") is
         // the reasoning behind the verb, not the instruction itself, so it moves behind the
         // info icon rather than sitting inline under the pill.
+        // Qty already has its own column; repeating it here duplicated the number rather
+        // than adding to it.
         cell: ({ row }) => (
           <div className="flex min-w-0 items-center gap-1.5">
             <OrderInquiryVerbPill verb={row.original.verb} />
-            <span className="tabular-nums text-xs text-muted-foreground">
-              {row.original.qty}
-            </span>
             {row.original.note && (
               <Tooltip>
                 <TooltipTrigger asChild>

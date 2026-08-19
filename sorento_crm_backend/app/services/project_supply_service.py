@@ -49,6 +49,7 @@ whichever line the database happened to return first.
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -3824,6 +3825,23 @@ class ProjectSupplyService:
         results: List[Dict[str, Any]] = []
         for entry in entries:
             pso_id = str(entry.pso_id)
+            # A malformed id would otherwise reach `get_order`'s query, and Postgres would
+            # raise its own message for it - which then surfaces verbatim as this entry's
+            # `error`, a database internal leaking to the planner instead of the plain "this
+            # id is not a sales order" it actually is. Caught before the query, same as the
+            # single-order route's own `validate_uuid_path` guard.
+            try:
+                uuid.UUID(pso_id)
+            except (ValueError, AttributeError, TypeError):
+                results.append(
+                    {
+                        "pso_id": pso_id,
+                        "ok": False,
+                        "error": "Not a valid sales order id.",
+                        "failing_lines": None,
+                    }
+                )
+                continue
             try:
                 order = self.get_order(pso_id)
                 assert_can_act(self.db, order)

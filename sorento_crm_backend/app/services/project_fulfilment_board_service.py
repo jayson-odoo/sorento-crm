@@ -501,6 +501,13 @@ class FulfilmentBoardService:
             "dateBuckets": buckets,
             "productRows": [{"item_code": item, "description": None} for item in products],
             "cells": cells,
+            # EVERY contributing line, never windowed: a cell only exists for a bucket that
+            # made it into `buckets`, and at day granularity that is the 30-day window
+            # (`DAY_WINDOW_COLUMNS`), not the whole selection. `_allocate` already ran over
+            # every bucket (`served`, above), so a line outside the window carries a real
+            # proposal here even though no cell on screen shows it - Approve all, the strip and
+            # the List view read this list, never `cells`, for exactly that reason.
+            "contributions": [self._contribution(row) for row in rows],
             "orders": self._standings(rows),
             # SELECTION-scoped totals, counted over every contributing line before any window
             # is applied - never over the cells on screen.
