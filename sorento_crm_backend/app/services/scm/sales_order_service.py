@@ -158,6 +158,16 @@ class SalesOrderService:
             raise AppException(404, f"Product not found: {sku}", code="PRODUCT_NOT_FOUND")
         return prod
 
+    def _warehouse(self, code: str) -> Warehouse:
+        wh = (
+            self.db.query(Warehouse)
+            .filter(func.lower(func.btrim(Warehouse.warehouse_code)) == code.strip().lower())
+            .first()
+        )
+        if not wh:
+            raise AppException(404, f"Warehouse not found: {code}", code="WAREHOUSE_NOT_FOUND")
+        return wh
+
     def _order_type_label(self, order_type: Optional[str]) -> str:
         if not order_type:
             return ""
@@ -235,7 +245,9 @@ class SalesOrderService:
                 "product_name": ln.product.product_name if ln.product else "",
                 "qty_ordered": qo,
                 "qty_delivered": qd,
-                "uom": self._uom_for(ln.product) if ln.product else "",
+                # The line's own override when one was set; otherwise the product's base
+                # UOM, same as before this column was mapped.
+                "uom": ln.uom or (self._uom_for(ln.product) if ln.product else ""),
                 # The three the detail page needs and the list does not. Per line, not per
                 # header: one order routinely ships from two locations on two dates, and
                 # folding either onto the header states something the order never said.
@@ -507,8 +519,9 @@ class SalesOrderService:
         `ProjectSalesOrderLine.core_sales_order_line_id` and any `OrderLinkClaim` pointing at
         the old id (both `ondelete="SET NULL"`), silently dropping an adopted order's mirror
         link on an ordinary qty edit. Instead: match each payload line to an existing row,
-        update only what the payload actually says (qty_ordered / product), and leave
-        `qty_delivered`, `source_system`, `warehouse_id`, `line_status` and the id untouched.
+        update only what the payload actually says (qty_ordered / product, plus
+        warehouse / required_date / uom when the caller SENT that key - see below), and leave
+        `qty_delivered`, `source_system`, `line_status` and the id untouched.
 
         Matched by `id` when the payload carries one (the FE does not send it today, but a
         future caller - or n8n - might); otherwise by SKU, first-unmatched-row-wins when a
@@ -517,6 +530,12 @@ class SalesOrderService:
         still referenced by a project sales-order line's reconciled core link or an
         SO<->PO `OrderLinkClaim`, in which case the whole update is refused with a 409 rather
         than silently orphaning that link.
+
+        `warehouse_code` / `required_date` / `uom` are applied via `model_fields_set`, not a
+        plain `is not None` check: a key the caller never sent must leave the stored value
+        alone (this is how a same-order qty-only edit, which does not carry these keys,
+        cannot wipe out a location/date/UoM another edit set), while a key sent as an
+        explicit `null`/`""` clears it.
         """
         existing_lines = list(so.lines)
         matched_ids: set[str] = set()
@@ -538,10 +557,24 @@ class SalesOrderService:
                     None,
                 )
             prod = self._product(ln.sku)
+            fields_set = ln.model_fields_set
+            warehouse_id = (
+                self._warehouse(ln.warehouse_code).id if ln.warehouse_code else None
+            ) if "warehouse_code" in fields_set else None
+            required_date = (
+                date.fromisoformat(ln.required_date) if ln.required_date else None
+            ) if "required_date" in fields_set else None
+            uom = (ln.uom or None) if "uom" in fields_set else None
             if target is not None:
                 matched_ids.add(target.id)
                 target.product_id = prod.id
                 target.qty_ordered = ln.qty_ordered
+                if "warehouse_code" in fields_set:
+                    target.warehouse_id = warehouse_id
+                if "required_date" in fields_set:
+                    target.required_date = required_date
+                if "uom" in fields_set:
+                    target.uom = uom
             else:
                 self.db.add(SalesOrderLine(
                     sales_order_id=so.id,
@@ -551,6 +584,9 @@ class SalesOrderService:
                     priority=so.priority,
                     line_status="open",
                     source_system="manual",
+                    warehouse_id=warehouse_id,
+                    required_date=required_date,
+                    uom=uom,
                 ))
 
         removed = [l for l in existing_lines if l.id not in matched_ids]

@@ -4,9 +4,8 @@
  * ============================================================================
  * Mounted under `require_module_enabled_with_api_key("scm")` at
  * `/api/v1/scm/sales-orders`. Reads gate on `scm.dashboard.view`; writes gate on
- * `scm.reorder.run`. No UUIDs surfaced - SO identified by so_number in the UI,
- * addressed by id in the path. `uom` is display-only (product base UOM) and is
- * NOT sent on write; the BE stamps it from the product.
+ * `scm.reorder.run`. No UUIDs surfaced - SO identified by so_number in the UI, a line's
+ * warehouse by its code, addressed by id in the path.
  *
  *   GET    /sales-orders            list (page/limit/sort/dir/query/status/priority/source,
                                    date_from/date_to/customer_id/outstanding/sales_agent_id)
@@ -19,7 +18,8 @@
  *   POST   /sales-orders            create (order_type, customer_code, priority,
  *                                   requested_delivery_date?, sales_agent_id?,
  *                                   lines:[{sku,qty_ordered}])
- *   PUT    /sales-orders/{id}       update (partial)
+ *   PUT    /sales-orders/{id}       update (partial; lines:[{id?,sku,qty_ordered,
+ *                                   warehouse_code?,required_date?,uom?}] upserts by id/SKU)
  *   DELETE /sales-orders/{id}       hard delete (204)
  *   POST   /sales-orders/{id}/create-do   → { sales_order, do_number }
  * ============================================================================
@@ -51,12 +51,17 @@ export interface SalesOrderListQuery {
 }
 
 /**
- * Strip the display-only `uom` from each line - the BE derives it.
- *
  * `lines` rides through only when the caller sent it. Omitted (not `[]`, not present
  * with the key at all - `JSON.stringify` drops an `undefined` property), an update PUT
- * leaves the order's lines untouched on the BE; sending it, even unchanged, would
- * replace every line and drop whatever warehouse each was assigned.
+ * leaves the order's lines untouched on the BE; sending it, even unchanged, upserts every
+ * line in the array (matched by `id`, or by SKU when a line carries none).
+ *
+ * Per line, `id` / `warehouse_code` / `required_date` / `uom` are forwarded AS GIVEN - the
+ * BE reads `model_fields_set`, so a key this object never had (not `undefined` inside an
+ * object that HAS the key, but the key genuinely absent) leaves that line's stored value
+ * alone, while `null`/`''` clears it. `JSON.stringify` drops an `undefined`-valued key
+ * entirely, which is what makes "the caller never touched this field" reach the BE as
+ * "the key is absent" rather than as an explicit clear.
  */
 function toWritePayload(data: SalesOrderFormData) {
   return {
@@ -68,7 +73,14 @@ function toWritePayload(data: SalesOrderFormData) {
     // distinguishes a field it never received from one sent as `null` via
     // `model_fields_set`, and this key is always present in the JSON body.
     sales_agent_id: data.sales_agent_id ?? null,
-    lines: data.lines?.map((l) => ({ sku: l.sku, qty_ordered: l.qty_ordered })),
+    lines: data.lines?.map((l) => ({
+      id: l.id,
+      sku: l.sku,
+      qty_ordered: l.qty_ordered,
+      ...(l.warehouse_code !== undefined ? { warehouse_code: l.warehouse_code } : {}),
+      ...(l.required_date !== undefined ? { required_date: l.required_date } : {}),
+      ...(l.uom !== undefined ? { uom: l.uom } : {}),
+    })),
   };
 }
 

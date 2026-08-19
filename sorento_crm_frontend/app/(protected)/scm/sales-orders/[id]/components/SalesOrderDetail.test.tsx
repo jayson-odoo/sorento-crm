@@ -66,6 +66,14 @@ vi.mock('../../../hooks/useScmOptions', () => ({
     isLoading: false,
   }),
   useProductOptions: () => EMPTY_OPTS,
+  useWarehouseOptions: () => ({
+    data: [
+      { value: 'BRW-BB', label: 'Brickworks Batu Berendam' },
+      { value: 'BRW-IB', label: 'Brickworks Iskandar' },
+      { value: 'KL-01', label: 'Kuala Lumpur 01' },
+    ],
+    isLoading: false,
+  }),
 }));
 
 vi.mock('../../hooks/useSalesAgentOptions', () => ({
@@ -521,8 +529,11 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
     // `clearable` renders an explicit × once a value is selected - the agent select's own
-    // stated requirement, since not every order names an agent.
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Clear selection' }));
+    // stated requirement, since not every order names an agent. Scoped to the Agent combobox:
+    // the Location select on the line grid is clearable too and has its own × once a line
+    // carries a warehouse.
+    const agentCombo = screen.getByRole('combobox', { name: 'Agent' });
+    fireEvent.pointerDown(within(agentCombo).getByRole('button', { name: 'Clear selection' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await screen.findByRole('button', { name: /^Edit$/ });
@@ -543,6 +554,56 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
 
     await screen.findByRole('button', { name: /^Edit$/ });
     const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
-    expect(body.lines).toEqual([{ sku: 'CW-BASIN-450', qty_ordered: 400, uom: 'PCS' }]);
+    // Every field the line already carried rides along unchanged - `id` so the BE matches
+    // by id rather than SKU, and the location/date/UoM the order loaded with.
+    expect(body.lines).toEqual([{
+      id: 'l-1',
+      sku: 'CW-BASIN-450',
+      qty_ordered: 400,
+      warehouse_code: 'BRW-BB',
+      required_date: '2026-08-30',
+      uom: 'PCS',
+    }]);
+  });
+
+  it('the Location select is clearable', () => {
+    useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    const locationCombo = screen.getByRole('combobox', { name: 'Location on CW-BASIN-450' });
+    expect(locationCombo).toHaveTextContent('Brickworks Batu Berendam');
+    // Same clear affordance the Agent select already carries - a location, once picked,
+    // must be unsettable, not just re-pickable.
+    expect(within(locationCombo).getByRole('button', { name: 'Clear selection' }))
+      .toBeInTheDocument();
+  });
+
+  it('editing a line\'s location, delivery date and UoM sends them with the line id', async () => {
+    useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Location on CW-BASIN-450' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Brickworks Iskandar' }));
+
+    fireEvent.change(screen.getByLabelText('Delivery date on CW-BASIN-450'), {
+      target: { value: '2026-10-05' },
+    });
+    fireEvent.change(screen.getByLabelText('UoM on CW-BASIN-450'), { target: { value: 'BOX' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await screen.findByRole('button', { name: /^Edit$/ });
+    const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
+    expect(body.lines).toEqual([{
+      id: 'l-1',
+      sku: 'CW-BASIN-450',
+      qty_ordered: 320,
+      warehouse_code: 'BRW-IB',
+      required_date: '2026-10-05',
+      uom: 'BOX',
+    }]);
   });
 });

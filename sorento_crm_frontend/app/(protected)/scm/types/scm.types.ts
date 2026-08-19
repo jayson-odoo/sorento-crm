@@ -340,11 +340,27 @@ export interface SalesOrderFormData {
   sales_agent_id?: string | null;
   /**
    * Omitted entirely on an update where the person never touched a line - a header-only
-   * edit (order type, customer, dates) must not resend lines, because the BE's update
-   * path fully replaces whatever `lines` it is given, dropping any warehouse assignment
-   * a line held. Always present (non-empty) on create.
+   * edit (order type, customer, dates) must not resend lines: the BE upserts by `id` (or
+   * SKU when no `id` is given), and a KEY left off a sent line (`warehouse_code` /
+   * `required_date` / `uom`) leaves that line's stored value alone rather than clearing
+   * it. Always present (non-empty) on create.
    */
-  lines?: { sku: string; qty_ordered: number; uom: string }[];
+  lines?: {
+    /** The existing line's id, carried on an edit so the BE matches by id rather than
+     *  falling back to SKU. Absent on create, where the line does not exist yet. */
+    id?: string;
+    sku: string;
+    qty_ordered: number;
+    /** Omitted leaves the line's stored UoM alone; `null`/`''` clears it (falls back to
+     *  the product's base UoM); a value sets an override. */
+    uom?: string | null;
+    /** Warehouse CODE, never the UUID. Omitted leaves the line's warehouse alone; `null`/
+     *  `''` clears it; a code sets it. */
+    warehouse_code?: string | null;
+    /** ISO `yyyy-mm-dd`. Same omitted/clear/set semantics as `warehouse_code`. Shown on
+     *  the detail page as "Delivery date". */
+    required_date?: string | null;
+  }[];
 }
 
 // ---------------------------------------------------------------------------

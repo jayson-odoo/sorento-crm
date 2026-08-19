@@ -17,6 +17,7 @@ import uuid
 
 import pytest
 
+from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import SO_STATUS_DRAFT, ProjectSalesOrder, ProjectSalesOrderLine
@@ -52,9 +53,13 @@ def world(db):
                         category_id=cat.id, base_uom_id=uom.id, list_price=0,
                         is_active=True, is_discontinued=False)
     customer = Customer(id=_u(), customer_code=unique_code("C"), customer_name=f"{MARKER} Acme")
-    db.add_all([product_a, product_b, customer])
+    warehouse = Warehouse(id=_u(), warehouse_code=unique_code("WH")[:50], warehouse_name=f"{MARKER} wh")
+    db.add_all([product_a, product_b, customer, warehouse])
     db.flush()
-    return {"product_a": product_a, "product_b": product_b, "customer": customer}
+    return {
+        "product_a": product_a, "product_b": product_b, "customer": customer,
+        "warehouse": warehouse,
+    }
 
 
 def _uploaded_order(db, world, *, qty_ordered=10, qty_delivered=3) -> tuple[SalesOrder, SalesOrderLine]:
@@ -262,3 +267,125 @@ def test_malformed_agent_id_is_a_404_not_a_db_error(db, world):
             so.id, SalesOrderUpdate(sales_agent_id="not-a-uuid"), user_id=None,
         )
     assert exc.value.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# location / delivery date / UoM are editable on a matched line too (19 Aug live
+# test: the detail page only let SKU + qty be edited)
+# --------------------------------------------------------------------------- #
+
+def test_editing_location_date_and_uom_keeps_the_line_id_and_qty_delivered(db, world):
+    so, line = _uploaded_order(db, world)
+    original_id = line.id
+
+    out = SalesOrderService(db).update(
+        so.id,
+        SalesOrderUpdate(lines=[{
+            "id": line.id,
+            "sku": world["product_a"].product_code,
+            "qty_ordered": 10,
+            "warehouse_code": world["warehouse"].warehouse_code,
+            "required_date": "2026-09-01",
+            "uom": "BOX",
+        }]),
+        user_id=None,
+    )
+
+    assert len(out["lines"]) == 1
+    out_line = out["lines"][0]
+    assert out_line["id"] == original_id
+    assert out_line["warehouse_code"] == world["warehouse"].warehouse_code
+    assert out_line["required_date"] == "2026-09-01"
+    assert out_line["uom"] == "BOX"
+
+    db.expire_all()
+    row = db.get(SalesOrderLine, original_id)
+    assert row is not None
+    assert row.warehouse_id == world["warehouse"].id
+    assert row.required_date.isoformat() == "2026-09-01"
+    assert row.uom == "BOX"
+    assert float(row.qty_delivered) == 3
+    assert row.source_system == "scm_upload"
+
+
+def test_a_line_edit_that_omits_location_date_uom_leaves_them_untouched(db, world):
+    """An edit that never mentions these keys (e.g. a qty-only change from the FE, which
+    does not yet carry a location it never touched) must not clear a value another edit
+    set - `model_fields_set`, not `is not None`."""
+    so, line = _uploaded_order(db, world)
+    line.warehouse_id = world["warehouse"].id
+    from datetime import date as _date
+    line.required_date = _date(2026, 8, 1)
+    line.uom = "BOX"
+    db.flush()
+
+    out = SalesOrderService(db).update(
+        so.id,
+        SalesOrderUpdate(lines=[{
+            "id": line.id,
+            "sku": world["product_a"].product_code,
+            "qty_ordered": 99,
+        }]),
+        user_id=None,
+    )
+
+    assert out["lines"][0]["qty_ordered"] == 99
+    assert out["lines"][0]["warehouse_code"] == world["warehouse"].warehouse_code
+    assert out["lines"][0]["required_date"] == "2026-08-01"
+    assert out["lines"][0]["uom"] == "BOX"
+
+    db.expire_all()
+    row = db.get(SalesOrderLine, line.id)
+    assert row.warehouse_id == world["warehouse"].id
+    assert row.required_date == _date(2026, 8, 1)
+    assert row.uom == "BOX"
+
+
+def test_explicit_null_clears_location_date_and_uom(db, world):
+    so, line = _uploaded_order(db, world)
+    line.warehouse_id = world["warehouse"].id
+    from datetime import date as _date
+    line.required_date = _date(2026, 8, 1)
+    line.uom = "BOX"
+    db.flush()
+
+    SalesOrderService(db).update(
+        so.id,
+        SalesOrderUpdate(lines=[{
+            "id": line.id,
+            "sku": world["product_a"].product_code,
+            "qty_ordered": 10,
+            "warehouse_code": None,
+            "required_date": None,
+            "uom": None,
+        }]),
+        user_id=None,
+    )
+
+    db.expire_all()
+    row = db.get(SalesOrderLine, line.id)
+    assert row.warehouse_id is None
+    assert row.required_date is None
+    assert row.uom is None
+
+
+def test_editing_a_line_with_an_unknown_warehouse_code_is_a_404(db, world):
+    so, line = _uploaded_order(db, world)
+
+    with pytest.raises(AppException) as exc:
+        SalesOrderService(db).update(
+            so.id,
+            SalesOrderUpdate(lines=[{
+                "id": line.id,
+                "sku": world["product_a"].product_code,
+                "qty_ordered": 10,
+                "warehouse_code": f"{MARKER}-NOPE",
+            }]),
+            user_id=None,
+        )
+    assert exc.value.status_code == 404
+    assert exc.value.detail["code"] == "WAREHOUSE_NOT_FOUND"
+
+    db.expire_all()
+    row = db.get(SalesOrderLine, line.id)
+    assert row.warehouse_id is None, "the refused write must not half-apply"

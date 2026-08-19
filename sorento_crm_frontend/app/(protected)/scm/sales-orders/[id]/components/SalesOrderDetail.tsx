@@ -27,6 +27,7 @@ import {
   useCustomerOptions,
   useOrderTypeOptions,
   useProductOptions,
+  useWarehouseOptions,
 } from '../../../hooks/useScmOptions';
 import { useSalesAgentOptions } from '../../hooks/useSalesAgentOptions';
 import SalesOrderNavigation from '../../components/SalesOrderNavigation';
@@ -47,17 +48,24 @@ import type { SalesOrder, SalesOrderLine, SalesOrderPriority } from '../../../ty
  *
  * VIEW AND EDIT ARE THE SAME SCREEN (A5). Editing swaps a read-only value for an input IN
  * PLACE - the same fields, in the same order, in the same grid. Header: Order type, Customer,
- * Priority, Requested delivery, Agent. Lines: SKU and Qty. Everything else on the summary
- * (Customer code, Market segment, Source, Lines, Total qty, Still owed, Locations) has no edit
- * counterpart and stays exactly where it always was. One Save writes the whole header, plus
- * the lines ONLY when they actually moved - see `lineSignature` - because the PUT endpoint
- * still replaces the WHOLE `lines` array when the key is sent at all: omit it for a
- * header-only edit or every line is re-sent. The service now UPSERTS what it is sent rather
- * than delete-and-reinsert, matching each sent line to an existing row by `id` when given, or
- * by SKU otherwise (this form never sends `id`, so a same-order qty edit is matched by SKU) -
- * so a matched line keeps its id, `qty_delivered`, `source_system` and warehouse; only an
- * unmatched existing line is deleted, and the BE refuses that with a 409 when the line is
- * still reconciled to a project sales order or claimed by a purchase order.
+ * Priority, Requested delivery, Agent. Lines: SKU, Qty ordered, Location, Delivery date and
+ * UoM. Everything else on the summary (Customer code, Market segment, Source, Lines, Total
+ * qty, Still owed, Locations) has no edit counterpart and stays exactly where it always was.
+ * One Save writes the whole header, plus the lines ONLY when they actually moved - see
+ * `lineSignature` - because the PUT endpoint still upserts the WHOLE `lines` array when the
+ * key is sent at all: omit it for a header-only edit or every line is re-sent for no reason.
+ * The service UPSERTS what it is sent rather than delete-and-reinsert, matching each sent
+ * line to an existing row by `id` FIRST (this form now sends it) or by SKU otherwise - so a
+ * matched line keeps its id, `qty_delivered` and `source_system`; only an unmatched existing
+ * line is deleted, and the BE refuses that with a 409 when the line is still reconciled to a
+ * project sales order or claimed by a purchase order.
+ *
+ * `warehouse_code` / `required_date` / `uom` ride on the SAME line objects as SKU/qty. The BE
+ * applies each key independently via `model_fields_set` - a key a sent LINE does not carry
+ * leaves that line's stored value untouched - but this form always sends all three for every
+ * line once `lines` is sent at all (the same "resend everything on any line change" rule the
+ * SKU/qty columns already followed), each carrying either the draft's edited value or the
+ * value the order loaded with, so an untouched line reads back exactly as it was.
  */
 
 type BadgeDef = { variant: 'secondary' | 'primary' | 'warning' | 'success'; label: string };
@@ -131,18 +139,51 @@ function Field({
   );
 }
 
-/** `sku|qty` per line, order-independent, so a re-save with the same lines in a different
- *  order is not read as a change. Mirrors `SalesOrderFormModal`'s own invariant: `lines` is
- *  left off the write entirely when nothing here moved, or a header-only edit would resend
- *  every line for the BE to match-and-upsert for no reason. */
-function lineSignature(ls: { sku: string; qty_ordered: number }[]): string {
+/** `sku|qty|warehouse_code|required_date|uom` per line, order-independent, so a re-save
+ *  with the same lines in a different order is not read as a change. Mirrors
+ *  `SalesOrderFormModal`'s own invariant: `lines` is left off the write entirely when
+ *  nothing here moved, or a header-only edit would resend every line for the BE to
+ *  match-and-upsert for no reason. */
+function lineSignature(
+  ls: {
+    sku: string;
+    qty_ordered: number;
+    warehouse_code: string;
+    required_date: string;
+    uom: string;
+  }[],
+): string {
   return ls
-    .map((l) => `${l.sku}|${l.qty_ordered}`)
+    .map((l) => `${l.sku}|${l.qty_ordered}|${l.warehouse_code}|${l.required_date}|${l.uom}`)
     .sort()
     .join(',');
 }
 
-type LineDraft = { sku: string; qty_ordered: string };
+type LineDraft = {
+  sku: string;
+  qty_ordered: string;
+  warehouse_code: string;
+  required_date: string;
+  uom: string;
+};
+
+/** The in-progress draft for a line, or one seeded from the row as loaded when nothing has
+ *  touched it yet - so any single field's onChange can spread this and set only the field it
+ *  owns without silently dropping the other four. */
+function draftOrRow(
+  drafts: Record<string, LineDraft>,
+  row: SalesOrderLine,
+): LineDraft {
+  return (
+    drafts[row.id] ?? {
+      sku: row.sku,
+      qty_ordered: String(row.qty_ordered),
+      warehouse_code: row.warehouse_code ?? '',
+      required_date: row.required_date?.slice(0, 10) ?? '',
+      uom: row.uom ?? '',
+    }
+  );
+}
 
 export function SalesOrderDetail({ id }: { id: string }) {
   const { data, isLoading, isError } = useSalesOrder(id);
@@ -154,6 +195,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
   const customerOptions = useCustomerOptions();
   const productOptions = useProductOptions();
   const agentOptions = useSalesAgentOptions();
+  const warehouseOptions = useWarehouseOptions();
 
   const [isEditing, setIsEditing] = useState(false);
   const [orderType, setOrderType] = useState('');
@@ -173,11 +215,23 @@ export function SalesOrderDetail({ id }: { id: string }) {
     setAgentId(so.sales_agent_id ?? '');
     const drafts: Record<string, LineDraft> = {};
     for (const ln of so.lines) {
-      drafts[ln.id] = { sku: ln.sku, qty_ordered: String(ln.qty_ordered) };
+      drafts[ln.id] = {
+        sku: ln.sku,
+        qty_ordered: String(ln.qty_ordered),
+        warehouse_code: ln.warehouse_code ?? '',
+        required_date: ln.required_date?.slice(0, 10) ?? '',
+        uom: ln.uom ?? '',
+      };
     }
     setLineDrafts(drafts);
     originalLineSignatureRef.current = lineSignature(
-      so.lines.map((l) => ({ sku: l.sku, qty_ordered: l.qty_ordered })),
+      so.lines.map((l) => ({
+        sku: l.sku,
+        qty_ordered: l.qty_ordered,
+        warehouse_code: l.warehouse_code ?? '',
+        required_date: l.required_date?.slice(0, 10) ?? '',
+        uom: l.uom ?? '',
+      })),
     );
     setError(null);
     setIsEditing(true);
@@ -237,7 +291,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 onChange={(v) =>
                   setLineDrafts((prev) => ({
                     ...prev,
-                    [row.original.id]: { ...prev[row.original.id], sku: v, qty_ordered: prev[row.original.id]?.qty_ordered ?? String(row.original.qty_ordered) },
+                    [row.original.id]: { ...draftOrRow(prev, row.original), sku: v },
                   }))
                 }
                 options={mergedProductOptions}
@@ -278,7 +332,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 onChange={(e) =>
                   setLineDrafts((prev) => ({
                     ...prev,
-                    [row.original.id]: { sku: prev[row.original.id]?.sku ?? row.original.sku, qty_ordered: e.target.value },
+                    [row.original.id]: { ...draftOrRow(prev, row.original), qty_ordered: e.target.value },
                   }))
                 }
                 className="h-8 text-right tabular-nums"
@@ -328,8 +382,37 @@ export function SalesOrderDetail({ id }: { id: string }) {
       {
         accessorKey: 'warehouse_code',
         header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
-        cell: ({ row }) => row.original.warehouse_code || '-',
-        size: 120,
+        cell: ({ row }) => {
+          if (isEditing) {
+            const draft = draftOrRow(lineDrafts, row.original);
+            const selectId = `so-edit-line-${row.original.id}-warehouse`;
+            return (
+              <>
+                {/* SearchableSelect forwards `id`, not arbitrary aria props - the accessible
+                    name needs a real (visually-hidden) label. */}
+                <label className="sr-only" htmlFor={selectId}>
+                  Location on {row.original.sku}
+                </label>
+                <SearchableSelect
+                  id={selectId}
+                  value={draft.warehouse_code}
+                  onChange={(v) =>
+                    setLineDrafts((prev) => ({
+                      ...prev,
+                      [row.original.id]: { ...draftOrRow(prev, row.original), warehouse_code: v },
+                    }))
+                  }
+                  options={warehouseOptions.data ?? []}
+                  placeholder="No location"
+                  clearable
+                  size="sm"
+                />
+              </>
+            );
+          }
+          return row.original.warehouse_code || '-';
+        },
+        size: 140,
         meta: { headerTitle: 'Location' },
       },
       {
@@ -340,16 +423,56 @@ export function SalesOrderDetail({ id }: { id: string }) {
         // line ships", which is what the customer wants to know, not an internal deadline.
         accessorFn: (line) => line.required_date ?? undefined,
         header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
-        cell: ({ row }) =>
-          row.original.required_date ? fmtDate(row.original.required_date) : '-',
-        size: 130,
+        cell: ({ row }) => {
+          if (isEditing) {
+            const draft = draftOrRow(lineDrafts, row.original);
+            return (
+              <Input
+                type="date"
+                aria-label={`Delivery date on ${row.original.sku}`}
+                value={draft.required_date}
+                onChange={(e) =>
+                  setLineDrafts((prev) => ({
+                    ...prev,
+                    [row.original.id]: {
+                      ...draftOrRow(prev, row.original),
+                      required_date: e.target.value,
+                    },
+                  }))
+                }
+                className="h-8"
+              />
+            );
+          }
+          return row.original.required_date ? fmtDate(row.original.required_date) : '-';
+        },
+        size: 150,
         meta: { headerTitle: 'Delivery date' },
       },
       {
         accessorKey: 'uom',
         header: ({ column }) => <DataGridColumnHeader title="UoM" column={column} />,
-        cell: ({ row }) => row.original.uom,
-        size: 90,
+        cell: ({ row }) => {
+          if (isEditing) {
+            const draft = draftOrRow(lineDrafts, row.original);
+            return (
+              <Input
+                aria-label={`UoM on ${row.original.sku}`}
+                value={draft.uom}
+                onChange={(e) =>
+                  setLineDrafts((prev) => ({
+                    ...prev,
+                    [row.original.id]: { ...draftOrRow(prev, row.original), uom: e.target.value },
+                  }))
+                }
+                placeholder="UoM"
+                className="h-8"
+              />
+            );
+          }
+          return row.original.uom;
+        },
+        size: 100,
         meta: { headerTitle: 'UoM' },
       },
       {
@@ -367,7 +490,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
         meta: { headerTitle: 'Status' },
       },
     ],
-    [isEditing, lineDrafts, mergedProductOptions],
+    [isEditing, lineDrafts, mergedProductOptions, warehouseOptions.data],
   );
 
   const table = useReactTable({
@@ -427,14 +550,19 @@ export function SalesOrderDetail({ id }: { id: string }) {
     setError(null);
     if (!orderType) return setError('Select an order type.');
     if (!customerCode) return setError('Select a customer.');
-    // `uom` is display-only (the BE stamps it from the product) and dropped by the service
-    // before the write - carried here only so the shape matches `SalesOrderFormData.lines`.
+    // `id` is sent so the BE matches this line by id rather than falling back to SKU.
+    // Location / delivery date / UoM ride the SAME upsert as SKU/qty - see the class
+    // docstring - carrying either what the person typed or, for an untouched line, exactly
+    // what the order loaded with.
     const cleanedLines = so.lines.map((ln) => {
       const draft = lineDrafts[ln.id];
       return {
+        id: ln.id,
         sku: draft?.sku ?? ln.sku,
         qty_ordered: Number(draft?.qty_ordered ?? ln.qty_ordered),
-        uom: ln.uom,
+        warehouse_code: draft?.warehouse_code ?? ln.warehouse_code ?? '',
+        required_date: draft?.required_date ?? ln.required_date?.slice(0, 10) ?? '',
+        uom: draft?.uom ?? ln.uom ?? '',
       };
     });
     if (cleanedLines.some((l) => !l.sku || !(l.qty_ordered > 0))) {

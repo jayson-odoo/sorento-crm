@@ -88,7 +88,21 @@ class SalesOrderLineInput(BaseModel):
     id: Optional[str] = None
     sku: str
     qty_ordered: float = Field(..., gt=0)
-    uom: str = ""
+    #: Optional[str], read via `model_fields_set` (not `is not None`) in `_upsert_lines` -
+    #: an omitted key leaves the line's stored override alone (falling back to the
+    #: product's base UOM on read), while an explicit `null`/`""` clears the override.
+    uom: Optional[str] = Field(None, max_length=100)
+    #: Which warehouse this line ships from, by CODE - never the UUID, matching `sku` /
+    #: `customer_code` elsewhere on this schema. Same `model_fields_set` semantics as
+    #: `uom`: omitted leaves the line's warehouse alone, sent (including `null`/`""`)
+    #: clears it, a known code resolves and sets it. An unknown code is a 404.
+    warehouse_code: Optional[str] = None
+    #: When this line's quantity is due - the SAME column the detail page shows and labels
+    #: "Delivery date" (`sales_order_lines.required_date`). The table also carries a
+    #: never-mapped `delivery_date` column that nothing reads or shows and is deliberately
+    #: left that way here, so this edits the column the FE already displays under that
+    #: label. ISO `yyyy-mm-dd`; same `model_fields_set` semantics as `uom` / `warehouse_code`.
+    required_date: Optional[str] = None
 
 
 class SalesOrderFormData(BaseModel):
