@@ -4294,6 +4294,40 @@ def test_a_project_hot_selling_pool_rung_offers_nothing_when_availability_is_not
         )
 
 
+def test_a_cold_pool_rung_says_the_pool_is_oversold_rather_than_offering_its_stale_balance():
+    """A non-hot-selling item shares the same cap `pool_reserve_capacity` gives the
+    hot-selling rungs (`max(min(free, available), 0)`), read here rather than forked. The
+    queue-netted balance ("Had") is still 4 - nothing of THIS line's own book ranks ahead of
+    it - but the pile's signed position is oversold by the wider book, so `offered` must
+    read 0, not the stale balance, and the sentence must say oversold rather than silently
+    printing zero."""
+    with blank_session() as db:
+        _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _dealer_pool(db, product, abc_class_retail="B")
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, pool, on_hand=4)
+        theirs = _order(db, so_number=f"ZZT-SO-A{_uid()[:6]}", order_date=date(2026, 1, 1))
+        _line(db, theirs, product, qty="9", required_date=date(2026, 9, 10), warehouse=pool)
+        ours = _order(db, so_number=f"ZZT-SO-B{_uid()[:6]}", order_date=date(2026, 1, 1))
+        _line(db, ours, product, qty="5", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+        step = _step(
+            _cell(board, product.product_code, "2026-08-31")["contributions"][0],
+            "pool",
+        )
+
+        assert step["opening"] == "4", "nothing of this line's own queue claims the pile"
+        assert step["pool"]["available"] == "-5"
+        assert step["offered"] == "0"
+        assert step["taken"] == "0"
+        assert step["why"] == (
+            f"Cold at retail: {pool.warehouse_code} is oversold (-5 available), so nothing "
+            "is offered."
+        )
+
+
 def test_the_pool_rung_never_offers_more_than_the_pile_had_left():
     """The invariant behind the sub-table: `taken` can never exceed what was left.
 

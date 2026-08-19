@@ -27,7 +27,7 @@ describe('salesOrderService', () => {
     expect(u.searchParams.get('priority')).toBe('high');
   });
 
-  it('create strips the display-only uom from each line', async () => {
+  it('create forwards a line uom the caller set (9a730b5dc: uom is a real, editable field)', async () => {
     apiFetch.mockResolvedValue(ok({ id: 'so-1' }, 201));
     const form: SalesOrderFormData = {
       order_type: 'dealer',
@@ -40,6 +40,21 @@ describe('salesOrderService', () => {
     const [, init] = apiFetch.mock.calls[0];
     const body = JSON.parse((init as RequestInit).body as string);
     expect(body.requested_delivery_date).toBe('2026-08-01');
+    expect(body.lines).toEqual([{ sku: 'WESERP10B', qty_ordered: 5, uom: 'BAG' }]);
+  });
+
+  it('create omits uom for a line the caller never set, rather than sending it as null', async () => {
+    apiFetch.mockResolvedValue(ok({ id: 'so-1' }, 201));
+    const form: SalesOrderFormData = {
+      order_type: 'dealer',
+      customer_code: 'C-1',
+      priority: 'normal',
+      requested_delivery_date: '2026-08-01',
+      lines: [{ sku: 'WESERP10B', qty_ordered: 5 }],
+    };
+    await createSalesOrder(form);
+    const [, init] = apiFetch.mock.calls[0];
+    const body = JSON.parse((init as RequestInit).body as string);
     expect(body.lines).toEqual([{ sku: 'WESERP10B', qty_ordered: 5 }]);
     expect(body.lines[0]).not.toHaveProperty('uom');
   });

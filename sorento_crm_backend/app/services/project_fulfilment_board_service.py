@@ -72,6 +72,7 @@ from app.services.scm.front_planning_engine import (
     BUY,
     RESERVE,
     TIMELY_SPO,
+    pool_reserve_capacity,
     qty_text,
 )
 
@@ -1703,12 +1704,16 @@ class FulfilmentBoardService:
             balance = max(_dec(pool_open), _ZERO)
             pile = self._pool_pile(row, fact, balance)
             available = _dec(pile.get("available"))
-            if fact.is_dealer_hot_selling:
-                pool_offered = _ZERO
-            elif fact.is_project_hot_selling:
-                pool_offered = max(min(balance, available), _ZERO)
-            else:
-                pool_offered = balance
+            # Same cap `pool_reserve_capacity` applies to every pool draw
+            # (`max(min(free, available), 0)`), read here rather than forked, so an oversold
+            # pool - signed Available negative while the queue-netted balance is still
+            # positive - cannot show an "offered" the ladder itself would never take.
+            capacity = pool_reserve_capacity(
+                is_dealer_hot_selling=fact.is_dealer_hot_selling,
+                is_project_hot_selling=fact.is_project_hot_selling,
+                pools=[{"location": pool_code, "free": balance, "available": available}],
+            )
+            pool_offered = capacity[0][1] if capacity else _ZERO
             other_pools = [
                 p for p in self.supply.pool_chain_for(fact, pool_free_left=pool_open)
                 if p.get("location") != pool_code
@@ -1967,6 +1972,18 @@ class FulfilmentBoardService:
         # signed position (on hand - SO + SPO) is beside it in the sub-table.
         on_hand_available = on_hand - _dec(pile.get("reserved"))
         claimed = _dec(pile.get("claimed_ahead_qty"))
+        if available <= _ZERO and balance > _ZERO:
+            # The queue-netted `balance` (this line's own book, "Had") reads positive -
+            # nothing of THIS line's own queue claims the pile - while the pile's own
+            # SIGNED position is not: other orders across the WHOLE book already outsell
+            # what the pool holds. `pool_reserve_capacity` caps the draw at that position,
+            # so the offered figure must say why: the pool is oversold, not merely empty
+            # (the `balance == 0` case below is a different, already-explained story - the
+            # own queue claimed it all).
+            return (
+                f"{prefix}: {code} is oversold ({qty_text(available)} available), so "
+                "nothing is offered."
+            )
         left = (
             f"{prefix}, so {code} is offered: {qty_text(balance)} left after its own queue "
             "ahead of this line"

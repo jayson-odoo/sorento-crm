@@ -48,10 +48,14 @@ def _uid() -> str:
 def test_confirm_all_commits_the_good_order_and_reports_the_bad_one_without_writing_it(api):
     """One order confirms cleanly; the other names a line that belongs to the FIRST order,
     which is not on the second order's own book - a failing line, refused whole, nothing
-    written for it - while the first order's own commit stands untouched."""
+    written for it - while the first order's own commit stands untouched.
+
+    Ladder v2 (section E rule 7): the own location is never a Reserve source any more, so
+    the good order's line reserves from the shared POOL (`world.pool_wh`, wired to
+    `world.own_wh` by the `api` fixture) rather than its own warehouse."""
     client, world = api
     db = world.db
-    _stock(db, world.product, world.own_wh, on_hand=100)
+    _stock(db, world.product, world.pool_wh, on_hand=100)
 
     order_1 = _project_so(db, world.project)
     core_1 = _core_so(db, world.company_id)
@@ -70,7 +74,7 @@ def test_confirm_all_commits_the_good_order_and_reports_the_bad_one_without_writ
                 "pso_id": order_1.id,
                 "lines": [
                     _line_payload(
-                        line_1.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "50"}]
+                        line_1.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "50"}]
                     )
                 ],
             },
@@ -131,10 +135,13 @@ def test_confirm_all_names_a_malformed_pso_id_plainly_instead_of_a_database_erro
     would raise its own message for it, and that message would surface verbatim as this
     entry's `error` - a database internal leaking to the planner. Caught before the query,
     same guard the single-order route applies via `validate_uuid_path`, and reported as a
-    plain per-entry refusal rather than aborting the whole batch."""
+    plain per-entry refusal rather than aborting the whole batch.
+
+    Ladder v2 (section E rule 7): the own location is never a Reserve source any more, so
+    the good order's line reserves from the shared POOL (`world.pool_wh`) instead."""
     client, world = api
     db = world.db
-    _stock(db, world.product, world.own_wh, on_hand=50)
+    _stock(db, world.product, world.pool_wh, on_hand=50)
 
     order = _project_so(db, world.project)
     core = _core_so(db, world.company_id)
@@ -149,7 +156,7 @@ def test_confirm_all_names_a_malformed_pso_id_plainly_instead_of_a_database_erro
                 "pso_id": order.id,
                 "lines": [
                     _line_payload(
-                        line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "50"}]
+                        line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "50"}]
                     )
                 ],
             },
