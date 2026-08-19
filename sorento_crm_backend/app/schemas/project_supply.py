@@ -60,6 +60,11 @@ class SupplyComponent(BaseModel):
     #: re-confirming this proposal AS PROPOSED can re-identify the same donor line
     #: without a second lookup (`ConfirmBorrowComponent.donor_core_line_id`).
     donor_core_line_id: Optional[str] = None
+    #: The DONOR's own required date (section E.4: "urgency = the donor's required
+    #: date"), round-tripped into `ConfirmBorrowComponent.donor_required_date` so the
+    #: order-back Order Inquiry row's urgency is the donor's, not this line's own.
+    #: `None` outside `group_borrow`.
+    donor_required_date: Optional[date] = None
 
 
 class SupplySpoRef(BaseModel):
@@ -129,6 +134,10 @@ class BorrowCandidate(BaseModel):
     #: `_pct`), so it is shown but not selectable without a manual override.
     over_cap: bool = False
     cap_reason: Optional[str] = None
+    #: The donor's own required date (section E.4: "urgency = the donor's required
+    #: date"), for a `group_borrow` row - the confirm payload round-trips this into
+    #: `ConfirmBorrowComponent.donor_required_date`. `None` on every other rung.
+    donor_required_date: Optional[date] = None
 
 
 class SupplyFrozenLine(BaseModel):

@@ -385,6 +385,14 @@ class ProjectOrderInquiryService:
         raised again by the next revision; a hole that has widened to 15 raises the 5
         still outstanding. Netted per (item, donor location), which is the pile the hole
         is in: a donor short of two products has two holes.
+
+        **`placed` is a POOL, consumed once, not restated per entry** (B3). Two order-backs
+        can share one (item, donor location) key - a group borrow at one location, and a
+        location-pile shortfall at the same one - and the actioned quantity purchasing
+        already placed there covers the FIRST entry that draws on it, then whatever is
+        left over covers the next. Netting the whole `placed[key]` off every entry sharing
+        the key (rather than decrementing it as each entry consumes it) under-raised every
+        entry after the first by the SAME amount, as if purchasing had placed it twice.
         """
         rows = (
             self.db.query(OrderInquiryRow)
@@ -406,7 +414,12 @@ class ProjectOrderInquiryService:
         created = 0
         for entry in shortfalls:
             key = (entry.get("item_code") or None, entry.get("stock_location") or None)
-            qty = _dec(entry.get("qty")) - placed.get(key, _ZERO)
+            raw_qty = _dec(entry.get("qty"))
+            already_placed = placed.get(key, _ZERO)
+            netted = min(raw_qty, already_placed)
+            if netted > _ZERO:
+                placed[key] = already_placed - netted
+            qty = raw_qty - netted
             if qty <= _ZERO:
                 continue
             line = entry.get("line")

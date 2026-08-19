@@ -140,6 +140,11 @@ class Component:
     #: (`_check_group_borrow` re-reads its live committed quantity, AC-C03) without a
     #: second lookup. `None` outside `group_borrow`.
     donor_core_line_id: Optional[str] = None
+    #: The DONOR's own required date (section E.4: "urgency = the donor's required
+    #: date") - the order-back Order Inquiry row's urgency, not this line's own.
+    #: `None` outside `group_borrow`, and on a donor whose own required date is unset
+    #: (the order-back then falls back to the borrowing line's own date).
+    donor_required_date: Optional[date] = None
 
     @property
     def stated(self) -> str:
@@ -151,82 +156,9 @@ def _own_reason(location: str) -> str:
     return f"free stock at {location} covers the need by the required date"
 
 
-def _pool_reason_project_hot(pool_location: str, available: Decimal) -> str:
-    return (
-        f"free stock in the shared {pool_location} pool covers the need by the required "
-        f"date, drawn while its availability stays positive ({qty_text(available)} "
-        "available)"
-    )
-
-
 def _spo_reason(spo_number: str, arrival_date: Optional[date]) -> str:
     when = arrival_date.isoformat() if arrival_date else "an unstated date"
     return f"SPO {spo_number} arrives on {when}, by the required date"
-
-
-# --------------------------------------------------------------------------- #
-# Reserve eligibility (PLAN 3.3) - kept for the read-only strip and for a manual
-# amendment's recheck, which still judge a location the same way 3.3a always did.
-# The v2 LADDER (`propose_line`) no longer calls the own-location leg of this.
-# --------------------------------------------------------------------------- #
-
-
-def reserve_capacity(
-    *,
-    is_dealer_hot_selling: bool,
-    is_project_hot_selling: bool = False,
-    fulfilment_location: Optional[str],
-    pool_location: Optional[str],
-    free_stock: Mapping[str, Any],
-    pool_available: Any = None,
-) -> List[Tuple[str, Decimal, str]]:
-    """How much Reserve each location may contribute, in draw order, with its reason.
-
-    Section 3.3a's own rule, kept for the read-only strip (a line's own location still
-    states its free stock) and for judging a hand-typed amendment against the same
-    arithmetic. Ladder v2's automatic proposal (`propose_line`) no longer draws Reserve
-    from the own location at all (section E rule 7) and draws the pool through
-    `pool_reserve_capacity` instead, which knows about more than one pool.
-
-    * **Dealer hot-selling**: the pool contributes nothing at all - it is kept for retail.
-    * **Project hot-selling** (and not dealer hot-selling): the pool contributes only while
-      its own SIGNED availability (``on hand - SO qty + SPO qty``, `pool_available`) stays
-      positive - ``max(min(pool free, pool_available), 0)``.
-    * **Neither**: the pool contributes its whole free balance, uncapped.
-
-    Dealer wins when a product is hot-selling on both demand classes at once.
-
-    When the pool location IS the fulfilment location (a warehouse that is its own pool),
-    only the own contribution is added - a second entry for the same location would double
-    it.
-    """
-    out: List[Tuple[str, Decimal, str]] = []
-
-    if fulfilment_location:
-        own_free = max(_dec(free_stock.get(fulfilment_location)), ZERO)
-        if own_free > ZERO:
-            out.append((fulfilment_location, own_free, _own_reason(fulfilment_location)))
-
-    if not pool_location or pool_location == fulfilment_location:
-        return out
-
-    pool_free = max(_dec(free_stock.get(pool_location)), ZERO)
-
-    if is_dealer_hot_selling:
-        return out
-
-    if is_project_hot_selling:
-        available = _dec(pool_available)
-        offered = max(min(pool_free, available), ZERO)
-        if offered > ZERO:
-            out.append(
-                (pool_location, offered, _pool_reason_project_hot(pool_location, available))
-            )
-        return out
-
-    if pool_free > ZERO:
-        out.append((pool_location, pool_free, _own_reason(pool_location)))
-    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -335,7 +267,9 @@ def propose_line(
     """The proposed composition for one line, ladder v2's own order (section E).
 
     0. beyond `reorder_coverage_until` -> the WHOLE line is a Buy, nothing else is tried,
-       and the rest of this function never runs;
+       and the rest of this function never runs. An UNDATED line (`required_date=None`)
+       never hits this rung at all - the comparison requires both dates, so it falls
+       straight through to rung 1;
     1. timely incoming, for supply arriving on or before the required date;
     2. the shared pool(s), `pool_reserve_capacity`, own site first;
     3. group take: `group_take_candidates`, already capped by the caller
@@ -458,6 +392,7 @@ def propose_line(
                 same_agent=bool(candidate.get("same_agent")),
                 order_back_qty=take,
                 donor_core_line_id=candidate.get("donor_core_line_id"),
+                donor_required_date=_as_date(candidate.get("donor_required_date")),
             )
         )
         remaining -= take

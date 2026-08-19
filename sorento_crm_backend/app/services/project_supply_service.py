@@ -456,6 +456,36 @@ class _BorrowLedger:
         self._held[key] = max(self._held.get(key, _ZERO) - qty, _ZERO)
 
 
+class _CapacityLedger:
+    """What a Reserve rung's location still has left, across every line of ONE
+    confirmation (S7).
+
+    `_check_line` used to build a fresh capacity dict per line from live figures, and only
+    carried the line's OWN site pool forward (the old `pool_left`). Every OTHER pool in the
+    chain and every group-take sibling was re-read live on each line with no memory of
+    what earlier lines of the SAME confirmation had already drawn - so two lines of one
+    order could each be offered the whole of a secondary pool, or the whole of a sibling's
+    free stock, and both accepted.
+
+    Seeded lazily, one location at a time, from whatever LIVE capacity `_check_line` first
+    computes for it; every later line of the confirmation reads and draws down the SAME
+    running balance instead of the live figure again.
+    """
+
+    def __init__(self) -> None:
+        self._left: Dict[Tuple[str, str], Decimal] = {}
+
+    def capacity(self, product_id: Optional[str], warehouse_id: str, live_qty: Decimal) -> Decimal:
+        key = (product_id or "", warehouse_id)
+        if key not in self._left:
+            self._left[key] = live_qty
+        return self._left[key]
+
+    def take(self, product_id: Optional[str], warehouse_id: str, qty: Decimal) -> None:
+        key = (product_id or "", warehouse_id)
+        self._left[key] = max(self._left.get(key, _ZERO) - qty, _ZERO)
+
+
 @dataclass
 class _FrozenComponent:
     """One component read back off a frozen snapshot, in the shape the payload's own
@@ -560,8 +590,32 @@ class ProjectSupplyService:
         self._warehouse_code_memo: Dict[str, Optional[Warehouse]] = {}
         # Ladder v2 group borrow (section E rule 4): how much of ONE donor sales-order
         # line is still available to lend, within this confirmation only - so two lines
-        # of the same confirm cannot both take the whole of it.
+        # of the same confirm cannot both take the whole of it (seeded net of what OTHER
+        # confirmed decisions already hold from it, S1 - see `_group_borrow_held_qty`).
         self._donor_line_ledger: Dict[str, Decimal] = {}
+        # S3: the group pile is the SAME ranked list for every line sharing a
+        # (product, group) - see `_group_pile_members`. `priority.active_policy` and
+        # `priority.payment_terms_by_customer` are read at most once each per request too
+        # (`_active_policy`, `_payment_terms_for`), and `_decided_elsewhere`'s own
+        # whole-table read is memoized behind `_decided_elsewhere_cached` for the same
+        # reason: a board of N lines of one product/group must not pay N round trips for
+        # facts that do not vary by line.
+        self._group_pile_members_cache: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        self._payment_terms_cache: Dict[str, Optional[int]] = {}
+        self._active_policy_loaded = False
+        self._active_policy_value: Optional[Any] = None
+        self._decided_elsewhere_cache: Optional[Set[str]] = None
+        # PROJECT line ids of the lines this request is reading/replacing right now
+        # (`_facts_for`'s own `replaced`, `demand_facts`'s own `exclude_line_ids`) - fed to
+        # `_decided_elsewhere` so a line being decided in THIS request is never read as
+        # "covered elsewhere" (S2, parity with `_pile_book`), and to `_group_borrow_held_qty`
+        # so a donor line's OWN prior hold on one of these lines is un-netted the same way
+        # `_free_stock` already un-nets it (S1).
+        self._replaced_line_ids: Set[str] = set()
+        # CORE sales-order line ids of every line the current confirmation/board selection
+        # is itself deciding - never offered as a group-borrow donor (S2): a line whose own
+        # state is moving in this same request is not a stable, pre-existing donor.
+        self._current_selection_core_ids: Set[str] = set()
 
     # ------------------------------------------------------------------ lookups
 
@@ -772,7 +826,7 @@ class ProjectSupplyService:
         serves to the admin screen, which may still be mid-migration on another branch."""
         if self._fulfilment_settings_cache is None:
             try:
-                policy = priority.active_policy(self.db)
+                policy = self._active_policy()
                 self._fulfilment_settings_cache = dict(
                     priority.fulfilment_settings(policy) or {}
                 )
@@ -888,26 +942,31 @@ class ProjectSupplyService:
                 out.append({"location": code, "qty": capacity})
         return out
 
-    def _group_pile(
-        self, fact: _LineFacts
-    ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
-        """Every OPEN demand line for this product across the whole ownership group (this
-        line's own location and every sibling), ranked TOGETHER by the active priority
-        policy - one call, not per donor (section E rule 4: "compute with the existing rank
-        machinery across the group's open lines for that product").
+    def _group_pile_members(self, fact: _LineFacts) -> List[Dict[str, Any]]:
+        """Every OPEN demand line for one PRODUCT across a whole ownership GROUP (every
+        `*-<group>` location), ranked TOGETHER by the active priority policy.
 
-        Returns the ranked list (this line's own core line included, when it is still open
-        demand) and this line's own entry within it, or `None` when this line is not itself
-        open demand at its pile (an amended/carried line has none to compare against, so no
-        donor can be judged against it either).
+        Cached per `(product_id, group_code)`, not per line (S3): the query and the ranked
+        order it produces are identical for every line that shares a product and a group -
+        `locations` is the group's WHOLE membership regardless of which sibling is asking
+        (own code included), so a board of N lines of one product/group used to pay N
+        round trips for the exact same rows. `priority.active_policy` and
+        `priority.payment_terms_by_customer` are read through the request-scoped helpers
+        below for the same reason: unlike this list, THOSE could legitimately differ
+        between calls, so they memoize by their own key rather than piggy-backing on this
+        cache.
         """
-        if not fact.product_id or not fact.core:
-            return [], None
+        if not fact.group_code or not fact.own_code:
+            return []
+        cache_key = (fact.product_id or "", fact.group_code)
+        if cache_key in self._group_pile_members_cache:
+            return self._group_pile_members_cache[cache_key]
         locations = dict(self._group_sibling_warehouses(fact))
         if fact.own_code and fact.warehouse:
             locations[fact.own_code] = fact.warehouse
-        if not locations:
-            return [], None
+        if not fact.product_id or not locations:
+            self._group_pile_members_cache[cache_key] = []
+            return []
         warehouse_ids = [str(w.id) for w in locations.values()]
         rows = (
             self.db.query(
@@ -932,10 +991,10 @@ class ProjectSupplyService:
             .all()
         )
         if not rows:
-            return [], None
-        terms = priority.payment_terms_by_customer(
-            self.db, [str(order.customer_id) for _l, order, _a, _n in rows if order.customer_id]
-        )
+            self._group_pile_members_cache[cache_key] = []
+            return []
+        customer_ids = {str(order.customer_id) for _l, order, _a, _n in rows if order.customer_id}
+        terms = self._payment_terms_for(customer_ids)
         warehouses_by_id = {str(w.id): code for code, w in locations.items()}
         members: List[Dict[str, Any]] = []
         for line, order, agent_code, line_no in rows:
@@ -945,6 +1004,7 @@ class ProjectSupplyService:
             members.append(
                 {
                     "line_id": str(line.id),
+                    "sales_order_id": str(line.sales_order_id),
                     "so_number": order.so_number or "",
                     "line_no": line_no,
                     "open_qty": open_qty,
@@ -958,9 +1018,25 @@ class ProjectSupplyService:
                 }
             )
         if not members:
-            return [], None
-        weights, class_weights = priority.policy_weights(priority.active_policy(self.db))
+            self._group_pile_members_cache[cache_key] = []
+            return []
+        weights, class_weights = priority.policy_weights(self._active_policy())
         self._rank_pile(members, weights=weights, class_weights=class_weights)
+        self._group_pile_members_cache[cache_key] = members
+        return members
+
+    def _group_pile(
+        self, fact: _LineFacts
+    ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """This line's group pile (`_group_pile_members`) and this line's own entry within
+        it, or `None` when this line is not itself open demand at its pile (an
+        amended/carried line has none to compare against, so no donor can be judged
+        against it either)."""
+        if not fact.product_id or not fact.core:
+            return [], None
+        members = self._group_pile_members(fact)
+        if not members:
+            return [], None
         mine = next((m for m in members if m["line_id"] == str(fact.core.id)), None)
         return members, mine
 
@@ -971,7 +1047,19 @@ class ProjectSupplyService:
         L first then the siblings (section E rule 4), each stating whether it is ranked
         below this line (auto-eligible) and whether it shares this line's agent (offered
         at any rank). Cached per line, since the sheet asks for both the auto list and the
-        offer list off the same read."""
+        offer list off the same read.
+
+        **Never a sibling line of this line's OWN sales order** (S2): borrowing from
+        another line of the same order and raising an order-back against it is a
+        borrow "against itself", not against another customer's commitment.
+        **Never a line already covered by another active decision** (S2, parity with
+        `_pile_book`'s own `_decided_elsewhere` exclusion): its committed quantity is
+        already promised to whichever composition covers it, so it is not a stable donor
+        for a different one - the same rule that keeps it out of the competing-demand
+        pile keeps it out of the donor list. **Never a line that is ITSELF part of the
+        current confirmation/board selection** (S2): its own state is moving in this same
+        request, so it is not a pre-existing, stable donor either.
+        """
         cache_key = str(fact.core.id) if fact.core else None
         if cache_key is not None and cache_key in self._group_donor_cache:
             return self._group_donor_cache[cache_key]
@@ -980,11 +1068,19 @@ class ProjectSupplyService:
             if cache_key is not None:
                 self._group_donor_cache[cache_key] = []
             return []
-        my_agent_id = self._agent_id_of(fact)
+        my_agent_id = mine.get("donor_agent_id")
+        my_sales_order_id = mine.get("sales_order_id")
         my_index = members.index(mine)
+        decided = self._decided_elsewhere_cached()
         donors: List[Dict[str, Any]] = []
         for index, member in enumerate(members):
             if member is mine:
+                continue
+            if member.get("sales_order_id") == my_sales_order_id:
+                continue
+            if member["line_id"] in decided:
+                continue
+            if member["line_id"] in self._current_selection_core_ids:
                 continue
             location = member.get("warehouse_code")
             if not location:
@@ -1005,22 +1101,15 @@ class ProjectSupplyService:
                     "same_agent": same_agent,
                     # Below this line in the SAME ranked pile - "ranked below this line".
                     "lower_ranked": index > my_index,
+                    # Position in the ranked pile - the safest donor at one location is
+                    # the LOWEST-ranked one (furthest down the queue), not the biggest.
+                    "rank_index": index,
                 }
             )
-        donors.sort(key=lambda d: (d["location_rank"], d["location"], -_dec(d["qty"])))
+        donors.sort(key=lambda d: (d["location_rank"], d["location"], -d["rank_index"]))
         if cache_key is not None:
             self._group_donor_cache[cache_key] = donors
         return donors
-
-    def _agent_id_of(self, fact: _LineFacts) -> Optional[str]:
-        if fact.core is None:
-            return None
-        row = (
-            self.db.query(SalesOrder.sales_agent_id)
-            .filter(SalesOrder.id == fact.core.sales_order_id)
-            .first()
-        )
-        return str(row[0]) if row and row[0] else None
 
     def _group_borrow_auto_candidates(self, fact: _LineFacts) -> List[Dict[str, Any]]:
         """Rung 4's AUTOMATIC list: donors ranked below this line only (section E rule 4).
@@ -1036,6 +1125,11 @@ class ProjectSupplyService:
                 "donor_agent_code": donor["donor_agent_code"],
                 "same_agent": donor["same_agent"],
                 "donor_core_line_id": donor["donor_core_line_id"],
+                # B4: "urgency = the donor's required date" - carried into the engine's
+                # own `Component.donor_required_date` so the proposal, and whatever the
+                # confirm payload round-trips from it, name the DONOR's date, not this
+                # line's own.
+                "donor_required_date": donor["required_date"],
             }
             for donor in self._group_borrow_donors(fact)
             if donor["lower_ranked"]
@@ -1194,6 +1288,14 @@ class ProjectSupplyService:
         }
         warehouses.update(self._warehouses(pool_ids - set(warehouses)))
 
+        # S1/S2 (see `_facts_for`'s own copy of this): the lines this read is un-netting,
+        # and the CORE lines of the whole selection this call is asking about at once - the
+        # board's own "current selection" for `_group_borrow_donors`.
+        self._replaced_line_ids = {str(line_id) for line_id in (exclude_line_ids or [])}
+        self._current_selection_core_ids = {
+            str(row["line_id"]) for row in rows if row.get("line_id")
+        }
+        self._decided_elsewhere_cache = None
         self._free_cache = self._free_stock(product_ids, exclude_line_ids=exclude_line_ids)
         self._holds_cache = self._holds_by_project(
             product_ids, exclude_line_ids=exclude_line_ids
@@ -1418,6 +1520,7 @@ class ProjectSupplyService:
                 else None
             ),
             "donor_core_line_id": component.donor_core_line_id,
+            "donor_required_date": component.donor_required_date,
         }
 
     def _resolve_source_warehouse_id(
@@ -1747,8 +1850,9 @@ class ProjectSupplyService:
         checked: List[Tuple[ProjectSalesOrderLine, Any, _LineFacts]] = []
         # What is still available as the payload is walked, so two lines of the SAME
         # confirmation cannot each be sold the whole pile. The per-line facts say what was
-        # free when the sheet was read; these say what is left after the lines before it.
-        pool_left: Dict[str, Decimal] = {}
+        # free when the sheet was read; these say what is left after the lines before it
+        # (S7: every pool AND every group-take sibling, not only this line's own pool).
+        capacity_left = _CapacityLedger()
         borrow_left: _BorrowLedger = _BorrowLedger()
 
         for entry in payload_lines:
@@ -1775,7 +1879,7 @@ class ProjectSupplyService:
             fact = facts[str(line.id)]
             checked.append((line, entry, fact))
             self._check_line(
-                entry, fact, pool_left, borrow_left, stale, invalid, carried_holds
+                entry, fact, capacity_left, borrow_left, stale, invalid, carried_holds
             )
 
         # A line the payload does not name is NOT a failure any more (13.4). It is
@@ -1911,7 +2015,7 @@ class ProjectSupplyService:
         self,
         entry: Any,
         fact: _LineFacts,
-        pool_left: Dict[str, Decimal],
+        capacity_left: "_CapacityLedger",
         borrow_left: "_BorrowLedger",
         stale: List[Dict[str, Any]],
         invalid: List[Dict[str, Any]],
@@ -1956,21 +2060,36 @@ class ProjectSupplyService:
         # more, only the pool chain (own site pool then every other) and this line's
         # group-take siblings - the same candidates `compose_line` walked to propose this
         # composition, so the recheck cannot refuse what the proposal itself offered.
-        pools = self._pool_chain(
-            fact, own_pool_free_left=pool_left.get(fact.pool_key) if fact.pool_key else None
-        )
-        capacity = {
-            location: qty
-            for location, qty, _reason in pool_reserve_capacity(
-                is_dealer_hot_selling=fact.is_dealer_hot_selling,
-                is_project_hot_selling=fact.is_project_hot_selling,
-                pools=pools,
+        #
+        # S7: every location here is drawn through `capacity_left`, the running ledger
+        # shared across every line of this confirmation - not read live per line - so a
+        # second line asking the same pool or the same group-take sibling sees what the
+        # first line of this confirmation already took, not the live figure again.
+        pools = self._pool_chain(fact, own_pool_free_left=None)
+        capacity: Dict[str, Decimal] = {}
+        location_ids: Dict[str, str] = {}
+        for location, live_qty, _reason in pool_reserve_capacity(
+            is_dealer_hot_selling=fact.is_dealer_hot_selling,
+            is_project_hot_selling=fact.is_project_hot_selling,
+            pools=pools,
+        ):
+            source = self._warehouse_by_code(location)
+            if source is None:
+                continue
+            location_ids[location] = str(source.id)
+            capacity[location] = capacity_left.capacity(
+                fact.product_id, str(source.id), live_qty
             )
-        }
         for candidate in self._group_take_candidates(fact):
-            capacity[candidate["location"]] = capacity.get(
-                candidate["location"], _ZERO
-            ) + _dec(candidate["qty"])
+            location = candidate["location"]
+            source = self._warehouse_by_code(location)
+            if source is None:
+                continue
+            location_ids[location] = str(source.id)
+            seeded = capacity_left.capacity(
+                fact.product_id, str(source.id), _dec(candidate["qty"])
+            )
+            capacity[location] = capacity.get(location, _ZERO) + seeded
         reserve_locations = self._reserve_ladder_locations(fact)
         by_id = {str(w.id): code for code, w in reserve_locations.items()}
         allowed = " or ".join(sorted(reserve_locations)) or "no location"
@@ -2010,10 +2129,10 @@ class ProjectSupplyService:
                 continue
             if warehouse not in capacity:
                 # The location IS this line's own or its pool; it simply has nothing left for
-                # this line. `reserve_capacity` omits a location contributing zero, so this
-                # used to fall through to the message above and report a location error for a
-                # quantity problem - which is what the planner saw as "Reserve may only come
-                # from this line's own location" printed about their own location.
+                # this line. `pool_reserve_capacity` omits a location contributing zero, so
+                # this used to fall through to the message above and report a location error
+                # for a quantity problem - which is what the planner saw as "Reserve may only
+                # come from this line's own location" printed about their own location.
                 refuse(
                     stale,
                     f"{warehouse} has nothing free for this line now, so none of the "
@@ -2034,10 +2153,9 @@ class ProjectSupplyService:
                 )
                 continue
             capacity[warehouse] -= qty
-            if fact.pool_code and warehouse == fact.pool_code and fact.pool:
-                pool_left[fact.pool_key] = max(
-                    pool_left.get(fact.pool_key, fact.pool_free) - qty, _ZERO
-                )
+            warehouse_id = location_ids.get(warehouse)
+            if warehouse_id:
+                capacity_left.take(fact.product_id, warehouse_id, qty)
 
         for item in entry.borrow or []:
             self._check_borrow(item, fact, borrow_left, refuse, stale, invalid, carried_holds)
@@ -2234,9 +2352,10 @@ class ProjectSupplyService:
 
         A group borrow takes another sales order's own COMMITTED quantity, not free
         stock - so it is checked against that donor line's live open quantity, never
-        against `_free_at`/`_BorrowLedger`. A separate per-donor-line ledger
-        (`_donor_line_ledger`) stops two lines of the SAME confirmation both borrowing
-        the whole of one donor line.
+        against `_free_at`/`_BorrowLedger`. A per-donor-line ledger (`_donor_line_ledger`)
+        stops two lines of the SAME confirmation both borrowing the whole of one donor
+        line; seeded net of what OTHER confirmed decisions already hold from it (S1,
+        `_group_borrow_held_qty`), so a SECOND confirmation cannot do the same.
         """
         qty = _dec(item.qty)
         donor_line = (
@@ -2252,11 +2371,52 @@ class ProjectSupplyService:
         if fact.core is not None and str(line.id) == str(fact.core.id):
             refuse(invalid, "A line cannot borrow from itself.")
             return
+        # The CORE `SalesOrderLine` carries no line number of its own (that is the
+        # PROJECT mirror's `line_no`); named off the confirm payload's own
+        # `donor_line_no`, round-tripped from the proposal that offered this donor,
+        # the same way `_borrow_shortfalls` names it in the order-back note.
+        donor_line_no = getattr(item, "donor_line_no", None)
+        line_text = f" line {donor_line_no}" if donor_line_no is not None else ""
+        # S8: the donor line named has to still BE what the borrow claims it is - the
+        # same product, still open demand, and inside this line's own ownership group -
+        # not merely a row that exists.
+        if fact.product_id and str(line.product_id or "") != str(fact.product_id):
+            refuse(
+                invalid,
+                f"{order.so_number or 'That sales order'}{line_text} no longer holds "
+                "this product.",
+            )
+            return
         if str(line.warehouse_id or "") != str(warehouse.id):
             refuse(
                 invalid,
-                f"{order.so_number or 'That sales order'} line {line.line_no} is no "
-                f"longer at {warehouse.warehouse_code}.",
+                f"{order.so_number or 'That sales order'}{line_text} is no longer at "
+                f"{warehouse.warehouse_code}.",
+            )
+            return
+        donor_group = sales_agent_service.group_of_warehouse_code(warehouse.warehouse_code)
+        if not fact.group_code or donor_group != fact.group_code:
+            refuse(
+                invalid,
+                f"{warehouse.warehouse_code} is outside this line's ownership group, so "
+                "it cannot be borrowed as a group borrow.",
+            )
+            return
+        still_open = (
+            self.db.query(SalesOrderLine.id)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .filter(
+                SalesOrderLine.id == donor_core_line_id,
+                SalesOrder.status == "open",
+                is_open_demand(),
+            )
+            .first()
+        )
+        if still_open is None:
+            refuse(
+                stale,
+                f"{order.so_number or 'That sales order'}{line_text} is no longer open "
+                "demand, so it cannot be borrowed from.",
             )
             return
         carried = self._carried_component_qty(
@@ -2266,17 +2426,25 @@ class ProjectSupplyService:
         if ask <= _ZERO:
             return
         if donor_core_line_id not in self._donor_line_ledger:
+            # S1: net off what any OTHER active decision already holds from this SAME
+            # donor line - this confirmation's OWN lines being replaced excluded, since
+            # their prior hold is what THIS confirmation is about to replace.
+            held_elsewhere = self._group_borrow_held_qty(
+                donor_core_line_id, exclude_line_ids=self._replaced_line_ids
+            )
             self._donor_line_ledger[donor_core_line_id] = max(
-                _dec(line.qty_ordered) - _dec(line.qty_delivered), _ZERO
+                _dec(line.qty_ordered) - _dec(line.qty_delivered) - held_elsewhere, _ZERO
             )
         available = self._donor_line_ledger[donor_core_line_id]
         if qty > available:
             room = available - carried
             refuse(
                 stale,
-                f"{order.so_number or 'that sales order'} line {line.line_no} now holds "
+                f"{order.so_number or 'that sales order'}{line_text} now holds "
                 f"{qty_text(room if room > _ZERO else _ZERO)} at {warehouse.warehouse_code}, "
-                f"and {qty_text(ask)} was asked for.",
+                # The number actually tested, above (`qty`) - not `ask`, which is only
+                # the increment over what this order already carried.
+                f"and {qty_text(qty)} was asked for.",
             )
             return
         self._donor_line_ledger[donor_core_line_id] = available - qty
@@ -2510,6 +2678,15 @@ class ProjectSupplyService:
                 if qty <= _ZERO or not item.warehouse_id:
                     continue
                 if str(item.warehouse_id) == own_id:
+                    continue
+                if getattr(item, "donor_core_line_id", None):
+                    # A group borrow (B3): already raised, unconditionally, as its own
+                    # order-back in `order_backs` above. `donor_availability` nets every
+                    # open SO's `so_qty` at this location - INCLUDING the donor's own
+                    # committed quantity - so feeding the same item into this pile too
+                    # double-counts it: the pile goes negative from the donor's own
+                    # demand alone, and a second `IV_BORROW_SHORTFALL` row is raised for
+                    # a hole that is really the same borrow already accounted for.
                     continue
                 pile = pile_for(line, fact, str(item.warehouse_id))
                 pile["borrowed"] += qty
@@ -2927,7 +3104,58 @@ class ProjectSupplyService:
             "free_before": qty_text(free + held),
             "free_after_full_borrow": qty_text(max(free + held - qty, _ZERO)),
             "committed_qty": qty_text(held),
+            # S1: the only place a group borrow's donor CORE line is recorded on the
+            # written allocation row (there is no dedicated column for it). Read back by
+            # `_group_borrow_held_qty` so a SECOND confirmation - of this order or another
+            # one - sees what an earlier one already took from the same donor line.
+            "donor_core_line_id": getattr(item, "donor_core_line_id", None),
         }
+
+    def _group_borrow_held_qty(
+        self, donor_core_line_id: str, *, exclude_line_ids: Optional[Set[str]] = None
+    ) -> Decimal:
+        """What is currently held FROM one donor sales-order line by an ACTIVE group
+        borrow, written by any confirmation (S1).
+
+        Seeds `_donor_line_ledger`: without this, `_check_group_borrow` only guarded
+        against two lines of the SAME confirmation both taking the whole of a donor's open
+        quantity - a SECOND, separate confirmation (this order's next revision, or a
+        different project SO entirely) read the donor's live open quantity fresh and could
+        borrow the same units again. Read off `donor_impact_snapshot`, the one place a
+        group-borrow allocation records its donor (`_donor_impact`); a row written before
+        this key existed is simply not found, the same as any other additive JSON field -
+        it goes on not being netted rather than raising.
+
+        `exclude_line_ids` (PROJECT line ids) leaves out this confirmation's OWN lines
+        being replaced: their previous hold on this donor is about to be superseded by
+        whatever this same confirmation asks for now, and un-netting it here mirrors the
+        same carve-out `_free_stock`/`_hold_query` already give a line being replaced.
+        """
+        query = (
+            self.db.query(func.coalesce(func.sum(SOLineAllocation.qty), 0))
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.id == SOLineAllocation.so_line_id,
+            )
+            .outerjoin(
+                SOSupplyDecision, SOSupplyDecision.id == SOLineAllocation.decision_id
+            )
+            .filter(
+                SOLineAllocation.source_type == ALLOC_SOURCE_OTHER_LOCATION,
+                SOLineAllocation.donor_impact_snapshot["donor_core_line_id"].astext
+                == donor_core_line_id,
+                SOLineAllocation.confirmed_at.isnot(None),
+                or_(
+                    SOLineAllocation.decision_id.is_(None),
+                    SOSupplyDecision.state == DECISION_ACTIVE,
+                ),
+            )
+        )
+        if exclude_line_ids:
+            query = query.filter(
+                SOLineAllocation.so_line_id.notin_(list(exclude_line_ids))
+            )
+        return _dec(query.scalar())
 
     def _restamp_stock_location(
         self, line: ProjectSalesOrderLine, entry: Any, fact: _LineFacts
@@ -3042,6 +3270,17 @@ class ProjectSupplyService:
             for line in lines
             if replacing is None or str(line.id) in replacing
         ]
+        # S1/S2: the lines this call is reading/replacing right now, for
+        # `_decided_elsewhere_cached` and `_group_borrow_held_qty`; and the CORE lines
+        # among them, so `_group_borrow_donors` never offers a line that is itself part
+        # of the current confirmation as a donor to another line of it.
+        self._replaced_line_ids = set(replaced)
+        self._current_selection_core_ids = {
+            str(line.core_sales_order_line_id)
+            for line in lines
+            if line.core_sales_order_line_id and str(line.id) in self._replaced_line_ids
+        }
+        self._decided_elsewhere_cache = None
         self._free_cache = self._free_stock(product_ids, exclude_line_ids=replaced)
         self._holds_cache = self._holds_by_project(product_ids, exclude_line_ids=replaced)
         self._pile_cache = None
@@ -3734,6 +3973,44 @@ class ProjectSupplyService:
                     out.add(str(core_line_id))
         return out
 
+    def _decided_elsewhere_cached(self) -> Set[str]:
+        """`_decided_elsewhere(self._replaced_line_ids)`, read once per request (S3).
+
+        `_decided_elsewhere`'s own query has no product/warehouse filter - it reads every
+        ACTIVE decision in the system - and `self._replaced_line_ids` is fixed for the
+        whole of one `proposal_for`/`confirm`/`demand_facts` call, so calling it once per
+        group-borrow line the way `_group_borrow_donors` used to is the exact N-queries-
+        for-one-answer shape S3 is about.
+        """
+        if self._decided_elsewhere_cache is None:
+            self._decided_elsewhere_cache = self._decided_elsewhere(self._replaced_line_ids)
+        return self._decided_elsewhere_cache
+
+    def _active_policy(self) -> Optional[Any]:
+        """The active `scm.priority_policy` row, read at most once per request (S3).
+
+        `priority.active_policy` has no caching of its own, and several ladder v2 readers
+        each asked it independently - `_group_pile`, `_pile_book`, `pool_claims` - so a
+        board of many lines paid one extra round trip per line for a row that cannot
+        change mid-request.
+        """
+        if not self._active_policy_loaded:
+            self._active_policy_value = priority.active_policy(self.db)
+            self._active_policy_loaded = True
+        return self._active_policy_value
+
+    def _payment_terms_for(self, customer_ids: Iterable[str]) -> Dict[str, Optional[int]]:
+        """`priority.payment_terms_by_customer`, memoized per customer for the request
+        (S3): only customers not already answered are queried, so asking the same handful
+        of customers across many lines of one board pays for each customer once."""
+        ids = {str(cid) for cid in customer_ids if cid}
+        missing = ids - set(self._payment_terms_cache.keys())
+        if missing:
+            self._payment_terms_cache.update(
+                priority.payment_terms_by_customer(self.db, list(missing))
+            )
+        return {cid: self._payment_terms_cache.get(cid) for cid in ids}
+
     def _pile_book(
         self,
         product_ids: Iterable[str],
@@ -3798,7 +4075,7 @@ class ProjectSupplyService:
         terms = priority.payment_terms_by_customer(
             self.db, [str(row.customer_id) for row in rows if row.customer_id]
         )
-        weights, class_weights = priority.policy_weights(priority.active_policy(self.db))
+        weights, class_weights = priority.policy_weights(self._active_policy())
 
         grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
         for row in rows:
@@ -3928,7 +4205,7 @@ class ProjectSupplyService:
         book = self._pile_book(product_ids, pool_ids, exclude_line_ids=exclude_line_ids)
         if not members:
             return {}
-        weights, class_weights = priority.policy_weights(priority.active_policy(self.db))
+        weights, class_weights = priority.policy_weights(self._active_policy())
         out: Dict[str, Dict[str, Any]] = {}
         by_pile: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
         for member in members:
@@ -4232,6 +4509,7 @@ class ProjectSupplyService:
                     "donor_core_line_id": donor["donor_core_line_id"],
                     "lower_ranked": donor["lower_ranked"],
                     "same_agent": donor["same_agent"],
+                    "donor_required_date": donor["required_date"],
                 }
             )
         return out

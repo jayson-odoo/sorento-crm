@@ -1500,18 +1500,20 @@ def test_an_own_location_reserve_is_refused_ladder_v2_removed_that_rung(api):
     assert world.own_wh.warehouse_code in failing[0]["reason"]
 
 
-def test_a_pool_reserve_and_a_borrow_at_one_location_open_one_hole_between_them(api):
-    """Aggregated per donor pile, exactly as two borrows are: the location goes short once.
+def test_a_pool_reserve_across_two_lines_of_one_confirmation_shares_the_pools_available_capacity(api):
+    """S7 (`documentation/plans/scm/PLAN-demo-followups-19aug-ladder-v2.md`, review fixes):
+    the pool's SIGNED availability (`max(min(free, available), 0)`, section E rule 2) is a
+    RUNNING LEDGER across every line of one confirmation, not judged per line against the
+    same live figure read afresh.
 
-    Ladder v2 caps EACH line's pool Reserve at the pool's own signed availability
-    (`max(min(free, available), 0)`, section E rule 2), so a SINGLE line can no longer
-    oversell it - but the `available` figure is not decremented ACROSS the two lines of
-    one confirmation, only `free` is, so together they can still open a hole the pool's
-    own book (ranked behind both of them) did not protect: 100 on hand, 90 owed to that
-    book leaves `available` at 10, and each line's own ask (6) clears that cap on its own,
-    while the two together take 12.
+    100 on hand, 90 owed to the pool's own book leaves `available` at 10. Before this fix,
+    each line's own ask (6) cleared that cap independently - `_check_line` rebuilt its
+    capacity dict from live figures on every line and only ever carried the line's OWN
+    site pool forward - so the confirmation wrote both Reserves and oversold the pool by 2,
+    caught only afterwards by an order-back. Now the second line is refused outright: the
+    pool has nothing left to give it, so the confirmation writes nothing at all (AC-C01).
     """
-    from app.models.project_so import IV_BORROW_SHORTFALL, OrderInquiryRow
+    from app.models.project_so import SOSupplyDecision
 
     client, world = api
     db = world.db
@@ -1542,19 +1544,20 @@ def test_a_pool_reserve_and_a_borrow_at_one_location_open_one_hole_between_them(
             ]
         },
     )
-    assert response.status_code == 200, response.text
+    assert response.status_code == 409, response.text
+    body = response.json()
+    failing = {row["line_no"] for row in body["failing_lines"]}
+    assert failing == {2}, body
+    assert "4" in body["failing_lines"][0]["reason"]
 
-    rows = (
-        db.query(OrderInquiryRow)
-        .filter(
-            OrderInquiryRow.verb == IV_BORROW_SHORTFALL,
-            OrderInquiryRow.state == "raised",
-        )
-        .all()
+    # Atomic (AC-C01): the second line's refusal rolls the whole confirmation back, so
+    # the first line's own Reserve never lands either.
+    assert (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .first()
+        is None
     )
-    assert len(rows) == 1, "one pile, one hole"
-    assert str(rows[0].qty) in ("2", "2.0000")
-    assert "line 1, line 2" in rows[0].note
 
 
 # --------------------------------------------------- the donor's availability nets holds
