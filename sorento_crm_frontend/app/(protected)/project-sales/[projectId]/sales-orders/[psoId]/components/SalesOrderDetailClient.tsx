@@ -8,6 +8,7 @@ import {
   Download,
   FileDiff,
   GitCompareArrows,
+  RotateCcw,
   Send,
   Shuffle,
   SquarePen,
@@ -36,18 +37,22 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
+  useAcknowledgeScheduleFinding,
   useProjectSalesOrder,
   useProjectSalesOrderNeighbours,
+  useScheduleFindings,
   useSalesOrderDelete,
   useSalesOrderImportFile,
   useSalesOrderMutations,
 } from '../../../../_shared/hooks/useProjectSalesOrders';
+import { SalesOrderStockLocationBulkApply } from './SalesOrderStockLocationBulkApply';
 import { useProject } from '../../../../_shared/hooks/useProjects';
 import { useOpenDivergenceForOrder } from '../../../../_shared/hooks/useSoDivergence';
 import type { ProjectSalesOrderFinding } from '../../../../_shared/types/projectSalesOrder.types';
 import { SalesOrderAcknowledgeDialog } from '../../../components/SalesOrderAcknowledgeDialog';
 import { SalesOrderFindingsSection } from '../../../components/SalesOrderFindingsSection';
 import { SalesOrderLinesTable } from '../../../components/SalesOrderLinesTable';
+import { ScheduleFindingsSection } from '../../../components/ScheduleFindingsSection';
 import { formatMoney, sumMoney } from '../../../components/SalesOrderMoney';
 import { SalesOrderPublishDialog } from '../../../components/SalesOrderPublishDialog';
 import { SalesOrderRegroupDialog } from '../../../components/SalesOrderRegroupDialog';
@@ -56,7 +61,6 @@ import {
   SalesOrderStatusPill,
 } from '../../../components/SalesOrderStatusPill';
 import { ReviewStatePill } from '../../../../_shared/components/ReviewStatePill';
-import { AllocationPanel } from './AllocationPanel';
 import { useSalesOrderEditSession } from './useSalesOrderEditSession';
 
 /**
@@ -85,7 +89,10 @@ export function SalesOrderDetailClient({
   const searchParams = useSearchParams();
   const project = useProject(projectId);
   const salesOrder = useProjectSalesOrder(psoId);
-  const { acknowledge, save, regroup, publish } = useSalesOrderMutations(projectId, psoId);
+  const { acknowledge, save, regroup, publish, unpublish, reorderLines } = useSalesOrderMutations(
+    projectId,
+    psoId,
+  );
   const removeOrder = useSalesOrderDelete(projectId);
   const importFile = useSalesOrderImportFile(psoId);
   const edit = useSalesOrderEditSession(
@@ -97,12 +104,23 @@ export function SalesOrderDetailClient({
   // `updated_at` so an ingest or a publish refetches it: this is what disables the amend
   // button, and a stale answer either blocks a clean order or lets a wrong amendment past.
   const { divergence } = useOpenDivergenceForOrder(psoId, salesOrder.data?.updated_at);
+  // The (PO, schedule) pair's OWN findings, not this order's: see `ScheduleFindingsSection`
+  // for why a finding naming no PO line cannot be shown as if it belonged to one order.
+  const scheduleFindings = useScheduleFindings(
+    salesOrder.data?.purchase_order_id,
+    salesOrder.data?.schedule_version_id,
+  );
+  const acknowledgeScheduleFinding = useAcknowledgeScheduleFinding(
+    salesOrder.data?.purchase_order_id,
+    salesOrder.data?.schedule_version_id,
+  );
 
   const [acknowledging, setAcknowledging] = React.useState<ProjectSalesOrderFinding | null>(null);
   const [regrouping, setRegrouping] = React.useState(false);
   const [publishing, setPublishing] = React.useState(false);
   const [focusLineId, setFocusLineId] = React.useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
+  const [confirmUnpublish, setConfirmUnpublish] = React.useState(false);
   const [confirmRemovals, setConfirmRemovals] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
 
@@ -202,6 +220,11 @@ export function SalesOrderDetailClient({
     (finding) => finding.severity === 'warn' && !finding.acknowledged_at,
   );
   const isPublished = so.status === 'published' || so.status === 'amended';
+  // The route's own gate: draft, blocked (on a finding) or ready to publish. Narrower than
+  // `!isPublished` alone, because `awaiting_costing` (sponsorship) is neither published nor
+  // reorderable - the server 409s it, so the handle is not offered for it either.
+  const isReorderableStatus =
+    so.status === 'draft' || so.status === 'blocked' || so.status === 'ready';
   /**
    * A draft nobody here may edit has no publish and no AutoCount answer to give, so the one
    * thing left to do with it is read it - and the worksheet then leaves the gear, because an
@@ -370,6 +393,15 @@ export function SalesOrderDetailClient({
                   <ClipboardList className="size-4" aria-hidden />
                   Order inquiry
                 </Link>
+              </DropdownMenuItem>
+            )}
+            {/* Experimental at this stage (captain, 19 Aug 2026): a published or amended
+                order may go back to draft. The server refuses it 409 once anything has
+                already acted on the published state - the confirm names what that is. */}
+            {canEdit && isPublished && (
+              <DropdownMenuItem onSelect={() => setConfirmUnpublish(true)}>
+                <RotateCcw className="size-4" aria-hidden />
+                Unpublish
               </DropdownMenuItem>
             )}
             {canEdit && !isPublished && (
@@ -558,6 +590,27 @@ export function SalesOrderDetailClient({
         onFocusLine={setFocusLineId}
       />
 
+      <ScheduleFindingsSection
+        findings={scheduleFindings.data ?? []}
+        canEdit={canEdit}
+        onAcknowledge={(findingId, reason) =>
+          acknowledgeScheduleFinding.mutateAsync({ findingId, reason })
+        }
+      />
+
+      {/* Standalone, like "Move lines" beside it: writes immediately on the stored order, so
+          it is offered whether or not an edit session happens to be open. Only while the
+          order may still be corrected - the same rule the lines' own Stock location cell
+          follows. */}
+      {canEdit && !isPublished && !edit.isEditing && (
+        <SalesOrderStockLocationBulkApply
+          projectId={projectId}
+          psoId={psoId}
+          lines={lines}
+          reference={reference}
+        />
+      )}
+
       <SalesOrderLinesTable
         lines={lines}
         findings={findings}
@@ -577,9 +630,20 @@ export function SalesOrderDetailClient({
               }
             : null
         }
+        // Standalone, like Move lines and the stock-location bulk apply beside it: writes
+        // immediately on the stored order, so it is only offered while there is no
+        // in-progress edit session for it to race (a staged, unsaved new row has no id the
+        // reorder route could place).
+        reorder={
+          canEdit && isReorderableStatus && !edit.isEditing
+            ? { enabled: true, onReorder: (lineIds) => reorderLines.mutate(lineIds) }
+            : undefined
+        }
       />
 
-      <AllocationPanel psoId={psoId} />
+      {/* Allocation section hidden here for now (captain, 19 Aug 2026): "hide this section
+          first, don't want to show something that I can't explain". The component and its
+          tests are untouched; only this mount is gone. */}
 
       {acknowledging && (
         <SalesOrderAcknowledgeDialog
@@ -642,6 +706,38 @@ export function SalesOrderDetailClient({
               {`Save and remove ${edit.removedCount} ${
                 edit.removedCount === 1 ? 'line' : 'lines'
               }`}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Experimental at this stage: goes back to draft, not a delete. The server names what
+          already acted on the published state when it refuses. */}
+      <AlertDialog open={confirmUnpublish} onOpenChange={setConfirmUnpublish}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{`Unpublish ${reference}?`}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {`${reference} goes back to draft; nothing that already acted on it exists.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={unpublish.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={unpublish.isPending}
+              onClick={(event) => {
+                // Held open by hand: the dialog closes itself on click, and a refusal would
+                // then have nowhere to report back to.
+                event.preventDefault();
+                unpublish
+                  .mutateAsync()
+                  .then(() => setConfirmUnpublish(false))
+                  .catch(() => {
+                    // The mutation already toasted the reason.
+                  });
+              }}
+            >
+              {unpublish.isPending ? 'Unpublishing...' : 'Unpublish'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

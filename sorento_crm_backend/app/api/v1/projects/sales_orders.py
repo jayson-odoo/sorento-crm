@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
+from app.models.project_so import SODraftFinding
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.project_sales_order import (
     AcknowledgeFindingRequest,
@@ -46,6 +47,8 @@ from app.schemas.project_sales_order import (
     PublishRequest,
     PublishResponse,
     RegroupRequest,
+    RenumberLinesResponse,
+    ReorderLinesRequest,
     SalesOrderBulkDeleteRequest,
     SalesOrderBulkDeleteResponse,
     SalesOrderDeleteResponse,
@@ -54,6 +57,7 @@ from app.schemas.project_sales_order import (
     SalesOrderWorksheet,
     ScheduleVersionOption,
     SODraftFindingRow,
+    UnpublishResponse,
 )
 from app.services import project_po_service as po_svc
 from app.services import project_record_navigation as record_nav
@@ -173,6 +177,84 @@ async def build_sales_orders(
         )
         db.commit()
         return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# ---------------------------------------------------- batch-level (PO + schedule) findings
+#
+# A finding that names no PO line belongs to no drafted order (see `SODraftFinding`'s own
+# docstring) - a schedule column for a product not on the PO at all, a phase from another
+# project, an un-mapped column, the whole document's total mismatch. These read and clear at
+# the (purchase order, schedule version) pair, never at a specific sales order, and never
+# block one.
+
+
+@router.get(
+    "/purchase-orders/{po_id}/schedule-findings",
+    response_model=List[SODraftFindingRow],
+)
+async def list_schedule_findings(
+    po_id: str,
+    schedule_version_id: str = Query(...),
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    try:
+        validate_uuid_path(po_id, resource="Purchase order")
+        validate_uuid_path(schedule_version_id, resource="Delivery schedule version")
+        service = ProjectSODraftService(db)
+        rows = service.list_schedule_findings(po_id, schedule_version_id)
+        return [service.serialize_schedule_finding(row) for row in rows]
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/purchase-orders/{po_id}/schedule-findings/{finding_id}/acknowledge",
+    response_model=SODraftFindingRow,
+)
+async def acknowledge_schedule_finding(
+    po_id: str,
+    finding_id: str,
+    payload: AcknowledgeFindingRequest,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """403 on a hard stop without the sales-manager grant. The reason stays forever.
+
+    Never touches an order's status: a batch-level finding never blocked one.
+    """
+    try:
+        validate_uuid_path(po_id, resource="Purchase order")
+        validate_uuid_path(finding_id, resource="Finding")
+        po = po_svc.get_po(db, po_id)
+        project = projects.get_project_or_404(db, po.project_id)
+        projects.assert_can_edit_project(
+            db, project, current_user["id"], permission_slugs(db, current_user["id"])
+        )
+        finding = (
+            db.query(SODraftFinding)
+            .filter(SODraftFinding.id == finding_id, SODraftFinding.purchase_order_id == po_id)
+            .first()
+        )
+        if finding is None:
+            raise AppException(
+                status_code=404,
+                message="That finding is not on this purchase order.",
+                code="finding_foreign_po",
+            )
+        service = ProjectSODraftService(db)
+        service.acknowledge_finding(
+            finding_id,
+            reason=payload.reason,
+            actor_user_id=current_user["id"],
+            permissions=permission_slugs(db, current_user["id"]),
+        )
+        db.commit()
+        db.refresh(finding)
+        return service.serialize_schedule_finding(finding)
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -461,6 +543,32 @@ async def acknowledge_finding(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+@router.put("/sales-orders/{pso_id}/lines/order", response_model=RenumberLinesResponse)
+async def reorder_sales_order_lines(
+    pso_id: str,
+    payload: ReorderLinesRequest,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """A hand drag, persisted verbatim: `line_ids` becomes `line_no` 1..N.
+
+    Registered ahead of the per-line PUT below: both match `/lines/<segment>`, and a
+    literal path only wins over `{line_id}` if it is added to the router first.
+
+    409 once the order is past draft. 422 when `line_ids` is not exactly the draft's
+    current line set -- a race with a save, or a stale screen, must not silently drop or
+    duplicate a line.
+    """
+    try:
+        service, order = _order_for_edit(db, pso_id, current_user)
+        changed = service.reorder_lines(order.id, payload.line_ids)
+        db.commit()
+        return {"changed": changed}
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 @router.put(
     "/sales-orders/{pso_id}/lines/{line_id}", response_model=ProjectSalesOrderLineRow
 )
@@ -515,6 +623,30 @@ async def regroup_sales_order(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+@router.post(
+    "/sales-orders/{pso_id}/renumber-lines", response_model=RenumberLinesResponse
+)
+async def renumber_sales_order_lines(
+    pso_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Repair for a draft's ``#`` column: PO line order, then phase, then set component.
+
+    A one-time fix for drafts built before that grouping was the rule, or for one
+    scrambled some other way. 409 once the order is past draft -- a published order's
+    numbers are printed.
+    """
+    try:
+        service, order = _order_for_edit(db, pso_id, current_user)
+        changed = service.renumber_draft_lines(order.id)
+        db.commit()
+        return {"changed": changed}
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 # -------------------------------------------------------------------- publish
 
 
@@ -540,6 +672,25 @@ async def publish_sales_order(
             reason=ask.reason,
             permissions=permission_slugs(db, current_user["id"]),
         )
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/sales-orders/{pso_id}/unpublish", response_model=UnpublishResponse)
+async def unpublish_sales_order(
+    pso_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Back to draft, experimental (captain, 19 Aug 2026). 409 naming what already acted on
+    the published state: an active supply decision, a published amendment, or an applied
+    planning change. Same permission as publish."""
+    try:
+        service, order = _order_for_edit(db, pso_id, current_user)
+        body = service.unpublish(order, actor_user_id=current_user["id"])
         db.commit()
         return body
     except Exception as exc:

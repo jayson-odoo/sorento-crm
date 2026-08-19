@@ -100,6 +100,9 @@ export interface ProjectSalesOrderRow {
    * when absent the panel matches `po_number` against the project's POs instead.
    */
   purchase_order_id?: string | null;
+  /** The (PO, schedule) pair this order was drafted from - what a batch-level finding
+   * (one naming no PO line, so belonging to no order) is keyed against. */
+  schedule_version_id?: string | null;
   published_at?: string | null;
   import_file_url?: string | null;
   /**
@@ -225,9 +228,20 @@ export interface SalesOrderLineUpdateBody {
   qty?: string;
   unit_price?: string;
   amount?: string;
+  uom?: string | null;
+  description?: string | null;
   delivery_date?: string | null;
   product_id?: string | null;
   area_group?: string | null;
+  /** A warehouse code. There is no `warehouse_id` on this line - see the Stock location
+   *  cell's own note - so the value written and read back is the code, not an id. */
+  stock_location?: string | null;
+}
+
+/** `POST /sales-orders/{pso_id}/unpublish` (captain, 19 Aug 2026, experimental). */
+export interface SalesOrderUnpublishResult {
+  status: string;
+  provisional_ref: string;
 }
 
 export interface SalesOrderRegroupGroup {

@@ -289,13 +289,32 @@ describe('SalesOrderLinesEditor, editing', () => {
     expect(screen.getByText('Needed when no product is picked')).toBeInTheDocument();
   });
 
-  it('marks a delivery date that is not an ISO day', () => {
-    const wrong = staged(LINES).slice(0, 1);
-    wrong[0] = { ...wrong[0], draft: { ...wrong[0].draft, delivery_date: '1/7/2026' } };
+  it('shows the stored ISO delivery date as dd/mm/yyyy, and writes ISO back on a typed date', () => {
+    const session = editing();
+    render(<SalesOrderLinesEditor lines={LINES} editing={session} />);
 
-    render(<SalesOrderLinesEditor lines={LINES.slice(0, 1)} editing={editing({ staged: wrong })} />);
+    const input = screen.getByRole('textbox', {
+      name: /Delivery on CB6633/,
+    }) as HTMLInputElement;
+    expect(input).toHaveValue('01/07/2026');
 
-    expect(screen.getAllByText('Use YYYY-MM-DD').length).toBeGreaterThan(0);
+    fireEvent.change(input, { target: { value: '15/08/2026' } });
+
+    const reported = session.stage.mock.calls.at(-1)?.[0] as StagedSalesOrderLine[];
+    expect(reported[0].draft.delivery_date).toBe('2026-08-15');
+  });
+
+  it('clears the delivery date when the typed value is cleared', () => {
+    const session = editing();
+    render(<SalesOrderLinesEditor lines={LINES} editing={session} />);
+
+    const input = screen.getByRole('textbox', {
+      name: /Delivery on CB6633/,
+    }) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '' } });
+
+    const reported = session.stage.mock.calls.at(-1)?.[0] as StagedSalesOrderLine[];
+    expect(reported[0].draft.delivery_date).toBe('');
   });
 });
 

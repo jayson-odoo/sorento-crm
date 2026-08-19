@@ -11,6 +11,7 @@ import type {
   AutocountChangeListResponse,
   PoVersionOption,
   ProjectSalesOrderDetail,
+  ProjectSalesOrderFinding,
   ProjectSalesOrderListParams,
   ProjectSalesOrderRow,
   SalesOrderBulkDeleteResult,
@@ -21,6 +22,7 @@ import type {
   SalesOrderPublishResult,
   SalesOrderRegroupGroup,
   SalesOrderSplitBy,
+  SalesOrderUnpublishResult,
   SalesOrderWorksheet,
   ScheduleVersionOption,
 } from '../types/projectSalesOrder.types';
@@ -159,6 +161,31 @@ export async function acknowledgeFinding(
   return response.json();
 }
 
+/**
+ * A hand drag, persisted verbatim: `lineIds` becomes `line_no` 1..N.
+ *
+ *   PUT /api/v1/project-sales/sales-orders/{pso_id}/lines/order
+ *   { line_ids: string[] }
+ *   200 { changed: number }
+ *
+ * 409 once the order is past draft. 422 when `lineIds` is not exactly the draft's current
+ * line set - a race with a save, or a stale screen, must not silently drop or duplicate a
+ * line, so the caller reverts its optimistic reorder on either refusal.
+ */
+export async function reorderSalesOrderLines(
+  psoId: string,
+  lineIds: string[],
+): Promise<{ changed: number }> {
+  const response = await apiFetch(`${BASE}/sales-orders/${psoId}/lines/order`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ line_ids: lineIds }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to save the new line order'));
+  return response.json();
+}
+
 export async function updateSalesOrderLine(
   psoId: string,
   lineId: string,
@@ -278,6 +305,46 @@ export async function bulkDeleteProjectSalesOrders(
   return response.json();
 }
 
+/**
+ * The batch-level findings for one (PO, schedule version) pair: a finding naming no PO
+ * line, so belonging to no drafted order (a schedule column for a product not on the PO
+ * at all, a phase from another project, an un-mapped column, the whole document's total
+ * mismatch). Never blocks a publish - it is context, not a gate.
+ *
+ *   GET /api/v1/project-sales/purchase-orders/{po_id}/schedule-findings?schedule_version_id=...
+ *   200 SODraftFindingRow[]  // same shape as an order's own `findings`, `line_id` always null
+ */
+export async function listScheduleFindings(
+  poId: string,
+  scheduleVersionId: string,
+): Promise<ProjectSalesOrderFinding[]> {
+  const response = await apiFetch(
+    `${BASE}/purchase-orders/${poId}/schedule-findings?schedule_version_id=${encodeURIComponent(scheduleVersionId)}`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the schedule findings'));
+  return response.json();
+}
+
+/** The reason is mandatory and stays on the finding forever, same as an order's own. */
+export async function acknowledgeScheduleFinding(
+  poId: string,
+  findingId: string,
+  reason: string,
+): Promise<ProjectSalesOrderFinding> {
+  const response = await apiFetch(
+    `${BASE}/purchase-orders/${poId}/schedule-findings/${findingId}/acknowledge`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to record the acknowledgement'));
+  return response.json();
+}
+
 export async function regroupSalesOrder(
   psoId: string,
   groups: SalesOrderRegroupGroup[],
@@ -318,6 +385,47 @@ export async function publishSalesOrder(
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to publish this sales order'));
   return response.json();
+}
+
+/**
+ * Back to draft, experimental (captain, 19 Aug 2026).
+ *
+ *   POST /api/v1/project-sales/sales-orders/{pso_id}/unpublish
+ *   200 { status, provisional_ref }
+ *
+ * 409 whenever something already acted on the published state: an active supply decision
+ * (`so_unpublish_supply_active`), a published amendment (`so_unpublish_amendment_published`),
+ * or an applied planning change (`so_unpublish_planning_change_applied`). 409
+ * `so_not_published` on a draft order. Same permission as publish.
+ */
+export async function unpublishSalesOrder(psoId: string): Promise<SalesOrderUnpublishResult> {
+  const response = await apiFetch(`${BASE}/sales-orders/${psoId}/unpublish`, {
+    method: 'POST',
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to unpublish this sales order'));
+  return response.json();
+}
+
+/**
+ * One warehouse code on every given line, one PATCH per line.
+ *
+ * Sequential rather than `Promise.all`: there is no bulk endpoint for this yet, and running
+ * one at a time means a failure partway through leaves a predictable prefix applied instead
+ * of an unpredictable subset, and the caller can say exactly how many landed before it
+ * throws.
+ */
+export async function bulkSetLinesStockLocation(
+  psoId: string,
+  lineIds: string[],
+  stockLocation: string | null,
+): Promise<{ applied: number }> {
+  let applied = 0;
+  for (const lineId of lineIds) {
+    await updateSalesOrderLine(psoId, lineId, { stock_location: stockLocation });
+    applied += 1;
+  }
+  return { applied };
 }
 
 // -------------------------------------------------------- Stage 1A: the worksheet

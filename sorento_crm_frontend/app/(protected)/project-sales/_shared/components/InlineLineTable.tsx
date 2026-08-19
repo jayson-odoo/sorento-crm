@@ -4,6 +4,7 @@ import * as React from 'react';
 import { Check, Plus, StickyNote, Trash2, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -30,6 +31,7 @@ export type InlineCellKind =
   | 'select'
   | 'searchable-select'
   | 'checkbox'
+  | 'date'
   | 'derived';
 
 /**
@@ -261,6 +263,22 @@ interface PendingDelete<TRow> {
 }
 
 const NEW_ROW_PREFIX = 'new:';
+
+/** `date` cells store the API's ISO string; the picker works in local `Date` objects. */
+function isoToLocalDate(value: string): Date | undefined {
+  const trimmed = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return undefined;
+  const [year, month, day] = trimmed.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function localDateToIso(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 function sameDraft(a: InlineDraft, b: InlineDraft): boolean {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
@@ -1237,6 +1255,20 @@ function InlineCell<TRow>({
         aria-label={label}
         checked={isInlineChecked(value)}
         onCheckedChange={(next) => onChange(next === true ? INLINE_CHECKED : '')}
+      />
+    );
+  }
+
+  if (column.kind === 'date') {
+    return (
+      <DatePicker
+        id={`${cellId.replace(/\W+/g, '-')}-date`}
+        ariaLabel={label}
+        value={isoToLocalDate(value)}
+        onChange={(date) => onChange(date ? localDateToIso(date) : '')}
+        placeholder={column.placeholder ?? 'DD/MM/YYYY'}
+        inputClassName="h-8"
+        className="w-full"
       />
     );
   }

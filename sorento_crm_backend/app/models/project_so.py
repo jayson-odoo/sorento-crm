@@ -581,13 +581,32 @@ class ProjectSalesOrderLine(Base, CompanyScopedMixin):
 
 
 class SODraftFinding(Base, CompanyScopedMixin):
-    """A cross-check result. Five codes are hard stops; the rest are cleared with a reason (D9)."""
+    """A cross-check result. Five codes are hard stops; the rest are cleared with a reason (D9).
+
+    Almost every finding names a line, or at least a PO line, and belongs to whichever
+    order(s) drafted from it. A few do not: a schedule column for a product not on the PO AT
+    ALL, a phase from another project, the whole-document total mismatch. Those name no
+    order, so `project_sales_order_id` is null and `purchase_order_id` +
+    `schedule_version_id` carry it instead -- one row per (PO, schedule version), not one
+    per order the build happened to produce, and not deleted when any one of those orders
+    is rebuilt or removed.
+    """
 
     __tablename__ = "so_draft_findings"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_sales_order_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.sales_orders.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.sales_orders.id", ondelete="CASCADE"), nullable=True
+    )
+    # Set only when `project_sales_order_id` is null -- see the class docstring.
+    purchase_order_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.purchase_orders.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    schedule_version_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.delivery_schedule_versions.id", ondelete="CASCADE"),
+        nullable=True,
     )
     line_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.sales_order_lines.id", ondelete="CASCADE"),
@@ -605,6 +624,7 @@ class SODraftFinding(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_so_findings_order", "project_sales_order_id"),
         Index("ix_so_findings_severity", "severity"),
+        Index("ix_so_findings_batch", "purchase_order_id", "schedule_version_id"),
         {"schema": "projects"},
     )
 
@@ -720,6 +740,11 @@ IV_CHANGE_SO = "CHANGE_SO"
 IV_CANCEL_BALANCE = "CANCEL_BALANCE"
 IV_PRE_ORDERED = "PRE_ORDERED_DO_NOT_ORDER"
 IV_ALREADY_INBOUND = "ALREADY_INBOUND"
+#: A planning-change batch released a line's whole claim: the reserve freed at its own
+#: location, and the Buy this line held is no longer bought for this line - it becomes a
+#: POOL purchase. An informational change row, exactly like DELAY/ADVANCE, never a fresh
+#: purchase of its own (`PLAN-so-book-diff-replanning.md` section 6, captain 19 Aug 2026).
+IV_RELEASE = "RELEASE"
 #: A borrow left the DONOR location oversold, so the hole it opened is buying work
 #: (PLAN-fulfilment-planning-from-autocount-so.md 13.11). Its own verb rather than
 #: `ORDER`, because the quantity belongs to the donor's location and not to the

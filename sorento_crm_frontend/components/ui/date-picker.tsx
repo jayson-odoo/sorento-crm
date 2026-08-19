@@ -41,6 +41,11 @@ export interface DatePickerProps {
   className?: string;
   /** If true, required field – clearing the input does not call onChange(undefined). */
   required?: boolean;
+  /** Forwarded to the typed input, for a table cell's own label/id. */
+  id?: string;
+  ariaLabel?: string;
+  /** Height of the typed input and the calendar-icon button, e.g. for a table cell row. */
+  inputClassName?: string;
 }
 
 /**
@@ -54,6 +59,9 @@ export function DatePicker({
   disabled = false,
   className,
   required = false,
+  id,
+  ariaLabel,
+  inputClassName,
 }: DatePickerProps) {
   const [open, setOpen] = React.useState(false);
   const [inputValue, setInputValue] = React.useState(() =>
@@ -86,12 +94,14 @@ export function DatePicker({
   return (
     <div className={cn('flex gap-2', className)}>
       <Input
+        id={id}
         type="text"
         placeholder={placeholder}
         value={inputValue}
         onChange={handleInputChange}
         disabled={disabled}
-        className="flex-1"
+        aria-label={ariaLabel}
+        className={cn('flex-1', inputClassName)}
         autoComplete="off"
       />
       <Popover open={open} onOpenChange={setOpen}>
@@ -101,8 +111,8 @@ export function DatePicker({
             variant="outline"
             size="icon"
             disabled={disabled}
-            className="shrink-0"
-            aria-label="Pick a date"
+            className={cn('shrink-0', inputClassName)}
+            aria-label={ariaLabel ? `Pick a date for ${ariaLabel}` : 'Pick a date'}
           >
             <CalendarIcon className="h-4 w-4" />
           </Button>

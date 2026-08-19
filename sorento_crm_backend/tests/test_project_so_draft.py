@@ -358,6 +358,24 @@ def seeded():
         yield db, company_id, owner
 
 
+def _po_line_numbers(db, lines):
+    """`ProjectSalesOrderLine` has no `source_po_line_no` column -- only the model in the
+    service (its transient `_source_po_line_no` set at build time) does. A test reading the
+    row back from a fresh query has to resolve it the same way the service's own
+    `_source_line_no` fallback does: through `source_po_line_id`."""
+    ids = [line.source_po_line_id for line in lines if line.source_po_line_id]
+    by_id = (
+        dict(
+            db.query(ProjectPOLine.id, ProjectPOLine.line_no)
+            .filter(ProjectPOLine.id.in_(ids))
+            .all()
+        )
+        if ids
+        else {}
+    )
+    return {line.id: by_id.get(line.source_po_line_id) for line in lines}
+
+
 def _findings(db, order_ids, code=None):
     query = db.query(SODraftFinding).filter(
         SODraftFinding.project_sales_order_id.in_(list(order_ids))
@@ -634,6 +652,125 @@ def test_quantities_spread_across_every_phase_and_sum_to_the_po_quantity(seeded)
     assert not _findings(db, [order_id], code="schedule_over")
 
 
+def _two_po_lines_three_phases(db, company_id, owner):
+    """Two PO lines, three phases each, one area -- the fixture both numbering tests share."""
+    project = _project(db, company_id, owner)
+    product_a = _product(db, "SRTA-100")
+    product_b = _product(db, "SRTB-200")
+    quotation = _quotation(
+        db, project, lines=[(product_a, "300", "10.00"), (product_b, "60", "20.00")]
+    )
+    party = _party(db, company_id)
+    po = _po(db, project, party=party, quotation_version=quotation)
+    po_version = _po_version(
+        db,
+        po,
+        lines=[
+            (1, product_a, "SRTA-100", "300", "UNIT", "10.00", "3000.00", False),
+            (2, product_b, "SRTB-200", "60", "UNIT", "20.00", "1200.00", False),
+        ],
+        extracted_total="4200.00",
+    )
+    schedule = _schedule(db, project, po, po_version=po_version)
+    dates = [date(2026, 7, 1), date(2026, 8, 1), date(2026, 9, 1)]
+    for sequence, delivery_date in enumerate(dates, start=1):
+        phase = _phase(
+            db,
+            project,
+            area_group="TOWER",
+            sequence=sequence,
+            label=f"Phase {sequence}",
+            delivery_date=delivery_date,
+            version=schedule,
+        )
+        _cell(db, schedule, phase, product_a, "100")
+        _cell(db, schedule, phase, product_b, "20")
+    return po, schedule, dates
+
+
+def test_line_numbers_group_by_po_line_then_phase_not_by_delivery_date(seeded):
+    """PO line 1's three phases number 1-3 and PO line 2's number 4-6, in delivery-date
+    order within each -- not interleaved by date across the two PO lines, which is what a
+    bare date sort used to give (the captain's "why does 1 jump to 23, 40, 57 ...")."""
+    db, company_id, owner = seeded
+    po, schedule, dates = _two_po_lines_three_phases(db, company_id, owner)
+
+    result = ProjectSODraftService(db).build(po.id, schedule.id)
+    order_id = result["data"][0]["id"]
+    lines = _lines(db, order_id)
+    po_line_no = _po_line_numbers(db, lines)
+
+    assert [
+        (line.line_no, po_line_no[line.id], line.delivery_date) for line in lines
+    ] == [
+        (1, 1, dates[0]),
+        (2, 1, dates[1]),
+        (3, 1, dates[2]),
+        (4, 2, dates[0]),
+        (5, 2, dates[1]),
+        (6, 2, dates[2]),
+    ]
+
+
+def test_renumber_draft_lines_repairs_a_scrambled_draft(seeded):
+    """The repair route for a draft numbered before the grouped-order fix (or scrambled
+    any other way): re-applies PO line, then phase, then set-component order."""
+    db, company_id, owner = seeded
+    po, schedule, dates = _two_po_lines_three_phases(db, company_id, owner)
+    result = ProjectSODraftService(db).build(po.id, schedule.id)
+    order_id = result["data"][0]["id"]
+
+    # Scramble it the way the old date-major sort used to: date first, PO line second.
+    lines = _lines(db, order_id)
+    po_line_no = _po_line_numbers(db, lines)
+    by_key = {(po_line_no[line.id], line.delivery_date): line for line in lines}
+    scrambled_order = [
+        by_key[(1, dates[0])],
+        by_key[(2, dates[0])],
+        by_key[(1, dates[1])],
+        by_key[(2, dates[1])],
+        by_key[(1, dates[2])],
+        by_key[(2, dates[2])],
+    ]
+    for index, line in enumerate(scrambled_order, start=1):
+        line.line_no = index
+    db.flush()
+
+    changed = ProjectSODraftService(db).renumber_draft_lines(order_id)
+
+    assert changed > 0
+    lines = _lines(db, order_id)
+    po_line_no = _po_line_numbers(db, lines)
+    assert [(line.line_no, po_line_no[line.id]) for line in lines] == [
+        (1, 1),
+        (2, 1),
+        (3, 1),
+        (4, 2),
+        (5, 2),
+        (6, 2),
+    ]
+
+    # A no-op re-run touches nothing.
+    assert ProjectSODraftService(db).renumber_draft_lines(order_id) == 0
+
+
+def test_renumber_draft_lines_refuses_once_the_order_is_past_draft(seeded):
+    db, company_id, owner = seeded
+    po, schedule, _dates = _two_po_lines_three_phases(db, company_id, owner)
+    result = ProjectSODraftService(db).build(po.id, schedule.id)
+    order = (
+        db.query(ProjectSalesOrder)
+        .filter(ProjectSalesOrder.id == result["data"][0]["id"])
+        .one()
+    )
+    order.status = "published"
+    db.flush()
+
+    with pytest.raises(AppException) as excinfo:
+        ProjectSODraftService(db).renumber_draft_lines(order.id)
+    assert excinfo.value.status_code == 409
+
+
 def test_the_area_split_produces_one_sales_order_per_area_and_records_its_origin(seeded):
     db, company_id, owner = seeded
     project = _project(db, company_id, owner)
@@ -900,7 +1037,6 @@ def _minimal(db, company_id, owner, **overrides):
                 ]
             },
         ),
-        ("total_mismatch", {"extracted_total": "40000.00"}),
         ("schedule_short", {"scheduled": "90"}),
         ("schedule_over", {"scheduled": "110"}),
         (
@@ -957,6 +1093,106 @@ def test_each_hard_finding_blocks_the_publish(seeded, code, overrides):
         service.publish(order, actor_user_id=owner)
     assert excinfo.value.status_code == 409
     assert code in str(excinfo.value.detail)
+
+
+# ------------------------------------------------------- batch-level findings
+
+
+def test_a_schedule_column_for_a_product_not_on_the_po_is_batch_level_only(seeded):
+    """A finding that names no PO line belongs to no order: one row, keyed by the (PO,
+    schedule version) pair, and zero rows on any of the drafted orders."""
+    db, company_id, owner = seeded
+    built = _two_area_build(db, company_id, owner)
+    po, schedule = built["po"], built["schedule"]
+    stray = _product(db, "SRT-NOT-ON-PO")
+    _phase_stray = _phase(
+        db,
+        built["project"],
+        area_group="TOWER",
+        sequence=2,
+        label="Level 9",
+        delivery_date=date(2026, 8, 1),
+        version=schedule,
+    )
+    _cell(db, schedule, _phase_stray, stray, "890")
+
+    result = built["service"].build(po.id, schedule.id)
+    order_ids = [row["id"] for row in result["data"]]
+
+    assert not _findings(db, order_ids, code="schedule_over")
+    batch = built["service"].list_schedule_findings(po.id, schedule.id)
+    over = [row for row in batch if row.code == "schedule_over"]
+    assert len(over) == 1
+    assert over[0].project_sales_order_id is None
+    # No trailing `.0000` in the sentence a person reads.
+    assert "890 of" in over[0].detail
+    assert "890.0000" not in over[0].detail
+
+
+def test_a_po_lines_finding_attaches_only_to_the_order_that_drafted_it(seeded):
+    """The TOWER order carries the short-scheduled product; the COMMON AREA order does
+    not carry it at all, so its own findings must stay empty and its publish unblocked by
+    a sibling's problem."""
+    db, company_id, owner = seeded
+    built = _two_area_build(db, company_id, owner)
+    po, schedule = built["po"], built["schedule"]
+    # Short-schedule the TOWER product: 6 of the 10 the PO ordered.
+    built["tower_cell"].qty = Decimal("6")
+    db.flush()
+
+    result = built["service"].build(po.id, schedule.id)
+    by_area = {row["area_group"]: row["id"] for row in result["data"]}
+    tower_order = built["service"].get_order(by_area["TOWER"])
+    common_order = built["service"].get_order(by_area["COMMON AREA"])
+
+    assert any(f.code == "schedule_short" for f in built["service"].blocking_findings(tower_order))
+    assert not built["service"].blocking_findings(common_order)
+
+    # COMMON AREA publishes untouched by TOWER's problem.
+    built["service"].publish(common_order, actor_user_id=owner)
+    assert common_order.status == "published"
+    with pytest.raises(AppException) as excinfo:
+        built["service"].publish(tower_order, actor_user_id=owner)
+    assert excinfo.value.status_code == 409
+
+
+def test_a_batch_level_finding_blocks_no_order_and_can_be_acknowledged_on_its_own(seeded):
+    db, company_id, owner = seeded
+    _project_row, _product_row, po, schedule = _minimal(
+        db, company_id, owner, extracted_total="40000.00"
+    )
+    service = ProjectSODraftService(db)
+    result = service.build(po.id, schedule.id)
+    order = service.get_order(result["data"][0]["id"])
+
+    assert not any(f.code == "total_mismatch" for f in service.blocking_findings(order))
+    # It still publishes cleanly - nothing about this order is wrong.
+    service.publish(order, actor_user_id=owner)
+    assert order.status == "published"
+
+    batch = service.list_schedule_findings(po.id, schedule.id)
+    mismatch = next(row for row in batch if row.code == "total_mismatch")
+    service.acknowledge_finding(
+        mismatch.id,
+        reason="Confirmed against the printed total, page 2.",
+        actor_user_id=owner,
+        permissions={OVERRIDE_PERMISSION},
+    )
+    db.refresh(mismatch)
+    assert mismatch.acknowledged_by == owner
+
+
+def test_a_batch_level_finding_is_replaced_not_duplicated_on_rebuild(seeded):
+    db, company_id, owner = seeded
+    _project_row, _product_row, po, schedule = _minimal(
+        db, company_id, owner, extracted_total="40000.00"
+    )
+    service = ProjectSODraftService(db)
+    service.build(po.id, schedule.id)
+    service.build(po.id, schedule.id)
+
+    batch = service.list_schedule_findings(po.id, schedule.id)
+    assert len([row for row in batch if row.code == "total_mismatch"]) == 1
 
 
 def test_a_hard_finding_needs_the_override_permission_to_acknowledge(seeded):
@@ -1652,10 +1888,42 @@ def test_the_import_file_carries_the_real_document_header_and_columns(seeded):
 
 
 def _blocked_pair(db, company_id, owner):
-    """A draft carrying TWO hard findings, so the bulk part of the override is real."""
-    _project_row, _product_row, po, schedule = _minimal(
-        db, company_id, owner, scheduled="90", extracted_total="40000.00"
+    """A draft carrying TWO hard findings, so the bulk part of the override is real.
+
+    Two products on one PO line each, one short-scheduled and one over-scheduled: both
+    findings name a PO line, so both are the order's OWN (unlike `total_mismatch`, which
+    moved to the batch level and no longer blocks any specific order - see
+    `test_a_batch_level_finding_blocks_no_order`).
+    """
+    project = _project(db, company_id, owner)
+    short_product = _product(db, "SRTWC8613-RL")
+    over_product = _product(db, "SRTWC8613-FC")
+    quotation = _quotation(
+        db, project, lines=[(short_product, "100", "392.85"), (over_product, "50", "10.00")]
     )
+    party = _party(db, company_id)
+    po = _po(db, project, party=party, quotation_version=quotation)
+    po_version = _po_version(
+        db,
+        po,
+        lines=[
+            (1, short_product, "SRTWC8613-RL", "100", "UNIT", "392.85", "39285.00", False),
+            (2, over_product, "SRTWC8613-FC", "50", "UNIT", "10.00", "500.00", False),
+        ],
+    )
+    schedule = _schedule(db, project, po, po_version=po_version)
+    phase = _phase(
+        db,
+        project,
+        area_group="TOWER",
+        sequence=1,
+        label="Level 2 & 7",
+        delivery_date=date(2026, 7, 1),
+        version=schedule,
+    )
+    _cell(db, schedule, phase, short_product, "90")  # schedule_short: 90 of 100
+    _cell(db, schedule, phase, over_product, "60")  # schedule_over: 60 scheduled, PO orders 50
+
     service = ProjectSODraftService(db)
     order = service.get_order(service.build(po.id, schedule.id)["data"][0]["id"])
     assert len(service.blocking_findings(order)) >= 2
