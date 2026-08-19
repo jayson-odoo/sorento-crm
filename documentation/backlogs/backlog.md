@@ -45,3 +45,4 @@ Format: `ID · Title · Source plan · Priority · Status`. IDs are `BL-<NNN>`, 
 > those into rows here as each is next touched (going-forward, not a bulk sweep).
 
 - **BL-032** (2026-08-19): `ReorderLevelUploadDialog.test.tsx` "applies on confirm and reports what actually happened" flakes in CI - asserts the Confirm button is gone while it is still in its loading state (spinner). Passes locally. Fix: `waitFor` the mutation to settle before the not-in-document assertion. Cost one rerun on PR #224.
+- **BL-033** (2026-08-19): `scm/incoming/components/PackingListUploadDialog.test.tsx` "carries the currency ..." flaked in CI on PR #228 (`expected last vi.fn() call to have been called with [File, ...]`) on a run whose branch had not touched the file; passed locally (16/16) and on the previous CI run of the same code. Same family as BL-032 (assertion before the async handler settles). Fix: `waitFor` the upload mock before asserting its last call. Cost one rerun.
