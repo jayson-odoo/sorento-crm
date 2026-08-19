@@ -290,6 +290,13 @@ export interface SalesOrder {
   status: SalesOrderStatus;
   order_date: string;
   requested_delivery_date: string | null;
+  /** Who sold it - the `sales_agents` master. The id rides along only so an edit select
+   *  can pre-select the current agent; a person reads `sales_agent_code` / `_label`,
+   *  never the id. Absent (all three null) when the order names no agent. */
+  sales_agent_id?: string | null;
+  sales_agent_code?: string | null;
+  /** `sales_agents.person_label` - the human the code belongs to, when set. */
+  sales_agent_label?: string | null;
   total_qty: number;
   /** Undelivered qty = committed demand contributed to the dashboard. */
   committed_qty: number;
@@ -324,6 +331,13 @@ export interface SalesOrderFormData {
   customer_code: string;
   priority: SalesOrderPriority;
   requested_delivery_date?: string | null;
+  /**
+   * `undefined` leaves the stored agent alone (the field was never sent); `null` or `''`
+   * explicitly CLEARS it; an id sets it. Always sent on the detail page's save, so the
+   * "leave alone" case in practice only applies to a payload that never sets this key -
+   * see `toWritePayload`.
+   */
+  sales_agent_id?: string | null;
   /**
    * Omitted entirely on an update where the person never touched a line - a header-only
    * edit (order type, customer, dates) must not resend lines, because the BE's update

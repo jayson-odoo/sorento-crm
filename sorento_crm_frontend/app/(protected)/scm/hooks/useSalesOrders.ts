@@ -26,6 +26,7 @@ interface UseSalesOrdersParams {
   customerId?: string | null;
   /** Keep only orders with quantity still owed. `false` narrows nothing. */
   outstanding?: boolean;
+  salesAgentId?: string | null;
 }
 
 export function useSalesOrders(params: UseSalesOrdersParams) {
@@ -45,6 +46,7 @@ export function useSalesOrders(params: UseSalesOrdersParams) {
         dateTo: params.dateTo ?? null,
         customerId: params.customerId ?? null,
         outstanding: params.outstanding ?? false,
+        salesAgentId: params.salesAgentId ?? null,
       }),
     staleTime: 10_000,
     refetchOnWindowFocus: false,

@@ -11,7 +11,17 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { useQueryClient } from '@tanstack/react-query';
-import { FileText, LoaderCircleIcon, Pencil, Plus, Search, Trash2, Upload, X } from 'lucide-react';
+import {
+  FileText,
+  LoaderCircleIcon,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -44,8 +54,8 @@ import {
   useCreateSalesOrder,
   useDeleteSalesOrder,
   useSalesOrders,
-  useUpdateSalesOrder,
 } from '../../hooks/useSalesOrders';
+import { useSalesAgentOptions } from '../hooks/useSalesAgentOptions';
 import { fmtDate, fmtInt } from '../../lib/format';
 import type {
   SalesOrder,
@@ -143,17 +153,19 @@ export default function SalesOrdersList() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [customerFilter, setCustomerFilter] = useState('');
+  const [agentFilter, setAgentFilter] = useState('');
   const [outstandingOnly, setOutstandingOnly] = useState(false);
 
+  // Create-only: editing moved to the detail page in place (A5), the same shape as the
+  // project sales order screen - see `editHref`.
   const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<SalesOrder | null>(null);
   const [deleting, setDeleting] = useState<SalesOrder | null>(null);
   const [creatingDo, setCreatingDo] = useState<SalesOrder | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
 
   const queryClient = useQueryClient();
 
-  const { data, isLoading, isFetching, refetch } = useSalesOrders({
+  const { data, isLoading, refetch } = useSalesOrders({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -165,13 +177,14 @@ export default function SalesOrdersList() {
     dateTo: dateTo || null,
     customerId: customerFilter || null,
     outstanding: outstandingOnly,
+    salesAgentId: agentFilter || null,
   });
 
   const customerOptions = useCustomerOptions();
+  const agentOptions = useSalesAgentOptions();
   const router = useRouter();
 
   const createMut = useCreateSalesOrder();
-  const updateMut = useUpdateSalesOrder();
   const deleteMut = useDeleteSalesOrder();
   const createDoMut = useCreateDoFromSalesOrder();
 
@@ -185,6 +198,7 @@ export default function SalesOrdersList() {
     dateFrom,
     dateTo,
     customerFilter,
+    agentFilter,
     outstandingOnly,
   ]);
 
@@ -204,6 +218,7 @@ export default function SalesOrdersList() {
           date_to: dateTo || undefined,
           customer_code: customerFilter || undefined,
           outstanding: outstandingOnly ? 'true' : undefined,
+          sales_agent_id: agentFilter || undefined,
         },
       ),
     [
@@ -217,21 +232,22 @@ export default function SalesOrdersList() {
       dateFrom,
       dateTo,
       customerFilter,
+      agentFilter,
       outstandingOnly,
     ],
   );
 
   const detailHref = (so: SalesOrder) =>
     `/scm/sales-orders/${so.id}${detailSearch ? `?${detailSearch}` : ''}`;
+  // Opens the detail page straight into its edit session (A5) - the list's query rides
+  // along the same way `detailHref` carries it, so Cancel or a back navigation lands the
+  // pager on the page the user was actually reading.
+  const editHref = (so: SalesOrder) =>
+    `/scm/sales-orders/${so.id}?${detailSearch ? `${detailSearch}&edit=1` : 'edit=1'}`;
 
   const handleSubmit = async (formData: SalesOrderFormData) => {
-    if (editing) {
-      await updateMut.mutateAsync({ id: editing.id, data: formData });
-    } else {
-      await createMut.mutateAsync(formData);
-    }
+    await createMut.mutateAsync(formData);
     setFormOpen(false);
-    setEditing(null);
   };
 
   // The dialog itself toasts and links to the job page (Confirm -> apply -> onApplied); this
@@ -282,6 +298,22 @@ export default function SalesOrdersList() {
         ),
         size: 200,
         meta: { headerTitle: 'Customer' },
+      },
+      {
+        accessorKey: 'sales_agent_code',
+        header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
+        cell: ({ row }) => {
+          const code = row.original.sales_agent_code;
+          if (!code) return <span className="text-muted-foreground">-</span>;
+          return (
+            <span className="truncate" title={row.original.sales_agent_label || code}>
+              {code}
+            </span>
+          );
+        },
+        size: 120,
+        enableSorting: false,
+        meta: { headerTitle: 'Agent' },
       },
       {
         accessorKey: 'order_type_label',
@@ -429,8 +461,9 @@ export default function SalesOrdersList() {
                 className="h-8 w-8"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setEditing(row.original);
-                  setFormOpen(true);
+                  // Edit lives on the detail page now, in place - the same shape as the
+                  // project sales order screen. The modal stays for CREATE only.
+                  router.push(editHref(row.original));
                 }}
                 aria-label="Edit"
               >
@@ -485,6 +518,7 @@ export default function SalesOrdersList() {
     (dateFrom ? 1 : 0) +
     (dateTo ? 1 : 0) +
     (customerFilter ? 1 : 0) +
+    (agentFilter ? 1 : 0) +
     (outstandingOnly ? 1 : 0);
 
   // An empty book and an over-filtered one look identical in the grid, so they say different
@@ -568,6 +602,19 @@ export default function SalesOrdersList() {
                         clearable
                       />
                     </div>
+                    <div>
+                      <Label htmlFor="so-agent" className="mb-1 block">
+                        Agent
+                      </Label>
+                      <SearchableSelect
+                        id="so-agent"
+                        value={agentFilter}
+                        onChange={setAgentFilter}
+                        options={agentOptions.options}
+                        placeholder="All agents"
+                        clearable
+                      />
+                    </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <Label htmlFor="so-date-from" className="mb-1 block">
@@ -645,6 +692,7 @@ export default function SalesOrdersList() {
                             setDateFrom('');
                             setDateTo('');
                             setCustomerFilter('');
+                            setAgentFilter('');
                             setOutstandingOnly(false);
                           }}
                         >
@@ -656,9 +704,16 @@ export default function SalesOrdersList() {
                 ),
               }}
               exportConfig={{ filename: 'sales_orders_export.xlsx' }}
-              onRefresh={() => void refetch()}
-              isRefreshing={isFetching && !isLoading}
+              // Two secondary actions is what makes the shared toolbar collapse them into
+              // an "Actions" dropdown (data-grid-list-toolbar.tsx) instead of a single loose
+              // button, matching Delivery Orders (OrdersList.tsx).
               secondaryActions={[
+                {
+                  key: 'refresh',
+                  label: 'Refresh',
+                  icon: RefreshCw,
+                  onClick: () => void refetch(),
+                },
                 {
                   key: 'upload-outstanding',
                   label: 'Upload outstanding sales orders',
@@ -667,12 +722,7 @@ export default function SalesOrdersList() {
                 },
               ]}
               primaryAction={
-                <Button
-                  onClick={() => {
-                    setEditing(null);
-                    setFormOpen(true);
-                  }}
-                >
+                <Button onClick={() => setFormOpen(true)}>
                   <Plus />
                   Add sales order
                 </Button>
@@ -704,13 +754,9 @@ export default function SalesOrdersList() {
 
       <SalesOrderFormModal
         open={formOpen}
-        onOpenChange={(o) => {
-          setFormOpen(o);
-          if (!o) setEditing(null);
-        }}
-        editing={editing}
+        onOpenChange={setFormOpen}
         onSubmit={handleSubmit}
-        isPending={createMut.isPending || updateMut.isPending}
+        isPending={createMut.isPending}
       />
 
       <ConfirmDeleteDialog

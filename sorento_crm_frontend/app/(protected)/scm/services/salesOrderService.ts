@@ -9,10 +9,11 @@
  * NOT sent on write; the BE stamps it from the product.
  *
  *   GET    /sales-orders            list (page/limit/sort/dir/query/status/priority/source,
-                                   date_from/date_to/customer_id/outstanding)
+                                   date_from/date_to/customer_id/outstanding/sales_agent_id)
  *   GET    /sales-orders/{id}       single
  *   POST   /sales-orders            create (order_type, customer_code, priority,
- *                                   requested_delivery_date?, lines:[{sku,qty_ordered}])
+ *                                   requested_delivery_date?, sales_agent_id?,
+ *                                   lines:[{sku,qty_ordered}])
  *   PUT    /sales-orders/{id}       update (partial)
  *   DELETE /sales-orders/{id}       hard delete (204)
  *   POST   /sales-orders/{id}/create-do   → { sales_order, do_number }
@@ -41,6 +42,7 @@ export interface SalesOrderListQuery {
   customerId?: string | null;
   /** Keep only orders with quantity still owed. `false` narrows nothing. */
   outstanding?: boolean;
+  salesAgentId?: string | null;
 }
 
 /**
@@ -57,6 +59,10 @@ function toWritePayload(data: SalesOrderFormData) {
     customer_code: data.customer_code,
     priority: data.priority,
     requested_delivery_date: data.requested_delivery_date ?? null,
+    // `null` here is an explicit "clear the agent", not "leave it alone" - the BE
+    // distinguishes a field it never received from one sent as `null` via
+    // `model_fields_set`, and this key is always present in the JSON body.
+    sales_agent_id: data.sales_agent_id ?? null,
     lines: data.lines?.map((l) => ({ sku: l.sku, qty_ordered: l.qty_ordered })),
   };
 }
@@ -84,6 +90,7 @@ export async function getSalesOrders(
       // Only when ON. Sending `outstanding=false` would put a param on the URL that means
       // "no filter", which then rides into the detail URL and reads as an active filter.
       outstanding: params.outstanding ? 'true' : undefined,
+      sales_agent_id: params.salesAgentId || undefined,
     },
   );
   const res = await apiFetch(`${BASE}?${sp.toString()}`);

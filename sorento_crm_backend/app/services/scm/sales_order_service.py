@@ -19,6 +19,7 @@ from app.models.inventory import Stock, Warehouse
 from app.models.lookup import LookupOption
 from app.models.order import Customer, Order, OrderLine, SalesOrder, SalesOrderLine
 from app.models.product import Product, UnitOfMeasure
+from app.models.sales_agent import SalesAgent
 from app.models.scm import OrderLinkClaim
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
@@ -106,6 +107,12 @@ class SalesOrderService:
             raise AppException(404, f"Customer not found: {code}", code="CUSTOMER_NOT_FOUND")
         return cust
 
+    def _agent(self, agent_id: str) -> SalesAgent:
+        agent = self.db.query(SalesAgent).get(agent_id)
+        if not agent:
+            raise AppException(404, "Sales agent not found", code="SALES_AGENT_NOT_FOUND")
+        return agent
+
     def _product(self, sku: str) -> Product:
         prod = (
             self.db.query(Product)
@@ -149,7 +156,31 @@ class SalesOrderService:
 
     # -- serialization -------------------------------------------------------
 
-    def serialize(self, so: SalesOrder) -> dict:
+    def _agent_fields(
+        self, agent_id: Optional[str], agent_map: Optional[dict] = None,
+    ) -> tuple[Optional[str], Optional[str]]:
+        """`(code, person_label)` for an agent id, or `(None, None)` when unset.
+
+        `agent_map` is a pre-built `{id: SalesAgent}` dict so a page of orders costs ONE
+        query for every distinct agent rather than one per row (see `_agent_map`, used by
+        `list`). A single-record read (`get`) has no map to share, so it falls back to one
+        direct lookup — still a single query, since it is a single order.
+        """
+        if not agent_id:
+            return None, None
+        agent = agent_map.get(agent_id) if agent_map is not None else self.db.query(SalesAgent).get(agent_id)
+        if not agent:
+            return None, None
+        return agent.sales_agent, agent.person_label
+
+    def _agent_map(self, rows: list[SalesOrder]) -> dict:
+        ids = {so.sales_agent_id for so in rows if so.sales_agent_id}
+        if not ids:
+            return {}
+        agents = self.db.query(SalesAgent).filter(SalesAgent.id.in_(ids)).all()
+        return {a.id: a for a in agents}
+
+    def serialize(self, so: SalesOrder, agent_map: Optional[dict] = None) -> dict:
         customer = so.customer
         total_qty = 0.0
         committed = 0.0
@@ -182,6 +213,7 @@ class SalesOrderService:
                 ),
             })
         order_dt = so.order_date or (so.created_at.date() if so.created_at else date.today())
+        agent_code, agent_label = self._agent_fields(so.sales_agent_id, agent_map)
         return {
             "id": so.id,
             "so_number": so.so_number,
@@ -196,6 +228,11 @@ class SalesOrderService:
             "requested_delivery_date": (
                 so.requested_delivery_date.isoformat() if so.requested_delivery_date else None
             ),
+            # Who sold it. `sales_agent_id` rides along only so the edit screen's select can
+            # pre-select the current agent; a person reads the code + label, never the id.
+            "sales_agent_id": so.sales_agent_id,
+            "sales_agent_code": agent_code,
+            "sales_agent_label": agent_label,
             "total_qty": total_qty,
             "committed_qty": committed,
             # What the order SAYS versus what is still owed. Both, because a "Total qty"
@@ -273,7 +310,8 @@ class SalesOrderService:
              query: Optional[str], status: Optional[str], priority: Optional[str],
              source: Optional[str] = None, *,
              date_from: Optional[date] = None, date_to: Optional[date] = None,
-             customer_code: Optional[str] = None, outstanding: bool = False) -> dict:
+             customer_code: Optional[str] = None, outstanding: bool = False,
+             sales_agent_id: Optional[str] = None) -> dict:
         q = self.db.query(SalesOrder).options(
             joinedload(SalesOrder.lines).joinedload(SalesOrderLine.product),
             joinedload(SalesOrder.lines).joinedload(SalesOrderLine.warehouse),
@@ -318,6 +356,8 @@ class SalesOrderService:
                     == customer_code.strip().lower()
                 )
             )
+        if sales_agent_id:
+            q = q.filter(SalesOrder.sales_agent_id == sales_agent_id)
         if outstanding:
             # The SAME rule the netting reads, so "still owed" cannot mean one thing on this
             # screen and another in the plan. Only when asked for: an unticked box must not
@@ -346,8 +386,10 @@ class SalesOrderService:
         q = q.order_by(*_order_by(sort_cols, sort, direction))
         total = q.count()
         rows = q.offset((page - 1) * limit).limit(limit).all()
+        # One query for every distinct agent on the page, not one per row.
+        agent_map = self._agent_map(rows)
         return {
-            "data": [self.serialize(so) for so in rows],
+            "data": [self.serialize(so, agent_map) for so in rows],
             "empty": total == 0,
             "pagination": {"total": total, "page": page},
         }
@@ -359,9 +401,11 @@ class SalesOrderService:
         so_number = NumberingService(self.db).get_next_number("sales_order", commit_rule=False)
         if not so_number:
             raise AppException(500, "Sales-order numbering rule missing", code="NUMBERING_MISSING")
+        agent_id = self._agent(data.sales_agent_id).id if data.sales_agent_id else None
         so = SalesOrder(
             so_number=so_number,
             customer_id=customer.id,
+            sales_agent_id=agent_id,
             order_date=date.today(),
             requested_delivery_date=(
                 date.fromisoformat(data.requested_delivery_date)
@@ -404,6 +448,12 @@ class SalesOrderService:
                 so.demand_class = demand
         if data.priority is not None:
             so.priority = data.priority
+        # `model_fields_set`, not `is not None`: an omitted field and an explicit `null`
+        # both arrive as `None` on the Pydantic model, and only the latter means "clear the
+        # agent" - a plain None-check could never tell "nobody touched this" from "unassign
+        # her" apart, and this is the one field on this endpoint that must support clearing.
+        if "sales_agent_id" in data.model_fields_set:
+            so.sales_agent_id = self._agent(data.sales_agent_id).id if data.sales_agent_id else None
         if data.requested_delivery_date is not None:
             so.requested_delivery_date = (
                 date.fromisoformat(data.requested_delivery_date)

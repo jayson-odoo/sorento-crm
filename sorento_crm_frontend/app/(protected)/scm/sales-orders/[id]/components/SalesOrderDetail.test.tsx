@@ -32,10 +32,13 @@ if (!window.matchMedia) {
 }
 Element.prototype.scrollIntoView = vi.fn();
 
+// A `let`, not a literal return, so the `?edit=1` auto-open test can point it at a URL
+// carrying the param without a second mock module.
+let searchParams = new URLSearchParams();
 vi.mock('next/navigation', () => ({
   usePathname: () => '/scm/sales-orders/so-1',
   useRouter: () => ({ push: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => searchParams,
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -43,11 +46,35 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 }));
 
 const useSalesOrder = vi.fn();
+const updateSalesOrderMutateAsync = vi.fn();
 vi.mock('../../../hooks/useSalesOrders', () => ({
   useSalesOrder: (...a: unknown[]) => useSalesOrder(...a),
   // The header's prev/next pager reads the same list the user came from. One row means no
   // neighbours, so the pager renders nothing and these tests stay about the record itself.
   useSalesOrders: () => ({ data: { data: [], pagination: { total: 0, page: 1, limit: 25 } } }),
+  useUpdateSalesOrder: () => ({ mutateAsync: updateSalesOrderMutateAsync, isPending: false }),
+}));
+
+const EMPTY_OPTS = { data: [], isLoading: false };
+vi.mock('../../../hooks/useScmOptions', () => ({
+  useOrderTypeOptions: () => ({
+    data: [{ value: 'dealer', label: 'Dealer' }, { value: 'project', label: 'Project' }],
+    isLoading: false,
+  }),
+  useCustomerOptions: () => ({
+    data: [{ value: '300-R009', label: 'Rowenda Kitchen Sdn Bhd' }],
+    isLoading: false,
+  }),
+  useProductOptions: () => EMPTY_OPTS,
+}));
+
+vi.mock('../../hooks/useSalesAgentOptions', () => ({
+  useSalesAgentOptions: () => ({
+    options: [
+      { value: 'agent-jeremy', label: 'JR001 · JEREMY' },
+      { value: 'agent-cindy', label: 'CL002 · CINDY LEE' },
+    ],
+  }),
 }));
 
 import { SalesOrderDetail } from './SalesOrderDetail';
@@ -98,6 +125,8 @@ function renderDetail() {
 beforeEach(() => {
   cleanup();
   useSalesOrder.mockReset();
+  updateSalesOrderMutateAsync.mockReset().mockResolvedValue(undefined);
+  searchParams = new URLSearchParams();
 });
 
 describe('SalesOrderDetail - states', () => {
@@ -367,5 +396,153 @@ describe('SalesOrderDetail - the note', () => {
     });
     renderDetail();
     expect(screen.getByText('A COMPANY NOT IN THE CRM / 300-NOSUCH')).toBeInTheDocument();
+  });
+});
+
+describe('SalesOrderDetail - the agent', () => {
+  it("shows the agent's code and the person it is annotated to", () => {
+    useSalesOrder.mockReturnValue({
+      data: so({ sales_agent_id: 'agent-jeremy', sales_agent_code: 'JR001', sales_agent_label: 'JEREMY' }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    expect(screen.getByText('JR001')).toBeInTheDocument();
+    expect(screen.getByText('· JEREMY')).toBeInTheDocument();
+  });
+
+  it('reads as "-" when no order line-up names an agent', () => {
+    useSalesOrder.mockReturnValue({
+      data: so({ sales_agent_id: null, sales_agent_code: null, sales_agent_label: null }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    const summary = screen.getByRole('region', { name: 'Order summary' });
+    const agentValue = screen.getByText('Agent').closest('div');
+    expect(within(agentValue as HTMLElement).getByText('-')).toBeInTheDocument();
+    expect(summary).toContainElement(agentValue);
+  });
+});
+
+describe('SalesOrderDetail - view and edit are the same layout', () => {
+  function record() {
+    return so({
+      sales_agent_id: 'agent-jeremy',
+      sales_agent_code: 'JR001',
+      sales_agent_label: 'JEREMY',
+    });
+  }
+
+  it('has no Edit entry point while the record is still loading or missing', () => {
+    useSalesOrder.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    renderDetail();
+    expect(screen.queryByRole('button', { name: /^Edit$/ })).not.toBeInTheDocument();
+  });
+
+  it('swaps the header values for inputs in place, in the same field order, on Edit', () => {
+    useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
+    renderDetail();
+
+    const labelOrder = () =>
+      Array.from(
+        screen.getByRole('region', { name: 'Order summary' }).querySelectorAll('label, span.text-xs'),
+      ).map((el) => el.textContent);
+
+    const before = labelOrder();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    const after = labelOrder();
+
+    // Same labels, in the same order - editing swaps a value for an input, nothing moves.
+    expect(after).toEqual(before);
+
+    // The five editable fields are now real inputs, preloaded with the stored values.
+    expect(screen.getByRole('combobox', { name: 'Customer' })).toHaveTextContent(
+      'Rowenda Kitchen Sdn Bhd',
+    );
+    expect(screen.getByRole('combobox', { name: 'Order type' })).toHaveTextContent('Project');
+    expect(screen.getByRole('combobox', { name: 'Priority' })).toHaveTextContent('Normal');
+    expect(screen.getByRole('combobox', { name: 'Agent' })).toHaveTextContent('JR001 · JEREMY');
+    expect(screen.getByLabelText('Requested delivery')).toHaveValue('2026-08-30');
+
+    // Save / Cancel replace the pager and the way out; nothing else changed shape.
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Edit$/ })).not.toBeInTheDocument();
+  });
+
+  it('Cancel discards the session and returns to the read values, unsaved', () => {
+    useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Edit$/ })).toBeInTheDocument();
+    expect(updateSalesOrderMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('`?edit=1` opens the edit session on arrival, the same entry the list Pencil uses', () => {
+    searchParams = new URLSearchParams('edit=1');
+    useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
+    renderDetail();
+
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+  });
+
+  it('a header-only save (no line touched) omits `lines` from the write, so the BE leaves them alone', async () => {
+    useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    fireEvent.change(screen.getByLabelText('Requested delivery'), {
+      target: { value: '2026-09-15' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await screen.findByRole('button', { name: /^Edit$/ });
+    expect(updateSalesOrderMutateAsync).toHaveBeenCalledWith({
+      id: 'so-1',
+      data: expect.objectContaining({
+        requested_delivery_date: '2026-09-15',
+        sales_agent_id: 'agent-jeremy',
+      }),
+    });
+    const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
+    expect(body).not.toHaveProperty('lines');
+  });
+
+  it('an explicit Agent clear sends `sales_agent_id: null`', async () => {
+    useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    // `clearable` renders an explicit × once a value is selected - the agent select's own
+    // stated requirement, since not every order names an agent.
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Clear selection' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await screen.findByRole('button', { name: /^Edit$/ });
+    expect(updateSalesOrderMutateAsync).toHaveBeenCalledWith({
+      id: 'so-1',
+      data: expect.objectContaining({ sales_agent_id: null }),
+    });
+  });
+
+  it('editing a line quantity sends `lines`, replacing the whole set', async () => {
+    useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    const qtyInputs = screen.getAllByDisplayValue('320');
+    fireEvent.change(qtyInputs[0], { target: { value: '400' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await screen.findByRole('button', { name: /^Edit$/ });
+    const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
+    expect(body.lines).toEqual([{ sku: 'CW-BASIN-450', qty_ordered: 400, uom: 'PCS' }]);
   });
 });

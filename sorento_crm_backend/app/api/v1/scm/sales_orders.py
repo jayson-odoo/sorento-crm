@@ -51,6 +51,9 @@ def list_sales_orders(
     outstanding: bool = Query(
         False, description="Keep only orders with quantity still owed. Off narrows nothing."
     ),
+    sales_agent_id: Optional[str] = Query(
+        None, description="Keep only this sales agent's orders."
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(_READ),
 ):
@@ -68,7 +71,7 @@ def list_sales_orders(
     out = svc.list(
         page, limit, sort, dir, query, status, priority, source,
         date_from=date_from, date_to=date_to, customer_code=customer_code,
-        outstanding=outstanding,
+        outstanding=outstanding, sales_agent_id=sales_agent_id,
     )
     out["data"] = svc.with_links(out["data"])
     return out

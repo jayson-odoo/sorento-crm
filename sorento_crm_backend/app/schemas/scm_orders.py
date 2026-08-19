@@ -41,6 +41,14 @@ class SalesOrder(BaseModel):
     status: str
     order_date: str
     requested_delivery_date: Optional[str] = None
+    #: Who sold it, resolved from `sales_orders.sales_agent_id` (`sales_agents` master).
+    #: The id is carried only so the detail page's edit select can pre-select the current
+    #: agent — the code + label are what a person reads; never a bare UUID in the UI.
+    sales_agent_id: Optional[str] = None
+    sales_agent_code: Optional[str] = None
+    #: `sales_agents.person_label` — the human this agent code belongs to. Absent when
+    #: the agent has not been given one, which is most of the master today.
+    sales_agent_label: Optional[str] = None
     total_qty: float
     committed_qty: float
     #: What the order says, and how much of it is still open. Both, because a total that
@@ -81,6 +89,8 @@ class SalesOrderFormData(BaseModel):
     customer_code: str
     priority: str = "normal"
     requested_delivery_date: Optional[str] = None
+    #: Who sold it. Optional — most manual creates name no agent — applied as given.
+    sales_agent_id: Optional[str] = None
     lines: List[SalesOrderLineInput] = Field(..., min_length=1)
 
 
@@ -89,6 +99,11 @@ class SalesOrderUpdate(BaseModel):
     customer_code: Optional[str] = None
     priority: Optional[str] = None
     requested_delivery_date: Optional[str] = None
+    #: Optional[str], but read via `model_fields_set` in the service rather than a plain
+    #: `is not None` check: a field the caller never sent must leave the stored agent alone,
+    #: while one sent as an explicit `null` (or `""`) must CLEAR it. A plain `is not None`
+    #: check cannot tell those two apart — both arrive as `None`.
+    sales_agent_id: Optional[str] = None
     lines: Optional[List[SalesOrderLineInput]] = None
 
 

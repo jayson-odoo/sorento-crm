@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ColumnDef,
@@ -9,7 +9,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { ArrowLeft, CheckCircle2, Truck } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, LoaderCircleIcon, SquarePen, Truck } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardHeading, CardTable, CardTitle } from '@/components/ui/card';
@@ -18,11 +18,20 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Input } from '@/components/ui/input';
+import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { useSearchParams } from 'next/navigation';
-import { useSalesOrder } from '../../../hooks/useSalesOrders';
+import { useSalesOrder, useUpdateSalesOrder } from '../../../hooks/useSalesOrders';
+import {
+  useCustomerOptions,
+  useOrderTypeOptions,
+  useProductOptions,
+} from '../../../hooks/useScmOptions';
+import { useSalesAgentOptions } from '../../hooks/useSalesAgentOptions';
 import SalesOrderNavigation from '../../components/SalesOrderNavigation';
 import { fmtDate, fmtInt } from '../../../lib/format';
-import type { SalesOrder, SalesOrderLine } from '../../../types/scm.types';
+import type { SalesOrder, SalesOrderLine, SalesOrderPriority } from '../../../types/scm.types';
 
 /**
  * The sales-order detail, built to mirror `PurchaseOrderDetail` section for section: the
@@ -35,6 +44,14 @@ import type { SalesOrder, SalesOrderLine } from '../../../types/scm.types';
  * they differ because the DOMAIN differs - a sales order is delivered rather than received,
  * so the goods-receipt panel becomes a delivery panel - never because they were written on
  * different days.
+ *
+ * VIEW AND EDIT ARE THE SAME SCREEN (A5). Editing swaps a read-only value for an input IN
+ * PLACE - the same fields, in the same order, in the same grid. Header: Order type, Customer,
+ * Priority, Requested delivery, Agent. Lines: SKU and Qty. Everything else on the summary
+ * (Customer code, Market segment, Source, Lines, Total qty, Still owed, Locations) has no edit
+ * counterpart and stays exactly where it always was. One Save writes the whole header, plus
+ * the lines ONLY when they actually moved - see `lineSignature` - because the PUT endpoint
+ * REPLACES whatever `lines` it is sent, dropping every line's warehouse assignment otherwise.
  */
 
 type BadgeDef = { variant: 'secondary' | 'primary' | 'warning' | 'success'; label: string };
@@ -70,47 +87,171 @@ const PRIORITY_LABELS: Record<string, string> = {
   low: 'Low',
 };
 
+const PRIORITY_OPTIONS = [
+  { value: 'low', label: 'Low' },
+  { value: 'normal', label: 'Normal' },
+  { value: 'high', label: 'High' },
+  { value: 'urgent', label: 'Urgent' },
+];
+
 /** Is this order still owed to the customer? The counterpart of the PO screen's "On order".
  *  Derived from the OPEN line count rather than the status alone, because an order can sit
  *  in an open status with every line closed. */
 const countsAsCommitted = (so: SalesOrder) =>
   (so.open_line_count ?? 0) > 0 && so.committed_qty > 0;
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  /** Set while editing, so the label associates with the input/select it now wraps and
+   *  the field is reachable by its name - the same label text either way. */
+  htmlFor?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-muted-foreground">{label}</span>
+      {htmlFor ? (
+        <label htmlFor={htmlFor} className="text-xs text-muted-foreground">
+          {label}
+        </label>
+      ) : (
+        <span className="text-xs text-muted-foreground">{label}</span>
+      )}
       <span className="text-sm font-medium">{children}</span>
     </div>
   );
 }
+
+/** `sku|qty` per line, order-independent, so a re-save with the same lines in a different
+ *  order is not read as a change. Mirrors `SalesOrderFormModal`'s own invariant: `lines` is
+ *  left off the write entirely when nothing here moved, or the BE's replace-on-write would
+ *  wipe every line's warehouse assignment for a header-only edit. */
+function lineSignature(ls: { sku: string; qty_ordered: number }[]): string {
+  return ls
+    .map((l) => `${l.sku}|${l.qty_ordered}`)
+    .sort()
+    .join(',');
+}
+
+type LineDraft = { sku: string; qty_ordered: string };
 
 export function SalesOrderDetail({ id }: { id: string }) {
   const { data, isLoading, isError } = useSalesOrder(id);
   const searchParams = useSearchParams();
   const listSearch = searchParams.toString();
 
+  const updateMut = useUpdateSalesOrder();
+  const orderTypeOptions = useOrderTypeOptions();
+  const customerOptions = useCustomerOptions();
+  const productOptions = useProductOptions();
+  const agentOptions = useSalesAgentOptions();
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [orderType, setOrderType] = useState('');
+  const [customerCode, setCustomerCode] = useState('');
+  const [priority, setPriority] = useState<SalesOrderPriority>('normal');
+  const [requestedDate, setRequestedDate] = useState('');
+  const [agentId, setAgentId] = useState('');
+  const [lineDrafts, setLineDrafts] = useState<Record<string, LineDraft>>({});
+  const [error, setError] = useState<string | null>(null);
+  const originalLineSignatureRef = useRef<string | null>(null);
+
+  const beginEdit = (so: SalesOrder) => {
+    setOrderType(so.order_type);
+    setCustomerCode(so.customer_code);
+    setPriority(so.priority);
+    setRequestedDate(so.requested_delivery_date?.slice(0, 10) ?? '');
+    setAgentId(so.sales_agent_id ?? '');
+    const drafts: Record<string, LineDraft> = {};
+    for (const ln of so.lines) {
+      drafts[ln.id] = { sku: ln.sku, qty_ordered: String(ln.qty_ordered) };
+    }
+    setLineDrafts(drafts);
+    originalLineSignatureRef.current = lineSignature(
+      so.lines.map((l) => ({ sku: l.sku, qty_ordered: l.qty_ordered })),
+    );
+    setError(null);
+    setIsEditing(true);
+  };
+
+  const cancelEdit = () => {
+    setIsEditing(false);
+    setError(null);
+  };
+
+  // `?edit=1` opens the session on arrival - the same entry the list's Pencil action uses -
+  // so a click there and a bookmarked link land in the same place. Fired once: re-running it
+  // after Cancel would put the user straight back into the session they just left.
+  const wantsEdit = searchParams.get('edit') === '1';
+  const opened = useRef(false);
+  useEffect(() => {
+    if (!wantsEdit || opened.current || !data) return;
+    opened.current = true;
+    beginEdit(data);
+  }, [wantsEdit, data]);
+
   const lines = useMemo<SalesOrderLine[]>(() => data?.lines ?? [], [data]);
   // Sorted here rather than by the API: the lines come embedded in the order read, so there
   // is no second request to spend and no page boundary to sort across.
   const [sorting, setSorting] = useState<SortingState>([]);
+
+  // The Product dropdown is server-paged (top 100 by code), so a line whose SKU sorts past
+  // page one - routine on a large catalogue - is not among `productOptions.data` and the
+  // SearchableSelect renders it blank even though the line's own `sku` is set correctly.
+  // Widen the option list with this order's own lines so every one it opened with resolves.
+  const mergedProductOptions = useMemo(() => {
+    const base = productOptions.data ?? [];
+    const known = new Set(base.map((o) => o.value));
+    const extra: SearchableSelectOption[] = [];
+    for (const l of lines) {
+      if (!l.sku || known.has(l.sku)) continue;
+      known.add(l.sku);
+      extra.push({
+        value: l.sku,
+        label: l.product_name ? `${l.sku} · ${l.product_name}` : l.sku,
+      });
+    }
+    return extra.length ? [...base, ...extra] : base;
+  }, [productOptions.data, lines]);
 
   const columns = useMemo<ColumnDef<SalesOrderLine>[]>(
     () => [
       {
         accessorKey: 'sku',
         header: ({ column }) => <DataGridColumnHeader title="SKU" column={column} />,
-        cell: ({ row }) => (
-          <div className="flex min-w-0 flex-col">
-            <span className="font-medium">{row.original.sku}</span>
-            <span
-              className="truncate text-xs text-muted-foreground"
-              title={row.original.product_name}
-            >
-              {row.original.product_name}
-            </span>
-          </div>
-        ),
+        cell: ({ row }) => {
+          if (isEditing) {
+            const draft = lineDrafts[row.original.id];
+            return (
+              <SearchableSelect
+                value={draft?.sku ?? row.original.sku}
+                onChange={(v) =>
+                  setLineDrafts((prev) => ({
+                    ...prev,
+                    [row.original.id]: { ...prev[row.original.id], sku: v, qty_ordered: prev[row.original.id]?.qty_ordered ?? String(row.original.qty_ordered) },
+                  }))
+                }
+                options={mergedProductOptions}
+                placeholder="Select product"
+                size="sm"
+              />
+            );
+          }
+          return (
+            <div className="flex min-w-0 flex-col">
+              <span className="font-medium">{row.original.sku}</span>
+              <span
+                className="truncate text-xs text-muted-foreground"
+                title={row.original.product_name}
+              >
+                {row.original.product_name}
+              </span>
+            </div>
+          );
+        },
         size: 260,
         meta: { headerTitle: 'SKU' },
       },
@@ -120,7 +261,26 @@ export function SalesOrderDetail({ id }: { id: string }) {
         // API as "1200.0000" would otherwise order before "45" the way a word does.
         accessorFn: (line) => Number(line.qty_ordered),
         header: ({ column }) => <DataGridColumnHeader title="Qty ordered" column={column} />,
-        cell: ({ row }) => fmtInt(row.original.qty_ordered),
+        cell: ({ row }) => {
+          if (isEditing) {
+            const draft = lineDrafts[row.original.id];
+            return (
+              <Input
+                type="number"
+                min={0}
+                value={draft?.qty_ordered ?? String(row.original.qty_ordered)}
+                onChange={(e) =>
+                  setLineDrafts((prev) => ({
+                    ...prev,
+                    [row.original.id]: { sku: prev[row.original.id]?.sku ?? row.original.sku, qty_ordered: e.target.value },
+                  }))
+                }
+                className="h-8 text-right tabular-nums"
+              />
+            );
+          }
+          return fmtInt(row.original.qty_ordered);
+        },
         size: 130,
         meta: {
           headerTitle: 'Qty ordered',
@@ -201,7 +361,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
         meta: { headerTitle: 'Status' },
       },
     ],
-    [],
+    [isEditing, lineDrafts, mergedProductOptions],
   );
 
   const table = useReactTable({
@@ -257,6 +417,45 @@ export function SalesOrderDetail({ id }: { id: string }) {
   const committed = countsAsCommitted(so);
   const lineCount = so.line_count ?? lines.length;
 
+  const handleSave = async () => {
+    setError(null);
+    if (!orderType) return setError('Select an order type.');
+    if (!customerCode) return setError('Select a customer.');
+    // `uom` is display-only (the BE stamps it from the product) and dropped by the service
+    // before the write - carried here only so the shape matches `SalesOrderFormData.lines`.
+    const cleanedLines = so.lines.map((ln) => {
+      const draft = lineDrafts[ln.id];
+      return {
+        sku: draft?.sku ?? ln.sku,
+        qty_ordered: Number(draft?.qty_ordered ?? ln.qty_ordered),
+        uom: ln.uom,
+      };
+    });
+    if (cleanedLines.some((l) => !l.sku || !(l.qty_ordered > 0))) {
+      return setError('Every line needs a product and a quantity above zero.');
+    }
+    const linesUnchanged =
+      originalLineSignatureRef.current !== null &&
+      lineSignature(cleanedLines) === originalLineSignatureRef.current;
+    try {
+      await updateMut.mutateAsync({
+        id,
+        data: {
+          order_type: orderType,
+          customer_code: customerCode,
+          priority,
+          requested_delivery_date: requestedDate || null,
+          sales_agent_id: agentId || null,
+          ...(linesUnchanged ? {} : { lines: cleanedLines }),
+        },
+      });
+      setIsEditing(false);
+    } catch {
+      // The mutation already toasted the reason; leave the session open so nothing typed
+      // is lost.
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* Summary - always rendered. */}
@@ -285,11 +484,40 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 </span>
               )}
             </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <SalesOrderNavigation salesOrderId={id} />
-              {backLink}
-            </div>
+            {/* In an edit session the header states ONE intent: Save or Cancel. Nav and the
+                way out act on the order as it is STORED, and offering them over a screen
+                full of unsaved changes is offering to act on a document nobody is reading. */}
+            {isEditing ? (
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  Nothing is written until you press Save.
+                </span>
+                <Button variant="outline" size="sm" onClick={cancelEdit} disabled={updateMut.isPending}>
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={handleSave} disabled={updateMut.isPending}>
+                  {updateMut.isPending ? (
+                    <LoaderCircleIcon className="me-2 size-4 animate-spin" />
+                  ) : null}
+                  Save
+                </Button>
+              </div>
+            ) : (
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <SalesOrderNavigation salesOrderId={id} />
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => beginEdit(so)}>
+                  <SquarePen className="size-4" />
+                  Edit
+                </Button>
+                {backLink}
+              </div>
+            )}
           </div>
+          {isEditing && error ? (
+            <Alert variant="destructive" className="mt-3">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
         </CardHeader>
         {/* Named as a region so a reader (and a test) can tell the summary's "Still owed"
             from the lines grid's column of the same name. They share the phrase on purpose:
@@ -298,15 +526,96 @@ export function SalesOrderDetail({ id }: { id: string }) {
           aria-label="Order summary"
           className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-3 lg:grid-cols-4"
         >
-          <Field label="Customer">{so.customer_name || '-'}</Field>
-          <Field label="Customer code">{so.customer_code || '-'}</Field>
-          <Field label="Order type">{so.order_type_label || '-'}</Field>
-          <Field label="Market segment">{so.market_segment || '-'}</Field>
-          <Field label="Order date">{fmtDate(so.order_date)}</Field>
-          <Field label="Requested delivery">
-            {so.requested_delivery_date ? fmtDate(so.requested_delivery_date) : '-'}
+          <Field label="Customer" htmlFor={isEditing ? 'so-edit-customer' : undefined}>
+            {isEditing ? (
+              <SearchableSelect
+                id="so-edit-customer"
+                value={customerCode}
+                onChange={setCustomerCode}
+                options={customerOptions.data ?? []}
+                placeholder="Select customer"
+                size="sm"
+              />
+            ) : (
+              so.customer_name || '-'
+            )}
           </Field>
-          <Field label="Priority">{PRIORITY_LABELS[so.priority] ?? titleCase(so.priority)}</Field>
+          <Field label="Customer code">{so.customer_code || '-'}</Field>
+          <Field label="Order type" htmlFor={isEditing ? 'so-edit-order-type' : undefined}>
+            {isEditing ? (
+              <SearchableSelect
+                id="so-edit-order-type"
+                value={orderType}
+                onChange={setOrderType}
+                options={orderTypeOptions.data ?? []}
+                placeholder="Select type"
+                size="sm"
+              />
+            ) : (
+              so.order_type_label || '-'
+            )}
+          </Field>
+          <Field label="Market segment">{so.market_segment || '-'}</Field>
+          {/* Who sold it - the sales_agents master, resolved by the backend. Read as the
+              code with the person it has been annotated to, when known; edited as a
+              clearable select, since not every order names an agent. */}
+          <Field label="Agent" htmlFor={isEditing ? 'so-edit-agent' : undefined}>
+            {isEditing ? (
+              <SearchableSelect
+                id="so-edit-agent"
+                value={agentId}
+                onChange={setAgentId}
+                options={agentOptions.options}
+                placeholder="No agent"
+                clearable
+                size="sm"
+              />
+            ) : so.sales_agent_code ? (
+              <span title={so.sales_agent_label ?? undefined}>
+                {so.sales_agent_code}
+                {so.sales_agent_label ? (
+                  <span className="ms-1 font-normal text-muted-foreground">
+                    · {so.sales_agent_label}
+                  </span>
+                ) : null}
+              </span>
+            ) : (
+              '-'
+            )}
+          </Field>
+          <Field label="Order date">{fmtDate(so.order_date)}</Field>
+          <Field
+            label="Requested delivery"
+            htmlFor={isEditing ? 'so-edit-requested-date' : undefined}
+          >
+            {isEditing ? (
+              <Input
+                id="so-edit-requested-date"
+                type="date"
+                value={requestedDate}
+                onChange={(e) => setRequestedDate(e.target.value)}
+                className="h-8"
+              />
+            ) : so.requested_delivery_date ? (
+              fmtDate(so.requested_delivery_date)
+            ) : (
+              '-'
+            )}
+          </Field>
+          <Field label="Priority" htmlFor={isEditing ? 'so-edit-priority' : undefined}>
+            {isEditing ? (
+              <SearchableSelect
+                id="so-edit-priority"
+                value={priority}
+                onChange={(v) => setPriority((v || 'normal') as SalesOrderPriority)}
+                options={PRIORITY_OPTIONS}
+                placeholder="Select priority"
+                size="sm"
+              />
+            ) : (
+              PRIORITY_LABELS[so.priority] ?? titleCase(so.priority)
+            )}
+          </Field>
           <Field label="Locations">
             {so.stock_locations?.length ? so.stock_locations.join(', ') : '-'}
           </Field>
