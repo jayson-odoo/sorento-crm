@@ -611,18 +611,18 @@ export function FulfilmentPlanningClient() {
           <Button
             type="button"
             size="sm"
-            disabled={selected.length < 2 || overCap}
+            disabled={selected.length < 1 || overCap}
             title={
               overCap
                 ? `Untick some: a board takes at most ${MAX_BOARD_SELECTION} sales orders`
-                : selected.length < 2
-                  ? 'Tick two or more sales orders to plan them together'
+                : selected.length < 1
+                  ? 'Tick one or more sales orders to plan them'
                   : undefined
             }
             onClick={() => openBoard(selected)}
           >
             <LayoutGrid className="size-4" aria-hidden />
-            {`Plan together (${selected.length})`}
+            {selected.length === 1 ? `Plan ${selected[0]}` : `Plan together (${selected.length})`}
           </Button>
         </div>
       </div>
