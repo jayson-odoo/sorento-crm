@@ -3,15 +3,19 @@
 import * as React from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
 import Link from 'next/link';
-import { CalendarClock, CheckCircle2, TriangleAlert, Upload } from 'lucide-react';
+import { CalendarClock, CheckCircle2, Trash2, TriangleAlert, Upload } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { usePurchaseOrders } from '../../_shared/hooks/useProjects';
-import { useDeliverySchedules } from '../../_shared/hooks/useDeliverySchedules';
+import {
+  useDeliveryScheduleMutations,
+  useDeliverySchedules,
+} from '../../_shared/hooks/useDeliverySchedules';
 import type { Project } from '../../_shared/types/project.types';
 import {
   demoScheduleListState,
@@ -39,10 +43,14 @@ export function DeliverySchedulesPanel({ project }: { project: Project }) {
   const purchaseOrders = usePurchaseOrders(demo ? undefined : project.id);
   const hasPurchaseOrder = demo ? true : (purchaseOrders.data ?? []).length > 0;
 
+  const { remove } = useDeliveryScheduleMutations(project.id);
+
   const [uploading, setUploading] = React.useState(false);
   const [openId, setOpenId] = React.useState<string | null>(null);
 
   const rows = React.useMemo(() => view.data ?? [], [view.data]);
+  type Row = (typeof rows)[number];
+  const [pendingDelete, setPendingDelete] = React.useState<Row | null>(null);
 
   // Land on the first schedule so the tab is not an accordion the user must open to see
   // anything: most projects carry one schedule and that click buys nothing.
@@ -55,8 +63,6 @@ export function DeliverySchedulesPanel({ project }: { project: Project }) {
     0,
   );
   const awaitingConfirm = rows.filter((row) => !row.confirmed_at).length;
-
-  type Row = (typeof rows)[number];
 
   const columns = React.useMemo<ColumnDef<Row>[]>(
     () => [
@@ -163,12 +169,9 @@ export function DeliverySchedulesPanel({ project }: { project: Project }) {
       {
         id: 'actions',
         header: () => <span className="sr-only">Actions</span>,
-        cell: ({ row }) =>
-          row.original.latest_version_id ? (
-            <div
-              className="flex justify-end"
-              onClick={(event) => event.stopPropagation()}
-            >
+        cell: ({ row }) => (
+          <div className="flex justify-end gap-1" onClick={(event) => event.stopPropagation()}>
+            {row.original.latest_version_id && (
               <Button asChild size="sm" variant="outline">
                 <Link
                   href={`/project-sales/${project.id}/delivery-schedules/${row.original.latest_version_id}`}
@@ -176,14 +179,28 @@ export function DeliverySchedulesPanel({ project }: { project: Project }) {
                   {row.original.confirmed_at ? 'Open' : 'Review'}
                 </Link>
               </Button>
-            </div>
-          ) : null,
-        size: 110,
+            )}
+            {project.can_edit && (
+              <Button
+                type="button"
+                mode="icon"
+                variant="ghost"
+                size="sm"
+                aria-label={`Delete ${row.original.po_number ?? 'this schedule'}`}
+                title="Delete this schedule"
+                onClick={() => setPendingDelete(row.original)}
+              >
+                <Trash2 className="size-3.5 text-destructive" />
+              </Button>
+            )}
+          </div>
+        ),
+        size: 150,
         enableResizing: false,
         meta: { headerTitle: 'Actions' },
       },
     ],
-    [project.id],
+    [project.id, project.can_edit],
   );
 
   const open = rows.find((row) => row.id === openId) ?? null;
@@ -247,7 +264,11 @@ export function DeliverySchedulesPanel({ project }: { project: Project }) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <DeliveryScheduleVersionsGrid projectId={project.id} schedule={open} />
+            <DeliveryScheduleVersionsGrid
+              projectId={project.id}
+              schedule={open}
+              canEdit={project.can_edit}
+            />
           </CardContent>
         </Card>
       )}
@@ -259,6 +280,26 @@ export function DeliverySchedulesPanel({ project }: { project: Project }) {
           onDone={() => setUploading(false)}
         />
       )}
+
+      <ConfirmDeleteDialog
+        open={Boolean(pendingDelete)}
+        onOpenChange={(next) => !next && setPendingDelete(null)}
+        title="Confirm delete"
+        description={
+          pendingDelete
+            ? `Delete delivery schedule ${pendingDelete.po_number ?? ''} and its ${
+                pendingDelete.version_count
+              } version${pendingDelete.version_count === 1 ? '' : 's'}? This action cannot be undone.`
+            : ''
+        }
+        onDelete={async () => {
+          if (!pendingDelete) return;
+          if (pendingDelete.id === openId) setOpenId(null);
+          await remove.mutateAsync(pendingDelete.id);
+        }}
+        onSuccess={() => setPendingDelete(null)}
+        successMessage="Delivery schedule deleted"
+      />
     </>
   );
 }

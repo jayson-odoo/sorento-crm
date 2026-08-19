@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   DeliverySchedule,
@@ -37,6 +37,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 }));
 
 const listDeliveryScheduleVersions = vi.fn();
+const deleteDeliveryScheduleVersion = vi.fn();
 vi.mock('../../_shared/services/deliveryScheduleService', () => ({
   listDeliverySchedules: vi.fn(),
   listDeliveryScheduleVersions: (...args: unknown[]) =>
@@ -46,6 +47,9 @@ vi.mock('../../_shared/services/deliveryScheduleService', () => ({
   saveDeliveryScheduleCells: vi.fn(),
   resolveDeliveryScheduleProduct: vi.fn(),
   confirmDeliveryScheduleVersion: vi.fn(),
+  deleteDeliverySchedule: vi.fn(),
+  deleteDeliveryScheduleVersion: (...args: unknown[]) =>
+    deleteDeliveryScheduleVersion(...args),
 }));
 
 import { DeliveryScheduleVersionsGrid } from './DeliveryScheduleVersionsGrid';
@@ -85,13 +89,13 @@ function summary(
   };
 }
 
-function renderGrid() {
+function renderGrid(canEdit = false) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <DeliveryScheduleVersionsGrid projectId="p1" schedule={schedule} />
+      <DeliveryScheduleVersionsGrid projectId="p1" schedule={schedule} canEdit={canEdit} />
     </QueryClientProvider>,
   );
 }
@@ -99,6 +103,7 @@ function renderGrid() {
 beforeEach(() => {
   vi.clearAllMocks();
   listDeliveryScheduleVersions.mockResolvedValue([]);
+  deleteDeliveryScheduleVersion.mockResolvedValue(undefined);
 });
 
 describe('DeliveryScheduleVersionsGrid', () => {
@@ -163,5 +168,47 @@ describe('DeliveryScheduleVersionsGrid', () => {
     expect(screen.getByText('-')).toBeInTheDocument();
     expect(screen.getByText('Not dated')).toBeInTheDocument();
     expect(screen.getByText('Not yet')).toBeInTheDocument();
+  });
+
+  it('hides the delete action when the user cannot edit', async () => {
+    listDeliveryScheduleVersions.mockResolvedValue([summary()]);
+    renderGrid(false);
+
+    await screen.findByText('v2');
+    expect(screen.queryByRole('button', { name: /^Delete version/i })).toBeNull();
+  });
+
+  it('confirms before deleting a version, naming its number and revision label', async () => {
+    listDeliveryScheduleVersions.mockResolvedValue([summary()]);
+    renderGrid(true);
+
+    const trigger = await screen.findByRole('button', { name: 'Delete version 2' });
+    fireEvent.click(trigger);
+
+    expect(await screen.findByText('Confirm delete')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Delete version 2 (REVISED 1 - 23/7/2026)? This action cannot be undone.',
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(deleteDeliveryScheduleVersion).toHaveBeenCalledWith('v2'));
+    await waitFor(() => expect(screen.queryByText('Confirm delete')).toBeNull());
+  });
+
+  it('cancels without calling the delete service', async () => {
+    listDeliveryScheduleVersions.mockResolvedValue([summary()]);
+    renderGrid(true);
+
+    const trigger = await screen.findByRole('button', { name: 'Delete version 2' });
+    fireEvent.click(trigger);
+    await screen.findByText('Confirm delete');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(screen.queryByText('Confirm delete')).toBeNull());
+    expect(deleteDeliveryScheduleVersion).not.toHaveBeenCalled();
   });
 });
