@@ -487,8 +487,8 @@ function heldText(row: PlanningChangeRow): string {
 }
 
 /**
- * Every chip carries its own proof (AC-R02): `dealer hot-selling · ABC A at BRW, BRW-IB`,
- * `project hot-selling · ABC A at BRW-BB`, `discontinued`, `+14 d`, `beyond window · 60 d` /
+ * Every chip carries its own proof (AC-R02): `Dealer hot-selling at BRW, BRW-IB`,
+ * `Project hot-selling at BRW-BB`, `discontinued`, `+14 d`, `beyond window · 60 d` /
  * `in window · 60 d`, `PO placed · PO2026-0412` - the label names what and where, `title`
  * carries the full sentence.
  */
@@ -500,16 +500,16 @@ function FactChips({ row }: { row: PlanningChangeRow }) {
     const where = facts.dealer_hot_selling.where.join(', ');
     chips.push({
       key: 'dealer-hot-selling',
-      label: `dealer hot-selling · ABC A at ${where}`,
-      title: `ABC A by delivered quantity on retail (dealer) demand in the last 365 days at ${where}.`,
+      label: `Dealer hot-selling at ${where}`,
+      title: `Hot-selling to retail (dealer) customers at ${where}: inside the top 80% of quantity delivered in the last 12 months.`,
     });
   }
   if (facts.project_hot_selling.value) {
     const where = facts.project_hot_selling.where.join(', ');
     chips.push({
       key: 'project-hot-selling',
-      label: `project hot-selling · ABC A at ${where}`,
-      title: `ABC A by delivered quantity on project demand in the last 365 days at ${where}.`,
+      label: `Project hot-selling at ${where}`,
+      title: `Hot-selling to project customers at ${where}: inside the top 80% of quantity delivered in the last 12 months.`,
     });
   }
   if (facts.discontinued) {

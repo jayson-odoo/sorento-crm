@@ -105,8 +105,8 @@ export interface PlanningChangeBuyActionedFact {
  * The facts the rule used to choose the verb (AC-R02): "nothing is inferred by the reader; the
  * row says which fact chose the verb, and the fact carries its own proof."
  *
- * `dealer_hot_selling` is retail (dealer) demand: this item is an ABC-A mover by delivered
- * quantity on dealer orders in the last 365 days, at the locations named. `project_hot_selling`
+ * `dealer_hot_selling` is retail (dealer) demand: this item is inside the top 80% of quantity
+ * delivered on dealer orders in the last 12 months, at the locations named. `project_hot_selling`
  * is the same classification read against PROJECT demand instead - a different demand pool, so
  * a line can be hot on one, the other, both, or neither. Both are proof-carrying so "hot
  * selling" is never asserted without saying which demand and where.

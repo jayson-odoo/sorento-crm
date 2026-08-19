@@ -173,6 +173,8 @@ function boardProposal(overrides: {
     item_flags: {
       dealer_hot_selling: false,
       dealer_hot_selling_where: [],
+      project_hot_selling: false,
+      project_hot_selling_where: [],
       discontinued: false,
       retail_classification_available: true,
     },
