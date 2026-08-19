@@ -186,6 +186,55 @@ def test_a_fully_delivered_line_is_not_carried_as_zero(resolver):
 
 
 # --------------------------------------------------------------------------- #
+# Excel serial dates (19 Aug 2026 incident: openpyxl handed back the raw serial for
+# `required_date` on 14,497 rows of the captain's real AutoCount export, and the reader
+# read every one of them as unparseable, then the write path nulled the stored date).
+# --------------------------------------------------------------------------- #
+
+def test_a_date_cell_arriving_as_a_raw_excel_serial_number_is_read(resolver):
+    import openpyxl
+    from io import BytesIO
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE"])
+    ws.append(["SO346436", "CKS1050", 10, 43886])
+    ws.append(["SO346436", "CKSW015", 10, 44139])
+    ws.append(["SO346436", "TPE-9201", 10, "45000"])  # numeric string, same as int/float
+    buf = BytesIO()
+    wb.save(buf)
+
+    res = read_workbook(buf.getvalue(), SO, resolver)
+
+    assert [l.required_date for l in res.lines] == [
+        date(2020, 2, 25), date(2020, 11, 4), date(2023, 3, 15),
+    ]
+    assert res.problems == []
+    assert all(l.date_unreadable is False for l in res.lines)
+
+
+def test_a_small_number_that_looks_like_a_quantity_is_not_read_as_a_date(resolver):
+    """150 in the date column is not a plausible Excel serial (that range starts in 1954)
+    and must not be silently taken as one."""
+    import openpyxl
+    from io import BytesIO
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE"])
+    ws.append(["SO346436", "CKS1050", 10, 150])
+    buf = BytesIO()
+    wb.save(buf)
+
+    res = read_workbook(buf.getvalue(), SO, resolver)
+
+    assert res.lines[0].required_date is None
+    assert res.lines[0].date_unreadable is True
+    assert len(res.problems) == 1
+    assert "could not read the date" in res.problems[0].reason
+
+
+# --------------------------------------------------------------------------- #
 # the week-to-week story, file to file
 # --------------------------------------------------------------------------- #
 

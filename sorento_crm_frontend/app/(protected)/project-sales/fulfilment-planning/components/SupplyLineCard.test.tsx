@@ -2,7 +2,7 @@
  * Stage 1C - one line's supply composition (journey steps 1 and 2).
  *
  * Two rules are pinned hardest. Every section renders whatever the answer is, so no
- * eligible stock, no incoming by the required date, no later incoming, no borrow candidate,
+ * eligible stock, no incoming by the delivery date, no later incoming, no borrow candidate,
  * no reorder level and no classification each state that in place (AC-G02); and the read
  * view and the edit view are the SAME layout, so a confirmed line shows the frozen quantity
  * where the input was, in the same order, under the same headings.
@@ -12,6 +12,7 @@
  */
 import React from 'react';
 import { fireEvent, render, screen, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupplyLine } from '../../_shared/types/fulfilmentPlanning.types';
 import { draftFromLine, type DraftLine } from '../../_shared/lib/supplyComposition';
@@ -34,7 +35,7 @@ const DONOR_PROJECT = 'b2000000-0000-4000-8000-000000000001';
 const LINE_ID = 'c3000000-0000-4000-8000-000000000001';
 
 const SECTIONS = [
-  'Incoming by the required date',
+  'Incoming by the delivery date',
   'Reserve',
   'Borrow',
   'Buy',
@@ -52,6 +53,9 @@ function line(overrides: Partial<SupplyLine> = {}): SupplyLine {
     required_date: '2026-09-01',
     fulfilment_location: 'BRW-BB',
     is_dealer_hot_selling: false,
+    is_project_hot_selling: false,
+    dealer_classified: false,
+    project_classified: false,
     classification_unavailable: false,
     is_discontinued: false,
     pool_location: 'BRW-BB',
@@ -61,14 +65,14 @@ function line(overrides: Partial<SupplyLine> = {}): SupplyLine {
       {
         kind: 'timely_spo',
         qty: '100',
-        reason: 'SPO-2026-0311 arrives at BRW-BB on 01 Sep 2026, on the required date.',
+        reason: 'SPO-2026-0311 arrives at BRW-BB on 01 Sep 2026, on the delivery date.',
         source_location: 'BRW-BB',
         source_warehouse_id: WH_BRW,
       },
       {
         kind: 'reserve',
         qty: '200',
-        reason: 'Free stock at BRW-BB covers the need by the required date.',
+        reason: 'Free stock at BRW-BB covers the need by the delivery date.',
         source_location: 'BRW-BB',
         source_warehouse_id: WH_BRW,
       },
@@ -109,13 +113,18 @@ function renderCard(
   options: { frozen?: boolean; draft?: DraftLine } = {},
 ) {
   const draft = options.draft ?? draftFromLine(source);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
+  });
   return render(
-    <SupplyLineCard
-      line={source}
-      draft={draft}
-      frozen={options.frozen ?? false}
-      onChange={onChange}
-    />,
+    <QueryClientProvider client={client}>
+      <SupplyLineCard
+        line={source}
+        draft={draft}
+        frozen={options.frozen ?? false}
+        onChange={onChange}
+      />
+    </QueryClientProvider>,
   );
 }
 
@@ -140,10 +149,10 @@ describe('SupplyLineCard', () => {
     expect(screen.getByText('600 UNIT')).toBeInTheDocument();
   });
 
-  it('states the required date and the fulfilment location', () => {
+  it('states the delivery date and the fulfilment location', () => {
     renderCard(line());
 
-    expect(within(section('Required')).getByText('01/09/2026')).toBeInTheDocument();
+    expect(within(section('Delivery date')).getByText('01/09/2026')).toBeInTheDocument();
     expect(within(section('Fulfil from')).getByText('BRW-BB')).toBeInTheDocument();
   });
 
@@ -194,11 +203,11 @@ describe('SupplyLineCard', () => {
 
     expect(
       screen.getByText(
-        'SPO-2026-0311 arrives at BRW-BB on 01 Sep 2026, on the required date.',
+        'SPO-2026-0311 arrives at BRW-BB on 01 Sep 2026, on the delivery date.',
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText('Free stock at BRW-BB covers the need by the required date.'),
+      screen.getByText('Free stock at BRW-BB covers the need by the delivery date.'),
     ).toBeInTheDocument();
     expect(screen.getByText('Remaining uncovered need.')).toBeInTheDocument();
   });
@@ -214,18 +223,18 @@ describe('SupplyLineCard', () => {
   it('names the incoming that covers the line, with its arrival date', () => {
     renderCard(line());
 
-    const incoming = within(section('Incoming by the required date'));
+    const incoming = within(section('Incoming by the delivery date'));
     expect(incoming.getByText('SPO-2026-0311')).toBeInTheDocument();
     expect(incoming.getByText('· 100 · 01/09/2026')).toBeInTheDocument();
   });
 
   // -------------------------------------------------------------- empty states
-  it('says nothing arrives by the required date rather than dropping the section', () => {
+  it('says nothing arrives by the delivery date rather than dropping the section', () => {
     renderCard(BARE);
 
     expect(
-      within(section('Incoming by the required date')).getByText(
-        'No incoming arrives by the required date.',
+      within(section('Incoming by the delivery date')).getByText(
+        'No incoming arrives by the delivery date.',
       ),
     ).toBeInTheDocument();
   });
@@ -280,38 +289,73 @@ describe('SupplyLineCard', () => {
     const later = within(section('Later incoming'));
     expect(later.getByText('SPO-2026-0402')).toBeInTheDocument();
     expect(
-      later.getByText('Advisory: it arrives after the required date and covers nothing.'),
+      later.getByText('Advisory: it arrives after the delivery date and covers nothing.'),
     ).toBeInTheDocument();
   });
 
-  it('shows the hot-selling cap evidence: the pool, its level and where the draw stops', () => {
+  it('shows dealer hot-selling evidence: the pool, its level, and that it is not offered', () => {
     renderCard(
       line({
         is_dealer_hot_selling: true,
-        pool_cap: '40',
+        pool_cap: null,
         pool_reorder_level: '80',
       }),
     );
 
-    expect(screen.getByText('Hot selling')).toBeInTheDocument();
+    expect(screen.getByText('Dealer hot-selling')).toBeInTheDocument();
+    expect(
+      screen.getByText('BRW-BB, reorder level 80. Dealer hot-selling: the pool is not offered.'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows project hot-selling evidence: the pool is offered while it stays available', () => {
+    renderCard(
+      line({
+        is_project_hot_selling: true,
+        pool_cap: null,
+        pool_reorder_level: '80',
+      }),
+    );
+
+    expect(screen.getByText('Project hot-selling')).toBeInTheDocument();
     expect(
       screen.getByText(
-        'BRW-BB, reorder level 80. Dealer stock is out; the pool draw stops at 40.',
+        'BRW-BB, reorder level 80. Project hot-selling: the pool is offered while it stays available.',
       ),
     ).toBeInTheDocument();
   });
 
-  it('says the retail classification is unavailable rather than reading as not hot selling', () => {
+  it('says the item is not classified rather than reading as not hot selling', () => {
     renderCard(line({ classification_unavailable: true }));
 
-    expect(screen.getByText('Unavailable')).toBeInTheDocument();
-    expect(screen.queryByText('Not hot selling')).not.toBeInTheDocument();
+    expect(screen.getByText('Not classified')).toBeInTheDocument();
+    expect(screen.queryByText('Not hot-selling')).not.toBeInTheDocument();
   });
 
-  it('says a line with a classification and no A class is not hot selling', () => {
+  it('says a line with a classification and no A class on either demand class is not hot-selling', () => {
     renderCard(line());
 
-    expect(screen.getByText('Not hot selling')).toBeInTheDocument();
+    expect(screen.getByText('Not hot-selling')).toBeInTheDocument();
+  });
+
+  it('says cold at retail for a classified, non-hot retail letter', () => {
+    renderCard(line({ dealer_classified: true }));
+
+    expect(screen.getByText('Cold at retail')).toBeInTheDocument();
+    expect(screen.queryByText('Dealer hot-selling')).not.toBeInTheDocument();
+  });
+
+  it('says cold at project for a classified, non-hot project letter', () => {
+    renderCard(line({ project_classified: true }));
+
+    expect(screen.getByText('Cold at project')).toBeInTheDocument();
+    expect(screen.queryByText('Project hot-selling')).not.toBeInTheDocument();
+  });
+
+  it('never prints the word ABC or classification jargon anywhere on the card', () => {
+    const { container } = renderCard(line({ dealer_classified: true }));
+
+    expect(container.textContent).not.toMatch(/ABC/);
   });
 
   // -------------------------------------------------------------- the editing
@@ -438,14 +482,14 @@ describe('SupplyLineCard', () => {
             {
               kind: 'timely_spo',
               qty: '100',
-              reason: 'SPO-2026-0311 arrives at BRW-BB on the required date.',
+              reason: 'SPO-2026-0311 arrives at BRW-BB on the delivery date.',
               source_location: 'BRW-BB',
               source_warehouse_id: WH_BRW,
             },
             {
               kind: 'reserve',
               qty: '200',
-              reason: 'Free stock at BRW-BB covers the need by the required date.',
+              reason: 'Free stock at BRW-BB covers the need by the delivery date.',
               source_location: 'BRW-BB',
               source_warehouse_id: WH_BRW,
             },

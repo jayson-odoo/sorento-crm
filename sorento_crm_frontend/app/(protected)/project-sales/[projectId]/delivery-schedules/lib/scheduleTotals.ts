@@ -211,7 +211,7 @@ interface PhaseLike {
 }
 
 /** The column a cell belongs to, mirroring `columnKey` below. */
-function cellColumnKey(cell: CellLike): string {
+export function cellColumnKey(cell: CellLike): string {
   if (cell.product_id) return cell.product_id;
   if (cell.product_index !== null && cell.product_index !== undefined) {
     return `#${cell.product_index}`;
@@ -245,6 +245,131 @@ export function buildCellMap(cells: CellLike[]): CellMap {
     map.set(cellMapKey(cell.phase_id, key), cell.qty);
   }
   return map;
+}
+
+/** What the document itself marked on one cell: a tint, or a date this cell now overrides. */
+export interface CellMeta {
+  highlight: string | null;
+  deliveryDateOverride: string | null;
+}
+
+interface CellMetaLike extends CellLike {
+  highlight?: string | null;
+  delivery_date_override?: string | null;
+}
+
+/**
+ * `phaseId|columnKey` -> what the document marked on that cell (section 9.7a/c). Separate
+ * from `buildCellMap`: the qty map is read on every keystroke, this one only by cells that
+ * actually carry a tint or an accepted override, which on a real document is a handful.
+ */
+export function buildCellMetaMap(cells: CellMetaLike[]): Map<string, CellMeta> {
+  const map = new Map<string, CellMeta>();
+  for (const cell of cells) {
+    if (!cell.highlight && !cell.delivery_date_override) continue;
+    const key = cellColumnKey(cell);
+    if (!key) continue;
+    map.set(cellMapKey(cell.phase_id, key), {
+      highlight: cell.highlight ?? null,
+      deliveryDateOverride: cell.delivery_date_override ?? null,
+    });
+  }
+  return map;
+}
+
+// ------------------------------------------------------------------ by-date columns (9.8)
+
+export interface DateColumnCell {
+  qty: string;
+  /** The phase this cell's quantity was slotted for, before any accepted override. */
+  phaseId: string;
+  /** Set only when this cell's effective date differs from its own phase's date. */
+  wasDate?: string;
+}
+
+export interface DateColumn {
+  /** ISO, ascending. */
+  date: string;
+  /** The phase(s) whose cells landed here, in the sheet's own (sequence) order, deduped by label. */
+  phaseLabels: string[];
+  /** columnKey (product id, else `#index`) -> the cell at this date. */
+  cells: Map<string, DateColumnCell>;
+}
+
+interface DateColumnPhaseLike {
+  id: string;
+  label: string | null;
+  sequence: number;
+  delivery_date: string | null;
+}
+
+interface DateColumnCellLike extends CellLike {
+  delivery_date_override?: string | null;
+}
+
+/**
+ * The schedule turned round the OTHER way: one column per EFFECTIVE delivery date rather
+ * than per phase. A cell's effective date is its accepted override when it has one, else its
+ * own phase's date - so accepting SRT382-6's re-date moves its quantity to sit under the new
+ * date here, not under the phase it started on (the captain's own question, 19 Aug: "the
+ * quantity should be moved to the new accepted date").
+ *
+ * Built from the CELLS, not the phases: a date with no cell landing on it - whether nothing
+ * was ever scheduled there or every cell that was has since moved away - produces no column
+ * at all, which is what "empty date columns never appear" asks for. A pure function, no
+ * React: `DeliveryScheduleByDateMatrix` is the only reader.
+ */
+export function dateColumns(version: {
+  phases: DateColumnPhaseLike[];
+  cells: DateColumnCellLike[];
+}): DateColumn[] {
+  const phaseById = new Map(version.phases.map((phase) => [phase.id, phase]));
+  const groups = new Map<
+    string,
+    { phaseIds: Set<string>; cells: Map<string, DateColumnCell> }
+  >();
+
+  for (const cell of version.cells) {
+    const phase = phaseById.get(cell.phase_id);
+    if (!phase) continue;
+    const effective = cell.delivery_date_override ?? phase.delivery_date;
+    if (!effective) continue;
+    const key = cellColumnKey(cell);
+    if (!key) continue;
+
+    let group = groups.get(effective);
+    if (!group) {
+      group = { phaseIds: new Set(), cells: new Map() };
+      groups.set(effective, group);
+    }
+    group.phaseIds.add(phase.id);
+    group.cells.set(key, {
+      qty: cell.qty,
+      phaseId: phase.id,
+      wasDate:
+        phase.delivery_date && phase.delivery_date !== effective
+          ? phase.delivery_date
+          : undefined,
+    });
+  }
+
+  return Array.from(groups.entries())
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([date, group]) => {
+      const phases = Array.from(group.phaseIds)
+        .map((id) => phaseById.get(id))
+        .filter((phase): phase is DateColumnPhaseLike => Boolean(phase))
+        .sort((a, b) => a.sequence - b.sequence);
+      const seen = new Set<string>();
+      const phaseLabels: string[] = [];
+      for (const phase of phases) {
+        const label = phaseRowLabel(phase);
+        if (seen.has(label)) continue;
+        seen.add(label);
+        phaseLabels.push(label);
+      }
+      return { date, phaseLabels, cells: group.cells };
+    });
 }
 
 /**
@@ -441,4 +566,224 @@ export function phaseRowLabel(phase: {
 }): string {
   const label = phase.label?.trim();
   return label ? label : `Phase ${phase.sequence}`;
+}
+
+// ------------------------------------------------------------------ revision diff (section 9.1)
+
+/** A phase's identity across versions: `id` is per-version, `(area_group, sequence)` is not. */
+function phaseAgnosticKey(phase: { area_group: string | null; sequence: number }): string {
+  return `${phase.area_group ?? ''}::${phase.sequence}`;
+}
+
+/**
+ * A product's identity across versions: the id once resolved, else the code the document
+ * printed. Null when neither is known, which means this column cannot be matched to its
+ * counterpart on the other version at all.
+ */
+function productAgnosticKey(product: {
+  product_id: string | null;
+  product_code: string | null;
+}): string | null {
+  if (product.product_id) return `id:${product.product_id}`;
+  if (product.product_code) return `code:${product.product_code.trim().toUpperCase()}`;
+  return null;
+}
+
+export interface PhaseDateMove {
+  phaseId: string;
+  label: string;
+  area: string | null;
+  /** What the project held before this version (`promoted_delivery_date`). */
+  from: string;
+  /** What this version says. */
+  to: string;
+  /** Positive: pushed out. Negative: pulled in. Null when either date does not parse. */
+  deltaDays: number | null;
+}
+
+export function diffDaysIso(a: string, b: string): number | null {
+  const from = Date.parse(`${a}T00:00:00Z`);
+  const to = Date.parse(`${b}T00:00:00Z`);
+  if (Number.isNaN(from) || Number.isNaN(to)) return null;
+  return Math.round((to - from) / 86_400_000);
+}
+
+/**
+ * Which phases moved since whatever the project held before this version, straight off the
+ * payload (`promoted_delivery_date`) - no extra fetch needed for dates.
+ */
+export function schedulePhaseDateMoves(
+  phases: {
+    id: string;
+    area_group: string | null;
+    sequence: number;
+    label: string | null;
+    delivery_date: string | null;
+    promoted_delivery_date?: string | null;
+  }[],
+): PhaseDateMove[] {
+  const moves: PhaseDateMove[] = [];
+  for (const phase of phases) {
+    const from = phase.promoted_delivery_date;
+    const to = phase.delivery_date;
+    if (!from || !to || from === to) continue;
+    moves.push({
+      phaseId: phase.id,
+      label: phaseRowLabel(phase),
+      area: phase.area_group,
+      from,
+      to,
+      deltaDays: diffDaysIso(from, to),
+    });
+  }
+  return moves;
+}
+
+export interface ScheduleQtyChange {
+  phaseId: string;
+  phaseLabel: string;
+  area: string | null;
+  productLabel: string;
+  /** Null means the quantity did not exist on that side (a blank cell, not a zero). */
+  from: string | null;
+  to: string | null;
+}
+
+interface FullVersionLike {
+  phases: {
+    id: string;
+    area_group: string | null;
+    sequence: number;
+    label: string | null;
+  }[];
+  products: ProductLike[];
+  cells: CellLike[];
+}
+
+/**
+ * Quantities that changed between this version and the one before it, matched by
+ * `(area_group, sequence)` for the phase and `(product id, else product code)` for the
+ * column - neither survives as a stable id across two versions on its own.
+ *
+ * The payload carries no "quantity the project held before", unlike the date (finding
+ * P6-9.1), so this needs the FULL prior version fetched separately and diffs client-side.
+ * A pair that cannot be matched on either side is left out of both the changes and the
+ * unchanged count: there is nothing honest to say about a column or phase that only exists
+ * on one of the two documents.
+ */
+export function diffScheduleQuantities(
+  current: FullVersionLike,
+  prior: FullVersionLike,
+): { changes: ScheduleQtyChange[]; unchangedCount: number } {
+  const currentPhaseByAgnostic = new Map<string, FullVersionLike['phases'][number]>();
+  for (const phase of current.phases) {
+    currentPhaseByAgnostic.set(phaseAgnosticKey(phase), phase);
+  }
+  const currentPhaseAgnosticById = new Map<string, string>();
+  for (const phase of current.phases) {
+    currentPhaseAgnosticById.set(phase.id, phaseAgnosticKey(phase));
+  }
+
+  const currentColumnByKey = new Map<string, { agnostic: string; label: string }>();
+  const currentLabelByAgnostic = new Map<string, string>();
+  current.products.forEach((product, index) => {
+    const agnostic = productAgnosticKey(product);
+    if (!agnostic) return;
+    const label = product.product_code ?? product.customer_code_raw ?? 'Unidentified column';
+    currentColumnByKey.set(columnKey(product, index), { agnostic, label });
+    currentLabelByAgnostic.set(agnostic, label);
+  });
+
+  const priorPhaseAgnosticById = new Map<string, string>();
+  for (const phase of prior.phases) {
+    priorPhaseAgnosticById.set(phase.id, phaseAgnosticKey(phase));
+  }
+  const priorProductAgnosticByColumnKey = new Map<string, string>();
+  prior.products.forEach((product, index) => {
+    const agnostic = productAgnosticKey(product);
+    if (agnostic) priorProductAgnosticByColumnKey.set(columnKey(product, index), agnostic);
+  });
+  const priorQtyByDiffKey = new Map<string, string>();
+  for (const cell of prior.cells) {
+    const phaseAgnostic = priorPhaseAgnosticById.get(cell.phase_id);
+    if (!phaseAgnostic) continue;
+    const productAgnostic = priorProductAgnosticByColumnKey.get(cellColumnKey(cell));
+    if (!productAgnostic) continue;
+    priorQtyByDiffKey.set(`${phaseAgnostic}||${productAgnostic}`, cell.qty);
+  }
+
+  const changes: ScheduleQtyChange[] = [];
+  let unchangedCount = 0;
+  const seen = new Set<string>();
+
+  for (const cell of current.cells) {
+    const phaseAgnostic = currentPhaseAgnosticById.get(cell.phase_id);
+    if (!phaseAgnostic) continue;
+    const column = currentColumnByKey.get(cellColumnKey(cell));
+    if (!column) continue;
+    const diffKey = `${phaseAgnostic}||${column.agnostic}`;
+    if (seen.has(diffKey)) continue;
+    seen.add(diffKey);
+
+    const phase = currentPhaseByAgnostic.get(phaseAgnostic);
+    if (!phase) continue;
+    const priorQty = priorQtyByDiffKey.get(diffKey) ?? null;
+    if (priorQty !== null && qtyEquals(cell.qty, priorQty)) {
+      unchangedCount += 1;
+      continue;
+    }
+    changes.push({
+      phaseId: phase.id,
+      phaseLabel: phaseRowLabel(phase),
+      area: phase.area_group,
+      productLabel: column.label,
+      from: priorQty,
+      to: cell.qty,
+    });
+  }
+
+  // What the prior version had for a phase+product that STILL exists on this version but no
+  // longer carries a cell at all - a quantity removed rather than changed.
+  for (const cell of prior.cells) {
+    const phaseAgnostic = priorPhaseAgnosticById.get(cell.phase_id);
+    if (!phaseAgnostic) continue;
+    const productAgnostic = priorProductAgnosticByColumnKey.get(cellColumnKey(cell));
+    if (!productAgnostic) continue;
+    const diffKey = `${phaseAgnostic}||${productAgnostic}`;
+    if (seen.has(diffKey)) continue;
+    seen.add(diffKey);
+
+    const phase = currentPhaseByAgnostic.get(phaseAgnostic);
+    const label = currentLabelByAgnostic.get(productAgnostic);
+    if (!phase || !label) continue;
+    if (!isQty(cell.qty) || qtyEquals(cell.qty, '0')) continue;
+    changes.push({
+      phaseId: phase.id,
+      phaseLabel: phaseRowLabel(phase),
+      area: phase.area_group,
+      productLabel: label,
+      from: cell.qty,
+      to: null,
+    });
+  }
+
+  return { changes, unchangedCount };
+}
+
+// ------------------------------------------------------------------ revision proposals (9.7b)
+
+/**
+ * The words for a proposal's own cadence: "fortnight" when the document's gaps between the
+ * highlighted phases all agree, else the honest fallback that names nothing it cannot show.
+ * Each later cell keeps its ORIGINAL gap (the service's own rule), so the old-date gaps and
+ * the new-date gaps always agree - either is a fair thing to compare.
+ */
+export function proposalCadenceLabel(cells: { old_date: string | null }[]): string {
+  const dates = cells.map((cell) => cell.old_date).filter((value): value is string => Boolean(value));
+  if (dates.length < 2) return "keeping the document's own gaps";
+  const gaps = dates.slice(1).map((date, index) => diffDaysIso(dates[index], date));
+  if (gaps.some((gap) => gap === null)) return "keeping the document's own gaps";
+  const [first, ...rest] = gaps;
+  const allEqual = rest.every((gap) => gap === first);
+  return allEqual ? 'keeping the fortnight cadence' : "keeping the document's own gaps";
 }

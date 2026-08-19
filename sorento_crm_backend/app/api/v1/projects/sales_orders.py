@@ -36,6 +36,8 @@ from app.schemas.project_sales_order import (
     AmendmentPreviewRequest,
     AmendmentPreviewResponse,
     AmendmentPublishResponse,
+    AmendmentRowDecisionsRequest,
+    AutocountChangeListResponse,
     BuildSalesOrdersRequest,
     BuildSalesOrdersResponse,
     ProjectSalesOrderDetail,
@@ -752,4 +754,72 @@ async def publish_amendment(
         return body
     except Exception as exc:
         db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.put("/amendments/{amendment_id}/rows", response_model=AmendmentDetail)
+async def update_amendment_row_decisions(
+    amendment_id: str,
+    payload: AmendmentRowDecisionsRequest,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Accept or decline rows one at a time (section 9.3). 409 once published."""
+    try:
+        validate_uuid_path(amendment_id, resource="Amendment")
+        service = ProjectSODeltaService(db)
+        detail = service.get_amendment(amendment_id)
+        project_id = ProjectSODraftService(db).get_order(
+            detail["project_sales_order_id"]
+        ).project_id
+        project = projects.get_project_or_404(db, project_id)
+        projects.assert_can_edit_project(
+            db, project, current_user["id"], permission_slugs(db, current_user["id"])
+        )
+        body = service.update_row_decisions(
+            amendment_id,
+            {key: value.model_dump() for key, value in payload.decisions.items()},
+        )
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/amendments/{amendment_id}/autocount-change-list",
+    response_model=AutocountChangeListResponse,
+)
+async def get_autocount_change_list(
+    amendment_id: str,
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The accepted rows, in the shape a person keys into AutoCount (section 9.4)."""
+    try:
+        validate_uuid_path(amendment_id, resource="Amendment")
+        return ProjectSODeltaService(db).build_autocount_change_list(amendment_id)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/amendments/{amendment_id}/autocount-change-list.xlsx")
+async def export_autocount_change_list(
+    amendment_id: str,
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Same rows as the JSON twin, as the workbook that is keyed into AutoCount."""
+    try:
+        validate_uuid_path(amendment_id, resource="Amendment")
+        filename, body = ProjectSODeltaService(db).autocount_change_list_workbook(
+            amendment_id
+        )
+        return Response(
+            content=body,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

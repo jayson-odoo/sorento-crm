@@ -212,6 +212,34 @@ def test_an_undated_line_gaining_a_date_is_a_move():
 
 
 # --------------------------------------------------------------------------- #
+# an unreadable incoming date (19 Aug 2026 incident) must never read as a move
+# --------------------------------------------------------------------------- #
+
+def test_an_unreadable_incoming_date_is_not_a_move():
+    """The line already had a real date; the incoming row's date cell failed to parse
+    (`date_unreadable`), not merely blank. Reading that as a move would write `None` over
+    a date the database already holds - see `outstanding_import_service._write_date`."""
+    existing = [L(when=JUL1, qty=135)]
+    incoming = [Line(doc_number="SO397450", item_code="SRTWC8613-RL", location="BRW-BB",
+                     qty=135, required_date=None, date_unreadable=True)]
+
+    diff = diff_lines(existing, incoming)
+
+    assert kinds(diff) == [UNCHANGED]
+
+
+def test_an_unreadable_incoming_date_with_a_real_qty_change_is_qty_changed_not_a_move():
+    existing = [L(when=JUL1, qty=135)]
+    incoming = [Line(doc_number="SO397450", item_code="SRTWC8613-RL", location="BRW-BB",
+                     qty=100, required_date=None, date_unreadable=True)]
+
+    diff = diff_lines(existing, incoming)
+
+    assert kinds(diff) == [QTY_CHANGED]
+    assert diff.changes[0].qty_delta == -35
+
+
+# --------------------------------------------------------------------------- #
 # summary shape the confirm screen renders
 # --------------------------------------------------------------------------- #
 

@@ -273,3 +273,71 @@ def test_the_detail_payload_carries_what_the_detail_screen_reads(scm_app):
     for field in ("warehouse_code", "line_status", "required_date"):
         assert field in line, f"the detail screen reads {field} and the payload omits it"
     assert line["line_status"] == "open"
+
+
+def test_line_warehouse_code_reflects_the_assigned_warehouse(scm_app):
+    """A line carrying `warehouse_id` must return that warehouse's CODE, not a blank, and
+    OPEN lines must list before CLOSED ones regardless of insertion order or date.
+
+    The detail screen's Location column reads `warehouse_code` straight off this payload, so
+    a serializer that dropped the join or a query that forgot to eager-load it would render
+    "-" against a line that IS assigned a location - indistinguishable from a line that
+    genuinely has none. Covers both the raw serializer and the route it backs, plus the
+    open-first ordering `serialize()` now owns.
+    """
+    import uuid
+    from datetime import date
+
+    from app.models.inventory import Warehouse
+    from app.models.order import SalesOrder as SalesOrderModel
+    from app.models.order import SalesOrderLine
+    from app.models.product import Product
+    from app.services.scm.sales_order_service import SalesOrderService
+
+    app, db = _as(scm_app, "purchasing")
+    product = db.query(Product).filter(Product.product_code == SKU).one()
+    wh = Warehouse(
+        id=str(uuid.uuid4()),
+        warehouse_code=f"ZZTSOWH{uuid.uuid4().hex[:6]}".upper(),
+        warehouse_name="SCM test SO line warehouse",
+        is_active=True,
+    )
+    db.add(wh)
+    db.flush()
+
+    order = SalesOrderModel(
+        id=str(uuid.uuid4()), so_number=f"ZZTSO{uuid.uuid4().hex[:8]}".upper(), status="open",
+    )
+    db.add(order)
+    db.flush()
+    open_line = SalesOrderLine(
+        id=str(uuid.uuid4()), sales_order_id=order.id, product_id=product.id,
+        warehouse_id=wh.id, qty_ordered=10, qty_delivered=0, line_status="open",
+    )
+    # Inserted AFTER the open line and with an earlier required_date, so a naive
+    # insertion-order or date-ascending read would place it first. It must not: closed
+    # lines sort after every open one regardless of date.
+    closed_line = SalesOrderLine(
+        id=str(uuid.uuid4()), sales_order_id=order.id, product_id=product.id,
+        warehouse_id=None, qty_ordered=5, qty_delivered=5, line_status="closed",
+        required_date=date(2020, 1, 1),
+    )
+    db.add_all([open_line, closed_line])
+    db.flush()
+
+    payload = SalesOrderService(db).serialize(order)
+    assert payload["lines"][0]["warehouse_code"] == wh.warehouse_code
+    assert wh.warehouse_code in payload["stock_locations"]
+
+    # Open first, closed after - the ordering `serialize()` now owns so every consumer
+    # (this detail read, the list, create/update responses) agrees on it.
+    line_ids = [ln["id"] for ln in payload["lines"]]
+    assert line_ids == [open_line.id, closed_line.id]
+    assert payload["lines"][0]["line_status"] == "open"
+    assert payload["lines"][1]["line_status"] == "closed"
+
+    got = TestClient(app).get(f"/api/v1/scm/sales-orders/{order.id}")
+    assert got.status_code == 200, got.text
+    got_lines = got.json()["lines"]
+    assert got_lines[0]["warehouse_code"] == wh.warehouse_code
+    assert [ln["id"] for ln in got_lines] == [open_line.id, closed_line.id]

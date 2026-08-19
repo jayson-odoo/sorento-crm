@@ -9,11 +9,12 @@ resolve:
 * **quantities are decimal STRINGS.** A float round trip loses the tail of a quantity a
   customer signed for, and these numbers are compared for exact equality at confirmation.
 * **codes, not ids, everywhere the screen reads.** Warehouse CODE, item CODE, project
-  REFERENCE. The four id fields that do exist (`source_warehouse_id`, `donor_project_id`,
-  `warehouse_id` on a candidate, `project_id` on the proposal) are addressing only: the
-  confirm payload names a warehouse and a donor project by id while the sheet names them
-  by code, and the read had no other way to carry the pair. They are never rendered, the
-  same way `ReconciliationLine.id` is never rendered.
+  REFERENCE. The id fields that do exist (`source_warehouse_id`, `donor_project_id`,
+  `warehouse_id` on a candidate, `project_id` on the proposal, `product_id` on a line) are
+  addressing only: the confirm payload names a warehouse and a donor project by id while the
+  sheet names them by code, and the read had no other way to carry the pair -
+  `SupplyLine.product_id` is what the Proof button asks the classification-evidence endpoint
+  with. They are never rendered, the same way `ReconciliationLine.id` is never rendered.
 """
 from __future__ import annotations
 
@@ -104,15 +105,27 @@ class SupplyLine(BaseModel):
     project_line_id: str
     line_no: int
     item_code: Optional[str] = None
+    #: Addressing only, never rendered (see module docstring) - what the Proof button asks
+    #: `GET .../fulfilment-planning/classification` with.
+    product_id: Optional[str] = None
     description: Optional[str] = None
     uom: Optional[str] = None
     open_qty: str
     required_date: Optional[date] = None
     fulfilment_location: Optional[str] = None
     is_dealer_hot_selling: bool = False
+    is_project_hot_selling: bool = False
+    #: Classified (a non-null letter exists on that class, at an active location) but not
+    #: hot - "Cold at retail" / "Cold at project" in the UI's own words. `False` while the
+    #: class is hot too - the hot flag already covers it.
+    dealer_classified: bool = False
+    project_classified: bool = False
     classification_unavailable: bool = False
     is_discontinued: bool = False
     pool_location: Optional[str] = None
+    #: The old reorder-level cap for a hot-selling line. Always null now (19 August 2026):
+    #: dealer hot-selling offers the pool nothing and project hot-selling caps it by the
+    #: pool's own availability instead. Kept for wire compatibility, never a number again.
     pool_cap: Optional[str] = None
     pool_reorder_level: Optional[str] = None
     components: List[SupplyComponent] = []
@@ -227,3 +240,44 @@ class ConfirmResult(BaseModel):
     #: `lines_undecided > 0` is a normal, deliberate outcome, not a warning.
     lines_decided: int = 0
     lines_undecided: int = 0
+
+
+class ClassificationEvidenceLocation(BaseModel):
+    """One location's contribution to a demand class's ranking - the "proof" line."""
+
+    warehouse_code: str
+    qty_delivered: str
+    rank: int
+    of: int
+    #: This row's OWN share of the class's total quantity - qty / sum(qty) over the whole
+    #: window. "Its share" in the popover; kept separate from `cumulative_share_pct` so a
+    #: thin ranking's high cumulative figure is never read as this row's own weight (captain,
+    #: 19 Aug 2026: "Share: top 93.6%" read as good on a row that held almost nothing).
+    share_pct: Optional[float] = None
+    #: The running share INCLUDING this row - "Ranked above it" in the popover is this minus
+    #: `share_pct`.
+    cumulative_share_pct: Optional[float] = None
+    #: A/B/C, or absent when the class ranking never reached this row (should not happen -
+    #: every ranked row carries a letter).
+    letter: Optional[str] = None
+    hot: bool = False
+
+
+class ClassificationEvidenceClass(BaseModel):
+    demand_class: Literal["retail", "project"]
+    #: The word the captain asked for instead of the demand-class code: "Dealer" (retail
+    #: customers) or "Project".
+    label: str
+    verdict: Literal["hot", "cold", "unclassified"]
+    locations: List[ClassificationEvidenceLocation] = []
+
+
+class ClassificationEvidence(BaseModel):
+    """`GET .../fulfilment-planning/classification` - the proof behind a hot/cold chip."""
+
+    product_id: str
+    item_code: Optional[str] = None
+    computed_at: Optional[datetime] = None
+    window_days: int = 365
+    hot_cut_pct: float
+    classes: List[ClassificationEvidenceClass] = []

@@ -771,6 +771,13 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'projects.projects.view',
       },
       {
+        // Where the re-uploaded book's reaction to a planned line is reviewed and
+        // applied - born on the sales-order upload confirmation, listed here after.
+        title: 'Planning changes',
+        path: '/project-sales/planning-changes',
+        permission: 'projects.projects.view',
+      },
+      {
         title: 'Forecast & Reports',
         path: '/project-sales/reports',
         permission: 'projects.projects.view',
@@ -1767,6 +1774,13 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         // one tab per delivery month.
         title: 'Order Inquiries',
         path: '/project-sales/order-inquiries',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Where the re-uploaded book's reaction to a planned line is reviewed and
+        // applied - born on the sales-order upload confirmation, listed here after.
+        title: 'Planning changes',
+        path: '/project-sales/planning-changes',
         permission: 'projects.projects.view',
       },
       {

@@ -10,8 +10,13 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { toast } from 'sonner';
 import type { Project } from '../../_shared/types/project.types';
 import type { DeliverySchedule } from '../../_shared/types/deliverySchedule.types';
+
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -210,6 +215,32 @@ describe('DeliveryScheduleUploadDialog', () => {
 
     await waitFor(() => expect(uploadDeliverySchedule).toHaveBeenCalled());
     expect(uploadDeliverySchedule.mock.calls[0][1].issuer_party_id).toBe('party-slg');
+  });
+
+  it('surfaces the duplicate-upload 409 and leaves the dialog open to try a different file', async () => {
+    uploadDeliverySchedule.mockRejectedValue(
+      new Error(
+        'This file is already version 1 of this schedule (uploaded 19/08/2026 07:26). ' +
+          'Open that version to read it again, or upload a changed file.',
+      ),
+    );
+    const { onDone } = renderDialog();
+    await waitFor(() =>
+      expect(screen.getByLabelText(/Purchase order/i)).toHaveTextContent('HQ/26/01/121'),
+    );
+
+    fireEvent.change(screen.getByLabelText(/^File/i), { target: { files: [pdf()] } });
+    fireEvent.click(screen.getByRole('button', { name: /^Upload$/ }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        'This file is already version 1 of this schedule (uploaded 19/08/2026 07:26). ' +
+          'Open that version to read it again, or upload a changed file.',
+      ),
+    );
+    expect(push).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /^Upload$/ })).toBeInTheDocument();
   });
 
   it('says so when the project has no PO to reconcile against', async () => {

@@ -69,7 +69,7 @@ export function shiftedDayWindow(anchor: string, direction: 1 | -1): string {
  * raw, so a new one from the policy never regresses the screen to identifiers.
  */
 const FACTOR_LABELS: Record<string, string> = {
-  need_by_date: 'Required date',
+  need_by_date: 'Delivery date',
   document_age: 'Order date',
   customer_credit: 'Payment terms',
   demand_class: 'Demand type',
@@ -87,13 +87,13 @@ export function factorLabel(key: string): string {
  * Why one line stands in front of another, named.
  *
  * The policy's factors, plus the three the TIE-BREAK produces when the policy separated
- * nothing, in the queue's own order: an earlier required date, an earlier line of the same
+ * nothing, in the queue's own order: an earlier delivery date, an earlier line of the same
  * order, or a lower sales-order number. Those three are not factors and must not read as if
- * they were - the date tie is named apart from the "Required date" factor, because a factor
+ * they were - the date tie is named apart from the "Delivery date" factor, because a factor
  * label there would claim a score difference the two lines do not have.
  */
 export function aheadFactorLabel(key: string): string {
-  if (key === 'earlier_date') return 'Earlier required date (tie)';
+  if (key === 'earlier_date') return 'Earlier delivery date (tie)';
   if (key === 'line_order') return 'same order';
   if (key === 'tie_break') return 'tie-break';
   return factorLabel(key);

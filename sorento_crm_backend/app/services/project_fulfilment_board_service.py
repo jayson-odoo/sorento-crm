@@ -178,15 +178,15 @@ _COVERED_BEFORE = "Fully covered before this rung."
 #: The planner's words, matching the frontend's `factorLabel` map subject for subject: the
 #: policy's own keys (`need_by_date`) are exactly what the rank chips were told to stop showing.
 _AHEAD_PHRASES = {
-    "need_by_date": "an earlier required date",
+    "need_by_date": "an earlier delivery date",
     "document_age": "an older order date",
     "customer_credit": "shorter payment terms",
     "demand_class": "a higher-ranked demand type",
     "po_document_sequence": "an earlier purchase order sequence",
     #: Not policy factors at all: these three are the tie-break, in `_pile_book`'s own order
-    #: (required date, then line number within an order, then sales-order number), and naming
+    #: (delivery date, then line number within an order, then sales-order number), and naming
     #: a factor here would claim a score difference the two lines do not have.
-    "earlier_date": "the same rank and an earlier required date",
+    "earlier_date": "the same rank and an earlier delivery date",
     "line_order": "an earlier line number in the same order",
     "tie_break": "the same rank and a lower sales order number",
 }
@@ -388,7 +388,7 @@ class FulfilmentBoardService:
         for row in rows:
             row.bucket_key = bucket_key_for(row.required_date, as_of, granularity)
             # Per LINE, against its own date, which is the number the "N of M lines are past
-            # their required date" summary counts. A line dated yesterday is past even though
+            # their delivery date" summary counts. A line dated yesterday is past even though
             # the week it sits in has not ended, so the bucket flag alone would undercount it.
             row.is_past = row.required_date is not None and row.required_date < as_of
 
@@ -485,7 +485,7 @@ class FulfilmentBoardService:
             # is applied - never over the cells on screen.
             #
             # The screen cannot compute these for itself. Summed off the visible cells, "143 of
-            # 153 lines are already past their required date" is right at week and month and
+            # 153 lines are already past their delivery date" is right at week and month and
             # DISAPPEARS at day, because the 30-day window opens on work still to come and so
             # holds no past cell at all. The planner switching to the closest view would
             # silently lose the most important number on the board.
@@ -1363,8 +1363,12 @@ class FulfilmentBoardService:
             # Said, not implied: the ladder consulted these and never printed them, and the
             # captain read the trail as if it had consulted nothing.
             row.item_flags = {
-                "dealer_hot_selling": bool(fact.is_hot_selling),
-                "dealer_hot_selling_where": list(fact.hot_selling_where or []),
+                "dealer_hot_selling": bool(fact.is_dealer_hot_selling),
+                "dealer_hot_selling_where": list(fact.dealer_hot_selling_where or []),
+                "project_hot_selling": bool(fact.is_project_hot_selling),
+                "project_hot_selling_where": list(fact.project_hot_selling_where or []),
+                "dealer_classified": bool(fact.dealer_classified),
+                "project_classified": bool(fact.project_classified),
                 "discontinued": bool(fact.is_discontinued),
                 "retail_classification_available": not fact.classification_unavailable,
             }
@@ -1383,8 +1387,12 @@ class FulfilmentBoardService:
             # Amend on a covered line reads the same flags a proposal states: a discontinued
             # product needs a Buy reason whether or not the line was decided before.
             row.item_flags = {
-                "dealer_hot_selling": bool(fact.is_hot_selling),
-                "dealer_hot_selling_where": list(fact.hot_selling_where or []),
+                "dealer_hot_selling": bool(fact.is_dealer_hot_selling),
+                "dealer_hot_selling_where": list(fact.dealer_hot_selling_where or []),
+                "project_hot_selling": bool(fact.is_project_hot_selling),
+                "project_hot_selling_where": list(fact.project_hot_selling_where or []),
+                "dealer_classified": bool(fact.dealer_classified),
+                "project_classified": bool(fact.project_classified),
                 "discontinued": bool(fact.is_discontinued),
                 "retail_classification_available": not fact.classification_unavailable,
             }
@@ -1398,13 +1406,14 @@ class FulfilmentBoardService:
     ) -> List[Dict[str, Any]]:
         """Where else this line could be met from, read once per distinct question.
 
-        Cached per (product, location, hot-selling, the quantity being covered): the donors
-        depend on the fact's reserve reach rather than on the line, and recomputing them per
-        row walks the whole free-stock cache once per row - but the RANKING is against this
-        line's residual (13.11), so two rows covering different quantities are two different
-        questions.
+        Cached per (product, location, the quantity being covered): the donors depend on the
+        fact's reserve reach rather than on the line, and recomputing them per row walks the
+        whole free-stock cache once per row - but the RANKING is against this line's residual
+        (13.11), so two rows covering different quantities are two different questions.
+        Hot-selling no longer changes the donor set (own location is always Reserve-eligible,
+        never a Borrow source), so it is not part of the key.
         """
-        cache_key = (fact.product_id, row.warehouse_id, fact.is_hot_selling, need)
+        cache_key = (fact.product_id, row.warehouse_id, need)
         if cache_key not in borrow_cache:
             borrow_cache[cache_key] = self.supply.borrow_candidates_for(fact, need=need)
         return borrow_cache[cache_key]
@@ -1520,9 +1529,9 @@ class FulfilmentBoardService:
 
         EVERY rung is emitted, including the ones that gave nothing, because "the pool was
         checked and had none" is the answer to that question and an omitted step reads as a step
-        that was never taken. A rung skipped by a RULE - a hot-selling product may not touch its
-        own dealer stock, a location has no shared pool - says so under its own outcome rather
-        than looking like a source that happened to be empty.
+        that was never taken. A rung skipped by a RULE - the pool is this line's own location
+        and was already checked above, a location has no shared pool at all - says so under its
+        own outcome rather than looking like a source that happened to be empty.
 
         A READ, never a second allocator: every quantity here is either one the engine already
         produced (`components`) or one the facts already state, so the trail cannot disagree
@@ -1532,7 +1541,6 @@ class FulfilmentBoardService:
         remaining = _dec(row.qty)
         own_code = fact.own_code
         pool_code = fact.pool_code
-        level = max(_dec(fact.pool_reorder_level), _ZERO)
 
         def took(kind: str, location: Optional[str]) -> Decimal:
             return sum(
@@ -1607,10 +1615,13 @@ class FulfilmentBoardService:
                 }
             )
 
-        # 1. The line's own location, and what the demand ranked ahead of it there had left.
+        # 1. The line's own location. ALWAYS Reserve-eligible, hot-selling or not (captain,
+        #    19 August 2026: "reserve can always reserve regardless of dealer hot selling or
+        #    not"). What the demand ranked ahead of it there had left is the only thing that
+        #    still limits it.
         own_opening = self._free.get((row.product_id, row.warehouse_id), _ZERO)
-        own_offered = _ZERO if fact.is_hot_selling else fact.available_to_this_line
-        own_taken = took(RESERVE, own_code) if not fact.is_hot_selling else _ZERO
+        own_offered = fact.available_to_this_line
+        own_taken = took(RESERVE, own_code)
         add(
             "reserve_own",
             location=own_code,
@@ -1623,15 +1634,14 @@ class FulfilmentBoardService:
             ahead_by_factor=fact.ahead_by_factor,
             offered=own_offered,
             taken=own_taken,
-            eligible=not fact.is_hot_selling,
-            note="hot-selling: pool only" if fact.is_hot_selling else None,
             why=lambda outcome: self._own_why(
                 fact, outcome, own_code, own_opening, own_offered, own_taken
             ),
         )
 
-        # 2. The shared pool, which a hot-selling product may draw on only above the pool's own
-        #    reorder level (PLAN 3.3).
+        # 2. The shared pool - what hot-selling gates now, by demand class (PLAN 3.3a). Own
+        #    location's Reserve above already covers this location fully when the pool IS this
+        #    location, so that case is never walked twice.
         if not pool_code:
             add(
                 "reserve_pool",
@@ -1639,7 +1649,7 @@ class FulfilmentBoardService:
                 note="no shared pool",
                 why=lambda _outcome: "No shared pool for this product.",
             )
-        elif pool_code == own_code and not fact.is_hot_selling:
+        elif pool_code == own_code:
             add(
                 "reserve_pool",
                 location=pool_code,
@@ -1648,38 +1658,17 @@ class FulfilmentBoardService:
                 note="pool is this location",
                 why=lambda _outcome: "The pool is this location, already checked above.",
             )
-        elif pool_code == own_code:
-            # A dealer hot-selling item at a location that is its OWN pool (a bare site code
-            # points at itself, migration 311). Rung 1 rightly refused the dealer stock, and
-            # the engine then reserved at this same location above its reorder level - so
-            # THIS is the rung that took it, and it says so, or the trail never reaches 0
-            # while the source strip shows a Reserve.
-            balance = max(_dec(pool_open), _ZERO)
-            self_offered = max(balance - level, _ZERO)
-            self_taken = took(RESERVE, pool_code)
-            self_pile = self._pool_pile(row, fact, balance, level, self_offered)
-            add(
-                "reserve_pool",
-                location=pool_code,
-                warehouse_id=row.warehouse_ids.get(pool_code),
-                opening=balance,
-                offered=self_offered,
-                taken=self_taken,
-                note=(
-                    f"own location is the pool; capped by reorder level {qty_text(level)}"
-                    if level > _ZERO
-                    else "own location is the pool"
-                ),
-                why=lambda outcome: self._self_pool_why(
-                    fact, outcome, level, self_offered, self_taken
-                ),
-                pool=self_pile,
-            )
         else:
             balance = max(_dec(pool_open), _ZERO)
-            pool_offered = max(balance - level, _ZERO) if fact.is_hot_selling else balance
+            pile = self._pool_pile(row, fact, balance)
+            available = _dec(pile.get("available"))
+            if fact.is_dealer_hot_selling:
+                pool_offered = _ZERO
+            elif fact.is_project_hot_selling:
+                pool_offered = max(min(balance, available), _ZERO)
+            else:
+                pool_offered = balance
             pool_taken = took(RESERVE, pool_code)
-            pile = self._pool_pile(row, fact, balance, level, pool_offered)
             add(
                 "reserve_pool",
                 location=pool_code,
@@ -1687,13 +1676,16 @@ class FulfilmentBoardService:
                 opening=balance,
                 offered=pool_offered,
                 taken=pool_taken,
+                eligible=not fact.is_dealer_hot_selling,
                 note=(
-                    f"capped by reorder level {qty_text(level)}"
-                    if fact.is_hot_selling and level > _ZERO
+                    "dealer hot-selling: pool not offered"
+                    if fact.is_dealer_hot_selling
+                    else "project hot-selling: capped by pool availability"
+                    if fact.is_project_hot_selling
                     else None
                 ),
                 why=lambda outcome: self._pool_why(
-                    fact, outcome, pile, balance, level, pool_offered, pool_taken
+                    fact, outcome, pile, balance, pool_offered, pool_taken
                 ),
                 pool=pile,
             )
@@ -1740,8 +1732,6 @@ class FulfilmentBoardService:
         row: _Row,
         fact: Any,
         balance: Decimal,
-        level: Decimal,
-        offered: Decimal,
     ) -> Dict[str, Any]:
         """The pool's pile as rung 2 saw it, in AutoCount's vocabulary and this line's.
 
@@ -1749,9 +1739,12 @@ class FulfilmentBoardService:
         0?" Because `Had` is what the pool's OWN book ranked ahead of this line left, and
         Available is the pile's whole position - two true numbers, so both are printed with
         the subtraction between them. `available` is SIGNED and never clamped, as on a
-        donor row. `cap` is stated only when a cap applies (a dealer hot-selling item may
-        draw only above the pool's reorder level); null otherwise, never a number that would
-        read as a limit nobody set.
+        donor row.
+
+        `cap` is always null (19 August 2026): the old reorder-level cap on a hot-selling
+        line's pool draw is gone - dealer hot-selling offers the pool nothing at all, and
+        project hot-selling caps it against `available` instead. Kept for wire
+        compatibility, never a number that would read as a limit nobody set.
         """
         pool_id = str(fact.pool.id)
         key = (fact.product_id, pool_id)
@@ -1771,23 +1764,39 @@ class FulfilmentBoardService:
             "claimed_ahead_qty": qty_text(fact.pool_claimed_qty),
             "claimed_ahead_lines": int(fact.pool_claimed_lines or 0),
             "left": qty_text(balance),
-            "reorder_level": qty_text(level),
-            "cap": qty_text(offered) if fact.is_hot_selling else None,
+            "reorder_level": qty_text(max(_dec(fact.pool_reorder_level), _ZERO)),
+            "cap": None,
         }
 
     @staticmethod
-    def _flag_sentence(fact: Any) -> str:
-        """What the dealer hot-selling check concluded, in words, for the own rung."""
-        if fact.is_hot_selling:
-            where = ", ".join(fact.hot_selling_where or [])
-            evidence = f" (ABC A at {where})" if where else ""
-            return (
-                f"Dealer hot-selling{evidence}: own-location stock is kept for retail, "
-                "pool only."
-            )
-        if fact.classification_unavailable:
-            return "No retail classification for this item, so own-location stock is eligible."
-        return "Not dealer hot-selling, so own-location stock is eligible."
+    def _hot_prefix(fact: Any, *, dealer: bool) -> str:
+        """"Dealer hot-selling at BRW" or the project equivalent - the evidence sentence the
+        pool rung leads with (PLAN 3.3a).
+
+        The captain: "don't give me jargon like abc classification, just tell me hot selling
+        or cold selling, at project or retail" (19 August 2026) - so this names the class and
+        the location, never the letter or the word behind it. The number itself (which rank,
+        out of how many, what share) is a press away on the trail's Proof button
+        (`GET .../fulfilment-planning/classification`).
+        """
+        if dealer:
+            where = ", ".join(fact.dealer_hot_selling_where or [])
+            return f"Dealer hot-selling at {where}" if where else "Dealer hot-selling"
+        where = ", ".join(fact.project_hot_selling_where or [])
+        return f"Project hot-selling at {where}" if where else "Project hot-selling"
+
+    @staticmethod
+    def _cold_prefix(fact: Any) -> str:
+        """"Cold at retail and project" or the one class that carries evidence - the plain
+        word for "classified, but never ranked A", read off `dealer_classified` /
+        `project_classified` rather than off `classification_unavailable`, which only
+        answers "any evidence at all", not which class it was."""
+        classes = []
+        if fact.dealer_classified:
+            classes.append("retail")
+        if fact.project_classified:
+            classes.append("project")
+        return f"Cold at {' and '.join(classes)}"
 
     # ------------------------------------------------------------------ why, per rung
 
@@ -1806,31 +1815,28 @@ class FulfilmentBoardService:
         and his question was "what does this mean? why do the orders stand ahead of me? why?".
         So the sentence names the queue, what it wants, and WHY those lines rank first - in the
         planner's words, never in the policy's factor keys.
+
+        No hot-selling clause here (19 August 2026): own-location Reserve is always eligible,
+        so this rung reads exactly as it does for an ordinary item - hot-selling is the POOL
+        rung's business now (`_pool_why`).
         """
         where = f" at {location}" if location else ""
-        # The flag the rung was decided on comes FIRST, in words. The captain: "where is the
-        # consideration of dealer hot selling ... to see if we can take from BRW?" It was
-        # consulted on every line and never said, so a trail that reserved own stock read as
-        # one that had not checked.
-        flag = self._flag_sentence(fact)
-        if outcome == "not_eligible":
-            return flag
         if outcome == "none_needed":
-            return f"{flag} {_COVERED_BEFORE}"
+            return _COVERED_BEFORE
         if outcome == "took":
             if fact.lines_ahead:
                 return (
-                    f"{flag} {qty_text(offered)} left after the {fact.lines_ahead} lines "
+                    f"{qty_text(offered)} left after the {fact.lines_ahead} lines "
                     f"ahead; this line takes {qty_text(taken)}."
                 )
-            return f"{flag} First in the queue here; this line takes {qty_text(taken)}."
+            return f"First in the queue here; this line takes {qty_text(taken)}."
         if fact.lines_ahead:
             return (
-                f"{flag} {qty_text(opening)} on hand, but {fact.lines_ahead} lines with "
+                f"{qty_text(opening)} on hand, but {fact.lines_ahead} lines with "
                 f"{_ahead_phrase(fact.ahead_by_factor)} rank ahead and want "
                 f"{qty_text(fact.so_qty_ahead)} - none is left for this line."
             )
-        return f"{flag} No free stock{where}."
+        return f"No free stock{where}."
 
     def _pool_why(
         self,
@@ -1838,7 +1844,6 @@ class FulfilmentBoardService:
         outcome: str,
         pile: Dict[str, Any],
         balance: Decimal,
-        level: Decimal,
         offered: Decimal,
         taken: Decimal,
     ) -> str:
@@ -1848,63 +1853,76 @@ class FulfilmentBoardService:
         0?" - and on `Pool BRW | 4 | took 4`: "is it taken because for location BRW there is
         no outstanding quantity?" The answer is the pool's on hand, its availability, and what
         its own orders ranked ahead of this line claim, said together.
+
+        Amended 19 August 2026 (PLAN 3.3a): hot-selling is what gates the pool now, by demand
+        class - dealer wins when both flags are set, and each has its own sentence. A
+        classified-but-not-hot item ("Cold at retail" / "Cold at project" / both) is offered
+        the pool as it would be for any ordinary item, said in those words; an unclassified
+        item (no delivered demand of either class, ever) is offered the same way and says so
+        too - "Not classified" is a different answer from "cold" and must not print as it.
+
+        Amended again the same day: the captain, reading the trail, asked for the plain word
+        instead of the classification jargon - "don't give me jargon like abc classification,
+        just tell me hot selling or cold selling, at project or retail". Every sentence below
+        now names hot/cold/not-classified and never the letter or the word "ABC"; the ranked
+        number behind each verdict is the trail's Proof button
+        (`GET .../fulfilment-planning/classification`), not this sentence.
         """
         code = fact.pool_code
         if outcome == "none_needed":
             return _COVERED_BEFORE
+        if fact.is_dealer_hot_selling:
+            return (
+                f"{self._hot_prefix(fact, dealer=True)}: {code} is kept for retail, so the "
+                "pool is not offered."
+            )
+        available = _dec(pile.get("available"))
+        if fact.is_project_hot_selling:
+            prefix = self._hot_prefix(fact, dealer=False)
+            if available > _ZERO:
+                base = (
+                    f"{prefix}: {code} may be drawn while its availability stays positive - "
+                    f"{qty_text(available)} available, {qty_text(offered)} offered."
+                )
+            else:
+                base = (
+                    f"{prefix}: {code}'s availability is {qty_text(available)}, so nothing "
+                    "is offered."
+                )
+            return f"{base} This line takes {qty_text(taken)}." if outcome == "took" else base
+        if fact.classification_unavailable:
+            base = (
+                "Not classified (no retail or project deliveries of this item in the last "
+                f"12 months), so {code} is offered as for a cold item."
+            )
+            return f"{base} This line takes {qty_text(taken)}." if outcome == "took" else base
+        prefix = self._cold_prefix(fact)
         on_hand = _dec(pile.get("on_hand"))
         # The "Available" the captain was holding the rung against is the Inventory screen's
         # (on hand less reserved), so that is the figure the sentence quotes; AutoCount's
         # signed position (on hand - SO + SPO) is beside it in the sub-table.
-        available = on_hand - _dec(pile.get("reserved"))
+        on_hand_available = on_hand - _dec(pile.get("reserved"))
         claimed = _dec(pile.get("claimed_ahead_qty"))
-        capped = fact.is_hot_selling and level > _ZERO
         left = (
-            f"{code}: {qty_text(balance)} left after its own queue ahead of this line"
+            f"{prefix}, so {code} is offered: {qty_text(balance)} left after its own queue "
+            "ahead of this line"
         )
-        if capped:
-            left += (
-                f", capped above {code}'s reorder level {qty_text(level)}: "
-                f"{qty_text(offered)} left"
-            )
         if outcome == "took":
             return f"{left}; this line takes {qty_text(taken)}."
-        if capped and balance > _ZERO:
-            return f"{left}."
         if claimed > _ZERO:
             return (
-                f"{code} holds {qty_text(on_hand)} on hand (Available {qty_text(available)} "
-                f"in stock), but {code}'s own orders ranked ahead of this line claim "
-                f"{qty_text(claimed)}, so {qty_text(balance)} is left."
+                f"{prefix}, so {code} is offered. {code} holds {qty_text(on_hand)} on hand "
+                f"(Available {qty_text(on_hand_available)} in stock), but {code}'s own orders "
+                f"ranked ahead of this line claim {qty_text(claimed)}, so {qty_text(balance)} "
+                "is left."
             )
         if on_hand > _ZERO:
             return (
-                f"{code} holds {qty_text(on_hand)} on hand (Available {qty_text(available)} "
-                f"in stock), but none is left for this line."
+                f"{prefix}, so {code} is offered. {code} holds {qty_text(on_hand)} on hand "
+                f"(Available {qty_text(on_hand_available)} in stock), but none is left for "
+                "this line."
             )
-        return f"No stock at {code}."
-
-    @staticmethod
-    def _self_pool_why(
-        fact: Any, outcome: str, level: Decimal, offered: Decimal, taken: Decimal
-    ) -> str:
-        """The pool rung of a hot-selling line whose own location IS the pool.
-
-        One sentence carrying both facts, because the reader has just been told on rung 1
-        that this location's dealer stock was off limits: it is off limits AS THE LINE'S OWN
-        LOCATION, and reachable AS THE POOL above the reorder level, and only the second
-        reading took anything.
-        """
-        if outcome == "none_needed":
-            return _COVERED_BEFORE
-        code = fact.pool_code
-        left = (
-            f"{code} is this line's own location and the shared pool: {qty_text(offered)} "
-            f"left above the reorder level {qty_text(level)}"
-        )
-        if outcome == "took":
-            return f"{left}; this line takes {qty_text(taken)}."
-        return f"{left}."
+        return f"{prefix}, so {code} is offered, but there is no stock at {code}."
 
     @staticmethod
     def _buy_why(fact: Any, outcome: str) -> str:
@@ -1995,7 +2013,7 @@ class FulfilmentBoardService:
         where = f" at {row.location}" if row.location else ""
         if taker is None:
             reason = (
-                f"Nothing free{where} by the required date, so the quantity is bought."
+                f"Nothing free{where} by the delivery date, so the quantity is bought."
             )
         elif taker.sales_order_id == row.sales_order_id:
             reason = (
@@ -2078,8 +2096,8 @@ class FulfilmentBoardService:
             #: These two say which case it is, so the screen can word it honestly.
             "distinct_order_count": len({row.sales_order_id for row in members}),
             "rank_separates": len({round(float(row.rank_score), 6) for row in members}) > 1,
-            # Lines whose OWN required date is already past. Counted here so the screen can say
-            # "160 of 160 lines are past their required date" without walking every
+            # Lines whose OWN delivery date is already past. Counted here so the screen can say
+            # "160 of 160 lines are past their delivery date" without walking every
             # contribution, which is the information the aggregate Overdue column used to carry
             # and the only part of it worth keeping.
             "past_count": sum(1 for row in members if row.is_past),

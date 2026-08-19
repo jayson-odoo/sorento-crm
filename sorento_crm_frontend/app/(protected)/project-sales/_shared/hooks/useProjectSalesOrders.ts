@@ -15,8 +15,10 @@ import {
   bulkDeleteProjectSalesOrders,
   createAmendment,
   deleteProjectSalesOrder,
+  downloadAmendmentAutocountChangeListXlsx,
   downloadSalesOrderImportFile,
   getAmendment,
+  getAmendmentAutocountChangeList,
   getProjectSalesOrder,
   getSalesOrderWorksheet,
   listPoVersions,
@@ -28,11 +30,14 @@ import {
   regroupSalesOrder,
   salesOrderNeighboursPath,
   saveSalesOrderDocument,
+  updateAmendmentRowDecisions,
   updateSalesOrderLine,
 } from '../services/projectSalesOrderService';
 import type {
   AmendmentCreateBody,
+  AmendmentDetail,
   AmendmentPreviewBody,
+  AmendmentRowDecisionInput,
   ProjectSalesOrderListParams,
   SalesOrderDocumentSaveBody,
   SalesOrderLineUpdateBody,
@@ -125,6 +130,19 @@ export function useAmendment(amendmentId: string | undefined) {
   return useQuery({
     queryKey: [AMENDMENT_KEY, amendmentId],
     queryFn: () => getAmendment(amendmentId as string),
+    enabled: Boolean(amendmentId),
+  });
+}
+
+/**
+ * The AutoCount change list for an amendment (section 9.4): the accepted rows, in the
+ * export's own order. Refetches whenever a decision changes the accepted set, because the
+ * amendment query it is keyed alongside is what a decision invalidates.
+ */
+export function useAmendmentAutocountChangeList(amendmentId: string | undefined) {
+  return useQuery({
+    queryKey: [AMENDMENT_KEY, amendmentId, 'autocount-change-list'],
+    queryFn: () => getAmendmentAutocountChangeList(amendmentId as string),
     enabled: Boolean(amendmentId),
   });
 }
@@ -304,6 +322,20 @@ export function useSalesOrderImportFile(psoId: string) {
 }
 
 /**
+ * The AutoCount change list workbook (section 9.4), same shape as the import file above: a
+ * mutation because it must only run on request, and it caches nothing.
+ */
+export function useAmendmentAutocountChangeListExport(amendmentId: string) {
+  return useMutation({
+    mutationFn: async (reference: string) => {
+      const { blob, filename } = await downloadAmendmentAutocountChangeListXlsx(amendmentId);
+      saveBlobAs(blob, filename ?? `autocount-change-list-${reference}.xlsx`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+/**
  * Preview is a mutation rather than a query: it is a POST, it writes nothing, and it must
  * only run when the reviewer asks for a comparison.
  */
@@ -336,5 +368,55 @@ export function useAmendmentMutations(projectId: string, psoId: string) {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { preview, create, publish };
+  /**
+   * Accept or decline one row (section 9.3). Applied to the cached amendment OPTIMISTICALLY
+   * - a segmented control that waited out a round trip before flipping reads as broken - and
+   * rolled back if the server refuses (a decline with no reason, or a published amendment).
+   * The change list is invalidated alongside: which rows are accepted is exactly what it
+   * lists.
+   */
+  const updateRowDecisions = useMutation({
+    mutationFn: ({
+      amendmentId,
+      decisions,
+    }: {
+      amendmentId: string;
+      decisions: Record<string, AmendmentRowDecisionInput>;
+    }) => updateAmendmentRowDecisions(amendmentId, decisions),
+    onMutate: async ({ amendmentId, decisions }) => {
+      const key = [AMENDMENT_KEY, amendmentId];
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<AmendmentDetail>(key);
+      if (previous) {
+        queryClient.setQueryData<AmendmentDetail>(key, {
+          ...previous,
+          rows: previous.rows.map((row) => {
+            const rowKey = row.row_key ?? `${row.so_line_id}:${row.field}`;
+            const patch = decisions[rowKey];
+            if (!patch) return row;
+            return {
+              ...row,
+              decision: patch.decision,
+              declined_reason: patch.decision === 'declined' ? (patch.reason ?? null) : null,
+            };
+          }),
+        });
+      }
+      return { previous };
+    },
+    onError: (error: Error, variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData([AMENDMENT_KEY, variables.amendmentId], context.previous);
+      }
+      toast.error(error.message);
+    },
+    onSuccess: (amendment) => {
+      queryClient.setQueryData([AMENDMENT_KEY, amendment.id], amendment);
+      queryClient.invalidateQueries({
+        queryKey: [AMENDMENT_KEY, amendment.id, 'autocount-change-list'],
+      });
+    },
+  });
+
+  return { preview, create, publish, updateRowDecisions };
 }

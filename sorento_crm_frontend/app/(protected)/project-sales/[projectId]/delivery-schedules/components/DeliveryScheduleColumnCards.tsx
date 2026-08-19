@@ -171,8 +171,21 @@ export function DeliveryScheduleColumnCards({
                       {group.area ?? 'Ungrouped'}
                     </p>
                     <ul className="space-y-1">
-                      {group.phases.map((phase) => (
-                        <li key={phase.id} className="flex items-center gap-2">
+                      {group.phases.map((phase) => {
+                        const meta = controller.metaFor(phase.id, column.key);
+                        return (
+                        <li
+                          key={phase.id}
+                          className="flex items-center gap-2 rounded-md px-1 py-0.5"
+                          style={
+                            meta?.highlight
+                              ? {
+                                  backgroundColor: `color-mix(in oklab, ${meta.highlight} 35%, transparent)`,
+                                }
+                              : undefined
+                          }
+                          title={meta?.highlight ? 'Highlighted in the document' : undefined}
+                        >
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-xs font-medium">
                               {phaseRowLabel(phase)}
@@ -182,6 +195,19 @@ export function DeliveryScheduleColumnCards({
                                 ? formatDateInMalaysia(phase.delivery_date)
                                 : 'No date'}
                             </span>
+                            {meta?.deliveryDateOverride && (
+                              <span className="block truncate text-[11px]">
+                                <span className="text-muted-foreground line-through">
+                                  {phase.delivery_date
+                                    ? formatDateInMalaysia(phase.delivery_date)
+                                    : '—'}
+                                </span>
+                                {' '}
+                                <span className="font-medium">
+                                  {formatDateInMalaysia(meta.deliveryDateOverride)}
+                                </span>
+                              </span>
+                            )}
                           </span>
                           <input
                             type="text"
@@ -201,7 +227,8 @@ export function DeliveryScheduleColumnCards({
                             className="h-8 w-20 rounded-md border border-border bg-background px-2 text-end text-xs tabular-nums outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:text-muted-foreground"
                           />
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
                   </div>
                 ))}

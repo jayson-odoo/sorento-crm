@@ -21,12 +21,20 @@ divergent copies of "what a PO version looks like" is how a suite starts testing
 """
 from __future__ import annotations
 
+import io
 from datetime import date, timedelta
 from decimal import Decimal
 
+import openpyxl
 import pytest
 
-from app.models.project_so import OrderChangeNotice, SOAmendment
+from app.models.project_so import (
+    DeliveryScheduleCell,
+    OrderChangeNotice,
+    ProjectDeliveryPhase,
+    ProjectSalesOrderLine,
+    SOAmendment,
+)
 from app.services.error_handler import AppException
 from app.services.project_so_delta_service import (
     RESERVE_WINDOW_DAYS,
@@ -595,3 +603,258 @@ def test_the_amendment_detail_reads_as_a_chain(seeded):
     assert detail["status"] == "proposed"
     assert detail["verb_summary"]["DELAY"] == 24
     assert len(detail["delta"]["phase_summary"]) == 12
+    # Every row is accepted by default -- that is today's all-or-nothing behaviour.
+    assert detail["accepted_count"] == 24
+    assert detail["declined_count"] == 0
+    assert all(row["decision"] == "accepted" for row in detail["delta"]["rows"])
+    assert all(row["declined_reason"] is None for row in detail["delta"]["rows"])
+    assert all(row["row_key"] == str(i) for i, row in enumerate(detail["delta"]["rows"]))
+
+
+# --------------------------------------------------- section 9.3: accept / decline
+
+
+def _created_amendment(db, orders, r2, owner):
+    service = ProjectSODeltaService(db)
+    created = service.create(
+        orders["TOWER"].id,
+        schedule_version_id=r2.id,
+        reason="Programme pushed six months.",
+        actor_user_id=owner,
+    )
+    amendment = db.query(SOAmendment).filter(SOAmendment.id == created["amendment_id"]).one()
+    ocn = db.query(OrderChangeNotice).filter(OrderChangeNotice.id == created["ocn_id"]).one()
+    ocn.approver_id = owner
+    db.flush()
+    return service, amendment, ocn
+
+
+def test_declining_a_row_needs_a_reason(seeded):
+    db, company_id, owner = seeded
+    project, po, po_version, _r1, phases, orders, products = _tuju(db, company_id, owner)
+    r2 = _revision(db, project, po, po_version, phases, products)
+    service, amendment, _ocn = _created_amendment(db, orders, r2, owner)
+
+    with pytest.raises(AppException) as excinfo:
+        service.update_row_decisions(amendment.id, {"0": {"decision": "declined"}})
+    assert excinfo.value.status_code == 422
+    assert excinfo.value.detail["code"] == "amendment_row_reason_required"
+
+
+def test_an_unknown_row_key_is_refused(seeded):
+    db, company_id, owner = seeded
+    project, po, po_version, _r1, phases, orders, products = _tuju(db, company_id, owner)
+    r2 = _revision(db, project, po, po_version, phases, products)
+    service, amendment, _ocn = _created_amendment(db, orders, r2, owner)
+
+    with pytest.raises(AppException) as excinfo:
+        service.update_row_decisions(
+            amendment.id, {"99": {"decision": "accepted"}}
+        )
+    assert excinfo.value.status_code == 422
+    assert excinfo.value.detail["code"] == "amendment_row_unknown"
+
+
+def test_declining_one_row_leaves_that_line_untouched_and_the_rest_amended(seeded):
+    """AC-R05/R06-shaped: publish applies only the accepted rows; the declined row
+    stays in `delta_json` with its decision, and its own line is untouched."""
+    db, company_id, owner = seeded
+    project, po, po_version, _r1, phases, orders, products = _tuju(db, company_id, owner)
+    r2 = _revision(db, project, po, po_version, phases, products)
+    service, amendment, ocn = _created_amendment(db, orders, r2, owner)
+
+    declined_row = amendment.delta_json["rows"][0]
+    declined_line_id = declined_row["so_line_id"]
+    before_date = declined_row["from_value"]
+    assert declined_row["field"] == "delivery_date"
+
+    detail = service.update_row_decisions(
+        amendment.id,
+        {"0": {"decision": "declined", "reason": "Client wants this phase to stay."}},
+    )
+    assert detail["declined_count"] == 1
+    assert detail["accepted_count"] == 23
+    assert detail["delta"]["rows"][0]["decision"] == "declined"
+    assert detail["delta"]["rows"][0]["declined_reason"] == "Client wants this phase to stay."
+    assert detail["delta"]["rows"][1]["decision"] == "accepted"
+    assert detail["delta"]["rows"][1]["declined_reason"] is None
+
+    body = service.publish_amendment(amendment.id, actor_user_id=owner)
+    assert body["applied_rows"] == 23
+
+    declined_line = (
+        db.query(ProjectSalesOrderLine)
+        .filter(ProjectSalesOrderLine.id == declined_line_id)
+        .one()
+    )
+    assert declined_line.delivery_date.isoformat() == before_date
+
+    db.refresh(amendment)
+    assert amendment.verb_summary["DELAY"] == 23
+    db.refresh(ocn)
+    assert len(ocn.change_table_json["rows"]) == 23
+    assert ocn.change_table_json["verb_summary"]["DELAY"] == 23
+    # The declined row's own decision survives publish, unrewritten.
+    published_detail = service.get_amendment(amendment.id)
+    assert published_detail["delta"]["rows"][0]["decision"] == "declined"
+    assert published_detail["declined_count"] == 1
+    assert published_detail["accepted_count"] == 23
+
+
+def test_row_decisions_are_refused_once_the_amendment_is_no_longer_proposed(seeded):
+    db, company_id, owner = seeded
+    project, po, po_version, _r1, phases, orders, products = _tuju(db, company_id, owner)
+    r2 = _revision(db, project, po, po_version, phases, products)
+    service, amendment, _ocn = _created_amendment(db, orders, r2, owner)
+    service.publish_amendment(amendment.id, actor_user_id=owner)
+
+    with pytest.raises(AppException) as excinfo:
+        service.update_row_decisions(
+            amendment.id, {"1": {"decision": "declined", "reason": "too late now"}}
+        )
+    assert excinfo.value.status_code == 409
+    assert excinfo.value.detail["code"] == "amendment_not_proposed"
+
+
+# ------------------------------------------------- section 9.4: AutoCount change list
+
+
+def test_the_autocount_change_list_lists_only_accepted_rows(seeded):
+    db, company_id, owner = seeded
+    project, po, po_version, _r1, phases, orders, products = _tuju(db, company_id, owner)
+    r2 = _revision(db, project, po, po_version, phases, products)
+    service, amendment, _ocn = _created_amendment(db, orders, r2, owner)
+    service.update_row_decisions(
+        amendment.id,
+        {"0": {"decision": "declined", "reason": "Client wants this phase to stay."}},
+    )
+
+    payload = service.build_autocount_change_list(amendment.id)
+    assert payload["declined_count"] == 1
+    assert len(payload["rows"]) == 23
+    row = payload["rows"][0]
+    assert row["verb"] == "DELAY"
+    assert row["so_number"] == orders["TOWER"].provisional_ref
+    assert row["old_date"] and row["new_date"]
+    assert row["old_qty"] is None and row["new_qty"] is None
+
+
+def test_the_autocount_change_list_workbook_headings_rows_and_declined_footer(seeded):
+    db, company_id, owner = seeded
+    project, po, po_version, _r1, phases, orders, products = _tuju(db, company_id, owner)
+    r2 = _revision(db, project, po, po_version, phases, products)
+    service, amendment, _ocn = _created_amendment(db, orders, r2, owner)
+    service.update_row_decisions(
+        amendment.id,
+        {"0": {"decision": "declined", "reason": "Client wants this phase to stay."}},
+    )
+
+    filename, body = service.autocount_change_list_workbook(amendment.id)
+    assert filename.endswith(".xlsx")
+
+    workbook = openpyxl.load_workbook(io.BytesIO(body))
+    sheet = workbook.active
+    assert sheet["A1"].value.startswith("AUTOCOUNT CHANGE LIST")
+    headings = [cell.value for cell in sheet[2]]
+    assert headings == [
+        "S/O NO", "LINE", "ITEM CODE", "PRODUCT", "VERB",
+        "OLD QTY", "NEW QTY", "OLD DATE", "NEW DATE", "NEW S/O NO",
+    ]
+    data_rows = [row for row in sheet.iter_rows(min_row=3, max_row=25, values_only=True)]
+    assert len(data_rows) == 23
+    assert all(row[4] == "DELAY" for row in data_rows)
+
+    old_date_cell = sheet.cell(row=3, column=8)
+    new_date_cell = sheet.cell(row=3, column=9)
+    assert isinstance(old_date_cell.value, date)
+    assert isinstance(new_date_cell.value, date)
+    assert old_date_cell.number_format == "DD/MM/YYYY"
+    assert new_date_cell.number_format == "DD/MM/YYYY"
+
+    footer_values = [
+        row[0] for row in sheet.iter_rows(min_row=26, values_only=True) if row and row[0]
+    ]
+    assert "Declined: 1 rows" in footer_values
+
+
+# ------------------------------------------- section 9.5: AUTHORED_LIVE_STATUSES
+
+
+def test_amending_an_adopted_order_is_refused_the_same_way_a_draft_is(seeded):
+    """9.5: `create()` reads the shared `AUTHORED_LIVE_STATUSES` constant rather than
+    an inline literal pair -- an adopted order (never drafted, never published here)
+    is refused the same way a draft is."""
+    db, company_id, owner = seeded
+    project, po, po_version, _r1, phases, orders, products = _tuju(db, company_id, owner)
+    r2 = _revision(db, project, po, po_version, phases, products)
+    tower = orders["TOWER"]
+    tower.status = "adopted"
+    db.flush()
+
+    with pytest.raises(AppException) as excinfo:
+        ProjectSODeltaService(db).create(
+            tower.id,
+            schedule_version_id=r2.id,
+            reason="Programme pushed six months.",
+            actor_user_id=owner,
+        )
+    assert excinfo.value.status_code == 409
+
+
+# ----------------------------------------- section 9.7(d): accepted proposal override
+
+
+def test_an_accepted_proposals_override_reads_per_line_against_the_untouched_product(
+    seeded,
+):
+    """An accepted revision proposal (section 9.7b/c) writes
+    ``delivery_date_override`` on ONE product's cells; the delta reads it ahead of
+    the phase's own date for THAT product's lines and proposes ADVANCE/DELAY per
+    line, while the other product under the very same phases still reads the
+    phase's plain, unmatched date -- nothing about it changed."""
+    db, company_id, owner = seeded
+    project, po, po_version, _r1, phases, orders, products = _tuju(db, company_id, owner)
+    p1, p2, _p3 = products
+    r2 = _revision(db, project, po, po_version, phases, products)
+
+    # Simulate the accept step: p1's twelve TOWER cells on r2 get a cadence that
+    # starts well before every one of R1's own dates, so every p1 line reads
+    # ADVANCE regardless of the plain R2 delay sitting on the phase itself.
+    phase_by_id = {
+        row.id: row
+        for row in db.query(ProjectDeliveryPhase)
+        .filter(ProjectDeliveryPhase.project_id == project.id)
+        .all()
+    }
+    p1_cells = (
+        db.query(DeliveryScheduleCell)
+        .filter(
+            DeliveryScheduleCell.version_id == r2.id,
+            DeliveryScheduleCell.product_id == p1.id,
+        )
+        .all()
+    )
+    tower_p1_cells = [
+        cell for cell in p1_cells if phase_by_id[cell.phase_id].area_group == "TOWER"
+    ]
+    assert len(tower_p1_cells) == 12
+    ordered = sorted(tower_p1_cells, key=lambda cell: phase_by_id[cell.phase_id].sequence)
+    override_start = date(2025, 1, 1)
+    for index, cell in enumerate(ordered):
+        cell.delivery_date_override = override_start + timedelta(days=14 * index)
+    db.flush()
+
+    tower = ProjectSODeltaService(db).preview(orders["TOWER"].id, schedule_version_id=r2.id)
+    p1_rows = [row for row in tower["rows"] if row["product_code"] == "SRTWC8613-RL"]
+    p2_rows = [row for row in tower["rows"] if row["product_code"] == "SRTWC8608-RL"]
+    assert len(p1_rows) == 12
+    assert all(row["verb"] == "ADVANCE" for row in p1_rows)
+    assert {row["to_value"] for row in p1_rows} == {
+        (override_start + timedelta(days=14 * i)).isoformat() for i in range(12)
+    }
+    # p2 carries no override: same phases, still the plain R2 delay, untouched.
+    assert len(p2_rows) == 12
+    assert all(row["verb"] == "DELAY" for row in p2_rows)
+    assert {row["to_value"] for row in p2_rows} == {
+        r2_date.isoformat() for _s, _l, _r1d, r2_date, _q1, _q2 in TOWER
+    }

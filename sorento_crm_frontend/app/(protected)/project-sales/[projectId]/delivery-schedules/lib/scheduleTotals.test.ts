@@ -8,12 +8,17 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  buildCellMetaMap,
   buildColumnStates,
   compareQty,
+  dateColumns,
+  diffScheduleQuantities,
   groupPhasesByArea,
   isQty,
   normaliseQty,
   phaseRowLabel,
+  proposalCadenceLabel,
+  schedulePhaseDateMoves,
   signedQty,
   subtractQty,
   sumQty,
@@ -304,5 +309,361 @@ describe('phase grouping', () => {
     expect(phaseRowLabel({ label: null, sequence: 3 })).toBe('Phase 3');
     expect(phaseRowLabel({ label: '  ', sequence: 3 })).toBe('Phase 3');
     expect(phaseRowLabel({ label: 'Level 2 & 7', sequence: 1 })).toBe('Level 2 & 7');
+  });
+});
+
+describe('schedulePhaseDateMoves (section 9.1)', () => {
+  it('reports a phase whose promoted date differs from this version, with the day delta', () => {
+    const moves = schedulePhaseDateMoves([
+      {
+        id: 'ph1',
+        area_group: 'TOWER',
+        sequence: 1,
+        label: 'Level 2 & 7',
+        delivery_date: '2027-01-07',
+        promoted_delivery_date: '2026-07-01',
+      },
+    ]);
+
+    expect(moves).toHaveLength(1);
+    expect(moves[0]).toMatchObject({
+      phaseId: 'ph1',
+      label: 'Level 2 & 7',
+      area: 'TOWER',
+      from: '2026-07-01',
+      to: '2027-01-07',
+      deltaDays: 190,
+    });
+  });
+
+  it('leaves out a phase with no promoted date, or one that did not move', () => {
+    const moves = schedulePhaseDateMoves([
+      {
+        id: 'ph1',
+        area_group: 'TOWER',
+        sequence: 1,
+        label: null,
+        delivery_date: '2027-01-07',
+        promoted_delivery_date: null,
+      },
+      {
+        id: 'ph2',
+        area_group: 'TOWER',
+        sequence: 2,
+        label: null,
+        delivery_date: '2027-01-07',
+        promoted_delivery_date: '2027-01-07',
+      },
+    ]);
+
+    expect(moves).toHaveLength(0);
+  });
+
+  it('reads a pulled-in date as a negative delta', () => {
+    const moves = schedulePhaseDateMoves([
+      {
+        id: 'ph1',
+        area_group: null,
+        sequence: 1,
+        label: null,
+        delivery_date: '2026-01-01',
+        promoted_delivery_date: '2026-01-11',
+      },
+    ]);
+
+    expect(moves[0].deltaDays).toBe(-10);
+  });
+});
+
+describe('diffScheduleQuantities (section 9.1)', () => {
+  const priorPhases = [{ id: 'prior-ph1', area_group: 'TOWER', sequence: 1, label: 'Level 2 & 7' }];
+  const currentPhases = [
+    { id: 'cur-ph1', area_group: 'TOWER', sequence: 1, label: 'Level 2 & 7' },
+  ];
+
+  it('matches phases by (area_group, sequence) and products by id across two versions', () => {
+    const { changes, unchangedCount } = diffScheduleQuantities(
+      {
+        phases: currentPhases,
+        products: [product({ product_id: 'p1' })],
+        cells: [{ phase_id: 'cur-ph1', product_id: 'p1', qty: '66' }],
+      },
+      {
+        phases: priorPhases,
+        products: [product({ product_id: 'p1' })],
+        cells: [{ phase_id: 'prior-ph1', product_id: 'p1', qty: '72' }],
+      },
+    );
+
+    expect(unchangedCount).toBe(0);
+    expect(changes).toEqual([
+      {
+        phaseId: 'cur-ph1',
+        phaseLabel: 'Level 2 & 7',
+        area: 'TOWER',
+        productLabel: 'SRTWC8613-RL',
+        from: '72',
+        to: '66',
+      },
+    ]);
+  });
+
+  it('counts a matched cell with the same quantity as unchanged', () => {
+    const { changes, unchangedCount } = diffScheduleQuantities(
+      {
+        phases: currentPhases,
+        products: [product({ product_id: 'p1' })],
+        cells: [{ phase_id: 'cur-ph1', product_id: 'p1', qty: '72' }],
+      },
+      {
+        phases: priorPhases,
+        products: [product({ product_id: 'p1' })],
+        cells: [{ phase_id: 'prior-ph1', product_id: 'p1', qty: '72.00' }],
+      },
+    );
+
+    expect(changes).toHaveLength(0);
+    expect(unchangedCount).toBe(1);
+  });
+
+  it('falls back to the product code when neither version has resolved the product', () => {
+    const { changes } = diffScheduleQuantities(
+      {
+        phases: currentPhases,
+        products: [product({ product_id: null, product_code: 'SRTWB7055' })],
+        cells: [{ phase_id: 'cur-ph1', product_id: null, product_index: 0, qty: '20' }],
+      },
+      {
+        phases: priorPhases,
+        products: [product({ product_id: null, product_code: 'SRTWB7055' })],
+        cells: [{ phase_id: 'prior-ph1', product_id: null, product_index: 0, qty: '10' }],
+      },
+    );
+
+    expect(changes).toEqual([
+      expect.objectContaining({ productLabel: 'SRTWB7055', from: '10', to: '20' }),
+    ]);
+  });
+
+  it('reports a quantity the prior version had that this one no longer carries', () => {
+    const { changes } = diffScheduleQuantities(
+      {
+        phases: currentPhases,
+        products: [product({ product_id: 'p1' })],
+        cells: [],
+      },
+      {
+        phases: priorPhases,
+        products: [product({ product_id: 'p1' })],
+        cells: [{ phase_id: 'prior-ph1', product_id: 'p1', qty: '72' }],
+      },
+    );
+
+    expect(changes).toEqual([
+      expect.objectContaining({ productLabel: 'SRTWC8613-RL', from: '72', to: null }),
+    ]);
+  });
+
+  it('reports a quantity on a phase+product the prior version never had, as added', () => {
+    const { changes } = diffScheduleQuantities(
+      {
+        phases: currentPhases,
+        products: [product({ product_id: 'p1' })],
+        cells: [{ phase_id: 'cur-ph1', product_id: 'p1', qty: '72' }],
+      },
+      {
+        phases: [{ id: 'prior-ph9', area_group: 'COMMON AREA', sequence: 9, label: null }],
+        products: [product({ product_id: 'p9' })],
+        cells: [{ phase_id: 'prior-ph9', product_id: 'p9', qty: '5' }],
+      },
+    );
+
+    expect(changes).toEqual([
+      expect.objectContaining({ productLabel: 'SRTWC8613-RL', from: null, to: '72' }),
+    ]);
+  });
+
+  it('leaves out a prior quantity whose phase no longer exists on this version at all', () => {
+    const { changes } = diffScheduleQuantities(
+      {
+        phases: currentPhases,
+        products: [product({ product_id: 'p1' })],
+        cells: [{ phase_id: 'cur-ph1', product_id: 'p1', qty: '72' }],
+      },
+      {
+        phases: [
+          ...priorPhases,
+          { id: 'prior-ph9', area_group: 'COMMON AREA', sequence: 9, label: null },
+        ],
+        products: [product({ product_id: 'p1' }), product({ product_id: 'p9' })],
+        cells: [
+          { phase_id: 'prior-ph1', product_id: 'p1', qty: '72' },
+          { phase_id: 'prior-ph9', product_id: 'p9', qty: '5' },
+        ],
+      },
+    );
+
+    // The matched pair is unchanged (silent); the phase COMMON AREA::9 does not exist on
+    // this version at all, so nothing honest can be said about its removed quantity.
+    expect(changes).toHaveLength(0);
+  });
+});
+
+describe('buildCellMetaMap (section 9.7a/c)', () => {
+  it('keeps a highlight and an override, keyed the same way the qty map is', () => {
+    const meta = buildCellMetaMap([
+      { phase_id: 'ph1', product_id: 'p1', qty: '927', highlight: '#ffe08a' },
+      {
+        phase_id: 'ph2',
+        product_id: 'p1',
+        qty: '66',
+        delivery_date_override: '2026-07-23',
+      },
+    ]);
+
+    expect(meta.get('ph1|p1')).toEqual({ highlight: '#ffe08a', deliveryDateOverride: null });
+    expect(meta.get('ph2|p1')).toEqual({
+      highlight: null,
+      deliveryDateOverride: '2026-07-23',
+    });
+  });
+
+  it('carries nothing for an ordinary cell, which is most of them', () => {
+    const meta = buildCellMetaMap([{ phase_id: 'ph1', product_id: 'p1', qty: '927' }]);
+    expect(meta.size).toBe(0);
+  });
+});
+
+describe('proposalCadenceLabel (section 9.7b)', () => {
+  it('names the fortnight cadence when every gap between the highlighted phases agrees', () => {
+    expect(
+      proposalCadenceLabel([
+        { old_date: '2026-07-01' },
+        { old_date: '2026-07-15' },
+        { old_date: '2026-07-29' },
+      ]),
+    ).toBe('keeping the fortnight cadence');
+  });
+
+  it("falls back to the document's own gaps once they disagree", () => {
+    expect(
+      proposalCadenceLabel([
+        { old_date: '2026-07-01' },
+        { old_date: '2026-07-15' },
+        { old_date: '2026-08-01' },
+      ]),
+    ).toBe("keeping the document's own gaps");
+  });
+
+  it("says the document's own gaps with fewer than two phases to compare", () => {
+    expect(proposalCadenceLabel([{ old_date: '2026-07-01' }])).toBe(
+      "keeping the document's own gaps",
+    );
+  });
+});
+
+describe('dateColumns (section 9.8, by-date view)', () => {
+  it('leaves an unmoved cell under its own phase date, and never invents an empty column', () => {
+    const columns = dateColumns({
+      phases: [
+        { id: 'ph1', label: 'Level 2 & 7', sequence: 1, delivery_date: '2026-07-01' },
+        { id: 'ph2', label: 'Level 8 & 10', sequence: 2, delivery_date: '2026-07-15' },
+        // No cell ever lands here - not a phase every product takes.
+        { id: 'ph3', label: 'Level 11', sequence: 3, delivery_date: '2026-08-01' },
+      ],
+      cells: [{ phase_id: 'ph1', product_id: 'p1', qty: '855' }],
+    });
+
+    expect(columns).toEqual([
+      {
+        date: '2026-07-01',
+        phaseLabels: ['Level 2 & 7'],
+        cells: new Map([['p1', { qty: '855', phaseId: 'ph1', wasDate: undefined }]]),
+      },
+    ]);
+  });
+
+  it('groups two phases sharing a date under one header, in sequence order', () => {
+    const columns = dateColumns({
+      phases: [
+        { id: 'ph2', label: 'Level 8 & 10', sequence: 2, delivery_date: '2026-07-01' },
+        { id: 'ph1', label: 'Level 2 & 7', sequence: 1, delivery_date: '2026-07-01' },
+      ],
+      cells: [
+        { phase_id: 'ph1', product_id: 'p1', qty: '135' },
+        { phase_id: 'ph2', product_id: 'p2', qty: '48' },
+      ],
+    });
+
+    expect(columns).toHaveLength(1);
+    expect(columns[0].phaseLabels).toEqual(['Level 2 & 7', 'Level 8 & 10']);
+  });
+
+  /**
+   * The golden shape (section 9.7c, measured on the real R2): SRT382-6's twelve TOWER cells,
+   * each accepted onto its own new date, fortnightly from 23/7/2026. The captain's own
+   * question (19 Aug) is what this pins - the quantity moves to the new date, it does not
+   * stay behind under the old one.
+   */
+  it('moves an accepted override to its own new date column, was -> now, off the SRT382-6 shape', () => {
+    const columns = dateColumns({
+      phases: [
+        { id: 'ph1', label: 'Level 2 & 7', sequence: 1, delivery_date: '2027-01-07' },
+        { id: 'ph2', label: 'Level 8 & 10', sequence: 2, delivery_date: '2027-01-21' },
+      ],
+      cells: [
+        {
+          phase_id: 'ph1',
+          product_id: 'srt382-6',
+          qty: '135',
+          delivery_date_override: '2026-07-23',
+        },
+        {
+          phase_id: 'ph2',
+          product_id: 'srt382-6',
+          qty: '124',
+          delivery_date_override: '2026-08-06',
+        },
+        // A product this note never touched, unmoved, still under its own phase date.
+        { phase_id: 'ph1', product_id: 'p1', qty: '927' },
+      ],
+    });
+
+    expect(columns.map((column) => column.date)).toEqual([
+      '2026-07-23',
+      '2026-08-06',
+      '2027-01-07',
+    ]);
+
+    const moved = columns[0];
+    expect(moved.phaseLabels).toEqual(['Level 2 & 7']);
+    expect(moved.cells.get('srt382-6')).toEqual({
+      qty: '135',
+      phaseId: 'ph1',
+      wasDate: '2027-01-07',
+    });
+
+    // The 07/01/2027 column no longer carries SRT382-6's 135 at all - it moved, not copied.
+    const original = columns[2];
+    expect(original.cells.has('srt382-6')).toBe(false);
+    expect(original.cells.get('p1')).toEqual({ qty: '927', phaseId: 'ph1', wasDate: undefined });
+  });
+
+  it('falls back to product_index when the column has no resolved product', () => {
+    const columns = dateColumns({
+      phases: [{ id: 'ph1', label: null, sequence: 1, delivery_date: '2026-07-01' }],
+      cells: [{ phase_id: 'ph1', product_id: null, product_index: 2, qty: '927' }],
+    });
+
+    expect(columns[0].cells.has('#2')).toBe(true);
+  });
+
+  it('drops a cell whose phase cannot be found at all', () => {
+    const columns = dateColumns({
+      phases: [{ id: 'ph1', label: null, sequence: 1, delivery_date: '2026-07-01' }],
+      cells: [{ phase_id: 'ghost', product_id: 'p1', qty: '10' }],
+    });
+
+    expect(columns).toHaveLength(0);
   });
 });

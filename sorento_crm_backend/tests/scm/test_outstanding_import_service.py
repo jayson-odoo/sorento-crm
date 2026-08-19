@@ -265,3 +265,38 @@ def test_a_part_delivered_line_is_not_silently_undelivered(db, seeded):
     ), {"i": str(line)}).fetchone()
     assert float(delivered) == 20.0, "delivered quantity must never be rewritten"
     assert float(ordered) == 110.0, "ordered = already delivered 20 + still outstanding 90"
+
+
+# --------------------------------------------------------------------------- #
+# an unreadable date must never null a date the database already holds
+# (19 Aug 2026 incident: 14,128 open lines lost their `required_date` this way)
+# --------------------------------------------------------------------------- #
+
+def test_apply_never_nulls_a_date_the_reader_could_not_read(db, seeded):
+    svc.apply(db, week1(seeded), SO)  # the 1 Jul / 3 Aug lines exist, dated, from week 1
+
+    file_data = workbook(
+        [
+            # Same line as week 1's 1 Jul row, quantity bumped, date cell unreadable.
+            [seeded.project_so, seeded.item_rl, 150, "not-a-date", seeded.loc_project],
+            [seeded.project_so, seeded.item_rl, 72, date(2026, 8, 3), seeded.loc_project],
+        ],
+        headers=("S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE", "STOCK LOCATION"),
+    )
+
+    preview = svc.preview(db, file_data, SO)
+    assert preview.counts["qty_changed"] == 1
+    assert preview.counts["date_moved"] == 0
+    assert any("could not read the date" in p.reason for p in preview.row_problems)
+    assert preview.warnings
+    assert "date the reader could not read" in preview.warnings[0]
+
+    out = svc.apply(db, file_data, SO)
+    assert out["ok"]
+    assert out["counts"]["qty_changed"] == 1
+
+    rows = _outstanding(db, seeded.project_so, seeded.item_rl)
+    by_date = {d: float(q) for q, d, _status in rows}
+    # The 1 Jul line's date SURVIVES untouched; its quantity is still allowed to change.
+    assert by_date[date(2026, 7, 1)] == 150.0
+    assert by_date[date(2026, 8, 3)] == 72.0

@@ -419,7 +419,14 @@ def test_every_company_id_table_is_registered():
     # the merged answer at Stage 2, because `so_supply_decisions` exists once and not twice
     # (Stage 1C owns the model, Stage 2's duplicate declaration is gone - see
     # `app/models/project_so.py`). The value below is measured against the merged model set.
-    expected_owned = 113
+    #
+    # PLAN-so-book-diff-replanning.md adds 2: `planning_change_batches` is ONE company's
+    # reaction to its own re-uploaded SO book (born from that company's upload, listed on
+    # its own worklist), and `planning_change_rows` is that batch's own line-by-line record -
+    # owned rather than derived through the batch because every row write and read is BY
+    # ROW, keyed straight off `batch_id`/`row_id`, the same reason `plan_exception` and
+    # `so_amendments` are owned beside their own parents rather than left to a join.
+    expected_owned = 115
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

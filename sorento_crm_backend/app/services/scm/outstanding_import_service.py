@@ -11,6 +11,7 @@ would otherwise silently become a SKU that gets planned and purchased.
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -232,6 +233,12 @@ class PreviewResult:
     # Agent codes in this file that carry no demand class, so the client can see which of his
     # master rows still need one. Same key on both responses, same reason as above.
     unmapped_agents: list[AgentNotice] = field(default_factory=list)
+    # Additive safety notices that do not map to a single row or document - today, only
+    # "N rows carry a date the reader could not read". The operator reads `row_problems`
+    # for WHICH rows; this is the one-line summary that says the write will leave those
+    # rows' dates exactly as they already are, rather than the operator having to infer
+    # that from the per-row reasons.
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -251,6 +258,7 @@ class PreviewResult:
             "samples": self.samples,
             "activated_documents": list(self.activated_documents),
             "unmapped_agents": [asdict(a) for a in self.unmapped_agents],
+            "warnings": self.warnings,
         }
 
 
@@ -867,6 +875,21 @@ def _affected_product_ids(plan: _Plan) -> list[str]:
     )
 
 
+def _unreadable_date_warning(problems: list[RowProblem]) -> list[str]:
+    """AC-safety: a file whose dates the reader could not parse must say so ONCE, up front,
+    in plain language - not leave the operator to count "could not read the date" rows in
+    the per-row list and infer the consequence themselves. Additive: `row_problems` keeps
+    every one of those rows, this just states what happens to them."""
+    n = sum(1 for p in problems if "could not read the date" in p.reason)
+    if not n:
+        return []
+    row = "row" if n == 1 else "rows"
+    return [
+        f"{n} {row} carry a date the reader could not read; those dates will be left as "
+        "they are"
+    ]
+
+
 def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
     """What this upload would change. Writes nothing."""
     plan = _build(db, file_data, doc_type)
@@ -876,7 +899,9 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
             doc_type=doc_type, scope_documents=(), counts={}, total_rows=read.total_rows,
             unmapped_headers=read.unmapped_headers, missing_columns=read.missing_columns,
             row_problems=read.problems,
+            warnings=_unreadable_date_warning(read.problems),
         )
+    row_problems = read.problems + plan.problems
     return PreviewResult(
         doc_type=doc_type,
         scope_documents=diff.scope_documents,
@@ -884,11 +909,12 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
         total_rows=read.total_rows,
         unmapped_headers=read.unmapped_headers,
         missing_columns=read.missing_columns,
-        row_problems=read.problems + plan.problems,
+        row_problems=row_problems,
         resolution_issues=plan.issues,
         samples=_samples(diff),
         activated_documents=plan.activate,
         unmapped_agents=plan.agent_notices,
+        warnings=_unreadable_date_warning(row_problems),
     )
 
 
@@ -988,6 +1014,20 @@ def _refresh_money(line, extra: dict, bind: _Binding) -> None:
             setattr(line, col, value)
 
 
+def _write_date(change_after: Optional[Line], fallback: Optional[date]) -> Optional[date]:
+    """The date to WRITE for a changed line: the incoming date, unless the reader could not
+    read it - in which case the stored date must not be overwritten with `None`.
+
+    `change_after.required_date` is already `None` for both a genuinely blank cell and an
+    unreadable one; `date_unreadable` is what tells them apart. `fallback` is whatever the
+    line already holds (the diff's own `before.required_date` for an update, or `None` for
+    a brand-new line, which has nothing to fall back to).
+    """
+    if change_after is not None and change_after.date_unreadable:
+        return fallback
+    return change_after.required_date if change_after is not None else fallback
+
+
 def _identity(doc_number: str, item_code: str, location: str) -> dict:
     """What names a row in the job detail. No ids - the operator reads document numbers."""
     return {"doc_no": doc_number, "item_code": item_code, "location": location or ""}
@@ -1036,7 +1076,8 @@ def _record_rows_never_written(read: ReadResult, resolved: _Resolved,
 
 def apply(db: Session, file_data: bytes, doc_type: str = SO,
           actor: Optional[str] = None, outcome: Optional[ImportOutcome] = None,
-          on_total_rows: Optional[Callable[[int], None]] = None) -> dict:
+          on_total_rows: Optional[Callable[[int], None]] = None,
+          file_name: Optional[str] = None) -> dict:
     """Write the upload. Returns the same counts the preview showed.
 
     Closing is `line_status = 'closed'`, not a delete. The line existed and was planned
@@ -1189,6 +1230,12 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         order_ids[number] = header.id
 
     applied = {"added": 0, "updated": 0, "closed": 0, "unchanged": 0}
+    # The CORE line id each change actually wrote, keyed by the change object's identity
+    # (stable for the life of this call: `diff.changes` is never rebuilt below). Best-effort
+    # readers downstream - `planning_change_service.build_batch` - need this because an
+    # ADDED change's own `row_ref` is the source ROW NUMBER, not a line id: there is no id
+    # to have until the insert below runs.
+    applied_line_ids: dict[int, str] = {}
     for c in diff.changes:
         source_row = (int(c.after.row_ref)
                       if c.after is not None and (c.after.row_ref or "").isdigit() else None)
@@ -1208,6 +1255,7 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                 outcome.updated(code=oc.LINE_CLOSED, identity=identity,
                                 value=c.doc_number, entity_type="order_line",
                                 entity_id=c.before.row_ref)
+                applied_line_ids[id(c)] = str(c.before.row_ref)
             continue
 
         if c.kind == ADDED:
@@ -1226,14 +1274,21 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                 already = float(getattr(revived, bind.fulfilled) or 0)
                 revived.line_status = "open"
                 revived.qty_ordered = already + c.after.qty
-                setattr(revived, bind.date, c.after.required_date)
+                setattr(revived, bind.date, _write_date(c.after, getattr(revived, bind.date)))
                 _refresh_money(revived, extra, bind)
                 applied["added"] += 1
+                applied_line_ids[id(c)] = str(revived.id)
                 outcome.success(row=source_row, code=oc.CREATED, identity=identity,
                                 value=c.doc_number, entity_type="order_line",
                                 entity_id=revived.id)
                 continue
+            # An explicit id, not the column's own default: `planning_change_service`
+            # (called after this function flushes) needs the CORE line id an ADDED change
+            # wrote, and that default is a client-side callable SQLAlchemy would not
+            # resolve onto this instance until the flush at the end of this loop.
+            new_line_id = str(uuid.uuid4())
             fields = {
+                "id": new_line_id,
                 bind.header_fk: order_ids[c.doc_number],
                 "product_id": product_id,
                 "warehouse_id": warehouse_id,
@@ -1246,6 +1301,7 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                 fields[col] = extra.get(key)
             db.add(bind.line(**fields))
             applied["added"] += 1
+            applied_line_ids[id(c)] = new_line_id
             outcome.success(row=source_row, code=oc.CREATED, identity=identity,
                             value=c.doc_number)
             continue
@@ -1284,9 +1340,15 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         # booked receipt and leave the goods counted as still at sea.
         already = float(getattr(line, bind.fulfilled) or 0)
         line.qty_ordered = already + c.after.qty
-        setattr(line, bind.date, c.after.required_date)
+        # `c.kind` reaches here for QTY_CHANGED too, not only a real date move: an
+        # unreadable incoming date leaves `_classify` reading the date as unchanged, but
+        # the row still lands in this branch on the quantity alone, and a straight
+        # `c.after.required_date` would still write the `None` `_classify` was built to
+        # avoid. `_write_date` keeps the line's own stored date in that case.
+        setattr(line, bind.date, _write_date(c.after, c.before.required_date))
         _refresh_money(line, read.extras.get(str(c.after.row_ref), {}), bind)
         applied["updated"] += 1
+        applied_line_ids[id(c)] = str(line.id)
         outcome.updated(row=source_row, identity=identity, value=c.doc_number,
                         entity_type="order_line", entity_id=line.id)
 
@@ -1325,9 +1387,38 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         except Exception:  # pragma: no cover - defensive, see above
             logger.exception("plan exception batch failed for a confirmed SO upload")
 
+    # PLAN-so-book-diff-replanning.md section 2: the SO book's own reaction. Best-effort
+    # for the same reason the exception batch above is - the upload has already succeeded,
+    # and a defect in the reaction must cost the operator a batch the next upload produces
+    # again, never the upload itself. Only the SO channel plans against a project; a PO
+    # book has nothing to react to here.
+    planning_change_batch = None
+    if doc_type == SO and diff.has_material_change:
+        try:
+            from app.services import planning_change_service
+
+            batch = planning_change_service.build_batch(
+                db,
+                diff,
+                applied_line_ids=applied_line_ids,
+                order_ids=order_ids,
+                actor=actor,
+                import_job_id=getattr(outcome, "import_job_id", None),
+                file_name=file_name,
+            )
+            if batch is not None:
+                planning_change_batch = {
+                    "id": str(batch.id),
+                    "order_count": batch.order_count,
+                    "line_count": batch.line_count,
+                }
+        except Exception:  # pragma: no cover - defensive, see above
+            logger.exception("planning change batch failed for a confirmed SO upload")
+
     return {
         "ok": True,
         "exception_batch_id": exception_batch_id,
+        "planning_change_batch": planning_change_batch,
         # Everything this upload accounted for: every non-blank row of the file, plus the
         # lines it closed by absence. One outcome per unit, so processed reaches total exactly.
         "total_rows": total_rows,

@@ -244,7 +244,7 @@ export function BoardCellBreakdownDialog({
       {
         id: 'required_date',
         accessorFn: (row) => row.required_date ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Required" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
         cell: ({ row }) => (
           <span className="block truncate text-sm tabular-nums">
             {row.original.required_date
@@ -254,7 +254,7 @@ export function BoardCellBreakdownDialog({
         ),
         size: 120,
         minSize: 100,
-        meta: { headerTitle: 'Required' },
+        meta: { headerTitle: 'Delivery date' },
       },
       {
         id: 'fulfilment_location',
@@ -679,7 +679,12 @@ function shareNote(contribution: BoardContribution): string | null {
  * frozen composition and an amended one are the same four kinds in the same order - and two
  * renderings of one composition is how they come to disagree.
  */
-function confirmedSummary(decision: NonNullable<BoardContribution['decision']>): string {
+/**
+ * Exported so the planning-changes batch page (`PLAN-so-book-diff-replanning.md`) can print a
+ * replan/qty_up row's proposal in the same words the board's own breakdown does, rather than a
+ * second sentence-builder that drifts from this one.
+ */
+export function confirmedSummary(decision: NonNullable<BoardContribution['decision']>): string {
   return `Confirmed rev ${decision.revision_no} · ${amendSummary({
     verdict: 'amended',
     timely_spo_qty: decision.timely_spo_qty,
@@ -696,7 +701,8 @@ function confirmedSummary(decision: NonNullable<BoardContribution['decision']>):
   })}`;
 }
 
-function sourceLabel(kind: BoardContribution['sources'][number]['kind']): string {
+/** Exported for the same reason `confirmedSummary` is - see its comment. */
+export function sourceLabel(kind: BoardContribution['sources'][number]['kind']): string {
   if (kind === 'reserve') return 'Reserve';
   if (kind === 'timely_spo') return 'Incoming';
   if (kind === 'buy') return 'Buy';
@@ -711,7 +717,8 @@ function sourceLabel(kind: BoardContribution['sources'][number]['kind']): string
  * A Reserve is held AT a location; a Borrow comes FROM somebody else's. "Borrow 10 at MWH-IB"
  * reads as stock this line has there, which is the opposite of what a borrow is.
  */
-function sourceAt(source: BoardContribution['sources'][number]): string {
+/** Exported for the same reason `confirmedSummary` is - see its comment. */
+export function sourceAt(source: BoardContribution['sources'][number]): string {
   if (!source.location) return '';
   return source.kind === 'borrow' ? ` from ${source.location}` : ` at ${source.location}`;
 }

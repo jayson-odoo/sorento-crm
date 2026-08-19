@@ -13,7 +13,7 @@ the diff happen above it, which keeps the parsing testable against a file alone.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from io import BytesIO
 from typing import Any, Optional
 
@@ -96,6 +96,42 @@ def _to_float(value: Any) -> Optional[float]:
         return None
 
 
+# Excel's day-zero, used by the two formats that count days from it (the modern 1900
+# system and openpyxl's raw serial). `1899, 12, 30` rather than `12, 31`: Excel's calendar
+# carries a fictitious 29 Feb 1900, and offsetting from the 30th absorbs that bug the same
+# way Excel's own arithmetic does, so a serial converted here lands on the same date Excel
+# would show for it.
+_EXCEL_EPOCH = date(1899, 12, 30)
+
+# A cell's raw serial is a date only inside this span - 1954-10-03 to 2119-02-08 - wide
+# enough for any delivery date this system will ever hold, and comfortably above any
+# quantity a row would carry in the same column family (the incident that prompted this
+# range check was a QTY-looking `150` that must NOT read as a date).
+_EXCEL_SERIAL_MIN = 20000
+_EXCEL_SERIAL_MAX = 80000
+
+
+def _excel_serial_date(value: Any) -> Optional[date]:
+    """A date cell that arrived as its raw Excel SERIAL NUMBER instead of a `datetime`.
+
+    openpyxl hands back whatever the cell's stored value is; when the workbook's own
+    number format on that cell was lost on the way to us (the captain's real AutoCount
+    export did this on 14,497 rows: `required_date` arrived as the string/float `43886`,
+    never a `datetime`), the format-string loop below can never match it - it is a number,
+    not a date string. Fractional days (a time-of-day component) are ignored: nothing this
+    reader writes carries a time.
+    """
+    if isinstance(value, bool):  # bool is an int subclass; never a date
+        return None
+    try:
+        serial = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not (_EXCEL_SERIAL_MIN <= serial <= _EXCEL_SERIAL_MAX):
+        return None
+    return _EXCEL_EPOCH + timedelta(days=int(serial))
+
+
 def _to_date(value: Any) -> Optional[date]:
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
@@ -103,6 +139,9 @@ def _to_date(value: Any) -> Optional[date]:
         return value.date()
     if isinstance(value, date):
         return value
+    serial = _excel_serial_date(value)
+    if serial is not None:
+        return serial
     raw = str(value).strip()
     # Day-first before month-first: these are Malaysian exports, where 03/08/2026 is 3 Aug.
     # Guessing the other way silently moves a delivery five months.
@@ -306,7 +345,12 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
 
         raw_date = rec.get(date_field)
         when = _to_date(raw_date)
-        if when is None and _clean(raw_date):
+        # A cell that stated something and still failed to parse is a different fact from
+        # a cell that stated nothing: the first is a date we could not read, and the write
+        # path must never take it as "no date" and blank one the database already holds
+        # (`outstanding_import_service`/`outstanding_diff` read this flag for exactly that).
+        unreadable = when is None and bool(_clean(raw_date))
+        if unreadable:
             result.problems.append(RowProblem(
                 row_number, f"could not read the date in {date_field}",
                 value=_clean(raw_date)))
@@ -321,6 +365,7 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
             required_date=when,
             row_ref=str(row_number),
             label=_clean(rec.get(label_field)),
+            date_unreadable=unreadable,
         ))
         # An absent cost stays absent. A zero would read as free goods, and the cash
         # co-pilot ranks on this column. `order_date` is the DOCUMENT's own date (PO DATE /

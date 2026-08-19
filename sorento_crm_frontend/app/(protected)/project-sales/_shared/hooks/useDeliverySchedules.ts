@@ -1,18 +1,21 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   useRecordNeighbours,
   type RecordNeighboursResult,
 } from '@/hooks/useRecordNeighbours';
 import {
+  acceptRevisionProposal,
   confirmDeliveryScheduleVersion,
   DELIVERY_SCHEDULE_VERSION_NEIGHBOURS_PATH,
   dismissDeliveryScheduleColumn,
   getDeliveryScheduleVersion,
   listDeliverySchedules,
   listDeliveryScheduleVersions,
+  rejectRevisionProposal,
   resolveDeliveryScheduleProduct,
   retryDeliveryScheduleExtraction,
   saveDeliveryScheduleCells,
@@ -22,6 +25,7 @@ import type {
   DeliveryScheduleCellInput,
   DeliveryScheduleConfirmBody,
   DeliveryScheduleUploadBody,
+  DeliveryScheduleVersion,
 } from '../types/deliverySchedule.types';
 import { isExtractionPending, resolveExtractionPhase } from '../types/deliverySchedule.types';
 import { PROJECTS_KEY, projectKey } from './useProjects';
@@ -95,6 +99,37 @@ export function useDeliveryScheduleVersionNeighbours(
 }
 
 /**
+ * The full version this one revises, for the was -> now diff (section 9.1).
+ *
+ * Dates travel on the version itself (`promoted_delivery_date`), so only the QUANTITIES
+ * need this: there is no such field for them, so the prior version has to be fetched in
+ * full and diffed client-side. Disabled on a version 1, which revises nothing, and while
+ * the version list has not yet said which id is one before this one.
+ */
+export function useDeliverySchedulePriorVersion(
+  version: DeliveryScheduleVersion | undefined,
+  options: { enabled?: boolean } = {},
+) {
+  const enabled =
+    options.enabled !== false && Boolean(version) && (version?.version_no ?? 0) > 1;
+  const versions = useDeliveryScheduleVersions(
+    enabled ? version?.delivery_schedule_id : undefined,
+  );
+  const priorVersionId = versions.data?.find(
+    (candidate) => candidate.version_no === (version?.version_no ?? 0) - 1,
+  )?.id;
+  const prior = useDeliveryScheduleVersion(priorVersionId, {
+    enabled: enabled && Boolean(priorVersionId),
+  });
+
+  return {
+    data: prior.data,
+    isLoading: enabled && (versions.isLoading || (Boolean(priorVersionId) && prior.isLoading)),
+    isError: prior.isError,
+  };
+}
+
+/**
  * Upload invalidates the PROJECT too: the schedule binds delivery phases to it, so the
  * header and the phase list downstream both change once extraction lands.
  */
@@ -132,6 +167,7 @@ export function useDeliveryScheduleVersionMutations(
   versionId: string,
 ) {
   const queryClient = useQueryClient();
+  const router = useRouter();
 
   const adopt = (version: Awaited<ReturnType<typeof getDeliveryScheduleVersion>>) => {
     queryClient.setQueryData(scheduleVersionKey(versionId), version);
@@ -199,10 +235,51 @@ export function useDeliveryScheduleVersionMutations(
       adopt(version);
       queryClient.invalidateQueries({ queryKey: projectKey(projectId) });
       queryClient.invalidateQueries({ queryKey: [PROJECTS_KEY, 'list'] });
-      toast.success('Schedule confirmed. Its phases are on the project.');
+      // The confirm went through, but a schedule confirmed on top of an already-built sales
+      // order leaves that order stale - the server says so with a preview link rather than
+      // this screen guessing which order it was.
+      if (version.amendment_preview_url) {
+        const previewUrl = version.amendment_preview_url;
+        toast.success('Schedule confirmed - the linked sales order needs an amendment.', {
+          action: { label: 'Review the amendment', onClick: () => router.push(previewUrl) },
+        });
+      } else {
+        toast.success('Schedule confirmed. Its phases are on the project.');
+      }
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { saveCells, resolveProduct, dismissColumn, confirm, retryExtraction };
+  /**
+   * Accept writes the override for every cell the proposal names; reject writes nothing and
+   * only marks the state. Both toast on success AND failure - unlike the cell/product saves
+   * above, this is a whole re-date decision, not a keystroke.
+   */
+  const acceptProposal = useMutation({
+    mutationFn: (index: number) => acceptRevisionProposal(versionId, index),
+    onSuccess: (version) => {
+      adopt(version);
+      toast.success('Proposal accepted. The dates are written onto the schedule.');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const rejectProposal = useMutation({
+    mutationFn: (index: number) => rejectRevisionProposal(versionId, index),
+    onSuccess: (version) => {
+      adopt(version);
+      toast.success('Proposal rejected.');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return {
+    saveCells,
+    resolveProduct,
+    dismissColumn,
+    confirm,
+    retryExtraction,
+    acceptProposal,
+    rejectProposal,
+  };
 }

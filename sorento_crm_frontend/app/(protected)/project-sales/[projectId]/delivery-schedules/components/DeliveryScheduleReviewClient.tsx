@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -22,6 +23,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useProject } from '../../../_shared/hooks/useProjects';
 import {
+  useDeliverySchedulePriorVersion,
   useDeliveryScheduleVersion,
   useDeliveryScheduleVersionMutations,
   useDeliveryScheduleVersionNeighbours,
@@ -37,19 +39,25 @@ import {
 } from '../_demo/scheduleDemo';
 import {
   buildCellMap,
+  buildCellMetaMap,
   buildColumnStates,
   cellMapKey,
+  dateColumns as buildDateColumns,
   groupPhasesByArea,
   isQty,
   normaliseQty,
 } from '../lib/scheduleTotals';
 import type { ColumnState } from '../lib/scheduleTotals';
+import { DeliveryScheduleByDateMatrix } from './DeliveryScheduleByDateMatrix';
 import { DeliveryScheduleColumnCards } from './DeliveryScheduleColumnCards';
 import { DeliveryScheduleConfirmDialog } from './DeliveryScheduleConfirmDialog';
 import { DeliveryScheduleMatrix } from './DeliveryScheduleMatrix';
 import type { ColumnFocusRequest, ScheduleGridController } from './DeliveryScheduleMatrix';
+import { DeliveryScheduleNotes } from './DeliveryScheduleNotes';
 import { poProductOptions } from './DeliveryScheduleProductPicker';
 import { DeliveryScheduleReconciliationList } from './DeliveryScheduleReconciliationList';
+import { DeliveryScheduleRevisionDiff } from './DeliveryScheduleRevisionDiff';
+import { DeliveryScheduleRevisionProposals } from './DeliveryScheduleRevisionProposals';
 
 /**
  * Reviewing one version of a delivery schedule.
@@ -78,10 +86,21 @@ export function DeliveryScheduleReviewClient({
       ? describeReadingTime(version.extraction_elapsed_ms)
       : null;
 
-  const { saveCells, resolveProduct, dismissColumn, confirm, retryExtraction } =
-    useDeliveryScheduleVersionMutations(projectId, versionId);
+  const {
+    saveCells,
+    resolveProduct,
+    dismissColumn,
+    confirm,
+    retryExtraction,
+    acceptProposal,
+    rejectProposal,
+  } = useDeliveryScheduleVersionMutations(projectId, versionId);
+  /** Which proposal a request is in flight for, so only its own card shows pending. */
+  const [pendingProposalIndex, setPendingProposalIndex] = React.useState<number | null>(null);
   // The demo screen has no server behind it, so it has no neighbours to ask for either.
   const neighbours = useDeliveryScheduleVersionNeighbours(versionId, { enabled: !demo });
+  // The version this one revises, for the was -> now diff. No-op on a version 1 or on demo.
+  const priorVersion = useDeliverySchedulePriorVersion(version, { enabled: !demo });
 
   /**
    * The PO this schedule was checked against, for the column pickers.
@@ -124,6 +143,25 @@ export function DeliveryScheduleReviewClient({
 
   const storedCells = React.useMemo(
     () => buildCellMap(version?.cells ?? []),
+    [version?.cells],
+  );
+  const cellMeta = React.useMemo(
+    () => buildCellMetaMap(version?.cells ?? []),
+    [version?.cells],
+  );
+
+  /**
+   * The document turned round by date rather than by phase (section 9.8). Built off the
+   * whole cell list, not just what By date is currently showing, so the hint chip below can
+   * count the moved cells even while By phase is the one on screen.
+   */
+  const [viewMode, setViewMode] = React.useState<'phase' | 'date'>('phase');
+  const dateColumnsData = React.useMemo(
+    () => buildDateColumns({ phases: version?.phases ?? [], cells: version?.cells ?? [] }),
+    [version?.phases, version?.cells],
+  );
+  const overrideCount = React.useMemo(
+    () => (version?.cells ?? []).filter((cell) => cell.delivery_date_override).length,
     [version?.cells],
   );
 
@@ -314,6 +352,7 @@ export function DeliveryScheduleReviewClient({
     learnedColumns,
     registerColumnRef,
     focusRequest,
+    metaFor: (phaseId, columnKey) => cellMeta.get(cellMapKey(phaseId, columnKey)),
   };
 
   /**
@@ -454,6 +493,20 @@ export function DeliveryScheduleReviewClient({
         </div>
       )}
 
+      {version.amendment_preview_url && (
+        <div
+          data-testid="amendment-needed-banner"
+          className="flex flex-col gap-3 rounded-lg border border-[var(--color-warning-accent,var(--color-yellow-500))]/50 bg-[var(--color-warning-soft,var(--color-yellow-100))] px-3 py-2 text-sm dark:bg-[var(--color-warning-soft,var(--color-yellow-950))] sm:flex-row sm:items-center sm:justify-between"
+        >
+          <span className="break-words">
+            This schedule is confirmed; the linked sales order has not been amended yet.
+          </span>
+          <Button asChild size="sm" variant="outline" className="shrink-0">
+            <Link href={version.amendment_preview_url}>Review the amendment</Link>
+          </Button>
+        </div>
+      )}
+
       {readingNow && <ExtractionProgress version={version} />}
 
       {phase === 'failed' && (
@@ -524,6 +577,36 @@ export function DeliveryScheduleReviewClient({
 
       {!readingNow && columns.length > 0 && (
         <>
+          <DeliveryScheduleNotes notes={version.notes ?? []} />
+
+          <DeliveryScheduleRevisionProposals
+            proposals={version.revision_proposals ?? []}
+            canDecide={canEdit}
+            pendingIndex={pendingProposalIndex}
+            onAccept={(index) => {
+              if (demo) return;
+              setPendingProposalIndex(index);
+              acceptProposal.mutate(index, {
+                onSettled: () => setPendingProposalIndex(null),
+              });
+            }}
+            onReject={(index) => {
+              if (demo) return;
+              setPendingProposalIndex(index);
+              rejectProposal.mutate(index, {
+                onSettled: () => setPendingProposalIndex(null),
+              });
+            }}
+          />
+
+          {version.version_no > 1 && (
+            <DeliveryScheduleRevisionDiff
+              version={version}
+              priorVersion={priorVersion.data}
+              priorLoading={priorVersion.isLoading}
+            />
+          )}
+
           <Card>
             <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
               <CardTitle className="text-sm">Reconciliation</CardTitle>
@@ -575,13 +658,51 @@ export function DeliveryScheduleReviewClient({
             </CardContent>
           </Card>
 
-          {/* One grid, two shapes. The matrix needs room; a phone gets the per-column view. */}
-          <div className="hidden md:block">
-            <DeliveryScheduleMatrix controller={controller} />
+          {/* By phase is the document's own columns, unchanged; By date turns the same
+              cells round by their EFFECTIVE date, so an accepted re-date shows the quantity
+              sitting under the date it now goes out on, not the one it left (the captain's
+              own question, 19 Aug). */}
+          <div className="flex flex-wrap items-center gap-2">
+            <ToggleGroup
+              type="single"
+              variant="outline"
+              value={viewMode}
+              onValueChange={(next) => next && setViewMode(next as 'phase' | 'date')}
+            >
+              <ToggleGroupItem value="phase" className="px-3">
+                By phase
+              </ToggleGroupItem>
+              <ToggleGroupItem value="date" className="px-3">
+                By date
+              </ToggleGroupItem>
+            </ToggleGroup>
+            {viewMode === 'phase' && overrideCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setViewMode('date')}
+                className="rounded-full border border-border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted"
+              >
+                {`${overrideCount} cell${overrideCount === 1 ? '' : 's'} re-dated - view by date`}
+              </button>
+            )}
           </div>
-          <div className="md:hidden">
-            <DeliveryScheduleColumnCards controller={controller} />
-          </div>
+
+          {viewMode === 'phase' ? (
+            /* One grid, two shapes. The matrix needs room; a phone gets the per-column view. */
+            <>
+              <div className="hidden md:block">
+                <DeliveryScheduleMatrix controller={controller} />
+              </div>
+              <div className="md:hidden">
+                <DeliveryScheduleColumnCards controller={controller} />
+              </div>
+            </>
+          ) : (
+            /* Read-only, on every width: the inputs live in By phase, and building a
+               phone-specific by-date card view is not the trivial change the phone view
+               otherwise gets left alone for. */
+            <DeliveryScheduleByDateMatrix controller={controller} dateColumns={dateColumnsData} />
+          )}
         </>
       )}
 

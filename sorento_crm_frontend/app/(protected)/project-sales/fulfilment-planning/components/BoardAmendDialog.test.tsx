@@ -97,7 +97,7 @@ describe('BoardAmendDialog: what it is and what it holds', () => {
       .map((section) => section.textContent?.split('\n')[0] ?? '');
     expect(labels).toEqual([
       expect.stringContaining('Owed'),
-      expect.stringContaining('Incoming by the required date'),
+      expect.stringContaining('Incoming by the delivery date'),
       expect.stringContaining('Reserve'),
       expect.stringContaining('Borrow'),
       expect.stringContaining('Buy'),
@@ -338,6 +338,10 @@ describe('BoardAmendDialog: buying a discontinued product', () => {
   const discontinued = {
     dealer_hot_selling: false,
     dealer_hot_selling_where: [],
+    project_hot_selling: false,
+    project_hot_selling_where: [],
+    dealer_classified: false,
+    project_classified: false,
     discontinued: true,
     retail_classification_available: true,
   };

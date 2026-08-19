@@ -167,7 +167,7 @@ describe('PileQueueDialog', () => {
     const mine = await screen.findByTestId('queue-this-line');
     expect(mine).toHaveTextContent('4 (this line)');
     // Words, never the policy's own key.
-    expect(screen.getAllByText('Required date').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Delivery date').length).toBeGreaterThan(0);
     expect(screen.queryByText('need_by_date')).toBeNull();
     // A tie decided by line order is not a factor, and must not read as one.
     expect(screen.getByText('same order')).toBeInTheDocument();

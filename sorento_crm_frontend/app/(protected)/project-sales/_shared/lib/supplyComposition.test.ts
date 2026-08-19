@@ -35,6 +35,9 @@ function line(overrides: Partial<SupplyLine> = {}): SupplyLine {
     required_date: '2026-09-01',
     fulfilment_location: 'BRW-BB',
     is_dealer_hot_selling: false,
+    is_project_hot_selling: false,
+    dealer_classified: false,
+    project_classified: false,
     classification_unavailable: false,
     is_discontinued: false,
     pool_location: 'BRW-BB',
@@ -284,14 +287,14 @@ describe('draftFromLine', () => {
           {
             kind: 'timely_spo',
             qty: '100',
-            reason: 'SPO-2026-0311 arrives at BRW-BB on the required date.',
+            reason: 'SPO-2026-0311 arrives at BRW-BB on the delivery date.',
             source_location: 'BRW-BB',
             source_warehouse_id: WAREHOUSE_BRW,
           },
           {
             kind: 'reserve',
             qty: '200',
-            reason: 'Free stock at BRW-BB covers the need by the required date.',
+            reason: 'Free stock at BRW-BB covers the need by the delivery date.',
             source_location: 'BRW-BB',
             source_warehouse_id: WAREHOUSE_BRW,
           },
@@ -307,7 +310,7 @@ describe('draftFromLine', () => {
       location: 'BRW-BB',
       warehouse_id: WAREHOUSE_BRW,
       qty: '200',
-      reason: 'Free stock at BRW-BB covers the need by the required date.',
+      reason: 'Free stock at BRW-BB covers the need by the delivery date.',
     });
     expect(result.buy_qty).toBe('300');
     expect(lineBalance(result).balanced).toBe(true);

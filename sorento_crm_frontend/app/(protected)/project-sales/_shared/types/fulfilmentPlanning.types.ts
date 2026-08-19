@@ -247,7 +247,7 @@ export interface SupplyComponent {
   qty: string;
   /**
    * The short sentence the rule that produced the quantity wrote (AC-B14), for example
-   * "Reserve 10: free stock at BRW covers the need by the required date". Deterministic,
+   * "Reserve 10: free stock at BRW covers the need by the delivery date". Deterministic,
    * frozen with the snapshot at confirmation, and shown beside the quantity always.
    */
   reason: string;
@@ -332,6 +332,9 @@ export interface SupplyLine {
   project_line_id: string;
   line_no: number;
   item_code?: string | null;
+  /** Addressing only, never rendered - what the Proof button asks the classification
+   * evidence endpoint with. */
+  product_id?: string | null;
   description?: string | null;
   uom?: string | null;
   /** The core line's current open fulfilment quantity (AC-B01), in the line UOM. */
@@ -356,12 +359,21 @@ export interface SupplyLine {
    * blocked and never names it in a confirmation; `null` on every plannable line.
    */
   unplannable_reason?: string | null;
+  /** ABC A by quantity on retail demand (3.3a): the shared pool is not offered at all. */
   is_dealer_hot_selling: boolean;
-  /** No classification row at any qualifying dealer warehouse (AC-B05). */
+  /** ABC A by quantity on project demand (3.3a): the pool is capped by its own availability. */
+  is_project_hot_selling: boolean;
+  /** Classified (a non-null letter on that class, at an active location) but not hot -
+   * "Cold at retail" / "Cold at project". `false` while the class is hot too. */
+  dealer_classified: boolean;
+  project_classified: boolean;
+  /** No non-null ABC letter in either demand class (AC-B05, amended 3.3a). */
   classification_unavailable: boolean;
   is_discontinued: boolean;
   pool_location?: string | null;
-  /** `max(pool free - coalesce(pool reorder level, 0), 0)` when hot-selling (AC-B06). */
+  /** The old reorder-level cap. Always null now (19 August 2026, PLAN 3.3a) - dealer
+   * hot-selling offers the pool nothing and project hot-selling caps it by availability
+   * instead. Kept for wire compatibility. */
   pool_cap?: string | null;
   pool_reorder_level?: string | null;
   components: SupplyComponent[];
@@ -631,7 +643,9 @@ export interface BoardTrailPool {
   /** What was left for THIS line when the rung was reached - the rung's own `opening`. */
   left: string;
   reorder_level: string;
-  /** What could be taken above the reorder level, when a cap applies. Null when none does. */
+  /** The old reorder-level cap. Always null now (19 August 2026, PLAN 3.3a) - dealer
+   * hot-selling offers the pool nothing and project hot-selling caps it by availability
+   * instead. Kept for wire compatibility. */
   cap?: string | null;
 }
 
@@ -639,14 +653,28 @@ export interface BoardTrailPool {
  * The item facts the ladder judged a line on, said rather than implied.
  *
  * The captain: "where is the consideration of dealer hot selling / project hot selling /
- * discontinued, to see if we can take from BRW?" There is no project hot-selling concept - only
- * the dealer one - and `retail_classification_available: false` is "nobody has classified it",
- * which is a different answer from "not hot-selling".
+ * discontinued, to see if we can take from BRW?" Amended 19 August 2026 (PLAN 3.3a):
+ * hot-selling is judged PER DEMAND CLASS, BY QUANTITY delivered in that class - a SKU can be
+ * hot-selling on retail demand, on project demand, on both (dealer wins) or on neither.
+ * Own-location Reserve is always eligible regardless of either flag; the flags gate only how
+ * much the SHARED POOL contributes. `retail_classification_available: false` is "nobody has
+ * judged either class" (no delivered demand of either in the trailing-12mo window), which is
+ * a different answer from "not hot-selling".
  */
 export interface BoardItemFlags {
+  /** ABC A by quantity on retail demand: the pool contributes nothing at all. */
   dealer_hot_selling: boolean;
-  /** The dealer locations where it earned that, by code. */
+  /** The locations where it earned that, by code. */
   dealer_hot_selling_where: string[];
+  /** ABC A by quantity on project demand: the pool contributes only while its own signed
+   * availability stays positive. */
+  project_hot_selling: boolean;
+  /** The locations where it earned that, by code. */
+  project_hot_selling_where: string[];
+  /** Classified (a non-null letter on that class, at an active location) but not hot -
+   * "Cold at retail" / "Cold at project". `false` while the class is hot too. */
+  dealer_classified: boolean;
+  project_classified: boolean;
   discontinued: boolean;
   retail_classification_available: boolean;
 }
@@ -1346,4 +1374,43 @@ export interface PileQueue {
   /** The rule that produced this order, named. Always the LIVE policy. */
   policy_name: string;
   lines: PileQueueLine[];
+}
+
+/**
+ * One location's contribution to a demand class's ranking - the Proof popover's own row.
+ *
+ * The captain, reading the trail: "don't give me jargon like abc classification, just tell
+ * me hot selling or cold selling, at project or retail, with some button for me to view
+ * detail as a proof". This is that proof.
+ */
+export interface ClassificationEvidenceLocation {
+  warehouse_code: string;
+  qty_delivered: string;
+  rank: number;
+  of: number;
+  /** This row's OWN share of the class's total quantity - "Its share" in the popover. */
+  share_pct?: number | null;
+  /** The running share INCLUDING this row - "Ranked above it" is this minus `share_pct`. */
+  cumulative_share_pct?: number | null;
+  /** A/B/C. */
+  letter?: string | null;
+  hot: boolean;
+}
+
+export interface ClassificationEvidenceClass {
+  demand_class: 'retail' | 'project';
+  /** "Dealer" (retail customers) or "Project" - the word the captain asked for. */
+  label: string;
+  verdict: 'hot' | 'cold' | 'unclassified';
+  locations: ClassificationEvidenceLocation[];
+}
+
+/** `GET .../fulfilment-planning/classification?product_id=...` - the Proof button's payload. */
+export interface ClassificationEvidence {
+  product_id: string;
+  item_code?: string | null;
+  computed_at?: string | null;
+  window_days: number;
+  hot_cut_pct: number;
+  classes: ClassificationEvidenceClass[];
 }

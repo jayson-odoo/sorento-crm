@@ -345,8 +345,12 @@ export interface AmendmentVersionRef {
   label?: string | null;
 }
 
+/** Accepted forms an amendment; declined is recorded with a reason and left out of it. */
+export type AmendmentRowDecision = 'accepted' | 'declined';
+
 export interface AmendmentDeltaRow {
-  so_line_id: string;
+  /** `null` for an unmatched line - nothing on the other version to point a line id at. */
+  so_line_id: string | null;
   line_no: number;
   product_code?: string | null;
   description?: string | null;
@@ -357,6 +361,16 @@ export interface AmendmentDeltaRow {
   qty?: string | null;
   phase_label_from?: string | null;
   phase_label_to?: string | null;
+
+  /**
+   * GUESS (section 9.3): present once this row belongs to a CREATED amendment, addressing it
+   * for `PUT .../amendments/{id}/rows`. Absent on a bare preview - nothing to decide on yet,
+   * because nothing has been written.
+   */
+  row_key?: string;
+  /** Defaults to accepted server-side; absent (preview) reads the same way. */
+  decision?: AmendmentRowDecision;
+  declined_reason?: string | null;
 }
 
 /** A phase or product that could not be matched between versions. Never hidden. */
@@ -403,6 +417,42 @@ export interface AmendmentDetail extends AmendmentPreview {
   ocn_approver_name?: string | null;
   created_by_name?: string | null;
   created_at?: string | null;
+  /** GUESS (section 9.3): counted server-side off `rows[].decision`. */
+  accepted_count?: number;
+  declined_count?: number;
+}
+
+/** `PUT /amendments/{id}/rows` body: one entry per row being decided, keyed by `row_key`. */
+export interface AmendmentRowDecisionInput {
+  decision: AmendmentRowDecision;
+  /** Required by the server when declining; ignored when accepting. */
+  reason?: string | null;
+}
+
+export interface AmendmentRowDecisionsBody {
+  decisions: Record<string, AmendmentRowDecisionInput>;
+}
+
+/**
+ * One line of the AutoCount change list (section 9.4): what a person keys into AutoCount for
+ * an accepted row, in the export's own column order.
+ */
+export interface AutocountChangeListRow {
+  so_number: string;
+  line_no: number;
+  item_code: string | null;
+  product_name?: string | null;
+  verb: AmendmentVerb | string;
+  old_qty?: string | null;
+  new_qty?: string | null;
+  old_date?: string | null;
+  new_date?: string | null;
+  new_so_number?: string | null;
+}
+
+export interface AutocountChangeListResponse {
+  rows: AutocountChangeListRow[];
+  declined_count: number;
 }
 
 /**
@@ -421,6 +471,8 @@ export interface ScheduleVersionOption {
   po_version_no?: number | null;
   extraction_state?: string | null;
   confirmed_at?: string | null;
+  /** When this version was uploaded - distinguishes two uploads that share a label. */
+  created_at?: string | null;
 }
 
 export interface PoVersionOption {
@@ -430,6 +482,8 @@ export interface PoVersionOption {
   po_date?: string | null;
   extraction_state?: string | null;
   confirmed_at?: string | null;
+  /** When this version was uploaded - distinguishes two uploads that share a label. */
+  created_at?: string | null;
 }
 
 export interface ProjectSalesOrderListParams {

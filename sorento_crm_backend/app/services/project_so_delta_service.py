@@ -26,6 +26,7 @@ it is reported in ``unmatched`` rather than dressed up as an instruction.
 """
 from __future__ import annotations
 
+import io
 import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -38,8 +39,8 @@ from app.models.product import Product
 from app.models.project_so import (
     AMENDMENT_PROPOSED,
     AMENDMENT_PUBLISHED,
+    AUTHORED_LIVE_STATUSES,
     SO_STATUS_AMENDED,
-    SO_STATUS_PUBLISHED,
     DeliverySchedule,
     DeliveryScheduleCell,
     DeliveryScheduleVersion,
@@ -86,6 +87,25 @@ RESERVE_WINDOW_DAYS = 60
 OCN_NUMBERING_DOC_TYPE = "order_change_notice"
 _OCN_PREFIX = "OCN-"
 _OCN_DIGITS = 6
+
+# Per-row accept/decline (PLAN-so-book-diff-replanning.md 9.3). A row absent from
+# `row_decisions` is accepted by default -- that is today's all-or-nothing behaviour,
+# unchanged.
+DECISION_ACCEPTED = "accepted"
+DECISION_DECLINED = "declined"
+
+_AUTOCOUNT_HEADINGS = (
+    "S/O NO",
+    "LINE",
+    "ITEM CODE",
+    "PRODUCT",
+    "VERB",
+    "OLD QTY",
+    "NEW QTY",
+    "OLD DATE",
+    "NEW DATE",
+    "NEW S/O NO",
+)
 
 
 def _dec(value: Any, default: Decimal = _ZERO) -> Decimal:
@@ -143,10 +163,21 @@ class _PhaseFact:
     delivery_date: Optional[date]
     phase_id: Optional[str] = None
     qty: Dict[str, Decimal] = field(default_factory=dict)
+    # Section 9.7(d): `delivery_schedule_cells.delivery_date_override`, per product,
+    # for this phase in this version -- set only once an accepted revision proposal
+    # wrote it. Read ahead of `delivery_date` for that one product's lines, so an
+    # amendment can propose a date move on ONE line while the rest of the phase
+    # (and the phase's own summary, below) still reads the document's plain date.
+    date_overrides: Dict[str, date] = field(default_factory=dict)
 
     @property
     def key(self) -> Tuple[str, int]:
         return (self.area_group, self.sequence)
+
+    def line_date(self, product_id: Optional[str]) -> Optional[date]:
+        if product_id and product_id in self.date_overrides:
+            return self.date_overrides[product_id]
+        return self.delivery_date
 
 
 class ProjectSODeltaService:
@@ -275,24 +306,36 @@ class ProjectSODeltaService:
             # purchasing acts on: a phase with no date cannot be ordered for.
             verb = VERB_DELAY if after.delivery_date else VERB_ADVANCE
 
-        # A date move is a PHASE fact: every line under it moves by the same amount, and
-        # each gets its own row so the amendment can be applied line by line.
-        if verb:
-            for line in sorted(phase_lines, key=lambda row: row.line_no):
-                rows.append(
-                    self._row(
-                        order=order,
-                        line=line,
-                        product_id=line.product_id,
-                        verb=verb,
-                        field_name="delivery_date",
-                        from_value=_iso(before.delivery_date),
-                        to_value=_iso(after.delivery_date),
-                        qty=_dec(line.qty),
-                        before=before,
-                        after=after,
-                    )
+        # A date move is usually a PHASE fact: every line under it moves by the same
+        # amount. An accepted revision proposal (section 9.7d) can move ONE product's
+        # date on its own -- `line_date` reads that product's override where one was
+        # written, so this is computed per LINE and only reduces to "the whole phase
+        # moved together" when no line carries an override.
+        line_moved = False
+        for line in sorted(phase_lines, key=lambda row: row.line_no):
+            line_before = before.line_date(line.product_id)
+            line_after = after.line_date(line.product_id)
+            if line_before == line_after:
+                continue
+            line_moved = True
+            if line_before and line_after:
+                line_verb = VERB_DELAY if line_after > line_before else VERB_ADVANCE
+            else:
+                line_verb = VERB_DELAY if line_after else VERB_ADVANCE
+            rows.append(
+                self._row(
+                    order=order,
+                    line=line,
+                    product_id=line.product_id,
+                    verb=line_verb,
+                    field_name="delivery_date",
+                    from_value=_iso(line_before),
+                    to_value=_iso(line_after),
+                    qty=_dec(line.qty),
+                    before=before,
+                    after=after,
                 )
+            )
 
         qty_changed = False
         for product_id in sorted(set(before.qty) | set(after.qty)):
@@ -321,7 +364,7 @@ class ProjectSODeltaService:
                 )
             )
 
-        if relevant and (moved or qty_changed):
+        if relevant and (moved or line_moved or qty_changed):
             phase_summary.append(
                 {
                     "area_group": before.area_group,
@@ -546,7 +589,7 @@ class ProjectSODeltaService:
         hard gate from becoming drag: nobody retypes the change table, they approve it.
         """
         order = self._order_or_404(pso_id)
-        if order.status not in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED):
+        if order.status not in AUTHORED_LIVE_STATUSES:
             raise AppException(
                 status_code=409,
                 message=(
@@ -572,6 +615,11 @@ class ProjectSODeltaService:
                 ),
                 code="amendment_empty",
             )
+        # A row's identity for accept/decline (section 9.3) is its position in this
+        # list, stamped once here and never recomputed: `delta_json["rows"]` is
+        # immutable from this point on, so the index is as stable as any id would be.
+        for index, row in enumerate(delta["rows"]):
+            row["row_key"] = str(index)
 
         kind = "schedule" if schedule_version_id else "po"
         amendment = SOAmendment(
@@ -662,7 +710,23 @@ class ProjectSODeltaService:
 
         order = self._order_or_404(amendment.project_sales_order_id)
         delta = amendment.delta_json or {}
-        applied = self._apply_rows(order, delta.get("rows") or [])
+        accepted_rows, _declined_rows = self._decided_rows(amendment, delta)
+        applied = self._apply_rows(order, accepted_rows)
+
+        # Section 9.3: only the accepted rows are the amendment from here on. The
+        # verb summary and the OCN's own change table both count what was actually
+        # applied; a declined row stays in `delta_json["rows"]` (with its decision
+        # and reason) as the record of what was declined and why, but stops being
+        # counted as an instruction.
+        accepted_summary = {verb: 0 for verb in ALL_VERBS}
+        for row in accepted_rows:
+            accepted_summary[row["verb"]] = accepted_summary.get(row["verb"], 0) + 1
+        amendment.verb_summary = accepted_summary
+        if ocn.change_table_json:
+            change_table = dict(ocn.change_table_json)
+            change_table["rows"] = accepted_rows
+            change_table["verb_summary"] = accepted_summary
+            ocn.change_table_json = change_table
 
         amendment.status = AMENDMENT_PUBLISHED
         amendment.published_at = datetime.utcnow()
@@ -778,13 +842,7 @@ class ProjectSODeltaService:
     # ---------------------------------------------------------------- reading
 
     def get_amendment(self, amendment_id: str) -> Dict[str, Any]:
-        amendment = (
-            self.db.query(SOAmendment).filter(SOAmendment.id == amendment_id).first()
-        )
-        if amendment is None:
-            raise AppException(
-                status_code=404, message="Amendment not found.", code="amendment_not_found"
-            )
+        amendment = self._amendment_or_404(amendment_id)
         order = self._order_or_404(amendment.project_sales_order_id)
         ocn = (
             self.db.query(OrderChangeNotice)
@@ -798,7 +856,9 @@ class ProjectSODeltaService:
             if ocn and ocn.approver_id
             else None
         )
-        delta = amendment.delta_json or {}
+        delta = dict(amendment.delta_json or {})
+        annotated_rows, accepted_count, declined_count = self._annotated_rows(amendment, delta)
+        delta["rows"] = annotated_rows
         return {
             "id": amendment.id,
             "project_sales_order_id": order.id,
@@ -810,6 +870,8 @@ class ProjectSODeltaService:
             "to_version_label": (delta.get("to") or {}).get("label"),
             "verb_summary": amendment.verb_summary or {},
             "delta": delta,
+            "accepted_count": accepted_count,
+            "declined_count": declined_count,
             "ocn_id": ocn.id if ocn else None,
             "ocn_number": ocn.ocn_number if ocn else None,
             "ocn_reason": ocn.reason if ocn else None,
@@ -818,6 +880,201 @@ class ProjectSODeltaService:
             "published_at": amendment.published_at,
             "created_at": amendment.created_at,
         }
+
+    # ------------------------------------------------------ row decisions (9.3)
+
+    def update_row_decisions(
+        self, amendment_id: str, decisions: Dict[str, Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Merge per-row accept/decline into the stored map. Writes nothing else.
+
+        Only legal while the amendment is still ``proposed``: once published, the
+        rows that were applied are applied, and a row that was never even part of
+        this amendment cannot be decided on.
+        """
+        amendment = self._amendment_or_404(amendment_id)
+        if amendment.status != AMENDMENT_PROPOSED:
+            raise AppException(
+                status_code=409,
+                message=(
+                    "This amendment is no longer proposed, so its rows cannot be "
+                    "accepted or declined."
+                ),
+                code="amendment_not_proposed",
+            )
+        delta = amendment.delta_json or {}
+        known_keys = {
+            str(row.get("row_key") or index)
+            for index, row in enumerate(delta.get("rows") or [])
+        }
+        merged = dict(amendment.row_decisions or {})
+        for row_key, payload in (decisions or {}).items():
+            row_key = str(row_key)
+            if row_key not in known_keys:
+                raise AppException(
+                    status_code=422,
+                    message=f"Row '{row_key}' is not part of this amendment.",
+                    code="amendment_row_unknown",
+                )
+            decision = (payload or {}).get("decision")
+            if decision not in (DECISION_ACCEPTED, DECISION_DECLINED):
+                raise AppException(
+                    status_code=422,
+                    message="A row's decision must be 'accepted' or 'declined'.",
+                    code="amendment_row_decision_invalid",
+                )
+            reason = ((payload or {}).get("reason") or "").strip() or None
+            if decision == DECISION_DECLINED and not reason:
+                raise AppException(
+                    status_code=422,
+                    message="A declined row needs a reason.",
+                    code="amendment_row_reason_required",
+                )
+            merged[row_key] = {"decision": decision, "reason": reason}
+        amendment.row_decisions = merged
+        self.db.flush()
+        return self.get_amendment(amendment_id)
+
+    def _annotated_rows(
+        self, amendment: SOAmendment, delta: Dict[str, Any]
+    ) -> Tuple[List[Dict[str, Any]], int, int]:
+        """Every row of ``delta["rows"]``, with its decision and reason attached.
+
+        A row absent from ``row_decisions`` reads as accepted (the default), which
+        is why an amendment nobody has touched still shows every row accepted.
+        """
+        decisions = amendment.row_decisions or {}
+        rows: List[Dict[str, Any]] = []
+        accepted_count = 0
+        declined_count = 0
+        for index, row in enumerate(delta.get("rows") or []):
+            row = dict(row)
+            row_key = str(row.get("row_key") or index)
+            row["row_key"] = row_key
+            entry = decisions.get(row_key) or {}
+            decision = entry.get("decision")
+            if decision != DECISION_DECLINED:
+                decision = DECISION_ACCEPTED
+            row["decision"] = decision
+            row["declined_reason"] = entry.get("reason") if decision == DECISION_DECLINED else None
+            if decision == DECISION_DECLINED:
+                declined_count += 1
+            else:
+                accepted_count += 1
+            rows.append(row)
+        return rows, accepted_count, declined_count
+
+    def _decided_rows(
+        self, amendment: SOAmendment, delta: Dict[str, Any]
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """The rows split into (accepted, declined), each carrying its row_key."""
+        annotated, _accepted_count, _declined_count = self._annotated_rows(amendment, delta)
+        accepted = [row for row in annotated if row["decision"] == DECISION_ACCEPTED]
+        declined = [row for row in annotated if row["decision"] == DECISION_DECLINED]
+        return accepted, declined
+
+    def _amendment_or_404(self, amendment_id: str) -> SOAmendment:
+        amendment = (
+            self.db.query(SOAmendment).filter(SOAmendment.id == amendment_id).first()
+        )
+        if amendment is None:
+            raise AppException(
+                status_code=404, message="Amendment not found.", code="amendment_not_found"
+            )
+        return amendment
+
+    # -------------------------------------------------- AutoCount change list (9.4)
+
+    def build_autocount_change_list(self, amendment_id: str) -> Dict[str, Any]:
+        """Rows to key into AutoCount, plus how many were declined. Shared by the
+        JSON and xlsx endpoints so the two never drift."""
+        amendment = self._amendment_or_404(amendment_id)
+        order = self._order_or_404(amendment.project_sales_order_id)
+        ocn = (
+            self.db.query(OrderChangeNotice)
+            .filter(OrderChangeNotice.id == amendment.ocn_id)
+            .first()
+            if amendment.ocn_id
+            else None
+        )
+        delta = amendment.delta_json or {}
+        accepted, declined = self._decided_rows(amendment, delta)
+        so_ref = order.autocount_doc_no or order.provisional_ref
+        rows = [self._autocount_row(order, so_ref, row) for row in accepted]
+        return {
+            "amendment_id": amendment.id,
+            "ocn_number": ocn.ocn_number if ocn else None,
+            "so_ref": so_ref,
+            "rows": rows,
+            "declined_count": len(declined),
+        }
+
+    def _autocount_row(
+        self, order: ProjectSalesOrder, so_ref: Optional[str], row: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        field_name = row.get("field")
+        old_qty = new_qty = old_date = new_date = None
+        if field_name == "qty":
+            old_qty, new_qty = row.get("from_value"), row.get("to_value")
+        elif field_name == "delivery_date":
+            old_date, new_date = row.get("from_value"), row.get("to_value")
+        new_so_number = None
+        if row.get("verb") == VERB_CHANGE_SO_NO:
+            destination = self._destination_for(order, row.get("to_value"))
+            new_so_number = (
+                (destination.autocount_doc_no or destination.provisional_ref)
+                if destination
+                else row.get("to_value")
+            )
+        return {
+            "so_number": so_ref,
+            "line_no": row.get("line_no"),
+            "item_code": row.get("product_code"),
+            "product": row.get("description"),
+            "verb": row.get("verb"),
+            "old_qty": old_qty,
+            "new_qty": new_qty,
+            "old_date": old_date,
+            "new_date": new_date,
+            "new_so_number": new_so_number,
+        }
+
+    def autocount_change_list_workbook(self, amendment_id: str) -> Tuple[str, bytes]:
+        import openpyxl
+
+        payload = self.build_autocount_change_list(amendment_id)
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "CHANGES"
+        sheet.append([f"AUTOCOUNT CHANGE LIST - {payload['so_ref'] or ''}"])
+        sheet.append(list(_AUTOCOUNT_HEADINGS))
+        for row in payload["rows"]:
+            sheet.append(
+                [
+                    row.get("so_number") or "",
+                    row.get("line_no") or "",
+                    row.get("item_code") or "",
+                    row.get("product") or "",
+                    row.get("verb") or "",
+                    row.get("old_qty") or "",
+                    row.get("new_qty") or "",
+                    _as_date(row.get("old_date")),
+                    _as_date(row.get("new_date")),
+                    row.get("new_so_number") or "",
+                ]
+            )
+            for column in (8, 9):
+                cell = sheet.cell(row=sheet.max_row, column=column)
+                if isinstance(cell.value, date):
+                    cell.number_format = "DD/MM/YYYY"
+        if payload["declined_count"]:
+            sheet.append([])
+            sheet.append([f"Declined: {payload['declined_count']} rows"])
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        stem = (payload["so_ref"] or "amendment").replace("/", "-")
+        filename = f"autocount-change-list-{stem}.xlsx"
+        return filename, buffer.getvalue()
 
     # ----------------------------------------------------------------- shared
 
@@ -931,6 +1188,8 @@ class ProjectSODeltaService:
             fact.phase_id = fact.phase_id or phase.id
             if cell.product_id:
                 fact.qty[cell.product_id] = fact.qty.get(cell.product_id, _ZERO) + _dec(cell.qty)
+                if cell.delivery_date_override:
+                    fact.date_overrides[cell.product_id] = cell.delivery_date_override
         return facts
 
     def _extracted_phases(self, version: DeliveryScheduleVersion) -> List[Dict[str, Any]]:

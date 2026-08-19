@@ -23,6 +23,7 @@ import {
   type DraftLine,
 } from '../../_shared/lib/supplyComposition';
 import { BorrowAddDialog } from './BorrowAddDialog';
+import { ClassificationProofPopover } from './ClassificationProofPopover';
 
 /**
  * One line's composition (journey steps 1 and 2).
@@ -33,7 +34,7 @@ import { BorrowAddDialog } from './BorrowAddDialog';
  * reader where things are.
  *
  * Every section renders whatever the answer is (AC-G02). No eligible stock, no incoming by
- * the required date, no later incoming, no borrow candidate, no reorder level and no
+ * the delivery date, no later incoming, no borrow candidate, no reorder level and no
  * classification each state that in place; a section that disappears reads as a screen
  * that has not finished loading.
  */
@@ -101,7 +102,7 @@ export function SupplyLineCard({
       </header>
 
       <div className="grid grid-cols-2 gap-3 border-b border-border px-3 py-2.5 sm:grid-cols-3">
-        <Fact label="Required">
+        <Fact label="Delivery date">
           {line.required_date ? (
             <span className="tabular-nums">{formatDateInMalaysia(line.required_date)}</span>
           ) : (
@@ -118,28 +119,20 @@ export function SupplyLineCard({
             <span className="text-destructive">Not on the sales order line</span>
           )}
         </Fact>
-        <Fact label="Retail classification">
-          {line.classification_unavailable ? (
-            <span
-              className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('unknown')}`}
-              title="Retail classification unavailable"
-            >
-              Unavailable
-            </span>
-          ) : line.is_dealer_hot_selling ? (
-            <span
-              className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('pending')}`}
-              title="Hot selling at a dealer location"
-            >
-              Hot selling
-            </span>
-          ) : (
-            <Muted>Not hot selling</Muted>
-          )}
+        {/* Own-location Reserve is always eligible regardless of this fact (PLAN 3.3a); it
+            names what the SHARED POOL below is offered against. */}
+        <Fact label="Hot-selling">
+          <div className="flex flex-wrap items-center gap-1">
+            <HotSellingPills line={line} />
+            <ClassificationProofPopover
+              productId={line.product_id}
+              testId={line.project_line_id}
+            />
+          </div>
         </Fact>
       </div>
 
-      {/* Reserve evidence: the pool, its level and the cap the two produce. Rendered on
+      {/* Reserve evidence: the pool and what hot-selling (if any) offers of it. Rendered on
           every line, so "no reorder level is set" is stated rather than left blank. */}
       <div className="border-b border-border px-3 py-2.5 text-sm">
         <div className="text-2xs uppercase tracking-wide text-muted-foreground">
@@ -152,8 +145,10 @@ export function SupplyLineCard({
               ? `, reorder level ${line.pool_reorder_level}`
               : ', no reorder level set'}
             {line.is_dealer_hot_selling
-              ? `. Dealer stock is out; the pool draw stops at ${line.pool_cap ?? '0'}.`
-              : '.'}
+              ? '. Dealer hot-selling: the pool is not offered.'
+              : line.is_project_hot_selling
+                ? '. Project hot-selling: the pool is offered while it stays available.'
+                : '.'}
           </p>
         ) : (
           <Muted>No pool is configured for this location.</Muted>
@@ -169,11 +164,11 @@ export function SupplyLineCard({
 
       {/* Components, in the order the engine proposes them (plan 3.2). */}
       <div className="divide-y divide-border">
-        <Row label="Incoming by the required date">
+        <Row label="Incoming by the delivery date">
           {frozen ? (
             <FrozenComponents components={frozenOf('timely_spo')} uom={uom} />
           ) : line.timely_spo.length === 0 ? (
-            <Muted>No incoming arrives by the required date.</Muted>
+            <Muted>No incoming arrives by the delivery date.</Muted>
           ) : (
             <div className="space-y-1">
               <div className="text-sm tabular-nums">{`${draft.timely_spo_qty}${uom}`}</div>
@@ -353,7 +348,7 @@ export function SupplyLineCard({
           ) : (
             <div className="space-y-1">
               <SpoList refs={line.advisory_spo} />
-              <Muted>Advisory: it arrives after the required date and covers nothing.</Muted>
+              <Muted>Advisory: it arrives after the delivery date and covers nothing.</Muted>
             </div>
           )}
         </Row>
@@ -442,7 +437,7 @@ function BlockedLineCard({
       </header>
 
       <div className="grid grid-cols-2 gap-3 border-b border-border px-3 py-2.5 sm:grid-cols-3">
-        <Fact label="Required">
+        <Fact label="Delivery date">
           {line.required_date ? (
             <span className="tabular-nums">{formatDateInMalaysia(line.required_date)}</span>
           ) : (
@@ -552,4 +547,68 @@ function Reason({ children }: { children: React.ReactNode }) {
 /** Block, not inline: two empty states in one section must not run into one sentence. */
 function Muted({ children }: { children: React.ReactNode }) {
   return <span className="block text-sm text-muted-foreground">{children}</span>;
+}
+
+/**
+ * Hot, cold or not classified, in the plain words the captain asked for (19 August 2026:
+ * "don't give me jargon like abc classification, just tell me hot selling or cold selling,
+ * at project or retail"). Up to two pills - one per demand class - the same vocabulary the
+ * board's flag chips use (`BoardTrailPopover.ItemFlagChips`).
+ */
+function HotSellingPills({ line }: { line: SupplyLine }) {
+  if (line.classification_unavailable) {
+    return (
+      <span
+        className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('unknown')}`}
+        title="No retail or project deliveries of this item in the last 12 months"
+      >
+        Not classified
+      </span>
+    );
+  }
+  const pills: Array<{ key: string; label: string; title: string; tone: string }> = [];
+  if (line.is_dealer_hot_selling) {
+    pills.push({
+      key: 'dealer-hot',
+      label: 'Dealer hot-selling',
+      title: 'Dealer hot-selling: the shared pool is not offered',
+      tone: 'pending',
+    });
+  } else if (line.dealer_classified) {
+    pills.push({
+      key: 'dealer-cold',
+      label: 'Cold at retail',
+      title: 'Cold at retail: the shared pool is offered as it is for any ordinary item',
+      tone: 'draft',
+    });
+  }
+  if (line.is_project_hot_selling) {
+    pills.push({
+      key: 'project-hot',
+      label: 'Project hot-selling',
+      title: 'Project hot-selling: the shared pool is offered while it stays available',
+      tone: 'pending',
+    });
+  } else if (line.project_classified) {
+    pills.push({
+      key: 'project-cold',
+      label: 'Cold at project',
+      title: 'Cold at project: the shared pool is offered as it is for any ordinary item',
+      tone: 'draft',
+    });
+  }
+  if (pills.length === 0) return <Muted>Not hot-selling</Muted>;
+  return (
+    <>
+      {pills.map((pill) => (
+        <span
+          key={pill.key}
+          className={`${STATUS_PILL_BASE} normal-case ${statusPillClass(pill.tone)}`}
+          title={pill.title}
+        >
+          {pill.label}
+        </span>
+      ))}
+    </>
+  );
 }

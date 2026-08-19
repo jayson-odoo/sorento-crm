@@ -115,7 +115,7 @@ def test_equal_scores_and_dates_across_orders_are_the_sales_order_tie_break():
 def test_the_ahead_phrase_has_words_for_the_date_tie():
     from app.services.project_fulfilment_board_service import _ahead_phrase
 
-    assert _ahead_phrase({"earlier_date": 4}) == "the same rank and an earlier required date"
+    assert _ahead_phrase({"earlier_date": 4}) == "the same rank and an earlier delivery date"
     assert "earlier_date" not in _ahead_phrase({"earlier_date": 4, "tie_break": 1})
 
 

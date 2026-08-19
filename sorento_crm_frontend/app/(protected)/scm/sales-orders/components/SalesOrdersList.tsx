@@ -10,7 +10,8 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { FileText, LoaderCircleIcon, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { FileText, LoaderCircleIcon, Pencil, Plus, Search, Trash2, Upload, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -53,6 +54,11 @@ import type {
   SalesOrderStatus,
 } from '../../types/scm.types';
 import { SalesOrderFormModal } from './SalesOrderFormModal';
+// The order book upload lives on Reorder planning - the whole plan is computed from it, so
+// it is a planning action there. This list is the other place someone reasonably looks for
+// it, so the same dialog (never forked) is reused here too.
+import { OutstandingUploadDialog } from '../../reorder/components/OutstandingUploadDialog';
+import { runHistoryKey, todayRunKey } from '../../reorder/hooks/useReorderRun';
 
 type BadgeVariant = 'destructive' | 'warning' | 'secondary' | 'outline' | 'primary' | 'success';
 type BadgeDef = { variant: BadgeVariant; label: string };
@@ -143,6 +149,9 @@ export default function SalesOrdersList() {
   const [editing, setEditing] = useState<SalesOrder | null>(null);
   const [deleting, setDeleting] = useState<SalesOrder | null>(null);
   const [creatingDo, setCreatingDo] = useState<SalesOrder | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
+
+  const queryClient = useQueryClient();
 
   const { data, isLoading, isFetching, refetch } = useSalesOrders({
     pageIndex: pagination.pageIndex,
@@ -223,6 +232,16 @@ export default function SalesOrdersList() {
     }
     setFormOpen(false);
     setEditing(null);
+  };
+
+  // The dialog itself toasts and links to the job page (Confirm -> apply -> onApplied); this
+  // list only has to refresh once the write lands. The reorder plan is computed from the same
+  // order book, so its two queries are invalidated alongside this list's own, the same as
+  // Reorder planning's own `uploadQueued`.
+  const handleUploadQueued = () => {
+    void queryClient.invalidateQueries({ queryKey: ['scm', 'sales-orders'] });
+    void queryClient.invalidateQueries({ queryKey: todayRunKey });
+    void queryClient.invalidateQueries({ queryKey: runHistoryKey });
   };
 
   const columns = useMemo<ColumnDef<SalesOrder>[]>(
@@ -639,6 +658,14 @@ export default function SalesOrdersList() {
               exportConfig={{ filename: 'sales_orders_export.xlsx' }}
               onRefresh={() => void refetch()}
               isRefreshing={isFetching && !isLoading}
+              secondaryActions={[
+                {
+                  key: 'upload-outstanding',
+                  label: 'Upload outstanding sales orders',
+                  icon: Upload,
+                  onClick: () => setUploadOpen(true),
+                },
+              ]}
               primaryAction={
                 <Button
                   onClick={() => {
@@ -663,6 +690,17 @@ export default function SalesOrdersList() {
           </CardFooter>
         </Card>
       </DataGrid>
+
+      {/* Mounted only while open, the same as `UploadDataMenu` on Reorder planning: a closed
+          dialog starts from a clean flow rather than whatever the last upload left behind. */}
+      {uploadOpen ? (
+        <OutstandingUploadDialog
+          open
+          onOpenChange={setUploadOpen}
+          kind="sales-orders"
+          onQueued={handleUploadQueued}
+        />
+      ) : null}
 
       <SalesOrderFormModal
         open={formOpen}

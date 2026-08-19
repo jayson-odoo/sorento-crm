@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import type { DeliverySchedulePhase } from '../../../_shared/types/deliverySchedule.types';
-import type { ColumnState } from '../lib/scheduleTotals';
+import type { CellMeta, ColumnState } from '../lib/scheduleTotals';
 import { phaseRowLabel, sumQty } from '../lib/scheduleTotals';
 import { DeliveryScheduleProductPicker } from './DeliveryScheduleProductPicker';
 
@@ -64,6 +64,12 @@ export interface ScheduleGridController {
   learnedColumns: number[];
   registerColumnRef: (columnKey: string, node: HTMLElement | null) => void;
   /**
+   * What the document itself marked on one cell (section 9.7a/c): a tint, or a date this
+   * cell now overrides ahead of the phase's own. Absent for the ordinary cell, which is
+   * most of them.
+   */
+  metaFor: (phaseId: string, columnKey: string) => CellMeta | undefined;
+  /**
    * A column the reviewer asked to be put inside, from the reconciliation list.
    *
    * Both views watch it. The matrix answers unconditionally because a browser refuses focus
@@ -77,11 +83,11 @@ export interface ScheduleGridController {
 /**
  * The identity column, and it is wide because it carries the picker as well as the code.
  */
-const PRODUCT_COL = 'w-[240px] min-w-[240px] max-w-[240px]';
+export const PRODUCT_COL = 'w-[240px] min-w-[240px] max-w-[240px]';
 /** One per delivery phase, sized for a date plus the phase it belongs to. */
-const DATE_COL = 'w-[136px] min-w-[136px] max-w-[136px]';
+export const DATE_COL = 'w-[136px] min-w-[136px] max-w-[136px]';
 /** The three numbers that close every product row. */
-const TOTAL_COL = 'w-[124px] min-w-[124px] max-w-[124px]';
+export const TOTAL_COL = 'w-[124px] min-w-[124px] max-w-[124px]';
 
 /**
  * Two paint layers, and every pinned cell names the one it is on.
@@ -91,8 +97,8 @@ const TOTAL_COL = 'w-[124px] min-w-[124px] max-w-[124px]';
  * equal z-index the winner is whichever the DOM happened to put last rather than whichever
  * a reader expects to see.
  */
-const Z_PINNED = 'z-20';
-const Z_CORNER = 'z-30';
+export const Z_PINNED = 'z-20';
+export const Z_CORNER = 'z-30';
 
 /**
  * A pinned cell has to be OPAQUE, and this is the whole of the "stray number in the header"
@@ -105,7 +111,7 @@ const Z_CORNER = 'z-30';
  * what a pinned cell needs. It is also the only way to tint these tokens: the theme resolves
  * them to `oklch(...)`, so `hsl(var(--destructive) / 0.1)` would be dropped as invalid.
  */
-const UNRECONCILED_BG = 'bg-[color-mix(in_oklab,var(--destructive)_12%,var(--muted))]';
+export const UNRECONCILED_BG = 'bg-[color-mix(in_oklab,var(--destructive)_12%,var(--muted))]';
 
 /**
  * The schedule, TRANSPOSED: dates across the top, products down the side.
@@ -264,14 +270,24 @@ export function DeliveryScheduleMatrix({
               {dateColumns.map(({ phase, startsGroup }) => {
                 const editable = controller.canEdit && Boolean(column.productId);
                 const value = controller.valueFor(phase.id, column.key);
+                const meta = controller.metaFor(phase.id, column.key);
                 return (
                   <td
                     key={phase.id}
+                    // The highlight is an inline style, not a class: the colour is the
+                    // document's own and cannot be a Tailwind token. `color-mix` gives a
+                    // real tint at partial opacity.
+                    style={
+                      meta?.highlight
+                        ? { backgroundColor: `color-mix(in oklab, ${meta.highlight} 35%, transparent)` }
+                        : undefined
+                    }
+                    title={meta?.highlight ? 'Highlighted in the document' : undefined}
                     className={cn(
                       DATE_COL,
                       'border-b border-e border-border p-0',
                       startsGroup && 'border-s border-s-border',
-                      column.reconciled ? '' : 'bg-destructive/5',
+                      !meta?.highlight && (column.reconciled ? '' : 'bg-destructive/5'),
                     )}
                   >
                     <input
@@ -293,6 +309,19 @@ export function DeliveryScheduleMatrix({
                       onBlur={() => controller.commit(phase.id, column)}
                       className="h-8 w-full bg-transparent px-2 text-end tabular-nums outline-none focus:bg-primary/5 focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:text-muted-foreground"
                     />
+                    {/* The phase header above keeps the DOCUMENT's own date; this one
+                        product's cell shows its own, was -> now, once a proposal covering
+                        it was accepted. */}
+                    {meta?.deliveryDateOverride && (
+                      <p className="flex items-center gap-1 truncate px-2 pb-1 text-[10px] tabular-nums">
+                        <span className="text-muted-foreground line-through">
+                          {phase.delivery_date ? formatDateInMalaysia(phase.delivery_date) : '—'}
+                        </span>
+                        <span className="font-medium">
+                          {formatDateInMalaysia(meta.deliveryDateOverride)}
+                        </span>
+                      </p>
+                    )}
                   </td>
                 );
               })}
@@ -394,7 +423,7 @@ function DateTotal({ values }: { values: string[] }) {
   return <>{scheduled ? sumQty(values) : ''}</>;
 }
 
-function TotalsHeading({ label }: { label: string }) {
+export function TotalsHeading({ label }: { label: string }) {
   return (
     <th
       scope="col"
@@ -409,7 +438,7 @@ function TotalsHeading({ label }: { label: string }) {
   );
 }
 
-function TotalCell({
+export function TotalCell({
   column,
   value,
   missingLabel,
@@ -448,7 +477,7 @@ function TotalCell({
  * A product, as the head of its own row: what it is, whether it reconciles, and the way to
  * correct it when the code was matched to the wrong thing.
  */
-function ProductHeading({
+export function ProductHeading({
   column,
   controller,
 }: {

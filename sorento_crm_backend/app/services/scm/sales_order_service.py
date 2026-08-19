@@ -52,6 +52,22 @@ def _source_label(source_system: Optional[str]) -> str:
     return "manual"
 
 
+def _line_sort_key(ln: SalesOrderLine):
+    """OPEN lines first, then delivery date ascending (nulls last), then product code.
+
+    Applied here rather than on the FE, so the list and the detail screen - both built from
+    `serialize()` - and any other consumer of the payload (n8n via MCP, a future export) see
+    the same order without agreeing on it separately. The FE's own column-header sort still
+    works on top of this: it is the table's default order, not a lock on the rows.
+    """
+    return (
+        0 if ln.line_status == "open" else 1,
+        ln.required_date is None,
+        ln.required_date or date.min,
+        ln.product.product_code if ln.product else "",
+    )
+
+
 def _order_by(sort_cols: dict, sort: Optional[str], direction: str) -> list:
     """The sort, always made total by `id`.
 
@@ -138,7 +154,7 @@ class SalesOrderService:
         committed = 0.0
         lines = []
         open_lines = 0
-        for ln in so.lines:
+        for ln in sorted(so.lines, key=_line_sort_key):
             qo = float(ln.qty_ordered or 0)
             qd = float(ln.qty_delivered or 0)
             outstanding = max(qo - qd, 0.0)

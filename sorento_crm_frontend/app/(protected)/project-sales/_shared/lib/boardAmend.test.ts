@@ -56,7 +56,7 @@ describe('amendDraftFrom: the proposal, as something a person can edit', () => {
         location: 'BRW-BB',
         warehouse_id: 'wh-BRW-BB',
         qty: '40',
-        reason: 'Free unclaimed stock at BRW-BB covers this much by the required date.',
+        reason: 'Free unclaimed stock at BRW-BB covers this much by the delivery date.',
       },
     ]);
     expect(draft.borrow).toEqual([]);
@@ -136,6 +136,10 @@ describe('amendDraftFrom: the proposal, as something a person can edit', () => {
       item_flags: {
         dealer_hot_selling: false,
         dealer_hot_selling_where: [],
+        project_hot_selling: false,
+        project_hot_selling_where: [],
+        dealer_classified: false,
+        project_classified: false,
         discontinued: true,
         retail_classification_available: true,
       },
@@ -167,6 +171,10 @@ describe('amendDraftFrom on a covered line', () => {
       item_flags: {
         dealer_hot_selling: false,
         dealer_hot_selling_where: [],
+        project_hot_selling: false,
+        project_hot_selling_where: [],
+        dealer_classified: false,
+        project_classified: false,
         discontinued: true,
         retail_classification_available: true,
       },

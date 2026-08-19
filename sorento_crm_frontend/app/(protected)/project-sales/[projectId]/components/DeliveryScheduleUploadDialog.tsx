@@ -95,15 +95,23 @@ export function DeliveryScheduleUploadDialog({
           onSubmit={async (event) => {
             event.preventDefault();
             if (!file || !poId) return;
-            const result = await upload.mutateAsync({
-              poId,
-              body: {
-                file,
-                issuer_party_id: issuerId || null,
-                revision_label: revisionLabel.trim() || null,
-                delivery_schedule_id: scheduleId || null,
-              },
-            });
+            // mutateAsync rethrows, and the toast is already shown by the mutation's own
+            // onError - an uncaught rethrow here would only surface as an unhandled
+            // rejection in the browser (e.g. on the duplicate-upload 409).
+            let result;
+            try {
+              result = await upload.mutateAsync({
+                poId,
+                body: {
+                  file,
+                  issuer_party_id: issuerId || null,
+                  revision_label: revisionLabel.trim() || null,
+                  delivery_schedule_id: scheduleId || null,
+                },
+              });
+            } catch {
+              return;
+            }
             onDone();
             router.push(
               `/project-sales/${project.id}/delivery-schedules/${result.schedule_version_id}`,

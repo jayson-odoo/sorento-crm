@@ -54,7 +54,12 @@ def _mapped_classes():
 
 # Born after migration 354, so no pre-move name exists: these models chose their entity
 # type at birth and are pinned by their own test below, not by the rename contract.
-BORN_AFTER_THE_MOVE = frozenset({"so_supply_decisions"})
+BORN_AFTER_THE_MOVE = frozenset({
+    "so_supply_decisions",
+    # PLAN-so-book-diff-replanning.md (migration 29d85dc3ccc3), same reason as above.
+    "planning_change_batches",
+    "planning_change_rows",
+})
 
 
 def _projects_classes():
@@ -68,10 +73,18 @@ def _projects_classes():
 
 def test_a_model_born_after_the_move_keeps_the_prefix_convention_it_was_born_with():
     """`so_supply_decisions` never wrote a pre-move audit row, so nothing constrains it
-    historically; it adopted its siblings' `project_` prefix and this pins that choice."""
+    historically; it adopted its siblings' `project_` prefix and this pins that choice.
+
+    `planning_change_batches` / `planning_change_rows` (PLAN-so-book-diff-replanning.md)
+    are the same case: born straight into `projects` by their own migration, so they pin
+    the same convention rather than the rename contract.
+    """
+    from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
     from app.models.project_so import SOSupplyDecision
 
     assert _audit_entity_type(SOSupplyDecision) == "project_so_supply_decisions"
+    assert _audit_entity_type(PlanningChangeBatch) == "project_planning_change_batches"
+    assert _audit_entity_type(PlanningChangeRow) == "project_planning_change_rows"
 
 
 def test_every_renamed_model_pins_its_pre_move_audit_entity_type():

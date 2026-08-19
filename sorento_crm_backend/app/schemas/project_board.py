@@ -144,8 +144,10 @@ class BoardTrailPool(BaseModel):
     #: What was left for THIS line when the rung was reached - the rung's own `opening`.
     left: str = "0"
     reorder_level: str = "0"
-    #: What could be taken above the reorder level, when a cap applies (a dealer hot-selling
-    #: item draws only above it). Null when no cap applies - never "0" for a limit nobody set.
+    #: The old reorder-level cap on a hot-selling line's pool draw. Always null now (19
+    #: August 2026, PLAN 3.3a): dealer hot-selling offers the pool nothing and project
+    #: hot-selling caps it by the pool's own availability instead. Kept for wire
+    #: compatibility, never a number that would read as a limit nobody set.
     cap: Optional[str] = None
 
 
@@ -154,20 +156,36 @@ class BoardItemFlags(BaseModel):
 
     The captain, reading the trail: "where is the consideration of dealer hot selling /
     project hot selling / discontinued, to see if we can take from BRW?" They were consulted
-    on every line and never printed. There is no "project hot-selling" concept - only the
-    dealer one (PLAN-scm-front-planning 3.3) - and stating the flags plainly is the answer.
+    on every line and never printed - stating the flags plainly is the answer.
+
+    Amended 19 August 2026 (PLAN 3.3a): hot-selling is now judged PER DEMAND CLASS - a SKU
+    can be hot-selling on retail demand, on project demand, on both (dealer wins) or on
+    neither, ranked BY QUANTITY delivered in that class in the trailing-12mo window, not by
+    value. Own-location Reserve is always eligible regardless of either flag; the flags gate
+    only how much the SHARED POOL contributes.
     """
 
-    #: ABC class A at an active dealer-segment location (3.3): own-location stock is kept for
-    #: retail and the line may reserve from the pool only, above the pool's reorder level.
+    #: ABC class A by quantity on RETAIL (dealer)-classed demand (3.3a): the shared pool
+    #: contributes nothing at all - it is kept for retail.
     dealer_hot_selling: bool = False
-    #: The dealer locations where it earned that, by code. Evidence, not a bare verdict.
+    #: The locations where it earned that, by code. Evidence, not a bare verdict.
     dealer_hot_selling_where: List[str] = []
+    #: ABC class A by quantity on PROJECT-classed demand (3.3a): the shared pool contributes
+    #: only while its own signed availability stays positive.
+    project_hot_selling: bool = False
+    #: The locations where it earned that, by code.
+    project_hot_selling_where: List[str] = []
+    #: Classified (a non-null letter on that class, at an active location) but not hot -
+    #: "Cold at retail" / "Cold at project" in the UI's own words. `False` while the class
+    #: is hot too - the hot flag above already covers it.
+    dealer_classified: bool = False
+    project_classified: bool = False
     #: `products.is_discontinued`: a Buy for it needs a reason at confirm, nothing more.
     discontinued: bool = False
-    #: Somebody has classified this item at a dealer location at all. False is the PLAN's
-    #: "Retail classification unavailable" state, which is a different answer from "not
-    #: hot-selling" and must not be printed as it.
+    #: Somebody has classified this item - a NON-NULL letter on EITHER demand class - at all.
+    #: False is the PLAN's "no classification" state (no delivered demand of either class in
+    #: the trailing-12mo window), which is a different answer from "not hot-selling" and must
+    #: not be printed as it.
     retail_classification_available: bool = True
 
 
