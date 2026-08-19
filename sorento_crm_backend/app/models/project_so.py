@@ -868,10 +868,17 @@ ALLOC_SOURCE_ORDER = "order"
 #: `other_project`, but there is no donor project to ask, so it carries no claim row.
 #: A model constant, not a database enum: `source_type` is a plain String(16).
 ALLOC_SOURCE_OTHER_LOCATION = "other_location"
+#: Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E rung 3): positive,
+#: uncommitted stock at a SIBLING location of this line's ownership group, at another
+#: site. Kind `reserve` like `own`/`brw` - it is free stock, nobody's to ask - but never
+#: this line's OWN location (rule 7: the own-location Reserve rung is gone) and never the
+#: shared site pool (that is `brw`), so it carries its own source so a report can tell
+#: "reserved at home" from "taken from a sibling location" apart.
+ALLOC_SOURCE_GROUP_TAKE = "group_take"
 
-#: UI mapping, stated once: `own`/`brw` are Reserve, `other_project`/`other_location` are
-#: Borrow, `order` is Buy.
-ALLOC_RESERVE_SOURCES = (ALLOC_SOURCE_OWN, ALLOC_SOURCE_BRW)
+#: UI mapping, stated once: `own`/`brw`/`group_take` are Reserve, `other_project`/
+#: `other_location` are Borrow, `order` is Buy.
+ALLOC_RESERVE_SOURCES = (ALLOC_SOURCE_OWN, ALLOC_SOURCE_BRW, ALLOC_SOURCE_GROUP_TAKE)
 ALLOC_BORROW_SOURCES = (ALLOC_SOURCE_OTHER_PROJECT, ALLOC_SOURCE_OTHER_LOCATION)
 
 CLAIM_REQUESTED = "requested"

@@ -60,18 +60,22 @@ export function BorrowAddDialog({
   onDone: () => void;
   onAdd: (candidate: BorrowCandidate, qty: string, reason: string) => void;
 }) {
+  // The default selection is the first SELECTABLE candidate - an over-cap row (section E
+  // rule 5) is shown but disabled, and defaulting onto it would open the dialog with no
+  // valid choice made until the planner clicks something themselves.
+  const firstSelectable = candidates.find((candidate) => !candidate.over_cap) ?? candidates[0];
   const [selectedKey, setSelectedKey] = React.useState(
-    candidates[0] ? candidateKey(candidates[0]) : '',
+    firstSelectable ? candidateKey(firstSelectable) : '',
   );
-  const [qty, setQty] = React.useState(openingQty(candidates[0]));
+  const [qty, setQty] = React.useState(openingQty(firstSelectable));
   const [reason, setReason] = React.useState('');
 
   const selected =
-    candidates.find((candidate) => candidateKey(candidate) === selectedKey) ?? candidates[0];
+    candidates.find((candidate) => candidateKey(candidate) === selectedKey) ?? firstSelectable;
   const trimmed = reason.trim();
   const amount = Number.parseFloat(qty);
   const typed = Number.isFinite(amount) && amount > 0 ? amount : null;
-  const valid = Boolean(selected) && typed !== null && Boolean(trimmed);
+  const valid = Boolean(selected) && !selected.over_cap && typed !== null && Boolean(trimmed);
 
   return (
     <Dialog open onOpenChange={(next) => !next && onDone()}>
@@ -127,17 +131,27 @@ export function BorrowAddDialog({
                       {candidates.map((candidate) => {
                         const key = candidateKey(candidate);
                         const code = candidate.warehouse_code;
-                        const donor =
-                          candidate.source === 'other_project'
+                        const isGroupBorrow = candidate.rung === 'group_borrow';
+                        const donor = isGroupBorrow
+                          ? donorSoLabel(candidate)
+                          : candidate.source === 'other_project'
                             ? (candidate.donor_project_ref ?? 'Another project')
                             : code;
                         const chosen = key === selectedKey;
+                        const disabled = Boolean(candidate.over_cap);
                         return (
-                          <tr key={key} data-testid={`borrow-donor-${code}`}>
+                          <tr
+                            key={key}
+                            data-testid={`borrow-donor-${code}`}
+                            className={disabled ? 'opacity-60' : undefined}
+                          >
                             <td className={cn(SOURCE_COL, BODY_CELL)}>
                               <label
                                 htmlFor={`borrow-${lineNo}-${key}`}
-                                className="flex cursor-pointer items-start gap-2"
+                                className={cn(
+                                  'flex items-start gap-2',
+                                  disabled ? 'cursor-not-allowed' : 'cursor-pointer',
+                                )}
                               >
                                 <input
                                   id={`borrow-${lineNo}-${key}`}
@@ -145,6 +159,7 @@ export function BorrowAddDialog({
                                   name={`borrow-source-${lineNo}`}
                                   className="mt-0.5"
                                   checked={chosen}
+                                  disabled={disabled}
                                   onChange={() => {
                                     setSelectedKey(key);
                                     setQty(openingQty(candidate));
@@ -157,7 +172,15 @@ export function BorrowAddDialog({
                                   >
                                     {donor}
                                   </span>
-                                  {candidate.source === 'other_project' && (
+                                  {isGroupBorrow && (
+                                    <span
+                                      className="block truncate text-muted-foreground"
+                                      title={`At ${code}`}
+                                    >
+                                      {`At ${code}`}
+                                    </span>
+                                  )}
+                                  {!isGroupBorrow && candidate.source === 'other_project' && (
                                     <span
                                       className="block truncate text-muted-foreground"
                                       title={`Held at ${code}`}
@@ -165,9 +188,28 @@ export function BorrowAddDialog({
                                       {`Held at ${code}`}
                                     </span>
                                   )}
-                                  {candidate.recommended && (
-                                    <span className="mt-0.5 inline-block rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                                      Recommended
+                                  <span className="mt-0.5 flex flex-wrap gap-1">
+                                    {candidate.recommended && (
+                                      <span className="inline-block rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                                        Recommended
+                                      </span>
+                                    )}
+                                    {candidate.same_agent && (
+                                      <span
+                                        data-testid={`borrow-same-agent-${code}`}
+                                        className="inline-block rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
+                                        title="This donor shares the line's own sales agent, who can authorise moving her own stock."
+                                      >
+                                        Same agent
+                                      </span>
+                                    )}
+                                  </span>
+                                  {disabled && (
+                                    <span
+                                      data-testid={`borrow-cap-reason-${code}`}
+                                      className="mt-0.5 block text-2xs text-muted-foreground"
+                                    >
+                                      {candidate.cap_reason ?? 'Outside the cross-group borrow limit.'}
                                     </span>
                                   )}
                                 </span>
@@ -375,6 +417,19 @@ function isNegative(value: string | null): boolean {
   return value !== null && Number(value) < 0;
 }
 
+/** "SO371334 line 2", the group-borrow donor's own identity - never a bare warehouse code,
+ * which two different donor lines at the same location would otherwise share. */
+function donorSoLabel(candidate: BorrowCandidate): string {
+  const so = candidate.donor_so_number ?? 'An unnamed sales order';
+  const line = candidate.donor_line_no !== null && candidate.donor_line_no !== undefined
+    ? ` line ${candidate.donor_line_no}`
+    : '';
+  return `${so}${line}`;
+}
+
 function candidateKey(candidate: BorrowCandidate): string {
-  return `${candidate.source}-${candidate.warehouse_code}-${candidate.donor_project_ref ?? ''}`;
+  return (
+    `${candidate.source}-${candidate.warehouse_code}-${candidate.donor_project_ref ?? ''}-` +
+    `${candidate.donor_core_line_id ?? ''}`
+  );
 }

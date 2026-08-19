@@ -553,7 +553,7 @@ def test_apply_release_returns_the_whole_line_to_the_board_with_no_buy_and_no_oi
     it, and no Order Inquiry row is touched (release is not a purchase)."""
     client, world = api
     db = world.db
-    _stock(db, world.product, world.own_wh, on_hand=100)
+    _stock(db, world.product, world.pool_wh, on_hand=100)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="40",
                             required_date=date(2026, 8, 25))
@@ -563,7 +563,7 @@ def test_apply_release_returns_the_whole_line_to_the_board_with_no_buy_and_no_oi
     db.commit()
 
     _confirm(client, order.id, {"lines": [
-        _line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "40"}]),
+        _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "40"}]),
     ]})
 
     changed = _diff_change(
@@ -618,7 +618,7 @@ def test_apply_release_returns_the_whole_line_to_the_board_with_no_buy_and_no_oi
     assert row_model.applied_state == "applied"
     assert row_model.result_json["back_on_board"] is True
     assert row_model.result_json["released"]["qty"] == "40"
-    assert row_model.result_json["released"]["location"] == world.own_wh.warehouse_code
+    assert row_model.result_json["released"]["location"] == world.pool_wh.warehouse_code
 
 
 def test_apply_release_moves_the_lines_order_row_to_the_pool_and_raises_a_release_row(api):
@@ -629,7 +629,7 @@ def test_apply_release_moves_the_lines_order_row_to_the_pool_and_raises_a_releas
     worklist the way a DELAY row does."""
     client, world = api
     db = world.db
-    _stock(db, world.product, world.own_wh, on_hand=50)
+    _stock(db, world.product, world.pool_wh, on_hand=50)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="150",
                             required_date=date(2026, 8, 25))
@@ -638,7 +638,7 @@ def test_apply_release_moves_the_lines_order_row_to_the_pool_and_raises_a_releas
     db.commit()
 
     _confirm(client, order.id, {"lines": [
-        _line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "2"}],
+        _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "2"}],
                       buy_qty="148", buy_reason="Nothing free elsewhere."),
     ]})
 
@@ -647,7 +647,7 @@ def test_apply_release_moves_the_lines_order_row_to_the_pool_and_raises_a_releas
         .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
         .one()
     )
-    assert order_row.stock_location == world.own_wh.warehouse_code
+    assert order_row.stock_location == world.pool_wh.warehouse_code
 
     changed = _diff_change(
         DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
@@ -696,7 +696,7 @@ def test_apply_release_moves_the_lines_order_row_to_the_pool_and_raises_a_releas
 def test_apply_qty_down_reduces_buy_and_raises_cancel_balance(api):
     client, world = api
     db = world.db
-    _stock(db, world.product, world.own_wh, on_hand=50)
+    _stock(db, world.product, world.pool_wh, on_hand=50)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="66",
                             required_date=date(2027, 1, 15))
@@ -705,7 +705,7 @@ def test_apply_qty_down_reduces_buy_and_raises_cancel_balance(api):
     db.commit()
 
     _confirm(client, order.id, {"lines": [
-        _line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "50"}],
+        _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "50"}],
                       buy_qty="16", buy_reason="Nothing free elsewhere."),
     ]})
 
@@ -756,7 +756,7 @@ def test_apply_qty_down_reduces_buy_and_raises_cancel_balance(api):
 def test_apply_closed_retires_open_row_and_notes_actioned_row(api):
     client, world = api
     db = world.db
-    _stock(db, world.product, world.own_wh, on_hand=50)
+    _stock(db, world.product, world.pool_wh, on_hand=50)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="12",
                             required_date=date(2027, 1, 20))
@@ -765,7 +765,7 @@ def test_apply_closed_retires_open_row_and_notes_actioned_row(api):
     db.commit()
 
     _confirm(client, order.id, {"lines": [
-        _line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "4"}],
+        _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "4"}],
                       buy_qty="8", buy_reason="Timely stock short."),
     ]})
 
@@ -811,7 +811,7 @@ def test_apply_closed_retires_open_row_and_notes_actioned_row(api):
 def test_apply_per_order_failure_does_not_block_the_other_order(api):
     client, world = api
     db = world.db
-    _stock(db, world.product, world.own_wh, on_hand=200)
+    _stock(db, world.product, world.pool_wh, on_hand=200)
 
     core_so_a = _core_so(db, world.company_id)
     core_line_a = _core_line(db, core_so_a, world.product, world.own_wh, qty_ordered="40",
@@ -829,10 +829,10 @@ def test_apply_per_order_failure_does_not_block_the_other_order(api):
     db.commit()
 
     _confirm(client, order_a.id, {"lines": [
-        _line_payload(line_a.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "40"}]),
+        _line_payload(line_a.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "40"}]),
     ]})
     _confirm(client, order_b.id, {"lines": [
-        _line_payload(line_b.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "30"}]),
+        _line_payload(line_b.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "30"}]),
     ]})
 
     changed_a = _diff_change(
@@ -859,7 +859,7 @@ def test_apply_per_order_failure_does_not_block_the_other_order(api):
     # bump so `apply()`'s own drift path (the same `confirm()` re-validation every other
     # apply goes through) refuses it honestly, without hand-rolling a failure.
     _confirm(client, order_b.id, {"lines": [
-        _line_payload(line_b.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "30"}],
+        _line_payload(line_b.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "30"}],
                       amend_reason="Re-planned on the board."),
     ]})
 
@@ -875,7 +875,7 @@ def test_apply_per_order_failure_does_not_block_the_other_order(api):
 def test_apply_twice_is_a_noop(api):
     client, world = api
     db = world.db
-    _stock(db, world.product, world.own_wh, on_hand=100)
+    _stock(db, world.product, world.pool_wh, on_hand=100)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="40",
                             required_date=date(2026, 8, 25))
@@ -883,7 +883,7 @@ def test_apply_twice_is_a_noop(api):
     line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
     db.commit()
     _confirm(client, order.id, {"lines": [
-        _line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "40"}]),
+        _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "40"}]),
     ]})
 
     changed = _diff_change(
@@ -912,7 +912,7 @@ def test_apply_twice_is_a_noop(api):
 def test_set_row_decision_refuses_accept_on_a_superseded_row(api):
     client, world = api
     db = world.db
-    _stock(db, world.product, world.own_wh, on_hand=100)
+    _stock(db, world.product, world.pool_wh, on_hand=100)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="40",
                             required_date=date(2026, 8, 25))
@@ -920,7 +920,7 @@ def test_set_row_decision_refuses_accept_on_a_superseded_row(api):
     line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
     db.commit()
     _confirm(client, order.id, {"lines": [
-        _line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "40"}]),
+        _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "40"}]),
     ]})
 
     changed = _diff_change(
@@ -938,7 +938,7 @@ def test_set_row_decision_refuses_accept_on_a_superseded_row(api):
 
     # The board re-plans it before anybody reviews the batch.
     _confirm(client, order.id, {"lines": [
-        _line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "40"}],
+        _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "40"}],
                       amend_reason="Re-planned on the board."),
     ]})
 
@@ -957,7 +957,7 @@ def test_apply_stamps_applied_at_only_when_something_actually_applied(api):
     decisions AND a retry both behind the "already applied" gate."""
     client, world = api
     db = world.db
-    _stock(db, world.product, world.own_wh, on_hand=100)
+    _stock(db, world.product, world.pool_wh, on_hand=100)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="40",
                             required_date=date(2026, 8, 25))
@@ -965,7 +965,7 @@ def test_apply_stamps_applied_at_only_when_something_actually_applied(api):
     line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
     db.commit()
     _confirm(client, order.id, {"lines": [
-        _line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "40"}]),
+        _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "40"}]),
     ]})
 
     # A 14-day move, within the reserve window: `suggest()` returns "keep", not
@@ -1024,7 +1024,7 @@ def test_apply_stamps_applied_at_only_when_something_actually_applied(api):
 def test_routes_list_get_put_and_apply_happy_path(api):
     client, world = api
     db = world.db
-    _stock(db, world.product, world.own_wh, on_hand=100)
+    _stock(db, world.product, world.pool_wh, on_hand=100)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="72",
                             required_date=date(2026, 8, 20))
@@ -1033,7 +1033,7 @@ def test_routes_list_get_put_and_apply_happy_path(api):
     db.commit()
 
     _confirm(client, order.id, {"lines": [
-        _line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "72"}]),
+        _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "72"}]),
     ]})
 
     changed = _diff_change(
@@ -1288,7 +1288,7 @@ def test_route_put_amend_rejects_a_composition_that_does_not_balance_with_422(ap
 
 def test_route_put_amend_stores_the_planners_own_composition_and_apply_writes_it(api):
     client, world = api
-    _stock(world.db, world.product, world.own_wh, on_hand=100)
+    _stock(world.db, world.product, world.pool_wh, on_hand=100)
     batch, order, line, row = _no_decision_replan_row(client, world)
 
     response = client.put(
@@ -1297,15 +1297,15 @@ def test_route_put_amend_stores_the_planners_own_composition_and_apply_writes_it
             "decision": "amend",
             "composition": _line_payload(
                 line.id,
-                reserve=[{"warehouse_id": world.own_wh.id, "qty": "50"}],
+                reserve=[{"warehouse_id": world.pool_wh.id, "qty": "50"}],
                 buy_qty="22",
-                amend_reason="Own location has stock the proposal did not use.",
+                amend_reason="The pool has stock the proposal did not use.",
             ),
         },
     )
     assert response.status_code == 200, response.text
     assert response.json()["composition"]["reserve"] == [
-        {"warehouse_id": world.own_wh.id, "qty": "50"}
+        {"warehouse_id": world.pool_wh.id, "qty": "50"}
     ]
 
     apply_response = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
@@ -1431,7 +1431,7 @@ def test_apply_uncovers_a_replan_line_instead_of_letting_confirm_carry_it_forwar
     it instead of merely omitting it."""
     client, world = api
     db = world.db
-    _stock(db, world.product, world.own_wh, on_hand=100)
+    _stock(db, world.product, world.pool_wh, on_hand=100)
     core_so = _core_so(db, world.company_id)
     core_line_a = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="40",
                               required_date=date(2026, 8, 25))
@@ -1443,7 +1443,7 @@ def test_apply_uncovers_a_replan_line_instead_of_letting_confirm_carry_it_forwar
     db.commit()
 
     _confirm(client, order.id, {"lines": [
-        _line_payload(line_a.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "40"}]),
+        _line_payload(line_a.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "40"}]),
         _line_payload(line_b.id, buy_qty="21", buy_reason="Nothing free elsewhere."),
     ]})
     buy_row_b = (
@@ -1526,7 +1526,7 @@ def test_build_batch_proposal_for_a_covered_replan_row_is_the_boards_full_contri
     already render off the live board."""
     client, world = api
     db = world.db
-    _stock(db, world.product, world.own_wh, on_hand=500)
+    _stock(db, world.product, world.pool_wh, on_hand=500)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="432",
                             required_date=date(2026, 8, 25))
@@ -1558,7 +1558,9 @@ def test_build_batch_proposal_for_a_covered_replan_row_is_the_boards_full_contri
 
     proposal = row["proposal"]
     assert proposal is not None
-    assert [step["step"] for step in proposal["trail"]] == [1, 2, 3, 4, 5]
+    # Ladder v2's six rungs (incoming, pool, group take, group borrow, cross-group
+    # borrow, buy) - the own-location Reserve rung this pinned before is gone.
+    assert [step["step"] for step in proposal["trail"]] == [1, 2, 3, 4, 5, 6]
     assert proposal["rank_factors"]
     assert proposal["sources"]
     assert proposal["item_flags"] is not None

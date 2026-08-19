@@ -26,14 +26,14 @@ def _components(result):
     return tuple(getattr(result, "components", None) or result)
 
 
-# --------------------------------------------------------------- own-then-pool Reserve
+# --------------------------------------------------------------- ladder v2: own location
+# is never a Reserve source any more (section E rule 7); only the pool is.
 
 
-def test_reserve_draws_from_the_own_location_before_the_pool_and_states_both_wordings():
-    """PLAN 3.2 step 2 / 3.3's non-hot-selling boundary: "own fulfilment location first
-    then pool, no floor". Own free stock is not enough on its own, so the residual comes
-    from the pool, and the two Reserve components carry the two location-named reason
-    wordings the golden fixtures already use elsewhere for these two locations.
+def test_own_location_is_never_a_reserve_source_the_pool_covers_it_instead():
+    """Ladder v2 (section E, rule 7): "the own-location Reserve rung is REMOVED". A line
+    whose own free stock used to cover it directly now draws the SAME quantity from the
+    pool instead - own free stock is never read by the ladder at all.
     """
     from app.services.scm.front_planning_engine import propose_line
 
@@ -44,23 +44,80 @@ def test_reserve_draws_from_the_own_location_before_the_pool_and_states_both_wor
             required_date=REQUIRED_DATE,
             fulfilment_location=OWN_LOCATION,
             is_dealer_hot_selling=False,
-            free_stock={OWN_LOCATION: Decimal("30"), POOL_LOCATION: Decimal("100")},
-            pool_location=POOL_LOCATION,
+            pools=[
+                {
+                    "location": POOL_LOCATION,
+                    "free": Decimal("100"),
+                    "available": Decimal("100"),
+                }
+            ],
             timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
     )
 
+    assert not any(c.source_location == OWN_LOCATION for c in proposed)
     reserves = {c.source_location: c for c in proposed if c.kind == "reserve"}
-    assert set(reserves) == {OWN_LOCATION, POOL_LOCATION}
-    assert reserves[OWN_LOCATION].qty == Decimal("30")
-    assert reserves[OWN_LOCATION].reason == "free stock at SRT-KL covers the need by the required date"
-    assert reserves[POOL_LOCATION].qty == Decimal("60")
-    assert reserves[POOL_LOCATION].reason == "free stock at BRW covers the need by the required date"
+    assert set(reserves) == {POOL_LOCATION}
+    assert reserves[POOL_LOCATION].qty == Decimal("90")
+    assert reserves[POOL_LOCATION].reason == "Pool BRW has 100 available"
+    assert reserves[POOL_LOCATION].rung == "pool"
 
-    # The two components balance the whole line: nothing left over to Buy.
+    # The whole line balances: nothing left over to Buy.
     assert sum((c.qty for c in proposed), Decimal("0")) == Decimal("90")
     assert not any(c.kind == "buy" for c in proposed)
+
+
+def test_pool_reserve_draws_the_own_site_pool_before_the_other_site_pools():
+    """Section E rule 2: "P(S) first, then the other site pools". The own site pool is
+    not enough on its own, so the residual comes from the SECOND pool in the ordered list,
+    never the reverse."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("90"),
+            required_date=REQUIRED_DATE,
+            fulfilment_location=OWN_LOCATION,
+            pools=[
+                {"location": "BRW", "free": Decimal("30"), "available": Decimal("30")},
+                {"location": "MWH", "free": Decimal("100"), "available": Decimal("100")},
+            ],
+            timely_spo_qty=Decimal("0"),
+        )
+    )
+
+    reserves = {c.source_location: c for c in proposed if c.kind == "reserve"}
+    assert set(reserves) == {"BRW", "MWH"}
+    assert reserves["BRW"].qty == Decimal("30")
+    assert reserves["MWH"].qty == Decimal("60")
+    assert sum((c.qty for c in proposed), Decimal("0")) == Decimal("90")
+
+
+def test_every_pool_is_capped_by_its_own_signed_availability_not_only_a_hot_selling_one():
+    """Section E rule 2: `capacity = max(min(free, available), 0)` for EVERY pool now,
+    whether the product is hot-selling or not - a change from 3.3a's "neither: uncapped",
+    because ladder v2 can reach a SECOND pool that was never this line's own."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("90"),
+            required_date=REQUIRED_DATE,
+            fulfilment_location=OWN_LOCATION,
+            pools=[
+                {"location": POOL_LOCATION, "free": Decimal("100"), "available": Decimal("40")},
+            ],
+            timely_spo_qty=Decimal("0"),
+        )
+    )
+
+    # The whole-line rule: 40 of 90 covered is not the whole line, so the WHOLE 90 is
+    # bought - never "reserve 40, buy 50" - and no Reserve component survives at all.
+    assert len(proposed) == 1
+    assert proposed[0].kind == "buy"
+    assert proposed[0].qty == Decimal("90")
+    assert proposed[0].reason == "Only 40 of 90 can be covered from stock - buy the whole line"
 
 
 # --------------------------------------------------------------- hot-selling (PLAN 3.3a)
@@ -71,11 +128,9 @@ def test_reserve_draws_from_the_own_location_before_the_pool_and_states_both_wor
 # then we can take from BRW (provided the available quantity is positive)".
 
 
-def test_dealer_hot_selling_reserves_own_location_in_full_and_offers_no_pool():
-    """Own-location Reserve is ALWAYS eligible, hot-selling or not - the dealer stock at
-    999 is reserved just as it would be for an ordinary item, and the pool contributes
-    nothing at all (not even a capped amount): the old reorder-level cap is gone.
-    """
+def test_dealer_hot_selling_offers_no_pool_at_all():
+    """The pool is kept for retail on a dealer hot-selling product: not even a capped
+    amount is offered, so with nothing else to cover it the whole line is a Buy."""
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
@@ -85,60 +140,60 @@ def test_dealer_hot_selling_reserves_own_location_in_full_and_offers_no_pool():
             required_date=REQUIRED_DATE,
             fulfilment_location=DEALER_LOCATION,
             is_dealer_hot_selling=True,
-            free_stock={DEALER_LOCATION: Decimal("999"), POOL_LOCATION: Decimal("150")},
-            pool_location=POOL_LOCATION,
-            pool_available=Decimal("150"),
+            pools=[
+                {
+                    "location": POOL_LOCATION,
+                    "free": Decimal("150"),
+                    "available": Decimal("150"),
+                }
+            ],
             timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
     )
 
     assert not any(c.source_location == POOL_LOCATION for c in proposed)
-
-    reserve = next(c for c in proposed if c.kind == "reserve")
-    assert reserve.qty == Decimal("200")
-    assert reserve.source_location == DEALER_LOCATION
-    assert reserve.reason == "free stock at DLR-KL covers the need by the required date"
-    assert not any(c.kind == "buy" for c in proposed)
+    assert len(proposed) == 1
+    assert proposed[0].kind == "buy"
+    assert proposed[0].qty == Decimal("200")
 
 
 def test_project_hot_selling_caps_the_pool_at_its_own_signed_availability():
-    """PLAN 3.3a: `max(min(pool free, pool_available), 0)`. The pool's free balance (150)
-    is more than its signed availability (40), so the draw stops at 40 - the residual
-    still buys, rather than reaching further into a pool that is already thin.
+    """PLAN 3.3a, still true for a single pool under ladder v2: `max(min(pool free,
+    pool_available), 0)`. The pool's free balance (150) is more than its signed
+    availability (40), so the draw stops at 40 - which is not the whole line, so the
+    whole-line rule buys all of it rather than leaving a partial Reserve standing.
     """
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
         propose_line(
-            open_qty=Decimal("200"),
+            open_qty=Decimal("40"),
             line_no=9,
             required_date=REQUIRED_DATE,
             fulfilment_location=OWN_LOCATION,
             is_project_hot_selling=True,
-            free_stock={OWN_LOCATION: Decimal("0"), POOL_LOCATION: Decimal("150")},
-            pool_location=POOL_LOCATION,
-            pool_available=Decimal("40"),
+            pools=[
+                {
+                    "location": POOL_LOCATION,
+                    "free": Decimal("150"),
+                    "available": Decimal("40"),
+                }
+            ],
             timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
     )
 
-    reserve = next(c for c in proposed if c.kind == "reserve")
-    assert reserve.qty == Decimal("40")
-    assert reserve.source_location == POOL_LOCATION
-    assert reserve.reason == (
-        "free stock in the shared BRW pool covers the need by the required date, drawn "
-        "while its availability stays positive (40 available)"
-    )
-
-    buy = next(c for c in proposed if c.kind == "buy")
-    assert buy.qty == Decimal("160")
-    assert buy.reason == "remaining uncovered need"
+    assert len(proposed) == 1
+    assert proposed[0].kind == "reserve"
+    assert proposed[0].qty == Decimal("40")
+    assert proposed[0].source_location == POOL_LOCATION
+    assert proposed[0].reason == "Pool BRW has 40 available"
 
 
 def test_project_hot_selling_offers_nothing_when_the_pools_availability_is_not_positive():
-    """The other side of the same boundary: a pool already oversold (`pool_available`
+    """The other side of the same boundary: a pool already oversold (`available`
     negative or zero) offers nothing at all, never a floor read as "some" (PLAN 3.3a)."""
     from app.services.scm.front_planning_engine import propose_line
 
@@ -149,9 +204,13 @@ def test_project_hot_selling_offers_nothing_when_the_pools_availability_is_not_p
             required_date=REQUIRED_DATE,
             fulfilment_location=DEALER_LOCATION,
             is_project_hot_selling=True,
-            free_stock={DEALER_LOCATION: Decimal("0"), POOL_LOCATION: Decimal("50")},
-            pool_location=POOL_LOCATION,
-            pool_available=Decimal("-12"),
+            pools=[
+                {
+                    "location": POOL_LOCATION,
+                    "free": Decimal("50"),
+                    "available": Decimal("-12"),
+                }
+            ],
             timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
@@ -177,20 +236,22 @@ def test_dealer_hot_selling_wins_when_a_product_is_hot_on_both_demand_classes():
             fulfilment_location=DEALER_LOCATION,
             is_dealer_hot_selling=True,
             is_project_hot_selling=True,
-            free_stock={DEALER_LOCATION: Decimal("10"), POOL_LOCATION: Decimal("50")},
-            pool_location=POOL_LOCATION,
-            pool_available=Decimal("50"),
+            pools=[
+                {
+                    "location": POOL_LOCATION,
+                    "free": Decimal("50"),
+                    "available": Decimal("50"),
+                }
+            ],
             timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
     )
 
     assert not any(c.source_location == POOL_LOCATION for c in proposed)
-    reserve = next(c for c in proposed if c.kind == "reserve")
-    assert reserve.qty == Decimal("10")
-    assert reserve.source_location == DEALER_LOCATION
-    buy = next(c for c in proposed if c.kind == "buy")
-    assert buy.qty == Decimal("30")
+    assert len(proposed) == 1
+    assert proposed[0].kind == "buy"
+    assert proposed[0].qty == Decimal("40")
 
 
 # --------------------------------------------------------------- timely vs late SPO
@@ -284,8 +345,13 @@ def test_quantities_stay_exact_decimal_with_fractional_inputs():
             required_date=REQUIRED_DATE,
             fulfilment_location=OWN_LOCATION,
             is_dealer_hot_selling=False,
-            free_stock={OWN_LOCATION: Decimal("20.125"), POOL_LOCATION: Decimal("100")},
-            pool_location=POOL_LOCATION,
+            pools=[
+                {
+                    "location": POOL_LOCATION,
+                    "free": Decimal("100"),
+                    "available": Decimal("100"),
+                }
+            ],
             timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
@@ -295,8 +361,8 @@ def test_quantities_stay_exact_decimal_with_fractional_inputs():
     assert all(isinstance(q, Decimal) for q in quantities), "no float leaked into a quantity"
     assert sum(quantities, Decimal("0")) == open_qty
 
-    own_reserve = next(c for c in proposed if c.source_location == OWN_LOCATION)
-    assert own_reserve.qty == Decimal("20.125")
+    pool_reserve = next(c for c in proposed if c.source_location == POOL_LOCATION)
+    assert pool_reserve.qty == Decimal("70.255")
 
 
 # --------------------------------------------------------------- reversed-input determinism
@@ -379,3 +445,306 @@ def test_attribute_sources_gives_the_same_answer_with_three_lines_reversed():
     assert [c.kind for c in line30] == ["timely_spo"]
     assert line20[0].qty == Decimal("10")
     assert line30[0].qty == Decimal("8")
+
+
+# ============================================================================
+# Ladder v2 (PLAN-demo-followups-19aug-ladder-v2.md section E)
+# ============================================================================
+
+GROUP_CODE = "BB"
+
+
+# --------------------------------------------------------------- rung 0: coverage date
+
+
+def test_a_line_required_after_the_coverage_date_is_bought_in_full_and_nothing_else_runs():
+    """Section E rule 0: "a far-future line ... is Buy all. No partial decision"."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("358"),
+            required_date=date(2029, 1, 1),
+            fulfilment_location=OWN_LOCATION,
+            reorder_coverage_until=date(2026, 10, 31),
+            pools=[
+                {"location": POOL_LOCATION, "free": Decimal("999"), "available": Decimal("999")}
+            ],
+            timely_spo_qty=Decimal("999"),
+        )
+    )
+
+    assert len(proposed) == 1
+    assert proposed[0].kind == "buy"
+    assert proposed[0].qty == Decimal("358")
+    assert proposed[0].reason == "Beyond purchasing's coverage (31 Oct 2026) - buy now"
+    assert proposed[0].rung == "buy"
+
+
+def test_a_line_required_on_or_before_the_coverage_date_runs_the_ladder_normally():
+    """The boundary: required ON the coverage date is still inside it."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("50"),
+            required_date=date(2026, 10, 31),
+            fulfilment_location=OWN_LOCATION,
+            reorder_coverage_until=date(2026, 10, 31),
+            pools=[
+                {"location": POOL_LOCATION, "free": Decimal("50"), "available": Decimal("50")}
+            ],
+        )
+    )
+
+    assert len(proposed) == 1
+    assert proposed[0].kind == "reserve"
+    assert proposed[0].qty == Decimal("50")
+
+
+def test_no_coverage_date_set_never_gates_a_line():
+    """`reorder_coverage_until=None` is "no limit set", never a guessed date."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("10"),
+            required_date=date(2099, 1, 1),
+            fulfilment_location=OWN_LOCATION,
+            reorder_coverage_until=None,
+            pools=[
+                {"location": POOL_LOCATION, "free": Decimal("10"), "available": Decimal("10")}
+            ],
+        )
+    )
+
+    assert proposed[0].kind == "reserve"
+
+
+# --------------------------------------------------------------- rung 3: group take
+
+
+def test_group_take_covers_the_line_from_a_sibling_location_never_its_own():
+    """Section E rule 3: "sibling locations of G at other sites with POSITIVE Available ->
+    take from them. The own location L is never a source"."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("50"),
+            required_date=REQUIRED_DATE,
+            fulfilment_location="BRW-BB",
+            group_code=GROUP_CODE,
+            group_take_candidates=[{"location": "MWH-BB", "qty": Decimal("50")}],
+        )
+    )
+
+    assert len(proposed) == 1
+    assert proposed[0].kind == "reserve"
+    assert proposed[0].rung == "group_take"
+    assert proposed[0].source_location == "MWH-BB"
+    assert proposed[0].qty == Decimal("50")
+    assert proposed[0].reason == "MWH-BB has 50 available in the BB group"
+
+
+def test_group_take_never_offers_the_lines_own_location_even_if_passed_one():
+    """Belt and braces: the CALLER must never include `fulfilment_location` in the
+    candidate list, and this pins that a same-code candidate is still consumed - the
+    exclusion is the caller's job (`_group_take_candidates`), proven by the service test;
+    this only proves the engine draws down whatever it is handed, in order."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("30"),
+            required_date=REQUIRED_DATE,
+            fulfilment_location="BRW-BB",
+            group_code=GROUP_CODE,
+            group_take_candidates=[
+                {"location": "MWH-BB", "qty": Decimal("10")},
+                {"location": "DC1-BB", "qty": Decimal("20")},
+            ],
+        )
+    )
+
+    assert [c.source_location for c in proposed] == ["MWH-BB", "DC1-BB"]
+    assert sum((c.qty for c in proposed), Decimal("0")) == Decimal("30")
+
+
+# --------------------------------------------------------------- rung 4: group borrow
+
+
+def test_group_borrow_from_a_lower_ranked_donor_raises_an_order_back():
+    """Section E rule 4: donors ranked lower are proposed automatically, and every borrow
+    carries an order-back (equal to what was taken, at the donor's own required date)."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("145"),
+            required_date=REQUIRED_DATE,
+            fulfilment_location="BRW-BB",
+            group_code=GROUP_CODE,
+            group_borrow_candidates=[
+                {
+                    "location": "MWH-BB",
+                    "qty": Decimal("145"),
+                    "donor_so_number": "SO371334",
+                    "donor_line_no": 2,
+                    "donor_agent_code": "JEREMY",
+                    "same_agent": False,
+                }
+            ],
+        )
+    )
+
+    assert len(proposed) == 1
+    component = proposed[0]
+    assert component.kind == "borrow"
+    assert component.rung == "group_borrow"
+    assert component.qty == Decimal("145")
+    assert component.source_location == "MWH-BB"
+    assert component.donor_so_number == "SO371334"
+    assert component.donor_line_no == 2
+    assert component.donor_agent_code == "JEREMY"
+    assert component.same_agent is False
+    assert component.order_back_qty == Decimal("145")
+    assert component.reason == (
+        "SO371334 line 2 (agent JEREMY) holds 145 at MWH-BB; it is ranked below this "
+        "line; order-back raised"
+    )
+
+
+def test_a_same_agent_donor_is_never_auto_composed_only_offered():
+    """Section 8 / E rule 4: "the SAME AGENT's other SOs (even higher ranked)" are
+    OFFERED, never auto-proposed - so `propose_line` never sees one unless the caller put
+    it in `group_borrow_candidates`, which the service only does for a lower-ranked donor.
+    This pins the engine side of that split: the engine composes whatever it is handed and
+    has no opinion of its own about rank or agent."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    # The caller (the service) decided this same-agent donor is HIGHER ranked and so did
+    # not include it here at all - the whole-line rule then falls back to Buy.
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("100"),
+            required_date=REQUIRED_DATE,
+            fulfilment_location="BRW-BB",
+            group_code=GROUP_CODE,
+            group_borrow_candidates=[],
+        )
+    )
+
+    assert len(proposed) == 1
+    assert proposed[0].kind == "buy"
+    assert proposed[0].qty == Decimal("100")
+
+
+# --------------------------------------------------------------- rung 5: cross-group borrow
+
+
+def test_cross_group_borrow_completes_the_line_within_the_cap():
+    """Section E rule 5: free stock outside the group, offered only within the cap - the
+    service is the one that decides the cap; this pins that the engine draws whatever
+    candidate list it is handed, after the group rungs, before falling back to Buy."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("20"),
+            required_date=REQUIRED_DATE,
+            fulfilment_location="BRW-BB",
+            group_code=GROUP_CODE,
+            cross_group_borrow_candidates=[{"location": "BRW-HP", "qty": Decimal("20")}],
+        )
+    )
+
+    assert len(proposed) == 1
+    component = proposed[0]
+    assert component.kind == "borrow"
+    assert component.rung == "cross_group_borrow"
+    assert component.source_location == "BRW-HP"
+    assert component.qty == Decimal("20")
+    assert "BRW-HP" in component.reason
+    assert "cross-group borrow limit" in component.reason
+
+
+# --------------------------------------------------------------- rung 6: whole-line rule
+
+
+def test_whole_line_rule_covers_the_whole_line_across_every_rung_in_order():
+    """Section E rule 6: "cover Q entirely in rung order" - a case that needs incoming,
+    pool, group take AND group borrow together to reach the whole of Q."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("100"),
+            required_date=REQUIRED_DATE,
+            fulfilment_location="BRW-BB",
+            group_code=GROUP_CODE,
+            timely_spo_qty=Decimal("10"),
+            pools=[
+                {"location": "BRW", "free": Decimal("20"), "available": Decimal("20")}
+            ],
+            group_take_candidates=[{"location": "MWH-BB", "qty": Decimal("30")}],
+            group_borrow_candidates=[
+                {
+                    "location": "DC1-BB",
+                    "qty": Decimal("40"),
+                    "donor_so_number": "SO400001",
+                    "donor_line_no": 1,
+                    "donor_agent_code": "TERA",
+                    "same_agent": False,
+                }
+            ],
+        )
+    )
+
+    assert [c.rung for c in proposed] == [
+        "incoming", "pool", "group_take", "group_borrow",
+    ]
+    assert sum((c.qty for c in proposed), Decimal("0")) == Decimal("100")
+    assert not any(c.kind == "buy" for c in proposed)
+
+
+def test_whole_line_rule_drops_every_partial_component_when_the_line_falls_short():
+    """Section E rule 6, the other side: 213 of 358 covered is not the whole line, so
+    NONE of the partial components survive and the whole 358 is bought instead."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("358"),
+            required_date=REQUIRED_DATE,
+            fulfilment_location="BRW-BB",
+            group_code=GROUP_CODE,
+            pools=[
+                {"location": "BRW", "free": Decimal("213"), "available": Decimal("213")}
+            ],
+        )
+    )
+
+    assert len(proposed) == 1
+    assert proposed[0].kind == "buy"
+    assert proposed[0].qty == Decimal("358")
+    assert proposed[0].reason == (
+        "Only 213 of 358 can be covered from stock - buy the whole line"
+    )
+
+
+def test_open_qty_of_zero_proposes_nothing_at_all():
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("0"),
+            required_date=REQUIRED_DATE,
+            fulfilment_location="BRW-BB",
+            pools=[
+                {"location": "BRW", "free": Decimal("100"), "available": Decimal("100")}
+            ],
+        )
+    )
+
+    assert proposed == ()

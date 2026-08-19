@@ -268,6 +268,23 @@ export interface SupplyComponent {
   donor_project_id?: string | null;
   /** What CS typed: the Borrow reason, or the reason a discontinued product is bought. */
   cs_reason?: string | null;
+  /**
+   * Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E): which rung of the
+   * source ladder produced this component - `incoming` | `pool` | `group_take` |
+   * `group_borrow` | `cross_group_borrow` | `buy`. `null`/absent on a component frozen
+   * before ladder v2 landed.
+   */
+  rung?: string | null;
+  /** The donor sales order for a `group_borrow` component (section E.4). */
+  donor_so_number?: string | null;
+  donor_line_no?: number | null;
+  donor_agent_code?: string | null;
+  /** The donor shares this line's own sales agent (section 8). */
+  same_agent?: boolean;
+  /** The order-back this component raised: equal to what was taken. */
+  order_back_qty?: string | null;
+  /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
+  donor_core_line_id?: string | null;
 }
 
 /** One incoming SPO leg at the line's location. Timely covers, advisory does not. */
@@ -321,6 +338,26 @@ export interface BorrowCandidate {
   /** First in the ranking. Exactly one candidate carries it. */
   recommended?: boolean;
   donor_impact: BorrowDonorImpact;
+  /**
+   * Ladder v2 (section E): `group_borrow` or `cross_group_borrow` for a new group-aware
+   * donor row, `null`/absent for a plain `other_location`/`other_project` donor the old
+   * ladder already offered.
+   */
+  rung?: string | null;
+  /** The donor sales-order line this row names, for `group_borrow` (section E.4). */
+  donor_so_number?: string | null;
+  donor_line_no?: number | null;
+  donor_agent_code?: string | null;
+  /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
+  donor_core_line_id?: string | null;
+  /** Ranked below this line, so the ladder proposes it automatically. `false` on a
+   * same-agent donor ranked above this line: offered, never auto-composed. */
+  lower_ranked?: boolean;
+  /** The donor shares this line's own sales agent (section 8) - offered at any rank. */
+  same_agent?: boolean;
+  /** Outside the small-quantity cap - shown, but not selectable without an override. */
+  over_cap?: boolean;
+  cap_reason?: string | null;
 }
 
 /** The components as they were frozen at confirmation, read back on a confirmed order. */
@@ -443,6 +480,20 @@ export interface ConfirmBorrowComponent {
   qty: string;
   /** Mandatory: no Borrow is written without one (AC-B09). */
   reason: string;
+  /**
+   * Ladder v2 group borrow (section E.4): the donor's own sales-order line, from
+   * `BorrowCandidate.donor_core_line_id`. Present, this component is checked against
+   * that line's LIVE committed quantity at confirm, not against free stock. Absent, this
+   * is an ordinary `other_location` free-stock borrow, unchanged.
+   */
+  donor_core_line_id?: string | null;
+  /** Round-tripped from the donor row so the order-back note needs no second lookup. */
+  donor_so_number?: string | null;
+  donor_line_no?: number | null;
+  donor_agent_code?: string | null;
+  same_agent?: boolean;
+  /** The donor's own required date - the order-back's urgency (section E.4). */
+  donor_required_date?: string | null;
 }
 
 export interface ConfirmLine {
@@ -548,8 +599,24 @@ export interface BoardDateBucket {
  */
 export type BoardSourceKind = 'reserve' | 'timely_spo' | 'buy' | 'borrow' | 'unplannable';
 
-/** The rungs of the source ladder, in the order the engine walks them. */
-export type BoardTrailKind = 'reserve_own' | 'reserve_pool' | 'incoming' | 'borrow' | 'buy';
+/**
+ * The rungs of the source ladder, in the order the engine walks them - ladder v2
+ * (`PLAN-demo-followups-19aug-ladder-v2.md` section E): incoming, then the pool, then
+ * group take, group borrow, cross-group borrow, then buy. The own-location Reserve rung
+ * is gone (rule 7) - a line's own stock is read-only on the strip, never a rung.
+ * `reserve_own` / `reserve_pool` / plain `borrow` are the pre-v2 spellings, kept only so
+ * a stale cached trail does not fail to render.
+ */
+export type BoardTrailKind =
+  | 'incoming'
+  | 'pool'
+  | 'group_take'
+  | 'group_borrow'
+  | 'cross_group_borrow'
+  | 'buy'
+  | 'reserve_own'
+  | 'reserve_pool'
+  | 'borrow';
 
 /**
  * What happened at one rung.
@@ -713,6 +780,15 @@ export interface BoardDecisionBorrow {
   qty: string;
   /** The PERSON's reason. The confirmation refuses a Borrow that carries none. */
   reason: string;
+  /** Ladder v2 (section E.4): the donor sales-order line this Borrow named. */
+  rung?: string | null;
+  donor_so_number?: string | null;
+  donor_line_no?: number | null;
+  donor_agent_code?: string | null;
+  same_agent?: boolean;
+  /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
+  donor_core_line_id?: string | null;
+  donor_required_date?: string | null;
 }
 
 /**
@@ -967,6 +1043,14 @@ export interface BoardSource {
   /** SPO number when the source is incoming stock. */
   spo_number?: string | null;
   arrival_date?: string | null;
+  /** Ladder v2 (section E): which rung produced this source. */
+  rung?: string | null;
+  donor_so_number?: string | null;
+  donor_line_no?: number | null;
+  donor_agent_code?: string | null;
+  same_agent?: boolean;
+  /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
+  donor_core_line_id?: string | null;
 }
 
 /** A donor the engine found for a line's Borrow. Named, never an id. */
@@ -995,6 +1079,23 @@ export interface BoardBorrowCandidate {
   recommended?: boolean;
   /** What taking it costs whoever holds it (AC-B09). Shown while the borrow is chosen. */
   donor_impact?: BorrowDonorImpact;
+  /**
+   * Ladder v2 (section E): `group_borrow` or `cross_group_borrow` for a new group-aware
+   * donor row, absent for a plain `other_location`/`other_project` donor.
+   */
+  rung?: string | null;
+  donor_so_number?: string | null;
+  donor_line_no?: number | null;
+  donor_agent_code?: string | null;
+  /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
+  donor_core_line_id?: string | null;
+  /** Ranked below this line, so the ladder proposes it automatically. */
+  lower_ranked?: boolean;
+  /** The donor shares this line's own sales agent (section 8) - offered at any rank. */
+  same_agent?: boolean;
+  /** Outside the small-quantity cap - shown, but not selectable without an override. */
+  over_cap?: boolean;
+  cap_reason?: string | null;
 }
 
 /** One incoming purchase leg at a location, with the document that carries it. */
@@ -1223,6 +1324,13 @@ export interface BoardBorrowComponent {
   qty: string;
   /** Mandatory: no Borrow is written without one (AC-B09). */
   reason: string;
+  /** Ladder v2 group borrow (section E.4), round-tripped from the donor candidate row. */
+  donor_core_line_id?: string | null;
+  donor_so_number?: string | null;
+  donor_line_no?: number | null;
+  donor_agent_code?: string | null;
+  same_agent?: boolean;
+  donor_required_date?: string | null;
 }
 
 export interface BoardDecision {

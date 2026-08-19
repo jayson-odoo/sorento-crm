@@ -300,7 +300,10 @@ export function BoardCellBreakdownDialog({
         header: ({ column }) => <DataGridColumnHeader title="Sourced from" column={column} />,
         cell: ({ row }) => {
           const strip = row.original.sources
-            .map((source) => `${sourceLabel(source.kind)} ${source.qty}${sourceAt(source)}`)
+            .map(
+              (source) =>
+                `${sourceLabel(source.kind, source.rung)} ${source.qty}${sourceAt(source)}`,
+            )
             .join(' · ');
           // The engine's own sentences. `spo_number` and `arrival_date` are always null
           // because the SPO and its date are INSIDE the sentence (deviation 2), so the
@@ -738,12 +741,25 @@ export function confirmedSummary(decision: NonNullable<BoardContribution['decisi
   })}`;
 }
 
-/** Exported for the same reason `confirmedSummary` is - see its comment. */
-export function sourceLabel(kind: BoardContribution['sources'][number]['kind']): string {
+/**
+ * Exported for the same reason `confirmedSummary` is - see its comment.
+ *
+ * Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E): a rung, when the source
+ * carries one, reads by its own name (Pool / Group take / Group borrow / Cross-group
+ * borrow) rather than the bare `kind` the balance invariant uses - group borrow and
+ * cross-group borrow are now AUTO-PROPOSED, not only a person's decision on a covered row.
+ */
+export function sourceLabel(
+  kind: BoardContribution['sources'][number]['kind'],
+  rung?: string | null,
+): string {
+  if (rung === 'pool') return 'Pool';
+  if (rung === 'group_take') return 'Group take';
+  if (rung === 'group_borrow') return 'Group borrow';
+  if (rung === 'cross_group_borrow') return 'Cross-group borrow';
   if (kind === 'reserve') return 'Reserve';
   if (kind === 'timely_spo') return 'Incoming';
   if (kind === 'buy') return 'Buy';
-  // Only ever on a covered row: the engine proposes no Borrow, and a person did.
   if (kind === 'borrow') return 'Borrow';
   return 'Cannot be sourced';
 }
@@ -752,10 +768,19 @@ export function sourceLabel(kind: BoardContribution['sources'][number]['kind']):
  * Where the quantity comes from, in the preposition each kind takes.
  *
  * A Reserve is held AT a location; a Borrow comes FROM somebody else's. "Borrow 10 at MWH-IB"
- * reads as stock this line has there, which is the opposite of what a borrow is.
+ * reads as stock this line has there, which is the opposite of what a borrow is. A group
+ * borrow names its donor SO line instead, when one was stated - "from SO371334 line 2" is
+ * the identity that matters, the location is secondary.
  */
 /** Exported for the same reason `confirmedSummary` is - see its comment. */
 export function sourceAt(source: BoardContribution['sources'][number]): string {
+  if (source.kind === 'borrow' && source.rung === 'group_borrow' && source.donor_so_number) {
+    const line =
+      source.donor_line_no !== null && source.donor_line_no !== undefined
+        ? ` line ${source.donor_line_no}`
+        : '';
+    return ` from ${source.donor_so_number}${line}`;
+  }
   if (!source.location) return '';
   return source.kind === 'borrow' ? ` from ${source.location}` : ` at ${source.location}`;
 }

@@ -347,6 +347,13 @@ export function BoardAmendDialog({
                   qty,
                   reason: borrowReason,
                   donor_impact: candidate.donor_impact,
+                  // Ladder v2 group borrow (section E.4): the donor SO line this
+                  // candidate names, so the confirmation checks its live commitment.
+                  donor_core_line_id: candidate.donor_core_line_id,
+                  donor_so_number: candidate.donor_so_number,
+                  donor_line_no: candidate.donor_line_no,
+                  donor_agent_code: candidate.donor_agent_code,
+                  same_agent: candidate.same_agent,
                 },
               ])
             }

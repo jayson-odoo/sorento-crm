@@ -63,21 +63,14 @@ describe('amendDraftFrom: the proposal, as something a person can edit', () => {
     expect(draft.buy_qty).toBe('60');
   });
 
-  it('still offers the line’s OWN location when the proposal reserved nothing there', () => {
-    // The whole quantity is bought, so there is no Reserve source to read a warehouse off -
-    // and this is exactly the line a planner wants to move INTO a Reserve. A form with no row
-    // for it is a form that says "you may not".
+  it('opens with no Reserve row when the proposal reserved nothing (ladder v2: own location is never a source)', () => {
+    // Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E rule 7): the line's
+    // own location is never a Reserve source any more, so there is nothing left to
+    // invent a row for - unlike the old ladder, whose own-location rung this used to
+    // fall back onto.
     const draft = amendDraftFrom(contributionOf({}));
 
-    expect(draft.reserve).toEqual([
-      {
-        key: 'reserve-BRW-BB',
-        location: 'BRW-BB',
-        warehouse_id: 'wh-BRW-BB',
-        qty: '0',
-        reason: '',
-      },
-    ]);
+    expect(draft.reserve).toEqual([]);
     expect(draft.buy_qty).toBe('100');
   });
 
@@ -242,6 +235,17 @@ describe('borrowCandidatesOf: only a donor the confirmation can name', () => {
           free_after_full_borrow: '0',
           committed_qty: '0',
         },
+        // Ladder v2 (section E): this donor came off the pre-v2 shape, so none of the
+        // group-aware facts are stated.
+        rung: null,
+        donor_so_number: null,
+        donor_line_no: null,
+        donor_agent_code: null,
+        donor_core_line_id: null,
+        lower_ranked: false,
+        same_agent: false,
+        over_cap: false,
+        cap_reason: null,
       },
     ]);
   });
@@ -332,6 +336,12 @@ describe('decisionFromAmendDraft: what the draft carries away', () => {
           donor_project_id: null,
           qty: '10',
           reason: 'The site next door can wait a week.',
+          donor_core_line_id: null,
+          donor_so_number: null,
+          donor_line_no: null,
+          donor_agent_code: null,
+          same_agent: false,
+          donor_required_date: null,
         },
       ],
       buy_qty: '70',

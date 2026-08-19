@@ -192,13 +192,14 @@ def _restore(originals) -> None:
 
 
 class _World:
-    def __init__(self, db, company_id, eling, project, product, own_wh):
+    def __init__(self, db, company_id, eling, project, product, own_wh, pool_wh):
         self.db = db
         self.company_id = company_id
         self.eling = eling
         self.project = project
         self.product = product
         self.own_wh = own_wh
+        self.pool_wh = pool_wh
 
 
 @pytest.fixture()
@@ -216,9 +217,11 @@ def api():
         )
         product = _product(db)
         own_wh = _warehouse(db, f"ZZT-OWN-{_uid()[:4]}")
+        pool_wh = _warehouse(db, f"ZZT-BRW-{_uid()[:4]}")
+        own_wh.pool_warehouse_id = pool_wh.id
         db.commit()
         client, originals = _client(db, eling)
-        world = _World(db, company_id, eling, project, product, own_wh)
+        world = _World(db, company_id, eling, project, product, own_wh, pool_wh)
         try:
             with company_scope(db, frozenset({company_id})):
                 yield client, world
@@ -279,7 +282,7 @@ def test_inquiry_rows_appear_only_at_successful_confirmation_not_at_publish_or_r
 def test_inquiry_row_quantity_equals_the_confirmed_buy_residual_exactly_and_zero_buy_creates_no_row(api):
     client, world = api
     db = world.db
-    _stock(db, world.product, world.own_wh, on_hand=100)
+    _stock(db, world.product, world.pool_wh, on_hand=100)
     order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
     core_line_buy = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="25")
@@ -296,7 +299,7 @@ def test_inquiry_row_quantity_equals_the_confirmed_buy_residual_exactly_and_zero
             "lines": [
                 _line_payload(buy_line.id, buy_qty="25"),
                 _line_payload(
-                    reserve_line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "40"}]
+                    reserve_line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "40"}]
                 ),
             ]
         },
@@ -321,7 +324,7 @@ def test_reserve_borrow_timely_and_late_incoming_never_inflate_the_inquiry_row_q
     """A line with Reserve AND a Buy residual must raise a row for the Buy amount only."""
     client, world = api
     db = world.db
-    _stock(db, world.product, world.own_wh, on_hand=30)
+    _stock(db, world.product, world.pool_wh, on_hand=30)
     order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
@@ -334,7 +337,7 @@ def test_reserve_borrow_timely_and_late_incoming_never_inflate_the_inquiry_row_q
             "lines": [
                 _line_payload(
                     line.id,
-                    reserve=[{"warehouse_id": world.own_wh.id, "qty": "30"}],
+                    reserve=[{"warehouse_id": world.pool_wh.id, "qty": "30"}],
                     buy_qty="20",
                 )
             ]
@@ -542,7 +545,9 @@ def test_committed_v_excludes_a_confirmed_project_sos_line_from_its_committed_su
         )
         product = _product(db)
         own_wh = _warehouse(db, f"ZZT-CV-{_uid()[:4]}")
-        _stock(db, product, own_wh, on_hand=5)
+        pool_wh = _warehouse(db, f"ZZTCVP{_uid()[:6]}")
+        own_wh.pool_warehouse_id = pool_wh.id
+        _stock(db, product, pool_wh, on_hand=5)
         core_so = _core_so(db, company_id, demand_class="project", demand_origin="scm_order_inquiry")
         core_line = _core_line(db, core_so, product, own_wh, qty_ordered="9")
         order = _project_so(db, project, so_id=core_so.id)
@@ -552,7 +557,8 @@ def test_committed_v_excludes_a_confirmed_project_sos_line_from_its_committed_su
         client, originals = _client(db, eling)
         try:
             with company_scope(db, frozenset({company_id})):
-                # 9 on the sheet, of which CS reserves 5 and buys 4. The two figures are
+                # 9 on the sheet, of which CS reserves 5 (from the pool - ladder v2 has no
+                # own-location Reserve any more) and buys 4. The two figures are
                 # deliberately different, so "the sheet leg is gone" and "the confirmed
                 # Buy is counted" are distinguishable in the one number below.
                 response = client.post(
@@ -561,7 +567,7 @@ def test_committed_v_excludes_a_confirmed_project_sos_line_from_its_committed_su
                         "lines": [
                             _line_payload(
                                 line.id,
-                                reserve=[{"warehouse_id": own_wh.id, "qty": "5"}],
+                                reserve=[{"warehouse_id": pool_wh.id, "qty": "5"}],
                                 buy_qty="4",
                             )
                         ]

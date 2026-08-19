@@ -142,10 +142,10 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
                               {step.note && (
                                 <p className="text-2xs text-muted-foreground">{step.note}</p>
                               )}
-                              {step.kind === 'reserve_pool' && step.pool && (
+                              {step.kind === 'pool' && step.pool && (
                                 <PoolPile pool={step.pool} contributionKey={contribution.key} />
                               )}
-                              {step.kind === 'reserve_own' && (step.ahead?.length ?? 0) > 0 && (
+                              {(step.ahead?.length ?? 0) > 0 && (
                                 <QueueLink
                                   step={step}
                                   contributionKey={contribution.key}
@@ -380,23 +380,27 @@ function QueueLink({
   );
 }
 
-/** What the rung is, in the words the source strip already uses. */
+/**
+ * What the rung is, ladder v2's own order
+ * (`documentation/plans/scm/PLAN-demo-followups-19aug-ladder-v2.md` section E): Incoming,
+ * Pool, Group take, Group borrow, Cross-group borrow, Buy. The own-location Reserve rung is
+ * gone (rule 7) - stock at the line's own location is read-only on the strip, never a rung.
+ */
 function sourceOf(step: BoardTrailStep): string {
-  if (step.kind === 'reserve_own') {
-    return step.location ? `Reserve at ${step.location}` : 'Reserve';
-  }
-  if (step.kind === 'reserve_pool') return step.location ? `Pool ${step.location}` : 'Pool';
   if (step.kind === 'incoming') return 'Incoming (SPO)';
+  if (step.kind === 'pool') return step.location ? `Pool ${step.location}` : 'Pool';
+  if (step.kind === 'group_take') {
+    return step.location ? `Group take at ${step.location}` : 'Group take';
+  }
+  if (step.kind === 'group_borrow') return 'Group borrow';
+  if (step.kind === 'cross_group_borrow') return 'Cross-group borrow';
   if (step.kind === 'borrow') return 'Borrow';
   return 'Buy';
 }
 
-/**
- * Who was in front of this line at its own pile. Only the own location has a queue: the pool
- * nets its own book before it offers anything, and incoming, borrow and buy have none.
- */
+/** Who was in front of this line at a rung with a queue. No rung carries one under ladder v2. */
 function aheadOf(step: BoardTrailStep): string {
-  if (step.kind !== 'reserve_own' || !step.ahead_lines) return '-';
+  if (!step.ahead_lines) return '-';
   return `${step.ahead_qty ?? '0'} across ${step.ahead_lines} line${
     step.ahead_lines === 1 ? '' : 's'
   }`;

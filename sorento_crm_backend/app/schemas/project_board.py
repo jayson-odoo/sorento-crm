@@ -83,9 +83,27 @@ class BoardSource(BaseModel):
     reason: str
     spo_number: Optional[str] = None
     arrival_date: Optional[date] = None
+    #: Ladder v2 (section E): which rung produced this source - `pool`, `group_take`,
+    #: `group_borrow` or `cross_group_borrow`. `None` on a plain `timely_spo`/`buy` row.
+    rung: Optional[str] = None
+    donor_so_number: Optional[str] = None
+    donor_line_no: Optional[int] = None
+    donor_agent_code: Optional[str] = None
+    same_agent: bool = False
+    #: Addressing only, never rendered: re-identifies the donor's own core line so
+    #: approving this source AS PROPOSED still checks against its live commitment.
+    donor_core_line_id: Optional[str] = None
 
 
-BoardTrailKind = Literal["reserve_own", "reserve_pool", "incoming", "borrow", "buy"]
+#: Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E): "incoming" now comes
+#: BEFORE the pool, the own-location rung is gone (section E rule 7), and the group rungs
+#: are new. `reserve_own` / `reserve_pool` are the pre-v2 spellings, kept in the Literal so
+#: an old snapshot's frozen trail (there is none - the trail is never frozen - but a stale
+#: client cache might still hold one) does not 422 a read.
+BoardTrailKind = Literal[
+    "incoming", "pool", "group_take", "group_borrow", "cross_group_borrow", "buy",
+    "reserve_own", "reserve_pool", "borrow",
+]
 BoardTrailOutcome = Literal[
     "took", "nothing_left", "not_eligible", "offered", "none_needed"
 ]
@@ -271,6 +289,13 @@ class BoardDecisionBorrow(BaseModel):
     #: The PERSON's reason, not the rule's sentence: the confirmation refuses a Borrow that
     #: carries none, so re-posting this composition needs the one that was given.
     reason: str = ""
+    #: Ladder v2 (section E.4): the donor sales-order line this Borrow named, when it was a
+    #: `group_borrow`. `None` on an ordinary location/project Borrow.
+    rung: Optional[str] = None
+    donor_so_number: Optional[str] = None
+    donor_line_no: Optional[int] = None
+    donor_agent_code: Optional[str] = None
+    same_agent: bool = False
 
 
 class BoardLineDecision(BaseModel):
@@ -455,6 +480,17 @@ class BorrowCandidate(BaseModel):
     recommended: bool = False
     #: Absent only on a payload built before this field existed; the engine always states it.
     donor_impact: Optional[BorrowDonorImpact] = None
+    #: Ladder v2 (section E): `group_borrow` or `cross_group_borrow` for a new group-aware
+    #: donor row, `None` for a plain `other_location`/`other_project` donor.
+    rung: Optional[str] = None
+    donor_so_number: Optional[str] = None
+    donor_line_no: Optional[int] = None
+    donor_agent_code: Optional[str] = None
+    donor_core_line_id: Optional[str] = None
+    lower_ranked: bool = False
+    same_agent: bool = False
+    over_cap: bool = False
+    cap_reason: Optional[str] = None
 
 
 class StockDetailSalesOrder(BaseModel):

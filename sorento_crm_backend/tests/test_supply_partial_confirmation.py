@@ -429,6 +429,10 @@ def test_a_carried_line_keeps_its_borrow_reason_its_buy_reason_and_its_hold(api)
     donor_wh = _warehouse(db, f"ZZT-DONOR-{_uid()[:4]}")
     _stock(db, world.product, donor_wh, on_hand=100)
     order, line_1, line_2 = _two_line_order(world)
+    # Ladder v2 has no own-location Reserve any more; the pool is the only Reserve
+    # source, so it needs its own stock.
+    _stock(db, world.product, world.pool_wh, on_hand=100)
+    db.commit()
 
     first = client.post(
         f"{BASE}/sales-orders/{order.id}/confirm",
@@ -436,7 +440,7 @@ def test_a_carried_line_keeps_its_borrow_reason_its_buy_reason_and_its_hold(api)
             "lines": [
                 _line_payload(
                     line_1.id,
-                    reserve=[{"warehouse_id": world.own_wh.id, "qty": "20"}],
+                    reserve=[{"warehouse_id": world.pool_wh.id, "qty": "20"}],
                     borrow=[
                         {
                             "source": "other_location",
@@ -461,7 +465,7 @@ def test_a_carried_line_keeps_its_borrow_reason_its_buy_reason_and_its_hold(api)
 
     supply = ProjectSupplyService(db)
     held_before = supply.held_stock_by_location([world.product.id])
-    assert held_before[(world.product.id, world.own_wh.id)] == Decimal("20")
+    assert held_before[(world.product.id, world.pool_wh.id)] == Decimal("20")
     assert held_before[(world.product.id, donor_wh.id)] == Decimal("10")
 
     second = client.post(
@@ -501,6 +505,9 @@ def test_naming_a_covered_line_again_replaces_its_frozen_composition(api):
     client, world = api
     db = world.db
     order, line_1, _line_2 = _two_line_order(world)
+    # Ladder v2 has no own-location Reserve any more; the pool is the only Reserve source.
+    _stock(db, world.product, world.pool_wh, on_hand=100)
+    db.commit()
 
     first = client.post(
         f"{BASE}/sales-orders/{order.id}/confirm",
@@ -515,9 +522,9 @@ def test_naming_a_covered_line_again_replaces_its_frozen_composition(api):
                 {
                     **_line_payload(
                         line_1.id,
-                        reserve=[{"warehouse_id": world.own_wh.id, "qty": "50"}],
+                        reserve=[{"warehouse_id": world.pool_wh.id, "qty": "50"}],
                     ),
-                    "amend_reason": "The stock arrived at my own warehouse.",
+                    "amend_reason": "The stock arrived at the pool.",
                 }
             ]
         },
@@ -531,7 +538,7 @@ def test_naming_a_covered_line_again_replaces_its_frozen_composition(api):
     snapshot = active.line_snapshots[0]
     assert snapshot["buy_qty"] == "0"
     assert snapshot["reserve_qty"] == "50"
-    assert snapshot["amend_reason"] == "The stock arrived at my own warehouse."
+    assert snapshot["amend_reason"] == "The stock arrived at the pool."
 
 
 def test_a_discontinued_covered_line_survives_a_later_confirmation_of_another_line(api):

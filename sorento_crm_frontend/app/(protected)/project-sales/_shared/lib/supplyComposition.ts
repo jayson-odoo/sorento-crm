@@ -46,6 +46,17 @@ export interface DraftBorrow {
   qty: string;
   reason: string;
   donor_impact: BorrowDonorImpact;
+  /**
+   * Ladder v2 group borrow (`PLAN-demo-followups-19aug-ladder-v2.md` section E.4): the
+   * donor's own sales-order line. Present, this row is checked against that line's live
+   * committed quantity at confirm, not against free stock.
+   */
+  donor_core_line_id?: string | null;
+  donor_so_number?: string | null;
+  donor_line_no?: number | null;
+  donor_agent_code?: string | null;
+  same_agent?: boolean;
+  donor_required_date?: string | null;
 }
 
 export interface DraftReserve {
@@ -107,6 +118,14 @@ export function draftFromLine(line: SupplyLine): DraftLine {
           free_after_full_borrow: '0',
           committed_qty: '0',
         },
+        // A group_borrow the ladder auto-proposed (rung === 'group_borrow') already
+        // names its donor SO line; carried through so re-confirming the proposal as it
+        // stands still checks against that line's live commitment, not free stock.
+        donor_core_line_id: component.donor_core_line_id,
+        donor_so_number: component.donor_so_number,
+        donor_line_no: component.donor_line_no,
+        donor_agent_code: component.donor_agent_code,
+        same_agent: component.same_agent,
       })),
     buy_qty: buy?.qty ?? '0',
     buy_reason: buy?.cs_reason ?? '',
@@ -208,6 +227,12 @@ export function confirmLineFromDraft(draft: DraftLine): ConfirmLine {
         donor_project_id: row.donor_project_id ?? null,
         qty: fromMinor(toMinor(row.qty)),
         reason: row.reason.trim(),
+        donor_core_line_id: row.donor_core_line_id ?? null,
+        donor_so_number: row.donor_so_number ?? null,
+        donor_line_no: row.donor_line_no ?? null,
+        donor_agent_code: row.donor_agent_code ?? null,
+        same_agent: row.same_agent ?? false,
+        donor_required_date: row.donor_required_date ?? null,
       })),
     buy_qty: fromMinor(toMinor(draft.buy_qty)),
     buy_reason: draft.buy_reason.trim() ? draft.buy_reason.trim() : null,

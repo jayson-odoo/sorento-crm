@@ -63,8 +63,10 @@ def _as_tuple(component):
 # ------------------------------------------------------------------- AC-B08
 
 
-def test_the_dealer_hot_selling_worked_case_reserves_own_location_and_offers_no_pool():
-    """AC-B08 and PLAN 3.3a's own worked example, to the unit (amended 19 August 2026)."""
+def test_the_dealer_hot_selling_worked_case_offers_no_pool_and_buys_the_whole_line():
+    """AC-B08 and PLAN 3.3a's own worked example, updated for ladder v2 (section E rule 7,
+    19 August 2026 follow-up): the own-location Reserve rung this case used to exercise no
+    longer exists, so a dealer hot-selling line with no other cover is a straight Buy."""
     from app.services.scm.front_planning_engine import propose_line
 
     case = HOT_SELLING_WORKED_CASE
@@ -75,27 +77,17 @@ def test_the_dealer_hot_selling_worked_case_reserves_own_location_and_offers_no_
     )
 
 
-def test_a_dealer_hot_selling_product_reserves_its_own_dealer_facing_stock_in_full():
-    """PLAN 3.3a: own-location Reserve is always eligible, hot-selling or not. The 50
-    dealer units are reserved just as they would be for an ordinary item; it is the SHARED
-    POOL that is gated by dealer hot-selling, not the dealer's own stock.
+def test_a_dealer_hot_selling_product_offers_no_pool_reserve_at_all():
+    """Ladder v2 (section E rule 7): the line's own location is never a Reserve source any
+    more, so a dealer hot-selling product's own stock is not touched by this ladder either
+    - only the pool rung is gated by hot-selling, and dealer-hot excludes it entirely.
     """
     from app.services.scm.front_planning_engine import propose_line
 
     case = HOT_SELLING_WORKED_CASE
     proposed = _components(propose_line(**case.inputs))
 
-    dealer_reserve = sum(
-        (
-            Decimal(str(c.qty))
-            for c in proposed
-            if c.kind == RESERVE and c.source_location == DEALER_LOCATION
-        ),
-        Decimal("0"),
-    )
-    assert dealer_reserve == Decimal("50")
-    assert case.qty_from(DEALER_LOCATION) == Decimal("50")
-
+    assert not any(c.kind == RESERVE for c in proposed)
     pool_reserve = sum(
         (
             Decimal(str(c.qty))

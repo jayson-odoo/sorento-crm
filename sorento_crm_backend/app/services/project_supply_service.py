@@ -66,6 +66,7 @@ from app.models.product import Product
 from app.models.sales_agent import SalesAgent
 from app.models.project_so import (
     ALLOC_SOURCE_BRW,
+    ALLOC_SOURCE_GROUP_TAKE,
     ALLOC_SOURCE_ORDER,
     ALLOC_SOURCE_OTHER_LOCATION,
     ALLOC_SOURCE_OTHER_PROJECT,
@@ -86,17 +87,22 @@ from app.models.scm import ItemClassification, ReorderLevel
 from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.scm import priority
+from app.services.scm import sales_agent_service
 from app.services.scm.demand import demand_qty, is_open_demand
 from app.services.scm.front_planning_engine import (
     BORROW,
     BUY,
     RESERVE,
+    RUNG_CROSS_GROUP_BORROW,
+    RUNG_GROUP_BORROW,
+    RUNG_GROUP_TAKE,
+    RUNG_POOL,
     TIMELY_SPO,
     Component,
     attribute_sources,
+    pool_reserve_capacity,
     propose_line,
     qty_text,
-    reserve_capacity,
 )
 
 logger = logging.getLogger(__name__)
@@ -375,6 +381,11 @@ class _LineFacts:
     #: reconciled AutoCount line). Set, the line is read out with no components and no
     #: donors; it is never carried and cannot be named to a confirmation.
     unplannable_reason: Optional[str] = None
+    #: Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E, section 8). The
+    #: OWNERSHIP GROUP this line's own location belongs to - the suffix after the hyphen
+    #: (`BRW-BB` -> `BB`) - or `None` for a location that carries no group (a bare pool
+    #: code, or an inactive/unrecognised warehouse).
+    group_code: Optional[str] = None
 
     @property
     def own_code(self) -> Optional[str]:
@@ -505,6 +516,18 @@ class ProjectSupplyService:
         # The free / holds caches indexed by product, rebuilt when either cache is
         # replaced (`_by_product`), so a per-line lookup walks that product's rows only.
         self._indexed: Optional[Tuple[Any, Any, Dict[str, Any], Dict[str, Any]]] = None
+        # Ladder v2 (section E) per-request caches. `None` means "not read yet"; a
+        # populated-but-empty dict is a real, cacheable answer, so each uses its own
+        # sentinel rather than a falsy check.
+        self._fulfilment_settings_cache: Optional[Dict[str, Any]] = None
+        self._site_pools_cache: Optional[Dict[str, Warehouse]] = None
+        self._group_siblings_cache: Dict[str, Optional[Dict[str, Warehouse]]] = {}
+        self._group_donor_cache: Dict[str, List[Dict[str, Any]]] = {}
+        self._warehouse_code_memo: Dict[str, Optional[Warehouse]] = {}
+        # Ladder v2 group borrow (section E rule 4): how much of ONE donor sales-order
+        # line is still available to lend, within this confirmation only - so two lines
+        # of the same confirm cannot both take the whole of it.
+        self._donor_line_ledger: Dict[str, Decimal] = {}
 
     # ------------------------------------------------------------------ lookups
 
@@ -614,8 +637,10 @@ class ProjectSupplyService:
     def compose_line(
         self, fact: _LineFacts, *, pool_free_left: Optional[Decimal] = None
     ) -> Tuple[Component, ...]:
-        """The source ladder for ONE line: own location, then the shared pool, then timely
-        incoming, then Buy - with PLAN 3.3's hot-selling rules deciding what Reserve may touch.
+        """The source ladder for ONE line, ladder v2's own order
+        (`PLAN-demo-followups-19aug-ladder-v2.md` section E): coverage date, timely
+        incoming, the shared pool(s), group take, group borrow, cross-group borrow, then
+        the whole-line rule.
 
         Public because it has two callers and must never have two implementations. The sheet
         composes one order's lines; the multi-order board composes every contributing line of a
@@ -624,30 +649,32 @@ class ProjectSupplyService:
         acting on the sheet disagreed about the same line - which is the whole reason this is a
         method rather than a loop body.
 
-        Borrow is not proposed here, on either surface: it needs a donor and a reason from a
-        person (AC-B09). `borrow_candidates_for` is what offers it.
-
-        `pool_free_left` is the caller's running pool balance, because the pool is shared: the
-        sheet draws it down across one order's lines, the board across the whole selection.
-        Defaults to the whole pool free, which is what a single line on its own may draw.
+        `pool_free_left` is the caller's running balance for this line's OWN site pool,
+        because that one pool is shared: the sheet draws it down across one order's lines,
+        the board across the whole selection. The OTHER site pools (rung 2's second half)
+        are read fresh per line - they are the overflow, not the contested pile, and
+        tracking a running balance across every secondary pool for every line on a board
+        of hundreds is cost nothing here asks for. Defaults to the whole pool free, which
+        is what a single line on its own may draw.
         """
-        free_stock: Dict[str, Decimal] = {}
-        if fact.own_code:
-            free_stock[fact.own_code] = fact.own_free
-        if fact.pool_code:
-            free_stock[fact.pool_code] = (
-                fact.pool_free if pool_free_left is None else pool_free_left
-            )
+        pools = self._pool_chain(fact, own_pool_free_left=pool_free_left)
+        group_take = self._group_take_candidates(fact)
+        group_borrow = self._group_borrow_auto_candidates(fact)
+        cross_group = self._cross_group_borrow_candidates(
+            fact,
+            residual=self._ladder_residual_before_cross_group(
+                fact, pools=pools, group_take=group_take, group_borrow=group_borrow
+            ),
+        )
         return propose_line(
             open_qty=fact.open_qty,
             line_no=fact.line.line_no if fact.line is not None else None,
             required_date=fact.required_date,
             fulfilment_location=fact.own_code,
+            group_code=fact.group_code,
             is_dealer_hot_selling=fact.is_dealer_hot_selling,
             is_project_hot_selling=fact.is_project_hot_selling,
-            free_stock=free_stock,
-            pool_location=fact.pool_code,
-            pool_available=fact.pool_available,
+            pools=pools,
             timely_spo_qty=fact.timely_qty,
             timely_spo_refs=[
                 {
@@ -659,7 +686,409 @@ class ProjectSupplyService:
                 for ref in fact.timely_refs
             ],
             is_discontinued=fact.is_discontinued,
+            reorder_coverage_until=self._reorder_coverage_until(),
+            group_take_candidates=group_take,
+            group_borrow_candidates=group_borrow,
+            cross_group_borrow_candidates=cross_group,
         )
+
+    # ---------------------------------------- ladder v2 rung candidates, for the trail
+
+    def pool_chain_for(
+        self, fact: _LineFacts, *, pool_free_left: Optional[Decimal] = None
+    ) -> List[Dict[str, Any]]:
+        """`compose_line`'s pool candidate list (section E rule 2), public so the board's
+        trail can show every pool the ladder actually consulted, not only this line's own."""
+        return self._pool_chain(fact, own_pool_free_left=pool_free_left)
+
+    def group_take_candidates_for(self, fact: _LineFacts) -> List[Dict[str, Any]]:
+        """`compose_line`'s group-take candidate list (section E rule 3), public for the
+        board's trail."""
+        return self._group_take_candidates(fact)
+
+    def group_borrow_auto_candidates_for(self, fact: _LineFacts) -> List[Dict[str, Any]]:
+        """`compose_line`'s AUTO group-borrow candidate list (section E rule 4, lower-ranked
+        donors only), public for the board's trail."""
+        return self._group_borrow_auto_candidates(fact)
+
+    def cross_group_borrow_candidates_for(
+        self, fact: _LineFacts, *, residual: Decimal
+    ) -> List[Dict[str, Any]]:
+        """`compose_line`'s cross-group-borrow candidate list (section E rule 5, already
+        cap-filtered against `residual`), public for the board's trail."""
+        return self._cross_group_borrow_candidates(fact, residual=residual)
+
+    def warehouse_id_for_code(self, code: Optional[str]) -> Optional[str]:
+        """A warehouse CODE resolved to its id (addressing only), for a caller that only
+        has the ladder's own component `source_location` in hand - the board's row needs
+        this for a group take / group borrow / cross-group borrow source, which its own
+        `warehouse_ids` map (built from `fact.own_code` / `fact.pool_code` alone) does not
+        cover."""
+        if not code:
+            return None
+        warehouse = self._warehouse_by_code(code)
+        return str(warehouse.id) if warehouse else None
+
+    # -------------------------------------------------- ladder v2 group context (section E)
+
+    def _fulfilment_settings(self) -> Dict[str, Any]:
+        """`{reorder_coverage_until, cross_group_borrow_max_qty, cross_group_borrow_max_pct}`
+        for the active policy, read once per request. `.get()` with a None-safe fallback
+        throughout: this reads the SAME row `app.services.scm.priority.fulfilment_settings`
+        serves to the admin screen, which may still be mid-migration on another branch."""
+        if self._fulfilment_settings_cache is None:
+            try:
+                policy = priority.active_policy(self.db)
+                self._fulfilment_settings_cache = dict(
+                    priority.fulfilment_settings(policy) or {}
+                )
+            except Exception:  # pragma: no cover - defensive, see docstring
+                self._fulfilment_settings_cache = {}
+        return self._fulfilment_settings_cache
+
+    def _reorder_coverage_until(self) -> Optional[date]:
+        return self._fulfilment_settings().get("reorder_coverage_until")
+
+    def _cross_group_cap(self) -> Tuple[Optional[Decimal], Optional[Decimal]]:
+        settings = self._fulfilment_settings()
+        qty = settings.get("cross_group_borrow_max_qty")
+        pct = settings.get("cross_group_borrow_max_pct")
+        return (
+            _dec(qty) if qty is not None else None,
+            _dec(pct) if pct is not None else None,
+        )
+
+    def _site_pool_warehouses(self) -> Dict[str, Warehouse]:
+        """Every active warehouse that is SOME location's `pool_warehouse_id` - the pools
+        ladder v2's rung 2 can draw, read once per request.
+
+        The authoritative test is the FK, not the code's shape: on the live book every
+        pool also happens to be a plain site code with no hyphen (`BRW`, `MWH`, ...), but
+        that is a naming convention the data does not enforce, and a warehouse's OWN code
+        says nothing about whether it is anybody's pool.
+        """
+        if self._site_pools_cache is None:
+            pool_ids = {
+                str(row[0])
+                for row in self.db.query(Warehouse.pool_warehouse_id)
+                .filter(Warehouse.pool_warehouse_id.isnot(None))
+                .distinct()
+                .all()
+            }
+            self._site_pools_cache = {
+                warehouse_id: warehouse
+                for warehouse_id, warehouse in (
+                    self._warehouses(pool_ids) if pool_ids else {}
+                ).items()
+                if warehouse.is_active
+            }
+        return self._site_pools_cache
+
+    def _pool_chain(
+        self, fact: _LineFacts, *, own_pool_free_left: Optional[Decimal]
+    ) -> List[Dict[str, Any]]:
+        """The ordered pool list for `propose_line`'s rung 2: this line's own site pool
+        first, then every OTHER active site pool (section E rule 2)."""
+        chain: List[Dict[str, Any]] = []
+        if fact.pool_code and fact.pool:
+            chain.append(
+                {
+                    "location": fact.pool_code,
+                    "free": (
+                        fact.pool_free if own_pool_free_left is None else own_pool_free_left
+                    ),
+                    "available": fact.pool_available,
+                }
+            )
+        if not fact.product_id:
+            return chain
+        seen = {str(fact.pool.id)} if fact.pool else set()
+        for pool_id, pool in sorted(
+            self._site_pool_warehouses().items(), key=lambda item: item[1].warehouse_code
+        ):
+            if pool_id in seen:
+                continue
+            free = self._free_at(fact.product_id, pool_id)
+            triple = self._pile_facts().get(
+                (fact.product_id, pool_id), {"on_hand": _ZERO, "so_qty": _ZERO, "spo_qty": _ZERO}
+            )
+            available = triple["on_hand"] - triple["so_qty"] + triple["spo_qty"]
+            chain.append({"location": pool.warehouse_code, "free": free, "available": available})
+        return chain
+
+    def _group_sibling_warehouses(self, fact: _LineFacts) -> Dict[str, Warehouse]:
+        """Every active warehouse sharing this line's ownership group, at ANOTHER site -
+        never this line's own location (section E rule 3: "the own location L is never a
+        source"). Cached per group code, since a board asks this for many lines at once."""
+        if not fact.group_code or not fact.own_code:
+            return {}
+        cache = self._group_siblings_cache.setdefault(fact.group_code, None)
+        if cache is None:
+            rows = self.db.query(Warehouse).filter(Warehouse.is_active.is_(True)).all()
+            cache = {
+                row.warehouse_code: row
+                for row in rows
+                if row.warehouse_code
+                and sales_agent_service.group_of_warehouse_code(row.warehouse_code)
+                == fact.group_code
+            }
+            self._group_siblings_cache[fact.group_code] = cache
+        return {code: row for code, row in cache.items() if code != fact.own_code}
+
+    def _group_take_candidates(self, fact: _LineFacts) -> List[Dict[str, Any]]:
+        """Rung 3: positive Available at a sibling location (section E rule 3),
+        `capacity = max(min(free, available), 0)` - the same formula the pool rung uses."""
+        if not fact.product_id:
+            return []
+        siblings = self._group_sibling_warehouses(fact)
+        out: List[Dict[str, Any]] = []
+        for code, warehouse in sorted(siblings.items()):
+            free = self._free_at(fact.product_id, str(warehouse.id))
+            triple = self._pile_facts().get(
+                (fact.product_id, str(warehouse.id)),
+                {"on_hand": _ZERO, "so_qty": _ZERO, "spo_qty": _ZERO},
+            )
+            available = triple["on_hand"] - triple["so_qty"] + triple["spo_qty"]
+            capacity = max(min(free, available), _ZERO)
+            if capacity > _ZERO:
+                out.append({"location": code, "qty": capacity})
+        return out
+
+    def _group_pile(
+        self, fact: _LineFacts
+    ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """Every OPEN demand line for this product across the whole ownership group (this
+        line's own location and every sibling), ranked TOGETHER by the active priority
+        policy - one call, not per donor (section E rule 4: "compute with the existing rank
+        machinery across the group's open lines for that product").
+
+        Returns the ranked list (this line's own core line included, when it is still open
+        demand) and this line's own entry within it, or `None` when this line is not itself
+        open demand at its pile (an amended/carried line has none to compare against, so no
+        donor can be judged against it either).
+        """
+        if not fact.product_id or not fact.core:
+            return [], None
+        locations = dict(self._group_sibling_warehouses(fact))
+        if fact.own_code and fact.warehouse:
+            locations[fact.own_code] = fact.warehouse
+        if not locations:
+            return [], None
+        warehouse_ids = [str(w.id) for w in locations.values()]
+        rows = (
+            self.db.query(
+                SalesOrderLine, SalesOrder, SalesAgent.sales_agent,
+                # `line_no` is the PROJECT mirror's own, the same way `_pile_book` reads
+                # it: a core line nobody has adopted has none, and the ladder's own
+                # display already treats a missing line number as absent (never "0").
+                ProjectSalesOrderLine.line_no,
+            )
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
+            .outerjoin(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.core_sales_order_line_id == SalesOrderLine.id,
+            )
+            .filter(
+                SalesOrderLine.product_id == fact.product_id,
+                SalesOrderLine.warehouse_id.in_(warehouse_ids),
+                SalesOrder.status == "open",
+                is_open_demand(),
+            )
+            .all()
+        )
+        if not rows:
+            return [], None
+        terms = priority.payment_terms_by_customer(
+            self.db, [str(order.customer_id) for _l, order, _a, _n in rows if order.customer_id]
+        )
+        warehouses_by_id = {str(w.id): code for code, w in locations.items()}
+        members: List[Dict[str, Any]] = []
+        for line, order, agent_code, line_no in rows:
+            open_qty = max(_dec(line.qty_ordered) - _dec(line.qty_delivered), _ZERO)
+            if open_qty <= _ZERO:
+                continue
+            members.append(
+                {
+                    "line_id": str(line.id),
+                    "so_number": order.so_number or "",
+                    "line_no": line_no,
+                    "open_qty": open_qty,
+                    "required_date": line.required_date or order.requested_delivery_date,
+                    "order_date": order.order_date,
+                    "demand_class": order.demand_class,
+                    "payment_terms_days": terms.get(str(order.customer_id or "")),
+                    "warehouse_code": warehouses_by_id.get(str(line.warehouse_id)),
+                    "donor_agent_code": agent_code,
+                    "donor_agent_id": str(order.sales_agent_id) if order.sales_agent_id else None,
+                }
+            )
+        if not members:
+            return [], None
+        weights, class_weights = priority.policy_weights(priority.active_policy(self.db))
+        self._rank_pile(members, weights=weights, class_weights=class_weights)
+        mine = next((m for m in members if m["line_id"] == str(fact.core.id)), None)
+        return members, mine
+
+    def _group_borrow_donors(
+        self, fact: _LineFacts
+    ) -> List[Dict[str, Any]]:
+        """Every OTHER open line's committed quantity at this line's ownership group,
+        L first then the siblings (section E rule 4), each stating whether it is ranked
+        below this line (auto-eligible) and whether it shares this line's agent (offered
+        at any rank). Cached per line, since the sheet asks for both the auto list and the
+        offer list off the same read."""
+        cache_key = str(fact.core.id) if fact.core else None
+        if cache_key is not None and cache_key in self._group_donor_cache:
+            return self._group_donor_cache[cache_key]
+        members, mine = self._group_pile(fact)
+        if mine is None:
+            if cache_key is not None:
+                self._group_donor_cache[cache_key] = []
+            return []
+        my_agent_id = self._agent_id_of(fact)
+        my_index = members.index(mine)
+        donors: List[Dict[str, Any]] = []
+        for index, member in enumerate(members):
+            if member is mine:
+                continue
+            location = member.get("warehouse_code")
+            if not location:
+                continue
+            donor_agent_id = member.get("donor_agent_id")
+            same_agent = bool(my_agent_id) and donor_agent_id == my_agent_id
+            donors.append(
+                {
+                    "location": location,
+                    # L first, then the siblings: the location's own draw order.
+                    "location_rank": 0 if location == fact.own_code else 1,
+                    "qty": member["open_qty"],
+                    "donor_so_number": member.get("so_number") or None,
+                    "donor_line_no": member.get("line_no"),
+                    "donor_agent_code": member.get("donor_agent_code"),
+                    "donor_core_line_id": member.get("line_id"),
+                    "required_date": member.get("required_date"),
+                    "same_agent": same_agent,
+                    # Below this line in the SAME ranked pile - "ranked below this line".
+                    "lower_ranked": index > my_index,
+                }
+            )
+        donors.sort(key=lambda d: (d["location_rank"], d["location"], -_dec(d["qty"])))
+        if cache_key is not None:
+            self._group_donor_cache[cache_key] = donors
+        return donors
+
+    def _agent_id_of(self, fact: _LineFacts) -> Optional[str]:
+        if fact.core is None:
+            return None
+        row = (
+            self.db.query(SalesOrder.sales_agent_id)
+            .filter(SalesOrder.id == fact.core.sales_order_id)
+            .first()
+        )
+        return str(row[0]) if row and row[0] else None
+
+    def _group_borrow_auto_candidates(self, fact: _LineFacts) -> List[Dict[str, Any]]:
+        """Rung 4's AUTOMATIC list: donors ranked below this line only (section E rule 4).
+        A same-agent donor ranked ABOVE this line is never here - only in the offered list
+        `_group_borrow_all_donors` gives the sheet - because "offered, not auto-proposed"
+        is the whole point of naming her separately."""
+        return [
+            {
+                "location": donor["location"],
+                "qty": donor["qty"],
+                "donor_so_number": donor["donor_so_number"],
+                "donor_line_no": donor["donor_line_no"],
+                "donor_agent_code": donor["donor_agent_code"],
+                "same_agent": donor["same_agent"],
+                "donor_core_line_id": donor["donor_core_line_id"],
+            }
+            for donor in self._group_borrow_donors(fact)
+            if donor["lower_ranked"]
+        ]
+
+    def _ladder_residual_before_cross_group(
+        self,
+        fact: _LineFacts,
+        *,
+        pools: Sequence[Dict[str, Any]],
+        group_take: Sequence[Dict[str, Any]],
+        group_borrow: Sequence[Dict[str, Any]],
+    ) -> Decimal:
+        """What rung 5 (cross-group borrow) would still need to cover, walking rungs 1-4
+        the same greedy way `propose_line` does. The cap in section E rule 5 is stated
+        against THIS residual ("Q"), which the engine only knows once it reaches that
+        rung - computed here so the candidate list can be capped before it is handed in,
+        without duplicating the ladder's own arithmetic beyond a running subtraction."""
+        remaining = max(_dec(fact.open_qty), _ZERO)
+        if remaining <= _ZERO:
+            return _ZERO
+        if (
+            self._reorder_coverage_until() is not None
+            and fact.required_date is not None
+            and fact.required_date > self._reorder_coverage_until()
+        ):
+            return remaining
+        remaining -= min(remaining, max(_dec(fact.timely_qty), _ZERO))
+        for _location, capacity, _reason in pool_reserve_capacity(
+            is_dealer_hot_selling=fact.is_dealer_hot_selling,
+            is_project_hot_selling=fact.is_project_hot_selling,
+            pools=pools,
+        ):
+            if remaining <= _ZERO:
+                break
+            remaining -= min(remaining, capacity)
+        for candidate in group_take:
+            if remaining <= _ZERO:
+                break
+            remaining -= min(remaining, max(_dec(candidate.get("qty")), _ZERO))
+        for candidate in group_borrow:
+            if remaining <= _ZERO:
+                break
+            remaining -= min(remaining, max(_dec(candidate.get("qty")), _ZERO))
+        return max(remaining, _ZERO)
+
+    def _cross_group_borrow_candidates(
+        self, fact: _LineFacts, *, residual: Decimal
+    ) -> List[Dict[str, Any]]:
+        """Rung 5: free stock OUTSIDE this line's ownership group, offered only within the
+        small-quantity cap (section E rule 5). `residual` is what the ladder would still
+        need by the time it reaches this rung - the "Q" the cap is measured against.
+
+        A location with NO ownership group (`fact.group_code` is `None`) has no "outside
+        the group" either - cross-group borrow is a group concept, and auto-proposing an
+        ordinary free-stock donor under its name for an ungrouped line would silently
+        widen what "cross-group" means past what section 8 asked for.
+        """
+        if not fact.product_id or not fact.group_code or residual <= _ZERO:
+            return []
+        max_qty, max_pct = self._cross_group_cap()
+        inside = self._reserve_location_ids(fact) | {
+            str(w.id) for w in self._group_sibling_warehouses(fact).values()
+        }
+        free_index, _holds_index = self._by_product()
+        free_here = free_index.get(fact.product_id, {})
+        candidates: List[Dict[str, Any]] = []
+        for warehouse_id, free in free_here.items():
+            if free <= _ZERO or warehouse_id in inside:
+                continue
+            warehouse = self._warehouse_row(warehouse_id)
+            if warehouse is None or not warehouse.warehouse_code:
+                continue
+            code = warehouse.warehouse_code
+            if sales_agent_service.group_of_warehouse_code(code) == fact.group_code:
+                continue
+            within_qty = max_qty is not None and residual <= max_qty
+            within_pct = (
+                max_pct is not None
+                and free > _ZERO
+                and residual <= (free * max_pct / Decimal("100"))
+            )
+            if not (within_qty or within_pct):
+                continue
+            candidates.append({"location": code, "qty": free})
+        candidates.sort(key=lambda c: (-_dec(c["qty"]), c["location"]))
+        return candidates
 
     def borrow_candidates_for(
         self, fact: _LineFacts, *, need: Optional[Decimal] = None
@@ -865,6 +1294,9 @@ class ProjectSupplyService:
                 is_discontinued=(product_id or "") in discontinued,
                 timely_refs=timely_refs,
                 advisory_refs=[ref for ref in spo.get(key, []) if ref not in timely_refs],
+                group_code=sales_agent_service.group_of_warehouse_code(
+                    warehouse.warehouse_code if warehouse else None
+                ),
             )
         return facts
 
@@ -934,19 +1366,53 @@ class ProjectSupplyService:
     def _serialize_component(
         self, component: Component, fact: _LineFacts
     ) -> Dict[str, Any]:
-        warehouse_id = None
-        if component.source_location:
-            if fact.own_code == component.source_location and fact.warehouse:
-                warehouse_id = str(fact.warehouse.id)
-            elif fact.pool_code == component.source_location and fact.pool:
-                warehouse_id = str(fact.pool.id)
+        warehouse_id = self._resolve_source_warehouse_id(component.source_location, fact)
         return {
             "kind": component.kind,
             "qty": qty_text(component.qty),
             "reason": component.reason,
             "source_location": component.source_location,
             "source_warehouse_id": warehouse_id,
+            "rung": component.rung,
+            "donor_so_number": component.donor_so_number,
+            "donor_line_no": component.donor_line_no,
+            "donor_agent_code": component.donor_agent_code,
+            "same_agent": component.same_agent,
+            "order_back_qty": (
+                qty_text(component.order_back_qty)
+                if component.order_back_qty is not None
+                else None
+            ),
+            "donor_core_line_id": component.donor_core_line_id,
         }
+
+    def _resolve_source_warehouse_id(
+        self, source_location: Optional[str], fact: _LineFacts
+    ) -> Optional[str]:
+        """A component's warehouse CODE, resolved to an id (addressing only).
+
+        Own location and pool first, at no query cost - the common case. Ladder v2's
+        group take / group borrow / cross-group borrow rungs name a SIBLING or an outside
+        location the fact does not carry a reference for, so those fall back to a
+        memoized by-code lookup (`_warehouse_by_code`).
+        """
+        if not source_location:
+            return None
+        if fact.own_code == source_location and fact.warehouse:
+            return str(fact.warehouse.id)
+        if fact.pool_code == source_location and fact.pool:
+            return str(fact.pool.id)
+        warehouse = self._warehouse_by_code(source_location)
+        return str(warehouse.id) if warehouse else None
+
+    def _warehouse_by_code(self, code: str) -> Optional[Warehouse]:
+        if code not in self._warehouse_code_memo:
+            self._warehouse_code_memo[code] = (
+                self.db.query(Warehouse)
+                .filter(Warehouse.warehouse_code == code, Warehouse.is_active.is_(True))
+                .first()
+            )
+        return self._warehouse_code_memo[code]
 
     def _serialize_spo(self, ref: _SpoRow) -> Dict[str, Any]:
         return {
@@ -1452,20 +1918,30 @@ class ProjectSupplyService:
                 f"{qty_text(timely)}.",
             )
 
+        # Ladder v2 (section E rule 7): the own location is NEVER a Reserve source any
+        # more, only the pool chain (own site pool then every other) and this line's
+        # group-take siblings - the same candidates `compose_line` walked to propose this
+        # composition, so the recheck cannot refuse what the proposal itself offered.
+        pools = self._pool_chain(
+            fact, own_pool_free_left=pool_left.get(fact.pool_key) if fact.pool_key else None
+        )
         capacity = {
             location: qty
-            for location, qty, _reason in reserve_capacity(
+            for location, qty, _reason in pool_reserve_capacity(
                 is_dealer_hot_selling=fact.is_dealer_hot_selling,
                 is_project_hot_selling=fact.is_project_hot_selling,
-                fulfilment_location=fact.own_code,
-                pool_location=fact.pool_code,
-                free_stock=self._free_for(fact, pool_left),
-                pool_available=fact.pool_available,
+                pools=pools,
             )
         }
-        allowed = " or ".join([code for code in (fact.own_code, fact.pool_code) if code])
+        for candidate in self._group_take_candidates(fact):
+            capacity[candidate["location"]] = capacity.get(
+                candidate["location"], _ZERO
+            ) + _dec(candidate["qty"])
+        reserve_locations = self._reserve_ladder_locations(fact)
+        by_id = {str(w.id): code for code, w in reserve_locations.items()}
+        allowed = " or ".join(sorted(reserve_locations)) or "no location"
         for item in entry.reserve or []:
-            warehouse = self._warehouse_of(fact, str(item.warehouse_id))
+            warehouse = by_id.get(str(item.warehouse_id))
             qty = _dec(item.qty)
             if warehouse is None:
                 # A location that is neither this line's own nor its pool. Name what was
@@ -1547,16 +2023,6 @@ class ProjectSupplyService:
                 f"{qty_text(fact.open_qty)}.",
             )
 
-    def _free_for(
-        self, fact: _LineFacts, pool_left: Dict[str, Decimal]
-    ) -> Dict[str, Decimal]:
-        free: Dict[str, Decimal] = {}
-        if fact.own_code:
-            free[fact.own_code] = fact.own_free
-        if fact.pool_code and fact.pool:
-            free[fact.pool_code] = pool_left.get(fact.pool_key, fact.pool_free)
-        return free
-
     def _warehouse_of(self, fact: _LineFacts, warehouse_id: str) -> Optional[str]:
         if fact.warehouse and str(fact.warehouse.id) == warehouse_id:
             return fact.own_code
@@ -1565,20 +2031,32 @@ class ProjectSupplyService:
         return None
 
     def _reserve_location_ids(self, fact: _LineFacts) -> set:
-        """The warehouses Reserve MAY draw this line from (PLAN 3.3), by id.
+        """The warehouses Reserve MAY draw this line from, by id.
 
-        Structural, not "wherever there happens to be stock": the fulfilment location and
-        the shared pool, always - hot-selling no longer removes either from Reserve's reach
-        (captain, 19 August 2026: own-location Reserve is always eligible, hot-selling or
-        not). What hot-selling gates is how much the POOL contributes, not whether the own
-        location is inside Reserve at all, so it is never offered as a Borrow source either.
+        Structural, not "wherever there happens to be stock": the fulfilment location
+        (read-only under ladder v2, section E rule 7) and EVERY active site pool - rung 2
+        now reaches every pool, not only this line's own site (section E rule 2). None of
+        these is ever offered as a plain free-stock Borrow donor: the pool rung already
+        reaches them automatically, and offering them again as `other_location` would
+        double the same stock up as two different decisions.
         """
         ids = set()
         if fact.warehouse:
             ids.add(str(fact.warehouse.id))
         if fact.pool:
             ids.add(str(fact.pool.id))
+        ids.update(self._site_pool_warehouses().keys())
         return ids
+
+    def _reserve_ladder_locations(self, fact: _LineFacts) -> Dict[str, Warehouse]:
+        """Every location Reserve may draw THIS line from under ladder v2, by CODE: every
+        active site pool, and this line's group-take siblings (section E rules 2 and 3).
+        Never the own location (rule 7)."""
+        out: Dict[str, Warehouse] = {
+            pool.warehouse_code: pool for pool in self._site_pool_warehouses().values()
+        }
+        out.update(self._group_sibling_warehouses(fact))
+        return out
 
     def _check_borrow(
         self,
@@ -1602,7 +2080,28 @@ class ProjectSupplyService:
         if warehouse is None:
             refuse(invalid, "That location no longer exists.")
             return
+
+        donor_core_line_id = getattr(item, "donor_core_line_id", None)
+        if item.source == ALLOC_SOURCE_OTHER_LOCATION and donor_core_line_id:
+            self._check_group_borrow(
+                item, fact, warehouse, donor_core_line_id, refuse, stale, invalid,
+                carried_holds,
+            )
+            return
+
         if item.source == ALLOC_SOURCE_OTHER_LOCATION:
+            if fact.warehouse and str(item.warehouse_id) == str(fact.warehouse.id):
+                # Ladder v2 (section E rule 7): this line's own location is never a Borrow
+                # source (its demand IS this line) and never a Reserve source any more
+                # either - the only way to reach stock physically sitting here is a group
+                # borrow FROM ANOTHER SO's line, which names that line by id.
+                refuse(
+                    invalid,
+                    f"{warehouse.warehouse_code} is this line's own location. Free stock "
+                    "there cannot be borrowed - name the sales-order line it should come "
+                    "from, on the order's own sheet.",
+                )
+                return
             if str(item.warehouse_id) in self._reserve_location_ids(fact):
                 refuse(
                     invalid,
@@ -1685,6 +2184,68 @@ class ProjectSupplyService:
         from_hold = min(qty, held)
         borrow_left.take_held(fact.product_id, str(warehouse.id), str(donor.id), from_hold)
         borrow_left.take_free(fact.product_id, str(warehouse.id), qty - from_hold)
+
+    def _check_group_borrow(
+        self,
+        item: Any,
+        fact: _LineFacts,
+        warehouse: Warehouse,
+        donor_core_line_id: str,
+        refuse,
+        stale: List[Dict[str, Any]],
+        invalid: List[Dict[str, Any]],
+        carried_holds: Dict[str, Dict[str, Any]],
+    ) -> None:
+        """Ladder v2's group borrow (section E rule 4), re-read live (AC-C03).
+
+        A group borrow takes another sales order's own COMMITTED quantity, not free
+        stock - so it is checked against that donor line's live open quantity, never
+        against `_free_at`/`_BorrowLedger`. A separate per-donor-line ledger
+        (`_donor_line_ledger`) stops two lines of the SAME confirmation both borrowing
+        the whole of one donor line.
+        """
+        qty = _dec(item.qty)
+        donor_line = (
+            self.db.query(SalesOrderLine, SalesOrder)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .filter(SalesOrderLine.id == donor_core_line_id)
+            .first()
+        )
+        if donor_line is None:
+            refuse(invalid, "The donor sales-order line no longer exists.")
+            return
+        line, order = donor_line
+        if fact.core is not None and str(line.id) == str(fact.core.id):
+            refuse(invalid, "A line cannot borrow from itself.")
+            return
+        if str(line.warehouse_id or "") != str(warehouse.id):
+            refuse(
+                invalid,
+                f"{order.so_number or 'That sales order'} line {line.line_no} is no "
+                f"longer at {warehouse.warehouse_code}.",
+            )
+            return
+        carried = self._carried_component_qty(
+            carried_holds, str(fact.line.id), BORROW, str(warehouse.id)
+        )
+        ask = qty - carried if qty > carried else _ZERO
+        if ask <= _ZERO:
+            return
+        if donor_core_line_id not in self._donor_line_ledger:
+            self._donor_line_ledger[donor_core_line_id] = max(
+                _dec(line.qty_ordered) - _dec(line.qty_delivered), _ZERO
+            )
+        available = self._donor_line_ledger[donor_core_line_id]
+        if qty > available:
+            room = available - carried
+            refuse(
+                stale,
+                f"{order.so_number or 'that sales order'} line {line.line_no} now holds "
+                f"{qty_text(room if room > _ZERO else _ZERO)} at {warehouse.warehouse_code}, "
+                f"and {qty_text(ask)} was asked for.",
+            )
+            return
+        self._donor_line_ledger[donor_core_line_id] = available - qty
 
     # ------------------------------------------------------------------- writing
 
@@ -1865,6 +2426,46 @@ class ProjectSupplyService:
                 },
             )
 
+        # Ladder v2 group borrow (section E rule 4): "every borrow carries an order-back",
+        # unconditionally - unlike the location-pile shortfall below, which only fires
+        # when the donor's WHOLE pile goes negative. A group borrow takes another sales
+        # order's own committed quantity, so the donor line is short by exactly what was
+        # taken from it, full stop; built here, before the pile loop, so it never depends
+        # on the pile's own availability triple.
+        order_backs: List[Dict[str, Any]] = []
+        reference = order.autocount_doc_no or order.provisional_ref or ""
+        for line, entry, fact in checked:
+            for item in entry.borrow or []:
+                qty = _dec(item.qty)
+                donor_core_line_id = getattr(item, "donor_core_line_id", None)
+                if qty <= _ZERO or not donor_core_line_id:
+                    continue
+                donor_so_number = getattr(item, "donor_so_number", None) or "an unnamed sales order"
+                donor_line_no = getattr(item, "donor_line_no", None)
+                donor_agent_code = getattr(item, "donor_agent_code", None)
+                warehouse = self._warehouse_row(str(item.warehouse_id))
+                code = warehouse.warehouse_code if warehouse else ""
+                line_text = f" line {donor_line_no}" if donor_line_no is not None else ""
+                agent_text = f" (agent {donor_agent_code})" if donor_agent_code else ""
+                order_backs.append(
+                    {
+                        "line": line,
+                        "item_code": fact.item_code,
+                        "qty": qty,
+                        "required_date": (
+                            getattr(item, "donor_required_date", None)
+                            or fact.required_date
+                            or line.delivery_date
+                        ),
+                        "stock_location": code,
+                        "note": (
+                            f"Order-back: {donor_so_number}{line_text} lent "
+                            f"{qty_text(qty)} to {reference} line {line.line_no}"
+                            f"{agent_text}"
+                        ),
+                    }
+                )
+
         for line, entry, fact in checked:
             if not fact.product_id:
                 continue
@@ -1889,7 +2490,7 @@ class ProjectSupplyService:
                 pile["reserved"] += qty
                 pile["lines"].append(line.line_no)
         if not piles:
-            return []
+            return order_backs
 
         availability = self.donor_availability(piles.keys())
         # The WHOLE order's holds are left out here, named and carried alike, because
@@ -1898,8 +2499,7 @@ class ProjectSupplyService:
             piles.keys(),
             exclude_line_ids=[str(line.id) for line, _entry, _fact in checked],
         )
-        out: List[Dict[str, Any]] = []
-        reference = order.autocount_doc_no or order.provisional_ref or ""
+        out: List[Dict[str, Any]] = list(order_backs)
         for key, pile in piles.items():
             taken = pile["borrowed"] + pile["reserved"]
             after = (
@@ -1941,11 +2541,17 @@ class ProjectSupplyService:
     ) -> Dict[str, Any]:
         """Freeze the line as it was decided, in the words it was decided in (AC-G01)."""
         components: List[Dict[str, Any]] = []
+        reserve_by_id = {
+            str(w.id): code for code, w in self._reserve_ladder_locations(fact).items()
+        }
+        siblings = self._group_sibling_warehouses(fact)
         for item in entry.reserve or []:
             qty = _dec(item.qty)
             if qty <= _ZERO:
                 continue
-            location = self._warehouse_of(fact, str(item.warehouse_id))
+            location = self._warehouse_of(fact, str(item.warehouse_id)) or reserve_by_id.get(
+                str(item.warehouse_id)
+            )
             components.append(
                 {
                     "kind": RESERVE,
@@ -1953,6 +2559,13 @@ class ProjectSupplyService:
                     "source_location": location,
                     "source_warehouse_id": str(item.warehouse_id),
                     "reason": self._reserve_reason(fact, location),
+                    "rung": (
+                        RUNG_GROUP_TAKE
+                        if location in siblings
+                        else RUNG_POOL
+                        if location and location != fact.own_code
+                        else None
+                    ),
                 }
             )
         if _dec(entry.timely_spo_qty) > _ZERO:
@@ -1977,6 +2590,7 @@ class ProjectSupplyService:
                 if item.donor_project_id
                 else None
             )
+            is_group_borrow = bool(getattr(item, "donor_core_line_id", None))
             components.append(
                 {
                     "kind": "borrow",
@@ -1988,6 +2602,18 @@ class ProjectSupplyService:
                     "donor_project_id": str(donor.id) if donor else None,
                     "reason": self._borrow_reason(item, warehouse, donor),
                     "cs_reason": (item.reason or "").strip(),
+                    "rung": RUNG_GROUP_BORROW if is_group_borrow else None,
+                    "donor_so_number": getattr(item, "donor_so_number", None),
+                    "donor_line_no": getattr(item, "donor_line_no", None),
+                    "donor_agent_code": getattr(item, "donor_agent_code", None),
+                    "same_agent": bool(getattr(item, "same_agent", False)),
+                    "order_back_qty": qty_text(qty) if is_group_borrow else None,
+                    "donor_core_line_id": getattr(item, "donor_core_line_id", None),
+                    "donor_required_date": (
+                        getattr(item, "donor_required_date", None).isoformat()
+                        if getattr(item, "donor_required_date", None)
+                        else None
+                    ),
                 }
             )
         if _dec(entry.buy_qty) > _ZERO:
@@ -2054,16 +2680,22 @@ class ProjectSupplyService:
         }
 
     def _reserve_reason(self, fact: _LineFacts, location: Optional[str]) -> str:
-        for candidate, _qty, reason in reserve_capacity(
+        """The rule's own sentence for a confirmed Reserve component, at whichever
+        location it named - ladder v2's pool chain first (own site pool then every
+        other), then a group-take sibling (section E rule 3)."""
+        for candidate, _qty, reason in pool_reserve_capacity(
             is_dealer_hot_selling=fact.is_dealer_hot_selling,
             is_project_hot_selling=fact.is_project_hot_selling,
-            fulfilment_location=fact.own_code,
-            pool_location=fact.pool_code,
-            free_stock=self._free_for(fact, {}),
-            pool_available=fact.pool_available,
+            pools=self._pool_chain(fact, own_pool_free_left=None),
         ):
             if candidate == location:
                 return reason
+        for candidate in self._group_take_candidates(fact):
+            if candidate["location"] == location:
+                return (
+                    f"{location} has {qty_text(_dec(candidate['qty']))} available"
+                    f"{f' in the {fact.group_code} group' if fact.group_code else ''}"
+                )
         return f"free stock at {location} covers the need by the required date"
 
     def _timely_reason(self, fact: _LineFacts) -> str:
@@ -2097,16 +2729,27 @@ class ProjectSupplyService:
         "what did we tell the customer in March".
         """
         now = datetime.utcnow()
+        reserve_locations = self._reserve_ladder_locations(fact)
+        by_id = {str(w.id): code for code, w in reserve_locations.items()}
+        siblings = self._group_sibling_warehouses(fact)
         for item in entry.reserve or []:
             qty = _dec(item.qty)
             if qty <= _ZERO:
                 continue
-            location = self._warehouse_of(fact, str(item.warehouse_id))
-            source = (
-                ALLOC_SOURCE_BRW
-                if fact.pool_code and location == fact.pool_code
-                else ALLOC_SOURCE_OWN
+            location = self._warehouse_of(fact, str(item.warehouse_id)) or by_id.get(
+                str(item.warehouse_id)
             )
+            if location and location in siblings:
+                source = ALLOC_SOURCE_GROUP_TAKE
+            elif fact.pool_code and location == fact.pool_code:
+                source = ALLOC_SOURCE_BRW
+            elif location and location != fact.own_code:
+                # Any other active site pool, ladder v2's second pool rung (section E
+                # rule 2): the same Reserve kind as this line's own pool, just a
+                # different one.
+                source = ALLOC_SOURCE_BRW
+            else:
+                source = ALLOC_SOURCE_OWN
             self.db.add(
                 SOLineAllocation(
                     company_id=line.company_id,
@@ -2521,6 +3164,9 @@ class ProjectSupplyService:
                     None
                     if core is not None
                     else "No reconciled AutoCount line. Reconcile the sales order first."
+                ),
+                group_code=sales_agent_service.group_of_warehouse_code(
+                    warehouse.warehouse_code if warehouse else None
                 ),
             )
         return facts
@@ -3412,6 +4058,9 @@ class ProjectSupplyService:
         # line's own dealer location: Reserve may not touch it, and CS borrowing it with a
         # reason is the sanctioned way to use it (PLAN 3.3).
         inside = self._reserve_location_ids(fact)
+        group_siblings = self._group_sibling_warehouses(fact)
+        inside_group = inside | {str(w.id) for w in group_siblings.values()}
+        max_qty, max_pct = self._cross_group_cap()
         out: List[Dict[str, Any]] = []
 
         free_index, holds_index = self._by_product()
@@ -3432,6 +4081,33 @@ class ProjectSupplyService:
                 continue
             free = free_here[warehouse_id]
             committed = committed_at.get(warehouse_id, _ZERO)
+            # Ladder v2 (section E rule 5): a free-stock donor OUTSIDE this line's
+            # ownership group is the SAME donor rung 5 draws automatically, within the
+            # small-quantity cap - stated here, on the one row, rather than offered a
+            # second time as a separate "cross-group" candidate.
+            is_cross_group = bool(fact.group_code) and warehouse_id not in inside_group
+            over_cap = False
+            cap_reason = None
+            if is_cross_group:
+                within_qty = max_qty is not None and need <= max_qty
+                within_pct = (
+                    max_pct is not None
+                    and free > _ZERO
+                    and need <= (free * max_pct / Decimal("100"))
+                )
+                over_cap = need > _ZERO and not (within_qty or within_pct)
+                if over_cap:
+                    cap_bits = []
+                    if max_qty is not None:
+                        cap_bits.append(f"{qty_text(max_qty)} units")
+                    if max_pct is not None:
+                        cap_bits.append(
+                            f"{qty_text(max_pct)}% of {warehouse.warehouse_code}'s free stock"
+                        )
+                    cap_reason = (
+                        f"{qty_text(need)} exceeds the cross-group borrow limit "
+                        f"({' or '.join(cap_bits) or 'no limit set'})"
+                    )
             out.append(
                 {
                     "source": ALLOC_SOURCE_OTHER_LOCATION,
@@ -3444,6 +4120,9 @@ class ProjectSupplyService:
                         "free_after_full_borrow": qty_text(_ZERO),
                         "committed_qty": qty_text(committed),
                     },
+                    "rung": RUNG_CROSS_GROUP_BORROW if is_cross_group else None,
+                    "over_cap": over_cap,
+                    "cap_reason": cap_reason,
                 }
             )
 
@@ -3480,7 +4159,48 @@ class ProjectSupplyService:
                         },
                     }
                 )
+
+        out.extend(self._group_borrow_offer_rows(fact, need))
         return self._ranked(out)
+
+    def _group_borrow_offer_rows(
+        self, fact: _LineFacts, need: Decimal
+    ) -> List[Dict[str, Any]]:
+        """Rung 4's WHOLE offer list (section E.4, section 8): every donor in this line's
+        ownership group, lower-ranked ones the ladder already auto-composed AND a
+        same-agent donor ranked above this line - "the donor list must surface the SAME
+        AGENT's other SOs (even higher ranked), because the agent can authorise CS to move
+        stock between her own orders." `recommended` is decided by `_ranked` alongside
+        every other donor; this only states the facts that are true regardless of rank.
+        """
+        out: List[Dict[str, Any]] = []
+        for donor in self._group_borrow_donors(fact):
+            warehouse = self._warehouse_by_code(donor["location"])
+            if warehouse is None:
+                continue
+            free = self._free_at(fact.product_id, str(warehouse.id))
+            out.append(
+                {
+                    "source": ALLOC_SOURCE_OTHER_LOCATION,
+                    "rung": RUNG_GROUP_BORROW,
+                    "warehouse_code": donor["location"],
+                    "warehouse_id": str(warehouse.id),
+                    "free_qty": qty_text(donor["qty"]),
+                    **self._donor_pile(fact.product_id, str(warehouse.id), donor["qty"], need),
+                    "donor_impact": {
+                        "free_before": qty_text(free + donor["qty"]),
+                        "free_after_full_borrow": qty_text(free),
+                        "committed_qty": qty_text(donor["qty"]),
+                    },
+                    "donor_so_number": donor["donor_so_number"],
+                    "donor_line_no": donor["donor_line_no"],
+                    "donor_agent_code": donor["donor_agent_code"],
+                    "donor_core_line_id": donor["donor_core_line_id"],
+                    "lower_ranked": donor["lower_ranked"],
+                    "same_agent": donor["same_agent"],
+                }
+            )
+        return out
 
     def _donor_pile(
         self,
@@ -3525,6 +4245,10 @@ class ProjectSupplyService:
         Damage is measured against THIS line's residual (`available_after_need`), not against
         the donor's whole free stock. Availability then free break the ties, so of two donors
         that could both meet the line comfortably the one with more room to spare wins.
+
+        An `over_cap` row (ladder v2, section E rule 5) is still SHOWN in its earned rank
+        position, but never carries `recommended`: it cannot be taken automatically, so
+        recommending it would point CS at a donor the confirm path will refuse.
         """
         candidates.sort(
             key=lambda candidate: (
@@ -3534,8 +4258,12 @@ class ProjectSupplyService:
                 candidate["warehouse_code"],
             )
         )
-        for index, candidate in enumerate(candidates):
-            candidate["recommended"] = index == 0
+        recommended_set = False
+        for candidate in candidates:
+            eligible = not candidate.get("over_cap")
+            candidate["recommended"] = eligible and not recommended_set
+            if eligible:
+                recommended_set = True
         return candidates
 
     def _pile_facts(self) -> Dict[Tuple[str, str], Dict[str, Decimal]]:

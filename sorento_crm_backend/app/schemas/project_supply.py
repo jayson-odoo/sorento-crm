@@ -41,6 +41,25 @@ class SupplyComponent(BaseModel):
     donor_project_id: Optional[str] = None
     #: What CS typed: the Borrow reason, or the reason a discontinued product is bought.
     cs_reason: Optional[str] = None
+    #: Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E): which rung of the
+    #: source ladder produced this component - finer than `kind`, which only carries the
+    #: balance-invariant bucket. `None` on a component frozen before ladder v2 landed.
+    rung: Optional[str] = None
+    #: The donor sales order for a `group_borrow` component (section E.4): its number,
+    #: line and agent, so the sheet can name who it came from. `None` on every other kind.
+    donor_so_number: Optional[str] = None
+    donor_line_no: Optional[int] = None
+    donor_agent_code: Optional[str] = None
+    #: The donor shares this line's own sales agent - "she can authorise CS to move stock
+    #: between her own orders" (section 8).
+    same_agent: bool = False
+    #: The order-back this component raised: an Order Inquiry Buy for the donor's own
+    #: line, equal to what was taken. `None` outside `group_borrow`.
+    order_back_qty: Optional[str] = None
+    #: Addressing only, never rendered: the donor's own core sales-order line id, so
+    #: re-confirming this proposal AS PROPOSED can re-identify the same donor line
+    #: without a second lookup (`ConfirmBorrowComponent.donor_core_line_id`).
+    donor_core_line_id: Optional[str] = None
 
 
 class SupplySpoRef(BaseModel):
@@ -87,6 +106,29 @@ class BorrowCandidate(BaseModel):
     #: First in the ranking - the donor this borrow hurts least. Exactly one row carries it.
     recommended: bool = False
     donor_impact: BorrowDonorImpact
+    #: Ladder v2 (section E): `group_borrow` or `cross_group_borrow` when this row is one
+    #: of the new group-aware donors, `None` for a plain `other_location`/`other_project`
+    #: donor the old ladder already offered.
+    rung: Optional[str] = None
+    #: The donor sales-order line this row names, for `group_borrow` (section E.4): its
+    #: number, line, and the agent who owns it.
+    donor_so_number: Optional[str] = None
+    donor_line_no: Optional[int] = None
+    donor_agent_code: Optional[str] = None
+    #: Addressing only, never rendered: `donor_core_line_id` re-identifies the donor's own
+    #: sales-order line so the confirmation can re-read its live open quantity at commit
+    #: (AC-C03), the same way `warehouse_id` re-identifies a location.
+    donor_core_line_id: Optional[str] = None
+    #: The donor is ranked BELOW this line by the active priority policy, so this rung
+    #: proposes it automatically (section E.4). `False` on a same-agent donor ranked above
+    #: this line: offered, never auto-composed.
+    lower_ranked: bool = False
+    #: The donor shares this line's own sales agent (section 8) - offered at any rank.
+    same_agent: bool = False
+    #: This donor is outside the small-quantity cap (`cross_group_borrow_max_qty` /
+    #: `_pct`), so it is shown but not selectable without a manual override.
+    over_cap: bool = False
+    cap_reason: Optional[str] = None
 
 
 class SupplyFrozenLine(BaseModel):
@@ -202,6 +244,21 @@ class ConfirmBorrowComponent(BaseModel):
     #: number and item code like every other refusal, rather than a field-level 422 the
     #: sheet cannot attach to a row (AC-B09, AC-C02).
     reason: str = ""
+    #: Ladder v2 group borrow (section E.4): the donor's own sales-order line, addressing
+    #: only. Present, this component is checked against that line's LIVE committed
+    #: quantity (re-read at commit, AC-C03) rather than against free stock - it is
+    #: borrowing what is SOLD there, not what is spare. Absent, this is an ordinary
+    #: `other_location` free-stock borrow, unchanged.
+    donor_core_line_id: Optional[str] = None
+    #: Round-tripped from the proposal/donor row so the order-back note can be built
+    #: without a second lookup (`_borrow_shortfalls`). Display only; never validated.
+    donor_so_number: Optional[str] = None
+    donor_line_no: Optional[int] = None
+    donor_agent_code: Optional[str] = None
+    same_agent: bool = False
+    #: The donor's own required date, for the order-back Order Inquiry row's urgency
+    #: (section E.4: "urgency = the donor's required date").
+    donor_required_date: Optional[date] = None
 
 
 class ConfirmLine(BaseModel):
