@@ -51,12 +51,15 @@ from .test_so_supply_confirmation import (
 
 
 class _World:
-    def __init__(self, db, company_id, user_id, product, warehouse, order, line_a, line_b):
+    def __init__(
+        self, db, company_id, user_id, product, warehouse, pool_warehouse, order, line_a, line_b
+    ):
         self.db = db
         self.company_id = company_id
         self.user_id = user_id
         self.product = product
         self.warehouse = warehouse
+        self.pool_warehouse = pool_warehouse
         self.order = order
         self.line_a = line_a
         self.line_b = line_b
@@ -67,6 +70,10 @@ def _seed(db):
 
     Line A is open for 50 and line B for 45, so the sheet leg, the confirmed leg and a
     double count are three different numbers and the assertions cannot pass by accident.
+
+    Ladder v2 (section E rule 7): the own location is never a Reserve source any more, so
+    line A's Reserve component draws from a POOL wired to the line's own warehouse
+    (`pool_warehouse_id`), same as `tests/test_project_so_confirm_all_route.py`.
     """
     from app.services.project_service import register_project
 
@@ -78,8 +85,11 @@ def _seed(db):
         title=f"{MARKER} Partial Residences",
     )
     product = _product(db)
-    warehouse = _warehouse(db, f"ZZT-PC-{str(product.id)[:4]}")
-    _stock(db, product, warehouse, on_hand=20)
+    pool_warehouse = _warehouse(db, f"ZZT-PL-{str(product.id)[:4]}")
+    warehouse = _warehouse(
+        db, f"ZZT-PC-{str(product.id)[:4]}", pool_warehouse_id=pool_warehouse.id
+    )
+    _stock(db, product, pool_warehouse, on_hand=20)
 
     core_so = _core_so(db, company_id)
     core_so.demand_origin = "scm_order_inquiry"
@@ -89,7 +99,9 @@ def _seed(db):
     line_a = _project_line(db, order, line_no=10, product=product, core_line=core_a)
     line_b = _project_line(db, order, line_no=20, product=product, core_line=core_b)
     db.commit()
-    return _World(db, company_id, user_id, product, warehouse, order, line_a, line_b)
+    return _World(
+        db, company_id, user_id, product, warehouse, pool_warehouse, order, line_a, line_b
+    )
 
 
 def _committed(db, world) -> dict:
@@ -146,7 +158,7 @@ def test_the_undecided_lines_of_a_partly_confirmed_order_are_still_demand():
             [
                 _line_payload(
                     world.line_a.id,
-                    reserve=[{"warehouse_id": world.warehouse.id, "qty": "20"}],
+                    reserve=[{"warehouse_id": world.pool_warehouse.id, "qty": "20"}],
                     buy_qty="30",
                 )
             ],
@@ -176,7 +188,7 @@ def test_the_reorder_engine_reads_the_undecided_demand_through_its_own_path():
             [
                 _line_payload(
                     world.line_a.id,
-                    reserve=[{"warehouse_id": world.warehouse.id, "qty": "20"}],
+                    reserve=[{"warehouse_id": world.pool_warehouse.id, "qty": "20"}],
                     buy_qty="30",
                 )
             ],
@@ -203,7 +215,7 @@ def test_a_fully_confirmed_order_counts_its_buy_once_and_its_sheet_quantity_neve
             [
                 _line_payload(
                     world.line_a.id,
-                    reserve=[{"warehouse_id": world.warehouse.id, "qty": "20"}],
+                    reserve=[{"warehouse_id": world.pool_warehouse.id, "qty": "20"}],
                     buy_qty="30",
                 ),
                 _line_payload(world.line_b.id, buy_qty="45"),
@@ -231,7 +243,7 @@ def test_a_partly_confirmed_order_is_still_a_plan_demand_order():
             [
                 _line_payload(
                     world.line_a.id,
-                    reserve=[{"warehouse_id": world.warehouse.id, "qty": "20"}],
+                    reserve=[{"warehouse_id": world.pool_warehouse.id, "qty": "20"}],
                     buy_qty="30",
                 )
             ],
@@ -268,7 +280,7 @@ def test_the_python_twin_and_the_view_agree_about_which_lines_are_decided():
             [
                 _line_payload(
                     world.line_a.id,
-                    reserve=[{"warehouse_id": world.warehouse.id, "qty": "20"}],
+                    reserve=[{"warehouse_id": world.pool_warehouse.id, "qty": "20"}],
                     buy_qty="30",
                 )
             ],

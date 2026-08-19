@@ -2092,7 +2092,7 @@ class ProjectSupplyService:
             capacity[location] = capacity.get(location, _ZERO) + seeded
         reserve_locations = self._reserve_ladder_locations(fact)
         by_id = {str(w.id): code for code, w in reserve_locations.items()}
-        allowed = " or ".join(sorted(reserve_locations)) or "no location"
+        allowed = ", ".join(sorted(reserve_locations))
         for item in entry.reserve or []:
             warehouse = by_id.get(str(item.warehouse_id))
             qty = _dec(item.qty)
@@ -2103,13 +2103,27 @@ class ProjectSupplyService:
                 # the whole line was the problem.
                 posted = self._warehouse_row(str(item.warehouse_id))
                 posted_code = posted.warehouse_code if posted else "another location"
-                refuse(
-                    invalid,
-                    f"Reserve was asked for from {posted_code}, and this line can only "
-                    f"reserve from {allowed or 'no location, because it states none'}. "
-                    "Buy the quantity instead, or borrow it from that location on the "
-                    "order's own sheet, which records who it came from and why.",
-                )
+                if not reserve_locations:
+                    # No pool is configured for this line at all, so the ask can only be
+                    # its own location (rule 7 - the own location is never a Reserve
+                    # source). Say that plainly instead of naming "no location" as the
+                    # allowed set, which read like the line was broken rather than simply
+                    # unpooled.
+                    refuse(
+                        invalid,
+                        f"Reserve was asked for from {posted_code}, this line's own "
+                        "location. A line never reserves its own location; with no pool "
+                        f"configured for {posted_code}, buy the quantity or borrow it on "
+                        "the order's own sheet.",
+                    )
+                else:
+                    refuse(
+                        invalid,
+                        f"Reserve was asked for from {posted_code}, and this line "
+                        f"reserves only from its pool(s) {allowed}. Buy the quantity "
+                        "instead, or borrow it from that location on the order's own "
+                        "sheet, which records who it came from and why.",
+                    )
                 continue
             # What this order's own active revision already holds here, resubmitted:
             # not a new ask, so it is exempt from the recheck entirely - `capacity` is
