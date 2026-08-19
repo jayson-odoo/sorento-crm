@@ -322,6 +322,12 @@ class BoardContribution(BaseModel):
     #: Addressing only, and what a pivot BY CUSTOMER groups on: two different customers can
     #: carry the same name, and grouping by the label would merge them.
     customer_id: Optional[str] = None
+    #: Who sold it (`sales_orders.sales_agent_id` -> `sales_agents.sales_agent`). The code the
+    #: sales-order book carries; null on a line the upload could not resolve to one.
+    agent_code: Optional[str] = None
+    #: Who the code belongs to (`sales_agents.person_label`), when the master states one.
+    #: Shown as the code's `title`, never in place of the code.
+    agent_label: Optional[str] = None
     project_label: Optional[str] = None
     #: What a pivot BY PROJECT groups on: the project string, normalised. An order adopted from
     #: the AutoCount book has no project registration by design, so the string is the only
@@ -458,6 +464,9 @@ class StockDetailSalesOrder(BaseModel):
     so_number: str
     customer_name: Optional[str] = None
     customer_id: Optional[str] = None
+    #: Who sold it. Null for a purchase-order row (`StockDetailIncoming`), which is not a
+    #: sales document and carries no agent by construction.
+    agent_code: Optional[str] = None
     project_label: Optional[str] = None
     demand_class: Optional[str] = None
     #: The document's own date, and the date the quantity is wanted.

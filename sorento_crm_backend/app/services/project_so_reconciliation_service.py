@@ -62,6 +62,7 @@ from sqlalchemy.orm import Session
 
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product
+from app.models.sales_agent import SalesAgent
 from app.models.project_so import (
     AUTHORED_LIVE_STATUSES,
     LIVE_SO_STATUSES,
@@ -1422,8 +1423,12 @@ class ProjectSOReconciliationService:
                 func.min(SalesOrderLine.required_date),
                 func.sum(demand_qty()),
                 func.count(SalesOrderLine.id),
+                # Who sold it, in the same read: the worklist's own row, not a per-row lookup.
+                SalesAgent.sales_agent,
+                SalesAgent.person_label,
             )
             .join(SalesOrderLine, SalesOrderLine.sales_order_id == SalesOrder.id)
+            .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
             .filter(
                 SalesOrder.demand_class == PROJECT_CLASS,
                 SalesOrder.status == _CORE_SO_OPEN,
@@ -1434,6 +1439,8 @@ class ProjectSOReconciliationService:
                 SalesOrder.so_number,
                 SalesOrder.internal_note,
                 SalesOrder.customer_id,
+                SalesAgent.sales_agent,
+                SalesAgent.person_label,
             )
         )
         if sales_order_id:
@@ -1468,6 +1475,8 @@ class ProjectSOReconciliationService:
                 "earliest_required_date": row[4],
                 "outstanding_qty": row[5],
                 "open_line_count": row[6] or 0,
+                "agent_code": row[7],
+                "agent_label": row[8],
             }
             for row in rows
         ]
@@ -1564,6 +1573,11 @@ class ProjectSOReconciliationService:
             "earliest_required_date": core["earliest_required_date"],
             "outstanding_qty": core["outstanding_qty"],
             "open_line_count": core["open_line_count"],
+            #: Who sold it. Absent on the authored arm - `ProjectSalesOrder` carries no
+            #: `sales_agent_id` of its own - so `_worklist_row`'s `.get()` reads it as null
+            #: there rather than this method inventing a key for a row that has none.
+            "agent_code": core["agent_code"],
+            "agent_label": core["agent_label"],
             "record": record,
             "project_id": str(record.project_id)
             if record is not None and record.project_id
@@ -1709,6 +1723,10 @@ class ProjectSOReconciliationService:
             # either source has an answer.
             "project_label": project_name or row["project_string"],
             "customer_name": display.get("customer_name") or row["core_customer_name"],
+            #: Who sold it. Null on the authored arm, which has no agent of its own (see
+            #: `_core_row`).
+            "agent_code": row.get("agent_code"),
+            "agent_label": row.get("agent_label"),
             "po_number": display.get("po_number"),
             "area_group": record.area_group if record is not None else None,
             "status": record.status if record is not None else None,

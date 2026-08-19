@@ -59,6 +59,11 @@ class FulfilmentPlanningRow(BaseModel):
     #: sheet wrote on the core order. Never an id.
     project_label: Optional[str] = None
     customer_name: Optional[str] = None
+    #: Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`). Null on an authored
+    #: record, which carries no agent of its own, and on a core order the upload could not
+    #: resolve one for.
+    agent_code: Optional[str] = None
+    agent_label: Optional[str] = None
     po_number: Optional[str] = None
     area_group: Optional[str] = None
     #: The existing sales-order status (published, amended, adopted), never a review state.

@@ -57,6 +57,7 @@ from app.models.project_so import (
     ProjectSalesOrderLine,
     SOSupplyDecision,
 )
+from app.models.sales_agent import SalesAgent
 from app.services.error_handler import AppException
 from app.services.project_supply_service import (
     ProjectSupplyService,
@@ -246,6 +247,7 @@ class _Row:
 
     __slots__ = (
         "line_id", "sales_order_id", "so_number", "customer_id", "customer_name",
+        "agent_code", "agent_label",
         "project_label", "order_date", "line_no", "item_code", "product_id", "qty",
         "required_date", "warehouse_id", "location", "priority", "demand_class",
         "payment_terms_days", "bucket_key", "is_past", "rank_score", "rank_factors",
@@ -566,9 +568,13 @@ class FulfilmentBoardService:
                 SalesOrderLine.required_date,
                 owed.label("owed"),
                 case((~is_plan_demand_line(), True), else_=False).label("covered"),
+                # Who sold it. A purchase row (the SPO list below) has no agent - it is not a
+                # sales document - so the column is S/O-only by construction, never a guess.
+                SalesAgent.sales_agent.label("agent_code"),
             )
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+            .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
             .filter(
                 SalesOrderLine.product_id == product_id,
                 SalesOrderLine.warehouse_id == warehouse_id,
@@ -614,6 +620,7 @@ class FulfilmentBoardService:
                 "so_number": row.so_number,
                 "customer_name": row.customer_name,
                 "customer_id": str(row.customer_id) if row.customer_id else None,
+                "agent_code": row.agent_code,
                 "project_label": _project_label_from_note(row.internal_note),
                 "demand_class": row.demand_class,
                 #: AutoCount prints the document's own date and the date it is wanted.
@@ -877,10 +884,14 @@ class FulfilmentBoardService:
         if not so_numbers:
             return []
         records = (
-            self.db.query(SalesOrderLine, SalesOrder, Product, Warehouse)
+            self.db.query(SalesOrderLine, SalesOrder, Product, Warehouse, SalesAgent)
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .join(Product, Product.id == SalesOrderLine.product_id)
             .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
+            # Who sold it. One join, on the same read that already pulls the whole board's
+            # demand - the captain asked for the agent "everywhere", and a per-row lookup
+            # would be one query per line rather than one for the board.
+            .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
             .filter(
                 SalesOrder.so_number.in_(list(so_numbers)),
                 SalesOrder.status == "open",
@@ -895,7 +906,7 @@ class FulfilmentBoardService:
         # The ids are already inside the caller's company scope (they came off scoped rows),
         # which is what makes the unscoped raw read of the terms column safe.
         customers = self._customers(
-            {str(order.customer_id) for _l, order, _p, _w in records if order.customer_id}
+            {str(order.customer_id) for _l, order, _p, _w, _a in records if order.customer_id}
         )
         terms = priority.payment_terms_by_customer(self.db, list(customers.keys()))
         # How the confirm endpoint names these lines, when their order has been adopted.
@@ -906,7 +917,7 @@ class FulfilmentBoardService:
         frozen = self._frozen_decisions()
 
         rows: List[_Row] = []
-        for line, order, product, warehouse in records:
+        for line, order, product, warehouse, agent in records:
             customer_id = str(order.customer_id) if order.customer_id else None
             row = _Row(
                 line_id=str(line.id),
@@ -914,6 +925,8 @@ class FulfilmentBoardService:
                 so_number=order.so_number,
                 customer_id=customer_id,
                 customer_name=customers.get(customer_id or ""),
+                agent_code=agent.sales_agent if agent else None,
+                agent_label=agent.person_label if agent else None,
                 project_label=_project_label(order),
                 order_date=order.order_date,
                 line_no=line_numbers[str(line.id)],
@@ -1114,7 +1127,7 @@ class FulfilmentBoardService:
         is what the sheet shows, and Re-sync can renumber a later line.
         """
         by_order: Dict[str, List[tuple]] = defaultdict(list)
-        for line, order, product, _warehouse in records:
+        for line, order, product, _warehouse, _agent in records:
             by_order[str(order.id)].append(
                 (
                     line.required_date is None,
@@ -2249,6 +2262,10 @@ class FulfilmentBoardService:
             #: Addressing only, and the key a pivot BY CUSTOMER groups on: two different
             #: customers can carry the same name, and grouping by the label would merge them.
             "customer_id": row.customer_id,
+            #: Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`). The code is what
+            #: the column shows; the label names who the code belongs to, in the code's title.
+            "agent_code": row.agent_code,
+            "agent_label": row.agent_label,
             "project_label": row.project_label,
             #: The key a pivot BY PROJECT groups on (see `_project_key`).
             "project_key": row.project_key,

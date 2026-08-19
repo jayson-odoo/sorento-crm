@@ -175,7 +175,8 @@ describe('OrderInquiryClient', () => {
 
     expect(await screen.findByText('SO397450')).toBeInTheDocument();
     expect(screen.getByText('CB6633')).toBeInTheDocument();
-    expect(screen.getByText('600')).toBeInTheDocument();
+    // The Qty column, and the same figure again beside the verb pill in Instruction (A3).
+    expect(screen.getAllByText('600').length).toBeGreaterThan(0);
     expect(screen.getByText('BRW-BB')).toBeInTheDocument();
     expect(screen.getByText('ORDER')).toBeInTheDocument();
     expect(screen.getByText('Raised')).toBeInTheDocument();
@@ -254,7 +255,10 @@ describe('OrderInquiryClient', () => {
     renderClient();
 
     expect(await screen.findByText('DELAY')).toBeInTheDocument();
-    expect(screen.getByText('Was 2026-07-01')).toBeInTheDocument();
+    // Behind the info icon now, not inline under the pill (A3).
+    expect(screen.queryByText('Was 2026-07-01')).not.toBeInTheDocument();
+    fireEvent.focus(screen.getByRole('button', { name: 'Why this instruction' }));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Was 2026-07-01');
   });
 
   it('shows who actioned a row and when', async () => {

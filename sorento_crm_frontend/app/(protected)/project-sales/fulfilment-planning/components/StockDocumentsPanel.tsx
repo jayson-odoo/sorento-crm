@@ -57,6 +57,7 @@ export function StockDocumentsPanel({
         doc_no: order.so_number,
         sales_order_id: order.sales_order_id,
         party: order.customer_name ?? null,
+        agent_code: order.agent_code ?? null,
         project_label: order.project_label ?? null,
         doc_date: order.doc_date ?? null,
         due_date: order.delivery_date ?? null,
@@ -73,6 +74,7 @@ export function StockDocumentsPanel({
         doc_no: leg.spo_number,
         sales_order_id: null,
         party: leg.supplier_name ?? null,
+        agent_code: null,
         project_label: null,
         doc_date: null,
         due_date: leg.expected_date ?? null,
@@ -180,6 +182,21 @@ export function StockDocumentsPanel({
         size: 200,
         minSize: 150,
         meta: { headerTitle: 'Customer / supplier' },
+      },
+      {
+        // Who sold it. A purchase row has no agent - it is not a sales document - so this
+        // reads "-" there rather than a guess.
+        id: 'agent_code',
+        accessorFn: (row) => row.agent_code ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
+        cell: ({ row }) => (
+          <span className="block truncate text-sm tabular-nums">
+            {row.original.agent_code ?? '-'}
+          </span>
+        ),
+        size: 100,
+        minSize: 80,
+        meta: { headerTitle: 'Agent' },
       },
       {
         id: 'doc_date',
@@ -318,6 +335,7 @@ interface StockDetailRow {
   doc_no: string;
   sales_order_id: string | null;
   party: string | null;
+  agent_code: string | null;
   project_label: string | null;
   doc_date: string | null;
   due_date: string | null;

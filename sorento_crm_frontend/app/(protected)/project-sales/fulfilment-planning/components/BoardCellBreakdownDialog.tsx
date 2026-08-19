@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { AlertTriangle, Check, Pencil, X } from 'lucide-react';
+import { AlertTriangle, Check, Info, Pencil, X } from 'lucide-react';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,6 +15,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
@@ -175,6 +176,27 @@ export function BoardCellBreakdownDialog({
         meta: { headerTitle: 'Customer' },
       },
       {
+        // Who sold it, so the planner knows who to phone (the captain: agent "useful
+        // information" beside every line).
+        id: 'agent_code',
+        accessorFn: (row) => row.agent_code ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
+        cell: ({ row }) =>
+          row.original.agent_code ? (
+            <span
+              className="block truncate text-sm"
+              title={row.original.agent_label ?? row.original.agent_code}
+            >
+              {row.original.agent_code}
+            </span>
+          ) : (
+            <span className="text-sm text-muted-foreground">Not stated</span>
+          ),
+        size: 110,
+        minSize: 90,
+        meta: { headerTitle: 'Agent' },
+      },
+      {
         id: 'project_label',
         accessorFn: (row) => row.project_label ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
@@ -280,35 +302,50 @@ export function BoardCellBreakdownDialog({
           const strip = row.original.sources
             .map((source) => `${sourceLabel(source.kind)} ${source.qty}${sourceAt(source)}`)
             .join(' · ');
-          // The engine's own sentences, reachable on the cell rather than wrapped into the
-          // row: `spo_number` and `arrival_date` are always null because the SPO and its date
-          // are INSIDE the sentence (deviation 2), so the sentence is the only place the fact
-          // exists and it may never be dropped.
+          // The engine's own sentences. `spo_number` and `arrival_date` are always null
+          // because the SPO and its date are INSIDE the sentence (deviation 2), so the
+          // sentence is the only place the fact exists and it may never be dropped - it moves
+          // BEHIND the info icon rather than out of the row.
           const why = row.original.sources.map((source) => source.reason).join(' ');
           const share = shareNote(row.original);
           return (
-            <div className="min-w-0" title={why}>
+            <div className="min-w-0">
               <div className="flex items-start gap-1">
                 <span className="min-w-0 flex-1 truncate text-sm tabular-nums">{strip}</span>
-                {/* The whole ladder behind that strip, structured, under an icon (the
+                {/* The two prose sentences behind the numbers above - why this rung fired,
+                    and what was left for this line at its own pile - under one visible icon
+                    rather than a silent `title` nobody hovers or two lines of wrapped text
+                    (the captain: "don't explain too much", "put it under the tooltip"). The
+                    numbers stay in the row; only the prose moves. */}
+                {(why || share) && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        mode="icon"
+                        variant="ghost"
+                        size="sm"
+                        aria-label="Why this composition"
+                        data-testid={`source-info-${row.original.key}`}
+                        className="size-5 shrink-0 text-muted-foreground"
+                      >
+                        <Info className="size-3.5" aria-hidden />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      data-testid={`source-note-${row.original.key}`}
+                      className="max-w-xs space-y-1 break-words"
+                    >
+                      {why && <p>{why}</p>}
+                      {share && <p>{share}</p>}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                {/* The whole ladder behind that strip, structured, under its own icon (the
                     captain: "need more justification ... STRUCTURED instead of plain text
                     explaining, you can put it under the tooltip"). */}
                 <BoardTrailPopover contribution={row.original} />
               </div>
-              {share && (
-                // WRAPS rather than truncates, unlike the strip above it. Measured in the
-                // browser at the column's saved width: "1 line ahead wanting 60 · 955 lef..."
-                // cut off at the figure the sentence exists to state, and a saved column width
-                // means widening the default would not reach anybody who already has one. Two
-                // short lines inside a fixed-width cell overlap nothing.
-                <span
-                  data-testid={`share-note-${row.original.key}`}
-                  className="mt-0.5 block whitespace-normal break-words text-xs leading-snug tabular-nums text-muted-foreground"
-                  title={share}
-                >
-                  {share}
-                </span>
-              )}
               {row.original.contested && (
                 <span className="mt-0.5 inline-flex items-center gap-1 rounded bg-amber-100 px-1 text-[10px] font-medium text-amber-800">
                   <AlertTriangle className="size-3" aria-hidden />

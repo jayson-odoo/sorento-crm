@@ -101,6 +101,11 @@ export interface FulfilmentPlanningRow {
   /** The project name when one is registered, else the core order's own project string. */
   project_label?: string | null;
   customer_name?: string | null;
+  /** Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`). Null on an authored
+   * record, which carries no agent of its own, and on a core order nobody could resolve one
+   * for. */
+  agent_code?: string | null;
+  agent_label?: string | null;
   po_number?: string | null;
   area_group?: string | null;
   /** The existing sales-order status (published, amended, adopted, ...), not a review state. */
@@ -763,6 +768,11 @@ export interface BoardContribution {
    * prevent, so the fallback is a stated compromise rather than the design.
    */
   customer_id?: string | null;
+  /** Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`). Null when the sales order
+   * carries no agent. */
+  agent_code?: string | null;
+  /** Who the code belongs to, shown as the code's `title`, never in place of the code. */
+  agent_label?: string | null;
   project_label?: string | null;
   /**
    * The project's normalised key, for grouping only, never rendered.
@@ -1262,6 +1272,9 @@ export interface StockDetailSalesOrder {
   so_number: string;
   customer_name?: string | null;
   customer_id?: string | null;
+  /** Who sold it. Null on a purchase-order row (`StockDetailIncoming`), which is not a sales
+   * document and carries no agent by construction. */
+  agent_code?: string | null;
   project_label?: string | null;
   demand_class?: string | null;
   doc_date?: string | null;
