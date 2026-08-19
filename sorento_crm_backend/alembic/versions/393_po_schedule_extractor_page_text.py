@@ -32,7 +32,7 @@ version somebody was not currently serving. Fixed to:
 
 Idempotent: a second run finds ``{{page_text}}`` already present (case 2) and stops.
 
-Revision ID: 393_po_schedule_extractor_page_text
+Revision ID: 393_extractor_page_text
 Revises: ed706a98ddc6
 """
 from __future__ import annotations
@@ -48,7 +48,7 @@ from app.services.ai_prompt_registry import (
     _schedule_extractor_fallback,
 )
 
-revision = "393_po_schedule_extractor_page_text"
+revision = "393_extractor_page_text"
 down_revision = "ed706a98ddc6"
 branch_labels = None
 depends_on = None
