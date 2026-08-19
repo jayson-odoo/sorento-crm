@@ -23,6 +23,7 @@ from app.models.scm import OrderLinkClaim
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 from app.services.scm.demand import is_open_demand
+from app.services.scm.demand_class import class_of
 
 # Upper bound on suffix retries when reserving a unique DO number under contention.
 _DO_NUMBER_MAX_TRIES = 50
@@ -393,6 +394,14 @@ class SalesOrderService:
             so.customer_id = self._customer(data.customer_code).id
         if data.order_type is not None:
             so.order_type = data.order_type
+            # A hand-set type follows the same vocabulary the importer classifies demand
+            # with, so a manual edit cannot leave the order's `order_type` and
+            # `demand_class` disagreeing. `class_of` returns None when the stated type is
+            # blank/unrecognised - "nobody said" - which must NOT overwrite a class the
+            # importer already resolved, so demand_class is only touched when it answers.
+            demand = class_of(data.order_type)
+            if demand:
+                so.demand_class = demand
         if data.priority is not None:
             so.priority = data.priority
         if data.requested_delivery_date is not None:

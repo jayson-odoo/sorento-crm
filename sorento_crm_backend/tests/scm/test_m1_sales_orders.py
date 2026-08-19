@@ -341,3 +341,134 @@ def test_line_warehouse_code_reflects_the_assigned_warehouse(scm_app):
     got_lines = got.json()["lines"]
     assert got_lines[0]["warehouse_code"] == wh.warehouse_code
     assert [ln["id"] for ln in got_lines] == [open_line.id, closed_line.id]
+
+
+# --------------------------------------------------------------------------- #
+# header-only edit must not touch lines (BL: editing the order type wiped every
+# line's stock location, because the FE resent `lines` on every save and the
+# service's line-replace path drops whatever warehouse a line held)
+# --------------------------------------------------------------------------- #
+
+def test_update_header_only_leaves_lines_and_warehouses_untouched(scm_app):
+    """A PUT that omits `lines` entirely (header-only edit: type/customer/dates) must
+    leave every line - and whatever warehouse it is assigned to - exactly as it was.
+
+    The modal itself has no location field; a line's warehouse is only ever set
+    elsewhere (create-DO's auto-assign, a planner tool), so the only way this test can
+    fail is the service replacing lines it was never asked to touch.
+    """
+    import uuid
+
+    from app.models.inventory import Warehouse
+    from app.models.order import SalesOrderLine
+
+    app, db = _as(scm_app, "purchasing")
+    payload = {
+        "order_type": "dealer",
+        "customer_code": CUSTOMER,
+        "priority": "normal",
+        "lines": [
+            {"sku": SKU, "qty_ordered": 3, "uom": "PCS"},
+            {"sku": SKU, "qty_ordered": 5, "uom": "PCS"},
+            {"sku": SKU, "qty_ordered": 7, "uom": "PCS"},
+        ],
+    }
+    with TestClient(app) as c:
+        created = c.post("/api/v1/scm/sales-orders", json=payload)
+        assert created.status_code == 201, created.text
+        so_id = created.json()["id"]
+
+        wh = Warehouse(
+            id=str(uuid.uuid4()),
+            warehouse_code=f"ZZTSOWH{uuid.uuid4().hex[:6]}".upper(),
+            warehouse_name="SCM header-only test warehouse",
+            is_active=True,
+        )
+        db.add(wh)
+        db.flush()
+        lines = db.query(SalesOrderLine).filter(
+            SalesOrderLine.sales_order_id == so_id
+        ).all()
+        assert len(lines) == 3
+        line_ids_before = sorted(ln.id for ln in lines)
+        for ln in lines:
+            ln.warehouse_id = wh.id
+        db.flush()
+
+        # Header-only: order type changes, `lines` is absent from the body entirely -
+        # not sent as `null`, not sent as `[]`.
+        upd = c.put(f"/api/v1/scm/sales-orders/{so_id}", json={"order_type": "project"})
+        assert upd.status_code == 200, upd.text
+        body = upd.json()
+        assert body["order_type"] == "project"
+        assert len(body["lines"]) == 3
+        assert sorted(ln["qty_ordered"] for ln in body["lines"]) == [3, 5, 7]
+        assert all(ln["warehouse_code"] == wh.warehouse_code for ln in body["lines"])
+
+        # The rows themselves are untouched (same ids), not deleted and recreated.
+        after = db.query(SalesOrderLine).filter(
+            SalesOrderLine.sales_order_id == so_id
+        ).all()
+        assert sorted(ln.id for ln in after) == line_ids_before
+
+
+def test_update_with_lines_present_still_replaces_lines(scm_app):
+    """The opposite case: when `lines` IS present the PUT still fully replaces them -
+    that half of the contract is deliberately kept, only the "absent means untouched"
+    half was missing.
+    """
+    app, _ = _as(scm_app, "purchasing")
+    payload = {
+        "order_type": "dealer", "customer_code": CUSTOMER, "priority": "normal",
+        "lines": [{"sku": SKU, "qty_ordered": 3, "uom": "PCS"}],
+    }
+    with TestClient(app) as c:
+        created = c.post("/api/v1/scm/sales-orders", json=payload)
+        assert created.status_code == 201, created.text
+        so_id = created.json()["id"]
+
+        upd = c.put(
+            f"/api/v1/scm/sales-orders/{so_id}",
+            json={"lines": [{"sku": SKU, "qty_ordered": 9, "uom": "PCS"}]},
+        )
+        assert upd.status_code == 200, upd.text
+        body = upd.json()
+        assert len(body["lines"]) == 1
+        assert body["lines"][0]["qty_ordered"] == 9
+
+
+# --------------------------------------------------------------------------- #
+# a hand-set order type follows the same project/retail vocabulary the
+# importer classifies demand with
+# --------------------------------------------------------------------------- #
+
+def test_update_order_type_sets_demand_class(scm_app):
+    app, db = _as(scm_app, "purchasing")
+    from app.models.order import SalesOrder as SalesOrderModel
+
+    payload = {
+        "order_type": "dealer", "customer_code": CUSTOMER, "priority": "normal",
+        "lines": [{"sku": SKU, "qty_ordered": 1, "uom": "PCS"}],
+    }
+    with TestClient(app) as c:
+        created = c.post("/api/v1/scm/sales-orders", json=payload)
+        assert created.status_code == 201, created.text
+        so_id = created.json()["id"]
+
+        # order_type -> project sets demand_class -> project.
+        upd = c.put(f"/api/v1/scm/sales-orders/{so_id}", json={"order_type": "project"})
+        assert upd.status_code == 200, upd.text
+        row = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id).one()
+        assert row.demand_class == "project"
+
+        # order_type -> dealer (not a project word) sets demand_class -> retail.
+        upd2 = c.put(f"/api/v1/scm/sales-orders/{so_id}", json={"order_type": "dealer"})
+        assert upd2.status_code == 200, upd2.text
+        db.refresh(row)
+        assert row.demand_class == "retail"
+
+        # A PUT that never states order_type leaves demand_class exactly as it was.
+        upd3 = c.put(f"/api/v1/scm/sales-orders/{so_id}", json={"priority": "urgent"})
+        assert upd3.status_code == 200, upd3.text
+        db.refresh(row)
+        assert row.demand_class == "retail"

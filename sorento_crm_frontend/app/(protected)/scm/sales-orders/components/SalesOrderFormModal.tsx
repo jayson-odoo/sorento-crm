@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { LoaderCircleIcon, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -13,7 +13,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import {
   useCustomerOptions,
   useOrderTypeOptions,
@@ -33,10 +33,23 @@ const PRIORITY_OPTIONS = [
 ];
 
 // `uom` is display-only (product base UOM, stamped by the BE) - it is carried
-// for existing lines but never sent on write.
-type LineDraft = { sku: string; qty_ordered: string; uom: string };
+// for existing lines but never sent on write. `product_name` is likewise display-only:
+// it seeds the Product select's option for a line whose SKU is not in the (paged, top
+// -100-by-code) product dropdown, so an edited line with a code late in the catalogue
+// still shows its product instead of rendering blank.
+type LineDraft = { sku: string; qty_ordered: string; uom: string; product_name?: string };
 
 const emptyLine = (): LineDraft => ({ sku: '', qty_ordered: '', uom: '' });
+
+/** `sku|qty` per line, order-independent, so a re-save with the same lines in a
+ * different order is not read as a change. Used to decide whether `lines` rides on the
+ * write payload at all - see the note on `handleSubmit` below. */
+function lineSignature(ls: { sku: string; qty_ordered: number }[]): string {
+  return ls
+    .map((l) => `${l.sku}|${l.qty_ordered}`)
+    .sort()
+    .join(',');
+}
 
 export function SalesOrderFormModal({
   open,
@@ -57,6 +70,10 @@ export function SalesOrderFormModal({
   const [requestedDate, setRequestedDate] = useState('');
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
   const [error, setError] = useState<string | null>(null);
+  // What the order's lines looked like when the modal opened, so `handleSubmit` can tell
+  // "nothing about the lines changed" from "the person edited a line" - see the note
+  // there. Empty/null while creating, where lines are always sent.
+  const originalLineSignatureRef = useRef<string | null>(null);
 
   const orderTypeOptions = useOrderTypeOptions();
   const customerOptions = useCustomerOptions();
@@ -74,7 +91,11 @@ export function SalesOrderFormModal({
           sku: l.sku,
           qty_ordered: String(l.qty_ordered),
           uom: l.uom,
+          product_name: l.product_name,
         })),
+      );
+      originalLineSignatureRef.current = lineSignature(
+        editing.lines.map((l) => ({ sku: l.sku, qty_ordered: l.qty_ordered })),
       );
     } else {
       setOrderType('');
@@ -82,6 +103,7 @@ export function SalesOrderFormModal({
       setPriority('normal');
       setRequestedDate('');
       setLines([emptyLine()]);
+      originalLineSignatureRef.current = null;
     }
     setError(null);
   }, [open, editing]);
@@ -90,6 +112,27 @@ export function SalesOrderFormModal({
     () => customerOptions.data?.find((c) => c.value === customer)?.description ?? null,
     [customer, customerOptions.data],
   );
+
+  // The Product dropdown is server-paged (top 100 by code), so a line whose SKU sorts
+  // past page one - routine on a large catalogue - is not among `productOptions.data`
+  // and the SearchableSelect renders it blank even though the line's own `sku` is set
+  // correctly. Widen the option list with each edited order's own lines so every line
+  // it opened with always resolves to a real product, never a blank trigger.
+  const mergedProductOptions = useMemo(() => {
+    const base = productOptions.data ?? [];
+    if (!editing) return base;
+    const known = new Set(base.map((o) => o.value));
+    const extra: SearchableSelectOption[] = [];
+    for (const l of editing.lines) {
+      if (!l.sku || known.has(l.sku)) continue;
+      known.add(l.sku);
+      extra.push({
+        value: l.sku,
+        label: l.product_name ? `${l.sku} · ${l.product_name}` : l.sku,
+      });
+    }
+    return extra.length ? [...base, ...extra] : base;
+  }, [productOptions.data, editing]);
 
   const updateLine = (idx: number, patch: Partial<LineDraft>) => {
     setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
@@ -107,12 +150,23 @@ export function SalesOrderFormModal({
     if (cleanedLines.length === 0) {
       return setError('Add at least one line with a product and quantity.');
     }
+    // Editing an existing order whose lines are exactly what it opened with is a
+    // header-only save (order type, customer, dates) - `lines` is left OFF the payload
+    // so the BE leaves them, and whatever warehouse each carries, untouched. Sending the
+    // same lines back would still be read as "replace them", which is how editing just
+    // the order type used to wipe every line's stock location. A real line edit (added,
+    // removed, re-picked product, changed qty) still sends the full set, same as today.
+    const linesUnchanged =
+      editing !== null &&
+      originalLineSignatureRef.current !== null &&
+      lineSignature(cleanedLines.map((l) => ({ sku: l.sku, qty_ordered: l.qty_ordered }))) ===
+        originalLineSignatureRef.current;
     await onSubmit({
       order_type: orderType,
       customer_code: customer,
       priority,
       requested_delivery_date: requestedDate || null,
-      lines: cleanedLines,
+      ...(linesUnchanged ? {} : { lines: cleanedLines }),
     });
   };
 
@@ -193,7 +247,7 @@ export function SalesOrderFormModal({
                     <SearchableSelect
                       value={line.sku}
                       onChange={(v) => updateLine(idx, { sku: v })}
-                      options={productOptions.data ?? []}
+                      options={mergedProductOptions}
                       placeholder="Select product"
                     />
                   </div>
