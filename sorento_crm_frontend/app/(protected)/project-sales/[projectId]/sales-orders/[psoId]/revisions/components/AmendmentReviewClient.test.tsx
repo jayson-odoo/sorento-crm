@@ -201,6 +201,34 @@ beforeEach(() => {
 });
 
 describe('AmendmentReviewClient', () => {
+  it('labels two uploads of the same document by their upload time, not just the revision label', async () => {
+    listScheduleVersions.mockResolvedValue([
+      {
+        id: 'sched-v1',
+        version_no: 1,
+        revision_label: 'R1',
+        issuer_party_label: 'Buimaco Sdn Bhd',
+        created_at: '2026-07-20T01:00:00',
+      },
+      {
+        id: 'sched-v2',
+        version_no: 3,
+        revision_label: '1 - 23/7/2026',
+        issuer_party_label: 'SLG Construction Sdn Bhd',
+        created_at: '2026-08-18T23:26:00',
+      },
+    ]);
+
+    renderReview();
+
+    const select = await screen.findByLabelText('Select a version');
+    const optionText = within(select)
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+
+    expect(optionText).toContain('Version 3 · 1 - 23/7/2026 · uploaded 19/08/2026, 7:26 am');
+  });
+
   it('waits to be asked and writes nothing until then', async () => {
     renderReview();
 

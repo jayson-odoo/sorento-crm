@@ -1866,3 +1866,104 @@ def test_the_real_r1_schedule_extracts_and_reconciles(seeded):
     assert len(detail["products"]) >= 37
     assert len(matching) >= 35
     assert len(detail["phases"]) == 15
+
+
+# ------------------------------------------------------------ duplicate upload guard
+
+
+@pytest.fixture()
+def stored_document(monkeypatch):
+    """Object storage stubbed out. The bytes going to S3 are not what these tests are
+    about, and a unit test that needs credentials is a test nobody runs."""
+    monkeypatch.setattr(
+        ProjectScheduleService,
+        "_store_document",
+        lambda self, version, **kwargs: None,
+    )
+
+
+def test_uploading_the_same_bytes_twice_is_refused_naming_the_version_that_holds_them(
+    scenario, stored_document
+):
+    """The same PDF re-attached is not a new revision - it is the first one again."""
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    content = b"%PDF-1.4 zzt duplicate schedule bytes"
+
+    first = service.create_version(
+        purchase_order=scenario["po"],
+        content=content,
+        filename="schedule-r1.pdf",
+        mime="application/pdf",
+        actor_user_id=scenario["owner"],
+        delivery_schedule_id=scenario["version"].delivery_schedule_id,
+    )
+    db.flush()
+
+    with pytest.raises(AppException) as excinfo:
+        service.create_version(
+            purchase_order=scenario["po"],
+            content=content,
+            filename="schedule-r1-again.pdf",
+            mime="application/pdf",
+            actor_user_id=scenario["owner"],
+            delivery_schedule_id=scenario["version"].delivery_schedule_id,
+        )
+
+    assert excinfo.value.status_code == 409
+    assert excinfo.value.detail["code"] == "schedule_version_duplicate"
+    assert f"version {first.version_no}" in excinfo.value.detail["message"]
+
+
+def test_different_bytes_open_a_new_version_rather_than_refusing(scenario, stored_document):
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+
+    first = service.create_version(
+        purchase_order=scenario["po"],
+        content=b"first revision bytes",
+        filename="schedule-r1.pdf",
+        mime="application/pdf",
+        actor_user_id=scenario["owner"],
+        delivery_schedule_id=scenario["version"].delivery_schedule_id,
+    )
+    db.flush()
+
+    second = service.create_version(
+        purchase_order=scenario["po"],
+        content=b"second revision bytes, actually changed",
+        filename="schedule-r2.pdf",
+        mime="application/pdf",
+        actor_user_id=scenario["owner"],
+        delivery_schedule_id=scenario["version"].delivery_schedule_id,
+    )
+
+    assert second.version_no == first.version_no + 1
+
+
+def test_force_overrides_the_duplicate_guard(scenario, stored_document):
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    content = b"schedule bytes uploaded twice on purpose"
+
+    first = service.create_version(
+        purchase_order=scenario["po"],
+        content=content,
+        filename="schedule-r1.pdf",
+        mime="application/pdf",
+        actor_user_id=scenario["owner"],
+        delivery_schedule_id=scenario["version"].delivery_schedule_id,
+    )
+    db.flush()
+
+    second = service.create_version(
+        purchase_order=scenario["po"],
+        content=content,
+        filename="schedule-r1-forced.pdf",
+        mime="application/pdf",
+        actor_user_id=scenario["owner"],
+        delivery_schedule_id=scenario["version"].delivery_schedule_id,
+        force=True,
+    )
+
+    assert second.version_no == first.version_no + 1

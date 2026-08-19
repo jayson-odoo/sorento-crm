@@ -266,6 +266,10 @@ class DeliveryScheduleVersion(Base, CompanyScopedMixin):
     )
     source_filename = Column(Text, nullable=True)
     schedule_date = Column(Date, nullable=True)
+    # sha256 of the uploaded bytes, within this schedule: catches the same document
+    # uploaded twice before its own extraction differs anything. Nullable - rows from
+    # before this column existed carry no hash and are never matched against.
+    content_sha256 = Column(String(64), nullable=True)
 
     extraction_state = Column(String(16), nullable=False, server_default="queued")
     extraction_error = Column(Text, nullable=True)

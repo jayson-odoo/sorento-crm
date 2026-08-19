@@ -41,6 +41,9 @@ class ScheduleVersionOption(BaseModel):
     po_version_no: Optional[int] = None
     reconciled_columns: Optional[int] = None
     total_columns: Optional[int] = None
+    # When this version was uploaded - two uploads of the same document (same version_no
+    # scheme, same/blank revision_label) are otherwise indistinguishable in a picker.
+    created_at: Optional[datetime] = None
 
 
 # ------------------------------------------------------------------------- build

@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { formatDateInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   useAmendment,
   useAmendmentAutocountChangeList,
@@ -87,7 +87,15 @@ export function AmendmentReviewClient({
     () => [
       ...(scheduleVersions.data ?? []).map((version) => ({
         value: `${SCHEDULE_PREFIX}${version.id}`,
-        label: version.revision_label || `Version ${version.version_no}`,
+        // Two uploads of the same document read identically on version_no and revision_label
+        // alone; the upload time is what tells them apart in the picker.
+        label: [
+          `Version ${version.version_no}`,
+          version.revision_label,
+          version.created_at ? `uploaded ${formatDateTimeInMalaysia(version.created_at)}` : null,
+        ]
+          .filter(Boolean)
+          .join(' · '),
         description: [
           version.issuer_party_label,
           version.schedule_date ? formatDateInMalaysia(version.schedule_date) : null,
@@ -98,7 +106,12 @@ export function AmendmentReviewClient({
       })),
       ...(poVersions.data ?? []).map((version) => ({
         value: `${PO_PREFIX}${version.id}`,
-        label: `${version.po_number || 'PO'} version ${version.version_no}`,
+        label: [
+          `${version.po_number || 'PO'} version ${version.version_no}`,
+          version.created_at ? `uploaded ${formatDateTimeInMalaysia(version.created_at)}` : null,
+        ]
+          .filter(Boolean)
+          .join(' · '),
         description: version.po_date ? formatDateInMalaysia(version.po_date) : undefined,
         group: 'Purchase order versions',
       })),
