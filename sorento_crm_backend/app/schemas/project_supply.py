@@ -242,6 +242,78 @@ class ConfirmResult(BaseModel):
     lines_undecided: int = 0
 
 
+# ------------------------------------------------------------------- the Plans page (D1)
+
+
+class PlanRow(BaseModel):
+    """One row of `GET /project-sales/plans`: one supply decision revision, cross-order.
+
+    Addressing is by `project_sales_order_id` (the SO sheet) and `sales_order_id` (the SCM
+    sales order), never rendered - the same "codes, not ids" rule the rest of this file
+    follows, with `so_number` and the agent CODE as what actually prints.
+    """
+
+    project_sales_order_id: str
+    sales_order_id: Optional[str] = None
+    project_id: Optional[str] = None
+    so_number: Optional[str] = None
+    customer_name: Optional[str] = None
+    agent_code: Optional[str] = None
+    agent_label: Optional[str] = None
+    revision_no: int
+    state: SupplyDecisionState
+    decided_by_name: Optional[str] = None
+    decided_at: Optional[datetime] = None
+    #: How many lines this revision covers. Never the sales order's whole line count - a
+    #: revision may cover a chosen subset (13.4) and this is that subset's size.
+    line_count: int = 0
+    #: "Reserve 213 · Buy 145", summed across every line the revision covers. `None` on a
+    #: revision that covers nothing (should not happen, but a summary is never invented).
+    components_summary: Optional[str] = None
+    #: Why the active revision no longer matches the order. Present only when `state` is
+    #: `challenged`.
+    challenged_reason: Optional[str] = None
+
+
+# --------------------------------------------------------- confirm all approved (D3)
+
+
+class ConfirmManyOrderBody(BaseModel):
+    """One order's half of `POST .../fulfilment-planning/confirm-all`. Same shape as
+    `ConfirmSupplyBody.lines`, named so a batch of them addresses each order by id."""
+
+    pso_id: str
+    lines: List[ConfirmLine] = Field(default_factory=list)
+
+
+class ConfirmManyBody(BaseModel):
+    orders: List[ConfirmManyOrderBody] = Field(default_factory=list)
+
+
+class ConfirmManyOrderResult(BaseModel):
+    """One order's outcome. `ok` decides which of the two halves is populated - never both,
+    and never neither: a result the caller cannot read as success-or-failure is worse than
+    a slower reply."""
+
+    pso_id: str
+    ok: bool
+    decision_revision: Optional[int] = None
+    inquiry_rows_created: Optional[int] = None
+    lines_decided: Optional[int] = None
+    lines_undecided: Optional[int] = None
+    error: Optional[str] = None
+    #: The lines the server refused, named the way `SupplyFailingLine` always is (AC-C02),
+    #: when the refusal named any.
+    failing_lines: Optional[List[SupplyFailingLine]] = None
+
+
+class ConfirmManyResult(BaseModel):
+    """`POST .../fulfilment-planning/confirm-all`. One result per order named in the body,
+    in the SAME order - a caller matching by index never has to search."""
+
+    results: List[ConfirmManyOrderResult] = []
+
+
 class ClassificationEvidenceLocation(BaseModel):
     """One location's contribution to a demand class's ranking - the "proof" line."""
 

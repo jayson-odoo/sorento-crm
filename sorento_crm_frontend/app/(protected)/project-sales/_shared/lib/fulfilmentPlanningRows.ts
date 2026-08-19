@@ -10,7 +10,7 @@
  * Pure, and deliberately separate from the grid: the ordering rule in particular is an acceptance
  * criterion (AC-FP04, total and stable) and is worth asserting without mounting a table.
  */
-import type { FulfilmentPlanningRow } from '../types/fulfilmentPlanning.types';
+import type { FulfilmentPlanningRow, PlanRow } from '../types/fulfilmentPlanning.types';
 import { fromMinor, toMinor } from './supplyComposition';
 
 /**
@@ -98,4 +98,21 @@ export function sortByEarliestRequired(
     }
     return (planningRowReference(left) ?? '').localeCompare(planningRowReference(right) ?? '');
   });
+}
+
+/**
+ * Where a Plans page row's identity column links to: the sales order it decided (D1).
+ *
+ * The SAME rule `planningRowSalesOrderHref` follows, over the Plans row's own two id fields:
+ * the CORE sales order when the decision's order has one (it always does by the time a
+ * decision exists - `CONFIRMABLE_STATUSES` requires published/amended/adopted, and every one
+ * of those sets `so_id`), else the project SO sheet when the order is registered to a
+ * project. A row with neither renders plain text rather than a link that 404s.
+ */
+export function planRowHref(row: PlanRow): string | null {
+  if (row.sales_order_id) return `/scm/sales-orders/${row.sales_order_id}`;
+  if (row.project_id && row.project_sales_order_id) {
+    return `/project-sales/${row.project_id}/sales-orders/${row.project_sales_order_id}`;
+  }
+  return null;
 }

@@ -52,16 +52,17 @@ import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import func, or_
+from sqlalchemy import func, nullslast, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Stock, Warehouse
-from app.models.order import SalesOrder, SalesOrderLine
+from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import InboundShipment, SPOAllocation, Supplier
 from app.models.product import Product
+from app.models.sales_agent import SalesAgent
 from app.models.project_so import (
     ALLOC_SOURCE_BRW,
     ALLOC_SOURCE_ORDER,
@@ -111,6 +112,18 @@ _ZERO = Decimal("0")
 #: the reconciliation service already treat as live - so the tuple is imported rather than
 #: restated, or the two would drift the next time a status is added.
 CONFIRMABLE_STATUSES = LIVE_SO_STATUSES
+
+#: The columns the Plans page (D1) may sort by, and therefore the only ones the route's own
+#: `Literal` offers - imported into the route rather than restated, the same discipline
+#: `FulfilmentPlanningRow.sort` follows, with a test asserting the two agree.
+PLAN_SORT_FIELDS: Tuple[str, ...] = (
+    "so_number",
+    "customer_name",
+    "agent_code",
+    "revision_no",
+    "state",
+    "decided_at",
+)
 
 #: The product a hold is keyed by: the CORE line's when the mirror line is reconciled to
 #: one, else the mirror's own. Free stock is read against the core product (`_facts_for`
@@ -258,6 +271,22 @@ class SupplyLinesRefused(AppException):
     ):
         super().__init__(status_code=status_code, message=message, code=code)
         self.detail["failing_lines"] = list(failing_lines)
+
+
+def _error_detail(exc: Exception) -> Tuple[str, Optional[List[Dict[str, Any]]]]:
+    """What went wrong, and which lines it named, off any exception `confirm` can raise.
+
+    `confirm_many` cannot let one order's raised `AppException` bubble - it has to KEEP the
+    message (and `failing_lines`, when the refusal named any) beside the `pso_id` it belongs
+    to and move on to the next order. `AppException.detail` is a plain dict, not an attribute,
+    which is why this is a function and not a property on the exception itself.
+    """
+    if isinstance(exc, AppException):
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        message = detail.get("message") or str(exc)
+        failing_lines = detail.get("failing_lines")
+        return message, failing_lines
+    return str(exc), None
 
 
 @dataclass
@@ -3615,3 +3644,210 @@ class ProjectSupplyService:
             pile = facts.get(key, {"on_hand": _ZERO, "so_qty": _ZERO, "spo_qty": _ZERO})
             out[key] = pile["on_hand"] - pile["so_qty"] + pile["spo_qty"]
         return out
+
+    # --------------------------------------------------------------- the Plans page (D1)
+
+    def list_decisions(
+        self,
+        *,
+        query: Optional[str] = None,
+        state: Optional[str] = None,
+        agent_code: Optional[str] = None,
+        sort: Optional[str] = None,
+        dir: str = "desc",
+        page: int = 1,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        """"Is the plan stored, how do I review it" (PLAN-demo-followups-19aug-ladder-v2 D1):
+        every supply decision, one row per revision, cross-order.
+
+        `state` defaults to `active` - what is COMMITTED NOW - because that is what the
+        question is asking; `superseded` and `challenged` stay a click away for whoever wants
+        the history. `query` matches the sales-order number, the customer name and the agent
+        code, the three the row itself prints; a decision is a composition across an order's
+        lines, not a per-line record, so there is no product to search here the way the
+        worklist searches one.
+
+        A pure read: nothing here writes, and unlike `proposal_for` it never challenges a
+        drifted revision - the row is reporting what was decided, not re-judging it live.
+        """
+        columns = (
+            SOSupplyDecision,
+            ProjectSalesOrder.project_id,
+            SalesOrder.id.label("sales_order_id"),
+            SalesOrder.so_number,
+            Customer.customer_name,
+            SalesAgent.sales_agent.label("agent_code"),
+            SalesAgent.person_label.label("agent_label"),
+            User.name.label("decided_by_name"),
+        )
+        base = (
+            self.db.query(*columns)
+            .join(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == SOSupplyDecision.project_sales_order_id,
+            )
+            .outerjoin(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
+            .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+            .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
+            .outerjoin(User, User.id == SOSupplyDecision.confirmed_by)
+            .filter(SOSupplyDecision.state == (state or DECISION_ACTIVE))
+        )
+        if agent_code:
+            base = base.filter(SalesAgent.sales_agent.ilike(agent_code.strip()))
+        if query and query.strip():
+            needle = f"%{query.strip()}%"
+            base = base.filter(
+                SalesOrder.so_number.ilike(needle)
+                | Customer.customer_name.ilike(needle)
+                | SalesAgent.sales_agent.ilike(needle)
+            )
+
+        total = base.count()
+        sort_column = self._plan_sort_column(sort)
+        ordering = sort_column.desc() if (dir or "desc") == "desc" else sort_column.asc()
+        # A stable tie-break, always: two decisions confirmed the same second (a batch
+        # confirm-all) would otherwise reorder between pages as ties are broken arbitrarily.
+        base = base.order_by(nullslast(ordering), SOSupplyDecision.revision_no.desc())
+
+        offset = max(page - 1, 0) * max(limit, 1)
+        rows = base.offset(offset).limit(limit).all()
+        data = [
+            self._serialize_plan_row(
+                decision,
+                project_id=project_id,
+                sales_order_id=sales_order_id,
+                so_number=so_number,
+                customer_name=customer_name,
+                agent_code=row_agent_code,
+                agent_label=agent_label,
+                decided_by_name=decided_by_name,
+            )
+            for (
+                decision,
+                project_id,
+                sales_order_id,
+                so_number,
+                customer_name,
+                row_agent_code,
+                agent_label,
+                decided_by_name,
+            ) in rows
+        ]
+        return {"data": data, "pagination": {"total": total, "page": page, "limit": limit}}
+
+    def _plan_sort_column(self, sort: Optional[str]) -> Any:
+        columns = {
+            "so_number": SalesOrder.so_number,
+            "customer_name": Customer.customer_name,
+            "agent_code": SalesAgent.sales_agent,
+            "revision_no": SOSupplyDecision.revision_no,
+            "state": SOSupplyDecision.state,
+            "decided_at": SOSupplyDecision.confirmed_at,
+        }
+        return columns.get(sort or "decided_at", SOSupplyDecision.confirmed_at)
+
+    def _serialize_plan_row(
+        self,
+        decision: SOSupplyDecision,
+        *,
+        project_id: Optional[str],
+        sales_order_id: Optional[str],
+        so_number: Optional[str],
+        customer_name: Optional[str],
+        agent_code: Optional[str],
+        agent_label: Optional[str],
+        decided_by_name: Optional[str],
+    ) -> Dict[str, Any]:
+        return {
+            "project_sales_order_id": str(decision.project_sales_order_id),
+            "sales_order_id": str(sales_order_id) if sales_order_id else None,
+            "project_id": str(project_id) if project_id else None,
+            "so_number": so_number,
+            "customer_name": customer_name,
+            "agent_code": agent_code,
+            "agent_label": agent_label,
+            "revision_no": decision.revision_no,
+            "state": decision.state,
+            "decided_by_name": decided_by_name,
+            "decided_at": decision.confirmed_at,
+            "line_count": len(decision.line_snapshots or []),
+            "components_summary": self._plan_components_summary(decision),
+            "challenged_reason": (
+                decision.superseded_reason if decision.state == DECISION_CHALLENGED else None
+            ),
+        }
+
+    def _plan_components_summary(self, decision: SOSupplyDecision) -> Optional[str]:
+        """"Reserve 213 · Buy 145": what a decision's revision actually holds, summed across
+        every line it covers. The same four kinds `_snapshot` freezes, in the order the ladder
+        proposes them, so the summary reads in the order a planner reasons in."""
+        totals: Dict[str, Decimal] = {}
+        for snapshot in decision.line_snapshots or []:
+            for component in snapshot.get("components") or []:
+                kind = component.get("kind")
+                if not kind:
+                    continue
+                totals[kind] = totals.get(kind, _ZERO) + _dec(component.get("qty"))
+        order = (RESERVE, TIMELY_SPO, BORROW, BUY)
+        labels = {RESERVE: "Reserve", TIMELY_SPO: "Incoming", BORROW: "Borrow", BUY: "Buy"}
+        parts = [
+            f"{labels[kind]} {qty_text(totals[kind])}"
+            for kind in order
+            if totals.get(kind, _ZERO) > _ZERO
+        ]
+        return " · ".join(parts) if parts else None
+
+    # --------------------------------------------------- confirm all approved (D3)
+
+    def confirm_many(
+        self,
+        entries: Sequence[Any],
+        *,
+        actor_user_id: str,
+        assert_can_act: Callable[[Session, ProjectSalesOrder], None],
+    ) -> List[Dict[str, Any]]:
+        """"Confirm all approved" (D3): every order's Confirm, each in its OWN transaction.
+
+        The board's Approve all composes a verdict per LINE across up to fifty orders; this is
+        the same per-order write `confirm` already does, called once per order rather than once
+        per press from the panel. One order failing its own re-check - a stale line, a line
+        somebody else confirmed a moment earlier - must never take the orders around it down
+        too, or "Confirm all" would silently discard decisions the planner had gotten right.
+        So each entry is tried, committed or rolled back, on its own; the caller gets a result
+        named by `pso_id` either way, and a later entry runs whether or not an earlier one
+        failed (no silent partial success - every order is accounted for in the reply).
+
+        `entries` duck-types `ConfirmSupplyBody` per order (`.pso_id`, `.lines`), which is why
+        `confirm` itself needed no change: it never learns this call has siblings.
+        """
+        results: List[Dict[str, Any]] = []
+        for entry in entries:
+            pso_id = str(entry.pso_id)
+            try:
+                order = self.get_order(pso_id)
+                assert_can_act(self.db, order)
+                body = self.confirm(order, entry, actor_user_id=actor_user_id)
+                self.db.commit()
+                results.append(
+                    {
+                        "pso_id": pso_id,
+                        "ok": True,
+                        "decision_revision": body["revision_no"],
+                        "inquiry_rows_created": body["inquiry_rows_created"],
+                        "lines_decided": body["lines_decided"],
+                        "lines_undecided": body["lines_undecided"],
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001 - every order must get an answer
+                self.db.rollback()
+                message, failing_lines = _error_detail(exc)
+                results.append(
+                    {
+                        "pso_id": pso_id,
+                        "ok": False,
+                        "error": message,
+                        "failing_lines": failing_lines,
+                    }
+                )
+        return results

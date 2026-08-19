@@ -5,6 +5,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { toast } from 'sonner';
 import {
   adoptSalesOrder,
+  confirmMany,
   getClassificationEvidence,
   getPileQueue,
   getPlanningBoard,
@@ -15,11 +16,14 @@ import {
   listFulfilmentPlanning,
   rerunReconciliation,
 } from '../services/fulfilmentPlanningService';
+import { listPlans } from '../services/plansService';
 import type {
   AdoptSalesOrderResult,
   BoardGranularity,
+  ConfirmManyBody,
   ConfirmSupplyBody,
   FulfilmentPlanningListParams,
+  PlanListParams,
 } from '../types/fulfilmentPlanning.types';
 import {
   ORDER_INQUIRY_ROWS_KEY,
@@ -36,6 +40,7 @@ export const CLASSIFICATION_EVIDENCE_KEY = 'project-classification-evidence';
 export const STOCK_DETAIL_KEY = 'project-stock-detail';
 export const RECONCILIATION_KEY = 'project-so-reconciliation';
 export const SUPPLY_KEY = 'project-so-supply';
+export const PLANS_KEY = 'project-supply-plans';
 
 export const fulfilmentPlanningKey = (params: FulfilmentPlanningListParams) => [
   FULFILMENT_PLANNING_KEY,
@@ -299,5 +304,61 @@ export function useStockDetail(productId: string, warehouseId: string) {
     queryFn: () => getStockDetail(productId, warehouseId),
     retry: 1,
     refetchOnWindowFocus: false,
+  });
+}
+
+/**
+ * The Plans page (D1): every supply decision, one row per revision, cross-order.
+ *
+ * `placeholderData` for the same reason the worklist keeps it: page and filter changes
+ * both change the query key, and without it the grid empties to a skeleton on every one.
+ */
+export function usePlans(params: PlanListParams = {}) {
+  return useQuery({
+    queryKey: [PLANS_KEY, params],
+    queryFn: () => listPlans(params),
+    placeholderData: keepPreviousData,
+  });
+}
+
+/**
+ * "Confirm all approved" (D3): one call, several orders, one result per order.
+ *
+ * Invalidates the same query families the per-order `confirm` does - the board, the
+ * worklist, the plans list itself (a newly confirmed decision belongs there now), the SO
+ * detail and the order-inquiry lists a confirmed Buy hands off to.
+ */
+export function useConfirmManyMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: ConfirmManyBody) => confirmMany(body),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: [FULFILMENT_PLANNING_KEY] });
+      queryClient.invalidateQueries({ queryKey: [PLANNING_BOARD_KEY] });
+      queryClient.invalidateQueries({ queryKey: [PLANS_KEY] });
+      queryClient.invalidateQueries({ queryKey: [RECONCILIATION_KEY] });
+      queryClient.invalidateQueries({ queryKey: [SUPPLY_KEY] });
+      queryClient.invalidateQueries({ queryKey: [SALES_ORDERS_KEY] });
+      queryClient.invalidateQueries({ queryKey: [SALES_ORDER_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_ROWS_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_SUMMARY_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
+      queryClient.invalidateQueries({ queryKey: [PILE_QUEUE_KEY] });
+      queryClient.invalidateQueries({ queryKey: [STOCK_DETAIL_KEY] });
+      const succeeded = result.results.filter((entry) => entry.ok).length;
+      const failed = result.results.length - succeeded;
+      if (failed === 0) {
+        toast.success(
+          `Confirmed ${succeeded} order${succeeded === 1 ? '' : 's'}.`,
+        );
+      } else {
+        toast.warning(
+          `Confirmed ${succeeded} order${succeeded === 1 ? '' : 's'}; ${failed} refused - see the results below.`,
+        );
+      }
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 }

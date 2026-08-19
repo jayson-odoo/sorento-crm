@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, PackageSearch, Search, X } from 'lucide-react';
+import { ArrowLeft, CheckCheck, LayoutGrid, List, PackageSearch, Search, X } from 'lucide-react';
 import {
   Alert,
   AlertContent,
@@ -11,6 +11,16 @@ import {
   AlertIcon,
   AlertTitle,
 } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -18,6 +28,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
+  useConfirmManyMutation,
   useFulfilmentPlanningMutations,
   useReconciliationMutations,
   usePlanningBoard,
@@ -46,10 +57,19 @@ import type {
   BoardGranularity,
   BoardOrderStanding,
   BoardRowAxis,
+  ConfirmManyOrderResult,
   SupplyFailingLine,
 } from '../../_shared/types/fulfilmentPlanning.types';
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
+import { FulfilmentBoardListView } from './FulfilmentBoardListView';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
+
+/** Persisted in the URL as `?view=list` (D2). Grid is the default the board shipped as. */
+type BoardView = 'grid' | 'list';
+
+function boardViewFrom(value: string | null): BoardView {
+  return value === 'list' ? 'list' : 'grid';
+}
 
 /** The calendar control the captain asked for: day, week or month (PLAN 13.3). */
 const GRANULARITY_OPTIONS = [
@@ -140,6 +160,12 @@ export function FulfilmentBoardPanel({
   const [rowAxis, setRowAxis] = React.useState<BoardRowAxis>(() =>
     rowAxisFrom(searchParams.get('rows')),
   );
+  /**
+   * Grid | List (D2, PLAN-demo-followups-19aug-ladder-v2 "a list view of the board so
+   * Approve all can be seen from an overview"). Persisted in the URL the same way the other
+   * dials are, so a link to the list view is shareable.
+   */
+  const [view, setView] = React.useState<BoardView>(() => boardViewFrom(searchParams.get('view')));
   const [draft, setDraft] = React.useState<BoardDraft>({});
   const [openCell, setOpenCell] = React.useState<BoardCell | null>(null);
   /** Which 30-day window the day view is showing. Undefined lets the server choose the first. */
@@ -158,10 +184,12 @@ export function FulfilmentBoardPanel({
     else next.set('rows', rowAxis);
     if (productSearch.trim()) next.set('product', productSearch.trim());
     else next.delete('product');
+    if (view === 'grid') next.delete('view');
+    else next.set('view', view);
     const query = next.toString();
     if (query === searchParams.toString()) return;
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  }, [granularity, rowAxis, productSearch, pathname, router, searchParams]);
+  }, [granularity, rowAxis, productSearch, view, pathname, router, searchParams]);
 
   const board = usePlanningBoard(
     soNumbers,
@@ -418,6 +446,159 @@ export function FulfilmentBoardPanel({
   }, [standings, board.data, draft]);
 
   /**
+   * Every contributing line of the WHOLE selection, unwindowed - the same population "Approve
+   * all" and the List view (D2) act on. Never `axis.cells`: those are the pivoted/filtered
+   * rows on screen, and a day window shows only 30 days of them (13.5's own reason `standings`
+   * reads `board.orders` instead of the cells).
+   */
+  const allContributions = React.useMemo<BoardContribution[]>(
+    () => board.data?.cells.flatMap((cell) => cell.contributions) ?? [],
+    [board.data],
+  );
+
+  /**
+   * Approve all (D3): every UNDECIDED, approvable proposal becomes `approved` in the draft.
+   *
+   * "Approvable" skips exactly what a single Approve press already refuses to touch: a line
+   * whose sales order states no location (`unplannable`, AC-FP16), and a line an active
+   * decision already covers and the planner has not amended (`covered` with no draft entry -
+   * approving a decision already taken would be a no-op that reads as new work). A line that
+   * ALREADY carries a verdict - approved, amended or rejected - is left exactly as the planner
+   * left it: Approve all fills in the blanks, it does not overwrite a decision.
+   */
+  const approveAll = React.useCallback(() => {
+    setDraft((current) => {
+      const next = { ...current };
+      for (const contribution of allContributions) {
+        if (contribution.unplannable || contribution.covered) continue;
+        if (next[contribution.key]) continue;
+        next[contribution.key] = { verdict: 'approved' };
+      }
+      return next;
+    });
+  }, [allContributions]);
+
+  /**
+   * "N approved · M undecided" (D3): counted over the SAME approvable population `approveAll`
+   * fills, so the toolbar sentence and what a press of the button would do never disagree.
+   * `approved` counts every non-rejected verdict - approved AND amended - because both are
+   * decisions "Confirm all approved" is about to write; a rejection is a decision too, but it
+   * commits nothing, so it is neither approved nor undecided here.
+   */
+  const approvalSummary = React.useMemo(() => {
+    let approved = 0;
+    let undecided = 0;
+    const orderIds = new Set<string>();
+    for (const contribution of allContributions) {
+      if (contribution.unplannable || contribution.covered) continue;
+      const decision = draft[contribution.key];
+      if (decision && decision.verdict !== 'rejected') {
+        approved += 1;
+        orderIds.add(contribution.sales_order_id);
+      } else if (!decision) {
+        undecided += 1;
+      }
+    }
+    return { approved, undecided, orderCount: orderIds.size };
+  }, [allContributions, draft]);
+
+  const confirmMany = useConfirmManyMutation();
+  const [confirmAllOpen, setConfirmAllOpen] = React.useState(false);
+  const [confirmingAll, setConfirmingAll] = React.useState(false);
+  const [batchResults, setBatchResults] = React.useState<ConfirmManyOrderResult[] | null>(null);
+
+  /**
+   * "Confirm all approved" (D3): one call, grouped per order, each order writing in its OWN
+   * transaction server-side (`confirm_many`) - so one order's refusal never takes the others
+   * down. Any order in the batch that has not been adopted yet is adopted first, exactly the
+   * step `confirmOrder` already takes for a single order; the board is re-read once afterwards
+   * so the fresh mirror lines can be named in the payload (adoption fills `project_line_id`,
+   * which is null until then).
+   */
+  const runConfirmAll = React.useCallback(async () => {
+    if (!board.data) return;
+    setConfirmAllOpen(false);
+    setConfirmingAll(true);
+    setBatchResults(null);
+    try {
+      let liveBoard = board.data;
+      let contributions = allContributions;
+
+      const wantedOrders = new Set(
+        contributions
+          .filter((contribution) => {
+            const decision = draft[contribution.key];
+            if (!decision || decision.verdict === 'rejected') return false;
+            if (contribution.covered && decision.verdict !== 'amended') return false;
+            return true;
+          })
+          .map((contribution) => contribution.sales_order_id),
+      );
+      if (wantedOrders.size === 0) return;
+
+      let adoptedAny = false;
+      for (const order of liveBoard.orders) {
+        if (!wantedOrders.has(order.sales_order_id) || order.project_sales_order_id) continue;
+        try {
+          await adopt.mutateAsync(order.sales_order_id);
+          adoptedAny = true;
+        } catch {
+          // Left out of the batch below: with no pso_id there is nothing to post for it.
+        }
+      }
+      if (adoptedAny) {
+        const fresh = await board.refetch();
+        if (fresh.data) {
+          liveBoard = fresh.data;
+          contributions = liveBoard.cells.flatMap((cell) => cell.contributions);
+        }
+      }
+
+      const psoIdBySalesOrder = new Map(
+        liveBoard.orders
+          .filter((order) => order.project_sales_order_id)
+          .map((order) => [order.sales_order_id, order.project_sales_order_id as string]),
+      );
+
+      const orders: { pso_id: string; lines: ReturnType<typeof confirmLinesFor> }[] = [];
+      for (const salesOrderId of wantedOrders) {
+        const psoId = psoIdBySalesOrder.get(salesOrderId);
+        if (!psoId) continue;
+        const lines = confirmLinesFor(contributions, salesOrderId, draft);
+        if (lines.length > 0) orders.push({ pso_id: psoId, lines });
+      }
+      if (orders.length === 0) return;
+
+      const result = await confirmMany.mutateAsync({ orders });
+      setBatchResults(result.results);
+
+      const committedPsoIds = new Set(
+        result.results.filter((entry) => entry.ok).map((entry) => entry.pso_id),
+      );
+      const committedLineIds = new Set(
+        orders
+          .filter((order) => committedPsoIds.has(order.pso_id))
+          .flatMap((order) => order.lines.map((line) => line.project_line_id)),
+      );
+      setDraft((current) => {
+        const next = { ...current };
+        for (const contribution of contributions) {
+          if (
+            contribution.project_line_id &&
+            committedLineIds.has(contribution.project_line_id) &&
+            next[contribution.key]
+          ) {
+            delete next[contribution.key];
+          }
+        }
+        return next;
+      });
+    } finally {
+      setConfirmingAll(false);
+    }
+  }, [board, allContributions, draft, adopt, confirmMany]);
+
+  /**
    * The rows on screen, and the rows the selection holds.
    *
    * Matching on the code AND the name, because a planner knows a product by either. The counts
@@ -609,6 +790,33 @@ export function FulfilmentBoardPanel({
               options={GRANULARITY_OPTIONS}
             />
           </div>
+          {/* Grid | List (D2): "how do I review it" - the grid answers what a product owes by
+              date, the list answers what is about to be committed, across every order, in one
+              scan. A toggle, not two screens, because it is the same draft either way. */}
+          <div className="inline-flex rounded-md border border-input" role="group" aria-label="Board view">
+            <Button
+              type="button"
+              size="sm"
+              variant={view === 'grid' ? 'primary' : 'ghost'}
+              className="rounded-e-none"
+              aria-pressed={view === 'grid'}
+              onClick={() => setView('grid')}
+            >
+              <LayoutGrid className="size-4" aria-hidden />
+              Grid
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={view === 'list' ? 'primary' : 'ghost'}
+              className="rounded-s-none border-s border-input"
+              aria-pressed={view === 'list'}
+              onClick={() => setView('list')}
+            >
+              <List className="size-4" aria-hidden />
+              List
+            </Button>
+          </div>
           {/* Last in the row and `ghost`: going back is secondary to the control that decides
               what the board shows, and an outline button beside the select out-shouted it. */}
           <Button type="button" variant="ghost" size="sm" onClick={onBack}>
@@ -617,6 +825,64 @@ export function FulfilmentBoardPanel({
           </Button>
         </div>
       </div>
+
+      {/* Approve all + Confirm all approved (D3). Its own row, above the grid/list, so it is
+          visible whichever view is on screen - the captain's ask was "a list view of the
+          board so Approve all can be seen from an overview", and the button that DOES the
+          approving has to be reachable from both. */}
+      {board.data && board.data.cells.length > 0 && (
+        <div className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-sm text-muted-foreground tabular-nums">
+            {`${approvalSummary.approved} approved · ${approvalSummary.undecided} undecided`}
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={approvalSummary.undecided === 0}
+              onClick={approveAll}
+            >
+              <CheckCheck className="size-4" aria-hidden />
+              Approve all
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={approvalSummary.approved === 0 || confirmingAll}
+              onClick={() => setConfirmAllOpen(true)}
+            >
+              Confirm all approved
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {batchResults && (
+        <div className="space-y-1 rounded-lg border border-border px-3 py-2.5">
+          <p className="text-sm font-medium">
+            {`Confirm all: ${batchResults.filter((r) => r.ok).length} of ${batchResults.length} orders confirmed`}
+          </p>
+          <ul className="space-y-1">
+            {batchResults.map((result) => {
+              const order = board.data?.orders.find(
+                (candidate) => candidate.project_sales_order_id === result.pso_id,
+              );
+              const label = order?.so_number ?? result.pso_id;
+              return (
+                <li
+                  key={result.pso_id}
+                  className={`text-sm break-words ${result.ok ? 'text-emerald-700' : 'text-destructive'}`}
+                >
+                  {result.ok
+                    ? `${label}: confirmed as revision ${result.decision_revision} (${result.inquiry_rows_created ?? 0} purchase row${(result.inquiry_rows_created ?? 0) === 1 ? '' : 's'} handed over)`
+                    : `${label}: ${result.error ?? 'refused'}`}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
 
       {board.isError ? (
         <Alert variant="destructive" appearance="light">
@@ -707,32 +973,48 @@ export function FulfilmentBoardPanel({
               popover on a row names the policy above its factor table, which is where somebody
               IS asking - see `BoardRankPopover` and PLAN 13.10. */}
 
-          {/* How much of the board is on screen. Only while a filter is on, and stated as a
-              fraction, so a narrowed board is never mistaken for the whole one. */}
-          {filtering && (
-            <p className="text-sm text-muted-foreground tabular-nums">
-              {`${visibleProductRows.length} of ${axis.rows.length} ${ROW_AXIS_NOUNS[rowAxis]}`}
-            </p>
-          )}
-
-          {visibleProductRows.length === 0 ? (
-            <Card>
-              <CardContent className="px-6 py-10 text-center">
-                <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
-                {/* NOT the "owes nothing" copy: the selection owes plenty, the filter simply
-                    matched none of it. */}
-                <h3 className="mt-2 text-sm font-semibold">No products match</h3>
-              </CardContent>
-            </Card>
+          {view === 'list' ? (
+            /* D2: one row per contributing line across every cell of the WHOLE selection, not
+               the pivoted/windowed rows the grid shows - the point is an overview, so the row
+               axis and product search that shape the grid do not narrow it. */
+            <FulfilmentBoardListView
+              contributions={allContributions}
+              draft={draft}
+              onDecide={decide}
+              isLoading={board.isFetching}
+            />
           ) : (
-          <FulfilmentBoardMatrix
-            dateBuckets={board.data.dateBuckets}
-            rows={visibleProductRows}
-            rowHeader={ROW_AXIS_OPTIONS.find((option) => option.value === rowAxis)?.label ?? 'Product'}
-            cells={axis.cells}
-            decidedKeys={decidedKeys}
-            onOpenCell={(cell) => setOpenCell(cell)}
-          />
+            <>
+              {/* How much of the board is on screen. Only while a filter is on, and stated as
+                  a fraction, so a narrowed board is never mistaken for the whole one. */}
+              {filtering && (
+                <p className="text-sm text-muted-foreground tabular-nums">
+                  {`${visibleProductRows.length} of ${axis.rows.length} ${ROW_AXIS_NOUNS[rowAxis]}`}
+                </p>
+              )}
+
+              {visibleProductRows.length === 0 ? (
+                <Card>
+                  <CardContent className="px-6 py-10 text-center">
+                    <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
+                    {/* NOT the "owes nothing" copy: the selection owes plenty, the filter
+                        simply matched none of it. */}
+                    <h3 className="mt-2 text-sm font-semibold">No products match</h3>
+                  </CardContent>
+                </Card>
+              ) : (
+                <FulfilmentBoardMatrix
+                  dateBuckets={board.data.dateBuckets}
+                  rows={visibleProductRows}
+                  rowHeader={
+                    ROW_AXIS_OPTIONS.find((option) => option.value === rowAxis)?.label ?? 'Product'
+                  }
+                  cells={axis.cells}
+                  decidedKeys={decidedKeys}
+                  onOpenCell={(cell) => setOpenCell(cell)}
+                />
+              )}
+            </>
           )}
 
           <Card>
@@ -778,6 +1060,25 @@ export function FulfilmentBoardPanel({
           onClose={() => setOpenCell(null)}
         />
       )}
+
+      {/* Confirmation dialog per PRINCIPLES: an irreversible batch write states what it is
+          about to do, in numbers, before it does it. */}
+      <AlertDialog open={confirmAllOpen} onOpenChange={setConfirmAllOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {`Confirm ${approvalSummary.approved} decisions across ${approvalSummary.orderCount} orders?`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Each order writes on its own; one order refusing does not stop the rest.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void runConfirmAll()}>Confirm</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

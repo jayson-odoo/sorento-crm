@@ -713,6 +713,34 @@ function byLabel(left: BoardAxisRow, right: BoardAxisRow): number {
 }
 
 /**
+ * The proposal, as one line of text - the same summary a cell's own composition strip shows,
+ * read off a single contribution rather than a cell (D2, the board's List view).
+ *
+ * A line with no proposal reads what it IS rather than a blank cell: unplannable states the
+ * reason, and a line that is neither unplannable nor holds a source is "Nothing proposed",
+ * never an empty string a table would render as a gap nobody can explain.
+ */
+export function proposalSummaryFor(contribution: BoardContribution): string {
+  if (contribution.unplannable) return 'Needs a location';
+  const parts = contribution.sources
+    .filter((source) => toMinor(source.qty) > 0)
+    .map((source) => {
+      const kind =
+        source.kind === 'reserve'
+          ? 'Reserve'
+          : source.kind === 'timely_spo'
+            ? 'Incoming'
+            : source.kind === 'buy'
+              ? 'Buy'
+              : source.kind === 'borrow'
+                ? 'Borrow'
+                : 'Cannot be sourced';
+      return `${kind} ${source.qty}${source.location ? ` at ${source.location}` : ''}`;
+    });
+  return parts.length > 0 ? parts.join(' · ') : 'Nothing proposed';
+}
+
+/**
  * Whether a row survives the board's search box.
  *
  * The captain asked for all four: "i also need sales order search, project search, customer

@@ -762,6 +762,14 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'projects.projects.view',
       },
       {
+        // "Is the plan stored, how do I review it" (captain, 19 Aug 2026 demo): the board
+        // writes the decision, this is where it is reviewed afterwards - cross-project for
+        // the same reason Fulfilment Planning beside it is.
+        title: 'Plans',
+        path: '/project-sales/plans',
+        permission: 'projects.projects.view',
+      },
+      {
         // Purchasing's own worklist, and cross-project because purchasing is: the rows an
         // ADOPTED AutoCount order raises belong to no project at all, so inside a project
         // they are reachable nowhere. Shaped like the spreadsheet they work from today,
@@ -1765,6 +1773,14 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         // inside its own project is one nobody goes looking for.
         title: 'Fulfilment Planning',
         path: '/project-sales/fulfilment-planning',
+        permission: 'projects.projects.view',
+      },
+      {
+        // "Is the plan stored, how do I review it" (captain, 19 Aug 2026 demo): the board
+        // writes the decision, this is where it is reviewed afterwards - cross-project for
+        // the same reason Fulfilment Planning beside it is.
+        title: 'Plans',
+        path: '/project-sales/plans',
         permission: 'projects.projects.view',
       },
       {

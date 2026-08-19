@@ -1427,3 +1427,93 @@ export interface ClassificationEvidence {
   hot_cut_pct: number;
   classes: ClassificationEvidenceClass[];
 }
+
+// ---------------------------------------------------------------------------
+// The Plans page (PLAN-demo-followups-19aug-ladder-v2 D1): "is the plan stored, how do I
+// review it". `GET /project-sales/plans` over `so_supply_decisions`, cross-order.
+// ---------------------------------------------------------------------------
+
+export type PlanState = 'active' | 'superseded' | 'challenged';
+
+/** One row: one supply decision revision. Addressed by `project_sales_order_id` and
+ * `sales_order_id`, never rendered - `so_number` is what prints. */
+export interface PlanRow {
+  project_sales_order_id: string;
+  sales_order_id?: string | null;
+  project_id?: string | null;
+  so_number?: string | null;
+  customer_name?: string | null;
+  agent_code?: string | null;
+  agent_label?: string | null;
+  revision_no: number;
+  state: PlanState;
+  decided_by_name?: string | null;
+  decided_at?: string | null;
+  /** How many lines THIS revision covers - never the order's whole line count (13.4). */
+  line_count: number;
+  /** "Reserve 213 · Buy 145", summed across every line the revision covers. */
+  components_summary?: string | null;
+  /** Why the active revision no longer matches the order. Present only when `state` is
+   * `challenged`. */
+  challenged_reason?: string | null;
+}
+
+export const PLAN_SORT_FIELDS = [
+  'so_number',
+  'customer_name',
+  'agent_code',
+  'revision_no',
+  'state',
+  'decided_at',
+] as const;
+
+export type PlanSortField = (typeof PLAN_SORT_FIELDS)[number];
+
+export interface PlanListParams {
+  page?: number;
+  limit?: number;
+  query?: string;
+  /** Defaults to `active` server-side - what is stored NOW. */
+  state?: PlanState;
+  agent_code?: string;
+  sort?: PlanSortField;
+  dir?: 'asc' | 'desc';
+}
+
+export interface PlanListEnvelope {
+  data: PlanRow[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+// ---------------------------------------------------------------------------
+// Confirm all approved (D3): the board's "Confirm all approved" writes several orders at
+// once, each in its own transaction server-side, and reports one result per order.
+// ---------------------------------------------------------------------------
+
+export interface ConfirmManyOrderBody {
+  pso_id: string;
+  lines: ConfirmLine[];
+}
+
+export interface ConfirmManyBody {
+  orders: ConfirmManyOrderBody[];
+}
+
+/** One order's outcome. `ok` decides which half is populated. */
+export interface ConfirmManyOrderResult {
+  pso_id: string;
+  ok: boolean;
+  decision_revision?: number | null;
+  inquiry_rows_created?: number | null;
+  lines_decided?: number | null;
+  lines_undecided?: number | null;
+  error?: string | null;
+  failing_lines?: SupplyFailingLine[] | null;
+}
+
+/** `POST /project-sales/fulfilment-planning/confirm-all`. */
+export interface ConfirmManyResult {
+  results: ConfirmManyOrderResult[];
+}

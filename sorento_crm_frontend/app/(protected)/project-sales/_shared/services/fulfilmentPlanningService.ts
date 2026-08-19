@@ -5,6 +5,8 @@ import type {
   BoardGranularity,
   ClassificationEvidence,
   PlanningBoard,
+  ConfirmManyBody,
+  ConfirmManyResult,
   ConfirmResult,
   ConfirmSupplyBody,
   FulfilmentPlanningListEnvelope,
@@ -387,5 +389,32 @@ export async function getClassificationEvidence(
   );
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the evidence'));
+  return response.json();
+}
+
+/**
+ * "Confirm all approved" (D3): every order's Confirm, in ONE call.
+ *
+ *   POST /project-sales/fulfilment-planning/confirm-all
+ *        body { orders: [{ pso_id, lines: ConfirmLine[] }] }
+ *        -> { results: [{ pso_id, ok, decision_revision?, inquiry_rows_created?,
+ *                          lines_decided?, lines_undecided?, error?, failing_lines? }] }
+ *
+ * Each order commits or refuses on its OWN: one order's stale line does not take the
+ * orders around it down, and every order named in the body gets a result either way - the
+ * caller never has to guess whether a missing entry means it committed or was skipped.
+ * `extractApiError` is not enough here: a 200 can still carry `ok: false` entries, so the
+ * caller reads `results` even on a successful response.
+ */
+export async function confirmMany(body: ConfirmManyBody): Promise<ConfirmManyResult> {
+  const response = await apiFetch(`${BASE}/fulfilment-planning/confirm-all`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok)
+    throw new Error(
+      await extractApiError(response, 'Failed to confirm the approved decisions'),
+    );
   return response.json();
 }

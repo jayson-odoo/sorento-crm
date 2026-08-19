@@ -61,6 +61,7 @@ import {
   SalesOrderStatusPill,
 } from '../../../components/SalesOrderStatusPill';
 import { ReviewStatePill } from '../../../../_shared/components/ReviewStatePill';
+import { AllocationPanel } from './AllocationPanel';
 import { useSalesOrderEditSession } from './useSalesOrderEditSession';
 
 /**
@@ -641,9 +642,10 @@ export function SalesOrderDetailClient({
         }
       />
 
-      {/* Allocation section hidden here for now (captain, 19 Aug 2026): "hide this section
-          first, don't want to show something that I can't explain". The component and its
-          tests are untouched; only this mount is gone. */}
+      {/* Re-mounted 19 Aug 2026 evening (PLAN-demo-followups-19aug-ladder-v2 D1): the captain
+          now wants to review plans, and this is the per-order half of that - the Plans page
+          is the cross-order list. */}
+      <AllocationPanel psoId={psoId} />
 
       {acknowledging && (
         <SalesOrderAcknowledgeDialog
