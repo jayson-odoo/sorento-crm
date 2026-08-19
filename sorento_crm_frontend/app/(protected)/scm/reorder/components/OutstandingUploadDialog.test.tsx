@@ -474,6 +474,37 @@ describe('OutstandingUploadDialog - scope is shown', () => {
   });
 });
 
+// ── 6b. planning changes card (PLAN-so-book-diff-replanning.md AC-R01) ──────
+// Phase 1: the real preview never carries this field, so it is exercised only against a
+// fixture that sets it - never faked into the live upload path.
+
+describe('OutstandingUploadDialog - the planning-changes card', () => {
+  it('shows the card and a Review link when the diff moved a planned line', async () => {
+    previewOutstandingImport.mockResolvedValue(
+      preview({
+        planning_change_batch: { id: 'pcb-1', order_count: 3, line_count: 11 },
+      }),
+    );
+    renderDialog();
+    await chooseFile();
+
+    const card = await screen.findByRole('region', { name: /Planning changes/i });
+    expect(card).toHaveTextContent('The book moved 11 planned lines on 3 orders');
+    expect(within(card).getByRole('link', { name: /Review/i })).toHaveAttribute(
+      'href',
+      '/project-sales/planning-changes/pcb-1',
+    );
+  });
+
+  it('renders nothing when no planned line was touched', async () => {
+    renderDialog();
+    await chooseFile();
+
+    await screen.findByText('Added');
+    expect(screen.queryByRole('region', { name: /Planning changes/i })).toBeNull();
+  });
+});
+
 // ── 7. problem reporting ────────────────────────────────────────────────────
 
 describe('OutstandingUploadDialog - problems are reported, not swallowed', () => {

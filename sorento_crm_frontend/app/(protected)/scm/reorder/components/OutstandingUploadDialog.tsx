@@ -1,6 +1,7 @@
 'use client';
 
 import { LoaderCircle, TestTube } from 'lucide-react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -27,6 +28,7 @@ import {
   type OutstandingChangeKind,
   type OutstandingCounts,
   type OutstandingImportKind,
+  type OutstandingPlanningChangeBatch,
   type OutstandingPreview,
   type OutstandingResolutionIssue,
   type OutstandingRowProblem,
@@ -152,6 +154,29 @@ function SampleTable({ rows }: { rows: OutstandingSampleRow[] }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+/**
+ * `The book moved N planned lines on M orders` (PLAN-so-book-diff-replanning.md AC-R01, journey
+ * step 1). Shown only when the diff touched a line that is already planned - most uploads never
+ * carry one, and a card that renders nothing for `null` says nothing rather than "0 changes".
+ */
+function PlanningChangeBatchCard({ batch }: { batch: OutstandingPlanningChangeBatch }) {
+  return (
+    <section
+      aria-label="Planning changes"
+      className="flex flex-col gap-2 rounded-lg border border-border bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <p className="text-sm font-medium">
+        {`The book moved ${fmtInt(batch.line_count)} planned line${
+          batch.line_count === 1 ? '' : 's'
+        } on ${fmtInt(batch.order_count)} order${batch.order_count === 1 ? '' : 's'}`}
+      </p>
+      <Button asChild variant="outline" size="sm">
+        <Link href={`/project-sales/planning-changes/${batch.id}`}>Review</Link>
+      </Button>
+    </section>
   );
 }
 
@@ -366,6 +391,10 @@ export function OutstandingUploadDialog({
                   Orders not in this file are untouched.
                 </p>
               </section>
+
+              {preview.planning_change_batch && (
+                <PlanningChangeBatchCard batch={preview.planning_change_batch} />
+              )}
 
               {sampleGroups.map((group) => (
                 <div key={group.key} className="space-y-1.5">
