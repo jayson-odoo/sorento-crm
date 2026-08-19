@@ -497,7 +497,15 @@ class AmendmentDetail(BaseModel):
     from_version_label: Optional[str] = None
     to_version_label: Optional[str] = None
     verb_summary: Dict[str, int] = {}
+    # `delta["rows"]` items carry, on top of `DeltaRow` above: `row_key` (str, the
+    # row's stable identity - its index within the immutable list), `decision`
+    # ("accepted" | "declined", accepted is the default for a row nobody touched)
+    # and `declined_reason` (str | null). Left as a loose dict rather than typed:
+    # `delta` already was one, and the shape of the rest of the envelope is
+    # documented on `DeltaRow` / `DeltaPhaseSummary` / `DeltaUnmatched` above.
     delta: Optional[Dict[str, Any]] = None
+    accepted_count: int = 0
+    declined_count: int = 0
     ocn_id: Optional[str] = None
     ocn_number: Optional[str] = None
     ocn_reason: Optional[str] = None
@@ -514,3 +522,42 @@ class AmendmentPublishResponse(BaseModel):
     applied_rows: int
     ocn_number: Optional[str] = None
     order_inquiry_id: Optional[str] = None
+
+
+class AmendmentRowDecision(BaseModel):
+    """One row's verdict: accept the suggestion, or decline it with a reason."""
+
+    decision: str = Field(..., description="accepted | declined")
+    reason: Optional[str] = Field(
+        None, description="Required when decision is 'declined'."
+    )
+
+
+class AmendmentRowDecisionsRequest(BaseModel):
+    """Merged into the amendment's stored map; rows not named here are untouched."""
+
+    decisions: Dict[str, AmendmentRowDecision]
+
+
+class AutocountChangeListRow(BaseModel):
+    """One accepted amendment row, in the shape a person keys into AutoCount."""
+
+    so_number: Optional[str] = None
+    line_no: Optional[int] = None
+    item_code: Optional[str] = None
+    product: Optional[str] = None
+    verb: str
+    old_qty: Optional[str] = None
+    new_qty: Optional[str] = None
+    old_date: Optional[str] = None
+    new_date: Optional[str] = None
+    new_so_number: Optional[str] = Field(
+        None, description="Set only for a CHANGE SO NO row."
+    )
+
+
+class AutocountChangeListResponse(BaseModel):
+    amendment_id: str
+    ocn_number: Optional[str] = None
+    rows: List[AutocountChangeListRow]
+    declined_count: int = 0

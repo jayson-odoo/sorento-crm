@@ -557,18 +557,31 @@ def _schedule_extractor_fallback() -> str:
         '                "name": "One-Piece WC"}],\n'
         '  "phases": [{"row": 1, "area_group": "TOWER", "label": "Level 2 & 7",\n'
         '              "delivery_date": "2026-07-01"}],\n'
-        '  "cells": [{"row": 1, "col": 1, "qty": 135}],\n'
-        '  "reported_totals": [{"col": 1, "qty": 927}]\n'
+        '  "cells": [{"row": 1, "col": 1, "qty": 135, "highlighted": false}],\n'
+        '  "reported_totals": [{"col": 1, "qty": 927}],\n'
+        '  "notes": ["..."]\n'
         "}\n"
         "\n"
         "Rules:\n"
         "- Only the products whose columns appear on THIS page.\n"
         "- An empty cell is omitted entirely. Never write it as zero.\n"
-        "- delivery_date as ISO yyyy-mm-dd. The rows run in calendar order, so use that to\n"
-        "  disambiguate an ambiguous day and month.\n"
+        "- delivery_date as ISO yyyy-mm-dd. This customer writes dates DAY/MONTH/YEAR: a date\n"
+        '  printed "7/1/2027" means 7 January 2027, not 1 July -- day first, always, never\n'
+        "  guessed. The rows also run in calendar order within a page, which corroborates a\n"
+        "  reading but is never itself the rule for which digit is the day.\n"
         '- "reported_totals" is the schedule\'s own TOTAL QTY row, transcribed, not computed.\n'
         "- A row under COMMON AREA may carry no label at all. Give it area_group COMMON AREA\n"
         "  and its date, and do not borrow the label from the row above it.\n"
+        '- "notes" is every free-text remark on this page that is NOT a header, product,\n'
+        "  phase, quantity or total -- a margin note, a stamp, a sentence written across the\n"
+        '  matrix. Transcribe each one VERBATIM, one string per remark. A note may describe a\n'
+        "  revision in prose (e.g. a delivery moved to a stated date) instead of changing the\n"
+        "  phase columns -- report the words exactly as printed and do NOT compute, infer or\n"
+        "  fill in a delivery_date from it; that reading is a person's job, not yours.\n"
+        '- "highlighted" is true when a cell sits on a COLOURED background fill (a tint the\n'
+        "  document itself drew behind the number, not text formatting) -- the customer's own\n"
+        "  way of marking which cells a margin note is about. Grey, black, white or no fill at\n"
+        '  all is false. Default false when unsure. Every cell object carries this key.\n'
     )
 
 

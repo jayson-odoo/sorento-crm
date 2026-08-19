@@ -472,8 +472,16 @@ class ProjectOrderInquiryService:
 
         order = self._order_or_404(amendment.project_sales_order_id)
         delta = amendment.delta_json or {}
+        # Section 9.3: a declined row was never applied to the order, so it must not
+        # become a purchasing instruction either. `row_decisions` defaults every row
+        # absent from it to accepted, which is why an amendment nobody touched still
+        # derives exactly as it always has.
+        row_decisions = amendment.row_decisions or {}
         demand: List[DemandRow] = []
-        for row in delta.get("rows") or []:
+        for index, row in enumerate(delta.get("rows") or []):
+            row_key = str(row.get("row_key") or index)
+            if (row_decisions.get(row_key) or {}).get("decision") == "declined":
+                continue
             change = _DELTA_VERB_CHANGE.get(str(row.get("verb") or ""))
             if change is None:
                 continue

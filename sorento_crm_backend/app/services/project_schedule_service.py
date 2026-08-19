@@ -43,7 +43,7 @@ import copy
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -54,6 +54,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.order import Customer
 from app.models.product import Product
 from app.models.project_so import (
+    AUTHORED_LIVE_STATUSES,
     CustomerItemCodeMap,
     DeliverySchedule,
     DeliveryScheduleCell,
@@ -61,6 +62,7 @@ from app.models.project_so import (
     ProjectDeliveryPhase,
     ProjectPOLine,
     ProjectPOVersion,
+    ProjectSalesOrder,
 )
 from app.models.projects import (
     Project,
@@ -93,6 +95,14 @@ TRIGRAM_MARGIN = 0.08
 # pg_trgm lives in ``public`` and is schema-qualified deliberately: tests pin
 # search_path to a scratch schema so raw SQL cannot reach the real tables.
 _TRGM_SCHEMA = "public"
+
+# Section 9.7(b): a page note naming a date, DAY-first, the same convention pinned
+# in `_parse_date`. `d/m/yyyy` or `dd/mm/yyyy`, one to two digits each side.
+_NOTE_DATE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b")
+
+PROPOSAL_PROPOSED = "proposed"
+PROPOSAL_ACCEPTED = "accepted"
+PROPOSAL_REJECTED = "rejected"
 
 _RESOLUTION_MAP = "map"
 _RESOLUTION_CODE = "code"
@@ -130,14 +140,47 @@ def to_decimal(value: Any) -> Optional[Decimal]:
 
 
 def _parse_date(value: Any) -> Optional[date]:
+    """ISO first (what the prompt asks the model for), then a slash date DAY-first.
+
+    Pinned 19 August 2026: the extractor read the same schedule's own "7/1/2027" as
+    2027-07-01 on one page and 2027-01-07 on the others, because nothing told it
+    which convention the customer writes in. The customer writes DAY/MONTH/YEAR, so
+    a slash date reaching this function unconverted is read that way -- never
+    month-first, and never guessed from calendar order.
+    """
     if isinstance(value, date):
         return value
     if not value:
         return None
+    text = str(value).strip()
     try:
-        return datetime.strptime(str(value).strip()[:10], "%Y-%m-%d").date()
+        return datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except ValueError:
+        pass
+    try:
+        return datetime.strptime(text, "%d/%m/%Y").date()
     except ValueError:
         return None
+
+
+def _dated_note(data: dict) -> Optional[Tuple[str, date]]:
+    """The first free-text note on a page that names a day-first date, and the date.
+
+    Section 9.7(b): a note without a date proposes nothing (there is nothing to
+    re-date TO), so this returns ``None`` and the caller records no proposal.
+    """
+    for note in data.get("notes") or []:
+        if not isinstance(note, str):
+            continue
+        match = _NOTE_DATE.search(note)
+        if not match:
+            continue
+        day, month, year = (int(part) for part in match.groups())
+        try:
+            return note.strip(), date(year, month, day)
+        except ValueError:
+            continue
+    return None
 
 
 def _clean(value: Any, limit: int = 180) -> Optional[str]:
@@ -176,6 +219,10 @@ class TextLayerPage:
     header_codes: List[str] = field(default_factory=list)
     rows: List[Dict[int, Decimal]] = field(default_factory=list)
     totals: Dict[int, Decimal] = field(default_factory=dict)
+    # Section 9.7(a): one entry per row, column index -> `#rrggbb`, for a cell that
+    # sits inside a coloured fill on the page (grey/black/white excluded). Parallel
+    # to `rows`, never merged into it: a highlight is not a quantity.
+    highlights: List[Dict[int, str]] = field(default_factory=list)
 
     @property
     def grid_proven(self) -> bool:
@@ -198,6 +245,64 @@ def _display_words(page) -> List[Tuple[Any, str]]:
 
     matrix = page.rotation_matrix
     return [(fitz.Rect(w[:4]) * matrix, w[4]) for w in page.get_text("words")]
+
+
+# A fill within this tolerance on every channel reads as grey, black or white --
+# a border, a gridline, a header band -- and is never a revision highlight
+# (section 9.7a, measured on the real R2 page 7: rose fills at (0.86,0.59,0.58)
+# and (0.9,0.72,0.72), nothing near-grey in between).
+_GREY_TOLERANCE = 0.05
+
+# A generic tint for a cell the VISION pass alone flagged `highlighted: true`: the
+# model reports a boolean, never the printed colour, so this is what renders when
+# no text-layer geometry is available to say the real one.
+_VISION_HIGHLIGHT_HEX = "#e5b8b8"
+
+
+def _is_colored_fill(rgb: Optional[Sequence[float]]) -> bool:
+    if not rgb or len(rgb) < 3:
+        return False
+    r, g, b = rgb[0], rgb[1], rgb[2]
+    return (max(r, g, b) - min(r, g, b)) > _GREY_TOLERANCE
+
+
+def _fill_hex(rgb: Sequence[float]) -> str:
+    r, g, b = rgb[0], rgb[1], rgb[2]
+    return "#%02x%02x%02x" % (
+        round(max(0.0, min(1.0, r)) * 255),
+        round(max(0.0, min(1.0, g)) * 255),
+        round(max(0.0, min(1.0, b)) * 255),
+    )
+
+
+def _colored_fills(page) -> List[Tuple[Any, str]]:
+    """Coloured rectangular fills on the page, in DISPLAY space.
+
+    ``page.get_drawings()`` reports every filled shape, borders and header bands
+    included; ``_is_colored_fill`` is what tells a customer's rose highlight from
+    the sheet's own grid lines.
+    """
+    import fitz
+
+    matrix = page.rotation_matrix
+    out: List[Tuple[Any, str]] = []
+    for drawing in page.get_drawings():
+        fill = drawing.get("fill")
+        if not _is_colored_fill(fill):
+            continue
+        rect = drawing.get("rect")
+        if rect is None:
+            continue
+        out.append((fitz.Rect(rect) * matrix, _fill_hex(fill)))
+    return out
+
+
+def _highlight_at(rect, fills: List[Tuple[Any, str]]) -> Optional[str]:
+    """The colour of the fill this cell's own rect sits inside, first match wins."""
+    for fill_rect, hex_color in fills:
+        if rect.intersects(fill_rect):
+            return hex_color
+    return None
 
 
 def _cluster(items, key, tolerance: float):
@@ -300,12 +405,28 @@ def _parse_text_page(page, page_no: int) -> Optional[TextLayerPage]:
                 out[index] = value
         return out
 
+    # Section 9.7(a): the same cells, tagged with the colour of the fill they sit
+    # inside. A cell with no coloured fill under it is simply absent from the map.
+    fills = _colored_fills(page)
+
+    def highlights_at(centre: float) -> Dict[int, str]:
+        out: Dict[int, str] = {}
+        for rect, word in numbers_at(centre):
+            index = column_of(rect)
+            if index is None or _qty_token(word) is None:
+                continue
+            color = _highlight_at(rect, fills)
+            if color:
+                out[index] = color
+        return out
+
     return TextLayerPage(
         page_no=page_no,
         column_count=len(centres),
         header_codes=[word for _, word in sorted(code_words, key=lambda it: it[0].x0)],
         rows=[cells_at(centre) for centre in data_centres],
         totals=cells_at(totals_centre) if totals_centre is not None else {},
+        highlights=[highlights_at(centre) for centre in data_centres],
     )
 
 
@@ -367,6 +488,9 @@ class _Column:
     header_code: Optional[str]
     name: Optional[str]
     cells: Dict[Tuple[str, int], Decimal] = field(default_factory=dict)
+    # Section 9.7(a): phase key -> `#rrggbb`, for a cell the document tints. Empty
+    # for a column nothing highlights.
+    cell_highlights: Dict[Tuple[str, int], str] = field(default_factory=dict)
     reported_total: Optional[Decimal] = None
     reported_total_source: Optional[str] = None
     qty_source: str = "vision"
@@ -790,6 +914,7 @@ class ProjectScheduleService:
         columns = self._merge_duplicate_columns(columns)
         self._upsert_phases(version, project, phases)
         self._write_cells(version, phases, columns)
+        self._build_revision_proposals(version, phases, columns, pages)
         return self._reconcile(version, schedule, phases, columns, header)
 
     def _merge_header(self, pages: Sequence[Tuple[int, dict]]) -> dict:
@@ -832,6 +957,10 @@ class ProjectScheduleService:
 
             quantities = self._page_quantities(data, page_phases, page_columns)
             reported = self._page_reported_totals(data, page_columns)
+            # Section 9.7(a): the vision pass's own `highlighted` flag, kept only as
+            # the fallback -- overwritten below by the text layer's real colour
+            # whenever the text layer is what this page's quantities trust too.
+            highlights = self._page_vision_highlights(data, page_phases, page_columns)
             source = "vision"
 
             text_page = text_pages.get(page_no)
@@ -852,6 +981,12 @@ class ProjectScheduleService:
                     for col_index, value in text_page.totals.items()
                     if col_index < len(page_columns)
                 }
+                highlights = {
+                    (page_phases[row_index].key, page_columns[col_index].index): color
+                    for row_index, row in enumerate(text_page.highlights)
+                    for col_index, color in row.items()
+                    if col_index < len(page_columns)
+                }
                 source = "text_layer"
 
             by_index = {column.index: column for column in page_columns}
@@ -865,6 +1000,10 @@ class ProjectScheduleService:
                 column = by_index.get(column_index)
                 if column is not None:
                     column.cells[phase_key] = value
+            for (phase_key, column_index), color in highlights.items():
+                column = by_index.get(column_index)
+                if column is not None:
+                    column.cell_highlights[phase_key] = color
             columns.extend(page_columns)
 
         ordered = sorted(phases.values(), key=lambda p: (p.area_group, p.sequence))
@@ -927,6 +1066,29 @@ class ProjectScheduleService:
             if phase is None or column is None or value is None or value == 0:
                 continue
             out[(phase.key, column.index)] = value
+        return out
+
+    def _page_vision_highlights(
+        self, data: dict, page_phases: List[_Phase], page_columns: List[_Column]
+    ) -> Dict[Tuple[Tuple[str, int], int], str]:
+        """The vision pass's own `highlighted` flag, rendered with a generic tint.
+
+        The model reports a boolean, not the printed colour, so this is the
+        fallback: the text layer's real `#rrggbb` (``TextLayerPage.highlights``)
+        overwrites it in ``_read_pages`` whenever the text layer is what the page's
+        quantities trust.
+        """
+        rows_by_number = {index + 1: phase for index, phase in enumerate(page_phases)}
+        cols_by_number = {index + 1: column for index, column in enumerate(page_columns)}
+        out: Dict[Tuple[Tuple[str, int], int], str] = {}
+        for cell in data.get("cells") or []:
+            if not cell.get("highlighted"):
+                continue
+            phase = rows_by_number.get(_as_int(cell.get("row")))
+            column = cols_by_number.get(_as_int(cell.get("col")))
+            if phase is None or column is None:
+                continue
+            out[(phase.key, column.index)] = _VISION_HIGHLIGHT_HEX
         return out
 
     def _page_reported_totals(
@@ -1105,9 +1267,90 @@ class ProjectScheduleService:
                         product_id=column.product_id,
                         customer_code_raw=column.customer_code_raw,
                         qty=value,
+                        highlight=column.cell_highlights.get(phase_key),
                     )
                 )
         self.db.flush()
+
+    def _build_revision_proposals(
+        self,
+        version: DeliveryScheduleVersion,
+        phases: List[_Phase],
+        columns: List[_Column],
+        pages: Sequence[Tuple[int, dict]],
+    ) -> None:
+        """Section 9.7(b): a page's tinted cells plus its own margin note become a
+        re-date SUGGESTION, never an applied change.
+
+        First highlighted phase (by its CURRENT date) moves to the note's date;
+        each later one moves by the ORIGINAL gap to its predecessor -- the
+        document's own cadence, read off the dates already on the phases, never a
+        constant. A note with no highlighted cells on the same page, or highlighted
+        cells with no dated note, proposes nothing: the review shows the note or
+        the tint as-is and leaves the reading to a person.
+
+        Re-run on every extraction, same as the cells: a proposal already accepted
+        or rejected does not survive a re-read, because the cells it was built from
+        do not either (`_write_cells` replaces them). The override it already wrote
+        on `delivery_schedule_cells` does survive, until that row is itself
+        replaced by the same re-read.
+        """
+        by_key = {phase.key: phase for phase in phases}
+        proposals: List[Dict[str, Any]] = []
+        for page_no, data in pages:
+            dated = _dated_note(data or {})
+            if dated is None:
+                continue
+            note_text, note_date = dated
+            for column in columns:
+                if column.page_no != page_no or not column.product_id:
+                    continue
+                highlighted = [
+                    by_key[key]
+                    for key in column.cell_highlights
+                    if key in column.cells and key in by_key and by_key[key].delivery_date
+                ]
+                if not highlighted:
+                    continue
+                highlighted.sort(key=lambda phase: phase.delivery_date)
+                cells: List[Dict[str, Any]] = []
+                previous_old: Optional[date] = None
+                previous_new: Optional[date] = None
+                for phase in highlighted:
+                    if previous_old is None:
+                        new_date = note_date
+                    else:
+                        gap_days = (phase.delivery_date - previous_old).days
+                        new_date = previous_new + timedelta(days=gap_days)
+                    cells.append(
+                        {
+                            "phase_id": phase.phase_id,
+                            "phase_label": phase.label,
+                            "qty": qty_str(column.cells.get(phase.key)),
+                            "old_date": phase.delivery_date.isoformat(),
+                            "new_date": new_date.isoformat(),
+                        }
+                    )
+                    previous_old, previous_new = phase.delivery_date, new_date
+                proposals.append(
+                    {
+                        "product_id": column.product_id,
+                        "item_code": self._product_code(column.product_id) or column.header_code,
+                        "note_text": note_text,
+                        "page_no": page_no,
+                        "state": PROPOSAL_PROPOSED,
+                        "decided_by": None,
+                        "decided_at": None,
+                        "cells": cells,
+                    }
+                )
+        version.revision_proposals = proposals
+
+    def _product_code(self, product_id: Optional[str]) -> Optional[str]:
+        if not product_id:
+            return None
+        row = self.db.query(Product.product_code).filter(Product.id == product_id).first()
+        return row[0] if row else None
 
     # ----------------------------------------------------------- reconciliation
 
@@ -1803,7 +2046,78 @@ class ProjectScheduleService:
         version.confirmed_at = datetime.utcnow()
         self.db.add(version)
         self.db.flush()
+        # Section 9.2: confirming a schedule version is where an authored SO built
+        # from an EARLIER version of the same schedule becomes stale. Best-effort,
+        # like every post-commit side effect (CLAUDE.md): a notification that fails
+        # must never turn a schedule that WAS confirmed into a 500.
+        try:
+            self._notify_stale_orders(version)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "schedule version %s confirmed, but notifying the stale order's "
+                "planner failed", version.id, exc_info=True,
+            )
         return version
+
+    def _amendment_preview_path(self, order: ProjectSalesOrder, version_id: str) -> str:
+        return (
+            f"/project-sales/{order.project_id}/sales-orders/{order.id}/revisions"
+            f"?schedule_version={version_id}"
+        )
+
+    def _stale_orders_for(self, version: DeliveryScheduleVersion) -> List[ProjectSalesOrder]:
+        """Authored orders on this schedule's PO that were built from an OLDER
+        version -- the ones a fresh confirm just made stale (AC, section 9.2)."""
+        schedule = self.schedule_for(version)
+        return (
+            self.db.query(ProjectSalesOrder)
+            .filter(
+                ProjectSalesOrder.purchase_order_id == schedule.purchase_order_id,
+                ProjectSalesOrder.status.in_(AUTHORED_LIVE_STATUSES),
+                ProjectSalesOrder.schedule_version_id.isnot(None),
+                ProjectSalesOrder.schedule_version_id != version.id,
+            )
+            .all()
+        )
+
+    def _notify_stale_orders(self, version: DeliveryScheduleVersion) -> None:
+        from app.models.projects import Project
+        from app.services.notification_service import NotificationService
+
+        orders = self._stale_orders_for(version)
+        if not orders:
+            return
+        label = version.revision_label or f"version {version.version_no}"
+        service = NotificationService(self.db)
+        for order in orders:
+            project = self.db.get(Project, order.project_id) if order.project_id else None
+            recipient = (project.owner_user_id if project else None) or order.published_by
+            if not recipient:
+                continue
+            reference = order.autocount_doc_no or order.provisional_ref
+            link = self._amendment_preview_path(order, version.id)
+            service.create_with_channel_preferences(
+                user_id=str(recipient),
+                type="project_schedule_confirmed_stale_so",
+                title=f"Delivery schedule {label} confirmed - {reference} needs an amendment",
+                body=(
+                    f"{reference} was built from an earlier version of this schedule. "
+                    "Review the suggested revision."
+                ),
+                data={
+                    "project_id": str(order.project_id) if order.project_id else None,
+                    "project_sales_order_id": str(order.id),
+                    "schedule_version_id": str(version.id),
+                    "sales_order_ref": reference,
+                    "link": link,
+                },
+                source_entity_type="project_sales_order",
+                source_entity_id=str(order.id),
+                dedup_key=f"{order.id}:{version.id}:schedule_confirmed_stale",
+                event_type="project_schedule_confirmed_stale_so",
+                send_in_app=True,
+                send_email=False,
+            )
 
     def _promote_phases(self, version: DeliveryScheduleVersion, payload: dict) -> None:
         """What THIS version says about each phase becomes what the project holds.
@@ -1835,6 +2149,85 @@ class ProjectScheduleService:
                 ),
                 code="schedule_version_confirmed",
             )
+
+    # ------------------------------------------------------ revision proposals
+
+    def _proposal_or_404(self, version: DeliveryScheduleVersion, index: int) -> dict:
+        proposals = version.revision_proposals or []
+        if index < 0 or index >= len(proposals):
+            raise AppException(
+                status_code=404,
+                message="That revision proposal was not found on this version.",
+                code="revision_proposal_not_found",
+            )
+        return proposals[index]
+
+    def _decide_proposal(
+        self,
+        version_id: str,
+        index: int,
+        *,
+        state: str,
+        actor_user_id: Optional[str],
+        apply_overrides: bool,
+    ) -> DeliveryScheduleVersion:
+        version = self.get_version(version_id)
+        self._assert_open(version)
+        proposals = list(version.revision_proposals or [])
+        proposal = self._proposal_or_404(version, index)
+        if proposal.get("state") != PROPOSAL_PROPOSED:
+            raise AppException(
+                status_code=409,
+                message=f"This proposal was already {proposal.get('state')}.",
+                code="revision_proposal_decided",
+            )
+        if apply_overrides:
+            for cell in proposal.get("cells") or []:
+                phase_id = cell.get("phase_id")
+                if not phase_id:
+                    continue
+                row = (
+                    self.db.query(DeliveryScheduleCell)
+                    .filter(
+                        DeliveryScheduleCell.version_id == version.id,
+                        DeliveryScheduleCell.phase_id == phase_id,
+                        DeliveryScheduleCell.product_id == proposal.get("product_id"),
+                    )
+                    .first()
+                )
+                if row is not None:
+                    row.delivery_date_override = _parse_date(cell.get("new_date"))
+        decided = dict(proposal)
+        decided["state"] = state
+        decided["decided_by"] = actor_user_id
+        decided["decided_at"] = datetime.utcnow().isoformat()
+        proposals[index] = decided
+        version.revision_proposals = proposals
+        flag_modified(version, "revision_proposals")
+        self.db.flush()
+        return version
+
+    def accept_revision_proposal(
+        self, version_id: str, index: int, *, actor_user_id: Optional[str]
+    ) -> DeliveryScheduleVersion:
+        """Writes the override for every cell the proposal names, and marks it
+        accepted. The cells this product does NOT carry a proposal for are
+        untouched -- accepting SRT382-6's re-date does nothing to any other
+        product's dates."""
+        return self._decide_proposal(
+            version_id, index, state=PROPOSAL_ACCEPTED,
+            actor_user_id=actor_user_id, apply_overrides=True,
+        )
+
+    def reject_revision_proposal(
+        self, version_id: str, index: int, *, actor_user_id: Optional[str]
+    ) -> DeliveryScheduleVersion:
+        """Marks the proposal rejected. Writes nothing else: the note and the tint
+        stay exactly as read, and the phase dates are untouched."""
+        return self._decide_proposal(
+            version_id, index, state=PROPOSAL_REJECTED,
+            actor_user_id=actor_user_id, apply_overrides=False,
+        )
 
     # --------------------------------------------------------------- serialising
 
@@ -1940,10 +2333,39 @@ class ProjectScheduleService:
                     "product_id": cell.product_id,
                     "customer_code_raw": cell.customer_code_raw,
                     "qty": qty_str(Decimal(cell.qty)),
+                    "highlight": cell.highlight,
+                    "delivery_date_override": (
+                        cell.delivery_date_override.isoformat()
+                        if cell.delivery_date_override
+                        else None
+                    ),
                 }
             )
 
         extracted = version.extracted_json or {}
+        # The customer occasionally writes a revision as PROSE in the margin rather
+        # than as a phase-column change (e.g. "ONLY FOR FLOOR TRAP TO BE DELIVER IN
+        # 2026, START FROM 23/7/2026"). The extractor reports it verbatim and does
+        # NOT turn it into a date -- inferring one here would be exactly the
+        # guess-a-date bug this file already had to be pinned against.
+        notes: List[Dict[str, Any]] = []
+        for page_entry in extracted.get("pages") or []:
+            page_data = page_entry.get("data") or {}
+            for note_text in page_data.get("notes") or []:
+                note_text = note_text.strip() if isinstance(note_text, str) else None
+                if note_text:
+                    notes.append({"page_no": page_entry.get("page_no"), "text": note_text})
+
+        # Section 9.2: only meaningful once this version is confirmed -- an open
+        # version is still being worked on, so nothing downstream is stale yet.
+        amendment_preview_url: Optional[str] = None
+        if version.confirmed_at is not None:
+            stale_orders = self._stale_orders_for(version)
+            if stale_orders:
+                amendment_preview_url = self._amendment_preview_path(
+                    stale_orders[0], version.id
+                )
+
         return {
             "id": str(version.id),
             "delivery_schedule_id": str(version.delivery_schedule_id),
@@ -1974,6 +2396,9 @@ class ProjectScheduleService:
             "products": products,
             "cells": cells,
             "date_warnings": payload.get("date_warnings") or [],
+            "notes": notes,
+            "revision_proposals": version.revision_proposals or [],
+            "amendment_preview_url": amendment_preview_url,
             "acknowledgement": payload.get("acknowledgement"),
             # From the payload being SERVED, not from the row's own counters: a confirmed
             # version is refreshed for display without being written, so the counters can
