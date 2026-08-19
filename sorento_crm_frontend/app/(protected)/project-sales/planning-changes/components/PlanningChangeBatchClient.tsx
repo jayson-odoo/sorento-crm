@@ -226,7 +226,7 @@ function BatchMetaStrip({ batch }: { batch: PlanningChangeBatch }) {
         >
           {batch.source.file_name}
         </Link>
-        {` · ${formatDateTimeInMalaysia(batch.created_at)} · ${batch.created_by_name}`}
+        {` · ${formatDateTimeInMalaysia(batch.created_at)} · ${batch.created_by_name ?? 'Unknown'}`}
       </p>
       <p>
         {`Scope: ${plural(lineCount, 'planned line')} on ${plural(orderCount, 'order')} moved · `}

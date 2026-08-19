@@ -12,6 +12,13 @@ import type {
   PlanningChangeDecision,
   PlanningChangeListParams,
 } from '../types/planningChange.types';
+import { FULFILMENT_PLANNING_KEY, PLANNING_BOARD_KEY } from './useFulfilmentPlanning';
+import {
+  ORDER_INQUIRY_ROWS_KEY,
+  ORDER_INQUIRY_SUMMARY_KEY,
+  ORDER_INQUIRY_WORKLIST_KEY,
+  ORDER_INQUIRY_WORKLIST_SUMMARY_KEY,
+} from './useOrderInquiry';
 
 export const PLANNING_CHANGE_BATCHES_KEY = 'planning-change-batches';
 export const PLANNING_CHANGE_BATCH_KEY = 'planning-change-batch';
@@ -57,6 +64,17 @@ export function usePlanningChangeMutations(batchId: string) {
     mutationFn: () => applyPlanningChanges(batchId),
     onSuccess: (result) => {
       invalidate();
+      // Apply writes through the same supply-confirmation path Fulfilment Planning uses
+      // (module docstring): the board reads live holds, and purchasing's Order Inquiry list
+      // is exactly what a released/replanned/reduced line hands over. Leaving either stale
+      // would show a planner a Reserve their own Apply had just released, or hide the rows
+      // purchasing was just told about.
+      queryClient.invalidateQueries({ queryKey: [FULFILMENT_PLANNING_KEY] });
+      queryClient.invalidateQueries({ queryKey: [PLANNING_BOARD_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_ROWS_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_SUMMARY_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
       if (result.already_applied) {
         toast.success('This batch was already applied.');
         return;

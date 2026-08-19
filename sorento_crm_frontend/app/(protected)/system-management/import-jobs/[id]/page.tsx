@@ -30,7 +30,9 @@ import {
 import { useCancelImportJob, useImportJobStatus } from '../hooks/useImportJobs';
 import { OutcomeBreakdownCard } from '../components/OutcomeBreakdownCard';
 import { ImportJobRowsCard } from '../components/ImportJobRowsCard';
+import { PlanningChangeOutcomeCard } from '../components/PlanningChangeOutcomeCard';
 import { toast } from 'sonner';
+import type { OutstandingPlanningChangeBatch } from '../../../scm/reorder/services/outstandingImportService';
 
 const JOB_TYPE_LABELS: Record<string, string> = {
   order_import: 'Order Import',
@@ -51,6 +53,20 @@ const JOB_TYPE_LABELS: Record<string, string> = {
 
 function getJobTypeLabel(jobType: string): string {
   return JOB_TYPE_LABELS[jobType] ?? jobType;
+}
+
+/**
+ * `result.upload.planning_change_batch` (`_run_scm_upload_job` nests the outstanding
+ * channel's own answer under `upload`) - `null` on every job that never raised one, which is
+ * most of them.
+ */
+function planningChangeBatchOf(
+  result: unknown,
+): OutstandingPlanningChangeBatch | null {
+  const upload = (result as { upload?: { planning_change_batch?: unknown } } | null | undefined)
+    ?.upload;
+  const batch = upload?.planning_change_batch as OutstandingPlanningChangeBatch | null | undefined;
+  return batch ?? null;
 }
 
 type ImportJobDetailPageProps = {
@@ -192,6 +208,7 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
   const displaySuccessful = progress ? progress.successful : job.successful_rows;
   const displayFailed = progress ? progress.failed : job.failed_rows;
   const displaySkipped = progress ? progress.skipped : job.skipped_rows;
+  const planningChangeBatch = planningChangeBatchOf(job.result);
 
   return (
     <>
@@ -411,6 +428,9 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
               </div>
             </CardContent>
           </Card>
+
+          {/* The planned-line reaction this SO book upload raised, once the worker wrote it. */}
+          {planningChangeBatch && <PlanningChangeOutcomeCard batch={planningChangeBatch} />}
 
           {/* Outcome breakdown - every reason, exact counts, never truncated */}
           <OutcomeBreakdownCard

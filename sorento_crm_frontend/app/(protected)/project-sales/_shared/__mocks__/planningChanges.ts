@@ -10,7 +10,7 @@
  * (one order that failed, one row a later board edit superseded before Apply ran) plus the
  * `result` Apply wrote.
  *
- * Kept after Phase 2 lands only where a component test still reads from it - one shape for the
+ * Kept after the backend landed because the component tests read from it: one shape for the
  * prototype and the tests means a test cannot pass against a row the screen never saw.
  */
 import type {

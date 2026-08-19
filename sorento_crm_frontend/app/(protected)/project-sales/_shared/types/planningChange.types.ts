@@ -192,8 +192,11 @@ export interface PlanningChangeBatchSource {
   upload_id: string;
   file_name: string;
   kind: PlanningChangeSourceKind;
-  /** The import job this upload ran as - `/system-management/import-jobs/{import_job_id}`. */
-  import_job_id: string;
+  /**
+   * The import job this upload ran as - `/system-management/import-jobs/{import_job_id}`.
+   * `null` when the batch is not traceable to an import job (backend: `Optional[str]`).
+   */
+  import_job_id?: string | null;
 }
 
 /**
@@ -216,7 +219,8 @@ export interface PlanningChangeResult {
 export interface PlanningChangeBatch {
   id: string;
   created_at: string;
-  created_by_name: string;
+  /** `null` when the upload ran with no acting user (e.g. an API-key import). */
+  created_by_name?: string | null;
   source: PlanningChangeBatchSource;
   applied_at?: string | null;
   applied_by_name?: string | null;
@@ -229,7 +233,8 @@ export interface PlanningChangeBatch {
 export interface PlanningChangeBatchSummary {
   id: string;
   created_at: string;
-  created_by_name: string;
+  /** `null` when the upload ran with no acting user (e.g. an API-key import). */
+  created_by_name?: string | null;
   source: PlanningChangeBatchSource;
   order_count: number;
   line_count: number;
