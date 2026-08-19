@@ -83,11 +83,11 @@ export interface ScheduleGridController {
 /**
  * The identity column, and it is wide because it carries the picker as well as the code.
  */
-const PRODUCT_COL = 'w-[240px] min-w-[240px] max-w-[240px]';
+export const PRODUCT_COL = 'w-[240px] min-w-[240px] max-w-[240px]';
 /** One per delivery phase, sized for a date plus the phase it belongs to. */
-const DATE_COL = 'w-[136px] min-w-[136px] max-w-[136px]';
+export const DATE_COL = 'w-[136px] min-w-[136px] max-w-[136px]';
 /** The three numbers that close every product row. */
-const TOTAL_COL = 'w-[124px] min-w-[124px] max-w-[124px]';
+export const TOTAL_COL = 'w-[124px] min-w-[124px] max-w-[124px]';
 
 /**
  * Two paint layers, and every pinned cell names the one it is on.
@@ -97,8 +97,8 @@ const TOTAL_COL = 'w-[124px] min-w-[124px] max-w-[124px]';
  * equal z-index the winner is whichever the DOM happened to put last rather than whichever
  * a reader expects to see.
  */
-const Z_PINNED = 'z-20';
-const Z_CORNER = 'z-30';
+export const Z_PINNED = 'z-20';
+export const Z_CORNER = 'z-30';
 
 /**
  * A pinned cell has to be OPAQUE, and this is the whole of the "stray number in the header"
@@ -111,7 +111,7 @@ const Z_CORNER = 'z-30';
  * what a pinned cell needs. It is also the only way to tint these tokens: the theme resolves
  * them to `oklch(...)`, so `hsl(var(--destructive) / 0.1)` would be dropped as invalid.
  */
-const UNRECONCILED_BG = 'bg-[color-mix(in_oklab,var(--destructive)_12%,var(--muted))]';
+export const UNRECONCILED_BG = 'bg-[color-mix(in_oklab,var(--destructive)_12%,var(--muted))]';
 
 /**
  * The schedule, TRANSPOSED: dates across the top, products down the side.
@@ -423,7 +423,7 @@ function DateTotal({ values }: { values: string[] }) {
   return <>{scheduled ? sumQty(values) : ''}</>;
 }
 
-function TotalsHeading({ label }: { label: string }) {
+export function TotalsHeading({ label }: { label: string }) {
   return (
     <th
       scope="col"
@@ -438,7 +438,7 @@ function TotalsHeading({ label }: { label: string }) {
   );
 }
 
-function TotalCell({
+export function TotalCell({
   column,
   value,
   missingLabel,
@@ -477,7 +477,7 @@ function TotalCell({
  * A product, as the head of its own row: what it is, whether it reconciles, and the way to
  * correct it when the code was matched to the wrong thing.
  */
-function ProductHeading({
+export function ProductHeading({
   column,
   controller,
 }: {

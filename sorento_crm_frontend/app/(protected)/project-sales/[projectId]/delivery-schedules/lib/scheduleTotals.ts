@@ -277,6 +277,101 @@ export function buildCellMetaMap(cells: CellMetaLike[]): Map<string, CellMeta> {
   return map;
 }
 
+// ------------------------------------------------------------------ by-date columns (9.8)
+
+export interface DateColumnCell {
+  qty: string;
+  /** The phase this cell's quantity was slotted for, before any accepted override. */
+  phaseId: string;
+  /** Set only when this cell's effective date differs from its own phase's date. */
+  wasDate?: string;
+}
+
+export interface DateColumn {
+  /** ISO, ascending. */
+  date: string;
+  /** The phase(s) whose cells landed here, in the sheet's own (sequence) order, deduped by label. */
+  phaseLabels: string[];
+  /** columnKey (product id, else `#index`) -> the cell at this date. */
+  cells: Map<string, DateColumnCell>;
+}
+
+interface DateColumnPhaseLike {
+  id: string;
+  label: string | null;
+  sequence: number;
+  delivery_date: string | null;
+}
+
+interface DateColumnCellLike extends CellLike {
+  delivery_date_override?: string | null;
+}
+
+/**
+ * The schedule turned round the OTHER way: one column per EFFECTIVE delivery date rather
+ * than per phase. A cell's effective date is its accepted override when it has one, else its
+ * own phase's date - so accepting SRT382-6's re-date moves its quantity to sit under the new
+ * date here, not under the phase it started on (the captain's own question, 19 Aug: "the
+ * quantity should be moved to the new accepted date").
+ *
+ * Built from the CELLS, not the phases: a date with no cell landing on it - whether nothing
+ * was ever scheduled there or every cell that was has since moved away - produces no column
+ * at all, which is what "empty date columns never appear" asks for. A pure function, no
+ * React: `DeliveryScheduleByDateMatrix` is the only reader.
+ */
+export function dateColumns(version: {
+  phases: DateColumnPhaseLike[];
+  cells: DateColumnCellLike[];
+}): DateColumn[] {
+  const phaseById = new Map(version.phases.map((phase) => [phase.id, phase]));
+  const groups = new Map<
+    string,
+    { phaseIds: Set<string>; cells: Map<string, DateColumnCell> }
+  >();
+
+  for (const cell of version.cells) {
+    const phase = phaseById.get(cell.phase_id);
+    if (!phase) continue;
+    const effective = cell.delivery_date_override ?? phase.delivery_date;
+    if (!effective) continue;
+    const key = cellColumnKey(cell);
+    if (!key) continue;
+
+    let group = groups.get(effective);
+    if (!group) {
+      group = { phaseIds: new Set(), cells: new Map() };
+      groups.set(effective, group);
+    }
+    group.phaseIds.add(phase.id);
+    group.cells.set(key, {
+      qty: cell.qty,
+      phaseId: phase.id,
+      wasDate:
+        phase.delivery_date && phase.delivery_date !== effective
+          ? phase.delivery_date
+          : undefined,
+    });
+  }
+
+  return Array.from(groups.entries())
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([date, group]) => {
+      const phases = Array.from(group.phaseIds)
+        .map((id) => phaseById.get(id))
+        .filter((phase): phase is DateColumnPhaseLike => Boolean(phase))
+        .sort((a, b) => a.sequence - b.sequence);
+      const seen = new Set<string>();
+      const phaseLabels: string[] = [];
+      for (const phase of phases) {
+        const label = phaseRowLabel(phase);
+        if (seen.has(label)) continue;
+        seen.add(label);
+        phaseLabels.push(label);
+      }
+      return { date, phaseLabels, cells: group.cells };
+    });
+}
+
 /**
  * The three numbers per column, and whether they agree.
  *

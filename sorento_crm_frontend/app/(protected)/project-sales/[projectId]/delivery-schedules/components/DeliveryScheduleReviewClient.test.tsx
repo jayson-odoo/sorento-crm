@@ -1092,3 +1092,53 @@ describe('DeliveryScheduleReviewClient notes and revision proposals', () => {
     expect(await screen.findByText(/^Accepted /)).toBeInTheDocument();
   });
 });
+
+/** Section 9.8 - By phase / By date, and the hint chip that offers the switch. */
+describe('DeliveryScheduleReviewClient, By phase / By date', () => {
+  it('defaults to By phase, and switches renderer when the toggle is pressed', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+    expect(screen.queryByTestId('schedule-by-date-matrix')).toBeNull();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'By date' }));
+
+    expect(await screen.findByTestId('schedule-by-date-matrix')).toBeInTheDocument();
+    expect(screen.queryByTestId('schedule-matrix')).toBeNull();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'By phase' }));
+    expect(await screen.findByTestId('schedule-matrix')).toBeInTheDocument();
+  });
+
+  it('shows no hint chip while nothing has been re-dated', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+    expect(screen.queryByText(/re-dated - view by date/)).toBeNull();
+  });
+
+  it('offers the hint chip once a cell carries an accepted override, and switches on click', async () => {
+    getDeliveryScheduleVersion.mockResolvedValue(
+      version({
+        cells: [
+          {
+            phase_id: 'ph1',
+            product_id: 'p1',
+            product_index: 0,
+            qty: '927',
+            delivery_date_override: '2026-07-23',
+          },
+          { phase_id: 'ph2', product_id: 'p2', product_index: 1, qty: '8' },
+          { phase_id: 'ph1', product_id: null, product_index: 2, qty: '927' },
+        ],
+      }),
+    );
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    const chip = screen.getByText('1 cell re-dated - view by date');
+    fireEvent.click(chip);
+
+    expect(await screen.findByTestId('schedule-by-date-matrix')).toBeInTheDocument();
+    // Once switched to By date, the hint (a By phase affordance) is gone.
+    expect(screen.queryByText(/re-dated - view by date/)).toBeNull();
+  });
+});
