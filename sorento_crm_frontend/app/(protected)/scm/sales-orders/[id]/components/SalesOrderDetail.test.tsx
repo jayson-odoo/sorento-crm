@@ -130,6 +130,42 @@ describe('SalesOrderDetail - states', () => {
     }
   });
 
+  it('shows each line\'s Location, falling back to "-" only for a line the API sent none for', () => {
+    // The gap this guards: a line carrying `warehouse_code` must render the code, and a line
+    // without one (closed history with no warehouse assigned) must read "-", not a blank cell
+    // that is indistinguishable from a column that failed to render at all.
+    useSalesOrder.mockReturnValue({
+      data: so({
+        lines: [
+          {
+            id: 'l-open', sku: 'SKU-OPEN', product_name: 'Open line', qty_ordered: 150,
+            qty_delivered: 0, uom: 'L', warehouse_code: 'BRW-IB', line_status: 'open',
+            required_date: null,
+          },
+          {
+            id: 'l-closed', sku: 'SKU-CLOSED', product_name: 'Closed line', qty_ordered: 500,
+            qty_delivered: 0, uom: 'L', warehouse_code: '', line_status: 'closed',
+            required_date: '2026-01-10',
+          },
+        ],
+        line_count: 2,
+        open_line_count: 1,
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    const openRow = screen.getByText('SKU-OPEN').closest('tr');
+    const closedRow = screen.getByText('SKU-CLOSED').closest('tr');
+    expect(openRow).not.toBeNull();
+    expect(closedRow).not.toBeNull();
+    expect(within(openRow as HTMLElement).getByText('BRW-IB')).toBeInTheDocument();
+    // The closed row has no location - it prints the same "-" every other empty cell on this
+    // grid uses, never a silently blank <td>.
+    expect(within(closedRow as HTMLElement).getAllByText('-').length).toBeGreaterThan(0);
+  });
+
   it('renders every section even when the record is bare', () => {
     // The CRUD standard, asserted on the emptiest record the API can return: a section that
     // disappears on missing data reads as a page that failed to load.
@@ -311,7 +347,7 @@ describe('SalesOrderDetail - sorting the lines', () => {
     // Printed as 04 Jul / 15 Aug / 01 Sep, so a sort on the displayed text would read
     // 01, 04, 15 and put September first.
     renderDetail();
-    fireEvent.click(screen.getByRole('button', { name: 'Required' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delivery date' }));
     expect(skuOrder()).toEqual(['SKU-C', 'SKU-A', 'SKU-B']);
   });
 });

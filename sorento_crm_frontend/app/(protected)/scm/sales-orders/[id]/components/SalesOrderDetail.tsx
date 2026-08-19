@@ -170,12 +170,14 @@ export function SalesOrderDetail({ id }: { id: string }) {
         id: 'required_date',
         // The ISO date, not the printed "04 Jul 2026": the display form sorts by day-of-month
         // and would put September before July. A line with no date sorts last either way.
+        // Labelled "Delivery date" - the same field (`required_date`) reads as "when this
+        // line ships", which is what the customer wants to know, not an internal deadline.
         accessorFn: (line) => line.required_date ?? undefined,
-        header: ({ column }) => <DataGridColumnHeader title="Required" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
         cell: ({ row }) =>
           row.original.required_date ? fmtDate(row.original.required_date) : '-',
         size: 130,
-        meta: { headerTitle: 'Required' },
+        meta: { headerTitle: 'Delivery date' },
       },
       {
         accessorKey: 'uom',
