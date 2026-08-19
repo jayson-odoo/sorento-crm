@@ -201,7 +201,7 @@ def test_the_list_can_be_narrowed_to_one_agent(db, world):
 
 
 # --------------------------------------------------------------------------- #
-# list_agents — GET /scm/sales-orders/agents (PLAN-demo-followups-19aug-ladder-v2 follow-up)
+# list_agents - GET /scm/sales-orders/agents (PLAN-demo-followups-19aug-ladder-v2 follow-up)
 #
 # A Purchasing-only SCM user holds `scm.dashboard.view` but not the sales-agents master's
 # own `master_data.sales_agents.view`, so the Agent filter/select is served off this route

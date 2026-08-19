@@ -190,7 +190,7 @@ class SalesOrderService:
         `agent_map` is a pre-built `{id: SalesAgent}` dict so a page of orders costs ONE
         query for every distinct agent rather than one per row (see `_agent_map`, used by
         `list`). A single-record read (`get`) has no map to share, so it falls back to one
-        direct lookup — still a single query, since it is a single order.
+        direct lookup - still a single query, since it is a single order.
         """
         if not agent_id:
             return None, None
