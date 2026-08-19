@@ -1396,8 +1396,8 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   }
 
   it('walks every rung in order, including the ones that gave nothing', () => {
-    const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
-    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+    const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
+    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
     const key = cell.contributions[0].key;
 
     const button = screen.getByTestId(`trail-info-${key}`);
@@ -1408,40 +1408,43 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       ...screen.getByTestId(`trail-${key}`).querySelectorAll('tbody tr[data-step]'),
     ].map((row) => row.querySelectorAll('td')[1]?.textContent);
     expect(sources).toEqual([
-      'Reserve at BRW-BB',
-      'Pool',
       'Incoming (SPO)',
-      'Borrow',
+      'Pool BRW-BB',
+      'Group take',
+      'Group borrow',
+      'Cross-group borrow',
       'Buy',
     ]);
   });
 
   it('states what each rung held, offered, gave, and what was still owed after it', () => {
-    const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
-    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+    // Ladder v2's whole-line rule (section E rule 6): the pool holds exactly what is owed, so
+    // it is proposed in full and the buy rung shows "Not needed" rather than a partial mix.
+    const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
+    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
     const key = cell.contributions[0].key;
     openTrail(key);
 
     // # | Source | Had | Ahead | For this line | Took | Still owed | Outcome
-    expect(stepCells(key, 'reserve_own')).toEqual([
-      '1',
-      'Reserve at BRW-BB',
-      '40',
+    expect(stepCells(key, 'pool')).toEqual([
+      '2',
+      'Pool BRW-BB',
+      '100',
       '-',
-      '40',
-      '40',
-      '60',
+      '100',
+      '100',
+      '0',
       'Took',
     ]);
     expect(stepCells(key, 'buy')).toEqual([
-      '5',
+      '6',
       'Buy',
       '-',
       '-',
-      '60',
-      '60',
       '0',
-      'Took',
+      '0',
+      '0',
+      'Not needed',
     ]);
   });
 
@@ -1455,9 +1458,9 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     const second = cell.contributions[1].key;
     openTrail(second);
 
-    expect(stepCells(second, 'reserve_own')).toEqual([
-      '1',
-      'Reserve at BRW-BB',
+    expect(stepCells(second, 'pool')).toEqual([
+      '2',
+      'Pool BRW-BB',
       '70',
       '60 across 1 line',
       '10',
@@ -1473,8 +1476,8 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     const key = cell.contributions[0].key;
     openTrail(key);
 
-    expect(stepCells(key, 'reserve_pool')).toContain('Not eligible');
-    expect(screen.getByText('no shared pool')).toBeInTheDocument();
+    expect(stepCells(key, 'group_take')).toContain('Nothing left');
+    expect(screen.getByText('no ownership group')).toBeInTheDocument();
   });
 
   it('says there is no plan at all for a line whose order states no location', () => {
@@ -1589,7 +1592,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   it('says a Borrow was found and left alone, and names the donors', () => {
     const cell = cellOf([demand({ qty: '100' })]);
     const contribution = cell.contributions[0];
-    const borrow = contribution.trail?.find((step) => step.kind === 'borrow');
+    const borrow = contribution.trail?.find((step) => step.kind === 'cross_group_borrow');
     Object.assign(borrow ?? {}, {
       opening: '25',
       offered: '25',
@@ -1600,7 +1603,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     renderCell(cell);
     openTrail(contribution.key);
 
-    const why = screen.getByTestId(`trail-why-${contribution.key}-borrow`);
+    const why = screen.getByTestId(`trail-why-${contribution.key}-cross_group_borrow`);
     expect(why.textContent).toContain('Use Amend to borrow');
     expect(screen.getByText('MWH-IB 20 · BRW 5')).toBeInTheDocument();
   });
@@ -1628,13 +1631,13 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
    * selling / discontinued, to see if we can take from BRW?" - and, on `Pool BRW | Had 0` beside
    * an Inventory screen showing `Available 1`: "why it shows 0?"
    */
-  it('opens the own rung with no hot-selling verdict in words, and shows no chip for an ordinary item', () => {
+  it('opens the pool rung with no hot-selling verdict in words, and shows no chip for an ordinary item', () => {
     const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
     const key = cell.contributions[0].key;
     openTrail(key);
 
-    expect(screen.getByTestId(`trail-why-${key}-reserve_own`).textContent).toBe(
+    expect(screen.getByTestId(`trail-why-${key}-pool`).textContent).toBe(
       'First in the queue here; this line takes 40.',
     );
     // An unflagged item is the ordinary case: no badge saying so.
@@ -1745,7 +1748,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   it('lays the pool pile out under rung 2 - on hand, SO, SPO, available, free, claimed ahead, left', () => {
     const cell = cellOf([demand({ qty: '1' })]);
     const contribution = cell.contributions[0];
-    const pool = contribution.trail?.find((step) => step.kind === 'reserve_pool');
+    const pool = contribution.trail?.find((step) => step.kind === 'pool');
     // The captain's B2155-NL-BLUE rung: BRW holds 1, its own line ahead claims it, 0 left.
     Object.assign(pool ?? {}, {
       location: 'BRW',
@@ -1775,8 +1778,8 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     renderCell(cell);
     openTrail(contribution.key);
 
-    expect(stepCells(contribution.key, 'reserve_pool').slice(1, 3)).toEqual(['Pool BRW', '0']);
-    expect(screen.getByTestId(`trail-why-${contribution.key}-reserve_pool`).textContent).toBe(
+    expect(stepCells(contribution.key, 'pool').slice(1, 3)).toEqual(['Pool BRW', '0']);
+    expect(screen.getByTestId(`trail-why-${contribution.key}-pool`).textContent).toBe(
       "BRW holds 1 on hand (Available 1 in stock), but BRW's own orders ranked ahead of this line claim 1, so 0 is left.",
     );
     const table = screen.getByTestId(`trail-pool-${contribution.key}`);
@@ -1787,12 +1790,12 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   });
 
   it('shows no pool sub-table when there is no shared pool', () => {
-    const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
-    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+    const cell = cellOf([demand({ qty: '100' })]);
+    renderDialog([demand({ qty: '100' })]);
     const key = cell.contributions[0].key;
     openTrail(key);
 
-    expect(screen.getByTestId(`trail-why-${key}-reserve_pool`).textContent).toBe(
+    expect(screen.getByTestId(`trail-why-${key}-pool`).textContent).toBe(
       'No shared pool for this product.',
     );
     expect(screen.queryByTestId(`trail-pool-${key}`)).not.toBeInTheDocument();

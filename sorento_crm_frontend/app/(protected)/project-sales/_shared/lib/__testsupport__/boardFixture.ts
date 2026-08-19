@@ -482,12 +482,15 @@ function applyFrozen(contribution: BoardContribution): void {
 }
 
 /**
- * The ladder as the server states it: EVERY rung, in order, including the ones that gave
- * nothing (PLAN 13.7, the captain's "what's the process you have gone through").
+ * The ladder as the server states it, ladder v2's own order (section E of
+ * `PLAN-demo-followups-19aug-ladder-v2.md`): Incoming, Pool, Group take, Group borrow,
+ * Cross-group borrow, Buy. The own-location Reserve rung is GONE (rule 7) - this fixture's
+ * `freeStock` map now models the SHARED POOL behind the line's location, never the location
+ * itself, which is why the rung it feeds is named `pool`.
  *
- * This fixture only ever models own-location free stock, so its pool, incoming and borrow rungs
- * are always empty - which is exactly the case worth having in the tests, because "checked and
- * had nothing" is the reading the screen must not silently drop.
+ * This fixture only ever models one pool and one cross-group donor, so `group_take` and
+ * `group_borrow` are always empty - which is exactly the case worth having in the tests,
+ * because "checked and had nothing" is the reading the screen must not silently drop.
  */
 function trailFor(input: {
   location: string;
@@ -537,7 +540,15 @@ function trailFor(input: {
     const key = leadingFactorOf(other, input.mine);
     byFactor[key] = (byFactor[key] ?? 0) + 1;
   }
-  add('reserve_own', {
+  add('incoming', {
+    location: input.location,
+    warehouse_id: `wh-${input.location}`,
+    opening: '0',
+    offered: 0,
+    taken: 0,
+    why: 'No supplier PO arrives by 3 Sep 2026.',
+  });
+  add('pool', {
     location: input.location,
     warehouse_id: `wh-${input.location}`,
     opening: fromMinor(input.opening),
@@ -548,8 +559,6 @@ function trailFor(input: {
     ahead_by_factor: byFactor,
     offered: input.offered,
     taken: input.reserved,
-    // No hot-selling clause here (19 August 2026, PLAN 3.3a): own-location Reserve is
-    // always eligible, so this rung reads exactly as it does for an ordinary item.
     why:
       input.reserved > 0
         ? input.ahead.lines > 0
@@ -557,24 +566,20 @@ function trailFor(input: {
           : `First in the queue here; this line takes ${fromMinor(input.reserved)}.`
         : input.ahead.lines > 0
           ? `${fromMinor(input.opening)} on hand, but ${input.ahead.lines} lines with ${aheadPhraseOf(byFactor)} rank ahead and want ${fromMinor(input.ahead.qty)} - none is left for this line.`
-          : `No free stock at ${input.location}.`,
+          : `No shared pool for this product.`,
   });
-  add('reserve_pool', {
+  add('group_take', {
     offered: 0,
     taken: 0,
-    outcome: 'not_eligible',
-    note: 'no shared pool',
-    why: 'No shared pool for this product.',
+    note: 'no ownership group',
+    why: 'This location carries no ownership group, so there are no siblings to take from.',
   });
-  add('incoming', {
-    location: input.location,
-    warehouse_id: `wh-${input.location}`,
-    opening: '0',
+  add('group_borrow', {
     offered: 0,
     taken: 0,
-    why: 'No supplier PO arrives by 3 Sep 2026.',
+    why: 'No other sales order in this ownership group is ranked below this line.',
   });
-  add('borrow', {
+  add('cross_group_borrow', {
     opening: '0',
     offered: 0,
     taken: 0,
