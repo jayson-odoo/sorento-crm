@@ -601,20 +601,23 @@ export type BoardSourceKind = 'reserve' | 'timely_spo' | 'buy' | 'borrow' | 'unp
 
 /**
  * The rungs of the source ladder, in the order the engine walks them - ladder v2
- * (`PLAN-demo-followups-19aug-ladder-v2.md` section E): incoming, then the pool, then
- * group take, group borrow, cross-group borrow, then buy. The own-location Reserve rung
- * is gone (rule 7) - a line's own stock is read-only on the strip, never a rung.
- * `reserve_own` / `reserve_pool` / plain `borrow` are the pre-v2 spellings, kept only so
- * a stale cached trail does not fail to render.
+ * (`PLAN-demo-followups-19aug-ladder-v2.md` section E, amended by review finding S4): the
+ * read-only own location (`reserve_own`), then incoming, the pool, group take, group
+ * borrow, cross-group borrow, then buy. The own-location rung is gone AS A SOURCE (rule
+ * 7 - a line's own stock is never reserved), but it stays as the first rung, read-only:
+ * it is the one place the queue ahead of THIS line at ITS OWN pile is named, because
+ * `QueueLink`'s dialog opens exactly this rung's own location and nowhere else's.
+ * `reserve_pool` / plain `borrow` are pre-v2 spellings, kept only so a stale cached trail
+ * does not fail to render.
  */
 export type BoardTrailKind =
+  | 'reserve_own'
   | 'incoming'
   | 'pool'
   | 'group_take'
   | 'group_borrow'
   | 'cross_group_borrow'
   | 'buy'
-  | 'reserve_own'
   | 'reserve_pool'
   | 'borrow';
 
@@ -789,6 +792,8 @@ export interface BoardDecisionBorrow {
   /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
   donor_core_line_id?: string | null;
   donor_required_date?: string | null;
+  /** The order-back this component raised: equal to what was taken. */
+  order_back_qty?: string | null;
 }
 
 /**
@@ -1051,6 +1056,8 @@ export interface BoardSource {
   same_agent?: boolean;
   /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
   donor_core_line_id?: string | null;
+  /** The donor's own required date - the order-back's urgency (section E.4). */
+  donor_required_date?: string | null;
 }
 
 /** A donor the engine found for a line's Borrow. Named, never an id. */

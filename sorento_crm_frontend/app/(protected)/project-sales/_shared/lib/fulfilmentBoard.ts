@@ -402,6 +402,7 @@ function borrowComponents(contribution: BoardContribution): ConfirmBorrowCompone
       donor_line_no: source.donor_line_no ?? null,
       donor_agent_code: source.donor_agent_code ?? null,
       same_agent: source.same_agent ?? false,
+      donor_required_date: source.donor_required_date ?? null,
     }));
 }
 

@@ -93,6 +93,10 @@ class BoardSource(BaseModel):
     #: Addressing only, never rendered: re-identifies the donor's own core line so
     #: approving this source AS PROPOSED still checks against its live commitment.
     donor_core_line_id: Optional[str] = None
+    #: The donor's own required date - the order-back's urgency (section E.4), carried
+    #: so approving this source AS PROPOSED still posts it (`ConfirmBorrowComponent`
+    #: takes it back), rather than making the order-back's urgency a second lookup.
+    donor_required_date: Optional[date] = None
 
 
 #: Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E): "incoming" now comes
@@ -296,6 +300,14 @@ class BoardDecisionBorrow(BaseModel):
     donor_line_no: Optional[int] = None
     donor_agent_code: Optional[str] = None
     same_agent: bool = False
+    #: Addressing only, never rendered: re-identifies the donor's own line so amending a
+    #: covered group-borrow line still names the SAME donor rather than posting it back as
+    #: an ordinary free-stock borrow (which the own-location check, rule 7, then refuses).
+    donor_core_line_id: Optional[str] = None
+    #: The donor's own required date - the order-back's urgency (section E.4).
+    donor_required_date: Optional[date] = None
+    #: The order-back this component raised: equal to what was taken.
+    order_back_qty: Optional[str] = None
 
 
 class BoardLineDecision(BaseModel):

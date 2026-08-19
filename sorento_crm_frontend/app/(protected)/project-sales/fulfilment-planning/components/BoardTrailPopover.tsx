@@ -387,6 +387,9 @@ function QueueLink({
  * gone (rule 7) - stock at the line's own location is read-only on the strip, never a rung.
  */
 function sourceOf(step: BoardTrailStep): string {
+  if (step.kind === 'reserve_own') {
+    return step.location ? `This location (${step.location})` : 'This location';
+  }
   if (step.kind === 'incoming') return 'Incoming (SPO)';
   if (step.kind === 'pool') return step.location ? `Pool ${step.location}` : 'Pool';
   if (step.kind === 'group_take') {
@@ -398,7 +401,11 @@ function sourceOf(step: BoardTrailStep): string {
   return 'Buy';
 }
 
-/** Who was in front of this line at a rung with a queue. No rung carries one under ladder v2. */
+/**
+ * Who was in front of this line at a rung with a queue. Own location only (`reserve_own`,
+ * S4 of the 19 Aug review): every other rung sends an empty list, because no other rung
+ * queues - the pool nets its own book before it is offered, and incoming and Buy have none.
+ */
 function aheadOf(step: BoardTrailStep): string {
   if (!step.ahead_lines) return '-';
   return `${step.ahead_qty ?? '0'} across ${step.ahead_lines} line${

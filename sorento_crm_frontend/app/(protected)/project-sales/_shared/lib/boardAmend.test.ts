@@ -180,6 +180,66 @@ describe('amendDraftFrom on a covered line', () => {
     const base = contributionOf({}, { decision: { ...frozen, buy_reason: undefined } });
     expect(amendDraftFrom(base).buy_reason).toBe('');
   });
+
+  it('keeps a group-borrow donor’s fields through Amend and back onto the posted payload (review finding B2)', () => {
+    // Dropping these on the round trip re-posts a covered group-borrow line as a plain
+    // free-stock donor, which the own-location check (rule 7) then refuses.
+    const groupBorrowFrozen = {
+      revision_no: 3,
+      timely_spo_qty: '0',
+      reserve: [],
+      borrow: [
+        {
+          source: 'other_location' as const,
+          warehouse_id: 'wh-MWH-BB',
+          location: 'MWH-BB',
+          donor_project_id: null,
+          qty: '90',
+          reason: 'Group borrow, auto-proposed.',
+          rung: 'group_borrow',
+          donor_so_number: 'SO371334',
+          donor_line_no: 2,
+          donor_agent_code: 'JEREMY',
+          same_agent: true,
+          donor_core_line_id: 'core-line-1',
+          donor_required_date: '2026-09-10',
+          order_back_qty: '90',
+        },
+      ],
+      buy_qty: '0',
+    };
+    const base = contributionOf({}, { decision: groupBorrowFrozen });
+    const draft = amendDraftFrom(base);
+
+    expect(draft.borrow).toEqual([
+      expect.objectContaining({
+        warehouse_id: 'wh-MWH-BB',
+        warehouse_code: 'MWH-BB',
+        qty: '90',
+        donor_core_line_id: 'core-line-1',
+        donor_so_number: 'SO371334',
+        donor_line_no: 2,
+        donor_agent_code: 'JEREMY',
+        same_agent: true,
+        donor_required_date: '2026-09-10',
+      }),
+    ]);
+
+    // Re-approved as-is (or re-posted untouched by Amend), the composition still names
+    // the SAME donor line - never a re-derived free-stock borrow at the same location.
+    const posted = decisionFromAmendDraft(draft, '');
+    expect(posted.borrow?.[0]).toEqual(
+      expect.objectContaining({
+        warehouse_id: 'wh-MWH-BB',
+        donor_core_line_id: 'core-line-1',
+        donor_so_number: 'SO371334',
+        donor_line_no: 2,
+        donor_agent_code: 'JEREMY',
+        same_agent: true,
+        donor_required_date: '2026-09-10',
+      }),
+    );
+  });
 });
 
 describe('borrowCandidatesOf: only a donor the confirmation can name', () => {

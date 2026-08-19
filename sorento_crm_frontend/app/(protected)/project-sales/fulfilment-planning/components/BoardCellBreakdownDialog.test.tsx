@@ -1408,6 +1408,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       ...screen.getByTestId(`trail-${key}`).querySelectorAll('tbody tr[data-step]'),
     ].map((row) => row.querySelectorAll('td')[1]?.textContent);
     expect(sources).toEqual([
+      'This location (BRW-BB)',
       'Incoming (SPO)',
       'Pool BRW-BB',
       'Group take',
@@ -1427,7 +1428,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
 
     // # | Source | Had | Ahead | For this line | Took | Still owed | Outcome
     expect(stepCells(key, 'pool')).toEqual([
-      '2',
+      '3',
       'Pool BRW-BB',
       '100',
       '-',
@@ -1437,7 +1438,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       'Took',
     ]);
     expect(stepCells(key, 'buy')).toEqual([
-      '6',
+      '7',
       'Buy',
       '-',
       '-',
@@ -1449,6 +1450,8 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   });
 
   it('names the queue that was ahead of the line at its own location', () => {
+    // S4 of the 19 August review: the queue is named on the READ-ONLY own-location rung,
+    // never on the pool - the pool nets its own (different) book before it is offered.
     const lines = [
       demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a', qty: '60' }),
       demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b', qty: '40' }),
@@ -1458,16 +1461,18 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     const second = cell.contributions[1].key;
     openTrail(second);
 
-    expect(stepCells(second, 'pool')).toEqual([
-      '2',
-      'Pool BRW-BB',
+    expect(stepCells(second, 'reserve_own')).toEqual([
+      '1',
+      'This location (BRW-BB)',
       '70',
       '60 across 1 line',
       '10',
-      '10',
-      '30',
-      'Took',
+      '0',
+      '40',
+      'Not eligible',
     ]);
+    // The pool rung itself carries no queue of its own in this fixture.
+    expect(stepCells(second, 'pool')[3]).toBe('-');
   });
 
   it('says a rung was skipped by a rule rather than leaving it out', () => {
@@ -1535,6 +1540,8 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   }
 
   it('says in words why each rung ended the way it did', () => {
+    // S4 of the 19 August review: the queue's own sentence lives on the READ-ONLY own
+    // location rung, the one rung `BoardTrailPopover` opens the whole queue from.
     const cell = rankedCell(queueOfFive(), { 'WESERP10B|BRW-BB': '40' });
     renderCell(cell);
     const last = cell.contributions[cell.contributions.length - 1].key;
@@ -1542,7 +1549,10 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
 
     const trail = screen.getByTestId(`trail-${last}`);
     expect(trail.textContent).toContain(
-      '40 on hand, but 4 lines with an earlier delivery date rank ahead and want 400 - none is left for this line.',
+      '0 left at BRW-BB after 400 owed to 4 lines ranked ahead of this line.',
+    );
+    expect(trail.textContent).toContain(
+      'stock at BRW-BB is committed to whichever sales order is queued for it',
     );
     expect(screen.getByTestId(`trail-why-${last}-buy`).textContent).toBe(
       'Nothing left to take, so the remainder is bought.',
@@ -1559,7 +1569,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
 
     const trail = screen.getByTestId(`trail-${last}`);
     expect(trail.textContent).toContain(
-      '40 on hand, but 4 lines with an earlier delivery date rank ahead and want 400 - none is left for this line.',
+      '0 left at BRW-BB after 400 owed to 4 lines ranked ahead of this line.',
     );
     expect(trail.textContent).not.toContain('Ahead of this line');
     expect(trail.querySelectorAll('[data-testid^="trail-ahead-line-"]')).toHaveLength(0);
@@ -1638,7 +1648,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     openTrail(key);
 
     expect(screen.getByTestId(`trail-why-${key}-pool`).textContent).toBe(
-      'First in the queue here; this line takes 40.',
+      'BRW-BB offers 40; this line takes 40.',
     );
     // An unflagged item is the ordinary case: no badge saying so.
     expect(screen.queryByTestId(`trail-flags-${key}`)).not.toBeInTheDocument();
@@ -1745,7 +1755,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     expect(screen.queryByTestId(`trail-flags-${key}`)).not.toBeInTheDocument();
   });
 
-  it('lays the pool pile out under rung 2 - on hand, SO, SPO, available, free, claimed ahead, left', () => {
+  it('lays the pool pile out under the pool rung - on hand, SO, SPO, available, free, claimed ahead, left', () => {
     const cell = cellOf([demand({ qty: '1' })]);
     const contribution = cell.contributions[0];
     const pool = contribution.trail?.find((step) => step.kind === 'pool');

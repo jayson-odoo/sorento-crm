@@ -1521,7 +1521,7 @@ def test_build_batch_proposal_for_a_covered_replan_row_is_the_boards_full_contri
     FROZEN composition (`_apply_frozen`: one source, no trail, no `rank_factors`) instead of
     running the ladder fresh. `_proposal_for` now previews this one line as uncovered
     (`FulfilmentBoardService.build(..., exclude_covered_line_ids=[project_line_id])`), so the
-    proposal is the board's own full `BoardContribution` - sources, a 5-rung trail,
+    proposal is the board's own full `BoardContribution` - sources, a 7-rung trail,
     `rank_factors`, and `item_flags` - the same shape `BoardTrailPopover` / `BoardAmendDialog`
     already render off the live board."""
     client, world = api
@@ -1558,9 +1558,12 @@ def test_build_batch_proposal_for_a_covered_replan_row_is_the_boards_full_contri
 
     proposal = row["proposal"]
     assert proposal is not None
-    # Ladder v2's six rungs (incoming, pool, group take, group borrow, cross-group
-    # borrow, buy) - the own-location Reserve rung this pinned before is gone.
-    assert [step["step"] for step in proposal["trail"]] == [1, 2, 3, 4, 5, 6]
+    # Ladder v2's seven rungs (the read-only own location, then incoming, pool, group
+    # take, group borrow, cross-group borrow, buy) - the own-location rung is never a
+    # SOURCE any more (rule 7), but it stays as a read-only first rung (S4 of the 19
+    # August review): it is the one place the queue ahead of this line is named.
+    assert [step["step"] for step in proposal["trail"]] == [1, 2, 3, 4, 5, 6, 7]
+    assert [step["kind"] for step in proposal["trail"]][0] == "reserve_own"
     assert proposal["rank_factors"]
     assert proposal["sources"]
     assert proposal["item_flags"] is not None

@@ -74,6 +74,54 @@ const OTHER_PROJECT: BorrowCandidate = {
   donor_impact: { free_before: '50', free_after_full_borrow: '10', committed_qty: '50' },
 };
 
+/** A ladder v2 group-borrow donor (section E.4): named by its SALES ORDER LINE, ranked below
+ * this one and offered because it shares the line's own agent - "she can authorise CS to move
+ * stock between her own orders" (section 8). */
+const GROUP_BORROW: BorrowCandidate = {
+  source: 'other_location',
+  warehouse_code: 'MWH-BB',
+  warehouse_id: 'wh-mwh-bb',
+  free_qty: '90',
+  qty_on_hand: '90',
+  so_qty: '0',
+  spo_qty: '0',
+  available_qty: '90',
+  qty_free: '90',
+  qty_committed: '0',
+  need_qty: '90',
+  available_after_need: '0',
+  recommended: false,
+  donor_impact: { free_before: '90', free_after_full_borrow: '0', committed_qty: '0' },
+  rung: 'group_borrow',
+  donor_so_number: 'SO371334',
+  donor_line_no: 2,
+  donor_agent_code: 'JEREMY',
+  donor_core_line_id: 'core-line-1',
+  same_agent: true,
+};
+
+/** A cross-group donor outside the small-quantity cap (section E rule 5): shown, never
+ * selectable without an override. */
+const OVER_CAP: BorrowCandidate = {
+  source: 'other_location',
+  warehouse_code: 'WH3',
+  warehouse_id: 'wh-wh3',
+  free_qty: '500',
+  qty_on_hand: '500',
+  so_qty: '0',
+  spo_qty: '0',
+  available_qty: '500',
+  qty_free: '500',
+  qty_committed: '0',
+  need_qty: '20',
+  available_after_need: '480',
+  recommended: false,
+  donor_impact: { free_before: '500', free_after_full_borrow: '480', committed_qty: '0' },
+  rung: 'cross_group_borrow',
+  over_cap: true,
+  cap_reason: 'Outside the cross-group borrow limit (50 units or 10%).',
+};
+
 const onAdd = vi.fn();
 const onDone = vi.fn();
 
@@ -339,5 +387,94 @@ describe('BorrowAddDialog', () => {
 
     expect(container.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
     expect(screen.getByRole('dialog').textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
+  });
+});
+
+/**
+ * Ladder v2's group-aware donor list (section E.4, section 8): a donor named by its own
+ * SALES ORDER LINE, an over-cap donor shown but never selectable, and a "Same agent" badge -
+ * the captain's "she can authorise CS to move stock between her own orders" (S13 of the 19
+ * August review findings).
+ */
+describe('BorrowAddDialog: ladder v2 group-aware donors', () => {
+  it('disables an over-cap donor and never lets it become the valid choice', () => {
+    renderDialog([OVER_CAP]);
+
+    const row = screen.getByTestId('borrow-donor-WH3');
+    expect(within(row).getByRole('radio')).toBeDisabled();
+    expect(screen.getByTestId('borrow-cap-reason-WH3')).toHaveTextContent(
+      'Outside the cross-group borrow limit (50 units or 10%).',
+    );
+
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '20' } });
+    fireEvent.change(screen.getByLabelText(/Reason/), {
+      target: { value: 'Small enough to borrow.' },
+    });
+    expect(screen.getByRole('button', { name: 'Add the borrow' })).toBeDisabled();
+  });
+
+  it('skips an over-cap donor for the default selection, opening on the first selectable one', () => {
+    renderDialog([OVER_CAP, OTHER_LOCATION]);
+
+    expect(within(screen.getByTestId('borrow-donor-HQ')).getByRole('radio')).toBeChecked();
+    expect(
+      within(screen.getByTestId('borrow-donor-WH3')).getByRole('radio'),
+    ).not.toBeChecked();
+  });
+
+  it('shows a Same agent badge for a donor sharing this line’s own sales agent', () => {
+    renderDialog([GROUP_BORROW]);
+
+    expect(screen.getByTestId('borrow-same-agent-MWH-BB')).toHaveTextContent('Same agent');
+  });
+
+  it('shows no Same agent badge for a donor that does not share the agent', () => {
+    renderDialog([OTHER_LOCATION]);
+
+    expect(screen.queryByTestId('borrow-same-agent-HQ')).not.toBeInTheDocument();
+  });
+
+  it('names a group-borrow donor by its sales order and line, never its bare warehouse code', () => {
+    renderDialog([GROUP_BORROW]);
+
+    expect(screen.getByText('SO371334 line 2')).toBeInTheDocument();
+    expect(screen.getByText('At MWH-BB')).toBeInTheDocument();
+  });
+
+  it('falls back to "An unnamed sales order" when a group-borrow donor names no SO', () => {
+    renderDialog([{ ...GROUP_BORROW, donor_so_number: null, donor_line_no: null }]);
+
+    expect(screen.getByText('An unnamed sales order')).toBeInTheDocument();
+  });
+
+  it('keeps two donor lines at the same location distinct by their own core line (candidateKey)', () => {
+    // Two SOs both lending from MWH-BB: candidateKey has to fold in `donor_core_line_id`, or
+    // the second row's radio would silently select the first donor's line instead.
+    const first = GROUP_BORROW;
+    const second: BorrowCandidate = {
+      ...GROUP_BORROW,
+      donor_core_line_id: 'core-line-2',
+      donor_line_no: 5,
+      same_agent: false,
+    };
+    renderDialog([first, second]);
+
+    const rows = screen.getAllByTestId('borrow-donor-MWH-BB');
+    expect(rows).toHaveLength(2);
+    expect(screen.getByText('SO371334 line 2')).toBeInTheDocument();
+    expect(screen.getByText('SO371334 line 5')).toBeInTheDocument();
+    const radios = rows.map((row) => within(row).getByRole('radio'));
+    expect(radios[0]).toBeChecked();
+    expect(radios[1]).not.toBeChecked();
+
+    fireEvent.click(radios[1]);
+    expect(radios[0]).not.toBeChecked();
+    expect(radios[1]).toBeChecked();
+
+    fireEvent.change(screen.getByLabelText(/Reason/), {
+      target: { value: 'Confirmed with CS.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
+    expect(onAdd).toHaveBeenCalledWith(second, expect.any(String), 'Confirmed with CS.');
   });
 });

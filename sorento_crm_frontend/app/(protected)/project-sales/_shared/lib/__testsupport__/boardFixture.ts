@@ -483,10 +483,12 @@ function applyFrozen(contribution: BoardContribution): void {
 
 /**
  * The ladder as the server states it, ladder v2's own order (section E of
- * `PLAN-demo-followups-19aug-ladder-v2.md`): Incoming, Pool, Group take, Group borrow,
- * Cross-group borrow, Buy. The own-location Reserve rung is GONE (rule 7) - this fixture's
- * `freeStock` map now models the SHARED POOL behind the line's location, never the location
- * itself, which is why the rung it feeds is named `pool`.
+ * `PLAN-demo-followups-19aug-ladder-v2.md`, S4 of the 19 August review): the read-only own
+ * location, then Incoming, Pool, Group take, Group borrow, Cross-group borrow, Buy. The
+ * own-location Reserve rung is GONE AS A SOURCE (rule 7) but stays as a read-only first
+ * rung, because it is the one place the queue ahead of THIS line at ITS OWN pile is named -
+ * `BoardTrailPopover`'s `QueueLink` opens exactly `fulfilment_warehouse_id`, which is this
+ * rung's own location and nowhere else's.
  *
  * This fixture only ever models one pool and one cross-group donor, so `group_take` and
  * `group_borrow` are always empty - which is exactly the case worth having in the tests,
@@ -540,6 +542,25 @@ function trailFor(input: {
     const key = leadingFactorOf(other, input.mine);
     byFactor[key] = (byFactor[key] ?? 0) + 1;
   }
+  // 0. Read-only: this line's own location. Never taken (rule 7), but the ONE rung that
+  // names the queue ahead of it, exactly as the real backend's `reserve_own` rung does.
+  add('reserve_own', {
+    location: input.location,
+    warehouse_id: `wh-${input.location}`,
+    opening: fromMinor(input.opening),
+    ahead_qty: fromMinor(input.ahead.qty),
+    ahead_lines: input.ahead.lines,
+    ahead: named,
+    ahead_more: Math.max(input.aheadLines.length - named.length, 0),
+    ahead_by_factor: byFactor,
+    offered: input.offered,
+    taken: 0,
+    outcome: 'not_eligible',
+    why:
+      input.ahead.lines > 0
+        ? `${fromMinor(input.offered)} left at ${input.location} after ${fromMinor(input.ahead.qty)} owed to ${input.ahead.lines} line${input.ahead.lines === 1 ? '' : 's'} ranked ahead of this line. Never reserved: stock at ${input.location} is committed to whichever sales order is queued for it - borrow from another sales order instead.`
+        : `${fromMinor(input.offered)} at ${input.location}, nothing ranked ahead of this line there. Never reserved: stock at ${input.location} is committed to whichever sales order is queued for it - borrow from another sales order instead.`,
+  });
   add('incoming', {
     location: input.location,
     warehouse_id: `wh-${input.location}`,
@@ -552,20 +573,13 @@ function trailFor(input: {
     location: input.location,
     warehouse_id: `wh-${input.location}`,
     opening: fromMinor(input.opening),
-    ahead_qty: fromMinor(input.ahead.qty),
-    ahead_lines: input.ahead.lines,
-    ahead: named,
-    ahead_more: Math.max(input.aheadLines.length - named.length, 0),
-    ahead_by_factor: byFactor,
     offered: input.offered,
     taken: input.reserved,
     why:
       input.reserved > 0
-        ? input.ahead.lines > 0
-          ? `${fromMinor(input.offered)} left after the ${input.ahead.lines} lines ahead; this line takes ${fromMinor(input.reserved)}.`
-          : `First in the queue here; this line takes ${fromMinor(input.reserved)}.`
-        : input.ahead.lines > 0
-          ? `${fromMinor(input.opening)} on hand, but ${input.ahead.lines} lines with ${aheadPhraseOf(byFactor)} rank ahead and want ${fromMinor(input.ahead.qty)} - none is left for this line.`
+        ? `${input.location} offers ${fromMinor(input.offered)}; this line takes ${fromMinor(input.reserved)}.`
+        : input.offered > 0
+          ? `${input.location} offers ${fromMinor(input.offered)}, but nothing is left for this line.`
           : `No shared pool for this product.`,
   });
   add('group_take', {
@@ -635,27 +649,6 @@ function leadingFactorOf(other: BoardContribution, mine: BoardContribution): str
     }
   }
   return best ?? tie;
-}
-
-/** The two commonest reasons the queue is ahead, in the words the server uses. */
-function aheadPhraseOf(byFactor: Record<string, number>): string {
-  const phrases: Record<string, string> = {
-    need_by_date: 'an earlier delivery date',
-    document_age: 'an older order date',
-    customer_credit: 'shorter payment terms',
-    demand_class: 'a higher-ranked demand type',
-    po_document_sequence: 'an earlier purchase order sequence',
-    line_order: 'an earlier line number in the same order',
-    tie_break: 'the same rank and a lower sales order number',
-  };
-  const ranked = Object.entries(byFactor).sort(
-    (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
-  );
-  if (ranked.length === 0) return 'a higher rank';
-  return ranked
-    .slice(0, 2)
-    .map(([key]) => phrases[key] ?? key.replace(/_/g, ' '))
-    .join(' or ');
 }
 
 /**
