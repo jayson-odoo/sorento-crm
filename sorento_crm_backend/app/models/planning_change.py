@@ -71,6 +71,11 @@ class PlanningChangeBatch(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "planning_change_batches"
+    # Born straight into `projects` (migration 29d85dc3ccc3), after the schema move (354) -
+    # no pre-move name to pin, so it adopts the `project_` prefix convention the way
+    # `so_supply_decisions` did (`app/models/project_so.py`,
+    # `test_projects_audit_entity_types.py::test_a_model_born_after_the_move_...`).
+    __audit_entity_type__ = "project_planning_change_batches"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     import_job_id = Column(
@@ -106,6 +111,8 @@ class PlanningChangeRow(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "planning_change_rows"
+    # Same convention as the batch above: born after 354, no pre-move name to pin.
+    __audit_entity_type__ = "project_planning_change_rows"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     batch_id = Column(

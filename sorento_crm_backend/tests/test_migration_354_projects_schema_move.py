@@ -40,7 +40,13 @@ SORENTO = "00000000-0000-0000-0000-000000000001"
 # Tables that declare the `projects` schema but were CREATED after the move, so revision
 # 354 has never heard of them: they have no pre-move name, no derived-index rename, and
 # both of 354's directions leave them exactly where their own migration put them.
-BORN_AFTER_THE_MOVE = frozenset({"so_supply_decisions"})
+BORN_AFTER_THE_MOVE = frozenset({
+    "so_supply_decisions",
+    # PLAN-so-book-diff-replanning.md: born straight into `projects` by their own migration
+    # (29d85dc3ccc3), same as `so_supply_decisions` above.
+    "planning_change_batches",
+    "planning_change_rows",
+})
 
 MIGRATION = (
     Path(__file__).resolve().parents[1]
