@@ -122,6 +122,19 @@ interface FieldDef {
    *  returns true. Used e.g. for the sponsor-subject "Others" companion input. */
   showWhen?: (fields: Record<string, string | string[]>) => boolean;
   /**
+   * Render this field only for SOME submitters (AC-F4). `showWhen` is a property of the
+   * FORM's current values; this one is a property of the CONTACT, so they cannot be the
+   * same predicate. A field hidden this way is dropped from the whole form - it is never
+   * seeded, never validated, never submitted - not merely hidden from the layout.
+   */
+  showWhenContact?: (contact: PortalContact | null) => boolean;
+  /**
+   * Name of the detail field carrying the human-readable label for this field's stored
+   * value, for pickers whose value is an id (`project_id` -> `project_code`). Same idea
+   * as `legacyLabelField`, for the async pickers rather than the contact select.
+   */
+  displayFromDetail?: string;
+  /**
    * Required only for SOME submitters (AC-F4). `required` is a static property of the
    * FORM; this is a property of the CONTACT, so the two cannot be the same field. The
    * server enforces the same rule -- this only decides whether the client stops first
@@ -257,11 +270,16 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
     { name: 'delivery_address', label: 'Delivery address', widget: 'textarea' },
     { name: 'project_title', label: 'Project title' },
     {
-      // AC-F3/AC-F4: shown to every contact, MANDATORY only for flagged ones. Unflagged
-      // submitters keep the free-text title above and nothing else changes for them.
+      // AC-F4: only a flagged contact gets the picker, and for them it is mandatory.
+      // Unflagged submitters keep the free-text title above and see nothing new - which
+      // is also what the flag's own hint in the contact dialog promises.
       name: 'project_id',
       label: 'Registered project',
       widget: 'project-async',
+      // The stored value is the project id; `project_code` is what a reloaded form
+      // shows in the box, because a UUID in the UI is never the answer.
+      displayFromDetail: 'project_code',
+      showWhenContact: (contact) => Boolean(contact?.requires_registered_project),
       requiredWhen: (contact) => Boolean(contact?.requires_registered_project),
     },
     { name: 'total_project_value', label: 'Total project value', widget: 'number', placeholder: 'e.g. 1234.00' },
@@ -360,7 +378,13 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   // load uses, rather than a second, divergent "apply the response" branch.
   const [reloadToken, setReloadToken] = useState(0);
 
-  const fieldDefs = FIELDS[kind];
+  // One filtered list feeds seeding, validation, submit payload, AI extract and render,
+  // so a contact-hidden field cannot survive in one of them (AC-F4).
+  const fieldDefs = useMemo(
+    () =>
+      FIELDS[kind].filter((f) => (f.showWhenContact ? f.showWhenContact(contact) : true)),
+    [kind, contact],
+  );
   const showLines = HAS_LINES.includes(kind);
   const isEditable = useMemo(
     () =>
@@ -1998,6 +2022,7 @@ function ComplaintFormSection({
 
 function PurchaseRequestFormSection({
   kind,
+  detail,
   fieldDefs,
   fields,
   setFieldValue,
@@ -2041,6 +2066,13 @@ function PurchaseRequestFormSection({
                     disabled={!isEditable || frozenFields?.has(f.name)}
                     contact={contact}
                     contactOption={resolveContactOption?.(f)}
+                    displayValue={
+                      f.displayFromDetail
+                        ? (((detail as Record<string, unknown> | null)?.[
+                            f.displayFromDetail
+                          ] as string | undefined) ?? undefined)
+                        : undefined
+                    }
                   />
                 </div>
               ))}
@@ -2062,6 +2094,7 @@ function FieldInput({
   disabled,
   contact,
   contactOption,
+  displayValue,
 }: {
   field: FieldDef;
   value: string | string[];
@@ -2076,6 +2109,8 @@ function FieldInput({
   disabled?: boolean;
   contact?: PortalContact | null;
   contactOption?: SearchableSelectOption;
+  /** Human-readable text for an id-valued picker (`FieldDef.displayFromDetail`). */
+  displayValue?: string;
 }) {
   // The asterisk has to agree with what submit actually enforces, or a flagged contact
   // gets stopped by a field that never said it was needed.
@@ -2103,6 +2138,7 @@ function FieldInput({
           onDOProductsConfirmed={onDOProductsConfirmed}
           disabled={disabled}
           contactOption={contactOption}
+          displayValue={displayValue}
         />
       </div>
       {invalid && (
@@ -2121,6 +2157,7 @@ function FieldControl({
   onDOProductsConfirmed,
   disabled,
   contactOption,
+  displayValue,
 }: {
   field: FieldDef;
   value: string | string[];
@@ -2133,6 +2170,8 @@ function FieldControl({
   }) => void;
   contactOption?: SearchableSelectOption;
   disabled?: boolean;
+  /** Human-readable text for an id-valued picker (`FieldDef.displayFromDetail`). */
+  displayValue?: string;
 }) {
   const widget: WidgetKind = field.widget ?? 'text';
   const stringValue = typeof value === 'string' ? value : '';
@@ -2224,6 +2263,10 @@ function FieldControl({
           fetchOptions={(q) => lookupProjects(q)}
           optionValue={(o) => o.id}
           optionLabel={(o) => `${o.project_code} - ${o.title}`}
+          // A registered project is picked, never typed: the column is a UUID FK, so
+          // free text would reach the server as an id and fail there instead of here.
+          allowFreeText={false}
+          displayValue={displayValue}
           // The company on every row (AC-F4a): a contact mapped to two of them cannot
           // otherwise tell two similarly-named phases apart.
           optionMeta={(o) => o.company_name ?? ''}
