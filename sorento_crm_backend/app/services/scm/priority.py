@@ -168,6 +168,101 @@ def policy_weights(policy: Optional[PriorityPolicy]) -> tuple[dict, dict]:
     return dict(policy.factors or {}), dict(policy.demand_class_weights or {})
 
 
+# --------------------------------------------------------------------------- #
+# Fulfilment policy admin (PLAN-demo-followups-19aug-ladder-v2.md C1/C2)
+# --------------------------------------------------------------------------- #
+
+#: What `buy_all_horizon_days` / `cross_group_borrow_max_qty` / `cross_group_borrow_max_pct`
+#: answer for a policy-less database - the same literals migration `ed706a98ddc6` seeds as
+#: `server_default`, kept here (not imported) for the same "migrations stay standalone"
+#: reason 385 states. The ladder (workstream E) is the eventual reader; this slice only
+#: stores and surfaces them.
+FULFILMENT_SETTINGS_DEFAULTS = {
+    "buy_all_horizon_days": 180,
+    "cross_group_borrow_max_qty": 50,
+    "cross_group_borrow_max_pct": 10.0,
+}
+
+#: What the admin screen shows when NO policy has ever been activated (a database that
+#: predates migration 385, or a blank test schema). The seeded "fair" weights, not the bare
+#: `DEFAULT_WEIGHTS` sequence-only fallback `policy_weights` gives the engine - a planner
+#: opening this screen for the first time should see what a fresh install would actually be
+#: ranking by, not an empty policy nobody chose.
+_NO_POLICY_NAME = "Fulfilment priority (no policy activated yet)"
+
+
+def fulfilment_settings(policy: Optional[PriorityPolicy]) -> dict:
+    """`{buy_all_horizon_days, cross_group_borrow_max_qty, cross_group_borrow_max_pct}` for a
+    policy, or the documented default. A sibling of `policy_weights` for the fields C2 added:
+    this slice does not wire them into scoring (that is workstream E), but the admin screen -
+    and later the ladder - both need one place to read them off the active row."""
+    if policy is None:
+        return dict(FULFILMENT_SETTINGS_DEFAULTS)
+    return {
+        "buy_all_horizon_days": int(policy.buy_all_horizon_days),
+        "cross_group_borrow_max_qty": int(policy.cross_group_borrow_max_qty),
+        "cross_group_borrow_max_pct": float(policy.cross_group_borrow_max_pct),
+    }
+
+
+def fulfilment_priority_as_dict(policy: Optional[PriorityPolicy]) -> dict:
+    """The admin screen's whole answer for one policy row: weights, class weights and the
+    ladder-v2 settings - in the shape `FulfilmentPriorityPolicy` serialises. Shared by the GET
+    route and by the response built after a PUT writes a new revision, so the two can never
+    format a row differently."""
+    if policy is None:
+        weights, class_weights = dict(FAIR_WEIGHTS), dict(FAIR_CLASS_WEIGHTS)
+    else:
+        weights, class_weights = policy_weights(policy)
+    return {
+        "name": policy.name if policy is not None else _NO_POLICY_NAME,
+        "factors": weights,
+        "demand_class_weights": class_weights,
+        **fulfilment_settings(policy),
+        "exists": policy is not None,
+    }
+
+
+def create_revision(
+    db: Session,
+    *,
+    name: str,
+    factors: Mapping[str, float],
+    demand_class_weights: Mapping[str, float],
+    buy_all_horizon_days: int,
+    cross_group_borrow_max_qty: int,
+    cross_group_borrow_max_pct: float,
+    notes: Optional[str] = None,
+) -> PriorityPolicy:
+    """Write a NEW policy revision and activate it. Never mutates an old row.
+
+    The `PriorityPolicy` docstring is explicit that history matters here - a planner is
+    judged against what the board ranked by at the time, so a save that rewrote the active
+    row in place would let that answer change retroactively under them. The partial unique
+    index (`uq_scm_priority_policy_one_active`) allows exactly one active row, so the old one
+    is deactivated in the SAME flush that activates the new one - the moment between the two
+    statements never has zero or two active rows for another request to observe as this
+    session's own uncommitted work, and the caller's `db.commit()` makes it durable.
+
+    Flushes but does not commit - the caller (the PUT route) commits, so a mid-transaction
+    failure elsewhere in the same request leaves no half-activated revision.
+    """
+    db.execute(text("UPDATE scm.priority_policy SET is_active = false WHERE is_active"))
+    revision = PriorityPolicy(
+        name=name,
+        is_active=True,
+        factors=dict(factors),
+        demand_class_weights=dict(demand_class_weights),
+        buy_all_horizon_days=int(buy_all_horizon_days),
+        cross_group_borrow_max_qty=int(cross_group_borrow_max_qty),
+        cross_group_borrow_max_pct=cross_group_borrow_max_pct,
+        notes=notes,
+    )
+    db.add(revision)
+    db.flush()
+    return revision
+
+
 def demand_class_by_po(db: Session, po_numbers: set[str]) -> dict[str, str]:
     """The demand class of the sales orders each purchase order is feeding.
 

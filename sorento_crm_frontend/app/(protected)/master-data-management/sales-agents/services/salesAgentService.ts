@@ -8,8 +8,8 @@
  *           -> { data: SalesAgent[], pagination: { total, page, limit }, empty }
  *           gated `master_data.sales_agents.view`; `query` matches the agent code.
  *   PATCH /api/v1/master-data/sales-agents/{id}/annotation
- *           body: partial { person_label, demand_class, internal_note, follow_up }
- *           -> SalesAgent    gated `master_data.sales_agents.edit`
+ *           body: partial { person_label, demand_class, location_group, internal_note,
+ *           follow_up } -> SalesAgent    gated `master_data.sales_agents.edit`
  *           An omitted key is left alone; `null` unsets. An unknown key is a 422, and a
  *           demand class outside the vocabulary is a 400 naming the allowed words.
  *

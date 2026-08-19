@@ -8,6 +8,7 @@ import {
   getClassification,
   getCoverScope,
   getClassScopeOptions,
+  getFulfilmentPriority,
   getPlanningMode,
   getProductScopeOptions,
   getSupplierScoring,
@@ -16,6 +17,7 @@ import {
   resolvePolicy,
   saveClassification,
   saveCoverScope,
+  saveFulfilmentPriority,
   savePlanningMode,
   saveSupplierScoring,
   updateReorderPolicy,
@@ -24,6 +26,7 @@ import {
 import type {
   AbcXyzWrite,
   CoverScopeWrite,
+  FulfilmentPriorityWrite,
   PlanningModeWrite,
   ReorderPolicyWrite,
   SupplierScoringWrite,
@@ -34,6 +37,7 @@ const CLASSIFICATION_KEY = ['scm', 'policies', 'classification'] as const;
 const SUPPLIER_KEY = ['scm', 'policies', 'supplier-scoring'] as const;
 const PLANNING_MODE_KEY = ['scm', 'policies', 'planning-mode'] as const;
 const COVER_SCOPE_KEY = ['scm', 'policies', 'cover-scope'] as const;
+const FULFILMENT_PRIORITY_KEY = ['scm', 'policies', 'fulfilment-priority'] as const;
 
 const optionOpts = { staleTime: 5 * 60_000, refetchOnWindowFocus: false, retry: 1 } as const;
 
@@ -171,6 +175,29 @@ export function useSaveCoverScope() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: COVER_SCOPE_KEY });
       toast.success('Cover setting saved');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+// ── Fulfilment priority (single active `scm.priority_policy` row) ──────────
+
+export function useFulfilmentPriority() {
+  return useQuery({
+    queryKey: FULFILMENT_PRIORITY_KEY,
+    queryFn: getFulfilmentPriority,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+export function useSaveFulfilmentPriority() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: FulfilmentPriorityWrite) => saveFulfilmentPriority(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: FULFILMENT_PRIORITY_KEY });
+      toast.success('Fulfilment priority saved');
     },
     onError: (e: Error) => toast.error(e.message),
   });

@@ -138,6 +138,17 @@ def set_demand_class(db: Session, code: str, demand_class: Optional[str]) -> Sal
     return agent
 
 
+def normalize_location_group(value: Optional[str]) -> Optional[str]:
+    """The stored form of a location group: trimmed and upper-cased, blank -> None.
+
+    Same normalisation as `normalize_code`, and for the same reason: a warehouse code's
+    suffix (`group_of_warehouse_code`) is upper-cased by construction, so a group typed
+    lower-case in the edit modal must still compare equal to it.
+    """
+    cleaned = (value or "").strip().upper()
+    return cleaned or None
+
+
 def annotate(
     db: Session,
     agent: SalesAgent,
@@ -146,8 +157,10 @@ def annotate(
     write_person_label: bool = False,
     demand_class: Optional[str] = None,
     write_demand_class: bool = False,
+    location_group: Optional[str] = None,
+    write_location_group: bool = False,
 ) -> SalesAgent:
-    """Apply the master screen's two annotations to an already-resolved agent.
+    """Apply the master screen's annotations to an already-resolved agent.
 
     The `write_*` flags distinguish "field omitted" from "field set to nothing", so a
     save that touches only the class cannot wipe a label the captain typed last week.
@@ -168,5 +181,42 @@ def annotate(
     if write_person_label:
         cleaned = (person_label or "").strip()
         agent.person_label = cleaned or None
+    if write_location_group:
+        agent.location_group = normalize_location_group(location_group)
     db.flush()
     return agent
+
+
+def agents_for_group(db: Session, group: Optional[str]) -> list[SalesAgent]:
+    """Every agent holding the given ownership group, normalised the same way it is stored.
+
+    Used to find "whose orders live at this ownership group" - the donor-list surfacing the
+    PLAN describes (section 8: "the donor list must surface the SAME AGENT's other SOs").
+    A blank/None group answers empty rather than every ungrouped agent, because "show me the
+    group" and "show me who has no group" are different questions and this is only the first.
+    """
+    key = normalize_location_group(group)
+    if not key:
+        return []
+    return (
+        db.query(SalesAgent)
+        .filter(func.upper(func.btrim(SalesAgent.location_group)) == key)
+        .all()
+    )
+
+
+def group_of_warehouse_code(code: Optional[str]) -> Optional[str]:
+    """The ownership-group suffix a warehouse code carries, e.g. `BRW-BB` -> `BB`.
+
+    The suffix AFTER THE FIRST HYPHEN, upper-cased. A plain site code (`BRW`, `MWH`) has no
+    hyphen and carries no group - it is a pool, not anyone's ownership group - so this
+    returns None for it rather than inventing one from the whole code.
+    """
+    if not code:
+        return None
+    text_code = str(code).strip()
+    if "-" not in text_code:
+        return None
+    _, _, suffix = text_code.partition("-")
+    suffix = suffix.strip().upper()
+    return suffix or None

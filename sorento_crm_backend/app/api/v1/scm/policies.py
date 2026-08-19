@@ -21,6 +21,8 @@ from app.dependencies import require_permission_with_api_key
 from app.schemas.scm_policy import (
     AbcXyzPolicy,
     AbcXyzWrite,
+    FulfilmentPriorityPolicy,
+    FulfilmentPriorityWrite,
     ReorderPolicyPage,
     ReorderPolicyRow,
     ReorderPolicyWrite,
@@ -29,6 +31,7 @@ from app.schemas.scm_policy import (
     SupplierScoringWrite,
 )
 from app.services.scm import policy_service as svc
+from app.services.scm import priority as priority_svc
 
 router = APIRouter()
 
@@ -71,6 +74,44 @@ def put_supplier_scoring(
     _user: dict = Depends(_MANAGE),
 ):
     return svc.put_supplier_scoring(db, body)
+
+
+# --- fulfilment priority (single active `scm.priority_policy` row) ----------
+#
+# PLAN-demo-followups-19aug-ladder-v2.md C1/C2. Declared here, before the parametric
+# `/policies/{policy_id}` routes below, for the same route-shadowing reason `classification`
+# and `supplier-scoring` are - "fulfilment-priority" must never be swallowed as a policy id.
+
+@router.get("/policies/fulfilment-priority", response_model=FulfilmentPriorityPolicy)
+def get_fulfilment_priority(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    return priority_svc.fulfilment_priority_as_dict(priority_svc.active_policy(db))
+
+
+@router.put("/policies/fulfilment-priority", response_model=FulfilmentPriorityPolicy)
+def put_fulfilment_priority(
+    body: FulfilmentPriorityWrite,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """Writes a NEW policy revision and activates it - never mutates an old row (see
+    `priority.create_revision`), so switching back is "activate the previous revision",
+    not "undo an edit"."""
+    current = priority_svc.active_policy(db)
+    revision = priority_svc.create_revision(
+        db,
+        name=current.name if current is not None else priority_svc.FAIR_POLICY_NAME,
+        factors=body.factors,
+        demand_class_weights=body.demand_class_weights,
+        buy_all_horizon_days=body.buy_all_horizon_days,
+        cross_group_borrow_max_qty=body.cross_group_borrow_max_qty,
+        cross_group_borrow_max_pct=body.cross_group_borrow_max_pct,
+        notes=current.notes if current is not None else None,
+    )
+    db.commit()
+    return priority_svc.fulfilment_priority_as_dict(revision)
 
 
 # --- resolution preview -----------------------------------------------------

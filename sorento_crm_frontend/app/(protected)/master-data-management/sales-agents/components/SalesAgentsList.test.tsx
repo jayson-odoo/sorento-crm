@@ -78,6 +78,7 @@ function agent(over: Partial<SalesAgent> = {}): SalesAgent {
     follow_up: false,
     person_label: 'Sean',
     demand_class: 'project',
+    location_group: 'BB',
     source: 'import',
     created_at: '2026-08-01T00:00:00',
     updated_at: null,
@@ -137,17 +138,24 @@ describe('SalesAgentsList states', () => {
   it('renders a row per agent with the annotation columns', () => {
     withRows([
       agent(),
-      agent({ id: 'agent-2', sales_agent: 'LCL', person_label: null, demand_class: null }),
+      agent({
+        id: 'agent-2',
+        sales_agent: 'LCL',
+        person_label: null,
+        demand_class: null,
+        location_group: null,
+      }),
     ]);
     render(<SalesAgentsList />);
 
     expect(screen.getByText('SEAN III')).toBeInTheDocument();
     expect(screen.getByText('Sean')).toBeInTheDocument();
     expect(screen.getByText('Project')).toBeInTheDocument();
+    expect(screen.getByText('BB')).toBeInTheDocument();
     expect(screen.getAllByText('Import')).toHaveLength(2);
     expect(screen.getByText('LCL')).toBeInTheDocument();
     // An unclassified agent says so rather than rendering blank.
-    expect(screen.getAllByText('Not set').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText('Not set').length).toBeGreaterThanOrEqual(3);
   });
 
   it('offers no create and no delete', () => {
@@ -173,7 +181,7 @@ describe('SalesAgentsList editing', () => {
     await waitFor(() =>
       expect(mutateAsync).toHaveBeenCalledWith({
         id: 'agent-1',
-        data: { person_label: 'Sean Lim', demand_class: 'project' },
+        data: { person_label: 'Sean Lim', demand_class: 'project', location_group: 'BB' },
       }),
     );
   });

@@ -129,6 +129,35 @@ export interface CoverScopeSetting {
 
 export type CoverScopeWrite = CoverScopeSetting;
 
+/**
+ * The single active `scm.priority_policy` row - the ranking that decides both what goes in
+ * a container and which purchase-order line arriving stock is assigned to (AC-H5). A PUT
+ * writes a NEW revision and activates it; it never edits an old row in place, so `id` /
+ * `name` on the response describe whichever revision is active NOW, not a record the FE can
+ * address by id.
+ *
+ * `factors` / `demand_class_weights` are open records (JSONB on the backend) rather than
+ * fixed fields, so a policy can carry a factor this UI does not yet render without losing it
+ * on save - `PUT` sends back whatever `GET` returned, edited in place.
+ */
+export interface FulfilmentPriorityPolicy {
+  name: string;
+  /** Ranking-factor weights, keyed by factor (see `lib/labels.ts::FULFILMENT_FACTOR_ORDER`). */
+  factors: Record<string, number>;
+  /** Demand-class weights, keyed by `project` / `retail`. */
+  demand_class_weights: Record<string, number>;
+  /** A line due further out than this many days is `Buy all`, untouched. */
+  buy_all_horizon_days: number;
+  /** A cross-ownership-group borrow is only offered under this quantity... */
+  cross_group_borrow_max_qty: number;
+  /** ...or this percentage of the line, whichever the ladder applies. */
+  cross_group_borrow_max_pct: number;
+  /** False only on a database that has never activated a fulfilment-priority policy. */
+  exists: boolean;
+}
+
+export type FulfilmentPriorityWrite = Omit<FulfilmentPriorityPolicy, 'name' | 'exists'>;
+
 /** Why a scope link did (or did not) win, for the preview teaching surface. */
 export type ResolutionReason =
   | 'most-specific-active'

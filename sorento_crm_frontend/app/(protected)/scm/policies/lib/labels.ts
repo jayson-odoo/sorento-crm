@@ -104,6 +104,42 @@ export const XYZ_OPTIONS = [
   { value: 'Z', label: 'Z' },
 ];
 
+// Fulfilment-priority ranking factors, named the way the board's cell drawer names them
+// (`project-sales/_shared/lib/fulfilmentBoard.ts::factorLabel`) - kept as its own copy here
+// rather than an import, so this tab never breaks from an edit to the board's own file. Order
+// matches the weight inputs on the Fulfilment tab.
+export const FULFILMENT_FACTOR_ORDER = [
+  'need_by_date',
+  'document_age',
+  'customer_credit',
+  'demand_class',
+  'po_document_sequence',
+] as const;
+
+export const FULFILMENT_FACTOR_LABEL: Record<string, string> = {
+  need_by_date: 'Delivery date',
+  document_age: 'Order date',
+  customer_credit: 'Payment terms',
+  demand_class: 'Demand type',
+  po_document_sequence: 'Purchase order sequence',
+};
+
+export function fulfilmentFactorLabel(key: string): string {
+  const known = FULFILMENT_FACTOR_LABEL[key];
+  if (known) return known;
+  const words = key.replace(/_/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+// Demand-class weight rows the Fulfilment tab shows - `project` / `retail` (S1's closed
+// vocabulary, `app.services.scm.demand_class.DEMAND_CLASSES`).
+export const FULFILMENT_CLASS_ORDER = ['project', 'retail'] as const;
+
+export const FULFILMENT_CLASS_LABEL: Record<string, string> = {
+  project: 'Project',
+  retail: 'Retail',
+};
+
 /**
  * Plain-language safety-stock summary for a grid row (novice-friendly), e.g.
  * "7-day buffer", "Statistical @ 95%", "Manual".

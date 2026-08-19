@@ -16,6 +16,9 @@ export interface SalesAgent {
   person_label: string | null;
   /** What this agent's orders are for. Null = nobody has decided yet. */
   demand_class: string | null;
+  /** Which warehouse-suffix ownership group this agent's stock lives in (e.g. `BB` for
+   *  BRW-BB/MWH-BB/DC1-BB). Null = nobody has decided yet. */
+  location_group: string | null;
   source: 'autocount' | 'manual' | 'import';
   created_at: string;
   updated_at: string | null;
@@ -33,6 +36,7 @@ export interface SalesAgent {
 export interface MirrorAnnotationPayload {
   person_label?: string | null;
   demand_class?: string | null;
+  location_group?: string | null;
   internal_note?: string | null;
   follow_up?: boolean;
 }

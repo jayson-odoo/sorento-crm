@@ -53,6 +53,7 @@ RESPONSE_KEYS = {
     "follow_up",
     "person_label",
     "demand_class",
+    "location_group",
     "source",
     "created_at",
     "updated_at",

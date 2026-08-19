@@ -609,6 +609,24 @@ class PriorityPolicy(Base):
     # is a row plus a weight.
     demand_class_weights = Column(JSONB, nullable=False, default=dict)
     notes = Column(Text, nullable=True)
+    # Ladder v2 (E) settings, added by migration ed706a98ddc6. Read-only from this slice's
+    # side (`priority.py` exposes them; the ladder itself is a later workstream) - kept on
+    # THIS row rather than a sibling table for the same reason `factors` is: one policy,
+    # activated as a whole, so a planner tuning "how far out is Buy all" cannot leave the
+    # weights and the horizon pointing at two different revisions.
+    #
+    # A line due further out than this many days is `Buy all`, untouched - no reservation,
+    # no borrow attempted.
+    buy_all_horizon_days = Column(Integer, nullable=False, default=180,
+                                  server_default=text("180"))
+    # A cross-OWNERSHIP-GROUP borrow (e.g. a BB line borrowing from an HP location) is only
+    # proposed under a small-quantity cap - either absolute qty or a percentage of the line,
+    # whichever the ladder decides to apply. Both are stored; which one gates is the ladder's
+    # call, not this row's.
+    cross_group_borrow_max_qty = Column(Integer, nullable=False, default=50,
+                                        server_default=text("50"))
+    cross_group_borrow_max_pct = Column(Numeric(6, 2), nullable=False, default=10,
+                                        server_default=text("10"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False

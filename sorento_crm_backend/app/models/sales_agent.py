@@ -75,6 +75,13 @@ class SalesAgent(Base):
     # "new agent, unclassified" instead of quietly inventing master data.
     source = Column(String(20), nullable=False, default="manual",
                     server_default=text("'manual'"))
+    # Which warehouse-suffix ownership group this agent's stock lives in - `BB` for
+    # BRW-BB/MWH-BB/DC1-BB, per the captain's ruling that those three locations are one
+    # ownership group belonging to the BB salespeople (PLAN-demo-followups-19aug-ladder-v2.md
+    # section 8). NULL means nobody has decided yet, the same "not our guess to make" shape
+    # as `demand_class`. Stored upper/trim-normalised by `sales_agent_service.annotate` so a
+    # typed `bb` still matches the group the warehouse suffix carries.
+    location_group = Column(String(16), nullable=True)
 
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
