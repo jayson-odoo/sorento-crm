@@ -345,3 +345,241 @@ Scouted 18 August; none is a blocker for the second half but the captain's journ
    dates render as was -> now (item 1). Nothing is inferred beyond note date + highlight +
    original cadence; a note without a date, or highlights without a note, show as-is with no
    proposal.
+
+## 10. Evidence run, 19 August 2026
+
+Run against the captain's e2e scratch stack (backend :8030, frontend :3050, worker running,
+DB `sorento_scm_e2e_stack`). Live data, not a fixture DB - `SO403765` is a real project SO
+(`BATHE CODE SDN BHD (PROJECT)` / `BATHE CODE/LOT 7916 RAMBAI MELAKA`) with an active decision
+at revision 4 covering lines 1, 2, 8, 12.
+
+**Auth note.** `outstanding_import.py`'s upload routes are behind `require_permission` (JWT
+only), not `require_permission_with_api_key` - the `EXTERNAL_API_KEY` path 401'd outright
+(`{"detail":"Authentication required"}`). Rather than drive the whole 20k-row baseline/diff
+build through agent-browser (fragile for byte-exact xlsx construction and JSON diff assertions),
+a staff session row was minted directly for the FE's own `E2E_EMAIL` user (`tehjayson@gmail.com`,
+role `admin`) via `INSERT INTO public.user_sessions` (same shape `mint_session()` writes) and
+used as a Bearer token for the file-upload/preview/apply/API-assertion half of the run; the
+review/apply/board/OI half was driven live through agent-browser against the same login. This
+was a deliberate deviation from "prefer the UI" for the data-construction steps only, on the
+grounds that verifying a 20,322-row diff byte-for-byte is not something a browser click sequence
+can assert; every UI-facing claim below (review page, batch list, board, Order Inquiries) is a
+real agent-browser screenshot/network-log against :3050.
+
+### Baseline
+
+`baseline.xlsx` = every `line_status='open'` row of `public.sales_order_lines` joined to its
+order/product/warehouse/customer, columns matching the reader's alias set exactly
+(`PROJECT/CUSTOMER, S/O NO, SO DATE, DEBTOR CODE, ITEM CODE, UOM, QTY, DELIVERY DATE,
+STOCK LOCATION, REMARK`), `QTY` = `qty_ordered - qty_delivered` (the outstanding figure, since
+the file carries no separate remaining/delivered column). Script:
+`/private/tmp/.../scratchpad/build_baseline.py`; output kept at
+`/private/tmp/claude-501/-Users-tehjayson--treehouse-sorento-crm-732336-11-sorento-crm/5dda4088-773f-4f57-8f73-eb3c1b6cd529/scratchpad/evidence/baseline.xlsx`
+(20,322 rows). `POST /api/v1/scm/outstanding/sales-orders/preview` against it returned
+`counts: {added:0, qty_changed:0, date_moved:0, date_and_qty_changed:0, closed:0,
+unchanged:20322}` - confirmed unchanged before touching anything, per the plan's own baseline
+rule.
+
+### A real pairing hazard in `outstanding_diff.diff_lines`, found while building the moved book
+
+SO403765 lines 1, 2 and an uncovered line (call it line 3) share **doc + item (B2155-NL-BLUE) +
+location (BRW-BB) + required_date** - three real DB rows, same group, only their quantities
+differ (43 / 21 / 22). `diff_lines`' pass-1/pass-2 pairing (`app/services/scm/outstanding_diff.py`)
+sorts a group's existing rows by `(date, qty)` and pops the incoming rows for that date in the
+same order; tracing it by hand showed that moving **two** of the three rows to different dates
+simultaneously (independent of which two) always steals the wrong incoming row for at least one
+of them - the third, untouched row gets paired against whichever old row is processed first at
+the shared date, corrupting it into a bogus `date_and_qty_changed`. Only moving the group's
+**highest-quantity** member alone (the last one `diff_lines` reaches at that date, after the
+others have already self-matched) is safe; a pure **quantity-only** change on any member (date
+held fixed) is always safe, because it never leaves the date's bucket. This is not a defect in
+the shipped feature - it is a property of a same-day/same-item/same-location AutoCount export the
+reader has always had to live with - but it constrained which of SO403765's lines could be
+changed together without producing a diff that lies about which line changed. Verified
+empirically against the real DB rows before touching `moved.xlsx`; not filed as a bug, noted here
+so a future test-writer doesn't waste the hour this cost.
+
+Because of it, the plan's literal "line1 +14 / line2 +90 / line12 advance / line2 or another
+covered line closed" mapping was adjusted: line1 (safe, highest-qty in its group) took +14
+days, the uncovered sibling (line 3, safe quantity-only move) took the qty+10 test, and the two
+singleton-group covered lines (8, 12 - each the only open line for their item+location) took +90
+and advance respectively. Line 2 was left untouched (leaving it alone is what keeps line 1's and
+line 3's pairing clean) - so the "closed by absence" covered-line scenario was **not** exercised
+this run; AC-R12's per-row pytest coverage is the source of truth for that rule, not this run.
+
+### Moved book and diff
+
+`moved.xlsx` = baseline with exactly these SO403765 rows changed (script:
+`/private/tmp/.../scratchpad/build_moved.py`):
+
+| Line | Product | Change | Held today (rev 4) |
+|---|---|---|---|
+| 1 (core `9acad3ad`) | B2155-NL-BLUE | required date 28/12/2026 -> 11/01/2027 (+14 d) | Borrow 10 from MWH-IB, Buy 33 (no reserve) |
+| 3, uncovered (core `d7282878`) | B2155-NL-BLUE | qty 22 -> 32 | not decided |
+| 8 (core `44f950dd`) | CB2807-DIY | required date 28/12/2026 -> 28/03/2027 (+90 d) | **Reserve 4 at BRW**, Buy 39 |
+| 12 (core `ef5c84c3`) | CKS1050 | required date 28/12/2026 -> 14/12/2026 (-14 d, advance) | Buy 21 (no reserve) |
+
+`POST .../preview` on `moved.xlsx` returned `counts: {date_moved:3, qty_changed:1,
+date_and_qty_changed:0, closed:0, added:0, unchanged:20318}` - exactly the 4 intended changes,
+correctly paired to the intended core line ids (spot-checked against the samples payload), no
+collateral damage on line 2 or anywhere else in the 20,322-row book.
+
+### Apply, job, batch
+
+`POST .../sales-orders/apply` queued job `783a6310-175e-4ae8-9d4d-f644c2744b5c` (RQ id
+`a063e889-59c4-4d48-835f-866766d31e08`); the worker picked it up immediately (`worker.log`) and
+finished in the same second. `GET /api/v1/system/jobs/{id}` result:
+`upload.counts = {added:0, closed:0, unchanged:20318, date_moved:3, qty_changed:1}`,
+`upload.applied = {updated:4, unchanged:20318}`, and - the point of the whole run -
+**`upload.planning_change_batch = {id: "6ffab539-371e-4403-a0e8-7ac2b163fd2e", order_count: 1,
+line_count: 4}`**. AC-R01 confirmed: the upload's own SO-line writes (dates/qty on the 4 core
+lines) landed regardless of what happens to the planning reaction below.
+
+**Batch id: `6ffab539-371e-4403-a0e8-7ac2b163fd2e`.**
+
+### Browser: import job page, review, batch page
+
+Logged in at :3050 as the FE's `E2E_EMAIL` user, navigated sidebar-only (System Management ->
+Import Jobs -> the `moved.xlsx` row -> `/system-management/import-jobs/a063e889-...`).
+Screenshot `evidence/import_job_detail.png`: a **"Planning changes"** card reads exactly
+`"This upload moved 4 planned lines on 1 order"` with a **Review** link - AC-R01's upload
+confirmation card, present and correct. Clicked Review -> `/project-sales/planning-changes/
+6ffab539-371e-4403-a0e8-7ac2b163fd2e` (screenshots `evidence/batch_page_wide.png`,
+`evidence/batch_page_wider.png`). Confirmed via `network requests --filter
+/api/v1/project-sales/planning-changes`: `GET .../planning-changes/{id}` fired and returned 200.
+
+One section, `SO403765 · BATHE CODE SDN BHD (PROJECT) · rev 4`, four rows, exactly matching
+AC-R02/AC-R03 and the section-0 table against the real facts:
+
+| Line | Kind | Facts | Suggested | Why |
+|---|---|---|---|---|
+| 3 | qty_up | no decision | **Replan** | "No decision holds this line yet, so it simply enters the board at its new date and quantity." |
+| 1 | delayed +14d | within window (60d), holds Borrow+Buy, no reserve | **Keep** | "Only a Buy is held and purchasing has not actioned it yet; the Buy stands and the inquiry row is updated to DELAY with the previous date." |
+| 8 | delayed +90d | beyond window, holds a genuine Reserve(4)@BRW | **Release** | "New date is 90 days out, beyond the 60-day reserve window; the reserve is released back to BRW rather than sitting idle for months - back on the board." |
+| 12 | advanced -14d | holds Buy only | **Replan** | "Advanced 14 days; the line runs the ladder again at the new date now, and the fresh proposal shows in the row and on the board." |
+
+Line 1 and line 3 both carry `dealer_hot_selling: true (MWH-BB)` in `facts`, yet line 1's
+suggestion is `keep` not `release` - correctly, because the section-0 "hot-selling -> release"
+rule is scoped to a line that holds a **reserve at the BRW pool**, and line 1 holds none (only
+borrow+buy). Facts chips, "Held today" column, and the segmented Accept/Keep as
+is/Open on the board decision control (AC-R04) all rendered (`snapshot -i` showed `button
+"Accept"`, `button "Keep as is"`, `link "Open on the board"` per row). `SO403765` on the batch
+header resolves to `href="/scm/sales-orders/bcdb2328-7c09-4bb1-8dbe-3ff294b88668"` - AC-R02's
+board/detail link, correct. Line 3's row correctly needs no acceptance (`decision: null`,
+"Not decided") and line 3, 12 both carried a full board `proposal` (sources, trail, rank
+factors, borrow candidates) - AC-R07.
+
+### Apply attempt: real, reproducible defect found
+
+Flipped line 8 (the reserve-holding row) to **Keep as is** (`PUT .../rows/{id}` -> 200, "Apply 3
+changes" -> "Apply 2 changes"). Pressed **Apply** -> confirm dialog ("This revises every
+affected order: holds released or kept, decisions re-issued, and Order Inquiry rows updated. 2
+rows will be applied. This cannot be undone.", screenshot `evidence/apply_confirm_dialog.png`) ->
+confirmed. `POST .../apply` returned **200** but the batch itself reports **failure**:
+
+```
+result: {
+  "orders_revised": [],
+  "orders_failed": [{"so_number": "SO403765",
+    "reason": "1 line cannot be confirmed. Nothing was written."}],
+  "inquiry_rows_changed": [], "lines_replanned": 0, "purchasing_notified": false
+}
+```
+
+`backend.log` traceback:
+`app.services.project_supply_service.SupplyLinesRefused: 409: {'message': '1 line cannot be
+confirmed. Nothing was written.', 'code': 'supply_lines_failed', 'failing_lines': [{'line_no': 8,
+'item_code': 'CB2807-DIY', 'reason': "BRW has nothing free for this line now, so none of the 4
+asked for can be reserved from it. Buy that quantity instead, or borrow it on the order's own
+sheet."}]}` - raised from `project_supply_service.py:1217` (`confirm()`), called from
+`planning_change_service.py:1257` (`_apply_one_order`).
+
+Root cause, checked against the DB: **line 8's own reserve is the only active reserve on
+CB2807-DIY at BRW anywhere in the system** (queried every `active` `so_supply_decisions` row for
+a reserve component on this product; SO403765's own revision-4 line 8 is the sole hit, 4 units,
+against 7 on hand). "Keep as is" carries the line's existing composition into the union body
+unnamed-but-present (per section 2: "the union body from `frozen_lines_of` minus released...");
+`confirm()` treats every named line in the body as a **fresh** ask and recomputes free stock from
+current facts rather than crediting back the calling order's own already-held reserve on that
+exact line, so re-affirming an untouched 4-unit hold that is already this order's own reserve
+fails as if it were new demand competing against itself. Screenshot of the failed result:
+`evidence/batch_applied.png` ("Partly failed - 2 rows could not be written", lines 1 and 12 both
+show **Failed** in the Decision column even though neither touches CB2807-DIY or BRW stock -
+AC-R05's per-order atomicity is doing exactly what it says, but it means one stale reserve on an
+unrelated product sinks two otherwise-independent Keep/Replan rows on the same order).
+
+**Second, compounding defect: the batch is now permanently stuck.** `planning_change_service.py`
+`apply()` stamps `batch.applied_at = datetime.utcnow()` unconditionally after the per-order loop
+(line 1371) even when `orders_revised` is empty and every order failed. Two consequences,
+both reproduced live:
+- `PUT .../rows/{id}` (to flip line 8 back to Accept and take the suggested Release instead,
+  which would drop the reserve component from the body and sidestep the stale-hold recheck)
+  now 409s: `{"message": "This batch has already been applied.", "code":
+  "planning_change_batch_applied"}` (`planning_change_service.py` ~line 885, gated on
+  `batch.applied_at is not None`).
+- `POST .../apply` again would short-circuit at line 1313 (`already_applied: true`,
+  `applied_orders: []`) and do nothing - not a retry, a no-op.
+
+There is no path back to a working state for this batch through the product: not the batch page
+(decisions locked), not re-applying (no-op), and not re-uploading the same book (the SO-line
+data was already written by the upload's own apply, so a second upload of `moved.xlsx` would
+diff as fully `unchanged` and raise no new batch to react with). Confirmed on
+`/project-sales/planning-changes` (screenshot `evidence/planning_changes_list.png`): the row
+shows `Applied 19/08/2026, 9:31 am` and `Pending: 2` simultaneously - a batch that is
+simultaneously "done" and has two rows nothing was ever written for.
+
+**Suggested fix (not applied - out of scope for this run):** only stamp `applied_at` /
+`applied_by` when `orders_revised` is non-empty, or add an explicit `orders_failed ==
+len(orders)` short-circuit that leaves the batch `pending` and the rows' `decision` editable so
+the planner can correct course (e.g. accept the suggested Release instead of Keep as is) and
+retry. Separately, `project_supply_service.confirm()`'s free-stock computation for a **named,
+unchanged** line should credit back that same order's own currently-active reserve on that exact
+line before checking availability, rather than validating it as fresh demand.
+
+### Board and Order Inquiries (unchanged, as the failure predicts)
+
+Since `orders_revised` was empty, the DB confirms nothing moved on the project side: revision 4
+is still the sole `active` decision for SO403765 (`projects.so_supply_decisions`), and
+`/project-sales/order-inquiries` filtered to `SO403765` (screenshot `evidence/order_inquiries.png`)
+shows all 11 rows still at `28/12/2026` - no DELAY/ADVANCE/CANCEL BALANCE rows, because AC-R08
+never ran. This is the correct, honest consequence of the apply having failed, not a second
+defect on top of the first.
+
+### What could not be completed
+
+Step 7's second half - a *successful* apply and the resulting board/Order Inquiry reaction (kept
+line stays `Confirmed rev 5`, released/replanned lines undecided again, DELAY/ADVANCE rows with
+the previous value) - could not be exercised, because the only batch this run produced is now
+permanently `applied`/locked with zero real orders revised, per the defect above. Re-running
+that half needs either the fix above, or a fresh upload against a line whose reserve is not the
+sole claim on its own product+location (line 1's Keep or line 12's Replan alone, without line
+8's Release in the mix, would very likely have gone through cleanly - not re-tried here to avoid
+manufacturing a second inconsistent batch on the shared stack).
+
+### Evidence index
+
+- `evidence/baseline.xlsx` - the current-state book; **re-uploading and applying this restores
+  SO403765 (and everything else) to its pre-run state**, since the underlying SO-line writes
+  (line 1: date, line 3: qty, line 8: date, line 12: date) are real and were not rolled back by
+  the planning-side failure. The captain has NOT been asked to do this - left as-is per the task
+  brief so the batch/failure state above can be inspected.
+- `evidence/moved.xlsx` - the uploaded book that produced the batch.
+- `evidence/import_jobs_list.png`, `evidence/import_job_detail.png` - job page, planning-changes
+  card.
+- `evidence/batch_page.png`, `evidence/batch_page_wide.png`, `evidence/batch_page_wider.png` -
+  review page at increasing viewport widths (table columns run wide).
+- `evidence/batch_page_kept.png` - after flipping line 8 to Keep as is ("Apply 2 changes").
+- `evidence/apply_confirm_dialog.png` - the Apply confirmation dialog.
+- `evidence/batch_applied.png` - the partly-failed result strip.
+- `evidence/planning_changes_list.png` - the list page (AC-R10), showing the stuck
+  Applied+Pending state.
+- `evidence/board_search.png`, `evidence/so_detail.png`, `evidence/order_inquiries.png` - board
+  and Order Inquiries, confirmed unchanged.
+- All paths above are under
+  `/private/tmp/claude-501/-Users-tehjayson--treehouse-sorento-crm-732336-11-sorento-crm/5dda4088-773f-4f57-8f73-eb3c1b6cd529/scratchpad/evidence/`
+  (session scratchpad, not the repo - move into the repo/plan folder if this evidence should
+  outlive the session).
+
+No console errors or uncaught exceptions were seen in the browser at any step
+(`agent-browser errors` checked after every navigation). Browser session closed cleanly
+(`agent-browser close`, not `--all`).
