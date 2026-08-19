@@ -78,6 +78,7 @@ function controller(overrides: Partial<ScheduleGridController> = {}): ScheduleGr
     learnedColumns: [],
     registerColumnRef: vi.fn(),
     focusRequest: null,
+    metaFor: () => undefined,
     ...overrides,
   };
 }
@@ -293,5 +294,58 @@ describe('DeliveryScheduleMatrix', () => {
     expect(screen.getByLabelText('Level 2 & 7, SRTWC8613-RL')).toBeDisabled();
     expect(screen.queryByLabelText(/Change the product/)).toBeNull();
     expect(screen.queryByLabelText(/Pick the product/)).toBeNull();
+  });
+});
+
+/** Section 9.7a/c - what the document itself marked on a cell. */
+describe('DeliveryScheduleMatrix, the document own marks', () => {
+  it("tints a highlighted cell with the document's own colour, and titles it", () => {
+    render(
+      <DeliveryScheduleMatrix
+        controller={controller({
+          metaFor: (phaseId, columnKey) =>
+            phaseId === 'ph1' && columnKey === 'p1'
+              ? { highlight: '#ffe08a', deliveryDateOverride: null }
+              : undefined,
+        })}
+      />,
+    );
+
+    const cell = screen.getByLabelText('Level 2 & 7, SRTWC8613-RL').closest('td');
+    expect(cell).not.toBeNull();
+    // jsdom re-serializes the colour (rgb(...)), so the assertion is on the mix, not the
+    // exact notation of the document's own colour.
+    expect(cell?.getAttribute('style')).toContain('color-mix(in oklab,');
+    expect(cell?.getAttribute('style')).toContain('35%, transparent)');
+    expect(cell).toHaveAttribute('title', 'Highlighted in the document');
+  });
+
+  it('leaves an ordinary cell untinted and untitled', () => {
+    render(<DeliveryScheduleMatrix controller={controller()} />);
+    const cell = screen.getByLabelText('Level 2 & 7, SRTWC8613-RL').closest('td');
+    expect(cell?.getAttribute('style') ?? '').not.toContain('color-mix');
+    expect(cell).not.toHaveAttribute('title');
+  });
+
+  it('shows an accepted override was -> now on its own cell, and leaves the phase header alone', () => {
+    render(
+      <DeliveryScheduleMatrix
+        controller={controller({
+          metaFor: (phaseId, columnKey) =>
+            phaseId === 'ph1' && columnKey === 'p1'
+              ? { highlight: null, deliveryDateOverride: '2026-07-23' }
+              : undefined,
+        })}
+      />,
+    );
+
+    // The phase column header keeps the document's own date.
+    const header = screen.getByRole('columnheader', { name: /Level 2 & 7/ });
+    expect(within(header).getByText('01/07/2026')).toBeInTheDocument();
+    // The cell adds its own, was -> now, without disturbing the header's.
+    const cell = screen.getByLabelText('Level 2 & 7, SRTWC8613-RL').closest('td');
+    expect(cell).not.toBeNull();
+    expect(within(cell as HTMLElement).getByText('01/07/2026')).toBeInTheDocument();
+    expect(within(cell as HTMLElement).getByText('23/07/2026')).toBeInTheDocument();
   });
 });

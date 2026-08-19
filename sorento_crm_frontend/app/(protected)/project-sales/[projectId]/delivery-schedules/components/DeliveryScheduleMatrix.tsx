@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import type { DeliverySchedulePhase } from '../../../_shared/types/deliverySchedule.types';
-import type { ColumnState } from '../lib/scheduleTotals';
+import type { CellMeta, ColumnState } from '../lib/scheduleTotals';
 import { phaseRowLabel, sumQty } from '../lib/scheduleTotals';
 import { DeliveryScheduleProductPicker } from './DeliveryScheduleProductPicker';
 
@@ -63,6 +63,12 @@ export interface ScheduleGridController {
   /** Column indexes whose product was just identified, so the map note is shown once. */
   learnedColumns: number[];
   registerColumnRef: (columnKey: string, node: HTMLElement | null) => void;
+  /**
+   * What the document itself marked on one cell (section 9.7a/c): a tint, or a date this
+   * cell now overrides ahead of the phase's own. Absent for the ordinary cell, which is
+   * most of them.
+   */
+  metaFor: (phaseId: string, columnKey: string) => CellMeta | undefined;
   /**
    * A column the reviewer asked to be put inside, from the reconciliation list.
    *
@@ -264,14 +270,24 @@ export function DeliveryScheduleMatrix({
               {dateColumns.map(({ phase, startsGroup }) => {
                 const editable = controller.canEdit && Boolean(column.productId);
                 const value = controller.valueFor(phase.id, column.key);
+                const meta = controller.metaFor(phase.id, column.key);
                 return (
                   <td
                     key={phase.id}
+                    // The highlight is an inline style, not a class: the colour is the
+                    // document's own and cannot be a Tailwind token. `color-mix` gives a
+                    // real tint at partial opacity.
+                    style={
+                      meta?.highlight
+                        ? { backgroundColor: `color-mix(in oklab, ${meta.highlight} 35%, transparent)` }
+                        : undefined
+                    }
+                    title={meta?.highlight ? 'Highlighted in the document' : undefined}
                     className={cn(
                       DATE_COL,
                       'border-b border-e border-border p-0',
                       startsGroup && 'border-s border-s-border',
-                      column.reconciled ? '' : 'bg-destructive/5',
+                      !meta?.highlight && (column.reconciled ? '' : 'bg-destructive/5'),
                     )}
                   >
                     <input
@@ -293,6 +309,19 @@ export function DeliveryScheduleMatrix({
                       onBlur={() => controller.commit(phase.id, column)}
                       className="h-8 w-full bg-transparent px-2 text-end tabular-nums outline-none focus:bg-primary/5 focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:text-muted-foreground"
                     />
+                    {/* The phase header above keeps the DOCUMENT's own date; this one
+                        product's cell shows its own, was -> now, once a proposal covering
+                        it was accepted. */}
+                    {meta?.deliveryDateOverride && (
+                      <p className="flex items-center gap-1 truncate px-2 pb-1 text-[10px] tabular-nums">
+                        <span className="text-muted-foreground line-through">
+                          {phase.delivery_date ? formatDateInMalaysia(phase.delivery_date) : '—'}
+                        </span>
+                        <span className="font-medium">
+                          {formatDateInMalaysia(meta.deliveryDateOverride)}
+                        </span>
+                      </p>
+                    )}
                   </td>
                 );
               })}

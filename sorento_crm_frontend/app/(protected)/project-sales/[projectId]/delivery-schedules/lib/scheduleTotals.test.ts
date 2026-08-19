@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  buildCellMetaMap,
   buildColumnStates,
   compareQty,
   diffScheduleQuantities,
@@ -15,6 +16,7 @@ import {
   isQty,
   normaliseQty,
   phaseRowLabel,
+  proposalCadenceLabel,
   schedulePhaseDateMoves,
   signedQty,
   subtractQty,
@@ -503,5 +505,58 @@ describe('diffScheduleQuantities (section 9.1)', () => {
     // The matched pair is unchanged (silent); the phase COMMON AREA::9 does not exist on
     // this version at all, so nothing honest can be said about its removed quantity.
     expect(changes).toHaveLength(0);
+  });
+});
+
+describe('buildCellMetaMap (section 9.7a/c)', () => {
+  it('keeps a highlight and an override, keyed the same way the qty map is', () => {
+    const meta = buildCellMetaMap([
+      { phase_id: 'ph1', product_id: 'p1', qty: '927', highlight: '#ffe08a' },
+      {
+        phase_id: 'ph2',
+        product_id: 'p1',
+        qty: '66',
+        delivery_date_override: '2026-07-23',
+      },
+    ]);
+
+    expect(meta.get('ph1|p1')).toEqual({ highlight: '#ffe08a', deliveryDateOverride: null });
+    expect(meta.get('ph2|p1')).toEqual({
+      highlight: null,
+      deliveryDateOverride: '2026-07-23',
+    });
+  });
+
+  it('carries nothing for an ordinary cell, which is most of them', () => {
+    const meta = buildCellMetaMap([{ phase_id: 'ph1', product_id: 'p1', qty: '927' }]);
+    expect(meta.size).toBe(0);
+  });
+});
+
+describe('proposalCadenceLabel (section 9.7b)', () => {
+  it('names the fortnight cadence when every gap between the highlighted phases agrees', () => {
+    expect(
+      proposalCadenceLabel([
+        { old_date: '2026-07-01' },
+        { old_date: '2026-07-15' },
+        { old_date: '2026-07-29' },
+      ]),
+    ).toBe('keeping the fortnight cadence');
+  });
+
+  it("falls back to the document's own gaps once they disagree", () => {
+    expect(
+      proposalCadenceLabel([
+        { old_date: '2026-07-01' },
+        { old_date: '2026-07-15' },
+        { old_date: '2026-08-01' },
+      ]),
+    ).toBe("keeping the document's own gaps");
+  });
+
+  it("says the document's own gaps with fewer than two phases to compare", () => {
+    expect(proposalCadenceLabel([{ old_date: '2026-07-01' }])).toBe(
+      "keeping the document's own gaps",
+    );
   });
 });

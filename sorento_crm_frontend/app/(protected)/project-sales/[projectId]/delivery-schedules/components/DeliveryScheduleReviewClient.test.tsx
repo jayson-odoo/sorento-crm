@@ -89,6 +89,8 @@ const saveDeliveryScheduleCells = vi.fn();
 const resolveDeliveryScheduleProduct = vi.fn();
 const confirmDeliveryScheduleVersion = vi.fn();
 const listDeliveryScheduleVersions = vi.fn();
+const acceptRevisionProposal = vi.fn();
+const rejectRevisionProposal = vi.fn();
 vi.mock('../../../_shared/services/deliveryScheduleService', () => ({
   DELIVERY_SCHEDULE_VERSION_NEIGHBOURS_PATH:
     '/api/v1/project-sales/delivery-schedule-versions/neighbours',
@@ -101,6 +103,8 @@ vi.mock('../../../_shared/services/deliveryScheduleService', () => ({
     resolveDeliveryScheduleProduct(...args),
   confirmDeliveryScheduleVersion: (...args: unknown[]) =>
     confirmDeliveryScheduleVersion(...args),
+  acceptRevisionProposal: (...args: unknown[]) => acceptRevisionProposal(...args),
+  rejectRevisionProposal: (...args: unknown[]) => rejectRevisionProposal(...args),
 }));
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -968,5 +972,123 @@ describe('DeliveryScheduleReviewClient revision diff and amendment banner', () =
     ) as [string, { action: { onClick: () => void } }];
     options.action.onClick();
     expect(push).toHaveBeenCalledWith('/project-sales/p1/sales-orders/so-1/revisions');
+  });
+});
+
+/** Section 9.7 - the notes callout and the re-dating proposals, above the grid. */
+describe('DeliveryScheduleReviewClient notes and revision proposals', () => {
+  it('renders the notes callout and a proposal card straight off the version', async () => {
+    getDeliveryScheduleVersion.mockResolvedValue(
+      version({
+        notes: [
+          {
+            page_no: 7,
+            text: 'ONLY FOR FLOOR TRAP TO BE DELIVER IN 2026, START FROM 23/7/2026',
+          },
+        ],
+        revision_proposals: [
+          {
+            product_id: 'p2',
+            item_code: 'SRTFV1001',
+            note_text: 'ONLY FOR FLOOR TRAP...',
+            page_no: 7,
+            state: 'proposed',
+            decided_by: null,
+            decided_at: null,
+            cells: [
+              {
+                phase_id: 'ph2',
+                phase_label: 'Phase 3',
+                qty: '8',
+                old_date: '2027-06-01',
+                new_date: '2026-07-23',
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    expect(screen.getByText('Notes on the document')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Page 7: ONLY FOR FLOOR TRAP TO BE DELIVER IN 2026, START FROM 23/7/2026',
+      ),
+    ).toBeInTheDocument();
+
+    expect(screen.getByText('Re-dating proposals')).toBeInTheDocument();
+    expect(
+      screen.getByText(/SRTFV1001 - re-date 1 phase from 23\/07\/2026/),
+    ).toBeInTheDocument();
+  });
+
+  it('says nothing was proposed, and no notes, without hiding either section', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    expect(screen.getByText('No notes on the document')).toBeInTheDocument();
+    expect(screen.getByText('No re-dating proposed')).toBeInTheDocument();
+  });
+
+  it('accepts a proposal through the confirm dialog, and writes it to the version query', async () => {
+    getDeliveryScheduleVersion.mockResolvedValue(
+      version({
+        revision_proposals: [
+          {
+            product_id: 'p2',
+            item_code: 'SRTFV1001',
+            note_text: 'note',
+            page_no: 7,
+            state: 'proposed',
+            decided_by: null,
+            decided_at: null,
+            cells: [
+              {
+                phase_id: 'ph2',
+                phase_label: 'Phase 3',
+                qty: '8',
+                old_date: '2027-06-01',
+                new_date: '2026-07-23',
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    acceptRevisionProposal.mockResolvedValue(
+      version({
+        revision_proposals: [
+          {
+            product_id: 'p2',
+            item_code: 'SRTFV1001',
+            note_text: 'note',
+            page_no: 7,
+            state: 'accepted',
+            decided_by: 'u1',
+            decided_at: '2026-08-19T02:00:00',
+            cells: [
+              {
+                phase_id: 'ph2',
+                phase_label: 'Phase 3',
+                qty: '8',
+                old_date: '2027-06-01',
+                new_date: '2026-07-23',
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Accept' }));
+
+    await waitFor(() => expect(acceptRevisionProposal).toHaveBeenCalledWith('v2', 0));
+    expect(await screen.findByText(/^Accepted /)).toBeInTheDocument();
   });
 });

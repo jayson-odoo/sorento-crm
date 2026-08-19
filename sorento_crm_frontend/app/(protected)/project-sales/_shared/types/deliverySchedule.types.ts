@@ -104,11 +104,51 @@ export interface DeliveryScheduleCell {
    * extractor read for such a column; when absent that column renders blank until resolved.
    */
   product_index?: number | null;
+  /** `#rrggbb` when the document tints this cell (section 9.7a). Null on an untinted cell. */
+  highlight?: string | null;
+  /**
+   * Set once a revision proposal covering this cell was accepted (section 9.7c). Read ahead
+   * of the phase's own `delivery_date` for this product only - the phase header keeps the
+   * document's own date, this one cell shows its own.
+   */
+  delivery_date_override?: string | null;
 }
 
 export interface DeliveryScheduleReconciliation {
   reconciled_columns: number;
   total_columns: number;
+}
+
+/** A free-text remark the extractor found on the page but did not interpret (section 9.7a). */
+export interface ScheduleNote {
+  page_no: number | null;
+  text: string;
+}
+
+export interface RevisionProposalCell {
+  phase_id: string | null;
+  phase_label: string | null;
+  qty: string | null;
+  old_date: string | null;
+  new_date: string | null;
+}
+
+export type RevisionProposalState = 'proposed' | 'accepted' | 'rejected';
+
+/**
+ * One product's re-date suggestion, built from its highlighted cells plus the page's own
+ * margin note (section 9.7b). Nothing is applied until Accept.
+ */
+export interface RevisionProposal {
+  product_id: string | null;
+  item_code: string | null;
+  note_text: string | null;
+  page_no: number | null;
+  state: RevisionProposalState;
+  /** A raw user id, not a name (no resolver on the wire yet) - never rendered as-is. */
+  decided_by: string | null;
+  decided_at: string | null;
+  cells: RevisionProposalCell[];
 }
 
 export interface DeliveryScheduleVersion {
@@ -127,6 +167,11 @@ export interface DeliveryScheduleVersion {
   cells: DeliveryScheduleCell[];
   reconciliation: DeliveryScheduleReconciliation;
   confirmed_at: string | null;
+
+  /** Additive (section 9.7a): free-text remarks found on the page, verbatim. */
+  notes?: ScheduleNote[];
+  /** Additive (section 9.7b): per-product re-date suggestions from notes + highlights. */
+  revision_proposals?: RevisionProposal[];
 
   /** GUESS: honest progress and the partial case both need these. */
   extraction_error?: string | null;
