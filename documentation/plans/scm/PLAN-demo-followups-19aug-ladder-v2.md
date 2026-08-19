@@ -154,23 +154,35 @@ D3. Approve all (board-wide, draft) + `POST /fulfilment-planning/confirm-all` (b
 D4. Optional: server-stored board draft (`so_supply_board_drafts` keyed by user + order set)
     so a reload does not lose the session. Do after D1-D3.
 
-### E. Ladder v2 (after section 8 answers) - `front_planning_engine.propose_line` + supply service
+### E. Ladder v2 - `front_planning_engine.propose_line` + supply service (captain's answers,
+19 Aug late evening: pool stays a Reserve source; the own `-BB` location is never reserved;
+positive Available inside the group is takeable; the horizon is purchasing's coverage DATE)
 
-Order, per line:
-0. **Horizon:** required date > today + `buy_all_horizon_days` -> `Buy all`, touch no stock.
-1. **Timely incoming** (SPO arriving by the required date, rank-attributed) counts toward cover.
-2. **Pool reserve:** plain site pools (own site first: BRW for a BRW-BB line, then MWH, DC1,
-   WH3), capacity = signed `Available` (on hand - SO qty + SPO qty), never below zero; hot-selling
-   gate of 3.3a still applies.
-3. **Borrow within the ownership group** (all `*-BB` locations for a BB line; own location
-   first, then the other sites' `-BB`): donors = other SOs' committed quantity at those
-   locations, lower-ranked first; the SAME AGENT's SOs listed regardless of rank and marked
-   "same agent - she can authorise". Every borrow raises an order-back (OI Buy row for the donor
-   SO, donor's required date = urgency). Proposed by the engine now, not only confirmed.
-4. **Cross-group borrow:** only when the line qty <= `cross_group_borrow_max_qty` (or pct).
-5. **Whole-line rule:** if 1+2+3(+4) cover the WHOLE owed qty -> propose that composition;
-   otherwise -> `Buy all`. No partial.
-6. Own-location Reserve rung REMOVED (BRW-* stock is customer-committed by definition).
+Vocabulary: own location L = `BRW-BB`; site S = the prefix (`BRW`); pool P(S) = the plain site
+warehouse (`BRW`, 892k on hand live); other pools = `MWH`, `DC1`, `WH3`; ownership group G = the
+suffix (`BB`) = every `*-BB` location; the line's agent A = `sales_orders.sales_agent_id`.
+
+Order, per line, owed Q with required date D:
+0. **Coverage date:** `reorder_coverage_until` set and D is after it -> `Buy Q now` ("beyond
+   purchasing's coverage, 31 Oct 2026"). Stop. Purchasing reorders up to that date; what lies
+   beyond it is not covered by the regular reorder and is bought immediately.
+1. **Timely incoming** (SPO arriving by D, rank-attributed) counts toward cover.
+2. **Pool reserve:** P(S) first, then the other site pools; capacity = `max(min(free,
+   available), 0)` (signed Available = on hand - SO qty + SPO qty, never below zero), hot-selling
+   gate of 3.3a retained.
+3. **Group take:** sibling locations of G at the other sites (`MWH-BB`, `DC1-BB`, ...) with
+   POSITIVE Available -> take from them. The own location L is never a source.
+4. **Group borrow:** other sales orders' committed quantity at G's locations (L first, then the
+   siblings): donors ranked LOWER than this line by the active priority policy are proposed
+   automatically; the SAME AGENT's sales orders are offered at any rank, marked "same agent -
+   she can authorise". Every borrow carries an order-back: an Order Inquiry Buy row for the
+   donor SO line, urgency = the donor's required date. Source type `order`.
+5. **Cross-group borrow** (free stock at locations outside G, the existing `other_location`
+   donors): offered only when Q <= `cross_group_borrow_max_qty` or Q <= `max_pct` % of that
+   location's free stock.
+6. **Whole-line rule:** if 1+2+3+4(+5) cover the WHOLE of Q, propose that composition in rung
+   order; otherwise propose `Buy Q` (the partial components are dropped, not mixed in).
+7. The own-location Reserve rung is REMOVED (the strip still shows L's figures, read-only).
 
 ### F. Rank: check the popover fact
 
