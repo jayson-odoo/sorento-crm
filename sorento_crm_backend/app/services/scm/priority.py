@@ -42,9 +42,11 @@ from datetime import date
 from typing import Any, Mapping, Optional, Sequence
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.scm import PriorityPolicy
+from app.services.error_handler import AppException
 from app.services.scm.cash_ranking import Factor, rank_score
 
 #: The factor keys a policy may weight. Adding a fifth is a row in `scm.priority_policy.factors`
@@ -244,9 +246,20 @@ def create_revision(
     statements never has zero or two active rows for another request to observe as this
     session's own uncommitted work, and the caller's `db.commit()` makes it durable.
 
+    Two concurrent PUTs are the case that matters: without a lock, both could read the same
+    active row, both UPDATE it false, and both INSERT a new active row, with the second
+    INSERT losing to `uq_scm_priority_policy_one_active` as an unhandled `IntegrityError` -
+    an ugly 500 for what is really "you and someone else saved at the same time". The active
+    row is SELECTed FOR UPDATE first so the second PUT blocks behind the first's commit
+    instead of racing it. That lock has nothing to hold when no row is active at all (a
+    fresh install, or the sliver of time between one transaction's UPDATE and its INSERT),
+    so the insert is wrapped in a savepoint too: any `IntegrityError` there is caught and
+    turned into a 409 asking the caller to reload, never a 500.
+
     Flushes but does not commit - the caller (the PUT route) commits, so a mid-transaction
     failure elsewhere in the same request leaves no half-activated revision.
     """
+    db.execute(text("SELECT id FROM scm.priority_policy WHERE is_active FOR UPDATE"))
     db.execute(text("UPDATE scm.priority_policy SET is_active = false WHERE is_active"))
     revision = PriorityPolicy(
         name=name,
@@ -258,8 +271,21 @@ def create_revision(
         cross_group_borrow_max_pct=cross_group_borrow_max_pct,
         notes=notes,
     )
-    db.add(revision)
-    db.flush()
+    savepoint = db.begin_nested()
+    try:
+        db.add(revision)
+        db.flush()
+        savepoint.commit()
+    except IntegrityError as exc:
+        savepoint.rollback()
+        raise AppException(
+            status_code=409,
+            message=(
+                "The fulfilment priority policy changed under you. Reload the page and "
+                "try again."
+            ),
+            code="scm_priority_policy_conflict",
+        ) from exc
     return revision
 
 

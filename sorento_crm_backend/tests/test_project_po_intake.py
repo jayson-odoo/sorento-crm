@@ -1214,6 +1214,77 @@ def test_run_extraction_commits_progress_once_per_page(seeded, monkeypatch):
     assert service.serialize_version(version)["pages_extracted"] == 4
 
 
+def test_a_retry_after_a_failed_read_does_not_pin_progress_to_the_old_page_count(seeded, monkeypatch):
+    """A retry runs `run_extraction` again on the SAME version row, and the failed
+    attempt already left stale entries in ``extracted_json['pages']``. Left uncleared,
+    ``_on_page`` appends onto them, so the FE's "Page X of Y" counter pins to a Y that
+    counts pages from the read that failed - this is checked WHILE the retry is still
+    RUNNING (persist_pages overwrites ``pages`` wholesale at the end regardless, so a
+    post-completion assertion alone would not catch the bug this fixes).
+    `run_extraction` must reset ``extracted_json['pages']`` before the first page of
+    the retry can land, so progress climbs 0, 1, 2 - never starting from 3 stale
+    entries and never exceeding the 2 real pages of this retry.
+    """
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-RETRY-PROGRESS"))
+
+    # A previous, failed attempt already wrote three stale page blobs.
+    version.extracted_json = {
+        "pages": [
+            {"page_no": 1, "data": {"lines": []}, "error": None},
+            {"page_no": 2, "data": {"lines": []}, "error": None},
+            {"page_no": 3, "data": None, "error": "boom"},
+        ]
+    }
+    db.flush()
+
+    monkeypatch.setattr(
+        ProjectPOExtractionService, "_document_bytes",
+        lambda self, version: (b"ZZT", "application/pdf"),
+    )
+    monkeypatch.setattr(
+        document_extraction, "_render_pages_rich",
+        lambda *a, **k: [RenderedPage(image_b64="i", image_mime="image/jpeg") for _ in range(2)],
+    )
+
+    class _StubProvider:
+        name = "stub"
+
+        def chat(self, messages, **kwargs):
+            return ChatResult(
+                content='{"lines": []}', prompt_tokens=1, completion_tokens=1, total_tokens=2
+            )
+
+    monkeypatch.setattr(document_extraction, "get_provider", lambda *a, **k: _StubProvider())
+    monkeypatch.setattr(app_settings, "document_ai_provider", "gemini", raising=False)
+    monkeypatch.setattr(app_settings, "gemini_api_key", "ZZT-key", raising=False)
+    monkeypatch.setattr(app_settings, "document_ai_page_concurrency", 2, raising=False)
+
+    progress_after_each_commit: list[int] = []
+    original_commit = db.commit
+
+    def snapshotting_commit(*args, **kwargs):
+        result = original_commit(*args, **kwargs)
+        progress_after_each_commit.append(
+            len((version.extracted_json or {}).get("pages") or [])
+        )
+        return result
+
+    db.commit = snapshotting_commit
+
+    summary = service.run_extraction(str(version.id))
+
+    assert summary["status"] == STATE_DONE
+    # The very first commit is the RUNNING stamp, made right after the reset: it must
+    # show 0, not the 3 stale entries the failed attempt left behind.
+    assert progress_after_each_commit[0] == 0
+    # Progress never exceeds this retry's real page count - never 3 (stale alone) and
+    # never 5 (3 stale + 2 new).
+    assert max(progress_after_each_commit) == 2
+    assert len((version.extracted_json or {}).get("pages") or []) == 2
+
+
 def test_the_version_carries_the_approval_stamps(seeded):
     db, project, owner = seeded
     service = ProjectPOExtractionService(db)

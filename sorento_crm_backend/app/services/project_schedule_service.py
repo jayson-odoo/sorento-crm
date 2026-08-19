@@ -872,6 +872,12 @@ class ProjectScheduleService:
         version = self.get_version(schedule_version_id)
         version.extraction_state = STATE_RUNNING
         version.extraction_error = None
+        # A retry starts on the SAME version row, and `_on_page` below appends to
+        # whatever `extracted_json['pages']` already holds. Left alone, a retry after a
+        # failed read appends the new pages onto the old ones, so the FE's "Page X of Y"
+        # progress counter pins to a Y that includes pages from the read that failed.
+        # Cleared here, once, before the first page can land.
+        version.extracted_json = {**(version.extracted_json or {}), "pages": []}
         # Only the reader knows when it actually picked the document up. See S20.
         recovery.mark_started(self.db, version)
         self.db.commit()

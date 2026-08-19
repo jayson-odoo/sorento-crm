@@ -49,8 +49,17 @@ RASTER_MIMES = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
 # The page's own text layer is sent alongside the image (19 Aug follow-up: "text +
 # image together"), capped so one dense CAD-exported page cannot blow up the prompt.
 # 6k characters is generous for a purchase order or a schedule matrix - both are
-# tables, not paragraphs - and a cap this size never truncates one in practice.
+# tables, not paragraphs - but the cap is real and a page beyond it IS truncated
+# mid-token, so a cut page carries `_PAGE_TEXT_TRUNCATED_MARKER` (below) rather than
+# stopping silently: the prompt tells the model the text layer is authoritative for
+# codes and numbers, and a truncated layer that says nothing about being truncated
+# would have the model trust a cut-off code as if it were the whole one.
 PAGE_TEXT_CHAR_LIMIT = 6000
+
+# Appended to a page's text layer when it was cut at PAGE_TEXT_CHAR_LIMIT, so the
+# prompt's own "authoritative for codes/numbers" rule is read against text that
+# says plainly it does not cover the whole page.
+_PAGE_TEXT_TRUNCATED_MARKER = "... [text layer truncated]"
 
 # The environment leg of ``resolve_api_key``, named per provider so an operator
 # with no key on the settings page is told which variable to set rather than
@@ -122,6 +131,21 @@ def _encode_page_image(pixmap) -> tuple[bytes, str]:
         return pixmap.tobytes("png"), "image/png"
 
 
+def _cap_page_text(raw_text: str) -> Optional[str]:
+    """Cap a page's text layer at ``PAGE_TEXT_CHAR_LIMIT``, flagging the cut.
+
+    The prompt tells the model the text layer is authoritative for codes and
+    numbers; a page cut mid-token with no marker leaves the model no way to know
+    it is trusting an incomplete layer.
+    """
+    if not raw_text:
+        return None
+    if len(raw_text) <= PAGE_TEXT_CHAR_LIMIT:
+        return raw_text
+    cutoff = max(PAGE_TEXT_CHAR_LIMIT - len(_PAGE_TEXT_TRUNCATED_MARKER), 0)
+    return raw_text[:cutoff].rstrip() + _PAGE_TEXT_TRUNCATED_MARKER
+
+
 def _render_pages_rich(
     content: bytes, mime: str, *, dpi: Optional[int] = None, page_limit: Optional[int] = None
 ) -> list[RenderedPage]:
@@ -147,7 +171,8 @@ def _render_pages_rich(
             image_bytes, image_mime = _encode_page_image(pixmap)
             # `get_text()`'s overloads are keyed on the option string, which pyright
             # cannot narrow from a runtime constant; "text" always returns a str.
-            page_text = str(page.get_text("text") or "").strip()[:PAGE_TEXT_CHAR_LIMIT] or None
+            raw_text = str(page.get_text("text") or "").strip()
+            page_text = _cap_page_text(raw_text)
             pages.append(
                 RenderedPage(
                     image_b64=base64.b64encode(image_bytes).decode(),

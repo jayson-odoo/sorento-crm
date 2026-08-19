@@ -40,16 +40,28 @@ export function FulfilmentPriorityPanel() {
 
   useEffect(() => {
     if (!data) return;
+    // Seeded from the FULL stored record, not just the keys this screen renders: the
+    // backend keeps `factors` / `demand_class_weights` as open JSONB precisely so a
+    // policy can carry a factor this UI does not yet know about, and a draft that only
+    // remembered the rendered keys would drop it the moment it was saved again.
     const nextFactors: Record<string, string> = {};
+    for (const [key, value] of Object.entries(data.factors)) {
+      nextFactors[key] = String(value);
+    }
     for (const key of FULFILMENT_FACTOR_ORDER) {
-      nextFactors[key] = String(data.factors[key] ?? 0);
+      if (!(key in nextFactors)) nextFactors[key] = '0';
     }
     setFactors(nextFactors);
+
     const nextClasses: Record<string, string> = {};
+    for (const [key, value] of Object.entries(data.demand_class_weights)) {
+      nextClasses[key] = String(value);
+    }
     for (const key of FULFILMENT_CLASS_ORDER) {
-      nextClasses[key] = String(data.demand_class_weights[key] ?? 0);
+      if (!(key in nextClasses)) nextClasses[key] = '0';
     }
     setClassWeights(nextClasses);
+
     setHorizonDays(String(data.buy_all_horizon_days));
     setBorrowMaxQty(String(data.cross_group_borrow_max_qty));
     setBorrowMaxPct(String(data.cross_group_borrow_max_pct));
@@ -65,6 +77,14 @@ export function FulfilmentPriorityPanel() {
       }
       parsedFactors[key] = value;
     }
+    // Any factor the stored policy carries beyond what this screen renders travels
+    // through untouched, merged over the edited set rather than replacing it.
+    for (const [key, raw] of Object.entries(factors)) {
+      if (key in parsedFactors) continue;
+      const value = Number(raw);
+      if (Number.isFinite(value)) parsedFactors[key] = value;
+    }
+
     const parsedClasses: Record<string, number> = {};
     for (const key of FULFILMENT_CLASS_ORDER) {
       const value = Number(classWeights[key]);
@@ -74,6 +94,12 @@ export function FulfilmentPriorityPanel() {
       }
       parsedClasses[key] = value;
     }
+    for (const [key, raw] of Object.entries(classWeights)) {
+      if (key in parsedClasses) continue;
+      const value = Number(raw);
+      if (Number.isFinite(value)) parsedClasses[key] = value;
+    }
+
     const horizon = Number(horizonDays);
     if (!Number.isInteger(horizon) || horizon <= 0) {
       setFormError('The Buy-all horizon must be a whole number of days greater than 0.');
@@ -90,13 +116,18 @@ export function FulfilmentPriorityPanel() {
       return;
     }
     setFormError(null);
-    await save.mutateAsync({
-      factors: parsedFactors,
-      demand_class_weights: parsedClasses,
-      buy_all_horizon_days: horizon,
-      cross_group_borrow_max_qty: maxQty,
-      cross_group_borrow_max_pct: maxPct,
-    });
+    try {
+      await save.mutateAsync({
+        factors: parsedFactors,
+        demand_class_weights: parsedClasses,
+        buy_all_horizon_days: horizon,
+        cross_group_borrow_max_qty: maxQty,
+        cross_group_borrow_max_pct: maxPct,
+      });
+    } catch {
+      // Already toasted by the mutation's own onError; this only stops the rejection
+      // `mutateAsync` rethrows from reaching the click handler unhandled.
+    }
   };
 
   return (
@@ -107,13 +138,6 @@ export function FulfilmentPriorityPanel() {
         </CardHeading>
       </CardHeader>
       <CardContent className="space-y-6">
-        <p className="text-sm text-muted-foreground">
-          When more than one order is competing for the same stock or the same incoming
-          purchase order, these weights decide who is served first. A higher weight means that
-          factor matters more; a factor nobody has stated (e.g. a customer with no payment
-          terms on file) is left out of the comparison rather than scored against them.
-        </p>
-
         {!data?.exists && !isLoading ? (
           <Alert>
             <AlertDescription>
@@ -170,10 +194,6 @@ export function FulfilmentPriorityPanel() {
 
             <div>
               <h4 className="mb-3 text-sm font-medium">Demand class weight</h4>
-              <p className="mb-3 text-2xs text-muted-foreground">
-                How much an order of this class is worth, when the demand-class factor above is
-                weighted.
-              </p>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 {FULFILMENT_CLASS_ORDER.map((key) => (
                   <div key={key}>
@@ -254,11 +274,6 @@ export function FulfilmentPriorityPanel() {
             </div>
           </>
         )}
-
-        <p className="rounded-md bg-muted/40 px-3 py-2 text-2xs text-muted-foreground">
-          Saving activates a NEW revision of this policy; the one it replaces is kept, not
-          overwritten, so past board decisions stay explainable by the rule active at the time.
-        </p>
       </CardContent>
       <CardFooter className="justify-end">
         <Button onClick={() => void onSave()} disabled={isLoading || save.isPending}>

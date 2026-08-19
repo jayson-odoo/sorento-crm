@@ -186,6 +186,29 @@ def test_the_page_text_layer_rides_in_the_same_turn_as_the_image(monkeypatch):
     assert "---\n\n---" in page_two["prompt"]
 
 
+def test_a_page_text_layer_past_the_cap_carries_a_truncation_marker():
+    """The prompt calls the text layer authoritative for codes/numbers; a page cut
+    mid-token with no marker would have the model trust an incomplete reading as if
+    it were the whole one."""
+    raw = "A" * (document_extraction.PAGE_TEXT_CHAR_LIMIT + 500)
+
+    capped = document_extraction._cap_page_text(raw)
+
+    assert capped is not None
+    assert capped.endswith(document_extraction._PAGE_TEXT_TRUNCATED_MARKER)
+    assert len(capped) <= document_extraction.PAGE_TEXT_CHAR_LIMIT
+
+
+def test_a_page_text_layer_under_the_cap_is_untouched():
+    raw = "STOCK CODE  QTY\nSRTWC8613-RL  927"
+
+    assert document_extraction._cap_page_text(raw) == raw
+
+
+def test_an_empty_page_text_layer_stays_none():
+    assert document_extraction._cap_page_text("") is None
+
+
 def test_the_prompt_template_is_resolved_once_for_the_whole_document(monkeypatch):
     provider = _StubProvider()
     calls = {"n": 0}

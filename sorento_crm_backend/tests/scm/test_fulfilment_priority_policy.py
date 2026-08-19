@@ -11,12 +11,19 @@ Same fixture family as `test_policy_config.py` (real Postgres, rolled-back savep
    `priority.active_policy()` (what the board itself reads) sees the new weights immediately.
 3. Negative weights, and the ladder-v2 settings outside their bounds, are refused with 422 and
    write nothing.
+4. `priority.create_revision` turns the race two concurrent PUTs can hit - both trying to
+   activate a new revision at once - into a 409 rather than an unhandled `IntegrityError`
+   (500) off `uq_scm_priority_policy_one_active`.
 """
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
+from app.models.scm import PriorityPolicy
+from app.services.error_handler import AppException
 from app.services.scm import priority as priority_svc
 from tests.scm.conftest import as_user, requires_pg, seed_user
 
@@ -186,3 +193,56 @@ def test_rbac_denied_without_manage(scm_app):
     with TestClient(app) as c:
         assert c.get(BASE).status_code == 403
         assert c.put(BASE, json=_write()).status_code == 403
+
+
+def test_a_uniqueness_conflict_on_activation_is_a_409_not_a_500(scm_app):
+    """`create_revision` wraps its own INSERT in a savepoint precisely so a collision on
+    `uq_scm_priority_policy_one_active` - what two concurrent PUTs racing past the FOR
+    UPDATE lock would produce - surfaces as an AppException 409, not a bare
+    `IntegrityError` bubbling up as a 500. Simulated by making the flush itself raise,
+    the same shape a real unique-index refusal takes at that call site.
+    """
+    app, db = _client(scm_app, "purchasing")
+    before_count = db.execute(text("SELECT count(*) FROM scm.priority_policy")).scalar()
+
+    real_flush = db.flush
+
+    def _boom_only_for_the_new_revision(*args, **kwargs):
+        # `Session.begin_nested()` itself flushes (to take its snapshot) before
+        # `create_revision` ever adds the new row, and that call must stay a real,
+        # harmless no-op flush - only the flush that actually has the new
+        # `PriorityPolicy` pending should look like the unique-index refusal.
+        if any(isinstance(obj, PriorityPolicy) for obj in db.new):
+            raise IntegrityError(
+                "INSERT INTO scm.priority_policy ...",
+                {},
+                Exception(
+                    'duplicate key value violates unique constraint '
+                    '"uq_scm_priority_policy_one_active"'
+                ),
+            )
+        return real_flush(*args, **kwargs)
+
+    db.flush = _boom_only_for_the_new_revision
+    try:
+        with pytest.raises(AppException) as excinfo:
+            priority_svc.create_revision(
+                db,
+                name="ZZT conflict test",
+                factors={"po_document_sequence": 1.0},
+                demand_class_weights={},
+                buy_all_horizon_days=180,
+                cross_group_borrow_max_qty=50,
+                cross_group_borrow_max_pct=10.0,
+            )
+    finally:
+        db.flush = real_flush
+
+    assert excinfo.value.status_code == 409
+    assert excinfo.value.detail["code"] == "scm_priority_policy_conflict"
+
+    # No orphan row was inserted - the savepoint around the INSERT rolled that part
+    # back, which is exactly what stops a 409 from also leaving a stray policy row
+    # nobody activated.
+    after_count = db.execute(text("SELECT count(*) FROM scm.priority_policy")).scalar()
+    assert after_count == before_count

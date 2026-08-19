@@ -121,4 +121,50 @@ describe('FulfilmentPriorityPanel', () => {
     expect(screen.getByText(/must be between 0 and 100/i)).toBeInTheDocument();
     expect(mutateAsync).not.toHaveBeenCalled();
   });
+
+  it('an extra factor / demand-class key the backend stored round-trips through save untouched', async () => {
+    // `factors` / `demand_class_weights` are open JSONB - a key this screen does not
+    // render (a future factor, or one added by another client) must survive a save
+    // made through this screen rather than being dropped.
+    const withExtras = {
+      ...DATA,
+      factors: { ...DATA.factors, future_factor: 2.5 },
+      demand_class_weights: { ...DATA.demand_class_weights, wholesale: 0.7 },
+    };
+    hooks.useFulfilmentPriority.mockReturnValue({ data: withExtras, isLoading: false, isError: false });
+    render(<FulfilmentPriorityPanel />);
+
+    fireEvent.change(screen.getByLabelText('Delivery date'), { target: { value: '5' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    const payload = mutateAsync.mock.calls[0][0];
+    expect(payload.factors).toEqual({
+      po_document_sequence: 1,
+      demand_class: 3,
+      need_by_date: 5,
+      document_age: 1,
+      customer_credit: 1,
+      future_factor: 2.5,
+    });
+    expect(payload.demand_class_weights).toEqual({ project: 1, retail: 0.4, wholesale: 0.7 });
+  });
+
+  it('a rejected save is not an unhandled promise rejection', async () => {
+    hooks.useFulfilmentPriority.mockReturnValue({ data: DATA, isLoading: false, isError: false });
+    mutateAsync.mockReset().mockRejectedValue(new Error('ZZT save failed'));
+    hooks.useSaveFulfilmentPriority.mockReturnValue({ mutateAsync, isPending: false });
+    const onUnhandledRejection = vi.fn();
+    window.addEventListener('unhandledrejection', onUnhandledRejection);
+
+    render(<FulfilmentPriorityPanel />);
+    fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    // Give the microtask queue a turn so an unhandled rejection would have fired.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    window.removeEventListener('unhandledrejection', onUnhandledRejection);
+    expect(onUnhandledRejection).not.toHaveBeenCalled();
+  });
 });

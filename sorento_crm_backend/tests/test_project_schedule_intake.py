@@ -511,6 +511,68 @@ def test_run_extraction_commits_progress_once_per_page(scenario, monkeypatch):
     assert commit_count["n"] >= 5
 
 
+def test_a_retry_after_a_failed_read_does_not_pin_progress_to_the_old_page_count(scenario, monkeypatch):
+    """Same defect as the PO reader's sibling test: a retry runs `run_extraction` again
+    on the SAME version row, and a failed attempt can leave stale entries in
+    ``extracted_json['pages']``. Checked WHILE the retry is RUNNING, because
+    ``persist_pages`` overwrites ``pages`` wholesale at the end regardless of what
+    ``_on_page`` accumulated mid-read."""
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    version = scenario["version"]
+
+    version.extracted_json = {
+        "pages": [
+            {"page_no": 1, "data": {"cells": []}},
+            {"page_no": 2, "data": {"cells": []}},
+        ]
+    }
+    db.flush()
+
+    monkeypatch.setattr(
+        ProjectScheduleService, "_document_bytes",
+        lambda self, version: (b"ZZT", "application/pdf"),
+    )
+    monkeypatch.setattr(project_schedule_service, "parse_text_matrix", lambda *a, **k: {})
+    monkeypatch.setattr(
+        document_extraction, "_render_pages_rich",
+        lambda *a, **k: [RenderedPage(image_b64="i", image_mime="image/jpeg") for _ in range(1)],
+    )
+
+    class _StubProvider:
+        name = "stub"
+
+        def chat(self, messages, **kwargs):
+            return ChatResult(content="{}", prompt_tokens=1, completion_tokens=1, total_tokens=2)
+
+    monkeypatch.setattr(document_extraction, "get_provider", lambda *a, **k: _StubProvider())
+    monkeypatch.setattr(app_settings, "document_ai_provider", "gemini", raising=False)
+    monkeypatch.setattr(app_settings, "gemini_api_key", "ZZT-key", raising=False)
+    monkeypatch.setattr(app_settings, "document_ai_page_concurrency", 1, raising=False)
+
+    progress_after_each_commit: list[int] = []
+    original_commit = db.commit
+
+    def snapshotting_commit(*args, **kwargs):
+        result = original_commit(*args, **kwargs)
+        progress_after_each_commit.append(
+            len((version.extracted_json or {}).get("pages") or [])
+        )
+        return result
+
+    db.commit = snapshotting_commit
+
+    result = service.run_extraction(version.id)
+
+    assert result["status"] in ("done", "partial")
+    # The RUNNING-stamp commit, right after the reset, must show 0 - not the 2 stale
+    # entries the failed attempt left behind.
+    assert progress_after_each_commit[0] == 0
+    # Never exceeds this retry's one real page - never 2 (stale alone) or 3 (stale + new).
+    assert max(progress_after_each_commit) == 1
+    assert len((version.extracted_json or {}).get("pages") or []) == 1
+
+
 def test_reading_a_confirmed_version_refreshes_the_display_and_writes_nothing(scenario):
     """What was agreed is the record. A confirmed version reports the current reading of
     its numbers, and the row it was bound as stays exactly as it was bound."""
