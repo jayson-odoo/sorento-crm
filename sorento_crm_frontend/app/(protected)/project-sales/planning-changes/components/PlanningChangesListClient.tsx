@@ -22,7 +22,10 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { usePlanningChangeBatches } from '../../_shared/hooks/usePlanningChanges';
-import type { PlanningChangeBatchSummary } from '../../_shared/types/planningChange.types';
+import {
+  PLANNING_CHANGE_SOURCE_KIND_LABEL,
+  type PlanningChangeBatchSummary,
+} from '../../_shared/types/planningChange.types';
 
 const STATE_TABS: { value: 'all' | 'pending' | 'applied'; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -102,6 +105,17 @@ export function PlanningChangesListClient() {
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.source.file_name}>
             {row.original.source.file_name}
+          </span>
+        ),
+      },
+      {
+        id: 'source_kind',
+        header: ({ column }) => <DataGridColumnHeader title="Source" column={column} />,
+        size: 130,
+        meta: { headerTitle: 'Source' },
+        cell: ({ row }) => (
+          <span className="block truncate">
+            {PLANNING_CHANGE_SOURCE_KIND_LABEL[row.original.source.kind]}
           </span>
         ),
       },

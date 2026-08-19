@@ -2,11 +2,13 @@
  * Phase 1 fixtures for planning changes (`PLAN-so-book-diff-replanning.md`).
  *
  * `pcb-1` is the batch under review: one row per rule of the section-0 table, spread across
- * three planned orders, so every reaction and every render state (held, no hold, hot-selling,
- * discontinued, buy-only, buy-actioned, advance, qty up, qty down, closed, new line) is on
- * screen at once. `pcb-0` is a batch already applied, carrying the two safety states Apply can
- * leave behind: one order that failed (left at its previous revision) and one row a later board
- * edit superseded before Apply ran.
+ * three planned orders, so every reaction and every render state (held, no hold, dealer
+ * hot-selling, project hot-selling, discontinued, buy-only, buy-actioned, advance, qty up, qty
+ * down, closed, new line) is on screen at once. One order is adopted (mirror of the AutoCount
+ * book, SO403765) and two are authored project SOs, so the SO-number link covers both kinds.
+ * `pcb-0` is a batch already applied, carrying the two safety states Apply can leave behind
+ * (one order that failed, one row a later board edit superseded before Apply ran) plus the
+ * `result` Apply wrote.
  *
  * Kept after Phase 2 lands only where a component test still reads from it - one shape for the
  * prototype and the tests means a test cannot pass against a row the screen never saw.
@@ -18,8 +20,41 @@ import type {
 import type {
   PlanningChangeBatch,
   PlanningChangeBatchSummary,
+  PlanningChangeBuyActionedFact,
+  PlanningChangeEvidencedFact,
+  PlanningChangeReserveWindowFact,
   PlanningChangeRow,
 } from '../types/planningChange.types';
+
+/** One calendar day arithmetic helper, UTC so a date-only string round-trips exactly. */
+function addDays(dateStr: string, days: number): string {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+/** A fact with no supporting evidence - `dealer_hot_selling: false` needs no `where`. */
+function evidencedFact(value: boolean, where: string[] = []): PlanningChangeEvidencedFact {
+  return { value, where };
+}
+
+/** The 60-day reserve window, measured from the line's previous delivery date. */
+function windowFact(
+  fromDate: string,
+  toDate: string,
+  daysMoved: number,
+): PlanningChangeReserveWindowFact {
+  return {
+    value: Math.abs(daysMoved) <= 60,
+    window_days: 60,
+    new_date: toDate,
+    window_end: addDays(fromDate, 60),
+  };
+}
+
+function buyActionedFact(value: boolean, poNumber: string | null = null): PlanningChangeBuyActionedFact {
+  return { value, po_number: value ? poNumber : null };
+}
 
 /** A minimal, type-complete `BoardContribution` for a replan/qty_up proposal (AC-R07). */
 function boardProposal(overrides: {
@@ -166,10 +201,12 @@ const ROW_1: PlanningChangeRow = {
     revision_no: 4,
   },
   facts: {
-    dealer_hot_selling: false,
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(false),
     discontinued: false,
-    within_reserve_window: true,
-    buy_actioned: false,
+    days_moved: 14,
+    within_reserve_window: windowFact('2026-08-20', '2026-09-03', 14),
+    buy_actioned: buyActionedFact(false),
   },
   suggested: 'keep',
   why: 'New date is 14 days out and inside the 60-day reserve window; the reserve stays put rather than being released and re-taken.',
@@ -197,10 +234,12 @@ const ROW_2: PlanningChangeRow = {
     revision_no: 4,
   },
   facts: {
-    dealer_hot_selling: false,
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(false),
     discontinued: false,
-    within_reserve_window: false,
-    buy_actioned: false,
+    days_moved: 197,
+    within_reserve_window: windowFact('2026-08-25', '2027-03-10', 197),
+    buy_actioned: buyActionedFact(false),
   },
   suggested: 'release',
   why: 'New date is 197 days out, beyond the 60-day reserve window; the reserve is released back to MWH-IB rather than sitting idle for months.',
@@ -228,13 +267,15 @@ const ROW_3: PlanningChangeRow = {
     revision_no: 4,
   },
   facts: {
-    dealer_hot_selling: true,
+    dealer_hot_selling: evidencedFact(true, ['BRW', 'BRW-IB']),
+    project_hot_selling: evidencedFact(false),
     discontinued: false,
-    within_reserve_window: true,
-    buy_actioned: false,
+    days_moved: 21,
+    within_reserve_window: windowFact('2026-09-05', '2026-09-26', 21),
+    buy_actioned: buyActionedFact(false),
   },
   suggested: 'release',
-  why: 'Dealer hot-selling: BRW pool stock is kept for retail whatever the size of the delay, so the reserve is released back to the pool.',
+  why: 'Dealer hot-selling at BRW, BRW-IB: retail needs the pool stock now, so the reserve is released back to the pool whatever the size of the delay.',
   proposal: null,
   inquiry_rows: [],
   decision: 'accept',
@@ -259,10 +300,12 @@ const ROW_4: PlanningChangeRow = {
     revision_no: 4,
   },
   facts: {
-    dealer_hot_selling: false,
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(false),
     discontinued: true,
-    within_reserve_window: false,
-    buy_actioned: false,
+    days_moved: 259,
+    within_reserve_window: windowFact('2026-08-15', '2027-05-01', 259),
+    buy_actioned: buyActionedFact(false),
   },
   suggested: 'keep',
   why: 'Discontinued: it cannot be bought again, so the reserve is kept whatever the size of the delay.',
@@ -290,10 +333,12 @@ const ROW_5: PlanningChangeRow = {
     revision_no: 4,
   },
   facts: {
-    dealer_hot_selling: false,
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(false),
     discontinued: false,
-    within_reserve_window: true,
-    buy_actioned: false,
+    days_moved: 19,
+    within_reserve_window: windowFact('2026-08-22', '2026-09-10', 19),
+    buy_actioned: buyActionedFact(false),
   },
   suggested: 'keep',
   why: 'Only a Buy of 25 is held and purchasing has not actioned it yet; the Buy stands and the inquiry row is updated to DELAY with the previous date.',
@@ -321,13 +366,15 @@ const ROW_6: PlanningChangeRow = {
     revision_no: 4,
   },
   facts: {
-    dealer_hot_selling: false,
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(false),
     discontinued: false,
-    within_reserve_window: true,
-    buy_actioned: true,
+    days_moved: 21,
+    within_reserve_window: windowFact('2026-08-28', '2026-09-18', 21),
+    buy_actioned: buyActionedFact(true, 'PO2026-0412'),
   },
   suggested: 'keep',
-  why: 'The Buy of 18 is already a placed purchase order; nothing in the plan changes, and the inquiry row notes the delay.',
+  why: 'The Buy of 18 is already a placed purchase order (PO2026-0412); nothing in the plan changes, and the inquiry row notes the delay.',
   proposal: null,
   inquiry_rows: [{ id: 'oi-6', verb: 'ORDER', qty: '18', state: 'actioned' }],
   decision: 'accept',
@@ -352,10 +399,12 @@ const ROW_7: PlanningChangeRow = {
     revision_no: 2,
   },
   facts: {
-    dealer_hot_selling: false,
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(true, ['BRW-BB']),
     discontinued: false,
-    within_reserve_window: false,
-    buy_actioned: false,
+    days_moved: -14,
+    within_reserve_window: windowFact('2027-02-18', '2027-02-04', -14),
+    buy_actioned: buyActionedFact(false),
   },
   suggested: 'replan',
   why: 'Advanced 18 Feb -> 04 Feb (-14 d); the line runs the ladder again at the new date now, and the proposal below is what it found.',
@@ -394,10 +443,12 @@ const ROW_8: PlanningChangeRow = {
     revision_no: 2,
   },
   facts: {
-    dealer_hot_selling: false,
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(false),
     discontinued: false,
-    within_reserve_window: true,
-    buy_actioned: false,
+    days_moved: 0,
+    within_reserve_window: windowFact('2027-01-10', '2027-01-10', 0),
+    buy_actioned: buyActionedFact(false),
   },
   suggested: 'replan',
   why: 'Qty rose from 72 to 90; the existing 72 stays held, and only the extra 18 runs the ladder.',
@@ -436,10 +487,12 @@ const ROW_9: PlanningChangeRow = {
     revision_no: 2,
   },
   facts: {
-    dealer_hot_selling: false,
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(false),
     discontinued: false,
-    within_reserve_window: true,
-    buy_actioned: false,
+    days_moved: 0,
+    within_reserve_window: windowFact('2027-01-15', '2027-01-15', 0),
+    buy_actioned: buyActionedFact(false),
   },
   suggested: 'reduce',
   why: 'Qty dropped from 66 to 50; the reserve of 50 stays, the Buy of 16 is reduced to nothing, and the inquiry row is cancelled for the drop.',
@@ -467,13 +520,15 @@ const ROW_10: PlanningChangeRow = {
     revision_no: 2,
   },
   facts: {
-    dealer_hot_selling: false,
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(false),
     discontinued: false,
-    within_reserve_window: true,
-    buy_actioned: true,
+    days_moved: 0,
+    within_reserve_window: windowFact('2027-01-20', '2027-01-20', 0),
+    buy_actioned: buyActionedFact(true, 'PO2026-0398'),
   },
   suggested: 'retire',
-  why: 'The line is closed in the book; the reserve and the remaining Buy are released, and the already-actioned inquiry row is kept with a note rather than retired.',
+  why: 'The line is closed in the book; the reserve and the remaining Buy are released, and the already-actioned inquiry row (PO2026-0398) is kept with a note rather than retired.',
   proposal: null,
   inquiry_rows: [{ id: 'oi-10', verb: 'ORDER', qty: '8', state: 'actioned' }],
   decision: 'accept',
@@ -492,10 +547,12 @@ const ROW_11A: PlanningChangeRow = {
   days_moved: null,
   held: null,
   facts: {
-    dealer_hot_selling: false,
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(false),
     discontinued: false,
-    within_reserve_window: true,
-    buy_actioned: false,
+    days_moved: 0,
+    within_reserve_window: windowFact('2026-10-01', '2026-10-01', 0),
+    buy_actioned: buyActionedFact(false),
   },
   suggested: 'replan',
   why: 'New line on the book; nothing was ever held for it, so it simply enters the board at its new date.',
@@ -517,10 +574,12 @@ const ROW_11B: PlanningChangeRow = {
   days_moved: null,
   held: null,
   facts: {
-    dealer_hot_selling: false,
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(false),
     discontinued: false,
-    within_reserve_window: true,
-    buy_actioned: false,
+    days_moved: 0,
+    within_reserve_window: windowFact('2026-10-12', '2026-10-12', 0),
+    buy_actioned: buyActionedFact(false),
   },
   suggested: 'replan',
   why: 'New line on the book; nothing was ever held for it, so it simply enters the board at its new date.',
@@ -536,9 +595,15 @@ export const MOCK_PLANNING_CHANGE_BATCH_PENDING: PlanningChangeBatch = {
   id: 'pcb-1',
   created_at: '2026-08-19T08:42:00',
   created_by_name: 'Aina',
-  source: { upload_id: 'imp-1042', file_name: 'JAN - DEC 2026 ORDER.xlsx' },
+  source: {
+    upload_id: 'imp-1042',
+    file_name: 'JAN - DEC 2026 ORDER.xlsx',
+    kind: 'so_book_upload',
+    import_job_id: 'imp-job-1042',
+  },
   applied_at: null,
   applied_by_name: null,
+  result: null,
   orders: [
     {
       project_sales_order_id: 'pso-403765',
@@ -546,6 +611,9 @@ export const MOCK_PLANNING_CHANGE_BATCH_PENDING: PlanningChangeBatch = {
       customer_name: 'BATHE CODE SDN BHD',
       project_label: 'Bathe Code HQ Retrofit',
       revision_no: 4,
+      is_adopted: true,
+      core_sales_order_id: 'core-403765',
+      project_id: null,
       rows: [ROW_1, ROW_2, ROW_3, ROW_4, ROW_5, ROW_6],
     },
     {
@@ -554,6 +622,9 @@ export const MOCK_PLANNING_CHANGE_BATCH_PENDING: PlanningChangeBatch = {
       customer_name: 'MATRIX EXCELCON',
       project_label: 'Matrix Excelcon Phase 2',
       revision_no: 2,
+      is_adopted: false,
+      core_sales_order_id: null,
+      project_id: 'proj-matrix-excelcon',
       rows: [ROW_7, ROW_8, ROW_9, ROW_10],
     },
     {
@@ -562,6 +633,9 @@ export const MOCK_PLANNING_CHANGE_BATCH_PENDING: PlanningChangeBatch = {
       customer_name: 'GREENFIELD DEVELOPMENT SDN BHD',
       project_label: 'Greenfield Suites Block C',
       revision_no: 1,
+      is_adopted: false,
+      core_sales_order_id: null,
+      project_id: 'proj-greenfield-suites',
       rows: [ROW_11A, ROW_11B],
     },
   ],
@@ -572,9 +646,26 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
   id: 'pcb-0',
   created_at: '2026-08-10T09:12:00',
   created_by_name: 'Ravi',
-  source: { upload_id: 'imp-0091', file_name: 'JUN - DEC 2026 REVISION.xlsx' },
+  source: {
+    upload_id: 'imp-0091',
+    file_name: 'JUN - DEC 2026 REVISION.xlsx',
+    kind: 'so_book_upload',
+    import_job_id: 'imp-job-0091',
+  },
   applied_at: '2026-08-10T10:05:00',
   applied_by_name: 'Aina',
+  result: {
+    orders_revised: [{ so_number: 'SO398800', revision_no: 5 }],
+    orders_failed: [
+      {
+        so_number: 'SO399120',
+        reason: 'Revision 3 was confirmed on the board after this batch was built.',
+      },
+    ],
+    inquiry_rows_changed: [{ verb: 'CANCEL_BALANCE', count: 1 }],
+    lines_replanned: 1,
+    purchasing_notified: true,
+  },
   orders: [
     {
       project_sales_order_id: 'pso-398800',
@@ -582,6 +673,9 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
       customer_name: 'PRIMA CONSORTIUM SDN BHD',
       project_label: 'Prima Consortium Tower B',
       revision_no: 5,
+      is_adopted: true,
+      core_sales_order_id: 'core-398800',
+      project_id: null,
       rows: [
         {
           id: 'pcr-a1',
@@ -600,10 +694,12 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
             revision_no: 5,
           },
           facts: {
-            dealer_hot_selling: false,
+            dealer_hot_selling: evidencedFact(false),
+            project_hot_selling: evidencedFact(false),
             discontinued: false,
-            within_reserve_window: true,
-            buy_actioned: false,
+            days_moved: 15,
+            within_reserve_window: windowFact('2026-07-20', '2026-08-04', 15),
+            buy_actioned: buyActionedFact(false),
           },
           suggested: 'keep',
           why: 'New date is 15 days out and inside the 60-day reserve window; the reserve stays put.',
@@ -630,10 +726,12 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
             revision_no: 5,
           },
           facts: {
-            dealer_hot_selling: false,
+            dealer_hot_selling: evidencedFact(false),
+            project_hot_selling: evidencedFact(false),
             discontinued: false,
-            within_reserve_window: true,
-            buy_actioned: false,
+            days_moved: 0,
+            within_reserve_window: windowFact('2026-08-01', '2026-08-01', 0),
+            buy_actioned: buyActionedFact(false),
           },
           suggested: 'reduce',
           why: 'Qty dropped from 30 to 22; the reserve of 22 stays and the Buy of 8 is cancelled.',
@@ -660,10 +758,12 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
             revision_no: 4,
           },
           facts: {
-            dealer_hot_selling: false,
+            dealer_hot_selling: evidencedFact(false),
+            project_hot_selling: evidencedFact(false),
             discontinued: false,
-            within_reserve_window: false,
-            buy_actioned: false,
+            days_moved: 153,
+            within_reserve_window: windowFact('2026-08-05', '2027-01-05', 153),
+            buy_actioned: buyActionedFact(false),
           },
           suggested: 'release',
           why: 'New date is 153 days out, beyond the 60-day reserve window; the reserve is released back to MWH-IB.',
@@ -683,6 +783,9 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
       customer_name: 'DELTA BUILD ENGINEERING',
       project_label: 'Delta Build Engineering HQ',
       revision_no: 2,
+      is_adopted: false,
+      core_sales_order_id: null,
+      project_id: 'proj-delta-build-hq',
       rows: [
         {
           id: 'pcr-b1',
@@ -701,10 +804,12 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
             revision_no: 2,
           },
           facts: {
-            dealer_hot_selling: false,
+            dealer_hot_selling: evidencedFact(false),
+            project_hot_selling: evidencedFact(false),
             discontinued: false,
-            within_reserve_window: false,
-            buy_actioned: false,
+            days_moved: 145,
+            within_reserve_window: windowFact('2026-07-28', '2026-12-20', 145),
+            buy_actioned: buyActionedFact(false),
           },
           suggested: 'release',
           why: 'New date is 145 days out, beyond the 60-day reserve window; the reserve is released back to BRW-BB.',
@@ -732,10 +837,12 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
             revision_no: 2,
           },
           facts: {
-            dealer_hot_selling: false,
+            dealer_hot_selling: evidencedFact(false),
+            project_hot_selling: evidencedFact(false),
             discontinued: false,
-            within_reserve_window: true,
-            buy_actioned: false,
+            days_moved: 0,
+            within_reserve_window: windowFact('2026-08-02', '2026-08-02', 0),
+            buy_actioned: buyActionedFact(false),
           },
           suggested: 'replan',
           why: 'Qty rose from 10 to 16; the existing 10 stays held, and only the extra 6 runs the ladder.',

@@ -60,7 +60,8 @@ export function PanelDataGrid<TRow extends object>({
   enableRowSelection,
   pageSize = 10,
 }: {
-  title: string;
+  /** A plain heading, or a heading with an embedded link (e.g. the record's own number). */
+  title: React.ReactNode;
   /** Filters, view switches and the Add button. Sits in the card header beside the title. */
   toolbar?: React.ReactNode;
   columns: ColumnDef<TRow>[];

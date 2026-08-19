@@ -40,6 +40,18 @@
  *    (carried on the SCM outstanding-orders upload preview/apply response, see
  *    `outstandingImportService.ts`): `planning_change_batch: { id, order_count, line_count }
  *    | null`. Read there, not fetched from this service.
+ *
+ * ── FACTS AND RESULT (captain review, 19 Aug 2026) ─────────────────────────
+ * `PlanningChangeRow.facts` carries its own proof, not a bare boolean: `dealer_hot_selling`
+ * and `project_hot_selling` are `{ value, where }` (ABC-A by delivered quantity on that demand
+ * pool in the last 365 days, at the locations named); `within_reserve_window` is
+ * `{ value, window_days, new_date, window_end }`; `buy_actioned` is `{ value, po_number }`.
+ * `PlanningChangeOrder` carries `is_adopted` + `core_sales_order_id` + `project_id` so the SO
+ * number links to its own document. `PlanningChangeBatch.source` carries `kind` +
+ * `import_job_id` (the upload's trigger, linkable to `/system-management/import-jobs/{id}`).
+ * `PlanningChangeBatch.result` (`null` until Apply runs) carries what Apply did: orders
+ * revised/failed, Order Inquiry rows changed, lines back on the board, whether purchasing was
+ * told - all read back as data on the batch page after Apply, and the fixture batch `pcb-0`.
  * ============================================================================
  */
 import {
@@ -171,15 +183,37 @@ export async function applyPlanningChanges(
     };
   }
   const appliedOrders: string[] = [];
+  const ordersRevised: { so_number: string; revision_no: number }[] = [];
+  const inquiryCounts = new Map<string, number>();
+  let linesReplanned = 0;
   for (const order of batch.orders) {
+    let orderApplied = false;
     for (const row of order.rows) {
       if (row.applied_state !== 'pending') continue;
-      if (row.decision === 'accept') row.applied_state = 'applied';
+      if (row.decision !== 'accept') continue;
+      row.applied_state = 'applied';
+      orderApplied = true;
+      // A `keep` leaves the board untouched; every other verb moves a line back onto it.
+      if (row.suggested !== 'keep') linesReplanned += 1;
+      for (const inquiry of row.inquiry_rows) {
+        inquiryCounts.set(inquiry.verb, (inquiryCounts.get(inquiry.verb) ?? 0) + 1);
+      }
     }
     appliedOrders.push(order.so_number);
+    if (orderApplied) {
+      order.revision_no += 1;
+      ordersRevised.push({ so_number: order.so_number, revision_no: order.revision_no });
+    }
   }
   batch.applied_at = new Date().toISOString();
   batch.applied_by_name = 'You';
+  batch.result = {
+    orders_revised: ordersRevised,
+    orders_failed: [],
+    inquiry_rows_changed: Array.from(inquiryCounts, ([verb, count]) => ({ verb, count })),
+    lines_replanned: linesReplanned,
+    purchasing_notified: inquiryCounts.size > 0,
+  };
   return { applied_orders: appliedOrders, failed_orders: [], already_applied: false };
 
   // Phase 2:

@@ -79,6 +79,8 @@ describe('PlanningChangesListClient - rows', () => {
     expect(screen.getByText('JUN - DEC 2026 REVISION.xlsx')).toBeInTheDocument();
     expect(screen.getByText('Aina')).toBeInTheDocument();
     expect(screen.getByText('Ravi')).toBeInTheDocument();
+    // The trigger is visible in the list too - what got uploaded, not just its file name.
+    expect(screen.getAllByText('SO book upload').length).toBe(2);
     expect(statePill('Pending')).toBeInTheDocument();
     expect(statePill('Partly failed')).toBeInTheDocument();
   });
