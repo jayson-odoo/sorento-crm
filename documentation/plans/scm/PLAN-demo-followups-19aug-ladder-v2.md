@@ -1,9 +1,19 @@
 # PLAN - stakeholder demo follow-ups of 19 August: ladder v2 (ownership groups, horizon, all-or-nothing), agent everywhere, plans page, approve all, fast reader
 
-**Status:** DRAFT for captain review, 19 August 2026 (evening). Facts verified in code and on the
-live stack DB (worktree 11, `sorento_scm_e2e_stack`). Workstreams A, B, C, D below are
-independent of the open ladder questions and START NOW; E, F wait for the two answers in
-section 8.
+**Status:** A, B, C, D IMPLEMENTED on `fm/scm-stack-followups-19aug-3` (19 August 2026, evening),
+reviewed once, review findings fixed in the same branch. Deferred from this branch, by name:
+C1's board preview of an unsaved policy (the `?preview_policy=` lever exists, no UI yet); D1's
+Amend / Release verbs on a Plans row (Open only; the verbs live on the SO sheet it opens); D4
+(server-stored board draft); B5's `flash-lite` trial (the model is sunset for new API keys,
+its successor rejects this REST shape - not measurable today). F closed: SO331506 reads order
+date 2024-12-18 / required 2030-01-01, the pasted popover was another document's. E (ladder v2)
+waits for the three answers in section 8. Facts verified in code and on the live stack DB
+(worktree 11, `sorento_scm_e2e_stack`).
+
+**B5 measured (19 Aug, golden fixtures, real key, `extract_document` called directly):** PO 10
+pages 71.6 s -> 12.5 s elapsed (14.2 s wall), all 51 lines and the PO number read; schedule 7
+pages 89-123 s -> 16.0 s elapsed (16.9 s wall), 7/7 pages. JPEG q85 body 2.46 MB vs 4.64 MB
+PNG. Default model unchanged (`gemini-2.5-flash`).
 
 **Slug:** demo-followups-19aug-ladder-v2. **Sits on:** `PLAN-fulfilment-planning-from-autocount-so.md`
 (board, ladder, Order Inquiries), `PLAN-scm-front-planning.md` 3.3/3.3a (reserve, hot-selling,
