@@ -192,6 +192,14 @@ describe('PlanningChangeBatchClient - every order section renders', () => {
     expect(screen.getByText('Reserve 40 at BRW-BB · Buy 20')).toBeInTheDocument();
     expect(screen.getByTestId('trail-info-pcb-1-so400875-l2-advance')).toBeInTheDocument();
   });
+
+  it('shows the qty column, incl. the from -> to move on a qty_down row', async () => {
+    renderClient();
+    await screen.findByRole('heading', { name: 'JAN - DEC 2026 ORDER.xlsx' });
+
+    expect(screen.getAllByRole('columnheader', { name: 'Qty' }).length).toBeGreaterThan(0);
+    expect(screen.getByText('72 -> 66')).toBeInTheDocument();
+  });
 });
 
 describe('PlanningChangeBatchClient - switching a decision', () => {

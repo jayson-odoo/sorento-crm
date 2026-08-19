@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatQty } from '../../_shared/lib/money';
 import { FactChip } from '../../_shared/components/FactChip';
 import { ReactionPill } from '../../_shared/components/PlanningChangeReactionPill';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
@@ -351,6 +352,14 @@ function OrderSection({
         meta: { headerTitle: 'Product' },
       },
       {
+        id: 'qty',
+        header: () => 'Qty',
+        cell: ({ row }) => <QtyCell row={row.original} />,
+        size: 90,
+        minSize: 70,
+        meta: { headerTitle: 'Qty' },
+      },
+      {
         id: 'change',
         header: () => 'Change',
         cell: ({ row }) => (
@@ -449,6 +458,31 @@ function orderHref(order: PlanningChangeOrder): string {
     return `/scm/sales-orders/${order.core_sales_order_id}`;
   }
   return `/project-sales/${order.project_id}/sales-orders/${order.project_sales_order_id}`;
+}
+
+/**
+ * The line's current open quantity (AC-R02): what it is now, so purchasing/planning don't
+ * have to cross-reference the Change column for a number that belongs on its own. A `closed`
+ * row shows what it WAS held at, struck; `qty_up`/`qty_down` show the move itself so the change
+ * reads in the qty column too, not only in Change.
+ */
+function QtyCell({ row }: { row: PlanningChangeRow }) {
+  if (row.kind === 'closed') {
+    return (
+      <span className="block text-right text-sm tabular-nums text-muted-foreground line-through">
+        {formatQty(row.from.qty)}
+      </span>
+    );
+  }
+  if (row.kind === 'qty_up' || row.kind === 'qty_down') {
+    return (
+      <span className="block text-right text-sm tabular-nums">
+        {`${formatQty(row.from.qty)} -> ${formatQty(row.to.qty)}`}
+      </span>
+    );
+  }
+  const qty = row.to.qty ? row.to.qty : row.from.qty;
+  return <span className="block text-right text-sm tabular-nums">{formatQty(qty)}</span>;
 }
 
 /** `Delivery date 04 Feb 2027 -> 18 Feb 2027 (+14 d)`, `Qty 72 -> 66`, `Closed`, `New line`. */
