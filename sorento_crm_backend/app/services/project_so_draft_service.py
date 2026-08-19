@@ -2975,6 +2975,7 @@ class ProjectSODraftService:
                 "po_version_no": po_version_numbers.get(version.po_version_id or ""),
                 "reconciled_columns": version.reconciled_columns,
                 "total_columns": version.total_columns,
+                "created_at": version.created_at,
             }
             for version, schedule in rows
         ]

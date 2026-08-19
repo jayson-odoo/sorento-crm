@@ -126,6 +126,7 @@ async def upload_delivery_schedule(
     revision_label: Optional[str] = Form(None),
     delivery_schedule_id: Optional[str] = Form(None),
     po_version_id: Optional[str] = Form(None),
+    force: bool = Form(False),
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
@@ -135,6 +136,10 @@ async def upload_delivery_schedule(
     latest confirmed version: a schedule issued before a handwritten cancellation
     reconciles to the PO as it stood, and rejecting it would reject a document the
     customer considers correct (finding G1).
+
+    `force=true` overrides the duplicate-upload guard - the same bytes already stored
+    against this schedule 409s by default (`schedule_version_duplicate`), naming the
+    version that already holds them.
     """
     try:
         validate_uuid_path(po_id, resource="Purchase order")
@@ -178,6 +183,7 @@ async def upload_delivery_schedule(
             delivery_schedule_id=delivery_schedule_id,
             po_version_id=po_version_id,
             page_count=pages,
+            force=force,
         )
         body = {
             "delivery_schedule_id": str(version.delivery_schedule_id),

@@ -40,6 +40,7 @@ document, which is the fallback working rather than a degradation.
 from __future__ import annotations
 
 import copy
+import hashlib
 import logging
 import re
 from dataclasses import dataclass, field
@@ -553,17 +554,26 @@ class ProjectScheduleService:
         delivery_schedule_id: Optional[str] = None,
         po_version_id: Optional[str] = None,
         page_count: Optional[int] = None,
+        force: bool = False,
     ) -> DeliveryScheduleVersion:
         """Store the document and open a version for it. Extraction happens later.
 
         ``po_version_id`` is what the checksum will reconcile AGAINST and defaults to
         the PO's latest CONFIRMED version, because that is the document the customer
         was working from when they drew the schedule (finding G1).
+
+        Refuses a second upload of bytes already stored against this SAME schedule
+        (``force`` overrides it) - the same PDF re-attached is not a new revision, and
+        opening a fresh version for it just buries the one that already read it.
         """
         schedule = self._resolve_schedule(purchase_order, delivery_schedule_id, issuer_party_id)
         if issuer_party_id and schedule.issuer_party_id != issuer_party_id:
             self._assert_party(issuer_party_id)
             schedule.issuer_party_id = issuer_party_id
+
+        content_hash = hashlib.sha256(content).hexdigest()
+        if not force:
+            self._assert_not_duplicate(schedule, content_hash)
 
         resolved_po_version = self._resolve_po_version(purchase_order, po_version_id)
         next_no = (
@@ -579,6 +589,7 @@ class ProjectScheduleService:
             revision_label=_clean(revision_label, 80),
             po_version_id=resolved_po_version.id if resolved_po_version else None,
             source_filename=_clean(filename, 255),
+            content_sha256=content_hash,
             extraction_state=STATE_QUEUED,
             # The page count is known here and nowhere else cheaply, and the confirm
             # screen needs it to say "4 of 7 pages read" rather than just "working".
@@ -655,6 +666,31 @@ class ProjectScheduleService:
         self.db.add(schedule)
         self.db.flush()
         return schedule
+
+    def _assert_not_duplicate(self, schedule: DeliverySchedule, content_hash: str) -> None:
+        """The guard only ever compares non-null hashes: rows uploaded before this
+        column existed carry no hash and are never mistaken for a match."""
+        existing = (
+            self.db.query(DeliveryScheduleVersion)
+            .filter(
+                DeliveryScheduleVersion.delivery_schedule_id == schedule.id,
+                DeliveryScheduleVersion.content_sha256 == content_hash,
+            )
+            .order_by(DeliveryScheduleVersion.version_no.asc())
+            .first()
+        )
+        if existing is None:
+            return
+        uploaded_malaysia = existing.created_at + timedelta(hours=8)
+        raise AppException(
+            status_code=409,
+            message=(
+                f"This file is already version {existing.version_no} of this schedule "
+                f"(uploaded {uploaded_malaysia.strftime('%d/%m/%Y %H:%M')}). Open that "
+                "version to read it again, or upload a changed file."
+            ),
+            code="schedule_version_duplicate",
+        )
 
     def _assert_party(self, party_id: str) -> None:
         if self.db.get(ProjectParty, party_id) is None:

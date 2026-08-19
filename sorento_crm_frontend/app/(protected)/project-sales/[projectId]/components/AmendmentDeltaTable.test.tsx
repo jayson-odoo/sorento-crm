@@ -113,4 +113,44 @@ describe('AmendmentDeltaTable', () => {
     expect(within(rows[0]).getByRole('button', { name: 'Accept' })).toBeDisabled();
     expect(within(rows[0]).getByRole('button', { name: 'Decline' })).toBeDisabled();
   });
+
+  it('keys two unmatched preview rows by position, not by their shared null so_line_id', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const unmatchedRows: AmendmentDeltaRow[] = [
+      {
+        so_line_id: null,
+        line_no: 7,
+        product_code: 'SRTWC0001',
+        description: 'FIRST UNMATCHED LINE',
+        verb: 'ORDER',
+        field: 'qty',
+        from_value: null,
+        to_value: '10',
+        qty: '10',
+      },
+      {
+        so_line_id: null,
+        line_no: 8,
+        product_code: 'SRTWC0002',
+        description: 'SECOND UNMATCHED LINE',
+        verb: 'ORDER',
+        field: 'qty',
+        from_value: null,
+        to_value: '20',
+        qty: '20',
+      },
+    ];
+
+    render(<AmendmentDeltaTable rows={unmatchedRows} />);
+
+    expect(screen.getByText('FIRST UNMATCHED LINE')).toBeInTheDocument();
+    expect(screen.getByText('SECOND UNMATCHED LINE')).toBeInTheDocument();
+    const keyWarning = consoleError.mock.calls.some((call) =>
+      String(call[0]).includes('same key'),
+    );
+    expect(keyWarning).toBe(false);
+
+    consoleError.mockRestore();
+  });
 });

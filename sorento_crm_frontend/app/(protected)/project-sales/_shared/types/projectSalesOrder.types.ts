@@ -349,7 +349,8 @@ export interface AmendmentVersionRef {
 export type AmendmentRowDecision = 'accepted' | 'declined';
 
 export interface AmendmentDeltaRow {
-  so_line_id: string;
+  /** `null` for an unmatched line - nothing on the other version to point a line id at. */
+  so_line_id: string | null;
   line_no: number;
   product_code?: string | null;
   description?: string | null;
@@ -470,6 +471,8 @@ export interface ScheduleVersionOption {
   po_version_no?: number | null;
   extraction_state?: string | null;
   confirmed_at?: string | null;
+  /** When this version was uploaded - distinguishes two uploads that share a label. */
+  created_at?: string | null;
 }
 
 export interface PoVersionOption {
@@ -479,6 +482,8 @@ export interface PoVersionOption {
   po_date?: string | null;
   extraction_state?: string | null;
   confirmed_at?: string | null;
+  /** When this version was uploaded - distinguishes two uploads that share a label. */
+  created_at?: string | null;
 }
 
 export interface ProjectSalesOrderListParams {

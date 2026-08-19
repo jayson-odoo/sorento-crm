@@ -50,9 +50,15 @@ export function formatDeltaValue(field: string, value: string | null | undefined
   return value;
 }
 
-/** The row's own key once it belongs to a created amendment, else the preview's own pair. */
-export function amendmentRowKey(row: AmendmentDeltaRow): string {
-  return row.row_key ?? `${row.so_line_id}:${row.field}`;
+/**
+ * The row's own key once it belongs to a created amendment. A bare preview has no `row_key`
+ * yet, and an unmatched line's `so_line_id` is `null` - two unmatched lines on the same field
+ * would collide on `null:qty`, so the preview falls back to its position in the array instead.
+ */
+export function amendmentRowKey(row: AmendmentDeltaRow, index?: number): string {
+  if (row.row_key) return row.row_key;
+  if (index !== undefined) return `preview-${index}`;
+  return `${row.so_line_id}:${row.field}`;
 }
 
 export function AmendmentDeltaTable({
@@ -259,7 +265,7 @@ export function AmendmentDeltaTable({
     columns,
     data: filtered,
     pageCount: Math.ceil(filtered.length / pagination.pageSize) || 0,
-    getRowId: (row) => amendmentRowKey(row),
+    getRowId: (row, index) => amendmentRowKey(row, index),
     state: { pagination },
     onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
