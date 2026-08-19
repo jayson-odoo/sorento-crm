@@ -1100,6 +1100,7 @@ class ProjectSupplyService:
         payload: Any,
         *,
         actor_user_id: str,
+        uncover_line_ids: Sequence[str] = (),
     ) -> Dict[str, Any]:
         """One transaction, every CHOSEN line, or nothing (PLAN 3.1, AC-C01 as amended
         by PLAN-fulfilment-planning-from-autocount-so.md 13.4).
@@ -1117,9 +1118,24 @@ class ProjectSupplyService:
         cannot even see every covered line), and re-posting a covered line rebuilt from
         its snapshot re-judged it against facts that had moved since - a discontinued
         product's covered line 422'd the confirmation of an unrelated one. A named line
-        REPLACES its frozen one (that is an amendment). There is no un-decide verb yet:
-        the only way a covered line leaves the decision is a material change superseding
-        the whole revision (`supersede_for_material_change`) or a drift challenging it.
+        REPLACES its frozen one (that is an amendment).
+
+        **The un-decide seam** (PLAN-so-book-diff-replanning.md section 10, defect found
+        live 19 August 2026): a covered line this call is meant to DROP - not replace,
+        not carry - names itself in `uncover_line_ids` instead of the payload. Without
+        this, a planning-change batch's `release`/`replan`/`retire` row deliberately left
+        OUT of the payload (so it returns to the board undecided) was carried forward
+        verbatim by the rule above the instant any OTHER line on the SAME order WAS named -
+        seen live: SO403765 rev 5 kept line 12's old Buy and old date after an ADVANCE was
+        raised for it, because line 8's Release was the only line actually posted and line
+        12 rode along uninvited. Named here, a line's snapshot is excluded from the carry
+        outright: its hold is gone (`_carry_allocations` never runs for it), `_borrow_shortfalls`
+        reads it as gone (`checked` no longer contains it), and `refresh_for_decision`
+        treats it exactly as a line "absent from `buy_lines`" already does - cancels
+        whatever it had raised. The only OTHER way a covered line leaves the decision
+        remains a material change superseding the whole revision
+        (`supersede_for_material_change`, which carries nothing at all) or a drift
+        challenging it.
 
         The caller owns the commit. Everything here runs inside it, including the Order
         Inquiry refresh, so purchasing can never be told to buy something that was not
@@ -1236,7 +1252,8 @@ class ProjectSupplyService:
             )
 
         carried = self._carried_lines(
-            self.active_decision(str(order.id)), named=seen, by_id=by_id, facts=facts
+            self.active_decision(str(order.id)), named=seen, by_id=by_id, facts=facts,
+            uncover=set(uncover_line_ids),
         )
         return self._write_decision(
             order, checked, carried=carried, actor_user_id=actor_user_id
@@ -1249,19 +1266,23 @@ class ProjectSupplyService:
         named: set,
         by_id: Dict[str, ProjectSalesOrderLine],
         facts: Dict[str, _LineFacts],
+        uncover: Optional[set] = None,
     ) -> List[_CarriedLine]:
-        """The active revision's lines this confirmation did not name, verbatim.
+        """The active revision's lines this confirmation did not name, verbatim - except
+        the ones the caller named in `uncover` (the un-decide seam, `confirm`'s docstring):
+        those are dropped from the new revision outright rather than carried.
 
-        A snapshot for a line no longer on the order is not carried: there is no row to
-        hold stock for, and the read-side drift check names exactly that case as a
+        A snapshot for a line no longer on the order is not carried either: there is no
+        row to hold stock for, and the read-side drift check names exactly that case as a
         challenge. Everything else comes across untouched.
         """
         if previous is None:
             return []
+        uncover = uncover or set()
         out: List[_CarriedLine] = []
         for snapshot in previous.line_snapshots or []:
             line_id = str(snapshot.get("project_line_id") or "")
-            if not line_id or line_id in named or line_id not in by_id:
+            if not line_id or line_id in named or line_id not in by_id or line_id in uncover:
                 continue
             out.append(
                 _CarriedLine(line=by_id[line_id], snapshot=snapshot, fact=facts[line_id])

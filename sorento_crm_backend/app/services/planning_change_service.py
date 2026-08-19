@@ -1537,6 +1537,14 @@ def _apply_one_order(
     retired = 0
     confirmed = 0
     handled_line_ids: set = set()
+    # Every covered line this batch means to DROP, not carry (the un-decide seam,
+    # `ProjectSupplyService.confirm`'s docstring) - a `release`/`replan`/`retire` row is
+    # deliberately excluded from `confirm_lines` below so it returns to the board
+    # undecided (or, for `retire`, drops out entirely), but the moment ANY other line on
+    # this SAME order is named, `confirm()`'s own "union is the server's" rule would carry
+    # this one forward verbatim unless it is named here instead (seen live: SO403765 rev 5
+    # kept line 12's old Buy and old date after an ADVANCE had been raised for it).
+    uncover_line_ids: List[str] = []
     for line_id, frozen_entry in frozen.items():
         row = by_line_id.get(line_id)
         if row is None:
@@ -1556,9 +1564,11 @@ def _apply_one_order(
             # Reserve hold is gone the moment it is absent from this revision; its
             # incoming/Buy parts are simply re-proposed when the line is next confirmed.
             replanned += 1
+            uncover_line_ids.append(line_id)
             continue
         if row.suggested == "retire":
             retired += 1
+            uncover_line_ids.append(line_id)
             _retire_inquiry_rows(
                 db, line_id, "The line was closed by a planning change batch."
             )
@@ -1583,7 +1593,9 @@ def _apply_one_order(
     revision_no = current_revision
     if confirm_lines:
         body = ConfirmSupplyBody(lines=[_to_confirm_line(p) for p in confirm_lines])
-        result = supply.confirm(order, body, actor_user_id=actor)
+        result = supply.confirm(
+            order, body, actor_user_id=actor, uncover_line_ids=uncover_line_ids
+        )
         revision_no = result["revision_no"]
         revised = True
     elif active_decision is not None and (replanned or retired):

@@ -17,6 +17,7 @@ from app.models.inventory import Stock, Warehouse
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
     INQUIRY_ACTIONED,
+    INQUIRY_CANCELLED,
     IV_ORDER,
     SO_STATUS_PUBLISHED,
     OrderInquiryRow,
@@ -1416,3 +1417,97 @@ def test_apply_carries_a_kept_lines_own_reserve_past_a_rival_that_moved_in(api):
     }
     assert allocations[line_kept.id].qty == Decimal("10")
     assert str(allocations[line_kept.id].warehouse_id) == world.pool_wh.id
+
+
+def test_apply_uncovers_a_replan_line_instead_of_letting_confirm_carry_it_forward(api):
+    """Live reproduction, 19 August 2026: `_apply_one_order` deliberately leaves a
+    `replan`/`release`/`retire` row OUT of the body it posts to `ProjectSupplyService
+    .confirm()` so the line returns to the board undecided - but `confirm()`'s own "union
+    is the server's" rule (PLAN 13.4) carries any covered line the body does not name
+    forward VERBATIM, so the instant another line on the SAME order IS named, the excluded
+    one rode along uninvited with its stale composition (seen live: SO403765 rev 5 kept
+    line 12's old Buy and old date after an ADVANCE had been raised for it). The un-decide
+    seam (`confirm(..., uncover_line_ids=...)`) is what `_apply_one_order` now uses to name
+    it instead of merely omitting it."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=100)
+    core_so = _core_so(db, world.company_id)
+    core_line_a = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="40",
+                              required_date=date(2026, 8, 25))
+    core_line_b = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="21",
+                              required_date=date(2026, 8, 25))
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line_a = _project_line(db, order, line_no=1, product=world.product, core_line=core_line_a)
+    line_b = _project_line(db, order, line_no=2, product=world.product, core_line=core_line_b)
+    db.commit()
+
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line_a.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "40"}]),
+        _line_payload(line_b.id, buy_qty="21", buy_reason="Nothing free elsewhere."),
+    ]})
+    buy_row_b = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line_b.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+
+    changed_a = _diff_change(
+        DATE_MOVED, core_line_a, doc_number=core_so.so_number, item_code="ZZT-ITEM-A",
+        location=world.own_wh.warehouse_code, old_date=date(2026, 8, 25),
+        new_date=date(2026, 8, 25) + timedelta(days=14), old_qty="40", new_qty="40",
+    )
+    changed_b = _diff_change(
+        DATE_MOVED, core_line_b, doc_number=core_so.so_number, item_code="ZZT-ITEM-B",
+        location=world.own_wh.warehouse_code, old_date=date(2026, 8, 25),
+        new_date=date(2026, 8, 25) - timedelta(days=14), old_qty="21", new_qty="21",
+    )
+    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed_a, changed_b])
+    batch = planning_change_service.build_batch(
+        db, diff,
+        applied_line_ids={
+            id(changed_a): str(core_line_a.id), id(changed_b): str(core_line_b.id),
+        },
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    out = planning_change_service.get_batch(db, str(batch.id))
+    rows = {row["line_no"]: row for row in out["orders"][0]["rows"]}
+    assert rows[1]["suggested"] == "keep"  # 14 days, within window, reserve held
+    assert rows[2]["suggested"] == "replan"  # advanced - rule 7, unconditional
+
+    # Line 2's row is explicitly accepted (a planner - or a batch built before the default
+    # changed to `null` for a `replan` row - can still do this; `held` is not `None`, so
+    # the write is legal). This is the exact shape that carried the line forward: NAMED as
+    # accepted, but excluded from the confirm body because its suggestion is `replan`.
+    planning_change_service.set_row_decision(db, str(batch.id), rows[2]["id"], "accept")
+    db.commit()
+
+    result = planning_change_service.apply(db, str(batch.id), world.actor)
+    db.commit()
+    assert result["failed_orders"] == [], result["failed_orders"]
+    assert result["applied_orders"] == [core_so.so_number]
+
+    from app.models.project_so import SOSupplyDecision
+
+    decision = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id,
+                SOSupplyDecision.state == "active")
+        .one()
+    )
+    snapshot_line_ids = {s.get("project_line_id") for s in decision.line_snapshots}
+    assert str(line_a.id) in snapshot_line_ids  # accepted normally: revised, still covered
+    assert str(line_b.id) not in snapshot_line_ids  # replan: dropped, not carried forward
+
+    from app.services.project_supply_service import ProjectSupplyService
+
+    supply = ProjectSupplyService(db)
+    frozen = supply.frozen_lines_of(supply.active_decision(str(order.id)))
+    assert str(line_b.id) not in frozen
+
+    # `refresh_for_decision` treats a line absent from `buy_lines` as dropped and cancels
+    # what it had raised - the same behaviour a genuinely-undecided line already gets.
+    db.refresh(buy_row_b)
+    assert buy_row_b.state == INQUIRY_CANCELLED
