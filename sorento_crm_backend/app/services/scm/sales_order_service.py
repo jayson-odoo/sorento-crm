@@ -7,6 +7,7 @@ so committed demand drops for those SKUs. so_number/do_number never leak UUIDs.
 """
 from __future__ import annotations
 
+import uuid
 from datetime import date
 from typing import Optional
 
@@ -19,6 +20,7 @@ from app.models.inventory import Stock, Warehouse
 from app.models.lookup import LookupOption
 from app.models.order import Customer, Order, OrderLine, SalesOrder, SalesOrderLine
 from app.models.product import Product, UnitOfMeasure
+from app.models.project_so import ProjectSalesOrder, ProjectSalesOrderLine
 from app.models.sales_agent import SalesAgent
 from app.models.scm import OrderLinkClaim
 from app.services.error_handler import AppException
@@ -108,7 +110,14 @@ class SalesOrderService:
         return cust
 
     def _agent(self, agent_id: str) -> SalesAgent:
-        agent = self.db.query(SalesAgent).get(agent_id)
+        # A malformed id (not a UUID at all) must read as "not found", not as a raw
+        # psycopg `invalid input syntax for type uuid` 500 out of the column comparison
+        # below - mirrors `supplier_scope.is_uuid`.
+        try:
+            uuid.UUID(str(agent_id))
+        except (ValueError, AttributeError, TypeError):
+            raise AppException(404, "Sales agent not found", code="SALES_AGENT_NOT_FOUND")
+        agent = self.db.get(SalesAgent, agent_id)
         if not agent:
             raise AppException(404, "Sales agent not found", code="SALES_AGENT_NOT_FOUND")
         return agent
@@ -194,7 +203,7 @@ class SalesOrderService:
         """
         if not agent_id:
             return None, None
-        agent = agent_map.get(agent_id) if agent_map is not None else self.db.query(SalesAgent).get(agent_id)
+        agent = agent_map.get(agent_id) if agent_map is not None else self.db.get(SalesAgent, agent_id)
         if not agent:
             return None, None
         return agent.sales_agent, agent.person_label
@@ -486,11 +495,54 @@ class SalesOrderService:
                 if data.requested_delivery_date else None
             )
         if data.lines is not None:
-            for ln in list(so.lines):
-                self.db.delete(ln)
-            self.db.flush()
-            for ln in data.lines:
-                prod = self._product(ln.sku)
+            self._upsert_lines(so, data.lines)
+        self.db.commit()
+        return self.serialize(self._get_or_404(so_id))
+
+    def _upsert_lines(self, so: SalesOrder, incoming: list) -> None:
+        """Reconcile ``so.lines`` against the payload IN PLACE, never delete + recreate.
+
+        A delete-and-reinsert (the previous behaviour) resets `qty_delivered` to 0, forces
+        `source_system` back to "manual" on every line, and mints new line ids - which severs
+        `ProjectSalesOrderLine.core_sales_order_line_id` and any `OrderLinkClaim` pointing at
+        the old id (both `ondelete="SET NULL"`), silently dropping an adopted order's mirror
+        link on an ordinary qty edit. Instead: match each payload line to an existing row,
+        update only what the payload actually says (qty_ordered / product), and leave
+        `qty_delivered`, `source_system`, `warehouse_id`, `line_status` and the id untouched.
+
+        Matched by `id` when the payload carries one (the FE does not send it today, but a
+        future caller - or n8n - might); otherwise by SKU, first-unmatched-row-wins when a
+        SKU repeats within the order. A payload line that matches nothing existing is a new
+        line. An existing line that nothing in the payload claims is removed - unless it is
+        still referenced by a project sales-order line's reconciled core link or an
+        SO<->PO `OrderLinkClaim`, in which case the whole update is refused with a 409 rather
+        than silently orphaning that link.
+        """
+        existing_lines = list(so.lines)
+        matched_ids: set[str] = set()
+
+        for ln in incoming:
+            ln_id = getattr(ln, "id", None)
+            target = None
+            if ln_id and ln_id not in matched_ids:
+                target = next((l for l in existing_lines if l.id == ln_id), None)
+            if target is None:
+                sku_norm = ln.sku.strip().lower()
+                target = next(
+                    (
+                        l for l in existing_lines
+                        if l.id not in matched_ids
+                        and l.product is not None
+                        and l.product.product_code.lower() == sku_norm
+                    ),
+                    None,
+                )
+            prod = self._product(ln.sku)
+            if target is not None:
+                matched_ids.add(target.id)
+                target.product_id = prod.id
+                target.qty_ordered = ln.qty_ordered
+            else:
                 self.db.add(SalesOrderLine(
                     sales_order_id=so.id,
                     product_id=prod.id,
@@ -500,8 +552,38 @@ class SalesOrderService:
                     line_status="open",
                     source_system="manual",
                 ))
-        self.db.commit()
-        return self.serialize(self._get_or_404(so_id))
+
+        removed = [l for l in existing_lines if l.id not in matched_ids]
+        if removed:
+            removed_ids = [l.id for l in removed]
+            linked = (
+                self.db.query(ProjectSalesOrder.provisional_ref)
+                .join(
+                    ProjectSalesOrderLine,
+                    ProjectSalesOrderLine.project_sales_order_id == ProjectSalesOrder.id,
+                )
+                .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(removed_ids))
+                .first()
+            )
+            if linked:
+                raise AppException(
+                    409,
+                    f"Cannot remove a line reconciled to project sales order {linked[0]}",
+                    code="SO_LINE_LINKED_TO_PROJECT",
+                )
+            claim = (
+                self.db.query(OrderLinkClaim)
+                .filter(OrderLinkClaim.so_line_id.in_(removed_ids))
+                .first()
+            )
+            if claim:
+                raise AppException(
+                    409,
+                    f"Cannot remove a line claimed by purchase order {claim.po_number}",
+                    code="SO_LINE_LINKED_TO_CLAIM",
+                )
+            for l in removed:
+                self.db.delete(l)
 
     def delete(self, so_id: str) -> None:
         so = self._get_or_404(so_id)

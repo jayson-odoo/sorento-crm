@@ -79,6 +79,13 @@ class LinkedPurchaseOrder(BaseModel):
 
 
 class SalesOrderLineInput(BaseModel):
+    #: The existing line's id, when the caller has one (e.g. an in-place qty edit on an
+    #: already-saved order). Optional - a brand-new line naturally has none yet, and the FE
+    #: form used to create/replace a whole order never has one either. When present, `update`
+    #: matches on it FIRST rather than falling back to SKU, so an edited line keeps its id
+    #: (and therefore `qty_delivered` / `source_system` / any reconciled link) instead of
+    #: being read as "delete this one, insert a new one".
+    id: Optional[str] = None
     sku: str
     qty_ordered: float = Field(..., gt=0)
     uom: str = ""

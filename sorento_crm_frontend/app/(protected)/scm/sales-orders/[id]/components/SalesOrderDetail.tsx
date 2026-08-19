@@ -51,7 +51,13 @@ import type { SalesOrder, SalesOrderLine, SalesOrderPriority } from '../../../ty
  * (Customer code, Market segment, Source, Lines, Total qty, Still owed, Locations) has no edit
  * counterpart and stays exactly where it always was. One Save writes the whole header, plus
  * the lines ONLY when they actually moved - see `lineSignature` - because the PUT endpoint
- * REPLACES whatever `lines` it is sent, dropping every line's warehouse assignment otherwise.
+ * still replaces the WHOLE `lines` array when the key is sent at all: omit it for a
+ * header-only edit or every line is re-sent. The service now UPSERTS what it is sent rather
+ * than delete-and-reinsert, matching each sent line to an existing row by `id` when given, or
+ * by SKU otherwise (this form never sends `id`, so a same-order qty edit is matched by SKU) -
+ * so a matched line keeps its id, `qty_delivered`, `source_system` and warehouse; only an
+ * unmatched existing line is deleted, and the BE refuses that with a 409 when the line is
+ * still reconciled to a project sales order or claimed by a purchase order.
  */
 
 type BadgeDef = { variant: 'secondary' | 'primary' | 'warning' | 'success'; label: string };
@@ -127,8 +133,8 @@ function Field({
 
 /** `sku|qty` per line, order-independent, so a re-save with the same lines in a different
  *  order is not read as a change. Mirrors `SalesOrderFormModal`'s own invariant: `lines` is
- *  left off the write entirely when nothing here moved, or the BE's replace-on-write would
- *  wipe every line's warehouse assignment for a header-only edit. */
+ *  left off the write entirely when nothing here moved, or a header-only edit would resend
+ *  every line for the BE to match-and-upsert for no reason. */
 function lineSignature(ls: { sku: string; qty_ordered: number }[]): string {
   return ls
     .map((l) => `${l.sku}|${l.qty_ordered}`)
