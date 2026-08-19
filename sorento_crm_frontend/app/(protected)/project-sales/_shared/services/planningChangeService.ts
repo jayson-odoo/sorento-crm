@@ -43,8 +43,8 @@
  *
  * ── FACTS AND RESULT (captain review, 19 Aug 2026) ─────────────────────────
  * `PlanningChangeRow.facts` carries its own proof, not a bare boolean: `dealer_hot_selling`
- * and `project_hot_selling` are `{ value, where }` (ABC-A by delivered quantity on that demand
- * pool in the last 365 days, at the locations named); `within_reserve_window` is
+ * and `project_hot_selling` are `{ value, where }` (inside the top 80% of quantity delivered
+ * on that demand pool in the last 12 months, at the locations named); `within_reserve_window` is
  * `{ value, window_days, new_date, window_end }`; `buy_actioned` is `{ value, po_number }`.
  * `PlanningChangeOrder` carries `is_adopted` + `core_sales_order_id` + `project_id` so the SO
  * number links to its own document. `PlanningChangeBatch.source` carries `kind` +

@@ -168,15 +168,15 @@ describe('PlanningChangeBatchClient - every order section renders', () => {
     renderClient();
     await screen.findByRole('heading', { name: 'JAN - DEC 2026 ORDER.xlsx' });
 
-    const dealerChip = screen.getByText('dealer hot-selling · ABC A at BRW, BRW-IB');
+    const dealerChip = screen.getByText('Dealer hot-selling at BRW, BRW-IB');
     expect(dealerChip).toHaveAttribute(
       'title',
-      'ABC A by delivered quantity on retail (dealer) demand in the last 365 days at BRW, BRW-IB.',
+      'Hot-selling to retail (dealer) customers at BRW, BRW-IB: inside the top 80% of quantity delivered in the last 12 months.',
     );
-    const projectChip = screen.getByText('project hot-selling · ABC A at BRW-BB');
+    const projectChip = screen.getByText('Project hot-selling at BRW-BB');
     expect(projectChip).toHaveAttribute(
       'title',
-      'ABC A by delivered quantity on project demand in the last 365 days at BRW-BB.',
+      'Hot-selling to project customers at BRW-BB: inside the top 80% of quantity delivered in the last 12 months.',
     );
     expect(screen.getByText('discontinued')).toBeInTheDocument();
     // One PO placed on the buy-actioned row, another on the closed row that kept an
