@@ -284,6 +284,11 @@ class DeliveryScheduleVersion(Base, CompanyScopedMixin):
 
     confirmed_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     confirmed_at = Column(DateTime(timezone=False), nullable=True)
+    # Section 9.7(b): a re-date SUGGESTED from a page's coloured cells plus its own
+    # margin note, never applied on its own. One entry per product per note:
+    # {product_id, item_code, note_text, page_no, state: proposed|accepted|rejected,
+    # decided_by, decided_at, cells: [{phase_id, phase_label, qty, old_date, new_date}]}.
+    revision_proposals = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
@@ -347,6 +352,15 @@ class DeliveryScheduleCell(Base, CompanyScopedMixin):
     )
     customer_code_raw = Column(String(180), nullable=True)
     qty = Column(Numeric(15, 4), nullable=False)
+    # Section 9.7(a): the fill colour behind this cell, `#rrggbb`, when the document
+    # tints it -- geometry from the text layer where it parsed, else the vision
+    # pass's own `highlighted` flag rendered with a generic tint. Grey/black/white
+    # fills (borders, header bands) are never a highlight and are not stored.
+    highlight = Column(String(7), nullable=True)
+    # Section 9.7(c): written only when a `revision_proposals` entry covering this
+    # cell is ACCEPTED. `project_so_delta_service` reads this ahead of the phase's
+    # own date for this product, so an amendment proposes ADVANCE/DELAY per line.
+    delivery_date_override = Column(Date, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
@@ -663,6 +677,11 @@ class SOAmendment(Base, CompanyScopedMixin):
     to_version_id = Column(UUID(as_uuid=False), nullable=True)
     verb_summary = Column(JSONB, nullable=True)  # {"DELAY": 12, "CANCEL_BALANCE": 1}
     delta_json = Column(JSONB, nullable=True)
+    # Per-row accept/decline, keyed by the delta row's `row_key` (its index within
+    # `delta_json["rows"]`): {"<row_key>": {"decision": "accepted"|"declined", "reason": str|None}}.
+    # A row absent from this map is accepted by default, so an amendment nobody has
+    # touched still publishes exactly as it did before this column existed.
+    row_decisions = Column(JSONB, nullable=True)
     status = Column(String(16), nullable=False, server_default=AMENDMENT_PROPOSED)
     published_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)

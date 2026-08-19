@@ -391,3 +391,53 @@ async def confirm_delivery_schedule_version(
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/delivery-schedule-versions/{version_id}/revision-proposals/{index}/accept",
+    response_model=DeliveryScheduleVersionResponse,
+)
+async def accept_revision_proposal(
+    version_id: str,
+    index: int,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Writes the override for every cell this proposal names (section 9.7c). 409
+    when it was already decided, or the version is confirmed."""
+    try:
+        version = _version_for_edit(db, version_id, current_user)
+        service = _service(db)
+        service.accept_revision_proposal(
+            version.id, index, actor_user_id=current_user["id"]
+        )
+        db.commit()
+        return service.get_version_detail(version_id)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/delivery-schedule-versions/{version_id}/revision-proposals/{index}/reject",
+    response_model=DeliveryScheduleVersionResponse,
+)
+async def reject_revision_proposal(
+    version_id: str,
+    index: int,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Marks the proposal rejected. Writes no override; the note and the tint show
+    as-is. 409 when it was already decided, or the version is confirmed."""
+    try:
+        version = _version_for_edit(db, version_id, current_user)
+        service = _service(db)
+        service.reject_revision_proposal(
+            version.id, index, actor_user_id=current_user["id"]
+        )
+        db.commit()
+        return service.get_version_detail(version_id)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

@@ -102,11 +102,59 @@ class ScheduleCellResponse(BaseModel):
     product_id: Optional[str] = None
     customer_code_raw: Optional[str] = None
     qty: str
+    highlight: Optional[str] = Field(
+        None,
+        description=(
+            "`#rrggbb` when the document tints this cell (section 9.7a); geometry "
+            "from the text layer where it parsed, else the vision pass's own flag."
+        ),
+    )
+    delivery_date_override: Optional[str] = Field(
+        None,
+        description=(
+            "Set only once a revision proposal covering this cell was accepted. "
+            "Read ahead of the phase's own date by the revision-delta engine."
+        ),
+    )
 
 
 class ScheduleReconciliation(BaseModel):
     reconciled_columns: int = 0
     total_columns: int = 0
+
+
+class ScheduleNoteResponse(BaseModel):
+    """A free-text remark the extractor found on the page but did not interpret.
+
+    Some revisions arrive as PROSE in the margin rather than as a phase-column
+    change (e.g. "ONLY FOR FLOOR TRAP TO BE DELIVER IN 2026, START FROM 23/7/2026").
+    Verbatim, never turned into a date: that reading is a person's job.
+    """
+
+    page_no: Optional[int] = None
+    text: str
+
+
+class RevisionProposalCell(BaseModel):
+    phase_id: Optional[str] = None
+    phase_label: Optional[str] = None
+    qty: Optional[str] = None
+    old_date: Optional[str] = None
+    new_date: Optional[str] = None
+
+
+class RevisionProposalResponse(BaseModel):
+    """Section 9.7(b): one product's re-date suggestion, built from its highlighted
+    cells plus the page's own margin note. Nothing here is applied until Accept."""
+
+    product_id: Optional[str] = None
+    item_code: Optional[str] = None
+    note_text: Optional[str] = None
+    page_no: Optional[int] = None
+    state: str = Field("proposed", description="proposed | accepted | rejected")
+    decided_by: Optional[str] = None
+    decided_at: Optional[str] = None
+    cells: List[RevisionProposalCell] = []
 
 
 class DeliveryScheduleVersionResponse(BaseModel):
@@ -157,6 +205,19 @@ class DeliveryScheduleVersionResponse(BaseModel):
     cells: List[ScheduleCellResponse] = []
     date_warnings: List[Dict[str, Any]] = Field(
         [], description="Dates that run backwards inside an area group (AC-E7)."
+    )
+    notes: List[ScheduleNoteResponse] = Field(
+        [], description="Free-text remarks the extractor found but did not interpret."
+    )
+    revision_proposals: List[RevisionProposalResponse] = Field(
+        [], description="Per-product re-date suggestions from highlighted cells + a dated note."
+    )
+    amendment_preview_url: Optional[str] = Field(
+        None,
+        description=(
+            "Set once this version is confirmed and an authored order was built "
+            "from an earlier version of the same schedule (section 9.2)."
+        ),
     )
     acknowledgement: Optional[Dict[str, Any]] = None
     reconciliation: ScheduleReconciliation = ScheduleReconciliation()

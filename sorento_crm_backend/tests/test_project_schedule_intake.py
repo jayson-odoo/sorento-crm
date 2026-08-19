@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import copy
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -30,9 +30,11 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.models.notification import Notification
 from app.models.order import Customer
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
+    SO_STATUS_PUBLISHED,
     CustomerItemCodeMap,
     DeliverySchedule,
     DeliveryScheduleCell,
@@ -40,12 +42,17 @@ from app.models.project_so import (
     ProjectDeliveryPhase,
     ProjectPOLine,
     ProjectPOVersion,
+    ProjectSalesOrder,
 )
 from app.models.projects import ProjectParty
 from app.models.user import User
 from app.services import project_seed_service
 from app.services.error_handler import AppException
-from app.services.project_schedule_service import ProjectScheduleService, parse_text_matrix
+from app.services.project_schedule_service import (
+    ProjectScheduleService,
+    _parse_date,
+    parse_text_matrix,
+)
 
 from ._pg_fixture import blank_session
 
@@ -1124,6 +1131,147 @@ def test_confirm_promotes_the_dates_this_version_carries(scenario):
     assert phase.delivery_date == date(2027, 1, 7)
 
 
+# ----------------------------------------- section 9.2: confirm tells the planner
+
+
+def _authored_order(db, project, po, schedule_version, owner) -> ProjectSalesOrder:
+    """An authored SO built from ``schedule_version``, published and therefore live."""
+    order = ProjectSalesOrder(
+        id=_uid(),
+        company_id=project.company_id,
+        project_id=project.id,
+        purchase_order_id=po.id,
+        schedule_version_id=schedule_version.id,
+        provisional_ref=f"ZZT-PSO-{_uid()[:8]}",
+        status=SO_STATUS_PUBLISHED,
+        published_by=owner,
+    )
+    db.add(order)
+    db.flush()
+    return order
+
+
+def test_confirming_a_later_version_notifies_the_stale_orders_planner(scenario):
+    """AC (section 9.2): a version confirmed over an order's own baseline makes that
+    order stale, and the planner who published it is told with a link to review it."""
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    first = _two_column_page(
+        wc_cells=[(1, 120), (2, 80)], basin_cells=[(3, 60), (4, 40)],
+        wc_total=200, basin_total=100,
+    )
+    service.persist_pages(scenario["version"], [(1, first)])
+    service.confirm(scenario["version"].id, actor_user_id=scenario["owner"])
+    db.flush()
+
+    order = _authored_order(
+        db, scenario["project"], scenario["po"], scenario["version"], scenario["owner"]
+    )
+
+    revised = _two_column_page(
+        wc_cells=[(1, 120), (2, 80)], basin_cells=[(3, 60), (4, 40)],
+        wc_total=200, basin_total=100,
+    )
+    revised["phases"][0]["delivery_date"] = "2027-01-07"
+    second = _schedule_version(
+        db, scenario["project"], scenario["po"], scenario["po_version"],
+        version_no=2, label="REVISED 1",
+    )
+    service.persist_pages(second, [(1, revised)])
+    db.flush()
+
+    service.confirm(second.id, actor_user_id=scenario["owner"])
+    db.flush()
+
+    notification = (
+        db.query(Notification)
+        .filter(
+            Notification.user_id == scenario["owner"],
+            Notification.type == "project_schedule_confirmed_stale_so",
+        )
+        .first()
+    )
+    assert notification is not None
+    assert order.provisional_ref in notification.title
+    assert "REVISED 1" in notification.title
+    expected_link = (
+        f"/project-sales/{order.project_id}/sales-orders/{order.id}/revisions"
+        f"?schedule_version={second.id}"
+    )
+    assert notification.data["link"] == expected_link
+
+    detail = service.get_version_detail(second.id)
+    assert detail["amendment_preview_url"] == expected_link
+
+
+def test_a_failing_notify_never_fails_the_confirm(scenario, monkeypatch):
+    """Best-effort, per CLAUDE.md: a notification failure must not turn a schedule
+    that WAS confirmed into an error."""
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    page = _two_column_page(
+        wc_cells=[(1, 120), (2, 80)], basin_cells=[(3, 60), (4, 40)],
+        wc_total=200, basin_total=100,
+    )
+    service.persist_pages(scenario["version"], [(1, page)])
+    db.flush()
+
+    def _boom(self, version):
+        raise RuntimeError("notification service unreachable")
+
+    monkeypatch.setattr(ProjectScheduleService, "_notify_stale_orders", _boom)
+
+    service.confirm(scenario["version"].id, actor_user_id=scenario["owner"])
+    db.flush()
+    version = db.get(DeliveryScheduleVersion, scenario["version"].id)
+    assert version.confirmed_at is not None
+
+
+# --------------------------------------------- section 9.6: day-first slash dates
+
+
+def test_the_normaliser_reads_a_slash_date_day_first():
+    """Pinned 19 August 2026: the same document read '7/1/2027' as 2027-07-01 on one
+    page and 2027-01-07 on the others. The customer writes day/month/year."""
+    assert _parse_date("7/1/2027") == date(2027, 1, 7)
+    assert _parse_date("23/7/2026") == date(2026, 7, 23)
+    # ISO stays ISO: the extractor is told to emit yyyy-mm-dd, and this is not a
+    # slash date to begin with.
+    assert _parse_date("2027-01-07") == date(2027, 1, 7)
+
+
+# ---------------------------------------------------- section addendum: prose notes
+
+
+def test_a_pages_free_text_note_round_trips_to_the_version_detail(scenario):
+    """The real R2 document (delivery_schedule_versions e36327d7) carries its
+    revision as a margin sentence while the phase columns stay unchanged; the
+    extractor must report it verbatim and never turn it into a date."""
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    page = _two_column_page(
+        wc_cells=[(1, 120), (2, 80)], basin_cells=[(3, 60), (4, 40)],
+        wc_total=200, basin_total=100,
+    )
+    page["notes"] = [
+        "ONLY FOR FLOOR TRAP TO BE DELIVER IN 2026, START FROM 23/7/2026",
+        "  ",  # blank notes are dropped, not shown as an empty remark
+    ]
+    service.persist_pages(scenario["version"], [(1, page)])
+    db.flush()
+
+    detail = service.get_version_detail(scenario["version"].id)
+    assert detail["notes"] == [
+        {
+            "page_no": 1,
+            "text": "ONLY FOR FLOOR TRAP TO BE DELIVER IN 2026, START FROM 23/7/2026",
+        }
+    ]
+    # Not inferred as a phase date: the columns this page carries are untouched.
+    row = _phase(detail, "TOWER", 1)
+    assert row["delivery_date"] == "2026-07-01"
+
+
 # ------------------------------------------------------- dismissing a false signal
 
 
@@ -1487,6 +1635,176 @@ def test_a_page_whose_printed_totals_all_agree_is_trusted_for_its_whole_grid():
     # Page 5 carries a row the label column does not show, so one column comes up short
     # and the page is NOT trusted: those columns stay with vision and reach CS.
     assert pages[5].grid_proven is False
+
+
+# --------------------------------------- section 9.7(a): geometric highlight tagging
+
+
+def test_a_coloured_fill_tags_its_cell_and_a_grey_fill_does_not():
+    """Section 9.7(a). A rose fill DRAWN behind a number (never text formatting) is
+    the customer's own way of marking a cell; a grey fill -- a border, a header
+    band -- is not. Built as a real PDF with pymupdf rather than mocked geometry,
+    since this is exactly the shape `page.get_drawings()` returns on the real R2."""
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page(width=400, height=300)
+    page.insert_text((50, 30), "SRTWC8613-RL", fontsize=10)
+    page.insert_text((150, 30), "SRTWB7055", fontsize=10)
+    # A rose fill behind the WC quantity -- the real R2 colour, measured 19 August.
+    page.draw_rect(fitz.Rect(45, 55, 95, 75), color=None, fill=(0.86, 0.59, 0.58))
+    page.insert_text((50, 70), "135", fontsize=10)
+    # A grey fill behind the basin quantity: a gridline, never a highlight.
+    page.draw_rect(fitz.Rect(145, 55, 195, 75), color=None, fill=(0.5, 0.5, 0.5))
+    page.insert_text((150, 70), "80", fontsize=10)
+    page.insert_text((10, 70), "L1", fontsize=10)
+    content = doc.tobytes()
+    doc.close()
+
+    pages = parse_text_matrix(content, "application/pdf")
+    assert len(pages) == 1
+    page_result = pages[1]
+    assert len(page_result.rows) == 1
+    row_highlights = page_result.highlights[0]
+    assert row_highlights.get(0) == "#db9694"
+    assert 1 not in row_highlights
+
+
+# ------------------------------------------ section 9.7(b)-(c): revision proposals
+
+
+def _highlighted_page(*, wc_cells, basin_cells, dates, note):
+    """A three-or-four-phase TOWER page: WC's cells are tinted, basin's are not,
+    and the page carries a dated margin note -- the shape of the real page 7."""
+    return _page(
+        products=[
+            {"col": 1, "customer_code": "BUI-HB-SRTWC8613-RL", "code": "SRTWC8613-RL",
+             "name": "One-Piece WC"},
+            {"col": 2, "customer_code": "BUI-HB-SRTWB7055", "code": "SRTWB7055",
+             "name": "Counter-Top Basin"},
+        ],
+        phases=[
+            {"row": index + 1, "area_group": "TOWER", "label": f"Level {index + 1}",
+             "delivery_date": d.isoformat()}
+            for index, d in enumerate(dates)
+        ],
+        cells=(
+            [
+                {"row": row, "col": 1, "qty": qty, "highlighted": True}
+                for row, qty in wc_cells
+            ]
+            + [
+                {"row": row, "col": 2, "qty": qty, "highlighted": False}
+                for row, qty in basin_cells
+            ]
+        ),
+        totals=[],
+    ) | {"notes": [note]}
+
+
+def test_a_proposal_preserves_the_original_cadence_between_highlighted_phases(scenario):
+    """Section 9.7(b): the first highlighted phase moves to the note's date; each
+    later one moves by the ORIGINAL gap to its predecessor -- 14, 14, then 28 days,
+    read off the dates already on the phases, never a constant."""
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    d1 = date(2026, 1, 7)
+    d2 = d1 + timedelta(days=14)
+    d3 = d2 + timedelta(days=14)
+    d4 = d3 + timedelta(days=28)
+    note_date = date(2026, 7, 23)
+    page = _highlighted_page(
+        wc_cells=[(1, 135), (2, 72), (3, 72), (4, 72)],
+        basin_cells=[(1, 60), (2, 40), (3, 40), (4, 40)],
+        dates=[d1, d2, d3, d4],
+        note="ONLY FOR FLOOR TRAP TO BE DELIVER IN 2026, START FROM 23/7/2026",
+    )
+    service.persist_pages(scenario["version"], [(1, page)])
+    db.flush()
+
+    version = db.get(DeliveryScheduleVersion, scenario["version"].id)
+    proposals = version.revision_proposals
+    assert len(proposals) == 1  # basin has no highlighted cells: no proposal for it
+    proposal = proposals[0]
+    assert proposal["product_id"] == scenario["wc"].id
+    assert proposal["state"] == "proposed"
+    assert proposal["decided_by"] is None
+    assert "23/7/2026" in proposal["note_text"]
+    cells = proposal["cells"]
+    assert [c["old_date"] for c in cells] == [d.isoformat() for d in (d1, d2, d3, d4)]
+
+    expected_new = [note_date]
+    for gap in (14, 14, 28):
+        expected_new.append(expected_new[-1] + timedelta(days=gap))
+    assert [c["new_date"] for c in cells] == [d.isoformat() for d in expected_new[:4]]
+
+
+def test_accepting_a_proposal_writes_overrides_and_refuses_a_second_decision(scenario):
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    d1 = date(2026, 1, 7)
+    d2 = d1 + timedelta(days=14)
+    page = _highlighted_page(
+        wc_cells=[(1, 135), (2, 72)],
+        basin_cells=[(1, 60), (2, 40)],
+        dates=[d1, d2],
+        note="START FROM 23/7/2026",
+    )
+    service.persist_pages(scenario["version"], [(1, page)])
+    db.flush()
+    version = db.get(DeliveryScheduleVersion, scenario["version"].id)
+    phase_id = version.revision_proposals[0]["cells"][0]["phase_id"]
+
+    accepted = service.accept_revision_proposal(
+        version.id, 0, actor_user_id=scenario["owner"]
+    )
+    assert accepted.revision_proposals[0]["state"] == "accepted"
+    assert accepted.revision_proposals[0]["decided_by"] == scenario["owner"]
+    assert accepted.revision_proposals[0]["decided_at"] is not None
+
+    cell = (
+        db.query(DeliveryScheduleCell)
+        .filter(
+            DeliveryScheduleCell.version_id == version.id,
+            DeliveryScheduleCell.product_id == scenario["wc"].id,
+            DeliveryScheduleCell.phase_id == phase_id,
+        )
+        .first()
+    )
+    assert cell.delivery_date_override == date(2026, 7, 23)
+
+    with pytest.raises(AppException) as excinfo:
+        service.accept_revision_proposal(version.id, 0, actor_user_id=scenario["owner"])
+    assert excinfo.value.status_code == 409
+
+
+def test_rejecting_a_proposal_writes_no_override(scenario):
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    d1 = date(2026, 1, 7)
+    page = _highlighted_page(
+        wc_cells=[(1, 135)], basin_cells=[(1, 60)], dates=[d1], note="START FROM 23/7/2026",
+    )
+    service.persist_pages(scenario["version"], [(1, page)])
+    db.flush()
+    version = db.get(DeliveryScheduleVersion, scenario["version"].id)
+    phase_id = version.revision_proposals[0]["cells"][0]["phase_id"]
+
+    rejected = service.reject_revision_proposal(
+        version.id, 0, actor_user_id=scenario["owner"]
+    )
+    assert rejected.revision_proposals[0]["state"] == "rejected"
+
+    cell = (
+        db.query(DeliveryScheduleCell)
+        .filter(
+            DeliveryScheduleCell.version_id == version.id,
+            DeliveryScheduleCell.product_id == scenario["wc"].id,
+            DeliveryScheduleCell.phase_id == phase_id,
+        )
+        .first()
+    )
+    assert cell.delivery_date_override is None
 
 
 # ------------------------------------------------------- the real document, live
