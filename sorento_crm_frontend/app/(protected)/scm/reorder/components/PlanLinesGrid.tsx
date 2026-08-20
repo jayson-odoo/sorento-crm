@@ -372,10 +372,13 @@ function GroupMembersPanel({
                   <td className="max-w-28 truncate px-2 py-1" title={m.warehouse}>
                     {m.warehouse}
                   </td>
-                  {/* N-4 (reviewer): ONE popover per member row - it carries the whole
-                      location's demand, not a per-channel slice, so mounting it a second time
-                      on the Retail cell just let clicking Retail open the same Project content
-                      under a misleading trigger. Lives on the Project cell. */}
+                  {/* Captain's own preferred fix (20 Aug, live diagnosis): "put the icon
+                      at project and retail separately then we don't need the open SOs".
+                      A single popover on the Project cell used to carry the WHOLE
+                      location's demand - order and retail mixed - so a captain reading a
+                      Retail-chipped SO under the Project number reasonably concluded
+                      retail was being counted as project. Each cell now opens ONLY its
+                      own channel, and the header inside says which one. */}
                   <td className="px-2 py-1 text-right tabular-nums">
                     <span className="inline-flex items-center justify-end gap-0.5">
                       {numCell(m.rec.project_committed)}
@@ -383,17 +386,38 @@ function GroupMembersPanel({
                         <PlanDemandPopover
                           runId={runId}
                           recId={m.id}
-                          label={`Demand behind ${m.warehouse}`}
+                          channel="project"
+                          label={`Project demand at ${m.warehouse}`}
                         />
                       </StopClick>
                     </span>
                   </td>
                   <td className="px-2 py-1 text-right tabular-nums">
-                    {numCell(m.rec.retail_committed)}
+                    <span className="inline-flex items-center justify-end gap-0.5">
+                      {numCell(m.rec.retail_committed)}
+                      <StopClick>
+                        <PlanDemandPopover
+                          runId={runId}
+                          recId={m.id}
+                          channel="retail"
+                          label={`Retail demand at ${m.warehouse}`}
+                        />
+                      </StopClick>
+                    </span>
                   </td>
                   {showUnclassified ? (
                     <td className="px-2 py-1 text-right tabular-nums">
-                      {numCell(m.rec.unclassified_committed)}
+                      <span className="inline-flex items-center justify-end gap-0.5">
+                        {numCell(m.rec.unclassified_committed)}
+                        <StopClick>
+                          <PlanDemandPopover
+                            runId={runId}
+                            recId={m.id}
+                            channel="unclassified"
+                            label={`Unclassified demand at ${m.warehouse}`}
+                          />
+                        </StopClick>
+                      </span>
                     </td>
                   ) : null}
                   <td className="px-2 py-1 text-right">

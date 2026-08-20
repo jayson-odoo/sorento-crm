@@ -315,7 +315,11 @@ describe('ReorderPlanningView - demand the plan could not net', () => {
 
   // > "order inquiry is only for project side" - a project SO no inquiry names is set
   // > aside AND counted (user decision, 2026-08-10). This banner is the counting half.
-  it('says how much project demand is waiting on an Order Inquiry', () => {
+  //
+  // Wording note (live diagnosis, 20 Aug): "waiting on an Order Inquiry" used to imply the
+  // orders the plan DOES count have one - 598 of 605 do not. The predicate is order-level:
+  // a project-class order the Order Inquiry import never named.
+  it('says how much project demand the Order Inquiry import never named', () => {
     stubToday(todayRun());
     useSetAsideDemand.mockReturnValue({
       data: {
@@ -328,12 +332,13 @@ describe('ReorderPlanningView - demand the plan could not net', () => {
     });
     renderView();
 
-    expect(screen.getByText(/waiting on an Order Inquiry/i)).toBeInTheDocument();
+    expect(screen.getByText(/the Order Inquiry import never named/i)).toBeInTheDocument();
+    expect(screen.queryByText(/waiting on an Order Inquiry/i)).not.toBeInTheDocument();
     expect(screen.getByText('480')).toBeInTheDocument();
     expect(screen.getByText('SO26-0101')).toBeInTheDocument();
   });
 
-  it('says nothing when every project order is on an inquiry', () => {
+  it('says nothing when every project order is named by the inquiry', () => {
     stubToday(todayRun());
     useSetAsideDemand.mockReturnValue({
       data: { orders: 0, lines: 0, quantity: 0, sample: [] },
@@ -341,7 +346,7 @@ describe('ReorderPlanningView - demand the plan could not net', () => {
     });
     renderView();
 
-    expect(screen.queryByText(/waiting on an Order Inquiry/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/the Order Inquiry import never named/i)).not.toBeInTheDocument();
   });
 });
 

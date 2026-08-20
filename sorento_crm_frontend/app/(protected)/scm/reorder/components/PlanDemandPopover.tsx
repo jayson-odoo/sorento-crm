@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { fmtInt, fmtSupplierCost } from '../../lib/format';
 import { DemandContextHeader } from './DemandContextHeader';
 import { orderInquiryWorklistHref } from '../lib/orderInquiryLink';
+import { PLAN_CHANNEL_LABEL, type PlanChannel } from '../lib/planLineGrouping';
 import { useRecommendationDemand } from '../hooks/useReorderRun';
 import type { PlanDemand } from '../services/reorderRunService';
 
@@ -69,11 +70,25 @@ export function describeDemandTotals(data: PlanDemand): string | null {
   return parts.join(' - ');
 }
 
-/** What each `PlanDemandLine.source` chip says, and the fuller sentence its title spells
- *  out (captain: "for project is order inquiry, for retail is sales order directly"). */
+/**
+ * What each `PlanDemandLine.source` chip says, and the fuller sentence its title spells
+ * out (captain: "for project is order inquiry, for retail is sales order directly").
+ *
+ * `order_inquiry` used to read "OI" and link to the worklist unconditionally - but the
+ * flag it is built from (`demand_origin`) is a permanent stamp on the ORDER, made the
+ * moment the Order Inquiry import creates it, and it survives long after CS has worked
+ * through every row off that order. Measured: 605 core sales orders carry the stamp; only
+ * 7 still have a live Order Inquiry row. "OI" promised a worklist entry that, almost every
+ * time, was not there. "OI import" says what actually happened - this order was CREATED
+ * BY the import - without claiming a live row exists; the click-through below is now
+ * gated on `has_inquiry_row`, the fact that answers that.
+ */
 const SOURCE_CHIP: Record<string, { chip: string; title: string }> = {
   sales_order: { chip: 'SO', title: 'Direct sales order' },
-  order_inquiry: { chip: 'OI', title: 'From an Order Inquiry (project channel)' },
+  order_inquiry: {
+    chip: 'OI import',
+    title: 'Order created by the Order Inquiry import',
+  },
   order_inquiry_confirmed: { chip: 'OI confirmed', title: 'Confirmed for buy by CS' },
 };
 
@@ -108,15 +123,35 @@ function ClassChip({ demandClass }: { demandClass: string | null | undefined }) 
   );
 }
 
-function PlanDemandBody({ runId, recId }: { runId: string | null; recId: string }) {
-  const { data, isLoading, isError, error } = useRecommendationDemand(runId, recId, true);
+function PlanDemandBody({
+  runId,
+  recId,
+  channel,
+}: {
+  runId: string | null;
+  recId: string;
+  /** Narrows the fetch AND the header to one channel (captain's own preferred fix, 20
+   *  Aug) - so a trigger sitting on the Project cell can never open a list that turns
+   *  out to be mostly Retail. `undefined` keeps the old unfiltered "whole row" popover. */
+  channel?: PlanChannel;
+}) {
+  const { data, isLoading, isError, error } = useRecommendationDemand(
+    runId,
+    recId,
+    true,
+    channel,
+  );
   // N-6 (reviewer): computed once - `describeDemandTotals` was called twice for the same
-  // `data`, once to decide whether to render the line and again to render it.
-  const demandTotals = data ? describeDemandTotals(data) : null;
+  // `data`, once to decide whether to render the line and again to render it. Skipped
+  // entirely when `channel` is set: a per-channel breakdown line under an already
+  // channel-scoped header is redundant at best, and reads as "0 of the other two" at
+  // worst - the header's own total is the one figure this popover is now making.
+  const demandTotals = !channel && data ? describeDemandTotals(data) : null;
+  const heading = channel ? `${PLAN_CHANNEL_LABEL[channel]} demand behind this row` : 'Demand behind this row';
   return (
     <>
       <div className="border-b px-3 py-2">
-        <div className="text-xs font-semibold">Demand behind this row</div>
+        <div className="text-xs font-semibold">{heading}</div>
         {data ? (
           <p className="mt-0.5 text-2xs text-muted-foreground">{describeDemandScope(data)}</p>
         ) : null}
@@ -137,8 +172,9 @@ function PlanDemandBody({ runId, recId }: { runId: string | null; recId: string 
         </p>
       ) : !data || !data.lines.length ? (
         <p className="p-3 text-2xs text-muted-foreground">
-          No open order line sits behind this quantity. It was raised from forecast demand
-          rather than from an order.
+          {channel
+            ? `No open ${PLAN_CHANNEL_LABEL[channel].toLowerCase()} order line sits behind this quantity.`
+            : 'No open order line sits behind this quantity. It was raised from forecast demand rather than from an order.'}
         </p>
       ) : (
         <>
@@ -147,11 +183,15 @@ function PlanDemandBody({ runId, recId }: { runId: string | null; recId: string 
               <li key={`${l.so_number}-${i}`} className="flex items-start gap-2 px-3 py-2">
                 <div className="min-w-0 flex-1">
                   {/* Click-through to the Order Inquiry worklist, scoped to this SO
-                      (captain, 20 Aug) - project channel only, since that worklist has
-                      nothing to show for a retail/unclassified line (it is scoped to
-                      Order Inquiry rows, and only a project-class order ever raises
-                      one). */}
-                  {l.source === 'order_inquiry' || l.source === 'order_inquiry_confirmed' ? (
+                      (captain, 20 Aug) - but only when a row is actually there to find.
+                      `order_inquiry_confirmed` is BUILT from a live row, so it always
+                      links. A bare `order_inquiry` is only a stamp on the order (it was
+                      CREATED by the import) and most of the time CS has already worked
+                      through every row off it - linking on the stamp alone sent the
+                      captain to a worklist filtered to nothing. `has_inquiry_row` is the
+                      fact that actually answers "is there something to open". */}
+                  {l.source === 'order_inquiry_confirmed' ||
+                  (l.source === 'order_inquiry' && l.has_inquiry_row) ? (
                     <Link
                       href={orderInquiryWorklistHref(l.so_number)}
                       onClick={(e) => e.stopPropagation()}
@@ -224,21 +264,32 @@ function PlanDemandBody({ runId, recId }: { runId: string | null; recId: string 
 export function PlanDemandPopover({
   runId,
   recId,
-  label = 'Demand behind this row',
+  label,
+  channel,
 }: {
   runId: string | null;
   recId: string;
+  /** Defaults to the channel-aware label when `channel` is set, so a trigger mounted on
+   *  the Retail cell announces itself as "Retail demand..." rather than the generic
+   *  wording of the row-level trigger. */
   label?: string;
+  /** Narrows this ONE trigger's drill to a single channel (captain's own preferred fix,
+   *  20 Aug: "put the icon at project and retail separately") - `undefined` is the
+   *  original row-level, unfiltered popover, still used where a cell is not itself
+   *  channel-specific. */
+  channel?: PlanChannel;
 }) {
   const [open, setOpen] = useState(false);
+  const resolvedLabel =
+    label ?? (channel ? `${PLAN_CHANNEL_LABEL[channel]} demand behind this row` : 'Demand behind this row');
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label={label}
-          title={label}
+          aria-label={resolvedLabel}
+          title={resolvedLabel}
           className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={(e) => e.stopPropagation()}
         >
@@ -247,7 +298,7 @@ export function PlanDemandPopover({
       </PopoverTrigger>
       <PopoverPortal>
         <PopoverContent align="start" className="w-[26rem] max-w-[92vw] p-0">
-          {open ? <PlanDemandBody runId={runId} recId={recId} /> : null}
+          {open ? <PlanDemandBody runId={runId} recId={recId} channel={channel} /> : null}
         </PopoverContent>
       </PopoverPortal>
     </Popover>

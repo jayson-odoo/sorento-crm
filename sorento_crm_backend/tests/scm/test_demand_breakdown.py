@@ -707,3 +707,221 @@ def test_drill_keeps_a_horizoned_pool_row_from_reading_as_a_sibling_pool(scm_app
     )
     assert out["locations"] == ["ZZTW-HZNBIN"]
     assert [l["so_number"] for l in out["lines"]] == ["ZZTSO-HZNBIN-NEAR"]
+
+
+# =============================================================================
+# 20 Aug live diagnosis - defect A: a `channel` trigger opens ONLY that channel
+# =============================================================================
+#
+# "i think it would be easier if we can just put the icon at project and retail
+# separately then we don't need the open SOs" (captain's own preferred fix). Before this,
+# ONE popover hung off the Project cell and listed every channel - a Retail-chipped SO
+# under the Project number read as retail counted as project, though both figures were
+# always correct (committed_v's own split).
+
+def _committed_v_split(db, pid, wid):
+    row = db.execute(text(
+        "SELECT COALESCE(project_committed, 0) AS project_committed, "
+        "       COALESCE(retail_committed, 0) AS retail_committed, "
+        "       COALESCE(unclassified_committed, 0) AS unclassified_committed "
+        "FROM scm.committed_v WHERE product_id = :p AND warehouse_id = :w"
+    ), {"p": pid, "w": wid}).mappings().first()
+    if row is None:
+        return {"project_committed": 0.0, "retail_committed": 0.0,
+                "unclassified_committed": 0.0}
+    return {k: float(v or 0) for k, v in row.items()}
+
+
+def test_channel_filter_returns_only_that_channels_lines_and_matches_committed_v(scm_app):
+    """A channel trigger's list must contain ONLY that channel's lines, and its total must
+    be the SAME figure `scm.committed_v` (and the row's own `project_committed` etc.)
+    already report - never a mix, and never a different number from the row it hangs on."""
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-CHFLT")
+    pid = _mk_product(db, f"ZZTP-CHFLT-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _so(db, pid, wid, 5, order_type="project", number="ZZTSO-CHFLT-PRJ")
+    _so(db, pid, wid, 7, order_type="retail", number="ZZTSO-CHFLT-RTL")
+    _so(db, pid, wid, 3, order_type=None, number="ZZTSO-CHFLT-UNC")
+    _link(db, pid, _mk_supplier(db, "ZZT Chflt Supplier"), moq=None, mult=None)
+    db.flush()
+    rec_id = _rec(db, ["ZZTW-CHFLT"], pid)
+
+    project = dbs.demand_for_recommendation(db, rec_id, channel="project")
+    retail = dbs.demand_for_recommendation(db, rec_id, channel="retail")
+    unclassified = dbs.demand_for_recommendation(db, rec_id, channel="unclassified")
+
+    assert [l["so_number"] for l in project["lines"]] == ["ZZTSO-CHFLT-PRJ"]
+    assert {l["demand_class"] for l in project["lines"]} == {"project"}
+    assert [l["so_number"] for l in retail["lines"]] == ["ZZTSO-CHFLT-RTL"]
+    assert {l["demand_class"] for l in retail["lines"]} == {"retail"}
+    assert [l["so_number"] for l in unclassified["lines"]] == ["ZZTSO-CHFLT-UNC"]
+    assert unclassified["lines"][0]["demand_class"] is None
+
+    assert project["channel"] == "project"
+    assert retail["channel"] == "retail"
+    assert unclassified["channel"] == "unclassified"
+
+    split = _committed_v_split(db, pid, wid)
+    assert project["committed_total"] == split["project_committed"] == 5.0
+    assert retail["committed_total"] == split["retail_committed"] == 7.0
+    assert unclassified["committed_total"] == split["unclassified_committed"] == 3.0
+
+
+def test_an_unrecognised_channel_is_unfiltered(scm_app):
+    """Contract: unfiltered is the DEFAULT, not an error - so a caller that predates the
+    field, or a bad value, sees exactly what an omitted `channel` always has."""
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-CHFLT2")
+    pid = _mk_product(db, f"ZZTP-CHFLT2-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _so(db, pid, wid, 5, order_type="project", number="ZZTSO-CHFLT2-PRJ")
+    _so(db, pid, wid, 7, order_type="retail", number="ZZTSO-CHFLT2-RTL")
+    _link(db, pid, _mk_supplier(db, "ZZT Chflt2 Supplier"), moq=None, mult=None)
+    db.flush()
+    rec_id = _rec(db, ["ZZTW-CHFLT2"], pid)
+
+    unfiltered = dbs.demand_for_recommendation(db, rec_id)
+    bogus = dbs.demand_for_recommendation(db, rec_id, channel="dealer")
+
+    assert unfiltered["channel"] is None
+    assert bogus["channel"] is None
+    assert sorted(l["so_number"] for l in bogus["lines"]) == sorted(
+        l["so_number"] for l in unfiltered["lines"]
+    )
+    assert bogus["committed_total"] == unfiltered["committed_total"] == 12.0
+
+
+def test_a_channel_filter_on_a_pooled_row_keeps_the_pool_scope(scm_app):
+    """The scope decision (warehouse vs pool) must be resolved off the UNFILTERED total -
+    a channel is a display slice of an already-scoped row, never a second opinion on which
+    locations it was netted over. Filtering to retail (a channel with only ONE line, at
+    ONE of the two pool members) must not make a pooled row read as its own warehouse."""
+    _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = true"))
+    root, bin_, pid = _two_bin_pool(db, "CHFLT3")
+    # `_two_bin_pool` already raises project-class orders at both members; add one
+    # retail-class line at a SINGLE member so the retail channel has exactly one line.
+    _so(db, pid, bin_, 15, order_type="retail", number="ZZTSO-CHFLT3-RTL")
+    db.flush()
+
+    rec = _rec_row(db, _run(db, ["ZZTW-CHFLT3-R", "ZZTW-CHFLT3-B"]), pid)
+    retail = dbs.demand_for_recommendation(db, str(rec["id"]), channel="retail")
+
+    assert retail["scope"] == "pool", (
+        "the row was netted over the pool; a channel filter must not relabel that"
+    )
+    assert retail["pool_code"] == "ZZTW-CHFLT3-R"
+    assert [l["so_number"] for l in retail["lines"]] == ["ZZTSO-CHFLT3-RTL"]
+
+
+def test_a_retail_channel_filter_excludes_the_confirmed_oi_leg(scm_app):
+    """The confirmed leg is entirely project-class by construction (S13b) - a retail or
+    unclassified channel must come back with none of it, not an empty-but-still-queried
+    leg."""
+    from tests.scm.test_channel_read_model import _confirmed_leg
+
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-CHFLT4")
+    pid = _mk_product(db, f"ZZTP-CHFLT4-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _so(db, pid, wid, 6, order_type="retail", number="ZZTSO-CHFLT4-RTL")
+    _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=8)
+    _link(db, pid, _mk_supplier(db, "ZZT Chflt4 Supplier"), moq=None, mult=None)
+    db.flush()
+
+    out = dbs.demand_for_recommendation(db, _rec(db, ["ZZTW-CHFLT4"], pid), channel="retail")
+
+    assert [l["source"] for l in out["lines"]] == ["sales_order"]
+    assert out["committed_total"] == 6.0
+
+
+# =============================================================================
+# 20 Aug live diagnosis - defect B: the "OI" chip must not promise an empty worklist
+# =============================================================================
+#
+# `source == "order_inquiry"` is a permanent stamp on the ORDER (`demand_origin`), made at
+# creation and never cleared once CS works through every inquiry row off it. `has_inquiry_row`
+# is the fact that actually says whether the Order Inquiry worklist has something to open for
+# THIS line right now (measured live: 605 core orders carry the stamp, 7 still have a row).
+
+def test_a_sheet_leg_line_with_no_inquiry_row_says_so(scm_app):
+    """The common case (598 of 605, measured): the order was created by the OI import, but
+    every row off it is long gone. The chip's underlying fact must read false, not assume
+    true from the stamp alone."""
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-OIROW1")
+    pid = _mk_product(db, f"ZZTP-OIROW1-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _so(db, pid, wid, 12, order_type="project", number="ZZTSO-OIROW1")
+    _link(db, pid, _mk_supplier(db, "ZZT Oirow1 Supplier"), moq=None, mult=None)
+    db.flush()
+
+    out = dbs.demand_for_recommendation(db, _rec(db, ["ZZTW-OIROW1"], pid))
+
+    assert len(out["lines"]) == 1
+    assert out["lines"][0]["source"] == "order_inquiry"
+    assert out["lines"][0]["has_inquiry_row"] is False
+
+
+def test_a_sheet_leg_line_with_a_live_inquiry_row_says_so(scm_app):
+    """The rare case (7 of 605): a row genuinely exists for this line, and has not (yet)
+    been confirmed - only an ACTIVE decision's Buy pulls a line out of the sheet leg
+    (`PLAN_DEMAND_LINE_SQL`), so a `superseded` decision leaves the sheet-leg line in
+    place, sitting beside the row that is its real evidence."""
+    from app.models.order import SalesOrder, SalesOrderLine
+    from tests.scm.test_channel_read_model import _confirmed_leg
+
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-OIROW2")
+    pid = _mk_product(db, f"ZZTP-OIROW2-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    so = SalesOrder(id=str(uuid.uuid4()), so_number="ZZTSO-OIROW2", status="open",
+                    demand_class="project", demand_origin="scm_order_inquiry")
+    db.add(so)
+    db.flush()
+    core_line = SalesOrderLine(id=str(uuid.uuid4()), sales_order_id=so.id, product_id=pid,
+                               warehouse_id=wid, qty_ordered=20, qty_delivered=0,
+                               line_status="open")
+    db.add(core_line)
+    db.flush()
+    # A decision that is NOT active leaves the sheet-leg line alone, while the helper
+    # still writes the `projects.order_inquiry_rows` row - exactly the "row exists, but
+    # not (yet) confirmed" case the chip has to tell apart from "no row at all".
+    _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=20,
+                   decision_state="superseded", core_line=core_line)
+    _link(db, pid, _mk_supplier(db, "ZZT Oirow2 Supplier"), moq=None, mult=None)
+    db.flush()
+
+    out = dbs.demand_for_recommendation(db, _rec(db, ["ZZTW-OIROW2"], pid))
+
+    assert len(out["lines"]) == 1
+    assert out["lines"][0]["source"] == "order_inquiry"
+    assert out["lines"][0]["has_inquiry_row"] is True
+
+
+def test_a_confirmed_leg_line_always_has_an_inquiry_row(scm_app):
+    """The confirmed leg is BUILT from a live row (S13b) - `has_inquiry_row` is trivially
+    true, and the worklist link must never be gated off it for this source."""
+    from tests.scm.test_channel_read_model import _confirmed_leg
+
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-OIROW3")
+    pid = _mk_product(db, f"ZZTP-OIROW3-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=8)
+    _link(db, pid, _mk_supplier(db, "ZZT Oirow3 Supplier"), moq=None, mult=None)
+    db.flush()
+
+    out = dbs.demand_for_recommendation(db, _rec(db, ["ZZTW-OIROW3"], pid))
+
+    confirmed = [l for l in out["lines"] if l["source"] == "order_inquiry_confirmed"]
+    assert len(confirmed) == 1
+    assert confirmed[0]["has_inquiry_row"] is True

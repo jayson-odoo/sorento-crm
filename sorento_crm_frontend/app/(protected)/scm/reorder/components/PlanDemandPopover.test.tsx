@@ -36,6 +36,7 @@ const demand = (over: Record<string, unknown> = {}) => ({
   locations: ['BRW-IB'],
   scope: 'warehouse',
   pool_code: null,
+  channel: null,
   ...over,
 });
 
@@ -66,7 +67,7 @@ describe('PlanDemandPopover', () => {
     expect(useRecommendationDemand).not.toHaveBeenCalled();
 
     await open();
-    expect(useRecommendationDemand).toHaveBeenCalledWith('run-1', 'rec-1', true);
+    expect(useRecommendationDemand).toHaveBeenCalledWith('run-1', 'rec-1', true, undefined);
   });
 
   it('names the location the ORDER was for, which is the whole question', async () => {
@@ -170,14 +171,16 @@ describe('PlanDemandPopover', () => {
       expect(chip).toHaveAttribute('title', 'Direct sales order');
     });
 
-    it('renders OI with "From an Order Inquiry (project channel)" for an order-inquiry line', async () => {
+    it('renders "OI import" with "Order created by the Order Inquiry import" for a sheet-leg line', async () => {
+      // Defect B: "OI" used to claim a live worklist entry off `demand_origin` alone -
+      // this is a stamp on the ORDER, not a fact about whether a row still exists.
       stub(demand({ lines: [{ ...demand().lines[0], source: 'order_inquiry' }] }));
       render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
       await open();
 
-      const chip = screen.getByText('OI');
+      const chip = screen.getByText('OI import');
       expect(chip).toBeInTheDocument();
-      expect(chip).toHaveAttribute('title', 'From an Order Inquiry (project channel)');
+      expect(chip).toHaveAttribute('title', 'Order created by the Order Inquiry import');
     });
 
     it('renders "OI confirmed" with "Confirmed for buy by CS" for a CS-confirmed line', async () => {
@@ -226,6 +229,99 @@ describe('PlanDemandPopover', () => {
       await open();
 
       expect(screen.queryByText(/^Project /)).not.toBeInTheDocument();
+    });
+  });
+
+  // Defect B: the worklist click-through must not promise a screen that will be empty.
+  describe('the Order Inquiry worklist link', () => {
+    it('links a sheet-leg line when a live inquiry row exists', async () => {
+      stub(
+        demand({
+          lines: [{ ...demand().lines[0], source: 'order_inquiry', has_inquiry_row: true }],
+        }),
+      );
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+      await open();
+
+      expect(screen.getByRole('link', { name: 'SO414050' })).toBeInTheDocument();
+    });
+
+    it('does not link a sheet-leg line when no inquiry row exists', async () => {
+      // The common case, measured live: 605 core orders carry the `order_inquiry`
+      // provenance stamp, 7 still have a row. Linking on the stamp alone sent a captain
+      // to a worklist filtered to nothing.
+      stub(
+        demand({
+          lines: [{ ...demand().lines[0], source: 'order_inquiry', has_inquiry_row: false }],
+        }),
+      );
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+      await open();
+
+      expect(screen.queryByRole('link', { name: 'SO414050' })).not.toBeInTheDocument();
+      expect(screen.getByText('SO414050')).toBeInTheDocument();
+    });
+
+    it('always links the confirmed leg, which is built from a live row', async () => {
+      stub(
+        demand({
+          lines: [
+            { ...demand().lines[0], source: 'order_inquiry_confirmed', has_inquiry_row: true },
+          ],
+        }),
+      );
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+      await open();
+
+      expect(screen.getByRole('link', { name: 'SO414050' })).toBeInTheDocument();
+    });
+
+    it('does not link a direct sales-order line', async () => {
+      stub(demand({ lines: [{ ...demand().lines[0], source: 'sales_order' }] }));
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+      await open();
+
+      expect(screen.queryByRole('link', { name: 'SO414050' })).not.toBeInTheDocument();
+    });
+  });
+
+  // Defect A: a `channel` prop narrows the fetch AND says which channel it opened.
+  describe('a channel-scoped trigger', () => {
+    it('passes the channel through to the fetch, keyed for its own cache entry', async () => {
+      stub(demand({ channel: 'project' }));
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" channel="project" />);
+      fireEvent.click(screen.getByRole('button', { name: /project demand behind this row/i }));
+      await screen.findByText('Project demand behind this row');
+
+      expect(useRecommendationDemand).toHaveBeenCalledWith('run-1', 'rec-1', true, 'project');
+    });
+
+    it('says which channel the header is showing', async () => {
+      stub(demand({ channel: 'retail', committed_total: 3092 }));
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" channel="retail" />);
+      fireEvent.click(screen.getByRole('button', { name: /retail demand behind this row/i }));
+
+      expect(await screen.findByText('Retail demand behind this row')).toBeInTheDocument();
+      expect(screen.getByText('3,092 committed at BRW-IB')).toBeInTheDocument();
+    });
+
+    it('hides the multi-channel totals line - the header already says which one this is', async () => {
+      stub(demand({ channel: 'project', project_total: 5395, retail_total: 3092 }));
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" channel="project" />);
+      fireEvent.click(screen.getByRole('button', { name: /project demand behind this row/i }));
+      await screen.findByText('Project demand behind this row');
+
+      expect(screen.queryByText(/^Project \d/)).not.toBeInTheDocument();
+    });
+
+    it('names the channel in the empty state instead of the generic forecast copy', async () => {
+      stub(demand({ channel: 'retail', lines: [], total: 0, shown: 0, committed_total: 0 }));
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" channel="retail" />);
+      fireEvent.click(screen.getByRole('button', { name: /retail demand behind this row/i }));
+
+      expect(
+        await screen.findByText(/No open retail order line sits behind this quantity/i),
+      ).toBeInTheDocument();
     });
   });
 });

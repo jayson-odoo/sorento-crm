@@ -331,6 +331,11 @@ def recommendation_demand(
     run_id: str,
     rec_id: str,
     limit: int = Query(200, ge=1, le=1000),
+    # Narrows to one channel's lines (captain's own preferred fix, 20 Aug: a separate
+    # drill icon per Project/Retail/Unclassified cell instead of one that carries
+    # everything). Unrecognised/omitted is unfiltered - `demand_for_recommendation`
+    # normalises it, so this never has to validate the enum itself.
+    channel: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
@@ -339,7 +344,7 @@ def recommendation_demand(
     Answers "why is it bought into BRW when I ordered for BRW-IB, and why so many" from the
     row itself: pooled netting is the reason, and the orders are the evidence."""
     svc.assert_run_visible(db, run_id)
-    return demand_breakdown_service.demand_for_recommendation(db, rec_id, limit)
+    return demand_breakdown_service.demand_for_recommendation(db, rec_id, limit, channel)
 
 
 @router.get("/reorder-runs/{run_id}/cover-sources")

@@ -476,9 +476,15 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         </div>
       ) : null}
 
-      {/* Project demand CS has not put on an Order Inquiry. NOT in the plan, by the user's
-          own rule - the inquiry is the demand for the project side - and counted here so a
-          smaller-than-expected plan explains itself instead of looking like lost data. */}
+      {/* Project demand the Order Inquiry import never named. NOT in the plan, by the
+          user's own rule - the inquiry is the demand for the project side - and counted
+          here so a smaller-than-expected plan explains itself instead of looking like
+          lost data.
+
+          Wording note (live diagnosis, 20 Aug): "waiting on an Order Inquiry" implied the
+          orders the plan DOES count have one - 598 of 605 do not, they are retail/direct
+          sales-order lines the split never asked to have one. The predicate this reports
+          is order-level, not line-level: a project-class order the import never named. */}
       {setAside.data && setAside.data.orders > 0 ? (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-sky-500/40 bg-sky-500/5 px-3 py-2 text-sm">
           <Info className="size-4 shrink-0 text-sky-600" aria-hidden />
@@ -490,8 +496,8 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             <span className="font-medium text-foreground tabular-nums">
               {fmtInt(setAside.data.orders)}
             </span>{' '}
-            project order{setAside.data.orders === 1 ? '' : 's'} are waiting on an Order
-            Inquiry, so this plan leaves them out.
+            project order{setAside.data.orders === 1 ? '' : 's'} the Order Inquiry import
+            never named, so this plan leaves them out.
             {setAside.data.sample.length ? (
               <>
                 {' '}

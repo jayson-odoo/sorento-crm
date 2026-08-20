@@ -1443,10 +1443,11 @@ describe('PlanLinesGrid - grouped-expand live location-stock cells (20 Aug live 
     expect(within(cell).getByText('66')).toBeInTheDocument();
   });
 
-  // N-4: exactly one demand popover per member row (previously mounted on both the Project
-  // AND Retail cells, with identical rec-wide content - clicking Retail opened the whole
-  // location's demand under a misleading trigger).
-  it('mounts exactly one demand popover per member row', () => {
+  // 20 Aug live diagnosis (defect A), superseding N-4: ONE popover per member row used to
+  // carry the WHOLE location's demand, mounted only on the Project cell - so a Retail-
+  // chipped SO read under the Project number. The fix (captain's own preferred one) is a
+  // separate trigger per channel cell, each scoped to only that channel.
+  it('mounts a separate Project and Retail trigger per member row, each scoped to its own channel', () => {
     locationStockState.isLoading = false;
     locationStockState.data = undefined;
     renderLiveGroupedGrid([locA, locB]);
@@ -1454,11 +1455,21 @@ describe('PlanLinesGrid - grouped-expand live location-stock cells (20 Aug live 
     fireEvent.click(screen.getByText('SKU-1'));
 
     expect(
-      screen.getByRole('button', { name: 'Demand behind Butterworth' }),
+      screen.getByRole('button', { name: 'Project demand at Butterworth' }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Demand behind BRW - IB' })).toBeInTheDocument();
     expect(
-      screen.getAllByRole('button', { name: /^Demand behind /i }),
-    ).toHaveLength(2);
+      screen.getByRole('button', { name: 'Retail demand at Butterworth' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Project demand at BRW - IB' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Retail demand at BRW - IB' }),
+    ).toBeInTheDocument();
+    // Neither fixture carries unclassified demand, so no third trigger - 2 members x 2
+    // channels, never a stray extra.
+    expect(
+      screen.getAllByRole('button', { name: /demand at /i }),
+    ).toHaveLength(4);
   });
 });

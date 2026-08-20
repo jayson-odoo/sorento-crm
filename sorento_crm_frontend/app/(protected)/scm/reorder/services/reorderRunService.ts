@@ -607,11 +607,21 @@ export interface PlanDemandLine {
   /**
    * Provenance (captain: "for project is order inquiry, for retail is sales order
    * directly"): which document this line traces back to. `order_inquiry_confirmed` is
-   * the CS-confirmed-for-buy leg (`project_need`); a bare `order_inquiry` is still
-   * awaiting that confirmation. Optional - absent on a cached response that predates
-   * the field.
+   * the CS-confirmed-for-buy leg (`project_need`); a bare `order_inquiry` means the ORDER
+   * was created by the Order Inquiry import - it says nothing about whether a row still
+   * exists for this line today (`has_inquiry_row` does). Optional - absent on a cached
+   * response that predates the field.
    */
   source?: 'sales_order' | 'order_inquiry' | 'order_inquiry_confirmed' | null;
+  /**
+   * Whether the Order Inquiry worklist actually has a row for this line right now. The
+   * `order_inquiry` source above is a stamp on the ORDER, made permanent at creation and
+   * never cleared once CS works through every inquiry row off it - a chip built from that
+   * alone promises a worklist entry that, most of the time, is no longer there (measured:
+   * 605 core orders carry the stamp, 7 still have a row). Optional - absent on a cached
+   * response that predates the field; treated as false by the caller in that case.
+   */
+  has_inquiry_row?: boolean;
 }
 
 export interface PlanDemand {
@@ -648,6 +658,14 @@ export interface PlanDemand {
   project_window_months?: number | null;
   retail_window_months?: number | null;
   demand_context_as_of?: string | null;
+  /**
+   * The channel this response was narrowed to, echoed back by the backend
+   * (`demand_breakdown_service.demand_for_recommendation`'s own `channel` param) - `null`
+   * when unfiltered. A cached response predating the field is indistinguishable from
+   * `null` here, which is the safe reading: it behaves exactly as an unfiltered request
+   * always has.
+   */
+  channel?: 'project' | 'retail' | 'unclassified' | null;
 }
 
 /** One warehouse's LIVE stock position for a product (captain: "fulfilment planning" style
@@ -686,13 +704,19 @@ export async function getLocationStock(productId: string): Promise<LocationStock
   return res.json();
 }
 
-/** GET /api/v1/scm/reorder-runs/{run}/recommendations/{rec}/demand */
+/** GET /api/v1/scm/reorder-runs/{run}/recommendations/{rec}/demand?channel=<channel>
+ *
+ *  `channel` narrows the response to ONE of `project`/`retail`/`unclassified` (captain's
+ *  own preferred fix, 20 Aug: separate drill icons per channel cell instead of one on
+ *  Project carrying everything). Omitted keeps the endpoint's existing unfiltered shape. */
 export async function getRecommendationDemand(
   runId: string,
   recId: string,
+  channel?: 'project' | 'retail' | 'unclassified',
 ): Promise<PlanDemand> {
+  const qs = channel ? `?channel=${encodeURIComponent(channel)}` : '';
   const res = await apiFetch(
-    `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/recommendations/${encodeURIComponent(recId)}/demand`,
+    `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/recommendations/${encodeURIComponent(recId)}/demand${qs}`,
   );
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the demand behind this row'));
   return res.json();

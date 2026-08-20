@@ -314,15 +314,21 @@ export function useNeedsLevelRecommendations(runId: string | null, enabled: bool
  * The open order lines a planned quantity was built from. Fetched only when the drill is
  * opened: the row carries the total, and pulling every contributing line for every row on
  * load is a cost nobody asked for.
+ *
+ * `channel` narrows the fetch to one of `project`/`retail`/`unclassified` (captain's own
+ * preferred fix, 20 Aug) - it is part of the query key so opening the Project trigger and
+ * the Retail trigger on the same row are two independently cached fetches, never one
+ * clobbering the other's cache entry.
  */
 export function useRecommendationDemand(
   runId: string | null,
   recId: string | null,
   enabled: boolean,
+  channel?: 'project' | 'retail' | 'unclassified',
 ) {
   return useQuery({
-    queryKey: ['scm', 'reorder', 'rec-demand', runId, recId],
-    queryFn: () => getRecommendationDemand(runId as string, recId as string),
+    queryKey: ['scm', 'reorder', 'rec-demand', runId, recId, channel ?? null],
+    queryFn: () => getRecommendationDemand(runId as string, recId as string, channel),
     enabled: enabled && !!runId && !!recId,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
