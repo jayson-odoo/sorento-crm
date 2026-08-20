@@ -314,6 +314,8 @@ function buildGroupRec(members: PlanLine[]): ReorderRecommendation {
     safety_days: null,
     review_days: null,
     moq: uniformOrNull(members.map((m) => m.rec.moq)),
+    master_moq: uniformOrNull(members.map((m) => m.rec.master_moq ?? null)),
+    moq_is_override: members.every((m) => m.rec.moq_is_override),
     order_multiple: uniformOrNull(members.map((m) => m.rec.order_multiple)),
     policy_type: null,
     supplier_selection: null,
@@ -391,6 +393,14 @@ function buildGroupedLine(members: PlanLine[], channels: PlanChannel[]): Grouped
     supplierResult.memberIndex !== null ? members[supplierResult.memberIndex] : null;
   const priceResult = uniformAcrossMembers(members, (m) => m.rec.unit_cost);
   const moqResult = uniformAcrossMembers(members, (m) => m.rec.moq);
+  // The frozen master MoQ, carried through the same "product fact" way as `moq` itself, so
+  // the group cell can show "master N" beside the buyer's own edit. Uniform-or-null, not the
+  // effective `moq` a conflict already reads: `isOverride` below is deliberately its OWN,
+  // stricter check (every member overridden), because editing the group row applies the same
+  // override to every member (20 Aug live test) - a genuine mid-group conflict is never
+  // "half overridden" by this grid.
+  const masterMoq = uniformOrNull(members.map((m) => m.rec.master_moq ?? null));
+  const moqIsOverride = !moqResult.conflict && members.every((m) => m.rec.moq_is_override);
   const conflicts = new Set<PlanChannelConflictField>();
   if (supplierResult.conflict) conflicts.add('supplier');
   if (priceResult.conflict) conflicts.add('price');
@@ -423,6 +433,8 @@ function buildGroupedLine(members: PlanLine[], channels: PlanChannel[]): Grouped
       order_up_to: sumOrNull(members.map((m) => m.order_qty_inputs.order_up_to)),
       rounded_qty: order_qty,
       moq: moqResult.value,
+      master_moq: masterMoq,
+      moq_is_override: moqIsOverride,
       order_multiple: uniformOrNull(members.map((m) => m.order_qty_inputs.order_multiple)),
     },
     alternatives: supplierMember ? supplierMember.alternatives : [],

@@ -50,6 +50,7 @@ import {
 import { levelActionLabel, type LevelSuggestion } from '../lib/levelSuggestion';
 import { poOffset, type PoReceipt } from '../lib/poCover';
 import { PlanLevelCell } from './PlanLevelCell';
+import { PlanMoqCell } from './PlanMoqCell';
 import type { TrajectoryEntry } from '../lib/trajectory';
 import type { ProductPurchaseTrend } from '../lib/purchaseTrend';
 import { PlanTrendPopover } from './PlanTrendPopover';
@@ -436,6 +437,7 @@ export function PlanLinesGrid({
   cheaperFor,
   levelFor,
   onAmendLevel,
+  onAmendMoq,
   poFor,
   trendFor,
   channelTrendFor,
@@ -479,6 +481,10 @@ export function PlanLinesGrid({
   levelFor?: (line: PlanLine) => LevelSuggestion | undefined;
   /** S14: record (or withdraw, with null) the buyer's own level figure. */
   onAmendLevel?: (s: LevelSuggestion, amended: number | null) => Promise<void> | void;
+  /** 20 Aug live test: record (or withdraw, with null) the buyer's own MoQ for a line -
+   *  master data drifts and they should not have to wait for a re-run to fix it. Absent =
+   *  read-only (the MOQ cell then only ever shows the frozen master figure). */
+  onAmendMoq?: (line: PlanLine, moq: number | null) => Promise<void> | void;
   /** S15: the open PO lines already carrying this product to this warehouse. */
   poFor?: (line: PlanLine) => PoReceipt[];
   /** Is this product's demand sustaining or dying off, on this line's side. */
@@ -1331,6 +1337,13 @@ export function PlanLinesGrid({
         cell: ({ row }) => {
           const line = row.original;
           const moq = line.order_qty_inputs?.moq ?? null;
+          const masterMoq = line.order_qty_inputs?.master_moq ?? null;
+          const isOverride = line.order_qty_inputs?.moq_is_override ?? false;
+          // Only a buy/covered row carries a real recommendation for the write to land on;
+          // a grouped row edits every member at once, so every member has to qualify.
+          const editable = isGroupedLine(line)
+            ? line.__group.members.every((m) => m.rec.type === 'buy' || m.rec.type === 'covered')
+            : line.rec.type === 'buy' || line.rec.type === 'covered';
           if (isGroupedLine(line) && moq === null && line.__group.conflicts.has('moq')) {
             // MOQ is a PRODUCT fact carried through when every location agrees (captain's
             // 20 Aug ruling) - this dash means the group's own locations genuinely disagree,
@@ -1343,35 +1356,34 @@ export function PlanLinesGrid({
               </span>
             );
           }
-          if (!line.purchasable || moq === null) {
+          if (!line.purchasable) {
             return (
               <span className="text-muted-foreground" title="No MOQ on file for this supplier">
                 {EM_DASH}
               </span>
             );
           }
-          const gap = moqGap(
-            // The PRE-round need: what the engine computed before the MOQ floor.
-            line.rec.recommended_qty ?? line.order_qty,
-            moq,
-            Math.ceil(line.order_qty),
-            economicsFor?.(line),
-            healthThresholds.dead_turnover_months,
-          );
+          const gap = moq !== null
+            ? moqGap(
+                // The PRE-round need: what the engine computed before the MOQ floor.
+                line.rec.recommended_qty ?? line.order_qty,
+                moq,
+                Math.ceil(line.order_qty),
+                economicsFor?.(line),
+                healthThresholds.dead_turnover_months,
+              )
+            : null;
           return (
-            <div className="min-w-0">
-              <span className="tabular-nums">{fmtInt(moq)}</span>
-              {gap ? (
-                <span
-                  className={`block truncate text-2xs ${
-                    gap.verdict === 'clears' ? 'text-muted-foreground' : 'text-scm-overstock'
-                  }`}
-                  title={gap.sentence}
-                >
-                  {moqGapNote(gap, fmtInt)}
-                </span>
-              ) : null}
-            </div>
+            <StopClick>
+              <PlanMoqCell
+                moq={moq}
+                masterMoq={masterMoq}
+                isOverride={isOverride}
+                disabled={!editable}
+                onChange={onAmendMoq ? (value) => onAmendMoq(line, value) : undefined}
+                note={gap ? { text: moqGapNote(gap, fmtInt), warn: gap.verdict !== 'clears', title: gap.sentence } : null}
+              />
+            </StopClick>
           );
         },
         size: 140,
@@ -1472,7 +1484,7 @@ export function PlanLinesGrid({
     [decisions, onDecide, onClear, runId, decisionsReadOnly, readOnlyReason,
      belongsOnBookProductIds, onOpenProductSheet,
      coverFor, priceFor, cheaperFor, trendFor, channelTrendFor, groupByChannel, dynamicChannels,
-     levelFor, onAmendLevel, poFor, purchaseTrendFor, purchaseTrendWindowMonths,
+     levelFor, onAmendLevel, onAmendMoq, poFor, purchaseTrendFor, purchaseTrendWindowMonths,
      onOpenPurchaseTrend, hasPhotoFor, photoStatus, onOpenPhoto, economicsFor, healthThresholds,
      onDecideLifecycle, staleAfterDays, renderSuggestedQtyCell, channelTotals],
   );

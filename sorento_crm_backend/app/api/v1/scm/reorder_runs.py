@@ -751,7 +751,7 @@ def list_recommendations(
     rows = db.execute(text(f"""
         SELECT rr.id, rr.rec_type, rr.product_id, rr.warehouse_id, rr.net_position, rr.reorder_point,
                rr.days_of_cover, rr.rounded_qty, rr.recommended_qty, rr.confidence_band,
-               rr.allocation, rr.inputs,
+               rr.allocation, rr.inputs, rr.moq_override,
                rr.rank, rr.rank_score, rr.unit_cost, rr.cash_impact, rr.funding_status,
                rr.currency, rr.rate_to_base, rr.rate_as_of, rr.status,
                p.product_code, p.product_name,
@@ -810,6 +810,28 @@ def apply_reorder_run_budget(
     return svc.apply_run_budget(db, run_id, float(budget))
 
 
+@router.put("/recommendations/{rec_id}/moq")
+def set_recommendation_moq(
+    rec_id: str,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_RUN),
+):
+    """Set (or clear) the buyer's own MoQ for one row (20 Aug live test): "MoQ is
+    varying, we need a place for the user to input it, and when they change it, our
+    calculation should recalculate." ``{moq: number}`` overrides; ``{moq: null}`` or an
+    absent key clears it back to the frozen master figure. Mutates planning state
+    (a decision-adjacent input, same as Accept/Adjust/Reject) → ``scm.reorder.run``.
+
+    Returns the recalculated ``order_qty`` / ``cash_impact`` so the plan grid can update
+    the row in place, without waiting on a full re-run."""
+    moq = payload.get("moq")
+    if moq is not None and not isinstance(moq, (int, float)):
+        raise AppException(status_code=422, message="MoQ must be a number or null.")
+    result = svc.set_moq_override(db, rec_id, float(moq) if moq is not None else None)
+    return result
+
+
 @router.get("/recommendations/{rec_id}/explain-net")
 def explain_recommendation_net(
     rec_id: str,
@@ -841,6 +863,21 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         allocation = [{"warehouse_code": a.get("warehouse_code"),
                        "warehouse_name": a.get("warehouse_name"),
                        "qty": a.get("qty")} for a in r["allocation"]]
+    # The buyer's own MoQ (20 Aug live test) — master data drifts and they cannot wait
+    # for a re-run to fix it. `moq_override` re-derives `order_qty`/`cash_impact` live,
+    # off the row's FROZEN `recommended_qty`, through the SAME rounding helper the engine
+    # itself used (`reorder_run_service.set_moq_override`) — the persisted `rounded_qty`
+    # / `inputs` never change, so a fresh run with no override still matches byte-for-byte.
+    moq_override = _f(r["moq_override"]) if is_priced else None
+    eff_moq, moq_is_override = svc.effective_moq(inp, moq_override)
+    if moq_is_override:
+        eff_rounded = svc.recalc_rounded_qty(
+            r["recommended_qty"], eff_moq, inp.get("order_multiple"))
+        eff_cash_impact = svc._cash_impact_in_base(
+            eff_rounded, r["unit_cost"], r["currency"], r["rate_to_base"], r["rate_as_of"])
+    else:
+        eff_rounded = r["rounded_qty"]
+        eff_cash_impact = r["cash_impact"]
     return {
         "id": r["id"],
         "type": r["rec_type"],
@@ -865,8 +902,8 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         "allocation": allocation,
         # A ``covered`` row carries a quantity too: it is what buying anyway would cost
         # you, and without it the choice between stock and a purchase has one side missing.
-        "order_qty": (_f(r["rounded_qty"])
-                      if r["rec_type"] in ("buy", "covered") else None),
+        # Reflects the buyer's MoQ override when set (see `eff_rounded` above).
+        "order_qty": _f(eff_rounded) if is_priced else None,
         # Pre-rounding order qty (order-up-to − net) so the derivation popup can show
         # the raw figure BEFORE MoQ / pack-multiple rounding lands on `order_qty`.
         "recommended_qty": (_f(r["recommended_qty"])
@@ -911,7 +948,12 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         "service_level": inp.get("service_level"),
         "safety_days": inp.get("safety_days"),
         "review_days": inp.get("review_days"),
-        "moq": inp.get("moq"),
+        # Effective MoQ (the buyer's override when set, else the frozen master figure) —
+        # what `order_qty` above was actually rounded against. `master_moq` and
+        # `moq_is_override` let the cell show both ("master 12") and mark the row edited.
+        "moq": eff_moq if is_priced else inp.get("moq"),
+        "master_moq": inp.get("moq") if is_priced else None,
+        "moq_is_override": moq_is_override if is_priced else False,
         "order_multiple": inp.get("order_multiple"),
         # --- S10: the weekly checklist, so the row answers "should I order this" alone ---
         "segment": r["segment"],
@@ -968,7 +1010,8 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         # reads as an arithmetic error.
         "unit_cost": _f(r["unit_cost"]) if is_priced else None,
         "currency": (r["currency"] if is_priced else None),
-        "cash_impact": _f(r["cash_impact"]) if is_priced else None,
+        # Reflects the buyer's MoQ override when set (see `eff_cash_impact` above).
+        "cash_impact": _f(eff_cash_impact) if is_priced else None,
         "base_currency": BASE_CURRENCY if is_priced else None,
         "rate_to_base": _f(r["rate_to_base"]) if is_priced else None,
         "rate_as_of": (r["rate_as_of"].isoformat()
@@ -977,7 +1020,7 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         # priced it) and `no_rate` (priced, in money we cannot convert) send the buyer to
         # two different screens, so "needs cost" alone would send half of them to the
         # wrong one.
-        "cost_status": _cost_status(r, inp, is_buy),
+        "cost_status": _cost_status(r, inp, is_buy, eff_cash_impact),
         "missing_rate_currencies": (
             list((inp.get("supplier_reason") or {}).get("missing_rates") or [])
             if is_buy else []
@@ -995,17 +1038,19 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
     }
 
 
-def _cost_status(r, inp: dict, is_buy: bool) -> Optional[str]:
+def _cost_status(r, inp: dict, is_buy: bool, cash_impact=None) -> Optional[str]:
     """`ok`, `no_cost`, or `no_rate` - which of the two reasons a buy has no cash figure.
 
     Both currently land in the same `needs_cost` funding bucket, which is right (a human
     has to look at them either way), but the fix differs: one is "buy it once so we know
     what it costs", the other is "enter a rate for CNY". A single label would send half the
-    rows to the wrong screen.
+    rows to the wrong screen. ``cash_impact`` defaults to the persisted column; the caller
+    passes the MoQ-override-effective figure so the status still agrees with the qty shown.
     """
     if not is_buy:
         return None
-    if r["cash_impact"] is not None:
+    effective = r["cash_impact"] if cash_impact is None else cash_impact
+    if effective is not None:
         return "ok"
     if r["unit_cost"] is None:
         return "no_cost"

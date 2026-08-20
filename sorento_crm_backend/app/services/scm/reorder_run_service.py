@@ -2369,6 +2369,77 @@ def net_breakdown(db: Session, product_id: str,
     }
 
 
+# ===========================================================================
+# MoQ override (20 Aug live test) — the buyer's own figure, recalculated live
+# ===========================================================================
+
+def effective_moq(inputs: Optional[dict], moq_override: Optional[float]) -> tuple[
+        Optional[float], bool]:
+    """(moq, is_override) — the buyer's own figure when set, else the frozen master
+    value the engine rounded against at run time (``inputs.moq``)."""
+    if moq_override is not None:
+        return float(moq_override), True
+    master = (inputs or {}).get("moq")
+    return (float(master) if master is not None else None), False
+
+
+def recalc_rounded_qty(recommended_qty, moq: Optional[float],
+                       order_multiple) -> Optional[float]:
+    """Re-derive ``rounded_qty`` off the row's FROZEN ``recommended_qty`` (need is
+    unchanged — only the rounding rung moves) through the SAME helper the engine used,
+    so an override can never drift from a fresh run's arithmetic."""
+    if recommended_qty is None:
+        return None
+    return eng.round_order_qty(float(recommended_qty), moq, order_multiple)
+
+
+def set_moq_override(db: Session, rec_id: str, moq: Optional[float]) -> dict:
+    """Persist (or clear, on ``None``) the buyer's own MoQ for one recommendation row,
+    and return the recalculated figures so the plan grid updates the row WITHOUT a full
+    re-run — captain's 20 Aug live-test ask ("MoQ is varying ... let them input it, and
+    when they change it, recalculate").
+
+    Never rewrites the persisted ``rounded_qty`` / ``inputs`` columns — AC-M3.11's freeze
+    still describes exactly what the engine computed; the override lives alongside it and
+    is applied live, the same way M4's ``funding_status`` is applied live against a
+    slid budget with no persistence until Apply."""
+    co, co_params = company_sql_predicate(db, "company_id", param_prefix="mvo")
+    rec = db.execute(text(
+        "SELECT id, rec_type, recommended_qty, unit_cost, currency, rate_to_base, "
+        "       rate_as_of, inputs FROM scm.reorder_recommendation "
+        f"WHERE id = :id AND {co or 'true'}"
+    ), {"id": rec_id, **co_params}).mappings().first()
+    if not rec:
+        raise AppException(status_code=404, message="Recommendation not found.")
+    if rec["rec_type"] not in ("buy", "covered"):
+        raise AppException(
+            status_code=422,
+            message="Only a buy or covered-by-stock row carries a MoQ to override.")
+    if moq is not None and float(moq) < 0:
+        raise AppException(status_code=422, message="MoQ cannot be negative.")
+
+    moq_value = float(moq) if moq is not None else None
+    db.execute(text(
+        "UPDATE scm.reorder_recommendation SET moq_override = :m WHERE id = :id"
+    ), {"m": moq_value, "id": rec_id})
+    db.commit()
+
+    inp = rec["inputs"] or {}
+    effective, is_override = effective_moq(inp, moq_value)
+    rounded = recalc_rounded_qty(rec["recommended_qty"], effective, inp.get("order_multiple"))
+    cash_impact = _cash_impact_in_base(
+        rounded, rec["unit_cost"], rec["currency"], rec["rate_to_base"], rec["rate_as_of"])
+    return {
+        "recommendation_id": rec_id,
+        "moq": effective,
+        "moq_is_override": is_override,
+        "master_moq": _fnum(inp.get("moq")),
+        "order_qty": _fnum(rounded),
+        "recommended_qty": _fnum(rec["recommended_qty"]),
+        "cash_impact": cash_impact,
+    }
+
+
 def _summarise(recs: list[ReorderRecommendation]) -> dict:
     # Buy count = ORDERABLE buys only (a supplier cost exists). Uncosted buys can't be
     # bought — they're the "N products skipped, no supplier cost" banner, not part of

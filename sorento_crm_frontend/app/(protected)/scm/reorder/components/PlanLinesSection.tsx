@@ -200,6 +200,7 @@ export function PlanLinesSection({
         cheaperFor={planLines.cheaperFor}
         levelFor={planLines.levelFor}
         onAmendLevel={planLines.amendLevel}
+        onAmendMoq={planLines.updateMoq}
         poFor={planLines.poFor}
         trendFor={planLines.trendFor}
         channelTrendFor={planLines.channelTrendFor}

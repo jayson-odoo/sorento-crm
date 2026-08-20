@@ -17,6 +17,7 @@ import {
   getAllDispositionRecommendations,
   getCoveredRecommendations,
   getNeedsLevelRecommendations,
+  setMoqOverride,
 } from '../services/reorderRunService';
 import { toPlanLines, type PlanLine } from '../lib/planLine';
 import {
@@ -377,6 +378,29 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [qc, runId],
   );
 
+  /**
+   * 20 Aug live test: record (or withdraw, with null) the buyer's own MoQ for a line.
+   *
+   * Grouped rows apply the SAME override to every member (MOQ is a supplier/product fact,
+   * not a per-location one - captain's 20 Aug ruling in `planLineGrouping.ts`); an ungrouped
+   * row writes its own single recommendation. Either way the write returns the recalculated
+   * figures, but this still invalidates the underlying fetches so the numbers a fresh page
+   * load would see and the numbers this session shows never drift apart.
+   */
+  const updateMoq = useCallback(
+    async (line: PlanLine, moq: number | null) => {
+      const recIds = isGroupedLine(line)
+        ? line.__group.members.map((m) => m.rec.id)
+        : [line.rec.id];
+      await Promise.all(recIds.map((id) => setMoqOverride(id, moq)));
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'buy'] }),
+        qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'covered'] }),
+      ]);
+    },
+    [qc, runId],
+  );
+
   /** The order trend for a line's product+side. Undefined = no opinion, render nothing. */
   const trendFor = useCallback(
     (line: PlanLine): TrajectoryEntry | undefined => {
@@ -445,6 +469,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
       dead_turnover_months: 6,
     },
     amendLevel,
+    updateMoq,
     levelSuggestions: levels.data?.suggestions ?? {},
     staleAfterDays: prices.data?.stale_after_days ?? 180,
     coverSources: cover.data?.sources ?? {},

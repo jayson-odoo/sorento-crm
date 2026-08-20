@@ -203,8 +203,18 @@ export interface ReorderRecommendation {
   safety_days: number | null;
   /** Review-period days folded into the order-up-to target. */
   review_days: number | null;
-  /** Supplier minimum order quantity applied when rounding. */
+  /**
+   * The MoQ `order_qty` was actually rounded against - the buyer's own override when
+   * they have set one (20 Aug live test), else the frozen master figure from
+   * `product_suppliers`. Editable on buy/covered rows; null on every other type.
+   */
   moq: number | null;
+  /** The frozen master MoQ (`product_suppliers.moq` at run time), even when a buyer
+   *  override is in effect - so the cell can show "master 12" beside the edited value.
+   *  Null on rows where MoQ never applies. */
+  master_moq?: number | null;
+  /** True when `moq` is the buyer's own figure rather than the master value. */
+  moq_is_override?: boolean;
   /** Supplier pack / order multiple applied when rounding. */
   order_multiple: number | null;
   /**

@@ -924,6 +924,37 @@ export async function amendLevelSuggestion(input: {
 }
 
 /**
+ * Set (or clear, with `moq: null`) the buyer's own MoQ for one row (20 Aug live test:
+ * "MoQ is varying, so we need a place to input it, and when they change it, our
+ * calculation should recalculate"). Buy/covered rows only.
+ *
+ * Backend contract: `PUT /api/v1/scm/recommendations/{rec_id}/moq` body `{moq}` →
+ * `{recommendation_id, moq, moq_is_override, master_moq, order_qty, recommended_qty,
+ * cash_impact}` — the recalculated figures, so the caller can patch the row in place
+ * rather than waiting on a full plan-lines refetch.
+ */
+export async function setMoqOverride(
+  recId: string,
+  moq: number | null,
+): Promise<{
+  recommendation_id: string;
+  moq: number | null;
+  moq_is_override: boolean;
+  master_moq: number | null;
+  order_qty: number | null;
+  recommended_qty: number | null;
+  cash_impact: number | null;
+}> {
+  const res = await apiFetch(`/api/v1/scm/recommendations/${recId}/moq`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ moq }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to update the MoQ'));
+  return res.json();
+}
+
+/**
  * Which products on the run have a photo to show: `{product_id: true}` (AC-7).
  *
  * Only the question the icon asks, because the icon is on EVERY row: the answer costs no
