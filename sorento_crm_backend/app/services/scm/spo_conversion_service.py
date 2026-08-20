@@ -118,9 +118,81 @@ always exactly one purchase order) and trusts it regardless of supplier spelling
 filter only comes back as a tiebreak on the rare/defensive case of more than one match. The
 UN-pinned (product-match) path is unchanged - it still filters by supplier, because inference
 with no stated document has nothing else to anchor it to.
+
+**Fifth amendment (captain doctrine correction, 21 Aug): the arithmetic was inverted.** His own
+words: "when there is PO, then we only can do SPO... it is when we got PO, then we only can
+pull from the PO to form SPO." Every amendment above treated an open PO as competing supply
+that REDUCED the suggested SPO qty (`packed - po_covered - on_hand - incoming_spo`). That is
+backwards: an SPO is the SHIPMENT LEG of an existing PO, not a request that shrinks once a PO
+happens to exist. Forming an SPO PULLS quantity FROM open PO lines; the pull IS the SPO's
+composition, not a deduction from it.
+
+  * **New arithmetic.** `suggested_qty` is now `po_covered_qty` itself - the SAME
+    earliest-first `po_takes` cascade as before (soonest `expected_date`, then PO number),
+    just no longer subtracted from anything. `_cascade_take`'s `need` argument is the packed
+    qty, so the cascade still naturally caps at `min(packed, total pullable)` - the ARITHMETIC
+    is unchanged, only what the caller DOES with the number is: it becomes the ask, not the
+    remainder.
+  * **On hand / incoming SPO drop out of the formula.** They stay on the response as CONTEXT
+    (cheap - the same `_stock_context` query as before) but no longer net anything; a shipment
+    with an open PO behind it is offered in full even while stock sits in the warehouse,
+    because forming the SPO is about accounting for the PO, not about whether the goods are
+    needed this minute.
+  * **A packed quantity with no PO backing cannot become an SPO line.** `no_po_qty =
+    max(packed - po_covered_qty, 0)` names the portion nothing open can back. When
+    `po_covered_qty` is zero - nothing at all is pullable - the WHOLE line is `cannot_convert`
+    (same shape as the no-supplier case, unselectable), reason `_REASON_NO_PO`: "No PO to pull
+    from - raise the PO in AutoCount first." A PARTIALLY-backed line stays selectable at
+    `po_covered_qty`; `no_po_qty` and a short note travel on `reason` so the shortfall is
+    visible, never silently dropped.
+  * **`covered` is gone.** It used to mean "nothing left to ask for, because a PO or stock
+    already covers it" - a concept that only made sense when a PO was a deduction. There is no
+    replacement flag: a line either has something pullable (`cannot_convert: false`,
+    `suggested_qty = po_covered_qty`) or it does not (`cannot_convert: true`).
+
+**Recording the pull, and the honesty question the plan asked to settle.** `create` decides,
+per confirmed line, exactly which open PO line(s) the confirmed quantity draws down (the same
+earliest-first cascade `suggest` already showed, re-run against LIVE data rather than trusted
+from the earlier read - the standard "recompute at write time" rule every write path in this
+module already follows). Two ways to record that pull were on the table:
+
+  1. **Advance the source PO line's accounting** - `po_line.qty_received += take_qty` on every
+     PO line a take draws from, the IDENTICAL write `allocation_suggestion_service.approve`
+     already makes when a shipment draws down a PO line (see that module's own docstring:
+     "the allocation raises `scm.on_order_v`; this makes `scm.po_ordered_v` fall"). Chosen.
+  2. **Link only** - record which PO lines were touched and by how much, but leave their
+     `qty_received` untouched, deferring the netting to the AutoCount book import that later
+     reconciles this SPO by number.
+
+  (1) is the honest one, and by a wide margin. Under (2), for as long as reconciliation has not
+  happened - which is every day between "Create SPO" and the next AutoCount import, an interval
+  this plan's own design notes already flag as open-ended - the SAME physical goods would count
+  TWICE in `scm.po_ordered_v`: once as the original PO line's still-open balance, and again as
+  the brand-new CRM SPO line's `qty_ordered`. Every screen that reads "ordered" (the PO book,
+  the container request's own PO column, the reorder engine's outstanding-PO context) would
+  overstate supply by exactly what "Create SPO" just did, silently, for however long
+  reconciliation takes. (1) keeps the total byte-identical before and after: the source line's
+  open balance falls by the take, the new SPO line's `qty_ordered` rises by the same take, nets
+  to zero movement in the company-wide "ordered" total - the conversion re-attributes an
+  existing order to its shipment, it does not conjure a second one.
+
+  **How the pull is recorded, without a new table.** `shipment_line_spo_link` already carries a
+  UNIQUE constraint on `inbound_shipment_line_id` (migration 406) - one row per shipment line,
+  ever - so a shipment line that cascades across MORE than one PO line cannot get a second link
+  row for its second source. Rather than a migration to lift that (out of scope for this pass,
+  flagged below), the new CRM SPO's own `purchase_order_lines.source_ref` - a free `String`
+  column, unused by any `crm_spo` line before this - now carries the take breakdown as JSON:
+  `[{"po_line_id": ..., "qty": ...}, ...]`, one entry per source PO line the confirmed quantity
+  drew from. This is what makes (1) SAFELY reversible: `unwind` parses it back and un-advances
+  exactly what `create` advanced, per source line, before deleting the CRM SPO rows - without
+  it, deleting a CRM SPO would have left the source PO permanently short by whatever it lent,
+  a real loss with no SPO left to explain it. A dedicated per-take link table (queryable in SQL
+  without parsing JSON) is the natural follow-up if this trail needs to be machine-readable
+  from outside this module - noted, not built, here.
 """
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import date as _date
@@ -131,7 +203,7 @@ from typing import Any, Optional
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from app.models.order import SalesOrder, SalesOrderLine
+from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import (
     InboundShipment,
     InboundShipmentLine,
@@ -140,6 +212,7 @@ from app.models.procurement import (
     SPOAllocation,
     Supplier,
 )
+from app.models.sales_agent import SalesAgent
 from app.models.scm import ProformaInvoiceLine, ProformaInvoiceShipmentLink, ShipmentLineSpoLink
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
@@ -172,6 +245,9 @@ _NUMBER_PREFIX = "CRM-SPO"
 
 _REASON_NO_SUPPLIER = "No supplier recorded on this shipment line, so it cannot be added to an SPO."
 _REASON_NOT_SELECTED = "Not selected."
+#: The doctrine correction's own line, verbatim from the captain - a packed quantity nothing
+#: open can back cannot become an SPO line at all, same shape as the no-supplier case.
+_REASON_NO_PO = "No PO to pull from - raise the PO in AutoCount first."
 
 
 def _uuid() -> str:
@@ -180,6 +256,11 @@ def _uuid() -> str:
 
 def _f(value: Any) -> Optional[float]:
     return None if value is None else float(value)
+
+
+def _g(value: float) -> str:
+    """Trim a quantity for a sentence - `12.0` reads `12`, `12.5` reads `12.5`."""
+    return f"{value:g}"
 
 
 def _shipment_or_404(db: Session, shipment_id: str) -> InboundShipment:
@@ -411,12 +492,45 @@ def _pinned_po_candidates(
     return _open_line_rows(q)
 
 
+def _match_takes_for_line(
+    db: Session, ln: InboundShipmentLine, need: float
+) -> tuple[Optional[str], list[tuple[PurchaseOrderLine, PurchaseOrder, float]]]:
+    """The one PO-matching decision this module makes, shared by `suggest` (a read against
+    `need = packed`) and `create` (a FRESH read, at write time, against `need = the confirmed
+    qty` - never the earlier `suggest` numbers, so a PO that moved between the two calls is
+    never double-spent). Pin first (a stated `po_ref` outranks inference), fall back to a
+    plain product/supplier match. Returns `(matched_by, takes)` - `takes` empty and
+    `matched_by` `None` when nothing is pullable at all."""
+    supplier_id = str(ln.supplier_id) if ln.supplier_id else None
+    if supplier_id is None or need <= 0:
+        return None, []
+
+    po_refs = _po_refs_for_line(db, str(ln.id))
+    matched_by: Optional[str] = None
+    takes: list[tuple[PurchaseOrderLine, PurchaseOrder, float]] = []
+    if len(po_refs) == 1:
+        pinned_lines = _pinned_po_candidates(db, next(iter(po_refs)), supplier_id, str(ln.product_id))
+        if pinned_lines:
+            takes = _cascade_take(pinned_lines, need)
+            matched_by = "po_ref"
+    if matched_by is None:
+        product_lines = _po_cascade_lines(db, supplier_id, str(ln.product_id))
+        takes = _cascade_take(product_lines, need)
+        if takes:
+            matched_by = "product"
+    return matched_by, takes
+
+
 def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
     """On hand + incoming SPO, company-wide, per product - COPIED from
     `container_request_service._stock_context` rather than imported (same reasoning that
     module gives for copying `loading_plan_service._catalogue_cbm`: two lanes touching the
     same file is a worse cost than a few duplicated lines). Same figures, same views, so this
-    screen and the container request can never disagree about what is already covered."""
+    screen and the container request can never disagree about what is on hand or incoming.
+
+    CONTEXT ONLY since the doctrine correction (module docstring, fifth amendment) - neither
+    figure feeds `suggested_qty` any more. Kept because it is cheap (one query, already paid
+    for by every earlier version of this module) and still useful to see beside the ask."""
     if not product_ids:
         return {}
     prod_scope, prod_params = company_sql_predicate(db, "p.company_id", param_prefix="scp")
@@ -528,6 +642,65 @@ def _demand_by_warehouse(db: Session, product_id: str) -> dict[str, dict]:
     return out
 
 
+def _demand_lines_by_warehouse(db: Session, product_id: str) -> dict[str, list[dict]]:
+    """The INDIVIDUAL open SO lines behind `_demand_by_warehouse`'s aggregates - the doctrine
+    correction's second drill: "what SO am I covering", per candidate location, earliest need
+    date first. Same predicate `location_stock_for_product`'s own `so_qty` aggregate uses
+    (`SalesOrder.status == 'open'`, `demand.is_open_demand()`); read once per product rather
+    than once per candidate location. `agent_name` is a cheap outer join (`sales_agents`
+    already carries a plain name column) - absent, never fabricated, on a line with no agent
+    on file.
+
+    Deliberately NOT cascaded/capped against the SPO qty here - a location's demand list is
+    the same regardless of how much of it this particular SPO ends up satisfying, and the
+    qty being proposed is edited live on screen (the same reason `_location_options.available`
+    leaves its own "after figure" to the caller). The FE runs the identical earliest-first
+    cascade against these rows and the live qty to answer "which of these does THIS SPO cover"
+    and to bucket the SO-coverage schedule matrix - mirroring `po_takes`, computed the same way
+    just on the other side of the shipment.
+    """
+    from app.services.scm.demand import demand_qty, is_open_demand
+
+    owed = demand_qty()
+    rows = (
+        db.query(
+            SalesOrderLine.warehouse_id,
+            SalesOrder.so_number,
+            Customer.customer_name,
+            SalesAgent.sales_agent,
+            SalesOrderLine.required_date,
+            SalesOrder.order_date,
+            owed.label("qty"),
+        )
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+        .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
+        .filter(
+            SalesOrderLine.product_id == product_id,
+            SalesOrder.status == "open",
+            is_open_demand(),
+            SalesOrderLine.warehouse_id.isnot(None),
+        )
+        .order_by(
+            SalesOrderLine.required_date.asc().nulls_last(),
+            SalesOrder.order_date.asc().nulls_last(),
+            SalesOrder.so_number.asc(),
+        )
+        .all()
+    )
+    out: dict[str, list[dict]] = {}
+    for r in rows:
+        out.setdefault(str(r.warehouse_id), []).append({
+            "so_number": r.so_number,
+            "customer_name": r.customer_name,
+            "agent_name": r.sales_agent,
+            "required_date": r.required_date.isoformat() if r.required_date else None,
+            "order_date": r.order_date.isoformat() if r.order_date else None,
+            "qty": float(r.qty or 0),
+        })
+    return out
+
+
 def _location_options(db: Session, product_id: str) -> dict:
     """Candidate destination warehouses for a new SPO on this product, ranked - the module
     docstring's "second amendment" section. Every location carrying any live figure for the
@@ -558,12 +731,14 @@ def _location_options(db: Session, product_id: str) -> dict:
                     "incoming_spo": 0.0,
                     "available": 0.0,
                     "rank_score": None,
+                    "demand_lines": [],
                 }
             ],
             "suggested_warehouse_id": str(fallback["id"]),
         }
 
     demand = _demand_by_warehouse(db, product_id)
+    demand_lines = _demand_lines_by_warehouse(db, product_id)
     demand_rows = [
         {
             "row_key": loc["warehouse_id"],
@@ -593,6 +768,11 @@ def _location_options(db: Session, product_id: str) -> dict:
             # edited quantity on screen, never a value this endpoint would have to go stale.
             "available": loc["available"],
             "rank_score": scores.get(loc["warehouse_id"]),
+            # "What SO am I covering" - the individual demand lines behind `outstanding_so`,
+            # earliest need date first. The FE cascades these against its own live SPO qty
+            # (and its own per-location split) to answer which of them this SPO actually
+            # serves, and to bucket the SO-coverage schedule matrix.
+            "demand_lines": demand_lines.get(loc["warehouse_id"], []),
         }
         for loc in locations
     ]
@@ -608,11 +788,13 @@ def _location_options(db: Session, product_id: str) -> dict:
 
 
 def suggest(db: Session, shipment_id: str) -> dict:
-    """What "Create SPO" would ask for, per shipment line. Almost a pure read - the one
-    exception is `_heal_stale_links`, which deletes any link row a prior `create` wrote that
-    no longer points at a live PO/PO line (see that function's docstring). The caller must
-    `db.commit()` after this, same as every other lazily-self-healing GET in this codebase
-    (`explainer.py`'s cached-explanation routes)."""
+    """What "Create SPO" would ask for, per shipment line - the DOCTRINE-CORRECTED arithmetic
+    (module docstring, fifth amendment): `suggested_qty` is what an open PO PULLS this SPO up
+    to, not what is left after a PO is subtracted. Almost a pure read - the one exception is
+    `_heal_stale_links`, which deletes any link row a prior `create` wrote that no longer
+    points at a live PO/PO line (see that function's docstring). The caller must `db.commit()`
+    after this, same as every other lazily-self-healing GET in this codebase (`explainer.py`'s
+    cached-explanation routes)."""
     shipment = _shipment_or_404(db, shipment_id)
     lines = (
         db.query(InboundShipmentLine)
@@ -678,7 +860,7 @@ def suggest(db: Session, shipment_id: str) -> dict:
                 "on_hand": 0.0,
                 "incoming_spo": 0.0,
                 "suggested_qty": 0.0,
-                "covered": False,
+                "no_po_qty": packed,
                 "cannot_convert": True,
                 "reason": _REASON_NO_SUPPLIER,
                 "unit_cost": _f(ln.unit_cost),
@@ -688,22 +870,7 @@ def suggest(db: Session, shipment_id: str) -> dict:
             })
             continue
 
-        po_refs = _po_refs_for_line(db, str(ln.id))
-        matched_by: Optional[str] = None
-        takes: list[tuple[PurchaseOrderLine, PurchaseOrder, float]] = []
-        if len(po_refs) == 1:
-            pinned_lines = _pinned_po_candidates(
-                db, next(iter(po_refs)), supplier_id, str(ln.product_id)
-            )
-            if pinned_lines:
-                takes = _cascade_take(pinned_lines, packed)
-                matched_by = "po_ref"
-        if matched_by is None:
-            product_lines = _po_cascade_lines(db, supplier_id, str(ln.product_id))
-            takes = _cascade_take(product_lines, packed)
-            if takes:
-                matched_by = "product"
-
+        matched_by, takes = _match_takes_for_line(db, ln, packed)
         po_covered = sum(t[2] for t in takes)
         matched_po_number = takes[0][1].po_number if takes else None
         po_takes = [
@@ -712,27 +879,43 @@ def suggest(db: Session, shipment_id: str) -> dict:
                 "po_number": po.po_number,
                 "qty": qty,
                 "expected_date": line.expected_date.isoformat() if line.expected_date else None,
+                # The captain's own ask (doctrine correction, per-take drill): the PO's OWN
+                # date and supplier, not just its number - a pinned match can resolve to a
+                # PO booked under a differently-spelled supplier (fourth amendment), so this
+                # is the PO's supplier, not necessarily the shipment line's.
+                "po_date": po.issue_date.isoformat() if po.issue_date else None,
+                "supplier_name": po.supplier.supplier_name if po.supplier else None,
             }
             for line, po, qty in takes
         ]
 
-        ctx = stock.get(str(ln.product_id), {"on_hand": 0.0, "incoming_spo": 0.0})
-        suggested = max(packed - po_covered - ctx["on_hand"] - ctx["incoming_spo"], 0.0)
-        covered = suggested <= 0
-        reason = None
-        if covered:
-            parts = []
-            if po_covered > 0:
-                po_names = ", ".join(dict.fromkeys(t["po_number"] for t in po_takes))
-                parts.append(f"already ordered on {po_names}")
-            if ctx["on_hand"] > 0 or ctx["incoming_spo"] > 0:
-                parts.append("covered by stock/incoming")
-            reason = "Fully covered - " + "; ".join(parts) + "." if parts else "Nothing packed on this line."
+        # The doctrine correction's own arithmetic (module docstring, fifth amendment):
+        # `suggested_qty` IS `po_covered_qty` - what an open PO pulls this SPO up to, never a
+        # remainder after PO/stock is subtracted. `on_hand` / `incoming_spo` stay on the
+        # response as context only.
+        suggested = po_covered
+        no_po_qty = max(packed - po_covered, 0.0)
+        cannot_convert = po_covered <= 0
+        if cannot_convert:
+            reason = _REASON_NO_PO
+        elif no_po_qty > 0:
+            reason = (
+                f"{_g(no_po_qty)} of {_g(packed)} has no PO to pull from - raise it in "
+                "AutoCount first."
+            )
+        else:
+            reason = None
 
-        pid = str(ln.product_id)
-        if pid not in location_cache:
-            location_cache[pid] = _location_options(db, pid)
-        location = location_cache[pid]
+        ctx = stock.get(str(ln.product_id), {"on_hand": 0.0, "incoming_spo": 0.0})
+
+        # No point ranking a destination for a line that cannot become an SPO line at all -
+        # mirrors the no-supplier branch above, which never fetches locations either.
+        location = {"options": [], "suggested_warehouse_id": None}
+        if not cannot_convert:
+            pid = str(ln.product_id)
+            if pid not in location_cache:
+                location_cache[pid] = _location_options(db, pid)
+            location = location_cache[pid]
 
         out_lines.append({
             "shipment_line_id": str(ln.id),
@@ -749,8 +932,8 @@ def suggest(db: Session, shipment_id: str) -> dict:
             "on_hand": ctx["on_hand"],
             "incoming_spo": ctx["incoming_spo"],
             "suggested_qty": suggested,
-            "covered": covered,
-            "cannot_convert": False,
+            "no_po_qty": no_po_qty,
+            "cannot_convert": cannot_convert,
             "reason": reason,
             "unit_cost": _f(ln.unit_cost),
             "currency": ln.currency,
@@ -794,18 +977,29 @@ def create(
     actor: Optional[str] = None,
     actor_user_id: Optional[str] = None,
 ) -> dict:
-    """Confirm the screen `suggest` drew. One `purchase_orders` header per supplier.
+    """Confirm the screen `suggest` drew. One `purchase_orders` header per supplier, each new
+    line PULLING its confirmed quantity from open PO line(s) - the doctrine correction (module
+    docstring, fifth amendment), re-derived HERE against live data rather than trusted from
+    `suggest`'s earlier read, the same "recompute at write time" rule every write in this
+    module already follows.
 
-    `lines` is `[{shipment_line_id, qty, include, warehouse_id}]` - every shipment line, per
-    the "same structure on read and write" screen shape: a line the buyer left unticked or a
-    covered line still needs a row here so the whole shipment is accounted for in ONE action,
-    not a part of it silently left for later.
+    `lines` is `[{shipment_line_id, qty, include, location_splits}]` - every shipment line, per
+    the "same structure on read and write" screen shape: a line the buyer left unticked still
+    needs a row here so the whole shipment is accounted for in ONE action, not a part of it
+    silently left for later. A line whose `qty` cannot be backed by ANY open PO (fresh check,
+    not the `suggest` snapshot) is skipped with `_REASON_NO_PO`, same as an untouched line is
+    skipped `_REASON_NOT_SELECTED` - "not selectable" holds at write time too, not only on the
+    read that drew the screen.
 
-    `warehouse_id` (the second amendment) is OPTIONAL. When a line carries one, the SAME
-    action that mints its SPO line also writes the `spo_allocations` row for it - one confirm,
-    two writes, not a second approve screen (see the module docstring). When absent, no
-    allocation is written for that line, byte-identical to every call before this amendment -
-    `scm.on_order_v` stays silent about it until someone allocates it, same as any other SPO.
+    `location_splits` (fourth ask, multi-location) is OPTIONAL and, when present, a list of
+    `{warehouse_id, qty}` that must sum to EXACTLY what this line actually pulls (recomputed,
+    not the client's stated `qty`) - the same "a split must add up" hard rule `allocation_
+    suggestion_service.approve` already enforces for its own splits, applied here because this
+    screen now makes the identical kind of decision. Each split writes its own `spo_allocations`
+    row in the SAME action that mints the SPO line - one confirm, still one write per DECISION,
+    now zero-or-many decisions per line rather than zero-or-one. Absent/empty means no
+    allocation is written for that line, byte-identical to a line with no location chosen -
+    `scm.on_order_v` stays silent about it until someone allocates it.
     `actor_user_id` is the real user id `spo_allocations.created_by` needs (a UUID column);
     `actor`, kept as-is, is the human-readable name other provenance on this shipment stamps.
     """
@@ -844,22 +1038,45 @@ def create(
     for line_id, ln in shipment_lines.items():
         item = by_line[line_id]
         include = bool(item.get("include"))
-        qty = float(item.get("qty") or 0)
-        warehouse_id = str(item.get("warehouse_id") or "") or None
+        requested = float(item.get("qty") or 0)
+        splits = [
+            {"warehouse_id": str(s.get("warehouse_id") or ""), "qty": float(s.get("qty") or 0)}
+            for s in (item.get("location_splits") or [])
+            if s.get("warehouse_id")
+        ]
         supplier_id = str(ln.supplier_id) if ln.supplier_id else None
 
         if supplier_id is None:
             skipped.append((line_id, _REASON_NO_SUPPLIER))
             continue
-        if not include or qty <= 0:
+        if not include or requested <= 0:
             skipped.append((line_id, _REASON_NOT_SELECTED))
             continue
+
+        # Re-derive what is ACTUALLY pullable right now - never the qty the client sent, and
+        # never `suggest`'s earlier read: a PO another confirm consumed in between must not be
+        # double-spent. Capped at what shipped, and at what the buyer asked for.
+        need = min(requested, float(ln.quantity_shipped or 0))
+        matched_by, takes = _match_takes_for_line(db, ln, need)
+        covered_now = sum(t[2] for t in takes)
+        if covered_now <= 0:
+            skipped.append((line_id, _REASON_NO_PO))
+            continue
+
+        if splits:
+            split_total = sum(s["qty"] for s in splits)
+            if abs(split_total - covered_now) > 1e-6:
+                raise AppException(
+                    422,
+                    "A line's location split has to add up to its SPO qty.",
+                    detail=f"{_g(split_total)} split against {_g(covered_now)} pulled from PO.",
+                )
 
         group = groups.setdefault(
             supplier_id,
             {"lines": [], "currency": ln.currency},
         )
-        group["lines"].append((ln, qty, warehouse_id))
+        group["lines"].append((ln, covered_now, takes, splits))
 
     if not groups:
         raise AppException(
@@ -875,10 +1092,10 @@ def create(
 
     created_spos: list[dict] = []
     line_links: dict[str, tuple[str, str]] = {}  # shipment_line_id -> (po_id, po_line_id)
-    # shipment_line_id -> (product_id, warehouse_id, qty, po_number, po_line_id) - only the
-    # lines that named a destination. Read after every SPO/line/link row above is written, so
-    # an allocation is never attempted against a purchase-order line that does not exist yet.
-    allocation_targets: dict[str, tuple[str, str, float, str, str]] = {}
+    # One entry per location split, across every line - read after every SPO/line/link row
+    # above is written, so an allocation is never attempted against a purchase-order line
+    # that does not exist yet.
+    allocation_targets: list[dict[str, Any]] = []
 
     for supplier_id, group in groups.items():
         po = PurchaseOrder(
@@ -896,28 +1113,50 @@ def create(
         db.flush()
 
         total_qty = 0.0
-        for ln, qty, warehouse_id in group["lines"]:
+        for ln, covered_now, takes, splits in group["lines"]:
             po_line = PurchaseOrderLine(
                 id=_uuid(),
                 purchase_order_id=po.id,
                 product_id=ln.product_id,
-                qty_ordered=Decimal(str(qty)),
+                qty_ordered=Decimal(str(covered_now)),
                 qty_received=0,
                 unit_cost=ln.unit_cost,
                 currency=ln.currency,
                 expected_date=po.expected_date,
                 line_status=_LINE_STATUS,
                 source_system=SOURCE_SYSTEM,
-                source_ref=str(ln.id),
+                # WHICH open PO line(s) this pull drew from, and how much of each - see the
+                # module docstring's fifth amendment for why this is JSON on `source_ref`
+                # rather than a new link table. Replaces the shipment-line-id this column
+                # used to carry (redundant - `ShipmentLineSpoLink.inbound_shipment_line_id`
+                # already names it).
+                source_ref=json.dumps([
+                    {"po_line_id": str(src_line.id), "qty": qty}
+                    for src_line, _src_po, qty in takes
+                ]),
             )
             db.add(po_line)
             db.flush()
             line_links[str(ln.id)] = (po.id, po_line.id)
-            if warehouse_id:
-                allocation_targets[str(ln.id)] = (
-                    str(ln.product_id), warehouse_id, qty, po.po_number, po_line.id,
-                )
-            total_qty += qty
+
+            # The pull ADVANCES the source PO line's own accounting - the honest choice the
+            # module docstring works through (fifth amendment): the same write `allocation_
+            # suggestion_service.approve` makes when a shipment draws down a PO line, so the
+            # source line's open balance falls by exactly what this SPO line just claimed and
+            # the company-wide "ordered" total nets to zero movement, never a double count.
+            for src_line, _src_po, qty in takes:
+                src_line.qty_received = float(src_line.qty_received or 0) + qty
+
+            for split in splits:
+                allocation_targets.append({
+                    "shipment_line_id": str(ln.id),
+                    "product_id": str(ln.product_id),
+                    "warehouse_id": split["warehouse_id"],
+                    "qty": split["qty"],
+                    "po_number": po.po_number,
+                    "po_line_id": po_line.id,
+                })
+            total_qty += covered_now
 
         created_spos.append({
             "purchase_order_id": str(po.id),
@@ -969,7 +1208,7 @@ def create(
 def _write_allocations(
     db: Session,
     shipment: InboundShipment,
-    targets: dict[str, tuple[str, str, float, str, str]],
+    targets: list[dict[str, Any]],
     *,
     actor_user_id: Optional[str],
 ) -> list[dict]:
@@ -978,8 +1217,12 @@ def _write_allocations(
     one can never disagree about what an allocation is. `forward_match=False` per row and one
     sweep per distinct SPO number at the end, for the exact reason `approve` already gives:
     several warehouses can share one SPO number here (a container is routinely several
-    factories, several destinations), and firing the GRN-forward-match hook per row would
-    place a waiting GRN line before every allocation under that number exists."""
+    factories, several destinations - and, since the fourth ask, several destinations for ONE
+    factory's line too), and firing the GRN-forward-match hook per row would place a waiting
+    GRN line before every allocation under that number exists.
+
+    `targets` is a FLAT list, one entry per location split - a line with two splits writes two
+    allocations here, both against the SAME `po_line_id` (its one new SPO line)."""
     if not targets:
         return []
     from app.schemas.procurement import SPOAllocationCreate
@@ -989,27 +1232,27 @@ def _write_allocations(
     service = SPOAllocationService(db)
     written: list[dict] = []
     forward_match_targets: set[tuple[str, Optional[str]]] = set()
-    for line_id, (product_id, warehouse_id, qty, po_number, po_line_id) in targets.items():
+    for target in targets:
         allocation = service.create_allocation(
             SPOAllocationCreate(
-                spo_number=po_number,
+                spo_number=target["po_number"],
                 inbound_shipment_id=str(shipment.id),
-                product_id=product_id,
-                warehouse_id=warehouse_id,
-                allocated_quantity=int(round(qty)),
-                po_line_id=po_line_id,
+                product_id=target["product_id"],
+                warehouse_id=target["warehouse_id"],
+                allocated_quantity=int(round(target["qty"])),
+                po_line_id=target["po_line_id"],
             ),
             created_by=actor_user_id,
             forward_match=False,
         )
         written.append({
-            "shipment_line_id": line_id,
-            "warehouse_id": warehouse_id,
+            "shipment_line_id": target["shipment_line_id"],
+            "warehouse_id": target["warehouse_id"],
             "allocation_id": str(allocation.id),
-            "qty": qty,
+            "qty": target["qty"],
         })
         forward_match_targets.add((
-            po_number,
+            target["po_number"],
             str(allocation.company_id) if allocation.company_id is not None else None,
         ))
 
@@ -1031,6 +1274,14 @@ def unwind(db: Session, shipment_id: str) -> dict:
     can legitimately have no PO behind it), so deleting the PO line alone would leave a
     now-untraceable allocation still counting as incoming supply - the exact half-undone state
     this action exists to avoid.
+
+    Since the doctrine correction (module docstring, fifth amendment), also REVERSES the
+    `qty_received` `create` advanced on every SOURCE PO line these SPO lines pulled from -
+    parsed back out of each deleted line's own `source_ref` JSON. Without this, deleting a CRM
+    SPO would leave the source PO permanently short by whatever it lent, with no SPO left to
+    explain where it went - a real loss, not merely an undo. Guarded the same defensive way
+    `_heal_stale_links` is: a source line already gone by some other path is simply skipped,
+    left to that function's own self-heal story rather than failing this one.
 
     Two hard guards, both refused with a 409 rather than a partial delete:
       * every header touched must carry `source_system == crm_spo` (`SOURCE_SYSTEM`) - an
@@ -1072,6 +1323,8 @@ def unwind(db: Session, shipment_id: str) -> dict:
     )
     po_line_ids = [str(pl.id) for pl in po_lines]
 
+    restored_source_lines = _reverse_advances(db, po_lines)
+
     deleted_allocations = 0
     if po_line_ids:
         deleted_allocations = (
@@ -1094,7 +1347,48 @@ def unwind(db: Session, shipment_id: str) -> dict:
         "deleted_po_numbers": po_numbers,
         "deleted_spo_count": len(pos),
         "deleted_allocation_count": deleted_allocations,
+        "restored_po_line_count": restored_source_lines,
     }
+
+
+def _parse_pulls(source_ref: Optional[str]) -> list[tuple[str, float]]:
+    """`create`'s own encoding of `source_ref` on a `crm_spo` line - a JSON list of
+    `{"po_line_id", "qty"}`. Anything else (absent, unparsable, an older/foreign line's own
+    unrelated `source_ref` value) reads as "nothing to reverse" rather than raising - this is
+    read defensively, on a delete path, not trusted input."""
+    if not source_ref:
+        return []
+    try:
+        data = json.loads(source_ref)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[tuple[str, float]] = []
+    for item in data:
+        try:
+            out.append((str(item["po_line_id"]), float(item["qty"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def _reverse_advances(db: Session, po_lines: list[PurchaseOrderLine]) -> int:
+    """`unwind`'s own half of the fifth amendment: undo the `qty_received` bump `create` made
+    on every SOURCE PO line these (about-to-be-deleted) `crm_spo` lines pulled from. Floored at
+    zero rather than allowed to go negative - a source line touched again by something else
+    since `create` ran must not be dragged below what IT now legitimately holds."""
+    reversals: dict[str, float] = {}
+    for pl in po_lines:
+        for src_id, qty in _parse_pulls(pl.source_ref):
+            reversals[src_id] = reversals.get(src_id, 0.0) + qty
+    if not reversals:
+        return 0
+    sources = db.query(PurchaseOrderLine).filter(PurchaseOrderLine.id.in_(reversals.keys())).all()
+    for src in sources:
+        taken = reversals.get(str(src.id), 0.0)
+        src.qty_received = max(float(src.qty_received or 0) - taken, 0.0)
+    return len(sources)
 
 
 # --------------------------------------------------------------------------- #

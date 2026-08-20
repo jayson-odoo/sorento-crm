@@ -55,7 +55,7 @@ export function CreateSpoPanel({ shipmentId }: { shipmentId: string }) {
     const next: Record<string, { include: boolean; qty: number }> = {};
     for (const ln of suggestion.data?.lines ?? []) {
       next[ln.shipment_line_id] = {
-        include: !ln.covered && !ln.cannot_convert && ln.suggested_qty > 0,
+        include: !ln.cannot_convert && ln.suggested_qty > 0,
         qty: ln.suggested_qty,
       };
     }

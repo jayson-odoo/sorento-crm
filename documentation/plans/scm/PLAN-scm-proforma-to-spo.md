@@ -1,12 +1,14 @@
 # PLAN - a proforma invoice becomes an SPO: convert, match, net, hand to AutoCount
 
 **Status:** BOTH halves BUILT (20-21 Aug 2026), PLUS the second amendment's planner
-(21 Aug, same day). Journey + three shaping decisions approved by the captain, 20 Aug 2026
-(live session, while testing the new proforma screen). AMENDED the same evening: the flow
-now bends through the packing list (see the Amendment section - it supersedes parts of the
-original decisions and journey below). AMENDED AGAIN 21 Aug 00:40 (surface + shape - see the
-"Second amendment" section) - BUILT the same day: `spo_conversion_service.suggest` now
-returns `po_takes` (earliest-first PO breakdown) and `location_options` +
+(21 Aug, same day), PLUS a doctrine correction to the planner's own arithmetic (21 Aug, same
+day - see "Doctrine correction" section, the most recent and now-governing description of
+`suggest`/`create`'s contract). Journey + three shaping decisions approved by the captain,
+20 Aug 2026 (live session, while testing the new proforma screen). AMENDED the same evening:
+the flow now bends through the packing list (see the Amendment section - it supersedes parts
+of the original decisions and journey below). AMENDED AGAIN 21 Aug 00:40 (surface + shape -
+see the "Second amendment" section) - BUILT the same day: `spo_conversion_service.suggest`
+now returns `po_takes` (earliest-first PO breakdown) and `location_options` +
 `suggested_warehouse_id` (ranked destination warehouses); `create` writes the chosen
 warehouse's `spo_allocations` row in the same confirm when one is given. FE: the planner
 table (`SpoPlannerTable.tsx`) lives on the packing-list detail page's own "SPO Planner" tab
@@ -17,6 +19,91 @@ reconciling a REAL packing-list upload onto an existing DRAFT shipment row (unst
 the first half - see the "STILL NOT built" note at the end of the second half's write-up),
 and AutoCount book-import reconciliation of a CRM SPO by number (explicitly out of scope
 both halves, noted where each is relevant).
+
+## Doctrine correction (captain, 21 Aug 2026) - the arithmetic was inverted. BUILT same day.
+
+Live, verbatim: **"when there is PO, then we only can do SPO... it is when we got PO, then we
+only can pull from the PO to form SPO."**
+
+Every version of `suggest` above (the original decisions, the Amendment, the second
+amendment) computed `suggested_qty = packed - po_covered - on_hand - incoming_spo` - an open
+PO was treated as COMPETING supply that REDUCED the SPO ask. That is exactly backwards. An
+SPO is the SHIPMENT LEG of an existing PO, not a request that shrinks once a PO happens to
+exist. Forming an SPO PULLS quantity FROM open PO lines; the pull IS the SPO's composition,
+never a deduction from it. What shipped, all in `app/services/scm/spo_conversion_service.py`
+(module docstring's "fifth amendment" carries the full write-up), `app/api/v1/scm/
+fulfilment.py`, `tests/scm/test_spo_conversion.py` (35 -> 36 tests, every test whose
+assertions depended on the old formula rewritten - see the coder's own report for the full
+list), and the FE (`SpoPlannerTable.tsx` + two new files beside it, `fulfilmentService.ts`,
+`useFulfilment.ts` untouched - it only forwards types):
+
+- **New arithmetic.** `suggested_qty` IS `po_covered_qty` - the SAME earliest-first `po_takes`
+  cascade as before (soonest `expected_date`, then PO number), just no longer subtracted from
+  anything; the cascade's own `need = packed` still caps it at `min(packed, total pullable)`.
+- **On hand / incoming SPO are context only.** Still returned (cheap, one query, unchanged),
+  never netted.
+- **`no_po_qty = max(packed_qty - po_covered_qty, 0)`** names the portion nothing open can
+  back. Zero pullable at all -> the WHOLE line is `cannot_convert` (same shape as the
+  no-supplier case, unselectable), `reason`: "No PO to pull from - raise the PO in AutoCount
+  first." A partially-backed line stays selectable at `po_covered_qty`, shortfall named on
+  `reason` too, never hidden.
+- **`covered` is gone.** It meant "nothing left to ask for" - a concept that only existed when
+  a PO was a deduction.
+
+**Recording the pull - the honesty decision the plan asked to settle.** Two candidates:
+(1) ADVANCE the source PO line's own `qty_received` by what it pulls - the IDENTICAL write
+`allocation_suggestion_service.approve` already makes when a shipment draws down a PO line;
+(2) link-only, leaving the source line's balance untouched until the next AutoCount book
+import reconciles the SPO by number. **(1) was chosen, by a wide margin.** Under (2), for
+every day between "Create SPO" and that reconciliation - an interval this plan's own design
+notes already call open-ended - the SAME physical goods would count TWICE in
+`scm.po_ordered_v`: once as the original PO line's still-open balance, once as the new CRM SPO
+line's `qty_ordered`. (1) keeps the company-wide "ordered" total byte-identical before and
+after - the conversion re-attributes an existing order to its shipment, it does not conjure a
+second one. Recorded WITHOUT a new link table (the existing `shipment_line_spo_link` is
+UNIQUE per shipment line, migration 406, so it cannot carry more than one source when a line
+cascades across several PO lines): the new CRM SPO line's own `purchase_order_lines.
+source_ref` carries the take breakdown as JSON, `[{"po_line_id", "qty"}, ...]` - honest enough
+to trace by hand, and exactly what makes `unwind` able to REVERSE the advance precisely
+(parses it back, un-advances each source line, before deleting the CRM SPO rows) rather than
+leaving a source PO permanently short with nothing left to explain where it went. A dedicated
+per-take link table (queryable in SQL without parsing JSON) is the natural follow-up if this
+trail needs to be machine-readable from outside this module - flagged, not built.
+
+**Also shipped, same message, same day (captain's numbered asks):**
+
+1. **PO takes drill names the PO's own date and supplier.** `po_takes[].po_date` (document
+   date) and `.supplier_name` (the PO's OWN supplier - can differ from the shipment line's own
+   on a pinned match resolved to a differently-spelled book entry, the fourth amendment's own
+   bug) - shown in `PoTakesDrillPopover`.
+2. **"What SO am I covering."** `location_options[].demand_lines` - the individual open SO
+   lines behind that location's `outstanding_so` figure (SO number, customer, agent, needed
+   date, qty, earliest first - `_demand_lines_by_warehouse`, same predicate
+   `location_stock_for_product`'s own `so_qty` uses). The FE cascades these against the live,
+   edited SPO qty at each chosen location (`cascadeTake`, client-side mirror of the backend's
+   own `_cascade_take`) to answer the question without a round-trip - `SoCoveredDrillPopover` /
+   a new "SO covered" column.
+3. **Two schedule views, Table/Schedule toggle.** `spoScheduleMatrix.ts` (generic builder,
+   week-bucketed only - a deliberate scope cut from the loading plan's own three-granularity
+   picker) + `SpoScheduleMatrixTable.tsx` (shared shell, visual precedent
+   `ContainerRequestScheduleMatrix`): "PO coverage" buckets `po_takes` by the PO's
+   `expected_date`; "SO coverage" buckets the cascaded demand takes by the SO line's
+   `required_date`. Product rows, weekly columns, drill-per-cell, same as the loading plan's
+   own Stage 1 schedule.
+4. **Multi-location split.** "I can create SPO to multiple locations." `SpoConfirmLine.
+   warehouse_id` (singular) replaced by `location_splits: {warehouse_id, qty}[]` - zero, one
+   or several destinations for ONE line, validated server-side (`create`) to sum to EXACTLY
+   what that line pulls (re-derived at write time, never the client's stated qty). Each split
+   writes its own `spo_allocations` row in the same confirm. FE: `LocationSplitPopover` - a
+   per-line editable list of destination rows (SearchableSelect + qty + remove), "Add
+   location", a live "X / Y split" check.
+
+**Not built, flagged for whoever picks this back up:** a dedicated per-take link table (see
+above); a day/month granularity toggle on the two schedule views (week only, for now); the
+self-heal bypass path (`_heal_stale_links`, third amendment) does not reverse a source PO's
+advance - only `unwind` does - so a CRM SPO removed by a path OTHER than the Delete action
+(a generic PO delete, a bad migration) leaves the source line short until someone re-runs
+`create` or fixes it by hand; documented as a known limitation, not silently wrong.
 
 **First half BUILT, 20 Aug 2026 (same evening):** the PI -> DRAFT INBOUND SHIPMENT convert
 from the Amendment's first decision. What shipped:

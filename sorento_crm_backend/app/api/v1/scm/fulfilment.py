@@ -495,14 +495,22 @@ class AllocationApproval(BaseModel):
     decisions: list[AllocationDecision] = Field(..., min_length=1)
 
 
+class SpoLocationSplit(BaseModel):
+    warehouse_id: str
+    qty: float = Field(..., gt=0)
+
+
 class SpoLineConfirm(BaseModel):
     shipment_line_id: str
     qty: float = Field(0, ge=0)
     include: bool = False
-    # The second amendment's location decision, made on the SAME screen (see
-    # `spo_conversion_service.create`'s docstring). Optional: absent means no allocation is
-    # written for this line, byte-identical to every call before the amendment.
-    warehouse_id: Optional[str] = None
+    # The multi-location ask (fourth doctrine-correction ask): zero, one or several
+    # destinations for this ONE line's SPO qty, each writing its own `spo_allocations` row in
+    # the same confirm (see `spo_conversion_service.create`'s docstring). Empty means no
+    # allocation is written for this line, byte-identical to every call before this ask - the
+    # single `warehouse_id` field the second amendment introduced is now the one-split case of
+    # this list, not a separate field.
+    location_splits: list[SpoLocationSplit] = Field(default_factory=list)
 
 
 class SpoCreateRequest(BaseModel):
@@ -763,16 +771,17 @@ def spo_suggestion(
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    """The SPO planner table: per shipment line, the suggested SPO quantity - packed, minus
-    what an open PO already covers, minus stock/incoming - and why a line is covered or
-    cannot convert. Also carries `po_takes` (the earliest-first per-PO breakdown behind
-    `po_covered_qty`) and `location_options` + `suggested_warehouse_id` (candidate
-    destination warehouses, ranked by Fulfilment Priority) - see `spo_conversion_service`'s
-    module docstring, "second amendment". `already_converted: true` when this shipment
-    already has SPOs (409 on the write below); the caller shows the existing SPOs instead of
-    the confirm screen. `self_heal_note` is non-null only when this call actually cleaned up a
-    stale link (a CRM SPO removed some other way than the DELETE below) - see
-    `spo_conversion_service._heal_stale_links`.
+    """The SPO planner table: per shipment line, what an open PO PULLS this SPO up to - never
+    a deduction (doctrine correction, `spo_conversion_service`'s module docstring, "fifth
+    amendment") - and why a line cannot convert (no supplier, or nothing open to pull from at
+    all). Also carries `po_takes` (the earliest-first per-PO breakdown behind `po_covered_qty`,
+    each now naming its own PO date and supplier) and `location_options` +
+    `suggested_warehouse_id` (candidate destination warehouses, ranked by Fulfilment Priority,
+    each carrying `demand_lines` - the open SO demand this SPO would go on to serve there).
+    `already_converted: true` when this shipment already has SPOs (409 on the write below); the
+    caller shows the existing SPOs instead of the confirm screen. `self_heal_note` is non-null
+    only when this call actually cleaned up a stale link (a CRM SPO removed some other way than
+    the DELETE below) - see `spo_conversion_service._heal_stale_links`.
     """
     out = spo_conversion_service.suggest(db, shipment_id)
     db.commit()  # persists any self-heal cleanup (get_db closes without commit)

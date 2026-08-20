@@ -812,49 +812,79 @@ export async function downloadPackingListExport(
 }
 
 /**
- * "Create SPO" - the shipment's uncovered lines become a real CRM purchase order
+ * "Create SPO" - a shipment line's PACKED quantity (`quantity_shipped`, never the PI's
+ * invoiced one) becomes a real CRM purchase order line, PULLED from open PO line(s)
  * (`PLAN-scm-proforma-to-spo.md`'s Amendment, second decision: "Separate button after
- * packing-list apply"). The BASE quantity is the PACKED figure (`quantity_shipped`), never
- * the PI's invoiced one.
+ * packing-list apply").
+ *
+ * ── DOCTRINE CORRECTION (captain, 21 Aug) - the arithmetic was inverted ─────
+ * His own words: "when there is PO, then we only can do SPO... it is when we got PO, then we
+ * only can pull from the PO to form SPO." Every version before this treated an open PO as
+ * competing supply that REDUCED the suggested SPO qty. Backwards: an SPO is the SHIPMENT LEG
+ * of an existing PO - forming one PULLS quantity FROM open PO lines, and the pull IS the
+ * SPO's composition, not a deduction from it.
+ *
+ *   * `suggested_qty` IS `po_covered_qty` - what the SAME earliest-first `po_takes` cascade
+ *     as before (soonest `expected_date`, then PO number) pulls, capped at the packed qty.
+ *     Never a remainder after PO/stock is subtracted.
+ *   * `on_hand` / `incoming_spo` are CONTEXT ONLY - shown, never netted.
+ *   * `no_po_qty = max(packed_qty - po_covered_qty, 0)` - the portion nothing open can back.
+ *     When `po_covered_qty` is zero, the WHOLE line is `cannot_convert` (same shape as the
+ *     no-supplier case, unselectable) with `reason` "No PO to pull from - raise the PO in
+ *     AutoCount first."; a PARTIALLY-backed line stays selectable at `po_covered_qty`, with
+ *     the shortfall named on `reason` too.
+ *   * `covered` is GONE - it meant "nothing left to ask for", a concept that only existed
+ *     when a PO was a deduction.
  *
  * ── BACKEND CONTRACT (app/api/v1/scm/fulfilment.py) ─────────────────────────
  *  GET  /api/v1/scm/inbound-shipments/{id}/spo-suggestion -> 200 SpoSuggestion. Auth:
  *       `scm.dashboard.view`. `already_converted: true` when this shipment already has
  *       SPOs from a prior run - `lines` is empty and `existing_spos` names them instead.
  *  POST /api/v1/scm/inbound-shipments/{id}/spo -> 201 SpoCreateResult. Body:
- *       { lines: [{shipment_line_id, qty, include, warehouse_id}] } - EVERY line on the
- *       shipment, ticked or not. 409 when this shipment was already converted (names the
- *       existing SPOs). Auth: `scm.reorder.run` (a PO-book write, same permission the
- *       packing-list apply and PI-convert paths use).
+ *       { lines: [{shipment_line_id, qty, include, location_splits}] } - EVERY line on the
+ *       shipment, ticked or not. `qty`/`location_splits` are RE-VALIDATED server-side against
+ *       LIVE PO data, never trusted off an earlier `suggest` read - a line whose pull shrinks
+ *       to zero between the two calls is skipped, not overdrawn. 409 when this shipment was
+ *       already converted (names the existing SPOs). Auth: `scm.reorder.run` (a PO-book
+ *       write, same permission the packing-list apply and PI-convert paths use).
  *  GET  /api/v1/scm/inbound-shipments/{id}/spo-worksheet/export -> 200 .xlsx bytes. The
  *       AutoCount handoff - what to key, per supplier. 404 until "Create SPO" has run.
  *
  * One SPO per SUPPLIER represented on the shipment - a container is routinely several
- * factories, and AutoCount POs are per supplier too. A line with no supplier recorded
- * (the n8n PDF path) cannot convert; a line already covered by an open PO or by stock
- * reads as covered, unticked by default, one line saying why.
+ * factories, and AutoCount POs are per supplier too. A line with no supplier recorded (the
+ * n8n PDF path), or with nothing pullable from any open PO, cannot convert.
+ *
+ * **Recording the pull, and the honesty decision the plan asked to settle.** `create`
+ * ADVANCES the source PO line's own `qty_received` by what it pulls (the IDENTICAL write
+ * `allocation_suggestion_service.approve` already makes for a shipment drawing down a PO
+ * line) - never link-only, which would double-count the same goods in `po_ordered_v` for
+ * however long AutoCount reconciliation takes. `unwind` (below) reverses this exactly.
  *
  * ── SECOND AMENDMENT (captain, 21 Aug 00:40) - the planner table ────────────
- * The surface moves to `/procurement-management/packing-lists/{id}` (the planner tab), and
- * the shape moves from a checkbox list to a loading-plan-style table (`SpoPlannerTable`,
- * visual precedent `ContainerRequestSection`). `suggest`'s payload grew, additively:
+ * The surface moved to `/procurement-management/packing-lists/{id}` (the planner tab), and
+ * the shape moved from a checkbox list to a loading-plan-style table (`SpoPlannerTable`,
+ * visual precedent `ContainerRequestSection`). `suggest`'s payload:
  *
  *   * `po_takes` - the `po_covered_qty` total broken into the per-PO takes an EARLIEST-FIRST
- *     cascade would make (soonest `expected_date`, then the PO's own number) - the same
- *     discipline Place-on-PO's cascade embodies. `matched_po_number` stays the FIRST take's
- *     number for backward compat; `po_covered_qty` is unchanged in value.
+ *     cascade makes (soonest `expected_date`, then PO number) - the same discipline
+ *     Place-on-PO's cascade embodies. Each take also names the PO's OWN date and supplier
+ *     (doctrine-correction ask - a pinned match can resolve to a differently-spelled
+ *     supplier than the shipment line's own).
  *   * `location_options` + `suggested_warehouse_id` - candidate destination warehouses for
- *     this product, each with its outstanding SO, on hand and incoming SPO, ranked by the
- *     shared Fulfilment Priority policy (project earlier delivery first, then retail). The
- *     "after figure" (what a location's `available` becomes once this SPO lands there) is
- *     computed on screen as `available + <the edited SPO qty>`, never sent stale from the
- *     server - the qty is live-edited on this same screen.
+ *     this product, each with its outstanding SO, on hand, incoming SPO and the individual
+ *     `demand_lines` behind that SO figure (doctrine-correction ask, "what SO am I
+ *     covering"), ranked by the shared Fulfilment Priority policy (project earlier delivery
+ *     first, then retail). The "after figure" (what a location's `available` becomes once
+ *     this SPO lands there) is computed on screen as `available + <the edited SPO qty>`,
+ *     never sent stale from the server - the qty is live-edited on this same screen.
  *
- * `SpoConfirmLine.warehouse_id` is the matching write-side addition: OPTIONAL, and when a
- * line carries one, "Create SPO" ALSO writes the `spo_allocations` row for it in the SAME
- * action - one confirm, two writes (see `spo_conversion_service.create`'s docstring for why
- * this does not disturb the pre-existing "no allocation, no `on_order_v` count" rule).
- * `SpoCreateResult.allocations` names what was written.
+ * ── FOURTH ASK (doctrine correction, same message) - multi-location split ───
+ * "I can create SPO to multiple locations." `SpoConfirmLine.warehouse_id` (singular) is
+ * replaced by `location_splits: {warehouse_id, qty}[]` - zero, one or several destinations
+ * for ONE line's SPO qty, validated server-side to sum to exactly what that line pulls.
+ * Each split writes its own `spo_allocations` row in the SAME confirm - one confirm, still
+ * one write per DECISION, now zero-or-many decisions per line rather than zero-or-one.
+ * `SpoCreateResult.allocations` names every row written, across every split.
  *
  * ── THIRD AMENDMENT (captain live case, 21 Aug) - delete + self-heal ────────
  * He created SPOs, then deleted their `spo_allocations` on the SPO Allocations screen, and
@@ -863,14 +893,19 @@ export async function downloadPackingListExport(
  *  DELETE /api/v1/scm/inbound-shipments/{id}/spo -> 200 SpoDeleteResult. Auth: `scm.reorder.
  *       run` (same as create). Unwinds the whole conversion for this shipment - every
  *       `purchase_orders` header it minted, their lines, the `shipment_line_spo_link` rows,
- *       and any `spo_allocations` left hanging off those PO lines. 409 (`not_crm_spo`) when a
- *       linked header was not created by Create SPO (an AutoCount import) - refused, not
- *       skipped. 404 when this shipment has no SPO to delete. Exposed on the planner as the
- *       Delete action on the already-converted state.
+ *       any `spo_allocations` left hanging off those PO lines, AND (doctrine correction)
+ *       REVERSES the `qty_received` advance `create` made on every source PO line those
+ *       lines pulled from (`restored_po_line_count`). 409 (`not_crm_spo`) when a linked
+ *       header was not created by Create SPO (an AutoCount import) - refused, not skipped.
+ *       404 when this shipment has no SPO to delete. Exposed on the planner as the Delete
+ *       action on the already-converted state.
  *  `SpoSuggestion.self_heal_note` - non-null only when THIS `spo-suggestion` call actually
  *       cleaned up a link left behind by a CRM SPO removed some OTHER way than the DELETE
  *       above (a generic PO delete, a bad migration) - shown as a small informational note,
- *       never a toast, since it describes something that already happened silently.
+ *       never a toast, since it describes something that already happened silently. That
+ *       bypass path does NOT reverse the source PO's advance (only `unwind` does), so a
+ *       self-healed line can come back `cannot_convert` rather than restored - a documented
+ *       limitation, not a bug.
  */
 export type SpoMatchedBy = 'po_ref' | 'product' | null;
 
@@ -880,6 +915,22 @@ export interface SpoPoTake {
   po_number: string;
   qty: number;
   expected_date: string | null;
+  /** The PO's OWN document date - distinct from `expected_date` (when the line is due). */
+  po_date: string | null;
+  /** The PO's OWN supplier - can differ from the shipment line's own supplier on a pinned
+   *  match resolved to a differently-spelled book entry (fourth amendment). */
+  supplier_name: string | null;
+}
+
+/** One open SO line behind a location's `outstanding_so` - "what SO am I covering"
+ *  (doctrine-correction ask), earliest need date first. */
+export interface SpoDemandLine {
+  so_number: string | null;
+  customer_name: string | null;
+  agent_name: string | null;
+  required_date: string | null;
+  order_date: string | null;
+  qty: number;
 }
 
 /** One candidate destination warehouse for a line's SPO qty, ranked. */
@@ -895,6 +946,9 @@ export interface SpoLocationOption {
   /** Fulfilment Priority score, absent on a location with no open demand behind it - those
    *  sort after every ranked one, by `warehouse_code`. */
   rank_score: number | null;
+  /** The individual demand lines behind `outstanding_so`, earliest first - cascade these
+   *  against the live SPO qty landing HERE to answer "what SO am I covering". */
+  demand_lines: SpoDemandLine[];
 }
 
 export interface SpoSuggestionLine {
@@ -908,17 +962,23 @@ export interface SpoSuggestionLine {
   po_covered_qty: number;
   matched_po_number: string | null;
   matched_by: SpoMatchedBy;
-  /** Earliest-first breakdown of `po_covered_qty` - empty when nothing is covered. */
+  /** Earliest-first breakdown of `po_covered_qty` - empty when nothing is pullable. */
   po_takes: SpoPoTake[];
+  /** Context only since the doctrine correction - never netted into `suggested_qty`. */
   on_hand: number;
   incoming_spo: number;
-  /** `packed - po_covered_qty - on_hand - incoming_spo`, floored at 0 - editable. */
+  /** `po_covered_qty`, capped at `packed_qty` by the cascade - what the PO(s) PULL this SPO
+   *  up to. Editable, but cannot exceed `po_covered_qty` (nothing more to pull). */
   suggested_qty: number;
-  /** Nothing left to ask for on this line - shown, unticked by default. */
-  covered: boolean;
-  /** No supplier recorded on this shipment line - cannot become an SPO line at all. */
+  /** `max(packed_qty - po_covered_qty, 0)` - the portion nothing open can back. Shown as
+   *  context on a selectable line; the reason the WHOLE line is `cannot_convert` when it
+   *  equals `packed_qty`. */
+  no_po_qty: number;
+  /** No supplier recorded, OR nothing at all is pullable from an open PO - cannot become an
+   *  SPO line, like the no-supplier case. */
   cannot_convert: boolean;
-  /** Why a line is `covered` or `cannot_convert`. Null on a line that needs an SPO. */
+  /** Why `cannot_convert`, or a note about a partially-uncovered remainder. Null on a line
+   *  fully backed by an open PO. */
   reason: string | null;
   unit_cost: number | null;
   currency: string | null;
@@ -949,13 +1009,20 @@ export interface SpoSuggestion {
   self_heal_note: string | null;
 }
 
+/** One destination for a slice of a line's SPO qty - the fourth amendment's multi-location
+ *  split. All of a line's splits must sum to exactly what that line pulls. */
+export interface SpoLocationSplit {
+  warehouse_id: string;
+  qty: number;
+}
+
 export interface SpoConfirmLine {
   shipment_line_id: string;
   qty: number;
   include: boolean;
-  /** The chosen destination (second amendment) - optional; absent writes no allocation for
-   *  this line, same as every call before the amendment. */
-  warehouse_id?: string | null;
+  /** Zero, one or several destinations (fourth amendment) - empty writes no allocation for
+   *  this line, same as every call before this ask. */
+  location_splits?: SpoLocationSplit[];
 }
 
 export interface CreatedSpo extends SpoRef {
@@ -1004,6 +1071,8 @@ export interface SpoDeleteResult {
   deleted_po_numbers: string[];
   deleted_spo_count: number;
   deleted_allocation_count: number;
+  /** Source PO lines whose `qty_received` advance was reversed (doctrine correction). */
+  restored_po_line_count: number;
 }
 
 export async function deleteSpo(shipmentId: string): Promise<SpoDeleteResult> {
