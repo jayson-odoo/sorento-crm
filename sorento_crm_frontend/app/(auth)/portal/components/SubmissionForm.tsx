@@ -78,6 +78,8 @@ import {
   lookupProducts,
   lookupSet,
   saveDraft,
+  discardRevisionDraft,
+  saveRevisionDraft,
   statusLabel,
   submitDraft,
   uploadAttachment,
@@ -374,6 +376,17 @@ const FROZEN_ON_REVISE: Record<PortalSubmissionKind, readonly string[]> = {
 const REASON_REQUIRED = 'Tell us what changed and why.';
 const REASON_MAX_LEN = 2000;
 
+function formatDraftSavedAt(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    });
+  } catch {
+    return iso;
+  }
+}
+
 function fieldSpansFullWidth(f: FieldDef): boolean {
   return (
     f.widget === 'textarea' ||
@@ -417,6 +430,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const [reason, setReason] = useState('');
   const [reasonError, setReasonError] = useState<string | null>(null);
   const [reviseConfirmOpen, setReviseConfirmOpen] = useState(false);
+  const [savingRevisionDraft, setSavingRevisionDraft] = useState(false);
+  const [discardingDraft, setDiscardingDraft] = useState(false);
+  const [discardDraftOpen, setDiscardDraftOpen] = useState(false);
   // Bumped after a revision so the form reloads through the same path the first
   // load uses, rather than a second, divergent "apply the response" branch.
   const [reloadToken, setReloadToken] = useState(0);
@@ -617,9 +633,19 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         const data = await fetchSubmission(kind, submissionId);
         if (cancelled) return;
         setDetail(data);
+        // Resume a saved-but-unsent revision (UAC: revision drafts): a stored,
+        // non-stale draft prefills the form OVER the saved values, sourced from
+        // the same field keys the saved submission itself is read from - so
+        // merging the draft's flat dict onto `data` and reading through the one
+        // block below covers fields, `products` and `product_lines` alike.
+        const draft = data.revision_draft ?? null;
+        const resumeDraft = Boolean(draft && !draft.stale);
+        const source = resumeDraft
+          ? { ...data, ...(draft!.fields || {}) }
+          : data;
         const next: Record<string, string | string[]> = {};
         for (const f of fieldDefs) {
-          const v = (data as Record<string, unknown>)[f.name];
+          const v = (source as Record<string, unknown>)[f.name];
           if (f.widget === 'do-multi-filter') {
             if (Array.isArray(v)) {
               next[f.name] = v.map((x) => String(x).trim()).filter(Boolean);
@@ -637,13 +663,13 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         }
         setFields(next);
         if (showLines) {
-          const lines = (data as { products?: ProductLine[] }).products ?? [];
+          const lines = (source as { products?: ProductLine[] }).products ?? [];
           setProducts(lines.map((l) => ({ ...l })));
         }
         if (kind === 'complaint') {
           const pls =
             (
-              data as {
+              source as {
                 product_lines?: {
                   product_code?: string | null;
                   product_type?: string | null;
@@ -662,6 +688,11 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           );
         }
         setAttachments((data.attachments as PortalAttachment[]) ?? []);
+        if (resumeDraft && draft) {
+          setReason(draft.reason ?? '');
+          setReasonError(null);
+          setReviseMode(true);
+        }
       } catch (e) {
         if (e instanceof PortalUnauthorizedError) {
           router.replace(
@@ -952,6 +983,67 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       toast.error(e instanceof Error ? e.message : 'Failed to send revision.');
     } finally {
       setReviseConfirmOpen(false);
+    }
+  };
+
+  /** Save the in-progress revision without sending it. Stays in revise mode -
+   *  this is a checkpoint, not an exit. */
+  const handleSaveRevisionDraft = async () => {
+    if (!submissionId) return;
+    setSavingRevisionDraft(true);
+    try {
+      await saveRevisionDraft(kind, submissionId, {
+        reason: reason.trim() || null,
+        baseRevisionNo: revisionPolicy?.used ?? 0,
+        fields: cleanedFields,
+        products: cleanedProducts,
+      });
+      toast.success('Draft saved.');
+      setReloadToken((t) => t + 1);
+    } catch (e) {
+      if (e instanceof PortalUnauthorizedError) {
+        router.replace(
+          portalVerifyPath({
+            slug,
+            reason: 'expired',
+            type: kind,
+            id: submissionId,
+          }),
+        );
+        return;
+      }
+      toast.error(e instanceof Error ? e.message : 'Failed to save draft.');
+    } finally {
+      setSavingRevisionDraft(false);
+    }
+  };
+
+  const handleDiscardDraft = async () => {
+    if (!submissionId) return;
+    setDiscardingDraft(true);
+    try {
+      await discardRevisionDraft(kind, submissionId);
+      toast.success('Draft discarded.');
+      setReviseMode(false);
+      setReason('');
+      setReasonError(null);
+      setReloadToken((t) => t + 1);
+    } catch (e) {
+      if (e instanceof PortalUnauthorizedError) {
+        router.replace(
+          portalVerifyPath({
+            slug,
+            reason: 'expired',
+            type: kind,
+            id: submissionId,
+          }),
+        );
+        return;
+      }
+      toast.error(e instanceof Error ? e.message : 'Failed to discard draft.');
+    } finally {
+      setDiscardingDraft(false);
+      setDiscardDraftOpen(false);
     }
   };
 
@@ -1327,6 +1419,35 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           }}
         />
       )}
+      {submissionId && !reviseMode && detail?.revision_draft?.stale && (
+        <Alert
+          variant="warning"
+          appearance="light"
+          data-testid="stale-draft-banner"
+        >
+          <AlertIcon>
+            <Info />
+          </AlertIcon>
+          <AlertContent>
+            <AlertTitle>This draft is out of date</AlertTitle>
+            <AlertDescription>
+              The submission changed after this draft was saved. Discard it and
+              start a new revision.
+              <div className="mt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDiscardDraftOpen(true)}
+                  disabled={discardingDraft}
+                >
+                  Discard draft
+                </Button>
+              </div>
+            </AlertDescription>
+          </AlertContent>
+        </Alert>
+      )}
       {detail?.rejection_reason && (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
           <p className="font-medium">Rejection reason</p>
@@ -1378,7 +1499,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               yet)
             </AlertTitle>
             <AlertDescription>
-              Nothing is saved until you press Send revision. {restartSentence}
+              Nothing is sent until you press Send revision. {restartSentence}
+              {detail?.revision_draft && (
+                <>
+                  <br />
+                  Draft saved{' '}
+                  {formatDraftSavedAt(detail.revision_draft.updated_at)}
+                </>
+              )}
             </AlertDescription>
           </AlertContent>
         </Alert>
@@ -1684,6 +1812,24 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           <Button variant="ghost" onClick={exitReviseMode} disabled={revising}>
             Cancel
           </Button>
+          {detail?.revision_draft && (
+            <Button
+              variant="outline"
+              className="text-destructive border-destructive/50 hover:bg-destructive/10"
+              onClick={() => setDiscardDraftOpen(true)}
+              disabled={revising || savingRevisionDraft || discardingDraft}
+            >
+              <Trash2 className="size-4 mr-1" />
+              Discard draft
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            onClick={handleSaveRevisionDraft}
+            disabled={revising || savingRevisionDraft}
+          >
+            {savingRevisionDraft ? 'Saving...' : 'Save as draft'}
+          </Button>
           <Button onClick={openReviseConfirm} disabled={revising}>
             {revising ? 'Sending...' : 'Send revision'}
           </Button>
@@ -1879,6 +2025,29 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {deleting ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={discardDraftOpen} onOpenChange={setDiscardDraftOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard this draft revision?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. The submission itself is unchanged.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={discardingDraft}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDiscardDraft}
+              disabled={discardingDraft}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {discardingDraft ? 'Discarding...' : 'Discard'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
