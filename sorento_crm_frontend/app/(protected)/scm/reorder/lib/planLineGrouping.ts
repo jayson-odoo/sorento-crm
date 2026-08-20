@@ -67,10 +67,22 @@ export function channelOf(line: Pick<PlanLine, 'rec'>): PlanChannel {
  * never hardcoded to Project + Retail. Computed once over the WHOLE list passed in (not
  * per product), so every product row in a grouped grid shares the same column set rather
  * than a jagged table where one row grows a third column the others lack.
+ *
+ * Project and Retail are gated on a warehouse actually carrying that segment
+ * (`channelOf`'s per-row read). Unclassified is gated differently, on purpose: a warehouse
+ * with no persisted segment folds into Unclassified by `channelOf` even when it happens to
+ * carry NO open demand there, and rendering the column for that alone is exactly what the
+ * captain rejected - "I don't need unclassified, nothing should be unclassified by right"
+ * (19 Aug). So Unclassified shows only when the run's `unclassified_committed` actually
+ * sums to something nonzero somewhere on the page - a genuine gap to close, not a warehouse
+ * that merely lacks a segment tag.
  */
 export function presentChannels(lines: Pick<PlanLine, 'rec'>[]): PlanChannel[] {
   const present = new Set(lines.map(channelOf));
-  return PLAN_CHANNEL_ORDER.filter((c) => present.has(c));
+  const hasUnclassifiedDemand = lines.some((l) => (l.rec.unclassified_committed ?? 0) !== 0);
+  return PLAN_CHANNEL_ORDER.filter((c) =>
+    c === 'unclassified' ? hasUnclassifiedDemand : present.has(c),
+  );
 }
 
 /** What one grouped PRODUCT row carries, beyond the `PlanLine` shape every existing cell
@@ -206,6 +218,19 @@ function buildGroupRec(members: PlanLine[]): ReorderRecommendation {
     project_committed: sumOrNull(members.map((m) => m.rec.project_committed)),
     retail_committed: sumOrNull(members.map((m) => m.rec.retail_committed)),
     unclassified_committed: sumOrNull(members.map((m) => m.rec.unclassified_committed)),
+    // The reorder-level columns (19-20 Aug follow-up): `master_reorder_level` /
+    // `master_reorder_quantity` are PRODUCT-record facts (`products.reorder_level` /
+    // `.reorder_quantity`), joined onto every one of this product's warehouse rows
+    // identically - carrying the first member's copy through loses nothing, unlike summing
+    // a per-location figure. Left OUT of `buildGroupRec` before this fix, a group row's
+    // "Reorder level" / "Reorder qty" cells read `undefined` and fell through to the
+    // column's own "not set" dash even for a product the master DOES carry a level for
+    // (captain: SRTWCX8861-S, `products.reorder_level=10`). The buyer's OWN level
+    // (`reorder_level`, `scm.reorder_level`) stays out: unlike the master figure it can
+    // genuinely differ per warehouse, and inventing one group-wide value for it would be
+    // exactly the kind of summed-per-location guess this function otherwise refuses to make.
+    master_reorder_level: first.rec.master_reorder_level ?? null,
+    master_reorder_quantity: first.rec.master_reorder_quantity ?? null,
   } as ReorderRecommendation;
 }
 

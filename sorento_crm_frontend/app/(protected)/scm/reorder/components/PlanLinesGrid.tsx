@@ -216,10 +216,38 @@ function numCell(value: number | null | undefined) {
 }
 
 /**
+ * Whether this member has anything at all to show - SO, either side of the channel split,
+ * on hand, SPO, PO, or a suggested qty. A location where every one of those reads zero adds
+ * nothing to the drill and is noise on the way to the ones that do (captain, 19 Aug: "if 0
+ * quantity why show here"). A figure the run genuinely never populated (null/undefined) is
+ * NOT the same claim as a stated zero - it counts as "nothing to show" here too, since a
+ * location with no stated data AND no zero data still has nothing worth a drill row.
+ */
+function memberHasActivity(m: PlanLine): boolean {
+  const figures = [
+    m.rec.outstanding_sales,
+    m.rec.project_need,
+    m.rec.retail_need,
+    m.rec.unclassified_need,
+    m.rec.on_hand,
+    m.rec.incoming_spo,
+    m.rec.outstanding_po,
+    m.order_qty,
+  ];
+  return figures.some((v) => typeof v === 'number' && v !== 0);
+}
+
+/**
  * The drill under a grouped PRODUCT row - the per-warehouse rows it summed, unsummed, one
  * per line (5.3/5.4: Location grain stays a read and drill view under Product grain;
  * nothing here is a decision). Every location-only fact that a group row cannot show
  * (price, supplier, MOQ, AutoCount level) lives on these rows, not the group.
+ *
+ * All-zero locations are filtered out (`memberHasActivity`) - UNLESS filtering would empty
+ * the panel entirely, in which case every member is shown anyway: a group row only exists
+ * because something summed to a nonzero suggested qty, so an all-zero-looking group is far
+ * more likely a stale/legacy fixture than a real one, and a panel with nothing in it reads
+ * as broken rather than as "nothing to see here".
  */
 function GroupMembersPanel({
   group,
@@ -228,6 +256,8 @@ function GroupMembersPanel({
   group: PlanChannelGroupMeta;
   onOpenMember: (rec: ReorderRecommendation) => void;
 }) {
+  const active = group.members.filter(memberHasActivity);
+  const visible = active.length > 0 ? active : group.members;
   return (
     <div className="border-t bg-muted/30 px-5 py-3">
       <div className="overflow-x-auto">
@@ -246,7 +276,7 @@ function GroupMembersPanel({
             </tr>
           </thead>
           <tbody>
-            {group.members.map((m) => (
+            {visible.map((m) => (
               <tr
                 key={m.id}
                 className="cursor-pointer border-t border-border/60 hover:bg-muted/60"
@@ -664,26 +694,24 @@ export function PlanLinesGrid({
             ) : null,
         },
       },
-      {
+      // Grouped mode drops the Location column entirely (19-20 Aug follow-up, captain:
+      // "i don't need locations column") - the group's own locations are already reachable
+      // by expanding the row (`GroupMembersPanel`), so the column would only repeat what the
+      // expand already carries. Ungrouped (Location-grain) mode keeps it: there it IS the
+      // row's identity.
+      ...(!groupByChannel ? [{
         id: 'warehouse',
         accessorKey: 'warehouse',
         header: ({ column }) => <DataGridColumnHeader title="Location" visibility column={column} />,
-        cell: ({ row }) => {
-          const group = isGroupedLine(row.original) ? row.original.__group : null;
-          // A group's `warehouse` field is already the compact display text
-          // (`locationLabel`); the title always carries the FULL list, even once the cell
-          // itself has fallen back to "N locations" (5.3).
-          const title = group ? group.locationCodes.join(', ') : row.original.warehouse;
-          return (
-            <span className="block truncate text-sm" title={title}>
-              {row.original.warehouse}
-            </span>
-          );
-        },
+        cell: ({ row }) => (
+          <span className="block truncate text-sm" title={row.original.warehouse}>
+            {row.original.warehouse}
+          </span>
+        ),
         size: 130,
         enableSorting: true,
         meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-20" /> },
-      },
+      } satisfies ColumnDef<PlanLine>] : []),
       // The Order-type chip and the SO/Project/Retail/Unclassified columns are an
       // UNGROUPED-only chapter (5.3 follow-up, 19-20 Aug): grouped mode replaces all five
       // with the dynamic channel columns below - "instead of 1 column SO, 1 column

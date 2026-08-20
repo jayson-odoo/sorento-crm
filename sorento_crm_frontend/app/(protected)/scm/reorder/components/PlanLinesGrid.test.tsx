@@ -1055,9 +1055,17 @@ describe('PlanLinesGrid - product-grain channel grouping (5.3 follow-up, 19-20 A
     expect(screen.getAllByText('SKU-1')).toHaveLength(1);
   });
 
-  it('the group row carries every location, joined, in the Location column', () => {
+  it('grouped mode has no Location column - the expand carries the locations instead (captain, 19-20 Aug: "i don\'t need locations column")', () => {
     renderGroupedGrid([retail, projectIb, projectIr]);
-    expect(screen.getByText('Butterworth, BRW - IB, BRW - IR')).toBeInTheDocument();
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).not.toContain('Location');
+    expect(screen.queryByText('Butterworth, BRW - IB, BRW - IR')).not.toBeInTheDocument();
+  });
+
+  it('an ungrouped (Location-grain) plan keeps the Location column', () => {
+    renderGrid([retail]);
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).toContain('Location');
   });
 
   it('grouped mode drops the Order-type badge column and the SO/Project/Retail/Unclassified fixed columns', () => {
@@ -1109,6 +1117,48 @@ describe('PlanLinesGrid - product-grain channel grouping (5.3 follow-up, 19-20 A
     expect(screen.getByText('Butterworth')).toBeInTheDocument();
     expect(screen.getByText('BRW - IB')).toBeInTheDocument();
     expect(screen.getByText('BRW - IR')).toBeInTheDocument();
+  });
+
+  it('the expand hides a location whose every figure is zero (captain, 19-20 Aug: "if 0 quantity why show here")', () => {
+    const allZero = line({
+      id: 'z', warehouse_id: 'w-zero', warehouse_code: 'BRW-Z', warehouse_name: 'Zero Loc',
+      segment: 'dealer', rank: 5, order_qty: 0, on_hand: 0, incoming_spo: 0, outstanding_po: 0,
+      outstanding_sales: 0, project_need: 0, retail_need: 0, unclassified_need: 0,
+    });
+    renderGroupedGrid([retail, projectIb, projectIr, allZero]);
+    fireEvent.click(screen.getByText('SKU-1'));
+    expect(screen.getByText('Butterworth')).toBeInTheDocument();
+    expect(screen.getByText('BRW - IB')).toBeInTheDocument();
+    expect(screen.getByText('BRW - IR')).toBeInTheDocument();
+    expect(screen.queryByText('Zero Loc')).not.toBeInTheDocument();
+  });
+
+  it('never empties the expand entirely - every member is shown when ALL of them are zero', () => {
+    const allZero1 = line({
+      id: 'z1', product_id: 'p9', sku: 'SKU-ZERO', warehouse_id: 'w-z1', warehouse_name: 'Zero 1',
+      segment: 'dealer', rank: 5, order_qty: 0, on_hand: 0, incoming_spo: 0, outstanding_po: 0,
+      outstanding_sales: 0, project_need: 0, retail_need: 0, unclassified_need: 0,
+    });
+    const allZero2 = line({
+      id: 'z2', product_id: 'p9', sku: 'SKU-ZERO', warehouse_id: 'w-z2', warehouse_name: 'Zero 2',
+      segment: 'dealer', rank: 6, order_qty: 0, on_hand: 0, incoming_spo: 0, outstanding_po: 0,
+      outstanding_sales: 0, project_need: 0, retail_need: 0, unclassified_need: 0,
+    });
+    renderGroupedGrid([allZero1, allZero2]);
+    fireEvent.click(screen.getByText('SKU-ZERO'));
+    expect(screen.getByText('Zero 1')).toBeInTheDocument();
+    expect(screen.getByText('Zero 2')).toBeInTheDocument();
+  });
+
+  it('a grouped row falls back to the product master reorder level/qty when nobody has set the buyer\'s own (19-20 Aug follow-up, captain: SRTWCX8861-S)', () => {
+    const withMaster = line({
+      id: 'm', warehouse_id: 'w-master', segment: 'dealer', rank: 6,
+      master_reorder_level: 10, master_reorder_quantity: 50,
+    });
+    renderGroupedGrid([withMaster]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).getByText('10')).toBeInTheDocument();
+    expect(within(row).getByText('50')).toBeInTheDocument();
   });
 
   it('a group row is always read-only', () => {

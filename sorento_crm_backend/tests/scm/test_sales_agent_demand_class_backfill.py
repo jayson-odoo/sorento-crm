@@ -15,7 +15,8 @@ import uuid
 
 import pytest
 
-from app.models.order import SalesOrder
+from app.models.access import MarketSegment
+from app.models.order import Customer, SalesOrder
 from app.models.sales_agent import SalesAgent
 from app.services.scm import sales_agent_service as svc
 from app.services.scm.demand_class import DEFAULT_DEMAND_CLASS, PROJECT
@@ -40,12 +41,35 @@ def _agent(db, **kwargs) -> SalesAgent:
     return row
 
 
-def _order(db, agent: SalesAgent, *, demand_class=None) -> SalesOrder:
+def _order(db, agent: SalesAgent, *, demand_class=None, customer: Customer = None) -> SalesOrder:
     row = SalesOrder(
         id=str(uuid.uuid4()),
         so_number=unique_code("SO"),
         sales_agent_id=agent.id,
         demand_class=demand_class,
+        customer_id=customer.id if customer is not None else None,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _customer(db, *, segment_stem=None) -> Customer:
+    """A customer, with a market segment carrying `segment_stem` as a substring when given.
+
+    `segment_stem` is matched by `demand_class.class_of` the same way `_customer_with_segment`
+    in `test_outstanding_import_demand_class.py` does it - a value containing "project" (or
+    "retail") classifies as that; `None` leaves the customer with no segment at all.
+    """
+    code = unique_code("CUST")
+    seg = None
+    if segment_stem is not None:
+        seg = unique_code(segment_stem).lower()
+        db.add(MarketSegment(id=str(uuid.uuid4()), code=seg, name=seg, is_active=True))
+        db.flush()
+    row = Customer(
+        id=str(uuid.uuid4()), customer_code=code, customer_name=code,
+        market_segment_code=seg, is_active=True,
     )
     db.add(row)
     db.flush()
@@ -119,3 +143,64 @@ def test_backfill_of_an_agent_with_no_orders_is_a_silent_zero(db):
 
     changed = svc._backfill_null_class_orders(db, agent, PROJECT)
     assert changed == 0
+
+
+def test_a_row_whose_customer_segment_answers_project_wins_over_the_agent(db):
+    """The demand-class priority bug: FANNY III (agent retail) rows whose customer's
+    segment is a project code must land on `project`, never on the agent's `retail`."""
+    agent = _agent(db, sales_agent=unique_code("FANNY"), demand_class=DEFAULT_DEMAND_CLASS)
+    customer = _customer(db, segment_stem="project")
+    order = _order(db, agent, demand_class=None, customer=customer)
+
+    svc.set_demand_class(db, agent.sales_agent, DEFAULT_DEMAND_CLASS)
+
+    db.expire_all()
+    assert db.get(SalesOrder, order.id).demand_class == PROJECT
+
+
+def test_a_row_whose_customer_segment_answers_retail_still_uses_the_segment(db):
+    agent = _agent(db, sales_agent=unique_code("SEGRETAIL"), demand_class=PROJECT)
+    customer = _customer(db, segment_stem="retail")
+    order = _order(db, agent, demand_class=None, customer=customer)
+
+    svc.set_demand_class(db, agent.sales_agent, PROJECT)
+
+    db.expire_all()
+    # The segment says retail even though the agent is a project agent - segment outranks
+    # the agent, so the order must not inherit the agent's class here.
+    assert db.get(SalesOrder, order.id).demand_class == DEFAULT_DEMAND_CLASS
+
+
+def test_a_customer_with_no_segment_still_falls_back_to_the_agent(db):
+    agent = _agent(db, sales_agent=unique_code("NOSEG"))
+    customer = _customer(db, segment_stem=None)
+    order = _order(db, agent, demand_class=None, customer=customer)
+
+    svc.set_demand_class(db, agent.sales_agent, PROJECT)
+
+    db.expire_all()
+    assert db.get(SalesOrder, order.id).demand_class == PROJECT
+
+
+def test_an_order_with_no_customer_at_all_falls_back_to_the_agent(db):
+    agent = _agent(db, sales_agent=unique_code("NOCUST"))
+    order = _order(db, agent, demand_class=None, customer=None)
+
+    svc.set_demand_class(db, agent.sales_agent, PROJECT)
+
+    db.expire_all()
+    assert db.get(SalesOrder, order.id).demand_class == PROJECT
+
+
+def test_backfill_count_covers_both_segment_and_agent_derived_rows(db):
+    agent = _agent(db, sales_agent=unique_code("MIXED"), demand_class=DEFAULT_DEMAND_CLASS)
+    project_customer = _customer(db, segment_stem="project")
+    from_segment = _order(db, agent, demand_class=None, customer=project_customer)
+    from_agent = _order(db, agent, demand_class=None, customer=None)
+
+    changed = svc._backfill_null_class_orders(db, agent, DEFAULT_DEMAND_CLASS)
+
+    assert changed == 2
+    db.expire_all()
+    assert db.get(SalesOrder, from_segment.id).demand_class == PROJECT
+    assert db.get(SalesOrder, from_agent.id).demand_class == DEFAULT_DEMAND_CLASS

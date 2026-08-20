@@ -68,10 +68,22 @@ describe('presentChannels', () => {
     const rows = [line({ segment: 'dealer' }), line({ segment: 'project' })];
     expect(presentChannels(rows)).toEqual(['project', 'retail']);
   });
-  it('includes Unclassified only when a row actually carries it', () => {
+  it('includes Unclassified only when the run carries a NONZERO unclassified sum, never on a bare missing segment', () => {
     expect(presentChannels([line({ segment: 'dealer' })])).toEqual(['retail']);
+    // A warehouse with no segment folds into `channelOf`'s Unclassified bucket, but with
+    // nothing actually committed there the column must stay hidden (captain, 19 Aug:
+    // "I don't need unclassified, nothing should be unclassified by right").
     expect(
-      presentChannels([line({ segment: 'dealer' }), line({ segment: null })]),
+      presentChannels([
+        line({ segment: 'dealer' }),
+        line({ segment: null, unclassified_committed: 0 }),
+      ]),
+    ).toEqual(['retail']);
+    expect(
+      presentChannels([
+        line({ segment: 'dealer' }),
+        line({ segment: null, unclassified_committed: 2 }),
+      ]),
     ).toEqual(['retail', 'unclassified']);
   });
 });
@@ -203,6 +215,22 @@ describe('groupPlanLinesByChannel - the TPE-9204 case (one row per PRODUCT)', ()
     expect(groups[0].__group.members).toEqual([retail, unclassified]);
     expect(groups[0].__group.channels).toEqual(['retail', 'unclassified']);
     expect(groups[0].__group.channelQty.unclassified).toBe(1);
+  });
+
+  it('carries the master reorder level/qty through from the first member (19-20 Aug follow-up)', () => {
+    const withMaster = line({
+      id: 'h', warehouse_id: 'w-master', rank: 9,
+      master_reorder_level: 10, master_reorder_quantity: 50,
+    });
+    const [group] = groupPlanLinesByChannel([withMaster]);
+    expect(group.rec.master_reorder_level).toBe(10);
+    expect(group.rec.master_reorder_quantity).toBe(50);
+  });
+
+  it('leaves the master reorder level/qty null rather than 0/undefined when no member carries one', () => {
+    const [group] = groupPlanLinesByChannel([retail]);
+    expect(group.rec.master_reorder_level).toBeNull();
+    expect(group.rec.master_reorder_quantity).toBeNull();
   });
 
   it('groups a second product separately even when it shares a channel', () => {

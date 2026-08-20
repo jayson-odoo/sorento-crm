@@ -9,6 +9,7 @@ import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { usePlanLines } from '../hooks/usePlanLines';
 import type { PlanLineStatus } from '../lib/planLine';
 import { planTotals, type PlanTotals } from '../lib/planDecisions';
+import { groupPlanLinesByChannel } from '../lib/planLineGrouping';
 import { lineBreachStatus } from '../lib/orderQtyLedger';
 import { LevelChangesPanel } from './LevelChangesPanel';
 import { PlanBudgetReview } from './PlanBudgetReview';
@@ -96,13 +97,31 @@ export function PlanLinesSection({
   // every line - including ones the buyer cannot see under the current filter - could read
   // "30 of 40, 10 left" with zero of those ten rows anywhere on screen.
   //
+  // 19-20 Aug follow-up: on a Product-grain run (`groupByChannel`), `PlanLinesGrid` renders
+  // ONE row per product, not one per (product, warehouse) - but `visibleLines` is still the
+  // per-warehouse list, so counting it directly read "0 of 10,712 made" beside a list of
+  // 4,280 products, and no decision is even possible at the warehouse grain here
+  // (`decisionsReadOnly` is always true under product grain - see `PlanLinesGrid`). What is
+  // actually decidable at THIS grain is one row per product, so the denominator is the
+  // grouped row count instead - the same `groupPlanLinesByChannel` the grid itself renders,
+  // so the header and the list can never disagree on "how many things are here". The
+  // per-product decision surface is the weekly order summary sheet (S3b), not this grid, so
+  // `decided` naturally reports 0 here rather than inventing one: a synthetic group row's id
+  // (`group:<product_id>`) is never a key in `decisions` (which is keyed by the underlying
+  // rec ids), and it never will be, because this view cannot record a decision at product
+  // grain at all.
+  //
   // Keyed on the PRIMITIVE fields, not the totals object itself: a fresh `useMemo` result
   // whenever `visibleLines` or `decisions` change identity, and a hand-rolled test double
   // may not memoize either at all - depending on the object's identity would refire this
   // effect, call `setState` in the caller, and re-render forever.
+  const countedLines = useMemo(
+    () => (groupByChannel ? groupPlanLinesByChannel(visibleLines) : visibleLines),
+    [groupByChannel, visibleLines],
+  );
   const reportedTotals = useMemo(
-    () => planTotals(visibleLines, planLines.decisions),
-    [visibleLines, planLines.decisions],
+    () => planTotals(countedLines, planLines.decisions),
+    [countedLines, planLines.decisions],
   );
   const { decided, undecided, buying, usingStock, usingPo, skipped, units, cost, unpriced } =
     reportedTotals;

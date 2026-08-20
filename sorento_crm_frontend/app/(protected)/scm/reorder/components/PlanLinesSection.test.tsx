@@ -234,6 +234,34 @@ describe('PlanLinesSection - reports totals upward for the decision-progress til
     );
   });
 
+  it('reports the GROUPED (product) count as the total under a Product-grain run, never the per-warehouse count (19-20 Aug follow-up)', () => {
+    // 3 per-warehouse rows for 2 products - PlanLinesGrid itself collapses this to 2 rows
+    // when `groupByChannel` is on, and no decision is ever possible at that grain here
+    // (decisionsReadOnly), so the tile must read "0 of 2", never "0 of 3".
+    const p1a = line({ id: 'a', sku: 'SKU-1', product_id: 'p1', warehouse_id: 'w1' });
+    const p1b = line({ id: 'b', sku: 'SKU-1', product_id: 'p1', warehouse_id: 'w2' });
+    const p2a = line({ id: 'c', sku: 'SKU-2', product_id: 'p2', warehouse_id: 'w3' });
+    stubPlanLines({ lines: [p1a, p1b, p2a], decisions: {} });
+    const onTotalsChange = vi.fn();
+    render(<PlanLinesSection runId="run-1" groupByChannel onTotalsChange={onTotalsChange} />);
+
+    expect(onTotalsChange).toHaveBeenCalledWith(
+      expect.objectContaining({ decided: 0, undecided: 2 }),
+    );
+  });
+
+  it('keeps the PER-WAREHOUSE count when the run is not Product-grain (groupByChannel unset)', () => {
+    const p1a = line({ id: 'a', sku: 'SKU-1', product_id: 'p1', warehouse_id: 'w1' });
+    const p1b = line({ id: 'b', sku: 'SKU-1', product_id: 'p1', warehouse_id: 'w2' });
+    stubPlanLines({ lines: [p1a, p1b], decisions: {} });
+    const onTotalsChange = vi.fn();
+    render(<PlanLinesSection runId="run-1" onTotalsChange={onTotalsChange} />);
+
+    expect(onTotalsChange).toHaveBeenCalledWith(
+      expect.objectContaining({ decided: 0, undecided: 2 }),
+    );
+  });
+
   it('DOES count the hidden row once the "covered by stock" status filter reveals it', () => {
     const visibleBuy = line({ id: 'a', sku: 'BUY-1', type: 'buy' });
     const revealedCovered = line({
