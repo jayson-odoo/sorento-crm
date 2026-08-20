@@ -332,7 +332,7 @@ describe('PackingListUploadDialog - the currency, asked for only when nothing el
     // verdict, the real apply with what it wrote.
     applyPackingList.mockImplementation((_file: File, opts: { validateOnly?: boolean }) =>
       opts?.validateOnly
-        ? Promise.resolve({ valid: true, errors: [], warnings: [], summary: {} })
+        ? new Promise((r) => setTimeout(() => r({ valid: true, errors: [], warnings: [], summary: {} }), 300))
         : Promise.resolve({
             shipments_created: 1,
             shipments_updated: 0,
@@ -357,7 +357,12 @@ describe('PackingListUploadDialog - the currency, asked for only when nothing el
       validateOnly: true,
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    // Confirm stays disabled until BOTH the read and the validate-only apply have
+    // resolved (`canConfirm` is false while `testing`). Being called is not being
+    // resolved: under CI load the click landed on a disabled button and was a no-op.
+    const confirm = screen.getByRole('button', { name: 'Confirm' });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    fireEvent.click(confirm);
     await waitFor(() =>
       expect(applyPackingList).toHaveBeenLastCalledWith(file, {
         supplierId: 'sup-1',
