@@ -144,6 +144,11 @@ export interface OrderInquiryWorklistRow {
    * fulfilment location. Blank when neither is known.
    */
   location?: string | null;
+  /** Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`), off the same core
+   * sales order the S/O no column reaches. Null when the row reaches no core order, or
+   * that order carries no agent. */
+  agent_code?: string | null;
+  agent_label?: string | null;
   state: OrderInquiryState | string;
   /** When purchasing was told. The spreadsheet's per-day tabs are this date. */
   raised_at?: string | null;
@@ -171,13 +176,6 @@ export interface OrderInquiryWorklistParams {
   limit?: number;
   sort?: string;
   dir?: 'asc' | 'desc';
-  /**
-   * `YYYY-MM`. Summary-only: asks the summary to also carry `by_day`, the calendar
-   * view's day cells for that one month. Separate from `delivery_month` because the
-   * calendar's own displayed month and the list's delivery-month filter are two
-   * different things - paging the calendar must not narrow the list underneath it.
-   */
-  month?: string;
 }
 
 export interface OrderInquiryWorklistEnvelope {
@@ -202,26 +200,6 @@ export interface OrderInquiryFacet {
   rows: number;
 }
 
-/** One chip's worth: an item code and verb, summed across every row raised for it. */
-export interface OrderInquiryDayItem {
-  item_code?: string | null;
-  qty: string;
-  verb: OrderInquiryVerb | string;
-}
-
-/**
- * One cell on the calendar. `top` is EVERY distinct item/verb group that day owes,
- * largest quantity first, uncapped - the screen decides how many chips fit and folds
- * the rest into "+N more" rather than the server guessing a cut.
- */
-export interface OrderInquiryDayTotal {
-  /** `YYYY-MM-DD`. */
-  date: string;
-  rows: number;
-  qty: string;
-  top: OrderInquiryDayItem[];
-}
-
 export interface OrderInquiryWorklistSummary {
   /** The visible set: every filter applied, the month included. */
   total_rows: number;
@@ -240,6 +218,50 @@ export interface OrderInquiryWorklistSummary {
   by_month: OrderInquiryMonthTotal[];
   suppliers: OrderInquiryFacet[];
   projects: OrderInquiryFacet[];
-  /** The calendar view's day cells for one month. Empty unless `month` was asked for. */
-  by_day: OrderInquiryDayTotal[];
+}
+
+/* --------------------------------------------------------- the schedule matrix
+ *
+ * A 2D read of the SAME worklist rows the list shows (D1, reworked): the captain wanted
+ * "vertically I can see by product, by sales order, by customer, by agent, then
+ * horizontally is the dates ... by date, by month, by year" - a matrix like the
+ * fulfilment planning board's, not a day-grid calendar. Built entirely CLIENT-SIDE off
+ * one unpaged fetch of the already-filtered worklist: there is nothing here the server
+ * needs to compute that grouping the rows in the browser cannot answer just as well, and
+ * a second endpoint would be a second idea of what a row is.
+ */
+
+/** The vertical axis the captain named, in the order they named it. */
+export type OrderInquiryMatrixAxis = 'product' | 'sales_order' | 'customer' | 'agent';
+
+/** How the date axis is cut. Week is the default, matching the planning board's own. */
+export type OrderInquiryMatrixGranularity = 'day' | 'week' | 'month' | 'year';
+
+export type OrderInquiryMatrixBucketKind = 'dated' | 'no_date';
+
+/** One column. Only buckets a row actually owes exist - never a full calendar grid. */
+export interface OrderInquiryMatrixBucket {
+  key: string;
+  kind: OrderInquiryMatrixBucketKind;
+  label: string;
+  /** ISO date of the bucket's start, dated buckets only. The ordering key. */
+  start?: string | null;
+}
+
+/** One row, whichever axis produced it. `key` is never rendered; `label` is. */
+export interface OrderInquiryMatrixRow {
+  key: string;
+  label: string;
+  /** Secondary text - a product's name under its code, an agent's name under their code. */
+  description?: string | null;
+}
+
+/** One cell: this row, by this bucket, across every worklist row that lands there. */
+export interface OrderInquiryMatrixCell {
+  row_key: string;
+  bucket_key: string;
+  /** Summed across every contributing row. Decimal STRING, same reason the rows are. */
+  qty: string;
+  /** The contributing rows themselves - what a click on the cell drills down to. */
+  rows: OrderInquiryWorklistRow[];
 }

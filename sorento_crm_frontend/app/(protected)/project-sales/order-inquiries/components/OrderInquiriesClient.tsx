@@ -3,7 +3,6 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { format } from 'date-fns';
 import {
   PaginationState,
   SortingState,
@@ -11,11 +10,18 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { CalendarDays, Download, List, Search, X } from 'lucide-react';
+import { AlertTriangle, Download, LayoutGrid, List, PackageSearch, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  Alert,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
+} from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { Card, CardContent, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
@@ -23,16 +29,23 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   useOrderInquiryWorklist,
   useOrderInquiryWorklistSummary,
 } from '../../_shared/hooks/useOrderInquiry';
+import { buildOrderInquiryMatrix } from '../../_shared/lib/orderInquiryMatrix';
 import { deliveryMonthLabel, formatInquiryQty } from '../../_shared/lib/orderInquiryWorklist';
 import { saveBlobAs } from '../../_shared/services/fileDownload';
 import { downloadOrderInquiryWorklistXlsx } from '../../_shared/services/orderInquiryService';
-import { OrderInquiryCalendarView } from './OrderInquiryCalendarView';
-import { OrderInquiryDayDrilldown } from './OrderInquiryDayDrilldown';
+import type {
+  OrderInquiryMatrixAxis,
+  OrderInquiryMatrixCell,
+  OrderInquiryMatrixGranularity,
+} from '../../_shared/types/orderInquiry.types';
+import { OrderInquiryMatrixCellDrilldown } from './OrderInquiryMatrixCellDrilldown';
+import { OrderInquiryScheduleMatrix } from './OrderInquiryScheduleMatrix';
 import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
 
 const STATE_OPTIONS = [
@@ -41,12 +54,51 @@ const STATE_OPTIONS = [
   { value: 'cancelled', label: 'Cancelled' },
 ];
 
-type OrderInquiryView = 'list' | 'calendar';
+type OrderInquiryView = 'list' | 'schedule';
 
-/** Persisted in the URL as `?view=calendar`. List is the default the page shipped as. */
+/** Persisted in the URL as `?view=schedule`. List is the default the page shipped as. */
 function viewFrom(value: string | null): OrderInquiryView {
-  return value === 'calendar' ? 'calendar' : 'list';
+  return value === 'schedule' ? 'schedule' : 'list';
 }
+
+/** The vertical axis the captain named, in the order they named it (rework of D1). */
+const MATRIX_AXIS_OPTIONS = [
+  { value: 'product', label: 'Product' },
+  { value: 'sales_order', label: 'Sales order' },
+  { value: 'customer', label: 'Customer' },
+  { value: 'agent', label: 'Agent' },
+];
+
+const MATRIX_AXES: OrderInquiryMatrixAxis[] = ['product', 'sales_order', 'customer', 'agent'];
+
+function matrixAxisFrom(value: string | null): OrderInquiryMatrixAxis {
+  return MATRIX_AXES.includes(value as OrderInquiryMatrixAxis)
+    ? (value as OrderInquiryMatrixAxis)
+    : 'product';
+}
+
+const MATRIX_GRANULARITY_OPTIONS = [
+  { value: 'day', label: 'By day' },
+  { value: 'week', label: 'By week' },
+  { value: 'month', label: 'By month' },
+  { value: 'year', label: 'By year' },
+];
+
+const MATRIX_GRANULARITIES: OrderInquiryMatrixGranularity[] = ['day', 'week', 'month', 'year'];
+
+function matrixGranularityFrom(value: string | null): OrderInquiryMatrixGranularity {
+  return MATRIX_GRANULARITIES.includes(value as OrderInquiryMatrixGranularity)
+    ? (value as OrderInquiryMatrixGranularity)
+    : 'week';
+}
+
+/**
+ * The unpaged fetch the Schedule view groups client-side, the same limit-1000 idiom the
+ * old day drilldown used. A delivery-filtered worklist has never approached that many rows
+ * in practice; if one ever does, the fix is a real server-side aggregate, not a bigger
+ * number here.
+ */
+const MATRIX_FETCH_LIMIT = 1000;
 
 /**
  * Purchasing's own order inquiry, across every project and every adopted sales order.
@@ -56,14 +108,16 @@ function viewFrom(value: string | null): OrderInquiryView {
  * ADOPTED AutoCount order raises belong to no project at all, so before this page existed
  * they were reachable only from the one sales order that raised them.
  *
- * Two ways to read the same worklist (D1, the captain: "instead of putting the months at
- * the top, we should have a calendar view"):
+ * Two ways to read the same worklist (D1, reworked - the captain: "vertically I can see by
+ * product, by sales order, by customer, by agent etc, then horizontally is the dates, then
+ * of course I can view by date, by month, by year"):
  *   - List: their own spreadsheet's columns, their order, unpaged filters including a
  *     delivery-month select. Everything the page has always been.
- *   - Calendar: a month grid, one cell per delivery day, with the day's row/qty totals
- *     and its biggest items as chips. Clicking a day narrows the SAME list below the grid
- *     to that one day - reusing the list's own columns and the list's own table, rather
- *     than a slide-over with a second column set invented for it.
+ *   - Schedule: a 2D matrix like the fulfilment planning board's - rows by product, sales
+ *     order, customer or agent, columns by day, week, month or year, built entirely off
+ *     the same filtered worklist rows the list already fetches (one request, grouped in
+ *     the browser). Clicking a cell narrows the SAME columns below it to that cell's own
+ *     rows - reusing the list's own columns rather than a second set invented for it.
  * Both views read whatever state/supplier/project/query/raised-date filters are already
  * set; only the List view carries the toolbar that sets them, so there is one filter UI
  * rather than two that could disagree.
@@ -94,29 +148,33 @@ export function OrderInquiriesClient() {
   const [sorting, setSorting] = React.useState<SortingState>([
     { id: 'delivery_date', desc: false },
   ]);
-  // The calendar's own displayed month - independent of the list's `delivery_month`
-  // filter, because paging the calendar must not narrow the list underneath it. Defaults
-  // to a shared `?delivery_month=` deep link when one is present, else the current month.
-  const [calendarMonth, setCalendarMonth] = React.useState(
-    () => searchParams.get('delivery_month') || format(new Date(), 'yyyy-MM'),
+  const [matrixAxis, setMatrixAxis] = React.useState<OrderInquiryMatrixAxis>(() =>
+    matrixAxisFrom(searchParams.get('rows')),
   );
-  const [selectedDay, setSelectedDay] = React.useState<string | null>(null);
+  const [matrixGranularity, setMatrixGranularity] = React.useState<OrderInquiryMatrixGranularity>(
+    () => matrixGranularityFrom(searchParams.get('granularity')),
+  );
+  const [openCell, setOpenCell] = React.useState<OrderInquiryMatrixCell | null>(null);
 
-  // Only `view` travels in the URL (D1). `replace`, not `push`: switching views is not a
-  // place in history to go back to.
+  // `view`, `rows` and `granularity` travel in the URL, so a link to the Schedule view is
+  // shareable. `replace`, not `push`: turning a dial is not a place in history to go back to.
   React.useEffect(() => {
     const next = new URLSearchParams(searchParams.toString());
     if (view === 'list') next.delete('view');
     else next.set('view', view);
+    if (matrixAxis === 'product') next.delete('rows');
+    else next.set('rows', matrixAxis);
+    if (matrixGranularity === 'week') next.delete('granularity');
+    else next.set('granularity', matrixGranularity);
     const query = next.toString();
     if (query === searchParams.toString()) return;
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  }, [view, pathname, router, searchParams]);
+  }, [view, matrixAxis, matrixGranularity, pathname, router, searchParams]);
 
-  // A day drawn from a month that is no longer on screen is not a selection anymore.
+  // A cell drawn from one axis/granularity is not a selection under a different one.
   React.useEffect(() => {
-    setSelectedDay(null);
-  }, [calendarMonth]);
+    setOpenCell(null);
+  }, [matrixAxis, matrixGranularity]);
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => setDebounced(search.trim()), 300);
@@ -155,31 +213,21 @@ export function OrderInquiriesClient() {
   const list = useOrderInquiryWorklist(params, { enabled: view === 'list' });
   const summary = useOrderInquiryWorklistSummary(filters);
 
-  // The calendar's own request: the same filters MINUS delivery_month (the calendar names
-  // its own range through `month` instead), plus that range.
-  const calendarFilters = React.useMemo(
+  // The Schedule view's own request: the same filters, unpaged, so the matrix groups
+  // exactly what the list would otherwise page through.
+  const matrixParams = React.useMemo(
     () => ({
-      query: debounced || undefined,
-      raised_date: raisedDate || undefined,
-      state: stateFilter || undefined,
-      supplier_id: supplierFilter || undefined,
-      project_id: projectFilter || undefined,
-      month: calendarMonth,
+      ...filters,
+      limit: MATRIX_FETCH_LIMIT,
+      sort: 'delivery_date',
+      dir: 'asc' as const,
     }),
-    [debounced, raisedDate, stateFilter, supplierFilter, projectFilter, calendarMonth],
+    [filters],
   );
-  const calendarSummary = useOrderInquiryWorklistSummary(calendarFilters, {
-    enabled: view === 'calendar',
-  });
-  const dayDrilldownFilters = React.useMemo(
-    () => ({
-      query: debounced || undefined,
-      raised_date: raisedDate || undefined,
-      state: stateFilter || undefined,
-      supplier_id: supplierFilter || undefined,
-      project_id: projectFilter || undefined,
-    }),
-    [debounced, raisedDate, stateFilter, supplierFilter, projectFilter],
+  const matrixList = useOrderInquiryWorklist(matrixParams, { enabled: view === 'schedule' });
+  const matrix = React.useMemo(
+    () => buildOrderInquiryMatrix(matrixList.data?.data ?? [], matrixAxis, matrixGranularity),
+    [matrixList.data, matrixAxis, matrixGranularity],
   );
 
   const rows = React.useMemo(() => list.data?.data ?? [], [list.data]);
@@ -227,6 +275,13 @@ export function OrderInquiriesClient() {
     (projectFilter ? 1 : 0) +
     (raisedDate ? 1 : 0);
 
+  const openCellRow = openCell
+    ? matrix.rows.find((row) => row.key === openCell.row_key)
+    : undefined;
+  const openCellBucket = openCell
+    ? matrix.buckets.find((bucket) => bucket.key === openCell.bucket_key)
+    : undefined;
+
   return (
     <div className="space-y-5">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -249,10 +304,10 @@ export function OrderInquiriesClient() {
         </div>
       </header>
 
-      {/* List | Calendar (D1): the list reads the spreadsheet's own columns one page at a
-          time; the calendar reads the same rows by delivery day, which is the shape
-          purchasing actually plans a month in. A toggle, not two pages, because it is the
-          same worklist either way. */}
+      {/* List | Schedule: the list reads the spreadsheet's own columns one page at a time;
+          the schedule reads the same rows as a 2D matrix - by product, sales order,
+          customer or agent down the side, by day, week, month or year across the top. A
+          toggle, not two pages, because it is the same worklist either way. */}
       <div
         className="inline-flex rounded-md border border-input"
         role="group"
@@ -272,33 +327,99 @@ export function OrderInquiriesClient() {
         <Button
           type="button"
           size="sm"
-          variant={view === 'calendar' ? 'primary' : 'ghost'}
+          variant={view === 'schedule' ? 'primary' : 'ghost'}
           className="rounded-s-none border-s border-input"
-          aria-pressed={view === 'calendar'}
-          onClick={() => setView('calendar')}
+          aria-pressed={view === 'schedule'}
+          onClick={() => setView('schedule')}
         >
-          <CalendarDays className="size-4" aria-hidden />
-          Calendar
+          <LayoutGrid className="size-4" aria-hidden />
+          Schedule
         </Button>
       </div>
 
-      {view === 'calendar' ? (
-        <div className="space-y-5">
-          <Card className="p-4">
-            <OrderInquiryCalendarView
-              month={calendarMonth}
-              onMonthChange={setCalendarMonth}
-              byDay={calendarSummary.data?.by_day ?? []}
-              isLoading={calendarSummary.isLoading}
-              selectedDay={selectedDay}
-              onSelectDay={setSelectedDay}
+      {view === 'schedule' ? (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <Label htmlFor="matrix-rows" className="text-sm text-muted-foreground">
+                Rows
+              </Label>
+              <div className="w-44">
+                <SearchableSelect
+                  id="matrix-rows"
+                  value={matrixAxis}
+                  onChange={(value) => setMatrixAxis(value as OrderInquiryMatrixAxis)}
+                  options={MATRIX_AXIS_OPTIONS}
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Label htmlFor="matrix-granularity" className="text-sm text-muted-foreground">
+                By
+              </Label>
+              <div className="w-40">
+                <SearchableSelect
+                  id="matrix-granularity"
+                  value={matrixGranularity}
+                  onChange={(value) =>
+                    setMatrixGranularity(value as OrderInquiryMatrixGranularity)
+                  }
+                  options={MATRIX_GRANULARITY_OPTIONS}
+                />
+              </div>
+            </div>
+          </div>
+
+          {matrixList.isError ? (
+            <Alert variant="destructive" appearance="light">
+              <AlertIcon>
+                <AlertTriangle />
+              </AlertIcon>
+              <AlertContent>
+                <AlertTitle>The schedule could not be loaded</AlertTitle>
+                <AlertDescription>
+                  {matrixList.error instanceof Error
+                    ? matrixList.error.message
+                    : 'Try again in a moment.'}
+                </AlertDescription>
+              </AlertContent>
+            </Alert>
+          ) : matrixList.isLoading ? (
+            <div className="space-y-3">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-72 w-full" />
+            </div>
+          ) : matrix.rows.length === 0 ? (
+            <Card>
+              <CardContent className="px-6 py-10 text-center">
+                <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
+                <h3 className="mt-2 text-sm font-semibold">No inquiries in this view</h3>
+                <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                  {filtered
+                    ? 'Clear the month and the filters to see everything purchasing has been told to buy.'
+                    : 'Confirming supply in Fulfilment Planning raises the rows purchasing acts on.'}
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <OrderInquiryScheduleMatrix
+              buckets={matrix.buckets}
+              rows={matrix.rows}
+              rowHeader={
+                MATRIX_AXIS_OPTIONS.find((option) => option.value === matrixAxis)?.label ??
+                'Product'
+              }
+              cells={matrix.cells}
+              onOpenCell={setOpenCell}
             />
-          </Card>
-          {selectedDay && (
-            <OrderInquiryDayDrilldown
-              day={selectedDay}
-              monthFilters={dayDrilldownFilters}
-              onClose={() => setSelectedDay(null)}
+          )}
+
+          {openCell && (
+            <OrderInquiryMatrixCellDrilldown
+              cell={openCell}
+              rowLabel={openCellRow?.label ?? ''}
+              bucketLabel={openCellBucket?.label ?? ''}
+              onClose={() => setOpenCell(null)}
             />
           )}
         </div>

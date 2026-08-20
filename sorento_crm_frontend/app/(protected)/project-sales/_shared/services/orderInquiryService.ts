@@ -113,17 +113,12 @@ export async function markOrderInquiryRows(
  *        unknown value is a 422, never a silent fall back to the default.
  *
  *   GET  {BASE}/order-inquiries/summary
- *        the same filters, no paging, plus `month=YYYY-MM` (summary-only)
+ *        the same filters, no paging
  *        -> { total_rows, total_qty, by_state,
- *             by_month: [{month,label,rows,qty}], suppliers: [], projects: [],
- *             by_day: [{date,rows,qty,top:[{item_code,qty,verb}]}] }
+ *             by_month: [{month,label,rows,qty}], suppliers: [], projects: [] }
  *        The totals honour every filter. The three AXES each ignore their own filter on
  *        purpose: they are the screen's controls, and a control that empties itself the
  *        moment it is used cannot be used a second time.
- *        `by_day` is empty unless `month` is given; it is the calendar view's own day
- *        cells for that one month, every other filter still applied. `top` is EVERY
- *        distinct item/verb group that day owes, largest quantity first, uncapped - the
- *        screen picks how many chips fit and folds the rest into "+N more".
  *
  *   GET  {BASE}/order-inquiries/export
  *        the same filters, no paging -> xlsx, one sheet per delivery month.
@@ -131,6 +126,11 @@ export async function markOrderInquiryRows(
  * Rows come from EVERY project and from every adopted AutoCount order, which belongs to
  * no project at all. Permission is `projects.projects.view`, the same read the module
  * already grants.
+ *
+ * The Schedule matrix (List | Schedule, reworked) is NOT a fourth endpoint: it asks this
+ * same list, unpaged (`limit: MATRIX_FETCH_LIMIT` in `OrderInquiriesClient`), and groups
+ * the rows client-side by whichever axis and date granularity the reader picked
+ * (`_shared/lib/orderInquiryMatrix.ts`). One fetch, one idea of what a row is.
  */
 
 function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
@@ -147,7 +147,6 @@ function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
       state: params.state,
       project_id: params.project_id,
       supplier_id: params.supplier_id,
-      month: params.month,
     },
   );
 }

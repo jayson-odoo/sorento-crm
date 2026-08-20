@@ -13,7 +13,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  MOCK_WORKLIST_BY_DAY,
   MOCK_WORKLIST_ROWS,
   MOCK_WORKLIST_SUMMARY,
 } from '../../_shared/__mocks__/orderInquiryWorklist';
@@ -60,14 +59,19 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     onChange,
     options,
     placeholder,
+    id,
   }: {
     value: string;
     onChange: (next: string) => void;
     options?: { value: string; label: string }[];
     placeholder?: string;
+    id?: string;
   }) => (
+    // `id` wins over `placeholder` (the matrix's Rows/By selects carry no placeholder at
+    // all - they always hold a value), the same precedence the planning board's own mock
+    // uses for the identical pair of controls.
     <select
-      aria-label={placeholder ?? 'select'}
+      aria-label={id ?? placeholder ?? 'select'}
       value={value}
       onChange={(event) => onChange(event.target.value)}
     >
@@ -139,6 +143,7 @@ describe('OrderInquiriesClient', () => {
       'Qty',
       'Delivery date',
       'Project / customer',
+      'Agent',
       'Location',
       'Supplier',
       'PO no',
@@ -350,33 +355,33 @@ describe('OrderInquiriesClient', () => {
     expect(within(row as HTMLElement).getAllByText('Not placed')).toHaveLength(2);
   });
 
-  describe('the calendar view (D1)', () => {
-    it('switching to Calendar persists ?view=calendar in the URL', async () => {
+  describe('the schedule view (rework of D1: a matrix, not a day-grid calendar)', () => {
+    it('switching to Schedule persists ?view=schedule in the URL', async () => {
       renderClient();
       await screen.findByText('SO385126');
 
-      fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
 
       await waitFor(() =>
         expect(routerReplace).toHaveBeenCalledWith(
-          '/project-sales/order-inquiries?view=calendar',
+          '/project-sales/order-inquiries?view=schedule',
           expect.objectContaining({ scroll: false }),
         ),
       );
-      expect(screen.getByRole('button', { name: 'Calendar' })).toHaveAttribute(
+      expect(screen.getByRole('button', { name: 'Schedule' })).toHaveAttribute(
         'aria-pressed',
         'true',
       );
-      // The list table, and the removed month row, are gone in this view.
+      // The list table is gone in this view.
       expect(screen.queryByText('SO385126')).not.toBeInTheDocument();
     });
 
     it('opens on the view the URL carries, and switching back to List drops ?view', async () => {
-      currentSearchParams = new URLSearchParams('view=calendar');
+      currentSearchParams = new URLSearchParams('view=schedule');
       renderClient();
 
       await waitFor(() =>
-        expect(screen.getByRole('button', { name: 'Calendar' })).toHaveAttribute(
+        expect(screen.getByRole('button', { name: 'Schedule' })).toHaveAttribute(
           'aria-pressed',
           'true',
         ),
@@ -393,77 +398,56 @@ describe('OrderInquiriesClient', () => {
       expect(await screen.findByText('SO385126')).toBeInTheDocument();
     });
 
-    it('renders the month with day totals and chips, folding extras into "+N more"', async () => {
-      currentSearchParams = new URLSearchParams('view=calendar&delivery_month=2026-01');
-      getOrderInquiryWorklistSummary.mockImplementation((params) =>
-        Promise.resolve(
-          (params as { month?: string } | undefined)?.month
-            ? { ...MOCK_WORKLIST_SUMMARY, by_day: MOCK_WORKLIST_BY_DAY }
-            : MOCK_WORKLIST_SUMMARY,
-        ),
-      );
-
+    it('renders rows by product and columns by delivery month, undated rows in "No date"', async () => {
+      currentSearchParams = new URLSearchParams('view=schedule&granularity=month');
       renderClient();
 
-      expect(await screen.findByText('January 2026')).toBeInTheDocument();
-      const cell = await screen.findByRole('button', { name: /19 January 2026, 3 rows/ });
-      expect(within(cell).getByText('3 rows · 150 qty')).toBeInTheDocument();
-      expect(within(cell).getByText('SRTWC8605-SC-RL × 85')).toBeInTheDocument();
-      expect(within(cell).getByText('SRTWB5400 × 35')).toBeInTheDocument();
-      expect(within(cell).getByText('BT012-CR × 20')).toBeInTheDocument();
-      // A fourth item exists in the fixture; the cell shows three chips and folds the rest.
-      expect(within(cell).getByText('+1 more')).toBeInTheDocument();
+      expect(await screen.findByText('SRTWB5400')).toBeInTheDocument();
+      expect(screen.getByText('SRTWC8605-SC-RL')).toBeInTheDocument();
+      expect(screen.getByText('SRTWT107')).toBeInTheDocument();
+      expect(screen.getByText('BT012-CR')).toBeInTheDocument();
+      expect(screen.getByText('Jan 2026')).toBeInTheDocument();
+      expect(screen.getByText('Mar 2026')).toBeInTheDocument();
+      expect(screen.getByText('No date')).toBeInTheDocument();
     });
 
-    it('a day with nothing raised is not a button that opens anything', async () => {
-      currentSearchParams = new URLSearchParams('view=calendar&delivery_month=2026-02');
-      getOrderInquiryWorklistSummary.mockImplementation((params) =>
-        Promise.resolve(
-          (params as { month?: string } | undefined)?.month
-            ? { ...MOCK_WORKLIST_SUMMARY, by_day: [] }
-            : MOCK_WORKLIST_SUMMARY,
+    it('switching Rows to Agent persists ?rows=agent and regroups by agent code', async () => {
+      currentSearchParams = new URLSearchParams('view=schedule');
+      renderClient();
+      await screen.findByText('SRTWB5400');
+
+      fireEvent.change(screen.getByLabelText('matrix-rows'), { target: { value: 'agent' } });
+
+      await waitFor(() =>
+        expect(routerReplace).toHaveBeenCalledWith(
+          '/project-sales/order-inquiries?view=schedule&rows=agent',
+          expect.objectContaining({ scroll: false }),
         ),
       );
-
-      renderClient();
-
-      expect(await screen.findByText('February 2026')).toBeInTheDocument();
-      const emptyDay = await screen.findByRole('button', { name: '13 February 2026' });
-      expect(emptyDay).toBeDisabled();
+      expect(await screen.findByText('SEAN I')).toBeInTheDocument();
+      expect(screen.getByText('No agent')).toBeInTheDocument();
     });
 
-    it('clicking a day narrows the worklist below the grid to that one day', async () => {
-      currentSearchParams = new URLSearchParams('view=calendar&delivery_month=2026-01');
-      getOrderInquiryWorklistSummary.mockImplementation((params) =>
-        Promise.resolve(
-          (params as { month?: string } | undefined)?.month
-            ? { ...MOCK_WORKLIST_SUMMARY, by_day: MOCK_WORKLIST_BY_DAY }
-            : MOCK_WORKLIST_SUMMARY,
-        ),
-      );
-      listOrderInquiryWorklist.mockResolvedValue(
-        envelope(
-          MOCK_WORKLIST_ROWS.filter((row) => (row.delivery_date ?? '').startsWith('2026-01')),
-        ),
-      );
-
+    it('clicking a cell drills down to its own rows, in the list columns', async () => {
+      currentSearchParams = new URLSearchParams('view=schedule&granularity=month');
       renderClient();
-      const cell = await screen.findByRole('button', { name: /19 January 2026, 3 rows/ });
+      const cell = await screen.findByRole('button', { name: '85, 1 row' });
 
       fireEvent.click(cell);
 
-      await waitFor(() =>
-        expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
-          expect.objectContaining({ delivery_month: '2026-01', limit: 1000 }),
-        ),
-      );
-      expect(await screen.findByText('Due 19 January 2026')).toBeInTheDocument();
-      // Only the row actually delivering on the 19th survives the day filter.
-      expect(screen.getByText('SRTWC8605-SC-RL')).toBeInTheDocument();
-      expect(screen.queryByText('SRTWB5400')).not.toBeInTheDocument();
+      expect(await screen.findByText('SRTWC8605-SC-RL · Jan 2026')).toBeInTheDocument();
+      expect(screen.getByText('SO386461')).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-      expect(screen.queryByText('Due 19 January 2026')).not.toBeInTheDocument();
+      expect(screen.queryByText('SRTWC8605-SC-RL · Jan 2026')).not.toBeInTheDocument();
+    });
+
+    it('says nothing is in this view when the filtered schedule is empty', async () => {
+      listOrderInquiryWorklist.mockResolvedValue(envelope([]));
+      currentSearchParams = new URLSearchParams('view=schedule');
+      renderClient();
+
+      expect(await screen.findByText('No inquiries in this view')).toBeInTheDocument();
     });
   });
 });

@@ -10,7 +10,6 @@
  * the prototype and the tests means a test cannot pass against a row the screen never saw.
  */
 import type {
-  OrderInquiryDayTotal,
   OrderInquiryWorklistRow,
   OrderInquiryWorklistSummary,
 } from '../types/orderInquiry.types';
@@ -29,6 +28,8 @@ export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
     supplier_id: 'sup-1',
     po_number: '202601-S0015',
     location: 'BRW-BB',
+    agent_code: 'SEAN I',
+    agent_label: 'Sean',
     state: 'actioned',
     raised_at: '2026-01-02T09:15:00',
     verb: 'ORDER',
@@ -51,6 +52,8 @@ export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
     supplier_id: null,
     po_number: null,
     location: null,
+    agent_code: null,
+    agent_label: null,
     state: 'raised',
     raised_at: '2026-01-08T11:02:00',
     verb: 'ORDER',
@@ -72,6 +75,8 @@ export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
     supplier: 'CHAOSHENG',
     supplier_id: 'sup-2',
     po_number: '202601-S0044',
+    agent_code: 'LCL',
+    agent_label: 'Lee',
     state: 'raised',
     raised_at: '2026-01-02T09:15:00',
     verb: 'ORDER',
@@ -120,25 +125,4 @@ export const MOCK_WORKLIST_SUMMARY: OrderInquiryWorklistSummary = {
     { id: 'proj-4', label: 'SDB @ Gombak', rows: 1 },
     { id: 'proj-9', label: 'Eko Titiwangsa', rows: 1 },
   ],
-  // Empty by default - only the calendar view asks for `month`, and the summary carries
-  // day cells only for the month it was asked about.
-  by_day: [],
 };
-
-/**
- * A single calendar day carrying four distinct item/verb groups, so the day-cell fixture
- * exercises both the chip rendering AND the "+N more" fold (the cell shows three chips).
- */
-export const MOCK_WORKLIST_BY_DAY: OrderInquiryDayTotal[] = [
-  {
-    date: '2026-01-19',
-    rows: 3,
-    qty: '150',
-    top: [
-      { item_code: 'SRTWC8605-SC-RL', qty: '85', verb: 'ORDER' },
-      { item_code: 'SRTWB5400', qty: '35', verb: 'ORDER' },
-      { item_code: 'BT012-CR', qty: '20', verb: 'CANCEL_BALANCE' },
-      { item_code: 'ZZT-EXTRA', qty: '10', verb: 'ORDER' },
-    ],
-  },
-];

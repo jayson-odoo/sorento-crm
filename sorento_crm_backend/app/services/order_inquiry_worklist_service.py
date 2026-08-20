@@ -52,6 +52,7 @@ from app.models.project_so import (
     ProjectSalesOrderLine,
 )
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
+from app.models.sales_agent import SalesAgent
 from app.services.error_handler import AppException
 from app.services.project_order_inquiry_service import project_customer_label
 
@@ -83,6 +84,7 @@ SORTABLE_FIELDS = frozenset(
         "state",
         "raised_at",
         "location",
+        "agent",
     }
 )
 
@@ -196,6 +198,7 @@ _SORT_EXPRESSIONS = {
     "state": OrderInquiryRow.state,
     "raised_at": _RAISED_AT,
     "location": _LOCATION,
+    "agent": SalesAgent.sales_agent,
 }
 
 _COLUMNS = (
@@ -220,6 +223,8 @@ _COLUMNS = (
     Supplier.supplier_name.label("supplier"),
     PurchaseOrder.po_number.label("po_number"),
     _LOCATION.label("location"),
+    SalesAgent.sales_agent.label("agent_code"),
+    SalesAgent.person_label.label("agent_label"),
 )
 
 
@@ -319,6 +324,11 @@ class OrderInquiryWorklistService:
             )
             .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
             .outerjoin(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
+            # Who sold it. The same core sales order the SO DATE / S/O NO columns already
+            # read off - `core_sales_order_line_id` is only ever set to a line of THIS
+            # order (`project_so_reconciliation_service`), so this is the one join, not a
+            # per-row lookup.
+            .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
             .outerjoin(Project, Project.id == ProjectSalesOrder.project_id)
             .outerjoin(
                 ProjectPurchaseOrder,
@@ -434,6 +444,8 @@ class OrderInquiryWorklistService:
             "supplier_id": row.supplier_id,
             "po_number": row.po_number,
             "location": row.location,
+            "agent_code": row.agent_code,
+            "agent_label": row.agent_label,
             "state": row.state,
             "raised_at": row.raised_at,
             "verb": row.verb,
@@ -448,16 +460,12 @@ class OrderInquiryWorklistService:
 
     # ---------------------------------------------------------------- summary
 
-    def summary(self, *, month: Optional[str] = None, **filters) -> Dict[str, Any]:
+    def summary(self, **filters) -> Dict[str, Any]:
         """The strip above the list, and the three controls beside it.
 
         Totals honour EVERY filter, month included, because they describe what is on
         screen. The three axes each drop their own filter, because a control that empties
         itself the moment you use it cannot be used a second time.
-
-        ``month`` is additive and optional: when given, the response also carries
-        ``by_day`` - the calendar view's day cells for that one month. Every other field
-        is exactly what it was before this existed, whether or not ``month`` is passed.
         """
         visible = self._base(**filters)
         state_rows = (
@@ -485,72 +493,7 @@ class OrderInquiryWorklistService:
             "by_month": self._by_month({**filters, "delivery_month": None}),
             "suppliers": self._suppliers({**filters, "supplier_id": None}),
             "projects": self._projects({**filters, "project_id": None}),
-            "by_day": (
-                self._by_day(month, {**filters, "delivery_month": None}) if month else []
-            ),
         }
-
-    def _by_day(self, month: str, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """One entry per day in `month` that has at least one row - the calendar's cells.
-
-        Respects every filter EXCEPT `delivery_month`: `month` names the exact range this
-        is about, the same way `_by_month` drops its own filter before counting the strip.
-        `_month_bounds` is the same validator the month strip uses, so a malformed month
-        refuses here exactly as it does there.
-        """
-        first, following = _month_bounds(month)
-        day_filters = {**filters, "delivery_month": None}
-        base = self._base(**day_filters).filter(
-            OrderInquiryRow.delivery_date >= first,
-            OrderInquiryRow.delivery_date < following,
-        )
-        totals = (
-            base.with_entities(
-                OrderInquiryRow.delivery_date,
-                func.count(OrderInquiryRow.id),
-                func.coalesce(func.sum(OrderInquiryRow.qty), 0),
-            )
-            .group_by(OrderInquiryRow.delivery_date)
-            .order_by(OrderInquiryRow.delivery_date.asc())
-            .all()
-        )
-        # A row with no item code has nothing a chip can print, so it counts toward the
-        # day's own rows/qty above but never toward a chip group.
-        item_rows = (
-            base.with_entities(
-                OrderInquiryRow.delivery_date,
-                OrderInquiryRow.item_code,
-                OrderInquiryRow.verb,
-                func.coalesce(func.sum(OrderInquiryRow.qty), 0),
-            )
-            .filter(OrderInquiryRow.item_code.isnot(None))
-            .group_by(
-                OrderInquiryRow.delivery_date,
-                OrderInquiryRow.item_code,
-                OrderInquiryRow.verb,
-            )
-            .all()
-        )
-        top_by_day: Dict[date, List[Dict[str, Any]]] = {}
-        for day, item_code, verb, qty in item_rows:
-            top_by_day.setdefault(day, []).append(
-                {"item_code": item_code, "verb": verb, "qty": _dec(qty)}
-            )
-        for entries in top_by_day.values():
-            entries.sort(key=lambda entry: entry["qty"], reverse=True)
-
-        return [
-            {
-                "date": day,
-                "rows": int(count),
-                "qty": _qty_str(_dec(qty)),
-                "top": [
-                    {**entry, "qty": _qty_str(entry["qty"])}
-                    for entry in top_by_day.get(day, [])
-                ],
-            }
-            for day, count, qty in totals
-        ]
 
     def _by_month(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
         month = func.to_char(OrderInquiryRow.delivery_date, "YYYY-MM")

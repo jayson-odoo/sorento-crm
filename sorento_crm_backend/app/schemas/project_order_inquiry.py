@@ -94,6 +94,11 @@ class OrderInquiryWorklistRow(BaseModel):
     # the confirmed allocation's warehouse for a plan/confirmed row, otherwise the line's
     # own fulfilment location. Blank when neither is known.
     location: Optional[str] = None
+    # Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`), read off the same core
+    # sales order the SO DATE / S/O NO columns already join to. Null on an authored row
+    # that reaches no core order and on one whose core order carries no agent.
+    agent_code: Optional[str] = None
+    agent_label: Optional[str] = None
     state: str
     raised_at: Optional[datetime] = None
     verb: str
@@ -127,33 +132,6 @@ class OrderInquiryStateCounts(BaseModel):
     total: int = 0
 
 
-class OrderInquiryDayItem(BaseModel):
-    """One item/verb group on a calendar day - a chip, not a row.
-
-    Rows of the same item code raised with the same verb are one instruction as far as
-    the calendar cell is concerned, so they are summed rather than printed once each.
-    """
-
-    item_code: Optional[str] = None
-    qty: str = "0"
-    verb: str
-
-
-class OrderInquiryDayTotal(BaseModel):
-    """One cell on the calendar: what is due on this delivery day.
-
-    ``top`` is every distinct item/verb group that day owes, largest quantity first -
-    ALL of them, uncapped. The screen decides how many chips a cell has room for and
-    folds the rest into "+N more"; the server guessing a cut would be right for no
-    screen size in particular.
-    """
-
-    date: date
-    rows: int = 0
-    qty: str = "0"
-    top: List[OrderInquiryDayItem] = []
-
-
 class OrderInquiryWorklistSummary(BaseModel):
     """The strip above the list, and the three controls beside it.
 
@@ -168,9 +146,6 @@ class OrderInquiryWorklistSummary(BaseModel):
     by_month: List[OrderInquiryMonthTotal] = []
     suppliers: List[OrderInquiryFacet] = []
     projects: List[OrderInquiryFacet] = []
-    #: The calendar view's own day cells for one month, empty unless a `month` was asked
-    #: for. Additive: every existing field above is unchanged whether or not this is used.
-    by_day: List[OrderInquiryDayTotal] = []
 
 
 class MarkInquiryRowsRequest(BaseModel):

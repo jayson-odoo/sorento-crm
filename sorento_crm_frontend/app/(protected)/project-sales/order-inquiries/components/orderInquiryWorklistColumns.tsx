@@ -141,6 +141,25 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
           ),
       },
       {
+        accessorKey: 'agent_code',
+        header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
+        size: 110,
+        meta: { headerTitle: 'Agent', skeleton: <Skeleton className="h-4 w-14" /> },
+        // Who sold it, off the core sales order. Blank when the row reaches no core order
+        // or that order carries no agent - never a guess.
+        cell: ({ row }) =>
+          row.original.agent_code ? (
+            <span
+              className="block truncate"
+              title={row.original.agent_label || row.original.agent_code}
+            >
+              {row.original.agent_code}
+            </span>
+          ) : (
+            <Muted>Not assigned</Muted>
+          ),
+      },
+      {
         accessorKey: 'location',
         header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
         size: 130,
