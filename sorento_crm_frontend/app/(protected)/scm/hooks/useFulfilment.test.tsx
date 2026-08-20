@@ -23,11 +23,12 @@ vi.mock('sonner', () => ({
 
 vi.mock('../services/fulfilmentService', () => ({
   createLoadingPlan: (...a: unknown[]) => createLoadingPlan(...a),
-  rerunLoadingPlan: vi.fn(),
+  updateLoadingPlan: vi.fn(),
   approveLoadingPlan: vi.fn(),
   getContainerSizes: vi.fn(),
   getSupplierStock: vi.fn(),
-  getUnfinishedPoLines: vi.fn(),
+  getUnfinishedStock: vi.fn(),
+  getSupplierStockListFile: vi.fn(),
   getLoadingPlans: vi.fn(),
   applyStockList: vi.fn(),
   previewStockList: vi.fn(),
@@ -97,8 +98,18 @@ describe('useContainerRequestBuild', () => {
     const { result } = renderHook(() => useContainerRequestBuild('sup-1'), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(buildContainerRequest).toHaveBeenCalledWith('sup-1');
+    expect(buildContainerRequest).toHaveBeenCalledWith('sup-1', undefined);
     expect(result.current.data?.supplier_id).toBe('sup-1');
+  });
+
+  it('forwards the "Plan until" horizon date to the build', async () => {
+    buildContainerRequest.mockResolvedValue({
+      supplier_id: 'sup-1', stock_list_as_of: '2026-08-18T00:00:00', rows: [], not_on_stock_list: 0,
+    });
+    const { result } = renderHook(() => useContainerRequestBuild('sup-1', '2026-09-01'), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(buildContainerRequest).toHaveBeenCalledWith('sup-1', '2026-09-01');
   });
 });
 
