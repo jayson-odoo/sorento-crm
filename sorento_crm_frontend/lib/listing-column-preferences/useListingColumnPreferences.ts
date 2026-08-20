@@ -2,13 +2,14 @@
 
 import { Table } from '@tanstack/react-table';
 import { useEffect, useMemo, useRef } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { debounce } from '@/lib/helpers';
 import {
   getUserListColumnConfig,
   resetUserListColumnConfig,
   upsertUserListColumnConfig,
   type UserListColumnConfigPayload,
+  type UserListColumnConfigResponse,
 } from './listColumnPreferencesService';
 import { mergeColumnOrderWithLeafColumns } from './mergeColumnOrder';
 
@@ -41,6 +42,7 @@ export function useListingColumnPreferences<TData extends object>({
   debounceMs?: number;
 }) {
   const key = (listingKey || '').trim();
+  const queryClient = useQueryClient();
 
   const defaultOrder = useMemo(() => {
     const stateOrder = (table.getState() as ColumnStateFromTanStack)?.columnOrder;
@@ -175,6 +177,25 @@ export function useListingColumnPreferences<TData extends object>({
 
   const upsertMutation = useMutation({
     mutationFn: (payload: UserListColumnConfigPayload) => upsertUserListColumnConfig(key, payload),
+    /**
+     * Seed the cache with the row the write returned, rather than invalidating: we
+     * already know the value, and a refetch would race the debounce.
+     *
+     * The query is `staleTime: Infinity` and nothing invalidated it, so a re-mount
+     * within the same SPA session re-read the PRE-save config and re-applied the OLD
+     * columns. Rarely noticed here (few people reorder columns and come straight
+     * back), but `useListingViewPreferences` shares this cache entry and its sort and
+     * filter change constantly, where the same staleness reads as "it forgot my
+     * filter". PLAN-listing-view-memory 3.3.
+     *
+     * Seeding the RESPONSE, not the payload, is what makes this safe: the endpoint
+     * merges, so the response carries the view keys this hook never sends. Seeding
+     * the partial body would drop them and re-create the clobber in the cache.
+     */
+    onSuccess: (result: UserListColumnConfigResponse) => {
+      if (!key) return;
+      queryClient.setQueryData(['list-column-config', key], result);
+    },
   });
 
   const debouncedSaveRef = useRef(
@@ -222,6 +243,15 @@ export function useListingColumnPreferences<TData extends object>({
 
   const resetMutation = useMutation({
     mutationFn: () => resetUserListColumnConfig(key),
+    // The row is gone, so the seeded cache entry must go with it - otherwise a
+    // re-mount would re-apply the config the user just reset.
+    onSuccess: () => {
+      if (!key) return;
+      queryClient.setQueryData(['list-column-config', key], {
+        listing_key: key,
+        config: null,
+      } satisfies UserListColumnConfigResponse);
+    },
   });
 
   const resetToDefaults = async () => {

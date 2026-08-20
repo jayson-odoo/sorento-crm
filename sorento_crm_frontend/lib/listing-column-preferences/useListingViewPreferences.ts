@@ -4,16 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { OnChangeFn, SortingState } from '@tanstack/react-table';
 import { debounce } from '@/lib/helpers';
-import type {
-  ListSortEntry,
-  UserListColumnConfigPayload,
-  UserListColumnConfigResponse,
+import {
+  getUserListColumnConfig,
+  upsertUserListColumnConfig,
+  type ListSortEntry,
+  type UserListColumnConfigPayload,
+  type UserListColumnConfigResponse,
 } from './listColumnPreferencesService';
-// TODO(phase-2): THE SEAM. Swap these two for `getUserListColumnConfig` /
-// `upsertUserListColumnConfig` from './listColumnPreferencesService' and swap
-// VIEW_QUERY_KEY_PREFIX for 'list-column-config' (see below). Nothing else in this
-// file changes.
-import { readListViewPreferences, writeListViewPreferences } from './listViewPreferencesStub';
 
 /**
  * Remembers the sort and the filter a user left a listing in, per user, per listing.
@@ -33,10 +30,13 @@ import { readListViewPreferences, writeListViewPreferences } from './listViewPre
  * its data query and fetch exactly once, already filtered and sorted (AC-B3).
  */
 
-// TODO(phase-2): becomes 'list-column-config', the key the column hook already uses,
-// so both hooks share a single GET of the single row. It is separate in Phase 1 only
-// because the column hook talks to the real endpoint while this one talks to the stub.
-const VIEW_QUERY_KEY_PREFIX = 'list-view-config';
+/**
+ * The SAME key the column hook uses, deliberately: one row, one GET. React Query
+ * dedupes the two hooks' concurrent reads into a single request, and each hook seeds
+ * this entry from its own PUT response - which the endpoint returns fully merged, so
+ * neither seeding drops the other's keys.
+ */
+const CONFIG_QUERY_KEY_PREFIX = 'list-column-config';
 
 function stableStringify(value: unknown): string {
   if (value === undefined) return 'undefined';
@@ -49,6 +49,20 @@ function stableStringify(value: unknown): string {
     );
   }
   return JSON.stringify(value);
+}
+
+/** The persisted form of the sort: exactly what goes in the payload. */
+function toSortEntries(sorting: SortingState): ListSortEntry[] {
+  return sorting.map((s) => ({ id: s.id, desc: Boolean(s.desc) }));
+}
+
+/**
+ * Both sides of the "has the view changed?" comparison go through here, on the
+ * PERSISTED form rather than raw TanStack state - otherwise a differently-key-ordered
+ * sort object from TanStack would read as a change and write back an identical value.
+ */
+function viewFingerprintOf(sorting: SortingState, filters: unknown): string {
+  return stableStringify({ sorting: toSortEntries(sorting), filters: filters ?? null });
 }
 
 /** Keeps only well-formed `{id, desc}` entries; a malformed blob applies nothing. */
@@ -110,8 +124,8 @@ export function useListingViewPreferences<TFilters extends Record<string, unknow
   const persistedFingerprintRef = useRef<string | null>(null);
 
   const { data: saved } = useQuery({
-    queryKey: [VIEW_QUERY_KEY_PREFIX, key],
-    queryFn: () => readListViewPreferences(key),
+    queryKey: [CONFIG_QUERY_KEY_PREFIX, key],
+    queryFn: () => getUserListColumnConfig(key),
     enabled: Boolean(key),
     staleTime: Infinity,
     retry: 0,
@@ -150,28 +164,25 @@ export function useListingViewPreferences<TFilters extends Record<string, unknow
 
     // What the listing now shows IS what storage holds, so nothing is written back:
     // not for a first-time user (AC-B2), not for the sort/filter we just applied.
-    persistedFingerprintRef.current = stableStringify({
-      sorting: nextSorting,
-      filters: storedFilters,
-    });
+    persistedFingerprintRef.current = viewFingerprintOf(nextSorting, storedFilters);
     appliedRef.current = true;
     setApplied(true);
   }, [key, saved, filtersVersion]);
 
   const viewFingerprint = useMemo(
-    () => stableStringify({ sorting, filters }),
+    () => viewFingerprintOf(sorting, filters),
     [sorting, filters],
   );
 
   const upsertMutation = useMutation({
-    mutationFn: (payload: UserListColumnConfigPayload) => writeListViewPreferences(key, payload),
+    mutationFn: (payload: UserListColumnConfigPayload) => upsertUserListColumnConfig(key, payload),
     // Seed the cache with the row the write returned. The query is `staleTime:
     // Infinity` and nothing invalidates it, so without this a re-mount within the
     // same SPA session re-applies the PRE-save value - it reads as "it forgot my
     // filter", the exact failure this feature exists to prevent (AC-B7, PLAN 3.3).
     onSuccess: (result: UserListColumnConfigResponse) => {
       if (!key) return;
-      queryClient.setQueryData([VIEW_QUERY_KEY_PREFIX, key], result);
+      queryClient.setQueryData([CONFIG_QUERY_KEY_PREFIX, key], result);
     },
   });
 
@@ -194,10 +205,7 @@ export function useListingViewPreferences<TFilters extends Record<string, unknow
     if (!key) return;
     if (!appliedRef.current) return;
 
-    const sortingPayload: ListSortEntry[] = sorting.map((s) => ({
-      id: s.id,
-      desc: Boolean(s.desc),
-    }));
+    const sortingPayload = toSortEntries(sorting);
 
     // An explicit null is a CLEAR, not "I am not writing that key" - that is the
     // distinction the chip's Clear affordance needs (AC-A3 / AC-C2). The column keys
