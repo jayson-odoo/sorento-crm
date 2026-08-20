@@ -1585,6 +1585,55 @@ def _notify_purchasing(
         return False
 
 
+def _bystander_returned_to_review(
+    db: Session,
+    supply,
+    order: ProjectSalesOrder,
+    so_number: str,
+    previous_decision,
+    previous_frozen: Dict[str, dict],
+    handled_line_ids: set,
+    revised: bool,
+) -> List[dict]:
+    """The applied-order surface's answer to B1 (code review, 20 Aug 2026): applying a batch
+    that (deliberately, module docstring) drops uncarried lines back to undecided used to say
+    nothing about it - `applied_orders`/`failed_orders` alone can't tell a clean apply from
+    one that just silently returned nine bystander lines to review. This does NOT change
+    what gets carried (still nothing, from a challenged revision, or a materially-superseded
+    one) - it only NAMES what already happened, derived from the decision rows themselves
+    rather than guessed: a line the PREVIOUS active revision covered that the new one (or,
+    for a material-change supersede, no revision at all) does not, and that THIS batch never
+    decided about at all - `handled_line_ids` already covers kept/confirmed/replanned/
+    released/retired/reduced lines, which are visible on the batch's own rows and are not
+    "silent"."""
+    if not revised or previous_decision is None or not previous_frozen:
+        return []
+    pso_id = str(order.id)
+    new_active = supply.active_decision(pso_id)
+    new_covered_ids = set((supply.frozen_lines_of(new_active) if new_active else {}).keys())
+    bystander_ids = set(previous_frozen.keys()) - new_covered_ids - handled_line_ids
+    if not bystander_ids:
+        return []
+    line_nos = sorted(
+        r[0]
+        for r in db.query(ProjectSalesOrderLine.line_no)
+        .filter(ProjectSalesOrderLine.id.in_(list(bystander_ids)))
+        .all()
+        if r[0] is not None
+    )
+    reason = previous_decision.superseded_reason or (
+        "The confirmed revision no longer matched the sales order."
+    )
+    return [
+        {
+            "so_number": so_number,
+            "line_count": len(bystander_ids),
+            "line_nos": line_nos,
+            "reason": reason,
+        }
+    ]
+
+
 def _apply_one_order(
     db: Session,
     supply,
@@ -1620,6 +1669,7 @@ def _apply_one_order(
         "lines_confirmed": 0,
         "inquiry_counts": {},
         "notified": False,
+        "returned_to_review": [],
     }
     if not accepted:
         return empty_result
@@ -1721,6 +1771,10 @@ def _apply_one_order(
         )
         revised = True
 
+    returned_to_review = _bystander_returned_to_review(
+        db, supply, order, so_number, active_decision, frozen, handled_line_ids, revised
+    )
+
     demand_rows, inquiry_counts = _oi_demand_rows(db, live, so_number)
     if demand_rows:
         ProjectOrderInquiryService(db).derive_for_book_change(
@@ -1749,6 +1803,7 @@ def _apply_one_order(
         "lines_confirmed": confirmed,
         "inquiry_counts": inquiry_counts,
         "notified": notified,
+        "returned_to_review": returned_to_review,
     }
 
 
@@ -1778,7 +1833,12 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
                 if r.applied_state == PLANNING_CHANGE_STATE_APPLIED
             }
         )
-        return {"applied_orders": applied_orders, "failed_orders": [], "already_applied": True}
+        return {
+            "applied_orders": applied_orders,
+            "failed_orders": [],
+            "already_applied": True,
+            "returned_to_review": (batch.result_json or {}).get("returned_to_review", []),
+        }
 
     by_order: Dict[str, List[PlanningChangeRow]] = defaultdict(list)
     for r in rows:
@@ -1793,6 +1853,7 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
     lines_replanned = 0
     lines_confirmed = 0
     purchasing_notified = False
+    returned_to_review: List[dict] = []
 
     for pso_id, order_rows in by_order.items():
         order = orders_map.get(pso_id)
@@ -1835,6 +1896,7 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
         for verb, count in outcome["inquiry_counts"].items():
             inquiry_counts[verb] = inquiry_counts.get(verb, 0) + count
         purchasing_notified = purchasing_notified or outcome["notified"]
+        returned_to_review.extend(outcome["returned_to_review"])
 
     # A batch is DONE only once it has written something. Stamping `applied_at` when
     # `orders_revised` is empty - nothing was actually written, whether because every
@@ -1860,6 +1922,7 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
             "lines_replanned": lines_replanned,
             "lines_confirmed": lines_confirmed,
             "purchasing_notified": purchasing_notified,
+            "returned_to_review": returned_to_review,
         }
     db.flush()
 
@@ -1867,4 +1930,5 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
         "applied_orders": applied_orders,
         "failed_orders": failed_orders,
         "already_applied": False,
+        "returned_to_review": returned_to_review,
     }

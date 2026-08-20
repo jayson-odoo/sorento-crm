@@ -18,6 +18,15 @@ import {
 } from '../../_shared/__mocks__/orderInquiryWorklist';
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
 
+// Every existing test here exercises an actor who CAN act on Order Inquiry - N1's own
+// view-only case gets its own describe block below, toggling this to empty.
+let granted = new Set(['projects.order_inquiry.action']);
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: (slug: string) => granted.has(slug),
+  useHasAnyPermission: (slugs: string[]) => slugs.some((slug) => granted.has(slug)),
+  usePermissions: () => ({ permissions: [...granted], permissionSet: granted, isLoading: false }),
+}));
+
 const routerReplace = vi.fn();
 let currentSearchParams = new URLSearchParams('');
 
@@ -130,6 +139,7 @@ function openActionsMenu() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  granted = new Set(['projects.order_inquiry.action']);
   currentSearchParams = new URLSearchParams('');
   listOrderInquiryWorklist.mockResolvedValue(envelope(MOCK_WORKLIST_ROWS));
   getOrderInquiryWorklistSummary.mockResolvedValue(MOCK_WORKLIST_SUMMARY);
@@ -549,6 +559,93 @@ describe('OrderInquiriesClient', () => {
         ),
       ).not.toBeInTheDocument();
       expect(autoPlaceOrderInquiryRows).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Unplace all (S2/S3/N1, code review 20 Aug 2026)', () => {
+    it('names every placed row when no filter narrows the scope, and tells the truth about what is lost', async () => {
+      getUnplaceAllPreview.mockResolvedValue({ count: 5, product_code: null, product_name: null });
+      renderClient();
+      await screen.findByText('SO385126');
+
+      openActionsMenu();
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Unplace all' }));
+
+      const dialog = await screen.findByRole('alertdialog');
+      expect(dialog.textContent).toContain('5 placed rows across the whole company');
+      expect(dialog.textContent).toContain(
+        'Auto-place will re-deal them by the current priority policy. Placements made by hand are not restored.',
+      );
+      // Never the old "the current view" wording - it silently included State, which this
+      // scope never does.
+      expect(dialog.textContent).not.toContain('current view');
+    });
+
+    it('never lets State narrow the described scope - it always means placed rows', async () => {
+      getUnplaceAllPreview.mockResolvedValue({ count: 5, product_code: null, product_name: null });
+      renderClient();
+      await screen.findByText('SO385126');
+
+      openFilters();
+      fireEvent.change(screen.getByLabelText('Every state'), { target: { value: 'raised' } });
+      // The filter popover is modal, so everything behind it is out of the accessibility
+      // tree until it closes.
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+      openActionsMenu();
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Unplace all' }));
+
+      const dialog = await screen.findByRole('alertdialog');
+      // Still "every placed row" - State=raised did not silently zero the described scope,
+      // and the request itself never carries `state` (S2's own contract).
+      expect(dialog.textContent).toContain('across the whole company');
+      await waitFor(() =>
+        expect(getUnplaceAllPreview).toHaveBeenLastCalledWith(
+          expect.not.objectContaining({ state: expect.anything() }),
+        ),
+      );
+    });
+
+    it('names the active filters in play instead of a vague "current view"', async () => {
+      getUnplaceAllPreview.mockResolvedValue({ count: 2, product_code: null, product_name: null });
+      renderClient();
+      await screen.findByText('SO385126');
+
+      openFilters();
+      fireEvent.change(screen.getByLabelText('Every supplier'), { target: { value: 'sup-1' } });
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+      openActionsMenu();
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Unplace all' }));
+
+      const dialog = await screen.findByRole('alertdialog');
+      // The supplier's own NAME, never its id (no UUIDs in the UI).
+      expect(dialog.textContent).toContain('from DAFUYUAN');
+      expect(dialog.textContent).not.toContain('sup-1');
+      expect(dialog.textContent).not.toContain('across the whole company');
+    });
+
+    it('distinguishes "no permission" from "genuinely nothing to unplace" (N1)', async () => {
+      granted = new Set(); // a view-only principal - no `projects.order_inquiry.action`
+      renderClient();
+      await screen.findByText('SO385126');
+
+      openActionsMenu();
+      const item = await screen.findByRole('menuitem', { name: 'Unplace all' });
+      expect(item).toHaveAttribute('aria-disabled', 'true');
+      expect(item).toHaveAttribute('title', "You don't have permission to unplace rows");
+      // Held off entirely, not fired-and-403'd for someone who could never press it.
+      expect(getUnplaceAllPreview).not.toHaveBeenCalled();
+    });
+
+    it('still reads "No placed rows to unplace" for a principal who CAN act, on a genuine zero', async () => {
+      getUnplaceAllPreview.mockResolvedValue({ count: 0, product_code: null, product_name: null });
+      renderClient();
+      await screen.findByText('SO385126');
+
+      openActionsMenu();
+      const item = await screen.findByRole('menuitem', { name: 'Unplace all' });
+      await waitFor(() => expect(item).toHaveAttribute('title', 'No placed rows to unplace'));
     });
   });
 });

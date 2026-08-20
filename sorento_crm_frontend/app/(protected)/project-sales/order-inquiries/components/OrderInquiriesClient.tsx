@@ -41,6 +41,8 @@ import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import { AutoPlaceOrderInquiryDialog } from '../../_shared/components/AutoPlaceOrderInquiryDialog';
 import { UnplaceAllOrderInquiryDialog } from '../../_shared/components/UnplaceAllOrderInquiryDialog';
 import {
@@ -114,6 +116,9 @@ function matrixGranularityFrom(value: string | null): OrderInquiryMatrixGranular
  */
 const MATRIX_FETCH_LIMIT = 1000;
 
+/** Same slug the backend gates `unplace-all(-preview)` and `mark`/`auto-place` on. */
+const ORDER_INQUIRY_ACTION_PERMISSION = 'projects.order_inquiry.action';
+
 /**
  * Purchasing's own order inquiry, across every project and every adopted sales order.
  *
@@ -143,6 +148,7 @@ export function OrderInquiriesClient() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const canActOnOrderInquiry = useHasPermission(ORDER_INQUIRY_ACTION_PERMISSION);
 
   const [view, setView] = React.useState<OrderInquiryView>(() =>
     viewFrom(searchParams.get('view')),
@@ -275,13 +281,41 @@ export function OrderInquiriesClient() {
     debounced || month || stateFilter || supplierFilter || projectFilter || raisedDate,
   );
 
+  // S2/S3 (code review, 20 Aug 2026): what the confirm dialog names as the scope. `state`
+  // is never one of these - `unplaceAllFilters` above always drops it, so the dialog must
+  // never claim "the current view" (which DOES include State) as its scope; it says
+  // exactly the filters that narrowed it, or "every placed row" when none did. Supplier/
+  // project resolve through the SAME lists the filter selects already render, so this
+  // never puts a raw id on screen.
+  const activeUnplaceScopeLabels = React.useMemo(() => {
+    const parts: string[] = [];
+    if (debounced) parts.push(`matching "${debounced}"`);
+    if (month) parts.push(`for delivery ${deliveryMonthLabel(month) ?? month}`);
+    if (raisedDate) parts.push(`raised on ${formatDateInMalaysia(raisedDate)}`);
+    if (supplierFilter) {
+      const supplier = (summary.data?.suppliers ?? []).find((s) => s.id === supplierFilter);
+      if (supplier) parts.push(`from ${supplier.label}`);
+    }
+    if (projectFilter) {
+      const project = (summary.data?.projects ?? []).find((p) => p.id === projectFilter);
+      if (project) parts.push(`for ${project.label}`);
+    }
+    return parts;
+  }, [debounced, month, raisedDate, supplierFilter, projectFilter, summary.data]);
+
   // "Unplace all" (the captain, 20-21 Aug) operates on the CURRENT worklist scope - one
   // product when the filters happen to narrow to it, every placed row when they name
   // nothing. The count comes from the server, resolved against the full matching set
   // (never just the loaded page - the worklist paginates server-side), so it is right
   // whether the scope is a single product or the whole company.
+  //
+  // Gated on `canActOnOrderInquiry` (N1, code review, 20 Aug 2026): the preview route is
+  // ACTION-gated on the backend (it previews a write, not a browse), so a view-only
+  // principal 403'd it, `count` fell back to 0, and the disabled tooltip lied - "No placed
+  // rows to unplace" on a company that may hold hundreds. Held off entirely rather than
+  // fired-and-403'd for a person who could never press the button anyway.
   const unplacePreview = useUnplaceAllPreview(unplaceAllFilters, {
-    enabled: view === 'list',
+    enabled: view === 'list' && canActOnOrderInquiry,
   });
   const unplaceCount = unplacePreview.data?.count ?? 0;
 
@@ -631,9 +665,18 @@ export function OrderInquiriesClient() {
                     label: 'Unplace all',
                     icon: Undo2,
                     onClick: () => setUnplacingAll(true),
-                    disabled: unplaceCount === 0,
-                    disabledReason:
-                      unplaceCount === 0 ? 'No placed rows to unplace' : undefined,
+                    // N1: a lacking action grant, or the preview call failing for any
+                    // other reason, must never read the same as "genuinely nothing to
+                    // unplace" - each says its own thing.
+                    disabled:
+                      !canActOnOrderInquiry || unplacePreview.isError || unplaceCount === 0,
+                    disabledReason: !canActOnOrderInquiry
+                      ? "You don't have permission to unplace rows"
+                      : unplacePreview.isError
+                        ? 'Could not check placed rows - try again'
+                        : unplaceCount === 0
+                          ? 'No placed rows to unplace'
+                          : undefined,
                   },
                 ]}
                 primaryAction={
@@ -680,6 +723,7 @@ export function OrderInquiriesClient() {
         filters={unplaceAllFilters}
         count={unplaceCount}
         productCode={unplacePreview.data?.product_code}
+        scopeLabels={activeUnplaceScopeLabels}
       />
     </div>
   );

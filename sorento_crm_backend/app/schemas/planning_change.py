@@ -136,6 +136,18 @@ class PlanningChangeBatchSource(BaseModel):
     import_job_id: Optional[str] = None
 
 
+class ApplyPlanningChangesReturnedToReview(BaseModel):
+    """B1 (code review, 20 Aug 2026): an order Apply revised whose new revision, or lack of
+    one, dropped lines this batch never named back to undecided - a challenged/superseded
+    revision carries nothing forward (module docstring in `planning_change_service.py`), and
+    the caller was previously told only `applied_orders`, with no sign those lines moved."""
+
+    so_number: str
+    line_count: int
+    line_nos: List[int] = Field(default_factory=list)
+    reason: str
+
+
 class PlanningChangeResult(BaseModel):
     orders_revised: List[Dict[str, Any]] = Field(default_factory=list)
     orders_failed: List[Dict[str, Any]] = Field(default_factory=list)
@@ -145,6 +157,13 @@ class PlanningChangeResult(BaseModel):
     #: the captain's own complaint this counter answers).
     lines_confirmed: int = 0
     purchasing_notified: bool = False
+    #: B1 (code review, 20 Aug 2026): lines a revised order's PREVIOUS revision covered that
+    #: this batch never named, dropped back to undecided as a side effect (a challenged or
+    #: materially-superseded revision carries nothing forward) rather than as anything this
+    #: batch decided. See `ApplyPlanningChangesReturnedToReview`.
+    returned_to_review: List[ApplyPlanningChangesReturnedToReview] = Field(
+        default_factory=list
+    )
 
 
 class PlanningChangeBatch(BaseModel):
@@ -195,3 +214,6 @@ class ApplyPlanningChangesResult(BaseModel):
     applied_orders: List[str] = Field(default_factory=list)
     failed_orders: List[Dict[str, Any]] = Field(default_factory=list)
     already_applied: bool = False
+    returned_to_review: List[ApplyPlanningChangesReturnedToReview] = Field(
+        default_factory=list
+    )

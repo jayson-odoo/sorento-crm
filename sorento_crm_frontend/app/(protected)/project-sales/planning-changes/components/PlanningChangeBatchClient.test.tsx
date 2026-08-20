@@ -37,8 +37,15 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
+const toastSuccess = vi.fn();
+const toastWarning = vi.fn();
+const toastError = vi.fn();
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+  toast: {
+    success: (...args: unknown[]) => toastSuccess(...args),
+    warning: (...args: unknown[]) => toastWarning(...args),
+    error: (...args: unknown[]) => toastError(...args),
+  },
 }));
 
 const getPlanningChangeBatch = vi.fn();
@@ -305,6 +312,60 @@ describe('PlanningChangeBatchClient - what Apply did (result strip)', () => {
     expect(within(strip).getByRole('link', { name: 'Order Inquiries' })).toHaveAttribute(
       'href',
       '/project-sales/order-inquiries',
+    );
+  });
+
+  it('states the dropped bystander lines separately from the result strip (B1)', async () => {
+    const batch = structuredClone(MOCK_PLANNING_CHANGE_BATCH_APPLIED);
+    batch.result!.returned_to_review = [
+      {
+        so_number: 'SO391698',
+        line_count: 9,
+        line_nos: [2, 3, 4, 5, 6, 7, 8, 9, 10],
+        reason: 'Line 1 is now open for 14, and the confirmed revision was balanced against 12.',
+      },
+    ];
+    getPlanningChangeBatch.mockResolvedValue(batch);
+    renderClient('pcb-0');
+
+    await screen.findByRole('heading', { name: 'JUN - DEC 2026 REVISION.xlsx' });
+    // Never inside the same strip as the "what Apply wrote" facts - it is a distinct warning.
+    const strip = screen.getByTestId('planning-change-result-strip');
+    expect(strip.textContent).not.toContain('returned to review');
+
+    const notice = screen.getByTestId('planning-change-returned-to-review');
+    expect(notice.textContent).toContain('9 lines returned to review');
+    expect(notice.textContent).toContain('SO391698 (9 lines)');
+    expect(screen.getByText('SO391698 (9 lines)')).toHaveAttribute(
+      'title',
+      'Line 1 is now open for 14, and the confirmed revision was balanced against 12.',
+    );
+  });
+
+  it('warns, on top of the success toast, the instant Apply drops bystander lines (B1)', async () => {
+    const applied = structuredClone(MOCK_PLANNING_CHANGE_BATCH_APPLIED);
+    applied.result!.returned_to_review = [
+      { so_number: 'SO391698', line_count: 9, line_nos: [2], reason: 'the confirmed revision had drifted' },
+    ];
+    getPlanningChangeBatch
+      .mockResolvedValueOnce(structuredClone(MOCK_PLANNING_CHANGE_BATCH_PENDING))
+      .mockResolvedValue(applied);
+    applyPlanningChanges.mockResolvedValue({
+      applied_orders: ['SO391698'],
+      failed_orders: [],
+      already_applied: false,
+      returned_to_review: applied.result!.returned_to_review,
+    });
+    renderClient();
+    await screen.findByRole('heading', { name: 'JAN - DEC 2026 ORDER.xlsx' });
+
+    fireEvent.click(screen.getByRole('button', { name: /Apply \d+ changes?/ }));
+    await screen.findByText('Apply planning changes');
+    fireEvent.click(screen.getByRole('button', { name: /^Apply$/ }));
+
+    await waitFor(() => expect(toastWarning).toHaveBeenCalled());
+    expect(toastWarning).toHaveBeenCalledWith(
+      'SO391698: 9 other lines returned to review (the confirmed revision had drifted)',
     );
   });
 

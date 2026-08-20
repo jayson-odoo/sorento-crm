@@ -19,9 +19,20 @@ import type { UnplaceAllRequest } from '../types/orderInquiry.types';
  * product when the filters happen to narrow to it, every placed row in the company when
  * they name nothing. `filters` and `count`/`productCode` are the SAME numbers the toolbar
  * button already resolved (`useUnplaceAllPreview`), so what a person confirms and what
- * the commit actually touches can never disagree. Confirmed like any bulk write - it
- * releases real PO-line claims - but the standard "This action cannot be undone" copy is
- * wrong here: it IS re-doable, through the very Auto-place button beside it.
+ * the commit actually touches can never disagree.
+ *
+ * `scopeLabels` (S2, code review, 20 Aug 2026) is the caller's own account of which
+ * filters actually narrowed this run - `filters` itself always drops `state` (the action
+ * is about placed rows whatever State says), so a dialog that called its scope "the
+ * current view" was lying the moment State was set to anything: a State=raised screen
+ * showing zero placed rows still offered to revert hundreds nobody could see. Named
+ * plainly instead: every active filter, or "every placed row" when none narrowed it.
+ *
+ * S3: the standard "cannot be undone" copy was dropped here on the theory that Auto-place
+ * makes this fully re-doable - no longer true once auto-place ranks contenders by policy
+ * (`_rank_raised_rows`): a re-run re-deals by the current priority, and a placement a
+ * person made BY HAND is destroyed outright (`_unplace_row` also deletes the link claim).
+ * The copy says that plainly rather than implying nothing is lost.
  */
 export function UnplaceAllOrderInquiryDialog({
   open,
@@ -29,15 +40,22 @@ export function UnplaceAllOrderInquiryDialog({
   filters,
   count,
   productCode,
+  scopeLabels = [],
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   filters: UnplaceAllRequest;
   count: number;
   productCode?: string | null;
+  /** The active filters in play, already human-readable (never a raw id) - `[]` when none narrow the scope. */
+  scopeLabels?: string[];
 }) {
   const unplaceAll = useUnplaceAllOrderInquiryRows();
-  const scope = productCode ? `for ${productCode}` : 'in the current view';
+  const scope = productCode
+    ? `for ${productCode}`
+    : scopeLabels.length > 0
+      ? scopeLabels.join(', ')
+      : 'across the whole company';
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -46,7 +64,8 @@ export function UnplaceAllOrderInquiryDialog({
           <AlertDialogTitle>Unplace all</AlertDialogTitle>
           <AlertDialogDescription>
             {count} placed row{count === 1 ? '' : 's'} {scope} will return to raised.
-            Auto-place can re-place them.
+            Auto-place will re-deal them by the current priority policy. Placements made
+            by hand are not restored.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

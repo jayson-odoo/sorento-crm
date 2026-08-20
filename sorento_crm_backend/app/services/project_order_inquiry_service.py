@@ -1910,6 +1910,20 @@ class ProjectOrderInquiryService:
         Rows tie on their score - including "this policy weights nothing here" - break
         to the ORIGINAL ordering, `delivery_date` then `created_at`: this is a strict
         refinement of what the cascade did before, not a different rule.
+
+        **Scored per PRODUCT, one contender group at a time** (S5, code review, 20 Aug
+        2026): `factors_for_demand_rows`'s own docstring is explicit that it normalizes
+        VALUES ACROSS THE ROWS PASSED IN - "the caller passes one cell's contributors,
+        not the world" - because a rank only means anything against the rows actually
+        competing for the SAME scarce PO lines. `auto_place_for_products` calls this
+        with every raised row across EVERY product in one batch; passing the whole batch
+        through in one `factors_for_demand_rows` call let an unrelated product's extreme
+        `order_date` compress the `document_age` axis for every OTHER product's rows too,
+        which could flip which of two genuinely competing rows on the SAME product wins
+        the only PO line there is. Grouped by product here instead, each group scored in
+        isolation, then the ranked groups concatenated back in the order their product
+        first appeared in `rows` - so which PRODUCT is processed first is unchanged, only
+        the SCORE within a product no longer depends on demand for a different one.
         """
         if not rows:
             return []
@@ -1937,33 +1951,53 @@ class ProjectOrderInquiryService:
             self.db, [cid for cid in customer_ids.values() if cid]
         )
 
-        demand_rows = []
+        # One contender group per product (`None` for a row that resolves to no product
+        # at all - it competes with nothing and is filtered out downstream anyway), each
+        # group keeping the rows' relative order from `rows` and the groups themselves
+        # ordered by each product's first appearance - `auto_place_for_products` still
+        # processes products in the same order it always has.
+        product_by_row = self._resolve_product_ids_bulk(rows)
+        groups: Dict[Optional[str], List[OrderInquiryRow]] = {}
+        group_order: List[Optional[str]] = []
         for row in rows:
-            pso_id = pso_by_inquiry.get(row.order_inquiry_id)
-            customer_id = customer_ids.get(pso_id) if pso_id else None
-            demand_rows.append(
-                {
-                    "row_key": row.id,
-                    "required_date": row.delivery_date,
-                    "order_date": order_dates.get(row.order_inquiry_id),
-                    "payment_terms_days": (
-                        terms_by_customer.get(customer_id) if customer_id else None
-                    ),
-                    "demand_class": "project",
-                }
-            )
+            key = product_by_row.get(row.id)
+            bucket = groups.get(key)
+            if bucket is None:
+                bucket = []
+                groups[key] = bucket
+                group_order.append(key)
+            bucket.append(row)
 
-        factors_by_row = priority.factors_for_demand_rows(self.db, demand_rows)
-        scores = priority.scores_for(factors_by_row)
-
-        def _sort_key(row: OrderInquiryRow) -> Tuple[float, date, datetime]:
+        def _sort_key(row: OrderInquiryRow, scores: Dict[str, float]) -> Tuple[float, date, datetime]:
             return (
                 -scores.get(row.id, 0.0),
                 row.delivery_date or date.max,
                 row.created_at or datetime.max,
             )
 
-        return sorted(rows, key=_sort_key)
+        ranked: List[OrderInquiryRow] = []
+        for key in group_order:
+            group_rows = groups[key]
+            demand_rows = []
+            for row in group_rows:
+                pso_id = pso_by_inquiry.get(row.order_inquiry_id)
+                customer_id = customer_ids.get(pso_id) if pso_id else None
+                demand_rows.append(
+                    {
+                        "row_key": row.id,
+                        "required_date": row.delivery_date,
+                        "order_date": order_dates.get(row.order_inquiry_id),
+                        "payment_terms_days": (
+                            terms_by_customer.get(customer_id) if customer_id else None
+                        ),
+                        "demand_class": "project",
+                    }
+                )
+            factors_by_row = priority.factors_for_demand_rows(self.db, demand_rows)
+            scores = priority.scores_for(factors_by_row)
+            ranked.extend(sorted(group_rows, key=lambda r: _sort_key(r, scores)))
+
+        return ranked
 
     def _customer_ids_for_pso(self, pso_ids: set) -> Dict[str, Optional[str]]:
         """Customer id per project sales order, the same resolution

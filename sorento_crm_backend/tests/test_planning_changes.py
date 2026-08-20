@@ -1622,11 +1622,17 @@ def test_apply_confirms_only_the_batchs_own_line_leaving_an_unconfirmable_siblin
     than `qty_up` - `challenge_if_drifted` (PLAN 5.3, unrelated to this bug) always
     supersedes the WHOLE order's active decision the moment a covered line's own live open
     quantity has already moved off what was frozen, which a `qty_up` row's own composition
-    needs live to total correctly; that would drop every OTHER line to undecided regardless
-    of this fix, confounding the assertion below. An `advanced` row exercises the identical
-    bystander-renaming bug (any `suggested='replan'` + `decision='confirm'` row takes the
-    same branch in `_apply_one_order`) without that unrelated confound, since neither its own
-    nor the sibling's frozen facts move in the DB."""
+    needs live to total correctly; that would drop every OTHER line to undecided AFTER this
+    fix, confounding the assertion below (a challenged revision carries nothing, module
+    docstring). It does NOT drop them regardless of this fix: pre-fix, `_apply_one_order`
+    renamed every covered line explicitly from its own frozen snapshot, so a clean sibling
+    was preserved in the new revision whatever the target line's own drift did - the carry-
+    forward path that a challenge starves was never in use. An `advanced` row exercises the
+    identical bystander-renaming bug (any `suggested='replan'` + `decision='confirm'` row
+    takes the same branch in `_apply_one_order`) without that unrelated confound, since
+    neither its own nor the sibling's frozen facts move in the DB. See
+    `test_apply_returns_a_dropped_bystander_in_returned_to_review` below for the drifted
+    case this one deliberately avoids."""
     client, world = api
     db = world.db
     _stock(db, world.product, world.pool_wh, on_hand=8)
@@ -1722,6 +1728,110 @@ def test_apply_confirms_only_the_batchs_own_line_leaving_an_unconfirmable_siblin
         .one()
     )
     assert order_row.qty == Decimal("12")
+
+
+def test_apply_returns_a_dropped_bystander_in_returned_to_review(api):
+    """B1 (code review, 20 Aug 2026): the case the test above deliberately dodges. A real
+    `qty_up` diff (12 -> 14) on the batch's own line moves that line's OWN live open
+    quantity off what rev 1 froze, so `challenge_if_drifted` supersedes the whole order's
+    active decision the moment Apply calls `confirm()` - "nothing is carried from a
+    challenged revision; the lines it covered are undecided again" (module docstring).
+    That is documented doctrine, not a bug: an unrelated sibling line the batch never named
+    falls back to undecided too, and its raised Buy row is retired exactly like any other
+    line dropped from the revision. The defect this pins is SILENCE - the apply result must
+    say so, not just report `applied_orders`."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_line_target = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="12",
+                                   required_date=date(2026, 9, 4))
+    core_line_sibling = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="8",
+                                    required_date=date(2026, 9, 4))
+    order = _project_so(db, world.project, so_id=core_so.id, status=SO_STATUS_PUBLISHED,
+                         autocount_doc_no=core_so.so_number)
+    line_target = _project_line(db, order, line_no=1, product=world.product,
+                                 core_line=core_line_target)
+    line_sibling = _project_line(db, order, line_no=2, product=world.product,
+                                  core_line=core_line_sibling)
+    db.commit()
+
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line_target.id, buy_qty="12", buy_reason="Nothing free elsewhere."),
+        _line_payload(line_sibling.id, buy_qty="8", buy_reason="Nothing free elsewhere."),
+    ]})
+    buy_row_sibling = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line_sibling.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+
+    # The book upload that produced this diff already wrote the new quantity to the core
+    # line (the real `outstanding_import_service.apply()` order of operations) - the batch
+    # is built AFTER that write, so its own proposal already walks the ladder for 14.
+    core_line_target.qty_ordered = Decimal("14")
+    db.flush()
+    changed_target = _diff_change(
+        QTY_CHANGED, core_line_target, doc_number=core_so.so_number, item_code="ZZT-TARGET",
+        location=world.own_wh.warehouse_code, old_date=date(2026, 9, 4),
+        new_date=date(2026, 9, 4), old_qty="12", new_qty="14",
+    )
+    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed_target])
+    batch = planning_change_service.build_batch(
+        db, diff, applied_line_ids={id(changed_target): str(core_line_target.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    out = planning_change_service.get_batch(db, str(batch.id))
+    assert len(out["orders"][0]["rows"]) == 1  # the sibling never appears in this batch
+    row = out["orders"][0]["rows"][0]
+    assert row["kind"] == "qty_up"
+    assert row["suggested"] == "replan"
+
+    planning_change_service.set_row_decision(db, str(batch.id), row["id"], "confirm")
+    db.commit()
+
+    result = planning_change_service.apply(db, str(batch.id), world.actor)
+    db.commit()
+    assert result["failed_orders"] == [], result["failed_orders"]
+    assert result["applied_orders"] == [core_so.so_number]
+
+    # The silence this finding fixes: apply's own result names the bystander it dropped.
+    assert len(result["returned_to_review"]) == 1
+    returned = result["returned_to_review"][0]
+    assert returned["so_number"] == core_so.so_number
+    assert returned["line_count"] == 1
+    assert returned["line_nos"] == [2]
+    assert returned["reason"]  # a real reason derived off the decision, not a guess
+
+    from app.models.project_so import SOSupplyDecision
+
+    decision = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id,
+                SOSupplyDecision.state == "active")
+        .one()
+    )
+    assert decision.revision_no == 2  # a new revision was written
+    snapshots = {s["project_line_id"]: s for s in decision.line_snapshots}
+    # The batch's own line is confirmed at the NEW quantity...
+    assert str(line_target.id) in snapshots
+    target_components = snapshots[str(line_target.id)]["components"]
+    target_buy = sum(Decimal(c["qty"]) for c in target_components if c["kind"] == "buy")
+    assert target_buy == Decimal("14")
+    # ...the untouched sibling is undecided again - dropped, not carried, exactly as an
+    # unrelated `replan`/`release`/`retire` row would be.
+    assert str(line_sibling.id) not in snapshots
+
+    from app.services.project_supply_service import ProjectSupplyService
+
+    supply = ProjectSupplyService(db)
+    frozen = supply.frozen_lines_of(supply.active_decision(str(order.id)))
+    assert str(line_sibling.id) not in frozen
+
+    # Its raised Buy row is retired, same as any other line the revision no longer covers.
+    db.refresh(buy_row_sibling)
+    assert buy_row_sibling.state == INQUIRY_CANCELLED
 
 
 def test_apply_of_a_genuinely_unconfirmable_target_line_still_fails_with_its_reason(api):

@@ -1342,3 +1342,82 @@ def test_auto_place_ranks_by_the_active_policys_need_by_date_over_the_old_delive
     db.refresh(newer)
     assert newer.state == INQUIRY_PLACED, "the sooner delivery date must draw the scarce quantity"
     assert older.state == INQUIRY_RAISED
+
+
+def test_auto_place_scores_a_product_the_same_alone_or_beside_an_unrelated_products_extreme_date(api):
+    """S5 (code review, 20 Aug 2026): `scm.priority.factors_for_demand_rows` normalizes
+    its date factors ACROSS THE ROWS PASSED IN - its own docstring: "the caller passes one
+    cell's contributors, not the world" - but `auto_place_for_products` used to hand it
+    every raised row across EVERY product in one call. Two rows genuinely competing for
+    the SAME product's only PO line must rank the same whether the run is scoped to that
+    product alone or covers the whole book alongside an unrelated product whose row
+    carries an extreme document date.
+
+    Both weighted factors are needed to see it: `document_age` alone (or `need_by_date`
+    alone) is a strictly monotonic rescale, so a third point can never flip which of two
+    OTHER points is larger - only their combination, unevenly compressed by a distortion
+    on one axis and not the other, can flip which one wins on total weighted score."""
+    client, db, world, user_id = api
+    _policy(db, {"document_age": 0.6, "need_by_date": 0.4}, {"project": 1.0})
+
+    def _arena(product):
+        line = _po_line(
+            db, world["company_id"], world["po"], product, world["warehouse"],
+            qty_ordered="10", expected_date=date(2026, 9, 1),
+        )
+        # Wins on document_age (the older document) - loses on need_by_date (the later
+        # delivery). Scoped 1-vs-1, `document_age`'s heavier weight (0.6 > 0.4) decides.
+        older_doc = _competing_row(
+            db, world["company_id"], world["project"],
+            published_at=datetime(2022, 1, 1), delivery_date=date(2026, 12, 1),
+            qty="10", item_code=product.product_code,
+        )
+        # The mirror: newer document, sooner delivery.
+        sooner_delivery = _competing_row(
+            db, world["company_id"], world["project"],
+            published_at=datetime(2026, 6, 1), delivery_date=date(2026, 9, 5),
+            qty="10", item_code=product.product_code,
+        )
+        return line, older_doc, sooner_delivery
+
+    from app.models.base import company_scope
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    # Run A: scoped to its own product alone (the query itself already excludes every
+    # other product's rows, whatever `_rank_raised_rows` does with what it is handed).
+    _line_a, older_a, sooner_a = _arena(world["product"])
+    db.commit()
+    with company_scope(db, frozenset({world["company_id"]})):
+        result_a = ProjectOrderInquiryService(db).auto_place_for_products(
+            [world["product"].id], actor_user_id=user_id, trigger="test"
+        )
+        db.commit()
+    assert result_a["placed_rows"] == 1
+    db.refresh(older_a)
+    db.refresh(sooner_a)
+    assert older_a.state == INQUIRY_PLACED, "document_age's heavier weight must decide"
+    assert sooner_a.state == INQUIRY_RAISED
+
+    # Run B: an identical pair on a FRESH product, run for the WHOLE book (`product_ids=
+    # None`) alongside a third row on `other_product` whose document date is extreme -
+    # its OWN delivery date sits between the pair's two, so it moves nothing on the
+    # `need_by_date` axis, only `document_age`'s span (the asymmetry S5 exploits).
+    fresh_product = _product(db, world["company_id"], f"ZZT-BASIN2-{_uid()[:6]}")
+    _line_b, older_b, sooner_b = _arena(fresh_product)
+    _competing_row(
+        db, world["company_id"], world["project"],
+        published_at=datetime(1990, 1, 1), delivery_date=date(2026, 10, 15),
+        qty="1", item_code=world["other_product"].product_code,
+    )
+    db.commit()
+    with company_scope(db, frozenset({world["company_id"]})):
+        result_b = ProjectOrderInquiryService(db).auto_place_for_products(
+            None, actor_user_id=user_id, trigger="test"
+        )
+        db.commit()
+    db.refresh(older_b)
+    db.refresh(sooner_b)
+    # The SAME winner as the scoped run (Run A) - the unrelated product's extreme date
+    # must not have flipped which of these two won the only PO line for THEIR product.
+    assert older_b.state == INQUIRY_PLACED, result_b
+    assert sooner_b.state == INQUIRY_RAISED
