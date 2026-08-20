@@ -917,15 +917,6 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     setFields((prev) => ({ ...prev, [name]: value }));
   };
 
-  const exitReviseMode = () => {
-    setReviseMode(false);
-    setReason('');
-    setReasonError(null);
-    setReviseConfirmOpen(false);
-    // Drop any edit made in revise mode by reloading the saved version.
-    setReloadToken((t) => t + 1);
-  };
-
   /** Gate before the confirm dialog: the reason is the one thing the journey
    *  asks for, so an empty one never reaches the dialog. */
   const openReviseConfirm = () => {
@@ -1441,7 +1432,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                   onClick={() => setDiscardDraftOpen(true)}
                   disabled={discardingDraft}
                 >
-                  Discard draft
+                  Discard revision
                 </Button>
               </div>
             </AlertDescription>
@@ -1809,7 +1800,11 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
 
       {reviseMode ? (
         <div className="flex flex-wrap gap-2 justify-end pt-2">
-          <Button variant="ghost" onClick={exitReviseMode} disabled={revising}>
+          <Button
+            variant="ghost"
+            onClick={() => router.replace(portalHomePath({ type: kind }))}
+            disabled={revising}
+          >
             Cancel
           </Button>
           {detail?.revision_draft && (
@@ -1820,7 +1815,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               disabled={revising || savingRevisionDraft || discardingDraft}
             >
               <Trash2 className="size-4 mr-1" />
-              Discard draft
+              Discard revision
             </Button>
           )}
           <Button

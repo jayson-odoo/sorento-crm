@@ -1,8 +1,9 @@
 /**
  * A `responded` stock inquiry is read-only on the plain-edit path (portal
  * revision UX): the office is mid-conversation with the salesperson, so the
- * only door back in is Revise. Cancelling a revision returns the form to that
- * same read-only "Responded" state.
+ * only door back in is Revise. Cancelling a revision navigates back to the
+ * portal list, same as the non-revise Cancel - unsaved edits are not kept,
+ * but a draft already saved server-side stays saved.
  *
  * Mocking pattern mirrors `SubmissionRevise.test.tsx`.
  */
@@ -16,6 +17,7 @@ import type {
   PortalRevisionPolicy,
   PortalSubmissionDetail,
 } from '../lib/portal-client';
+import { portalHomePath } from '../lib/portal-paths';
 
 const push = vi.fn();
 const replace = vi.fn();
@@ -225,7 +227,7 @@ describe('SubmissionForm - starting a revision from a responded inquiry', () => 
     expect(screen.queryByText(/Locked during a revision/)).toBeNull();
   });
 
-  it('Cancel hides the banner and returns the badge to Responded', async () => {
+  it('Cancel navigates back to the portal list, same as the non-revise Cancel', async () => {
     await renderResponded();
     await clickRevise();
 
@@ -233,7 +235,8 @@ describe('SubmissionForm - starting a revision from a responded inquiry', () => 
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    expect(screen.queryByTestId('revising-banner')).toBeNull();
-    expect(await screen.findByText('Responded')).toBeInTheDocument();
+    expect(replace).toHaveBeenCalledWith(
+      portalHomePath({ type: 'stock_inquiry' }),
+    );
   });
 });

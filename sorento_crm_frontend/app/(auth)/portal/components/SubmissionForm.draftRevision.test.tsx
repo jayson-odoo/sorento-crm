@@ -269,7 +269,7 @@ describe('SubmissionForm - discarding a draft', () => {
     await renderWith({ revision_draft: draft({ stale: true }) });
 
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Discard draft' }),
+      await screen.findByRole('button', { name: 'Discard revision' }),
     );
 
     expect(
@@ -285,15 +285,15 @@ describe('SubmissionForm - discarding a draft', () => {
     );
   });
 
-  it('also offers Discard draft from within revise mode when a draft exists', async () => {
+  it('also offers Discard revision from within revise mode when a draft exists', async () => {
     (discardRevisionDraft as ReturnType<typeof vi.fn>).mockResolvedValue(
       undefined,
     );
     await renderWith({ revision_draft: draft() });
 
-    // The draft auto-opened revise mode; the footer's Discard draft button is
-    // the one INSIDE the revise-mode action row, not the stale banner's.
-    fireEvent.click(screen.getByRole('button', { name: /Discard draft/ }));
+    // The draft auto-opened revise mode; the footer's Discard revision button
+    // is the one INSIDE the revise-mode action row, not the stale banner's.
+    fireEvent.click(screen.getByRole('button', { name: /Discard revision/ }));
     fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
 
     await waitFor(() => expect(discardRevisionDraft).toHaveBeenCalledTimes(1));
