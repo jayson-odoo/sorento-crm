@@ -64,6 +64,9 @@ const rerun = vi.fn();
 vi.mock('../../hooks/useFulfilment', () => ({
   useContainerSizes: () => ({ data: state.sizes, isLoading: false }),
   useSupplierStock: () => ({ data: state.stock, isLoading: false }),
+  // Retained stock-list attachment (BL: "View uploaded list"). No file stored in this suite's
+  // fixture, so the control stays hidden and every existing assertion is unaffected.
+  useSupplierStockListFile: () => ({ data: undefined, isLoading: false }),
   useUnfinishedStock: () => ({ data: state.unfinished, isLoading: false }),
   useLoadingPlans: () => ({ data: state.plans, isLoading: false }),
   useBuildLoadingPlan: () => ({ mutate: build, isPending: false, data: buildResult }),

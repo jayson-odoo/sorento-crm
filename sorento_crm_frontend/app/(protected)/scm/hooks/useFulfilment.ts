@@ -15,6 +15,7 @@ import {
   getPlanNotices,
   getSupplierNotices,
   getSupplierStock,
+  getSupplierStockListFile,
   getUnfinishedStock,
   sendContainerRequest,
   updateLoadingPlan,
@@ -79,6 +80,16 @@ export function useLoadingPlanDetail(planId: string | null) {
   });
 }
 
+/** The stored copy of the supplier's own sheet - for the "View uploaded list" control. */
+export function useSupplierStockListFile(supplierId: string | null) {
+  return useQuery({
+    queryKey: [...KEY, 'stock-list-file', supplierId],
+    queryFn: () => getSupplierStockListFile(supplierId as string),
+    enabled: !!supplierId,
+    refetchOnWindowFocus: false,
+  });
+}
+
 /** Invalidate everything keyed on one supplier: a new snapshot changes every plan under it. */
 function useSupplierInvalidator() {
   const qc = useQueryClient();
@@ -86,6 +97,7 @@ function useSupplierInvalidator() {
     void qc.invalidateQueries({ queryKey: [...KEY, 'stock', supplierId] });
     void qc.invalidateQueries({ queryKey: [...KEY, 'unfinished', supplierId] });
     void qc.invalidateQueries({ queryKey: [...KEY, 'plans', supplierId] });
+    void qc.invalidateQueries({ queryKey: [...KEY, 'stock-list-file', supplierId] });
   };
 }
 

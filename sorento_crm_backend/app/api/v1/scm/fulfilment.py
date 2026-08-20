@@ -41,7 +41,7 @@ from app.services.scm import (
     supplier_inventory_service,
     supplier_notice_service,
 )
-from app.services.scm.upload_intake import read_upload
+from app.services.scm.upload_intake import read_upload, read_upload_retained
 
 router = APIRouter()
 
@@ -100,11 +100,11 @@ async def apply_supplier_inventory(
     db: Session = Depends(get_db),
 ):
     """Replace this supplier's stock snapshot."""
-    data = await read_upload(file)
+    upload = await read_upload_retained(file)
     if validate_only:
-        return supplier_inventory_service.validate(db, data, supplier_id=supplier_id)
+        return supplier_inventory_service.validate(db, upload.data, supplier_id=supplier_id)
     out = supplier_inventory_service.apply(
-        db, data, supplier_id=supplier_id, actor=current_user.get("id")
+        db, upload.data, supplier_id=supplier_id, actor=current_user.get("id")
     )
     if not out.get("readable"):
         missing = ", ".join(out.get("missing_columns") or [])
@@ -117,6 +117,17 @@ async def apply_supplier_inventory(
             ),
         )
     db.commit()
+    # Retain the supplier's OWN sheet, previewable like any resource attachment, so Ms Tee
+    # can cross-check without opening Excel. Best-effort and AFTER the commit above - a
+    # storage hiccup here must never turn a successful apply into a failed request.
+    supplier_inventory_service.store_stock_list_attachment(
+        db,
+        upload.source_bytes,
+        filename=upload.source_name,
+        content_type=upload.content_type,
+        supplier_id=supplier_id,
+        uploaded_by=current_user.get("id"),
+    )
     return out
 
 
@@ -161,6 +172,24 @@ def list_unfinished(
 ):
     """Stock the supplier holds unfinished, so it can be asked for (AC-E2)."""
     return {"rows": loading_plan_service.unfinished_at_supplier(db, supplier_id)}
+
+
+@router.get("/supplier-inventory/stock-list-file")
+def get_supplier_stock_list_file(
+    supplier_id: str = Query(..., description="Whose stored stock list to show"),
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The latest retained copy of the supplier's own sheet, so it can be opened in-system
+    (like a resource attachment) instead of in Excel. `attachment_id` is null when nothing
+    has been uploaded yet, or a past upload's storage write failed."""
+    found = supplier_inventory_service.latest_stock_list_attachment(db, supplier_id=supplier_id)
+    return {
+        "supplier_id": supplier_id,
+        "attachment_id": found["attachment_id"] if found else None,
+        "filename": found["filename"] if found else None,
+        "uploaded_at": found["uploaded_at"] if found else None,
+    }
 
 
 # --------------------------------------------------------------------------- #

@@ -16,6 +16,7 @@ cannot join a loading plan, whose lines hang off our own purchase-order lines.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date, datetime
 from typing import Any, Optional
@@ -28,7 +29,14 @@ from app.models.scm import SupplierInventory
 from app.services.scm.supplier_inventory_reader import InventoryReadResult, read_workbook
 from app.services.scm.upload_validation import envelope, named
 
+logger = logging.getLogger(__name__)
+
 SOURCE_SYSTEM = "scm_supplier_inventory"
+
+#: The entity_type on the `attachments` row that holds the supplier's OWN sheet, keyed by
+#: entity_id=supplier_id. Same generic table Resource Management uses, so it gets the same
+#: preview/download endpoints for free rather than a bespoke viewer for one xlsx a week.
+STOCK_LIST_ENTITY_TYPE = "supplier_stock_list"
 
 #: How many sample rows the preview shows. Enough to recognise the file, short enough to read.
 _SAMPLE = 25
@@ -262,4 +270,98 @@ def apply(
         "duplicate_models_merged": len(parsed.rows) - written,
         "problems": [{"row": p.row_number, "reason": p.reason} for p in parsed.problems[:50]],
         "summary": summary,
+    }
+
+
+def store_stock_list_attachment(
+    db: Session,
+    file_bytes: Optional[bytes],
+    *,
+    filename: Optional[str],
+    content_type: Optional[str],
+    supplier_id: str,
+    uploaded_by: Optional[str],
+) -> Optional[str]:
+    """Keep the supplier's own sheet retrievable, the same way any other resource attachment
+    is - so Ms Tee can cross-check the loading plan against it without opening Excel.
+
+    Called AFTER `apply()` has already committed the inventory rows, so a storage hiccup here
+    must never turn a successful upload into a failed request (same rule as
+    `import_source_store.store_import_source_file`). On any error this logs and returns
+    None; there is nothing left for the caller to roll back.
+    """
+    if not file_bytes:
+        return None
+    try:
+        from app.schemas.resources import AttachmentCreate
+        from app.services.resources_service import AttachmentService
+        from app.services.storage_router import (
+            cdn_base_url,
+            default_provider,
+            get_backend,
+            sanitize_storage_filename,
+        )
+
+        display_name = (filename or "").strip() or "stock_list.xlsx"
+        original_filename = sanitize_storage_filename(display_name)
+        attachment_id = _uuid()
+        provider = default_provider()
+        key = f"{STOCK_LIST_ENTITY_TYPE}/{supplier_id}/{attachment_id}/{original_filename}"
+        s3_key, _ = get_backend(provider).upload_file(
+            file_content=file_bytes,
+            file_path=key,
+            content_type=content_type or "application/octet-stream",
+        )
+        stored_file_path = cdn_base_url(provider, s3_key)
+
+        service = AttachmentService(db)
+        attachment = service.create_attachment(
+            AttachmentCreate(
+                id=attachment_id,
+                attachment_type_id=None,
+                original_filename=original_filename,
+                stored_filename=display_name,
+                file_path=stored_file_path,
+                file_size_bytes=len(file_bytes),
+                mime_type=content_type or "application/octet-stream",
+                entity_type=STOCK_LIST_ENTITY_TYPE,
+                entity_id=supplier_id,
+                storage_provider=provider,
+            ),
+            uploaded_by,
+        )
+        return str(attachment.id)
+    except Exception as exc:  # noqa: BLE001 - best-effort, the apply already committed
+        # A failed insert/flush leaves the session's transaction dead until rolled back - the
+        # caller's `db` must come out of this usable, since the apply already committed on it.
+        db.rollback()
+        logger.warning(
+            "store_stock_list_attachment: failed to retain the stock list for supplier %s "
+            "(%s); the inventory apply already succeeded and continues without it",
+            supplier_id,
+            exc,
+        )
+        return None
+
+
+def latest_stock_list_attachment(db: Session, *, supplier_id: str) -> Optional[dict]:
+    """The most recently stored copy of the supplier's own sheet, if one was retained."""
+    from app.models.resources import Attachment
+
+    row = (
+        db.query(Attachment)
+        .filter(
+            Attachment.entity_type == STOCK_LIST_ENTITY_TYPE,
+            Attachment.entity_id == supplier_id,
+            Attachment.is_deleted.is_(False),
+        )
+        .order_by(Attachment.uploaded_at.desc())
+        .first()
+    )
+    if row is None:
+        return None
+    return {
+        "attachment_id": str(row.id),
+        "filename": row.stored_filename or row.original_filename,
+        "uploaded_at": row.uploaded_at,
     }

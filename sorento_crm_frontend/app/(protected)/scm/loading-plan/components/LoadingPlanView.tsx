@@ -9,7 +9,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Container, LoaderCircle, PackageOpen, Upload } from 'lucide-react';
+import { Container, Eye, LoaderCircle, PackageOpen, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -21,6 +21,9 @@ import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
@@ -32,6 +35,7 @@ import {
   useRerunLoadingPlan,
   useStockListApplied,
   useSupplierStock,
+  useSupplierStockListFile,
   useUnfinishedStock,
 } from '../../hooks/useFulfilment';
 import {
@@ -117,12 +121,14 @@ export function LoadingPlanView() {
   const [containerType, setContainerType] = useState('');
   const [containerCount, setContainerCount] = useState(1);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [stockListPreviewOpen, setStockListPreviewOpen] = useState(false);
   const [planId, setPlanId] = useState<string | null>(null);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
 
   const sizes = useContainerSizes();
   const stock = useSupplierStock(supplierId || null);
+  const stockListFile = useSupplierStockListFile(supplierId || null);
   const unfinished = useUnfinishedStock(supplierId || null);
   const plans = useLoadingPlans(supplierId || null);
   const build = useBuildLoadingPlan();
@@ -272,6 +278,22 @@ export function LoadingPlanView() {
     0,
   );
 
+  // The uploaded sheet itself, previewed through the same modal Resource Management uses.
+  // `url` is left blank - it is a same-origin attachment id, not a public CDN link, and the
+  // Excel slide reads bytes via `downloadUrl` regardless.
+  const stockListPreviewItems = useMemo<AttachmentPreviewItem[]>(() => {
+    const id = stockListFile.data?.attachment_id;
+    if (!id) return [];
+    return [
+      {
+        id,
+        name: stockListFile.data?.filename || 'Stock list',
+        url: '',
+        downloadUrl: `/api/v1/resource-management/attachments/${id}/download`,
+      },
+    ];
+  }, [stockListFile.data]);
+
   return (
     <div className="space-y-4">
       <Card className="p-4">
@@ -330,6 +352,28 @@ export function LoadingPlanView() {
             onUploadStockList={() => setUploadOpen(true)}
           />
 
+          {unfinished.data?.length ? (
+            <Card className="p-4">
+              <h3 className="text-sm font-semibold">Waiting on production</h3>
+              <p className="text-2xs text-muted-foreground">
+                Held unfinished, so it cannot be loaded until the supplier finishes it.
+              </p>
+              <ul className="mt-2 divide-y divide-border">
+                {unfinished.data.map((row) => (
+                  <li key={row.item_code} className="flex items-center justify-between py-1.5">
+                    <span className="truncate text-xs" title={row.item_code}>
+                      {row.item_code}
+                      {row.product_name ? (
+                        <span className="ms-2 text-muted-foreground">{row.product_name}</span>
+                      ) : null}
+                    </span>
+                    <span className="tabular-nums text-xs">{fmtInt(row.qty_unfinished)}</span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          ) : null}
+
           <h2 className="pt-2 text-sm font-semibold text-muted-foreground">
             Stage 2 · Container plan (CBM fit)
           </h2>
@@ -345,6 +389,17 @@ export function LoadingPlanView() {
                       : 'No stock list uploaded yet'}
                 </p>
               </div>
+              {stockListFile.data?.attachment_id ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => setStockListPreviewOpen(true)}
+                >
+                  <Eye className="size-4" />
+                  View uploaded list
+                </Button>
+              ) : null}
             </div>
 
             {stock.isLoading ? (
@@ -486,28 +541,6 @@ export function LoadingPlanView() {
               something has been sent, so "nothing has gone out yet" is a state she can see
               rather than infer from an absent section. */}
           {plan ? <SupplierNoticePanel planId={plan.id} /> : null}
-
-          {unfinished.data?.length ? (
-            <Card className="p-4">
-              <h3 className="text-sm font-semibold">Waiting on production</h3>
-              <p className="text-2xs text-muted-foreground">
-                Held unfinished, so it cannot be loaded until the supplier finishes it.
-              </p>
-              <ul className="mt-2 divide-y divide-border">
-                {unfinished.data.map((row) => (
-                  <li key={row.item_code} className="flex items-center justify-between py-1.5">
-                    <span className="truncate text-xs" title={row.item_code}>
-                      {row.item_code}
-                      {row.product_name ? (
-                        <span className="ms-2 text-muted-foreground">{row.product_name}</span>
-                      ) : null}
-                    </span>
-                    <span className="tabular-nums text-xs">{fmtInt(row.qty_unfinished)}</span>
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          ) : null}
         </>
       )}
 
@@ -520,6 +553,12 @@ export function LoadingPlanView() {
           onApplied={() => invalidateSupplier(supplierId)}
         />
       ) : null}
+
+      <AttachmentPreviewModal
+        open={stockListPreviewOpen}
+        onOpenChange={setStockListPreviewOpen}
+        items={stockListPreviewItems}
+      />
     </div>
   );
 }

@@ -12,6 +12,11 @@
  *       multipart: file + supplier_id. Auth: `scm.reorder.run`.
  *  GET  /api/v1/scm/supplier-inventory?supplier_id=   -> 200 SupplierStock
  *  GET  /api/v1/scm/supplier-inventory/unfinished     -> 200 { rows }
+ *  GET  /api/v1/scm/supplier-inventory/stock-list-file?supplier_id= -> 200 SupplierStockListFile
+ *       The uploaded sheet itself, retained as a resource attachment on apply (best-effort;
+ *       `attachment_id` is null when nothing was uploaded, or the retain failed). Preview it
+ *       through the SAME `/api/v1/resource-management/attachments/{id}/...` routes and shared
+ *       `AttachmentPreviewModal` Resource Management uses - no bespoke viewer for one xlsx.
  *  GET  /api/v1/scm/container-sizes                   -> 200 { sizes }
  *  POST /api/v1/scm/loading-plans                     -> 201 LoadingPlan
  *  PATCH/GET/DELETE /api/v1/scm/loading-plans/{id}
@@ -218,6 +223,21 @@ export async function getUnfinishedStock(supplierId: string): Promise<Unfinished
   );
   const body = await readJson<{ rows: UnfinishedRow[] }>(res, 'Failed to load unfinished stock');
   return body.rows;
+}
+
+/** The retained copy of the supplier's own sheet, if the last apply kept one. */
+export interface SupplierStockListFile {
+  supplier_id: string;
+  attachment_id: string | null;
+  filename: string | null;
+  uploaded_at: string | null;
+}
+
+export async function getSupplierStockListFile(supplierId: string): Promise<SupplierStockListFile> {
+  const res = await apiFetch(
+    `/api/v1/scm/supplier-inventory/stock-list-file?supplier_id=${encodeURIComponent(supplierId)}`,
+  );
+  return readJson<SupplierStockListFile>(res, 'Failed to load the stored stock list');
 }
 
 export async function getContainerSizes(): Promise<ContainerSize[]> {
