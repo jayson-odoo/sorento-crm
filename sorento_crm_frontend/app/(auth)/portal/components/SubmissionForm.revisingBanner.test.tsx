@@ -213,17 +213,15 @@ describe('SubmissionForm - starting a revision from a responded inquiry', () => 
     expect(screen.getByText('Draft')).toBeInTheDocument();
   });
 
-  it('shows the frozen-field hint under Sales person', async () => {
+  it('keeps Sales person disabled in revise mode, with no explanatory prose', async () => {
     await renderResponded();
     await clickRevise();
 
     const salesperson = document.getElementById('salesperson_contact_id');
     expect(salesperson).toHaveAttribute('disabled');
-    expect(
-      screen.getByText(
-        'Locked during a revision. Ask the office to change the requestor.',
-      ),
-    ).toBeInTheDocument();
+    // The disabled control is the whole message: the UI does not explain itself
+    // (cursor rule - no feature explanations inside the UI).
+    expect(screen.queryByText(/Locked during a revision/)).toBeNull();
   });
 
   it('Cancel hides the banner and returns the badge to Responded', async () => {

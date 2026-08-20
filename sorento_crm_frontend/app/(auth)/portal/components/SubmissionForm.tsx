@@ -1,6 +1,14 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -10,7 +18,6 @@ import {
   FileText,
   History,
   Info,
-  Lock,
   Plus,
   Sparkles,
   Trash2,
@@ -26,7 +33,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Alert, AlertContent, AlertDescription, AlertIcon, AlertTitle } from '@/components/ui/alert';
+import {
+  Alert,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
+} from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -34,7 +47,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
-import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
+import {
+  SearchableSelect,
+  type SearchableSelectOption,
+} from '@/components/common/SearchableSelect';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
@@ -66,7 +82,11 @@ import {
   submitDraft,
   uploadAttachment,
 } from '../lib/portal-client';
-import { portalDetailPath, portalHomePath, portalVerifyPath } from '../lib/portal-paths';
+import {
+  portalDetailPath,
+  portalHomePath,
+  portalVerifyPath,
+} from '../lib/portal-paths';
 import { portalFetchBytes, toPreviewItem } from '../lib/portal-preview';
 import { cleanLineItems } from '../lib/line-items';
 import { useRevisionHistory, useReviseSubmission } from '../hooks/useRevisions';
@@ -159,7 +179,11 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
     { name: 'item_description', label: 'Item description', widget: 'textarea' },
     { name: 'quantity', label: 'Quantity', widget: 'number' },
     { name: 'delivery_date', label: 'Required delivery date', widget: 'date' },
-    { name: 'project_customer', label: 'Project customer', widget: 'debtor-async' },
+    {
+      name: 'project_customer',
+      label: 'Project customer',
+      widget: 'debtor-async',
+    },
     { name: 'project_name', label: 'Project name' },
     {
       name: 'salesperson_contact_id',
@@ -170,7 +194,11 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       required: true,
     },
     { name: 'remark', label: 'Remark', widget: 'textarea' },
-    { name: 'additional_remark', label: 'Additional remark', widget: 'textarea' },
+    {
+      name: 'additional_remark',
+      label: 'Additional remark',
+      widget: 'textarea',
+    },
   ],
   complaint: [
     {
@@ -282,10 +310,16 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       // The stored value is the project id; `project_code` is what a reloaded form
       // shows in the box, because a UUID in the UI is never the answer.
       displayFromDetail: 'project_code',
-      showWhenContact: (contact) => Boolean(contact?.requires_registered_project),
+      showWhenContact: (contact) =>
+        Boolean(contact?.requires_registered_project),
       requiredWhen: (contact) => Boolean(contact?.requires_registered_project),
     },
-    { name: 'total_project_value', label: 'Total project value', widget: 'number', placeholder: 'e.g. 1234.00' },
+    {
+      name: 'total_project_value',
+      label: 'Total project value',
+      widget: 'number',
+      placeholder: 'e.g. 1234.00',
+    },
     {
       name: 'sponsor_subject',
       label: 'Sponsor subject',
@@ -296,7 +330,9 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       name: 'sponsor_subject_other',
       label: 'Please specify',
       placeholder: 'Specify the sponsor subject',
-      showWhen: (f) => (typeof f.sponsor_subject === 'string' ? f.sponsor_subject : '') === 'others',
+      showWhen: (f) =>
+        (typeof f.sponsor_subject === 'string' ? f.sponsor_subject : '') ===
+        'others',
     },
     {
       name: 'expected_delivery_date',
@@ -314,7 +350,10 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
   ],
 };
 
-const HAS_LINES: PortalSubmissionKind[] = ['purchase_request', 'sponsorship_form'];
+const HAS_LINES: PortalSubmissionKind[] = [
+  'purchase_request',
+  'sponsorship_form',
+];
 
 /**
  * Fields a revision may NOT change, mirroring the backend's
@@ -340,17 +379,6 @@ function fieldSpansFullWidth(f: FieldDef): boolean {
     f.widget === 'textarea' ||
     f.widget === 'do-multi-filter' ||
     f.widget === 'product-quantities'
-  );
-}
-
-/** Sits beneath a `FROZEN_ON_REVISE` field's control - the requestor is the
- *  routing key, so a revision can only view it, never move it. */
-function FrozenHint() {
-  return (
-    <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-      <Lock className="size-3" />
-      Locked during a revision. Ask the office to change the requestor.
-    </p>
   );
 }
 
@@ -383,7 +411,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const [contact, setContact] = useState<PortalContact | null>(null);
   const [invalidFields, setInvalidFields] = useState<Set<string>>(new Set());
   const [staffPreviewOpen, setStaffPreviewOpen] = useState(false);
-  const [neighbours, setNeighbours] = useState<PortalSubmissionNeighbours | null>(null);
+  const [neighbours, setNeighbours] =
+    useState<PortalSubmissionNeighbours | null>(null);
   const [reviseMode, setReviseMode] = useState(false);
   const [reason, setReason] = useState('');
   const [reasonError, setReasonError] = useState<string | null>(null);
@@ -396,7 +425,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   // so a contact-hidden field cannot survive in one of them (AC-F4).
   const fieldDefs = useMemo(
     () =>
-      FIELDS[kind].filter((f) => (f.showWhenContact ? f.showWhenContact(contact) : true)),
+      FIELDS[kind].filter((f) =>
+        f.showWhenContact ? f.showWhenContact(contact) : true,
+      ),
     [kind, contact],
   );
   const showLines = HAS_LINES.includes(kind);
@@ -422,7 +453,10 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   // stay locked.
   const editing = isEditable || reviseMode;
   const revisionHistory = useRevisionHistory(kind, submissionId);
-  const { revise, submitting: revising } = useReviseSubmission(kind, submissionId);
+  const { revise, submitting: revising } = useReviseSubmission(
+    kind,
+    submissionId,
+  );
 
   // Deep link from the long-press preview card: `?revise=1` asks for the composer.
   // Read and stripped from the URL once, so a refresh does not silently re-enter
@@ -434,7 +468,11 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     if (url.searchParams.get('revise') !== '1') return;
     reviseDeepLink.current = true;
     url.searchParams.delete('revise');
-    window.history.replaceState({}, '', url.pathname + (url.search || '') + url.hash);
+    window.history.replaceState(
+      {},
+      '',
+      url.pathname + (url.search || '') + url.hash,
+    );
   }, [submissionId]);
 
   // A bookmarked or shared `?revise=1` link must not unlock the form on a
@@ -503,8 +541,16 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           el.tagName === 'TEXTAREA' ||
           el.tagName === 'SELECT' ||
           (el as HTMLElement).isContentEditable);
-      if (isEditable(e.target as Element | null) || isEditable(document.activeElement)) return;
-      if (document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')) {
+      if (
+        isEditable(e.target as Element | null) ||
+        isEditable(document.activeElement)
+      )
+        return;
+      if (
+        document.querySelector(
+          '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]',
+        )
+      ) {
         return;
       }
       if (e.key === 'ArrowLeft' && neighbours.prev_id) {
@@ -549,7 +595,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           lookupFields.map((f) =>
             lookupSet(f.setKey as string)
               .then((r) => {
-                if (r.defaultValue && !next[f.name]) next[f.name] = r.defaultValue;
+                if (r.defaultValue && !next[f.name])
+                  next[f.name] = r.defaultValue;
               })
               .catch(() => {}),
           ),
@@ -595,9 +642,15 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         }
         if (kind === 'complaint') {
           const pls =
-            (data as {
-              product_lines?: { product_code?: string | null; product_type?: string | null; quantity?: string | null }[];
-            }).product_lines ?? [];
+            (
+              data as {
+                product_lines?: {
+                  product_code?: string | null;
+                  product_type?: string | null;
+                  quantity?: string | null;
+                }[];
+              }
+            ).product_lines ?? [];
           setComplaintLines(
             pls
               .filter((l) => (l.product_code ?? '').trim())
@@ -611,16 +664,31 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         setAttachments((data.attachments as PortalAttachment[]) ?? []);
       } catch (e) {
         if (e instanceof PortalUnauthorizedError) {
-          router.replace(portalVerifyPath({ slug, reason: 'expired', type: kind, id: submissionId }));
+          router.replace(
+            portalVerifyPath({
+              slug,
+              reason: 'expired',
+              type: kind,
+              id: submissionId,
+            }),
+          );
           return;
         }
         // Logged in as a different contact than the form's owner - send them to
         // the owner's confirm-identity card (deep-link slug), keep their token.
         if (e instanceof PortalOwnerMismatchError) {
-          router.replace(portalVerifyPath({ slug, reason: 'expired', type: kind, id: submissionId }));
+          router.replace(
+            portalVerifyPath({
+              slug,
+              reason: 'expired',
+              type: kind,
+              id: submissionId,
+            }),
+          );
           return;
         }
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load.');
+        if (!cancelled)
+          setError(e instanceof Error ? e.message : 'Failed to load.');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -628,7 +696,15 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [fieldDefs, kind, router, showLines, submissionId, defaultsFromContact, reloadToken]);
+  }, [
+    fieldDefs,
+    kind,
+    router,
+    showLines,
+    submissionId,
+    defaultsFromContact,
+    reloadToken,
+  ]);
 
   const cleanedFields = useMemo(() => {
     const out: Record<string, unknown> = {};
@@ -697,7 +773,12 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const handleSaveDraft = async () => {
     setSaving(true);
     try {
-      const saved = await saveDraft(kind, cleanedFields, cleanedProducts, submissionId);
+      const saved = await saveDraft(
+        kind,
+        cleanedFields,
+        cleanedProducts,
+        submissionId,
+      );
       await flushPendingFiles(saved.id);
       toast.success('Draft saved.');
       router.replace(portalHomePath({ type: kind }));
@@ -717,7 +798,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const collectMissingRequired = (): { name: string; label: string }[] => {
     const missing: { name: string; label: string }[] = [];
     for (const f of fieldDefs) {
-      const isRequired = f.required || (f.requiredWhen ? f.requiredWhen(contact) : false);
+      const isRequired =
+        f.required || (f.requiredWhen ? f.requiredWhen(contact) : false);
       if (!isRequired) continue;
       const v = fields[f.name];
       const empty = Array.isArray(v)
@@ -734,7 +816,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     return missing;
   };
 
-  const reportMissingRequired = (missing: { name: string; label: string }[]) => {
+  const reportMissingRequired = (
+    missing: { name: string; label: string }[],
+  ) => {
     setInvalidFields(new Set(missing.map((m) => m.name)));
     toast.error(
       `Missing ${missing.length} required field${missing.length === 1 ? '' : 's'}: ${missing
@@ -854,7 +938,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       revisionHistory.reload();
     } catch (e) {
       if (e instanceof PortalUnauthorizedError) {
-        router.replace(portalVerifyPath({ slug, reason: 'expired', type: kind, id: submissionId }));
+        router.replace(
+          portalVerifyPath({
+            slug,
+            reason: 'expired',
+            type: kind,
+            id: submissionId,
+          }),
+        );
         return;
       }
       // 409 (revised elsewhere) and 422 (policy) both carry one server sentence.
@@ -898,7 +989,10 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       for (const [name, value] of Object.entries(aiValues)) {
         const isMultiArray = widgetByName[name] === 'do-multi-filter';
         if (Array.isArray(value) && !isMultiArray) {
-          next[name] = value.map((v) => String(v).trim()).filter(Boolean).join(', ');
+          next[name] = value
+            .map((v) => String(v).trim())
+            .filter(Boolean)
+            .join(', ');
         } else {
           next[name] = value;
         }
@@ -909,7 +1003,11 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       setPendingFiles((prev) => [...prev, ...payload.files]);
     }
 
-    if (HAS_LINES.includes(kind) && payload.productLines && payload.productLines.length > 0) {
+    if (
+      HAS_LINES.includes(kind) &&
+      payload.productLines &&
+      payload.productLines.length > 0
+    ) {
       const numToString = (n: number | null | undefined): string | undefined =>
         n === null || n === undefined ? undefined : String(n);
       const aiLines: ProductLine[] = payload.productLines.map((p) => ({
@@ -942,7 +1040,10 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         .map((p) => ({
           product_code: (p.product_code ?? '').trim(),
           product_type: '',
-          quantity: p.quantity === null || p.quantity === undefined ? '' : String(p.quantity),
+          quantity:
+            p.quantity === null || p.quantity === undefined
+              ? ''
+              : String(p.quantity),
         }))
         .filter((l) => l.product_code);
       if (aiLines.length > 0) {
@@ -1006,11 +1107,17 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     );
     // AI customer wins; only fill from DO debtor when AI did not provide.
     if (!aiCustomer && customerNames.length > 0) {
-      setFields((prev) => ({ ...prev, customer_name: customerNames.join(', ') }));
+      setFields((prev) => ({
+        ...prev,
+        customer_name: customerNames.join(', '),
+      }));
     }
     // Only derive product lines from the DO when AI didn't already supply them.
     if (!aiSuppliedLines && productCodes.length > 0) {
-      const built = await buildComplaintLinesFromCodes(productCodes, complaintLines);
+      const built = await buildComplaintLinesFromCodes(
+        productCodes,
+        complaintLines,
+      );
       setComplaintLines(built);
     }
   };
@@ -1031,12 +1138,20 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         try {
           const matches = await lookupProducts(code, 5);
           const exact = matches.find((m) => m.product_code === code);
-          productType = (exact?.category_code ?? exact?.category_name ?? '').trim();
+          productType = (
+            exact?.category_code ??
+            exact?.category_name ??
+            ''
+          ).trim();
         } catch {
           // best-effort - leave blank, user can fill
         }
       }
-      out.push({ product_code: code, product_type: productType, quantity: existing?.quantity ?? '' });
+      out.push({
+        product_code: code,
+        product_type: productType,
+        quantity: existing?.quantity ?? '',
+      });
     }
     return out;
   };
@@ -1068,7 +1183,10 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     );
     setFields((prev) => ({ ...prev, customer_name: customerNames.join(', ') }));
     if (productCodes.length > 0) {
-      const built = await buildComplaintLinesFromCodes(productCodes, complaintLines);
+      const built = await buildComplaintLinesFromCodes(
+        productCodes,
+        complaintLines,
+      );
       setComplaintLines(built);
     }
   };
@@ -1090,7 +1208,10 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     );
     setFields((prev) => ({ ...prev, customer_name: customerNames.join(', ') }));
     if (productCodes.length > 0) {
-      const built = await buildComplaintLinesFromCodes(productCodes, complaintLines);
+      const built = await buildComplaintLinesFromCodes(
+        productCodes,
+        complaintLines,
+      );
       setComplaintLines(built);
     }
   };
@@ -1120,17 +1241,29 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   // Purchasing / technical response shown at top for salesperson once responded. Hidden when empty.
   const responseInfo = (() => {
     if (kind === 'stock_inquiry') {
-      const v = ((detail?.purchasing_response as string | null | undefined) ?? '').trim();
-      return v ? { label: 'Comment / reply by purchasing', value: v, team: 'purchasing' } : null;
+      const v = (
+        (detail?.purchasing_response as string | null | undefined) ?? ''
+      ).trim();
+      return v
+        ? {
+            label: 'Comment / reply by purchasing',
+            value: v,
+            team: 'purchasing',
+          }
+        : null;
     }
     if (kind === 'complaint') {
-      let v = ((detail?.technical_team_response as string | null | undefined) ?? '').trim();
+      let v = (
+        (detail?.technical_team_response as string | null | undefined) ?? ''
+      ).trim();
       // Strip legacy composed customer message so only technician wording shows (matches CRM).
       if (v.startsWith('There has been an update regarding your complaint')) {
         const idx = v.lastIndexOf(': ');
         if (idx !== -1) v = v.slice(idx + 2).trim();
       }
-      return v ? { label: 'Technical team response', value: v, team: 'technical team' } : null;
+      return v
+        ? { label: 'Technical team response', value: v, team: 'technical team' }
+        : null;
     }
     return null;
   })();
@@ -1138,21 +1271,32 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   // Staff (purchasing / technical) response attachments - surfaced at the top
   // of the reply banner, scoped away from the contact's own uploads below.
   // Count is derived from the loaded attachments, never typed.
-  const staffAttachments = attachments.filter((a) => a.uploader_kind === 'user');
-  const staffPreviewItems: AttachmentPreviewItem[] = staffAttachments.map(toPreviewItem);
+  const staffAttachments = attachments.filter(
+    (a) => a.uploader_kind === 'user',
+  );
+  const staffPreviewItems: AttachmentPreviewItem[] =
+    staffAttachments.map(toPreviewItem);
 
   // "Requested by" / "Salesperson" contact-select: pre-select the saved id and
   // resolve a NAME to show (never a UUID) - the legacy free-text sibling
   // column carries the point-in-time label, falling back to the submitting
   // contact's own name for a brand-new form.
-  const resolveContactOption = (field: FieldDef): SearchableSelectOption | undefined => {
+  const resolveContactOption = (
+    field: FieldDef,
+  ): SearchableSelectOption | undefined => {
     if (field.widget !== 'contact-select') return undefined;
-    const id = typeof fields[field.name] === 'string' ? (fields[field.name] as string) : '';
+    const id =
+      typeof fields[field.name] === 'string'
+        ? (fields[field.name] as string)
+        : '';
     if (!id) return undefined;
     const legacyLabel = field.legacyLabelField
-      ? ((detail as Record<string, unknown> | null)?.[field.legacyLabelField] as string | undefined)
+      ? ((detail as Record<string, unknown> | null)?.[
+          field.legacyLabelField
+        ] as string | undefined)
       : undefined;
-    const label = (legacyLabel ?? '').trim() || defaultsFromContact.fullname || 'You';
+    const label =
+      (legacyLabel ?? '').trim() || defaultsFromContact.fullname || 'You';
     return { value: id, label };
   };
 
@@ -1162,7 +1306,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   // With revisions off - or on an unsaved form, where there is no lineage to
   // read - the page keeps today's single flat stack and shows no tab strip at
   // all: a one-tab tab bar is furniture, not navigation.
-  const revisionsTabbed = Boolean(submissionId) && revisionPolicy?.enabled === true;
+  const revisionsTabbed =
+    Boolean(submissionId) && revisionPolicy?.enabled === true;
 
   const detailsContent = (
     <>
@@ -1191,12 +1336,17 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
 
       {responseInfo && (
         <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm">
-          <p className="font-medium text-emerald-700 dark:text-emerald-400">{responseInfo.label}</p>
-          <p className="mt-1 whitespace-pre-wrap text-foreground">{responseInfo.value}</p>
+          <p className="font-medium text-emerald-700 dark:text-emerald-400">
+            {responseInfo.label}
+          </p>
+          <p className="mt-1 whitespace-pre-wrap text-foreground">
+            {responseInfo.value}
+          </p>
           {staffAttachments.length > 0 && (
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <span className="text-xs text-emerald-700/80 dark:text-emerald-400/80">
-                {staffAttachments.length} attachment{staffAttachments.length === 1 ? '' : 's'} from{' '}
+                {staffAttachments.length} attachment
+                {staffAttachments.length === 1 ? '' : 's'} from{' '}
                 {responseInfo.team}
               </span>
               <Button
@@ -1205,7 +1355,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                 size="sm"
                 onClick={() => setStaffPreviewOpen(true)}
               >
-                View attachment{staffAttachments.length === 1 ? '' : 's'} ({staffAttachments.length})
+                View attachment{staffAttachments.length === 1 ? '' : 's'} (
+                {staffAttachments.length})
               </Button>
             </div>
           )}
@@ -1213,13 +1364,18 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       )}
 
       {reviseMode && (
-        <Alert variant="warning" appearance="light" data-testid="revising-banner">
+        <Alert
+          variant="warning"
+          appearance="light"
+          data-testid="revising-banner"
+        >
           <AlertIcon>
             <Info />
           </AlertIcon>
           <AlertContent>
             <AlertTitle>
-              Revising - revision {(detail?.revision_no ?? 0) + 1} (not sent yet)
+              Revising - revision {(detail?.revision_no ?? 0) + 1} (not sent
+              yet)
             </AlertTitle>
             <AlertDescription>
               Nothing is saved until you press Send revision. {restartSentence}
@@ -1287,7 +1443,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                 <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
                   <tr>
                     <th className="w-10 px-2 py-2 text-left">#</th>
-                    <th className="min-w-[180px] px-2 py-2 text-left">Item code</th>
+                    <th className="min-w-[180px] px-2 py-2 text-left">
+                      Item code
+                    </th>
                     <th className="w-28 px-2 py-2 text-left">Quantity</th>
                     {kind === 'sponsorship_form' && (
                       <>
@@ -1295,7 +1453,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                         <th className="w-32 px-2 py-2 text-left">Total</th>
                       </>
                     )}
-                    <th className="min-w-[200px] px-2 py-2 text-left">Remark</th>
+                    <th className="min-w-[200px] px-2 py-2 text-left">
+                      Remark
+                    </th>
                     <th className="w-12 px-2 py-2"></th>
                   </tr>
                 </thead>
@@ -1308,8 +1468,13 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                         ? (qtyNum * priceNum).toFixed(2)
                         : '';
                     return (
-                      <tr key={index} className="border-t border-border align-top">
-                        <td className="px-2 py-2 text-muted-foreground">{index + 1}</td>
+                      <tr
+                        key={index}
+                        className="border-t border-border align-top"
+                      >
+                        <td className="px-2 py-2 text-muted-foreground">
+                          {index + 1}
+                        </td>
                         <td className="px-2 py-2">
                           <AsyncCombobox<ProductLookupItem>
                             value={line.item_code ?? ''}
@@ -1336,7 +1501,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                             onChange={(e) =>
                               setProducts((prev) =>
                                 prev.map((p, i) =>
-                                  i === index ? { ...p, quantity: e.target.value } : p,
+                                  i === index
+                                    ? { ...p, quantity: e.target.value }
+                                    : p,
                                 ),
                               )
                             }
@@ -1374,12 +1541,16 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                                 onChange={(e) =>
                                   setProducts((prev) =>
                                     prev.map((p, i) =>
-                                      i === index ? { ...p, total: e.target.value } : p,
+                                      i === index
+                                        ? { ...p, total: e.target.value }
+                                        : p,
                                     ),
                                   )
                                 }
                                 placeholder={
-                                  computedTotal && !line.total ? computedTotal : ''
+                                  computedTotal && !line.total
+                                    ? computedTotal
+                                    : ''
                                 }
                                 disabled={!editing}
                               />
@@ -1392,7 +1563,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                             onChange={(e) =>
                               setProducts((prev) =>
                                 prev.map((p, i) =>
-                                  i === index ? { ...p, remark: e.target.value } : p,
+                                  i === index
+                                    ? { ...p, remark: e.target.value }
+                                    : p,
                                 ),
                               )
                             }
@@ -1407,7 +1580,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                             size="icon"
                             disabled={!editing}
                             onClick={() =>
-                              setProducts((prev) => prev.filter((_, i) => i !== index))
+                              setProducts((prev) =>
+                                prev.filter((_, i) => i !== index),
+                              )
                             }
                             title="Remove"
                           >
@@ -1475,7 +1650,10 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
 
       {reviseMode && (
         <Card>
-          <CardContent className="pt-6 space-y-1.5" data-field-name="revision_reason">
+          <CardContent
+            className="pt-6 space-y-1.5"
+            data-field-name="revision_reason"
+          >
             <Label htmlFor="revision_reason" className="min-w-0">
               What changed, and why?
               <span className="ml-0.5 text-destructive">*</span>
@@ -1492,7 +1670,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               className={reasonError ? 'border-destructive' : ''}
               disabled={revising}
             />
-            {reasonError && <p className="text-xs text-destructive">{reasonError}</p>}
+            {reasonError && (
+              <p className="text-xs text-destructive">{reasonError}</p>
+            )}
           </CardContent>
         </Card>
       )}
@@ -1540,7 +1720,10 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           {/* A read-only form has nothing to submit: a responded inquiry changes
               only through Revise, so a disabled Submit would just be a tease. */}
           {isEditable && (
-            <Button onClick={() => setConfirmOpen(true)} disabled={saving || submitting}>
+            <Button
+              onClick={() => setConfirmOpen(true)}
+              disabled={saving || submitting}
+            >
               {submitting ? 'Submitting...' : 'Submit'}
             </Button>
           )}
@@ -1603,7 +1786,10 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           {/* Same underlined strip the office detail pages use, so a record's
               tabs look the same whichever side of the system you are on. The
               list carries its own bottom margin, so the root drops space-y. */}
-          <TabsList variant="line" className="mb-5 w-full justify-start overflow-x-auto">
+          <TabsList
+            variant="line"
+            className="mb-5 w-full justify-start overflow-x-auto"
+          >
             <TabsTrigger value="details">
               <FileText />
               <span>Details</span>
@@ -1634,9 +1820,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               Send revision {(revisionPolicy?.used ?? 0) + 1}?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              The office stops work on the current version. {restartSentence} You will
-              have {revisionsLeftAfter} {revisionsLeftAfter === 1 ? 'revision' : 'revisions'}{' '}
-              left.
+              The office stops work on the current version. {restartSentence}{' '}
+              You will have {revisionsLeftAfter}{' '}
+              {revisionsLeftAfter === 1 ? 'revision' : 'revisions'} left.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1655,8 +1841,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               Submit this {SUBMISSION_LABELS[kind].toLowerCase()}?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Once submitted, your team will be notified. You can no longer edit unless it
-              is returned to you for changes.
+              Once submitted, your team will be notified. You can no longer edit
+              unless it is returned to you for changes.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1681,7 +1867,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this draft?</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. The draft will be permanently removed.
+              This action cannot be undone. The draft will be permanently
+              removed.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1707,7 +1894,11 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       {neighbours?.prev_id && (
         <button
           type="button"
-          onClick={() => router.push(portalDetailPath(kind, neighbours.prev_id as string, slug))}
+          onClick={() =>
+            router.push(
+              portalDetailPath(kind, neighbours.prev_id as string, slug),
+            )
+          }
           aria-label="Previous submission"
           className="fixed left-1 top-1/2 z-30 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/80 opacity-60 shadow-sm backdrop-blur transition hover:opacity-100 sm:left-3 sm:size-10"
         >
@@ -1717,7 +1908,11 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       {neighbours?.next_id && (
         <button
           type="button"
-          onClick={() => router.push(portalDetailPath(kind, neighbours.next_id as string, slug))}
+          onClick={() =>
+            router.push(
+              portalDetailPath(kind, neighbours.next_id as string, slug),
+            )
+          }
           aria-label="Next submission"
           className="fixed right-1 top-1/2 z-30 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/80 opacity-60 shadow-sm backdrop-blur transition hover:opacity-100 sm:right-3 sm:size-10"
         >
@@ -1738,7 +1933,10 @@ interface SectionProps {
   /** Fields locked for this render even though the form is editable. Empty
    *  outside revise mode; carries the requestor while revising. */
   frozenFields?: Set<string>;
-  statusBadge: { label: string; variant: 'warning' | 'destructive' | 'success' | 'secondary' } | null;
+  statusBadge: {
+    label: string;
+    variant: 'warning' | 'destructive' | 'success' | 'secondary';
+  } | null;
   onProductItemSelected: (fieldName: string, item: ProductLookupItem) => void;
   onDOItemsChanged?: (items: DOLookupItem[]) => void;
   onDOProductsConfirmed?: (payload: {
@@ -1753,7 +1951,9 @@ interface SectionProps {
   /** `contact-select` fields only - resolves the picker's pre-selected option
    *  (id + human-readable name) so a saved-but-ineligible contact still shows
    *  its name instead of a blank or a UUID. */
-  resolveContactOption?: (field: FieldDef) => SearchableSelectOption | undefined;
+  resolveContactOption?: (
+    field: FieldDef,
+  ) => SearchableSelectOption | undefined;
 }
 
 function StockInquiryFormSection({
@@ -1775,7 +1975,9 @@ function StockInquiryFormSection({
   }, [fieldDefs]);
 
   const dateValue = detail?.created_at
-    ? new Date(detail.created_at).toLocaleDateString(undefined, { dateStyle: 'short' })
+    ? new Date(detail.created_at).toLocaleDateString(undefined, {
+        dateStyle: 'short',
+      })
     : new Date().toLocaleDateString(undefined, { dateStyle: 'short' });
   const inquiryNumber =
     (detail?.document_number as string | undefined) ||
@@ -1802,10 +2004,13 @@ function StockInquiryFormSection({
             field={fieldByName.salesperson_contact_id}
             value={fields.salesperson_contact_id ?? ''}
             onChange={(v) => setFieldValue('salesperson_contact_id', v)}
-            disabled={!isEditable || frozenFields?.has('salesperson_contact_id')}
-            contactOption={resolveContactOption?.(fieldByName.salesperson_contact_id)}
+            disabled={
+              !isEditable || frozenFields?.has('salesperson_contact_id')
+            }
+            contactOption={resolveContactOption?.(
+              fieldByName.salesperson_contact_id,
+            )}
           />
-          {frozenFields?.has('salesperson_contact_id') && <FrozenHint />}
         </InquiryFormTableRow>
         <InquiryFormTableRow label="Product code">
           <FieldControl
@@ -1816,7 +2021,10 @@ function StockInquiryFormSection({
             disabled={!isEditable}
           />
         </InquiryFormTableRow>
-        <InquiryFormTableRow label="Item description" labelClassName="items-start pt-3">
+        <InquiryFormTableRow
+          label="Item description"
+          labelClassName="items-start pt-3"
+        >
           <FieldControl
             field={fieldByName.item_description}
             value={fields.item_description ?? ''}
@@ -1864,7 +2072,10 @@ function StockInquiryFormSection({
             disabled={!isEditable}
           />
         </InquiryFormTableRow>
-        <InquiryFormTableRow label="Additional remark" labelClassName="items-start pt-3">
+        <InquiryFormTableRow
+          label="Additional remark"
+          labelClassName="items-start pt-3"
+        >
           <FieldControl
             field={fieldByName.additional_remark}
             value={fields.additional_remark ?? ''}
@@ -1892,9 +2103,14 @@ function ComplaintLinesTable({
   invalid?: boolean;
 }) {
   const updateRow = (index: number, patch: Partial<ComplaintLine>) =>
-    setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
+    setLines((prev) =>
+      prev.map((l, i) => (i === index ? { ...l, ...patch } : l)),
+    );
   const addRow = () =>
-    setLines((prev) => [...prev, { product_code: '', product_type: '', quantity: '' }]);
+    setLines((prev) => [
+      ...prev,
+      { product_code: '', product_type: '', quantity: '' },
+    ]);
   const removeRow = (index: number) =>
     setLines((prev) => prev.filter((_, i) => i !== index));
 
@@ -1910,8 +2126,12 @@ function ComplaintLinesTable({
           <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="w-10 px-2 py-2 text-left">#</th>
-              <th className="min-w-[200px] px-2 py-2 text-left">Product code</th>
-              <th className="min-w-[140px] px-2 py-2 text-left">Product type</th>
+              <th className="min-w-[200px] px-2 py-2 text-left">
+                Product code
+              </th>
+              <th className="min-w-[140px] px-2 py-2 text-left">
+                Product type
+              </th>
               <th className="w-24 px-2 py-2 text-left">Qty</th>
               <th className="w-10 px-2 py-2"></th>
             </tr>
@@ -1919,7 +2139,10 @@ function ComplaintLinesTable({
           <tbody>
             {lines.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">
+                <td
+                  colSpan={5}
+                  className="px-3 py-4 text-center text-muted-foreground"
+                >
                   No products yet. Click “Add product”.
                 </td>
               </tr>
@@ -1932,7 +2155,11 @@ function ComplaintLinesTable({
                     value={line.product_code}
                     onChange={(v, item) => {
                       const derived = item
-                        ? (item.category_code ?? item.category_name ?? '').trim()
+                        ? (
+                            item.category_code ??
+                            item.category_name ??
+                            ''
+                          ).trim()
                         : '';
                       updateRow(index, {
                         product_code: v,
@@ -1949,7 +2176,9 @@ function ComplaintLinesTable({
                 <td className="px-2 py-2">
                   <Input
                     value={line.product_type}
-                    onChange={(e) => updateRow(index, { product_type: e.target.value })}
+                    onChange={(e) =>
+                      updateRow(index, { product_type: e.target.value })
+                    }
                     placeholder="Type"
                     disabled={disabled}
                   />
@@ -1960,7 +2189,9 @@ function ComplaintLinesTable({
                     inputMode="numeric"
                     min="0"
                     value={line.quantity}
-                    onChange={(e) => updateRow(index, { quantity: e.target.value })}
+                    onChange={(e) =>
+                      updateRow(index, { quantity: e.target.value })
+                    }
                     placeholder="Qty"
                     disabled={disabled}
                     // min-width on the input (not the <th>, which table
@@ -2014,7 +2245,9 @@ function ComplaintFormSection({
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2">
         <CardTitle>Complaint Information</CardTitle>
-        {statusBadge && <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>}
+        {statusBadge && (
+          <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
+        )}
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2034,7 +2267,6 @@ function ComplaintFormSection({
                 disabled={!isEditable || frozenFields?.has(f.name)}
                 contact={contact}
               />
-              {frozenFields?.has(f.name) && <FrozenHint />}
             </div>
           ))}
           {complaintLines && setComplaintLines && (
@@ -2067,7 +2299,9 @@ function PurchaseRequestFormSection({
   resolveContactOption,
 }: SectionProps & { kind: PortalSubmissionKind }) {
   const heading =
-    kind === 'sponsorship_form' ? 'Project Sales Sponsorship Form' : 'Purchase Request';
+    kind === 'sponsorship_form'
+      ? 'Project Sales Sponsorship Form'
+      : 'Purchase Request';
   return (
     <div className="w-full">
       <Card className="border-2 shadow-sm">
@@ -2107,7 +2341,6 @@ function PurchaseRequestFormSection({
                         : undefined
                     }
                   />
-                  {frozenFields?.has(f.name) && <FrozenHint />}
                 </div>
               ))}
           </div>
@@ -2149,7 +2382,8 @@ function FieldInput({
   // The asterisk has to agree with what submit actually enforces, or a flagged contact
   // gets stopped by a field that never said it was needed.
   const isRequired =
-    field.required || (field.requiredWhen ? field.requiredWhen(contact ?? null) : false);
+    field.required ||
+    (field.requiredWhen ? field.requiredWhen(contact ?? null) : false);
   return (
     <div className="space-y-1.5 min-w-0" data-field-name={field.name}>
       <Label htmlFor={field.name} className="min-w-0">
@@ -2304,7 +2538,9 @@ function FieldControl({
           // The company on every row (AC-F4a): a contact mapped to two of them cannot
           // otherwise tell two similarly-named phases apart.
           optionMeta={(o) => o.company_name ?? ''}
-          placeholder={field.placeholder ?? 'Search your registered projects...'}
+          placeholder={
+            field.placeholder ?? 'Search your registered projects...'
+          }
           disabled={disabled}
         />
       );
