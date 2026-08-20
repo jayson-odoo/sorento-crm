@@ -66,6 +66,38 @@ const UNREVISED_ROW: PortalSubmissionSummary = {
   product_code: 'XYZ-999',
 };
 
+const REVISING_ROW: PortalSubmissionSummary = {
+  id: 'si-revising',
+  kind: 'stock_inquiry',
+  title: 'Stock inquiry',
+  document_number: 'SI-26-0777',
+  reference: 'SI-26-0777',
+  status: 'responded',
+  is_editable: false,
+  is_draft: false,
+  created_at: '2026-07-10T00:00:00Z',
+  revision_no: 1,
+  last_revised_at: '2026-07-11T00:00:00Z',
+  has_revision_draft: true,
+  product_code: 'DEF-456',
+};
+
+const NOT_REVISING_ROW: PortalSubmissionSummary = {
+  id: 'si-not-revising',
+  kind: 'stock_inquiry',
+  title: 'Stock inquiry',
+  document_number: 'SI-26-0888',
+  reference: 'SI-26-0888',
+  status: 'responded',
+  is_editable: false,
+  is_draft: false,
+  created_at: '2026-07-12T00:00:00Z',
+  revision_no: 1,
+  last_revised_at: '2026-07-13T00:00:00Z',
+  has_revision_draft: false,
+  product_code: 'GHI-789',
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   (fetchMeWithGrace as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -102,5 +134,31 @@ describe('PortalLanding - revision badge and date on the submission card', () =>
       expect(screen.getAllByText(/^Revised /)).toHaveLength(1),
     );
     expect(freshCard).toBeInTheDocument();
+  });
+});
+
+describe('PortalLanding - revising chip for a parked, unsent draft', () => {
+  beforeEach(() => {
+    (fetchSubmissions as ReturnType<typeof vi.fn>).mockImplementation(
+      async (kind: string) =>
+        kind === 'stock_inquiry' ? [REVISING_ROW, NOT_REVISING_ROW] : [],
+    );
+  });
+
+  it('shows the Revising chip for a row with a parked draft', async () => {
+    render(<PortalLanding slug="darren" />);
+    await screen.findByText('SI-26-0777');
+
+    const chips = screen.getAllByTestId('revising-chip');
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toHaveTextContent('Revising');
+  });
+
+  it('shows no Revising chip for a row without a parked draft', async () => {
+    render(<PortalLanding slug="darren" />);
+    const notRevisingCard = await screen.findByText('SI-26-0888');
+
+    expect(notRevisingCard).toBeInTheDocument();
+    expect(screen.getAllByTestId('revising-chip')).toHaveLength(1);
   });
 });

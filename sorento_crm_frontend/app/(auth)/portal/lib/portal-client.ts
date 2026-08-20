@@ -79,6 +79,9 @@ export interface PortalSubmissionSummary {
   revision_no?: number | null;
   /** Set the moment a revision lands, so a list can sort/label by it. */
   last_revised_at?: string | null;
+  /** True while an unsent revision draft is parked on this submission - the
+   *  row's own `status` stays the real one; this is what tells the two apart. */
+  has_revision_draft?: boolean;
   // Optional kind-specific summary fields surfaced for the mobile card layout.
   product_code?: string | null;
   project_title?: string | null;

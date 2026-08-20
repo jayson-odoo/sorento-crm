@@ -201,16 +201,17 @@ describe('SubmissionForm - a responded stock inquiry is read-only', () => {
 });
 
 describe('SubmissionForm - starting a revision from a responded inquiry', () => {
-  it('shows the revising banner naming the next revision number, and the badge reads Draft', async () => {
+  it('shows the revising banner naming the next revision number, and the badge keeps showing the real status', async () => {
     await renderResponded();
     await clickRevise();
 
     const banner = await screen.findByTestId('revising-banner');
     expect(banner).toHaveTextContent('Revising - revision 2 (not sent yet)');
 
-    // The old "Responded" pill must not still be showing once revising starts.
-    expect(screen.queryByText('Responded')).toBeNull();
-    expect(screen.getByText('Draft')).toBeInTheDocument();
+    // The pill shows the real status throughout - revising does not override it
+    // to "Draft" (the "nothing sent yet" message lives in the banner instead).
+    expect(screen.getByText('Responded')).toBeInTheDocument();
+    expect(screen.queryByText('Draft')).toBeNull();
   });
 
   it('keeps Sales person disabled in revise mode, with no explanatory prose', async () => {

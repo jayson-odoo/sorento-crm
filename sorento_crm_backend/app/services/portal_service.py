@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.config import settings
 from app.models.access import RespondContact
 from app.models.complaints import Complaint
-from app.models.portal import PortalOtpCode, PortalToken
+from app.models.portal import PortalOtpCode, PortalRevisionDraft, PortalToken
 from app.models.procurement import (
     PurchaseRequestHeader,
     PurchaseRequestLine,
@@ -654,6 +654,26 @@ class PortalService:
             raise handle_not_found("Contact", token.contact_id)
         return contact
 
+    def _ids_with_revision_draft(self, source_entity_type: str, ids: list[str]) -> set[str]:
+        """Ids among ``ids`` that have an unsent revision draft parked.
+
+        One query per list call, skipped entirely when there is nothing to check
+        against - the list row marks "you have unsent changes here", not the
+        submission's real status (that stays untouched; see the revising banner
+        on the form itself for the "not sent yet" message).
+        """
+        if not ids:
+            return set()
+        rows = (
+            self.db.query(PortalRevisionDraft.source_entity_id)
+            .filter(
+                PortalRevisionDraft.source_entity_type == source_entity_type,
+                PortalRevisionDraft.source_entity_id.in_(ids),
+            )
+            .all()
+        )
+        return {str(r[0]) for r in rows}
+
     # ---------- List submissions ----------
 
     def list_submissions(
@@ -719,7 +739,15 @@ class PortalService:
                 func.coalesce(StockInquiry.last_revised_at, StockInquiry.created_at).desc(),
                 StockInquiry.id.asc(),
             ).all()
-            return [self._serialize_stock_inquiry_summary(r) for r in rows]
+            draft_ids = self._ids_with_revision_draft(
+                "stock_inquiry", [str(r.id) for r in rows]
+            )
+            return [
+                self._serialize_stock_inquiry_summary(
+                    r, has_revision_draft=str(r.id) in draft_ids
+                )
+                for r in rows
+            ]
         # purchase_request / sponsorship_form
         query = self.db.query(PurchaseRequestHeader).filter(
             PurchaseRequestHeader.contact_id == token.contact_id,
@@ -756,7 +784,13 @@ class PortalService:
             func.coalesce(PurchaseRequestHeader.last_revised_at, PurchaseRequestHeader.created_at).desc(),
             PurchaseRequestHeader.id.asc(),
         ).all()
-        return [self._serialize_request_summary(r) for r in rows]
+        # source_entity_type on portal_revision_drafts matches `kind` exactly for
+        # both purchase_request and sponsorship_form (see the revision adapters).
+        draft_ids = self._ids_with_revision_draft(kind, [str(r.id) for r in rows])
+        return [
+            self._serialize_request_summary(r, has_revision_draft=str(r.id) in draft_ids)
+            for r in rows
+        ]
 
     # ---------- Detail ----------
 
@@ -1747,7 +1781,9 @@ class PortalService:
         )
         return base
 
-    def _serialize_stock_inquiry_summary(self, row: StockInquiry) -> dict:
+    def _serialize_stock_inquiry_summary(
+        self, row: StockInquiry, *, has_revision_draft: bool = False
+    ) -> dict:
         return {
             "id": str(row.id),
             "kind": "stock_inquiry",
@@ -1763,6 +1799,10 @@ class PortalService:
             "created_at": row.created_at.isoformat() if row.created_at else None,
             "last_revised_at": row.last_revised_at.isoformat() if row.last_revised_at else None,
             "revision_no": int(row.revision_no or 0),
+            # Marks a list row that has an unsent revision draft parked - the row's
+            # own `status` stays the real one; this is what tells the two apart
+            # from the entity that simply hasn't been touched (UAC: revision drafts).
+            "has_revision_draft": has_revision_draft,
             "product_code": row.product_code,
             "project_name": row.project_name,
             "project_customer": row.project_customer,
@@ -1799,7 +1839,9 @@ class PortalService:
         )
         return base
 
-    def _serialize_request_summary(self, row: PurchaseRequestHeader) -> dict:
+    def _serialize_request_summary(
+        self, row: PurchaseRequestHeader, *, has_revision_draft: bool = False
+    ) -> dict:
         approval_rejected = (
             (getattr(row, "approval_status", None) or "").strip().lower() == "rejected"
         )
@@ -1822,6 +1864,8 @@ class PortalService:
             "created_at": row.created_at.isoformat() if row.created_at else None,
             "last_revised_at": row.last_revised_at.isoformat() if row.last_revised_at else None,
             "revision_no": int(row.revision_no or 0),
+            # See _serialize_stock_inquiry_summary - same convention here.
+            "has_revision_draft": has_revision_draft,
             "project_title": row.project_title,
             "customer_name": row.customer_name,
             "sponsor_subject": row.sponsor_subject,

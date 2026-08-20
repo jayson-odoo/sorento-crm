@@ -1312,23 +1312,23 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     return <div className="p-6 text-sm text-muted-foreground">Loading...</div>;
   }
 
-  // Revising reads as Draft everywhere the badge appears - nothing is sent
-  // until "Send revision", so the pill must not still claim the old status.
-  const statusBadge = reviseMode
+  // The badge always reflects the real state - revising does NOT override it
+  // to "Draft", because the list row shows the same real status and the two
+  // must never disagree. The "nothing sent yet" message lives in the
+  // revising banner below, not in the pill.
+  const statusBadge = detail?.is_draft
     ? { label: 'Draft', variant: 'warning' as const }
-    : detail?.is_draft
-      ? { label: 'Draft', variant: 'warning' as const }
-      : detail?.status
-        ? {
-            label: statusLabel(detail.status),
-            variant:
-              detail.status === 'rejected'
-                ? ('destructive' as const)
-                : detail.status === 'approved' || detail.status === 'responded'
-                  ? ('success' as const)
-                  : ('secondary' as const),
-          }
-        : null;
+    : detail?.status
+      ? {
+          label: statusLabel(detail.status),
+          variant:
+            detail.status === 'rejected'
+              ? ('destructive' as const)
+              : detail.status === 'approved' || detail.status === 'responded'
+                ? ('success' as const)
+                : ('secondary' as const),
+        }
+      : null;
 
   // Purchasing / technical response shown at top for salesperson once responded. Hidden when empty.
   const responseInfo = (() => {
