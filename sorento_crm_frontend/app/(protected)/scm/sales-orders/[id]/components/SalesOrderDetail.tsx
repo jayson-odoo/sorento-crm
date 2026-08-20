@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
   SortingState,
@@ -31,6 +32,7 @@ import {
 } from '../../../hooks/useScmOptions';
 import { useSalesAgentOptions } from '../../hooks/useSalesAgentOptions';
 import SalesOrderNavigation from '../../components/SalesOrderNavigation';
+import { getSalesOrderUoms, type SalesOrderPlanningChangeBatch } from '../../../services/salesOrderService';
 import { fmtDate, fmtInt } from '../../../lib/format';
 import { demandClassBadge } from '../../../lib/demandClass';
 import type { SalesOrder, SalesOrderLine, SalesOrderPriority } from '../../../types/scm.types';
@@ -197,6 +199,20 @@ export function SalesOrderDetail({ id }: { id: string }) {
   const productOptions = useProductOptions();
   const agentOptions = useSalesAgentOptions();
   const warehouseOptions = useWarehouseOptions();
+  // Inline rather than a shared hook file: this select is used on this one screen. Mirrors
+  // `useSalesOrderAgents`'s own staleTime - the UoM master changes rarely enough that a
+  // 5-minute cache is not worth a dedicated hooks file for one caller.
+  const uomOptionsQuery = useQuery({
+    queryKey: ['scm', 'sales-order-uoms'],
+    queryFn: getSalesOrderUoms,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+  const uomSelectOptions = useMemo<SearchableSelectOption[]>(
+    () => (uomOptionsQuery.data ?? []).map((u) => ({ value: u.uom_code, label: u.uom_name })),
+    [uomOptionsQuery.data],
+  );
   // Code review nit: the read view's Location cell shows the code (`row.original.warehouse_code`,
   // below), and `getWarehouseOptions` labels each option with the NAME - so the same value read
   // as "BRW" and edited as "Bandar Rawang Warehouse". Prefix the code onto the label here so the
@@ -216,8 +232,14 @@ export function SalesOrderDetail({ id }: { id: string }) {
   const [lineDrafts, setLineDrafts] = useState<Record<string, LineDraft>>({});
   const [error, setError] = useState<string | null>(null);
   const originalLineSignatureRef = useRef<string | null>(null);
+  // Set only when a save's response actually carries one (PLAN-so-book-diff-replanning.md
+  // section 2) - most saves never touch this. Cleared on the next edit session, so it
+  // cannot linger and describe a batch a later save superseded.
+  const [planningChangeBatch, setPlanningChangeBatch] =
+    useState<SalesOrderPlanningChangeBatch | null>(null);
 
   const beginEdit = (so: SalesOrder) => {
+    setPlanningChangeBatch(null);
     setOrderType(so.order_type);
     setCustomerCode(so.customer_code);
     setPriority(so.priority);
@@ -465,24 +487,38 @@ export function SalesOrderDetail({ id }: { id: string }) {
         cell: ({ row }) => {
           if (isEditing) {
             const draft = draftOrRow(lineDrafts, row.original);
+            const selectId = `so-edit-line-${row.original.id}-uom`;
             return (
-              <Input
-                aria-label={`UoM on ${row.original.sku}`}
-                value={draft.uom}
-                onChange={(e) =>
-                  setLineDrafts((prev) => ({
-                    ...prev,
-                    [row.original.id]: { ...draftOrRow(prev, row.original), uom: e.target.value },
-                  }))
-                }
-                placeholder="UoM"
-                className="h-8"
-              />
+              <>
+                {/* SearchableSelect forwards `id`, not arbitrary aria props - same pattern
+                    as the Location select above. */}
+                <label className="sr-only" htmlFor={selectId}>
+                  UoM on {row.original.sku}
+                </label>
+                <SearchableSelect
+                  id={selectId}
+                  value={draft.uom}
+                  onChange={(v) =>
+                    setLineDrafts((prev) => ({
+                      ...prev,
+                      [row.original.id]: { ...draftOrRow(prev, row.original), uom: v },
+                    }))
+                  }
+                  options={uomSelectOptions}
+                  // Clearing sends `''`, which the BE reads as an explicit `uom: null` -
+                  // "use the product's own default" - not "leave it alone" (this form
+                  // always sends the key once `lines` is sent at all, see the class
+                  // docstring).
+                  placeholder="Product default"
+                  clearable
+                  size="sm"
+                />
+              </>
             );
           }
           return row.original.uom;
         },
-        size: 100,
+        size: 140,
         meta: { headerTitle: 'UoM' },
       },
       {
@@ -500,7 +536,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
         meta: { headerTitle: 'Status' },
       },
     ],
-    [isEditing, lineDrafts, mergedProductOptions, warehouseSelectOptions],
+    [isEditing, lineDrafts, mergedProductOptions, warehouseSelectOptions, uomSelectOptions],
   );
 
   const table = useReactTable({
@@ -582,7 +618,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
       originalLineSignatureRef.current !== null &&
       lineSignature(cleanedLines) === originalLineSignatureRef.current;
     try {
-      await updateMut.mutateAsync({
+      const result = await updateMut.mutateAsync({
         id,
         data: {
           order_type: orderType,
@@ -593,6 +629,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
           ...(linesUnchanged ? {} : { lines: cleanedLines }),
         },
       });
+      setPlanningChangeBatch(result.planning_change_batch ?? null);
       setIsEditing(false);
     } catch {
       // The mutation already toasted the reason; leave the session open so nothing typed
@@ -661,6 +698,23 @@ export function SalesOrderDetail({ id }: { id: string }) {
             <Alert variant="destructive" className="mt-3">
               <AlertDescription>{error}</AlertDescription>
             </Alert>
+          ) : null}
+          {/* Only after a save whose response carried one - the same reaction an uploaded
+              book's own preview surfaces (`OutstandingUploadDialog`'s `PlanningChangeBatchCard`).
+              Quiet: a count and a link, nothing explaining what a planning change is. */}
+          {!isEditing && planningChangeBatch ? (
+            <div className="mt-3 flex flex-col gap-2 rounded-lg border border-border bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm font-medium">
+                {`Planning changes raised on ${fmtInt(planningChangeBatch.line_count)} line${
+                  planningChangeBatch.line_count === 1 ? '' : 's'
+                }`}
+              </p>
+              <Button asChild variant="outline" size="sm">
+                <Link href={`/project-sales/planning-changes/${planningChangeBatch.id}`}>
+                  Review
+                </Link>
+              </Button>
+            </div>
           ) : null}
         </CardHeader>
         {/* Named as a region so a reader (and a test) can tell the summary's "Still owed"

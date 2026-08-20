@@ -9,10 +9,12 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Response, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
+from app.schemas import scm_orders as scm_orders_schemas
 from app.schemas.scm_orders import (
     CreateDoResponse,
     SalesAgentOption,
@@ -27,6 +29,46 @@ router = APIRouter()
 
 _READ = require_permission_with_api_key("scm.dashboard.view")
 _WRITE = require_permission("scm.reorder.run")
+
+
+class UomOption(BaseModel):
+    """One active `units_of_measure` row, for the line UoM select on the detail page."""
+
+    id: str
+    uom_code: str
+    uom_name: str
+
+
+class PlanningChangeBatchEnvelope(BaseModel):
+    """`PLAN-so-book-diff-replanning.md` section 2's own envelope - the same shape the
+    SO-book upload's own preview response carries, so the FE reads one contract whichever
+    of the two raised it."""
+
+    id: str
+    order_count: int
+    line_count: int
+
+
+class SalesOrderUpdateResponse(SalesOrder):
+    """`SalesOrder` plus the planning-change batch THIS save raised, when the edit changed
+    a project-linked line's qty/date (`SalesOrderService._propagate_planning_change`).
+    `None` on every save that raised nothing - most of them."""
+
+    planning_change_batch: Optional[PlanningChangeBatchEnvelope] = None
+
+
+# `SalesOrder` (the parent) is declared in `app.schemas.scm_orders`, a different module -
+# also under `from __future__ import annotations`, so its INHERITED fields (`lines:
+# List[...]` etc) are still STRING annotations that need THAT module's namespace (`List`
+# is not imported here) to resolve, while `planning_change_batch` needs THIS module's
+# (`PlanningChangeBatchEnvelope`). Left unbuilt, this class is "not fully defined" (a
+# `PydanticUserError` on the very first request); a plain `force=True` rebuild resolves
+# against only this module and breaks on the inherited fields instead. Both namespaces,
+# explicitly.
+SalesOrderUpdateResponse.model_rebuild(
+    force=True,
+    _types_namespace={**vars(scm_orders_schemas), **globals()},
+)
 
 
 @router.get("/sales-orders", response_model=SalesOrderListResponse)
@@ -103,6 +145,22 @@ def list_sales_order_agents(
     return SalesOrderService(db).list_agents(q)
 
 
+@router.get("/sales-orders/uoms", response_model=list[UomOption])
+def list_sales_order_uoms(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_READ),
+):
+    """Every active unit of measure, for the line UoM select on the detail page.
+
+    Gated on `scm.dashboard.view` - this router's own read permission - rather than the
+    master data `/units-of-measure/select` route's `master_data.units_of_measure.view`,
+    for the same reason `/sales-orders/agents` above is: a purchasing/SCM-only role does
+    not necessarily hold the master-data permission, and would 403 on that select alone.
+    Declared before `/{so_id}` so `uoms` never parses as a SO id.
+    """
+    return SalesOrderService(db).list_uom_options()
+
+
 @router.get("/sales-orders/{so_id}", response_model=SalesOrder)
 def get_sales_order(so_id: str, db: Session = Depends(get_db), _user: dict = Depends(_READ)):
     return SalesOrderService(db).get(so_id)
@@ -117,7 +175,7 @@ def create_sales_order(
     return SalesOrderService(db).create(data, user.get("id"))
 
 
-@router.put("/sales-orders/{so_id}", response_model=SalesOrder)
+@router.put("/sales-orders/{so_id}", response_model=SalesOrderUpdateResponse)
 def update_sales_order(
     so_id: str,
     data: SalesOrderUpdate,

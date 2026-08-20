@@ -7,6 +7,7 @@ so committed demand drops for those SKUs. so_number/do_number never leak UUIDs.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date
 from typing import Optional
@@ -19,6 +20,7 @@ from app.models.access import MarketSegment
 from app.models.inventory import Stock, Warehouse
 from app.models.lookup import LookupOption
 from app.models.order import Customer, Order, OrderLine, SalesOrder, SalesOrderLine
+from app.models.planning_change import PLANNING_CHANGE_SOURCE_SO_MANUAL_EDIT
 from app.models.product import Product, UnitOfMeasure
 from app.models.project_so import ProjectSalesOrder, ProjectSalesOrderLine
 from app.models.sales_agent import SalesAgent
@@ -27,9 +29,25 @@ from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 from app.services.scm.demand import is_open_demand
 from app.services.scm.demand_class import DEMAND_CLASSES, class_of
+from app.services.scm.outstanding_diff import (
+    DATE_AND_QTY_CHANGED,
+    DATE_MOVED,
+    QTY_CHANGED,
+    Change,
+    Diff,
+    Line,
+)
+
+logger = logging.getLogger(__name__)
 
 # Upper bound on suffix retries when reserving a unique DO number under contention.
 _DO_NUMBER_MAX_TRIES = 50
+
+# A quantity difference below this is noise, not an edit - same threshold and same reason
+# `outstanding_diff._QTY_EPSILON` exists: two figures a decimal place apart on export must
+# not read as a planner's decision. Duplicated here rather than imported (that name is
+# private to that module) - `outstanding_import_service` does the same.
+_QTY_EPSILON = 0.0005
 
 
 #: Where a sales order came from, as one word a buyer can filter on. `inquiry` is separate
@@ -147,6 +165,24 @@ class SalesOrderService:
             }
             for a in rows
         ]
+
+    def list_uom_options(self) -> list[dict]:
+        """Every active unit of measure, for the line UoM select on the detail page.
+
+        `UnitOfMeasure` is a `CompanyScopedMixin` table, so a plain query here is already
+        scoped to the caller's company by the ORM's own `do_orm_execute` listener
+        (`app.services.company_scope.register_company_scope_listeners`) - no manual filter
+        needed, unlike the raw-SQL callers elsewhere in SCM. `is_active` IS filtered here,
+        unlike the master data `/units-of-measure/select` route, which forgets it - a
+        discontinued unit has no business in a fresh edit's dropdown.
+        """
+        rows = (
+            self.db.query(UnitOfMeasure)
+            .filter(UnitOfMeasure.is_active.is_(True))
+            .order_by(UnitOfMeasure.uom_code.asc())
+            .all()
+        )
+        return [{"id": u.id, "uom_code": u.uom_code, "uom_name": u.uom_name} for u in rows]
 
     def _product(self, sku: str) -> Product:
         prod = (
@@ -536,12 +572,122 @@ class SalesOrderService:
                 self._parse_date(data.requested_delivery_date, "requested_delivery_date")
                 if data.requested_delivery_date else None
             )
+        line_changes: list[tuple[SalesOrderLine, float, Optional[date]]] = []
         if data.lines is not None:
-            self._upsert_lines(so, data.lines)
+            line_changes = self._upsert_lines(so, data.lines)
         self.db.commit()
-        return self.serialize(self._get_or_404(so_id))
+        # PLAN-so-book-diff-replanning.md section 2's own reaction (Order Inquiry
+        # suggestions off a changed planned line), triggered by a MANUAL edit rather than
+        # a re-uploaded book - see `_propagate_planning_change`. Strictly AFTER the commit
+        # above: the edit has already succeeded, and this must never turn that success
+        # into a 500 (CLAUDE.md: post-commit side effects are best-effort).
+        planning_change_batch = (
+            self._propagate_planning_change(so, line_changes, user_id) if line_changes else None
+        )
+        result = self.serialize(self._get_or_404(so_id))
+        result["planning_change_batch"] = planning_change_batch
+        return result
 
-    def _upsert_lines(self, so: SalesOrder, incoming: list) -> None:
+    def _propagate_planning_change(
+        self,
+        so: SalesOrder,
+        line_changes: list[tuple[SalesOrderLine, float, Optional[date]]],
+        actor: Optional[str],
+    ) -> Optional[dict]:
+        """A hand-edited qty/date raises the SAME reaction an uploaded book raises.
+
+        `line_changes` is `_upsert_lines`'s own before-state, one `(line, old_qty,
+        old_required_date)` per MATCHED existing line (never a newly-added one - there is
+        no "before" for a line that did not exist). Classified into the identical
+        `outstanding_diff` kinds a re-upload would produce, then handed to
+        `planning_change_service.build_batch` exactly the way
+        `outstanding_import_service.apply()` does - a planner correcting one line by hand
+        on this screen must not get a silently different outcome than the identical
+        correction arriving in next week's book.
+
+        Best-effort, mirroring that same call site: this runs after `update()`'s own
+        commit, so a defect here must cost the project a batch, never the edit that
+        already saved.
+        """
+        changes: list[Change] = []
+        applied_line_ids: dict[int, str] = {}
+        for line, old_qty, old_date in line_changes:
+            new_qty = float(line.qty_ordered or 0)
+            new_date = line.required_date
+            qty_changed = abs(new_qty - old_qty) > _QTY_EPSILON
+            # A date "change" where either endpoint is `None` is not a schedule move - a
+            # line getting its FIRST-EVER date, or one just cleared, is not a delay/advance
+            # (mirrors `planning_change_service._is_null_anchored_date_move`). That guard
+            # lives downstream in `build_batch` and would drop such a change ENTIRELY,
+            # including a real qty change riding on the same line - so it is decided HERE
+            # instead, folding a null-anchored date into a plain qty comparison rather than
+            # depending on the downstream guard alone to catch it.
+            date_changed = (
+                old_date is not None and new_date is not None and old_date != new_date
+            )
+            if date_changed and qty_changed:
+                kind = DATE_AND_QTY_CHANGED
+            elif date_changed:
+                kind = DATE_MOVED
+            elif qty_changed:
+                kind = QTY_CHANGED
+            else:
+                continue  # unchanged - not material, never reaches the batch builder
+            item_code = line.product.product_code if line.product else ""
+            location = line.warehouse.warehouse_code if line.warehouse is not None else ""
+            before = Line(
+                doc_number=so.so_number, item_code=item_code, location=location,
+                qty=old_qty, required_date=old_date, row_ref=str(line.id),
+            )
+            after = Line(
+                doc_number=so.so_number, item_code=item_code, location=location,
+                qty=new_qty, required_date=new_date, row_ref=str(line.id),
+            )
+            change = Change(
+                kind=kind, doc_number=so.so_number, item_code=item_code, location=location,
+                before=before, after=after,
+            )
+            changes.append(change)
+            applied_line_ids[id(change)] = str(line.id)
+
+        if not changes:
+            return None
+
+        diff = Diff(scope_documents=(so.so_number,), changes=changes)
+        try:
+            from app.services import planning_change_service
+
+            batch = planning_change_service.build_batch(
+                self.db,
+                diff,
+                applied_line_ids=applied_line_ids,
+                order_ids={so.so_number: str(so.id)},
+                actor=actor,
+                import_job_id=None,
+                file_name=None,
+            )
+            if batch is None:
+                return None
+            # `build_batch` takes no source-kind parameter - its only caller until now was
+            # the SO-book upload, which is the column's own `server_default`. Stamp this
+            # batch as a manual edit's own reaction after the fact, in its own commit, so a
+            # defect in the stamp can never roll back the SO edit `update()` already
+            # committed above.
+            batch.source_kind = PLANNING_CHANGE_SOURCE_SO_MANUAL_EDIT
+            self.db.commit()
+            return {
+                "id": str(batch.id),
+                "order_count": batch.order_count,
+                "line_count": batch.line_count,
+            }
+        except Exception:  # pragma: no cover - defensive, see docstring above
+            logger.exception("planning change batch failed for a manual sales-order edit")
+            self.db.rollback()
+            return None
+
+    def _upsert_lines(
+        self, so: SalesOrder, incoming: list
+    ) -> list[tuple[SalesOrderLine, float, Optional[date]]]:
         """Reconcile ``so.lines`` against the payload IN PLACE, never delete + recreate.
 
         A delete-and-reinsert (the previous behaviour) resets `qty_delivered` to 0, forces
@@ -566,9 +712,15 @@ class SalesOrderService:
         alone (this is how a same-order qty-only edit, which does not carry these keys,
         cannot wipe out a location/date/UoM another edit set), while a key sent as an
         explicit `null`/`""` clears it.
+
+        Returns one `(line, old_qty_ordered, old_required_date)` per MATCHED existing line -
+        its state as it was before this method touched it - for `_propagate_planning_change`
+        to diff against the line's now-written values. Newly-added lines carry no "before"
+        and are not returned.
         """
         existing_lines = list(so.lines)
         matched_ids: set[str] = set()
+        line_changes: list[tuple[SalesOrderLine, float, Optional[date]]] = []
 
         for ln in incoming:
             ln_id = getattr(ln, "id", None)
@@ -597,6 +749,11 @@ class SalesOrderService:
             uom = (ln.uom or None) if "uom" in fields_set else None
             if target is not None:
                 matched_ids.add(target.id)
+                # Snapshotted BEFORE any of the mutations below - the only place this
+                # line's prior qty/date exist once they are overwritten.
+                line_changes.append(
+                    (target, float(target.qty_ordered or 0), target.required_date)
+                )
                 target.product_id = prod.id
                 target.qty_ordered = ln.qty_ordered
                 if "warehouse_code" in fields_set:
@@ -650,6 +807,8 @@ class SalesOrderService:
                 )
             for l in removed:
                 self.db.delete(l)
+
+        return line_changes
 
     def delete(self, so_id: str) -> None:
         so = self._get_or_404(so_id)

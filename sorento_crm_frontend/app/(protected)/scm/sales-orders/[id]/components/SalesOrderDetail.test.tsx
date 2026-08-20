@@ -13,7 +13,8 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, within, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 class ResizeObserverStub {
   observe() {}
@@ -85,6 +86,17 @@ vi.mock('../../hooks/useSalesAgentOptions', () => ({
   }),
 }));
 
+// `getSalesOrderUoms` is the only export the component reads off this service module - the
+// UoM select's own options. Everything else the component uses from it (`updateSalesOrder`)
+// is reached through the fully-mocked `useUpdateSalesOrder` above, never this module.
+vi.mock('../../../services/salesOrderService', () => ({
+  getSalesOrderUoms: () =>
+    Promise.resolve([
+      { id: 'uom-pcs', uom_code: 'PCS', uom_name: 'Pieces' },
+      { id: 'uom-box', uom_code: 'BOX', uom_name: 'Box' },
+    ]),
+}));
+
 import { SalesOrderDetail } from './SalesOrderDetail';
 import type { SalesOrder, SalesOrderLine } from '../../../types/scm.types';
 
@@ -127,13 +139,23 @@ function so(over: Partial<SalesOrder> = {}): SalesOrder {
 }
 
 function renderDetail() {
-  return render(<SalesOrderDetail id="so-1" />);
+  // A real `QueryClient`, not mocked: the UoM select's own `useQuery` (`getSalesOrderUoms`,
+  // mocked above) needs a provider to run at all. `retry: false` so an unmet expectation
+  // fails fast instead of retrying into the test's own timeout.
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <SalesOrderDetail id="so-1" />
+    </QueryClientProvider>,
+  );
 }
 
 beforeEach(() => {
   cleanup();
   useSalesOrder.mockReset();
-  updateSalesOrderMutateAsync.mockReset().mockResolvedValue(undefined);
+  // `planning_change_batch: null` - the shape every save's response carries, whether or not
+  // it raised one. `handleSave` reads this key unconditionally.
+  updateSalesOrderMutateAsync.mockReset().mockResolvedValue({ planning_change_batch: null });
   searchParams = new URLSearchParams();
 });
 
@@ -594,7 +616,9 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     fireEvent.change(screen.getByLabelText('Delivery date on CW-BASIN-450'), {
       target: { value: '2026-10-05' },
     });
-    fireEvent.change(screen.getByLabelText('UoM on CW-BASIN-450'), { target: { value: 'BOX' } });
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'UoM on CW-BASIN-450' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Box' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -608,5 +632,71 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
       required_date: '2026-10-05',
       uom: 'BOX',
     }]);
+  });
+
+  it('the UoM select is clearable, off the units-of-measure master', async () => {
+    // The line UoM: was a free-text `Input`, is now a `SearchableSelect` sourced from
+    // `getSalesOrderUoms` (mocked above) - clearable, since a line's own UoM override is
+    // optional and falls back to the product's default when unset.
+    useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    // The options load async (`getSalesOrderUoms`) - the trigger shows the placeholder
+    // until they resolve and the value's label can be matched. Re-queried each poll
+    // (not a captured reference) since the resolved options swap this node out.
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'UoM on CW-BASIN-450' })).toHaveTextContent(
+        'Pieces',
+      ),
+    );
+    const uomCombo = screen.getByRole('combobox', { name: 'UoM on CW-BASIN-450' });
+    expect(within(uomCombo).getByRole('button', { name: 'Clear selection' })).toBeInTheDocument();
+  });
+
+  it('clearing the UoM select sends an explicit empty override - the product default', async () => {
+    // `uom: ''` is the SAME wire value the free-text `Input` this select replaced already
+    // sent on clear - the BE reads an empty override as "use the product's own default"
+    // (`_upsert_lines`'s `ln.uom or None`), unchanged by this swap.
+    useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'UoM on CW-BASIN-450' })).toHaveTextContent(
+        'Pieces',
+      ),
+    );
+    const uomCombo = screen.getByRole('combobox', { name: 'UoM on CW-BASIN-450' });
+    fireEvent.pointerDown(within(uomCombo).getByRole('button', { name: 'Clear selection' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await screen.findByRole('button', { name: /^Edit$/ });
+    const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
+    expect(body.lines[0].uom).toBe('');
+  });
+
+  it('shows the planning-change banner when a save raises one, linking to it, and it clears on the next edit', async () => {
+    // Same envelope key the SO-book upload's own preview surfaces
+    // (`OutstandingUploadDialog`'s `PlanningChangeBatchCard`) - PLAN-so-book-diff
+    // -replanning.md section 2.
+    updateSalesOrderMutateAsync.mockResolvedValue({
+      planning_change_batch: { id: 'batch-77', order_count: 1, line_count: 2 },
+    });
+    useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('Planning changes raised on 2 lines')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Review' })).toHaveAttribute(
+      'href',
+      '/project-sales/planning-changes/batch-77',
+    );
+
+    // A fresh edit session clears the stale notice - it describes the LAST save, not this one.
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    expect(screen.queryByText('Planning changes raised on 2 lines')).not.toBeInTheDocument();
   });
 });

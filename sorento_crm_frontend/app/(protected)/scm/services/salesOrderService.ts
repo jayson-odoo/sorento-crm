@@ -15,12 +15,21 @@
  *                                   whole router - rather than the sales-agents master's own
  *                                   `master_data.sales_agents.view`, which a role like
  *                                   Purchasing does not hold.
+ *   GET    /sales-orders/uoms       active unit-of-measure options for the line UoM select.
+ *                                   Same `scm.dashboard.view` gate as `agents` above, for the
+ *                                   same reason - not the master data `/units-of-measure
+ *                                   /select`'s `master_data.units_of_measure.view`.
  *   GET    /sales-orders/{id}       single
  *   POST   /sales-orders            create (order_type, customer_code, priority,
  *                                   requested_delivery_date?, sales_agent_id?,
  *                                   lines:[{sku,qty_ordered}])
  *   PUT    /sales-orders/{id}       update (partial; lines:[{id?,sku,qty_ordered,
- *                                   warehouse_code?,required_date?,uom?}] upserts by id/SKU)
+ *                                   warehouse_code?,required_date?,uom?}] upserts by id/SKU).
+ *                                   Response is `SalesOrder` plus `planning_change_batch`
+ *                                   ({id, order_count, line_count} | null) - set when the
+ *                                   edit changed a project-linked line's qty/date, the SAME
+ *                                   reaction an uploaded book raises
+ *                                   (`outstandingImportService`'s own `planning_change_batch`).
  *   DELETE /sales-orders/{id}       hard delete (204)
  *   POST   /sales-orders/{id}/create-do   → { sales_order, do_number }
  * ============================================================================
@@ -137,10 +146,26 @@ export async function createSalesOrder(data: SalesOrderFormData): Promise<SalesO
   return res.json();
 }
 
+/** The planning-change batch a save raised, when the edit changed a project-linked line's
+ *  qty/date - the SAME reaction an uploaded book raises for the identical change
+ *  (`PLAN-so-book-diff-replanning.md` section 2). Same shape as
+ *  `outstandingImportService`'s `OutstandingPlanningChangeBatch`. */
+export interface SalesOrderPlanningChangeBatch {
+  id: string;
+  order_count: number;
+  line_count: number;
+}
+
+/** `SalesOrder` plus the batch THIS save raised. `null` on every save that raised nothing -
+ *  most of them, and every create/read (this field only ever comes back from the PUT). */
+export interface SalesOrderUpdateResult extends SalesOrder {
+  planning_change_batch: SalesOrderPlanningChangeBatch | null;
+}
+
 export async function updateSalesOrder(
   id: string,
   data: SalesOrderFormData,
-): Promise<SalesOrder> {
+): Promise<SalesOrderUpdateResult> {
   const res = await apiFetch(`${BASE}/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -174,6 +199,27 @@ export interface SalesOrderAgent {
 export async function getSalesOrderAgents(): Promise<SalesOrderAgent[]> {
   const res = await apiFetch(`${BASE}/agents`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load sales agents'));
+  return res.json();
+}
+
+/** One active `units_of_measure` row, as `GET /sales-orders/uoms` serves it. */
+export interface SalesOrderUom {
+  id: string;
+  uom_code: string;
+  uom_name: string;
+}
+
+/**
+ * Active units of measure, for the detail page's line UoM select.
+ *
+ * Served off THIS router (`scm.dashboard.view`), same reasoning as `getSalesOrderAgents`
+ * above - the master data `/units-of-measure/select` route gates on
+ * `master_data.units_of_measure.view`, which a role that can edit SCM sales orders does
+ * not necessarily hold.
+ */
+export async function getSalesOrderUoms(): Promise<SalesOrderUom[]> {
+  const res = await apiFetch(`${BASE}/uoms`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load units of measure'));
   return res.json();
 }
 
