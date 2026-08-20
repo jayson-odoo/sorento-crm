@@ -174,20 +174,35 @@ def test_neighbours_last_record_next_wraps_to_first(db: Session) -> None:
 def test_neighbours_out_of_filter_falls_back_to_unfiltered(db: Session) -> None:
     # The record exists but is NOT in the active filtered set. The service must
     # fall back to the unfiltered set so the pager is never dead, and the total
-    # reflects the unfiltered count (D2).
-    _seed_ordered_set(db, 3)  # match query=PREFIX
+    # reflects the unfiltered count, not the filtered one (D2).
+    #
+    # This used to prove that second half by comparing two SEPARATELY fetched
+    # live totals of the real, shared `orders` table for equality (one probe
+    # call, then `out["total"]` from the fallback). Another xdist worker's file
+    # can insert/delete rows in the gap between them (BL-034's exact shape,
+    # first found on `tests/test_complaint_neighbours.py`). What matters - that
+    # the fallback used the unfiltered scope, not the filtered one - is provable
+    # from this test's own marker rows alone, with no ambient count involved.
+    in_set = _seed_ordered_set(db, 3)  # match query=PREFIX
     # A row that does NOT match query=PREFIX.
     outside = _seed(db, order_number="ONBR-OUTSIDE-1", debtor_name="ZZZ-out")
+    own_ids = {r.id for r in in_set} | {outside.id}
 
     svc = OrderService(db)
-    # Compute the true unfiltered total to compare against.
-    unfiltered_total = svc.order_neighbours(outside.id)["total"]
-
     out = svc.order_neighbours(outside.id, query=PREFIX, sort_field="debtor_name")
-    # Fell back: index resolved against the unfiltered set, total == unfiltered.
+    # Fell back: not found in the filtered 3-row set, so index resolved against
+    # the wider one instead of staying None.
     assert out["index"] is not None, "D2 fallback must resolve the record"
-    assert out["total"] == unfiltered_total
-    assert out["total"] > 3  # bigger than the filtered subset
+    # Strictly bigger than the filtered subset (3): the filter was genuinely
+    # dropped, not narrowly re-applied.
+    assert out["total"] > 3
+
+    # And dropped ENTIRELY: every one of this test's own rows - marker rows
+    # nothing else in the suite writes - must be reachable in the SAME
+    # unfiltered scope `order_neighbours()`'s own D2 branch reads
+    # (`list_orders(ids_only=True)` with no filter args).
+    fallback_ids = set(svc.list_orders(ids_only=True))
+    assert own_ids <= fallback_ids
 
 
 def test_neighbours_accepts_order_number_identifier(db: Session) -> None:

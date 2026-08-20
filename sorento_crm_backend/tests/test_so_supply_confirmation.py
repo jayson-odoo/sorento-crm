@@ -14,6 +14,7 @@ existing row, per PRINCIPLES.md and the CI-is-empty lesson in this repo's CLAUDE
 """
 from __future__ import annotations
 
+import itertools
 import uuid
 from datetime import date, timedelta
 from decimal import Decimal
@@ -47,6 +48,39 @@ def _uid() -> str:
     return str(uuid.uuid4())
 
 
+_SUFFIX_SEQ = itertools.count()
+
+
+def _suffix() -> str:
+    """A deterministic, digit-free suffix for a fixture business code (warehouse
+    code, product code, SO number, ...).
+
+    Replaces a `_uid()[:4]`/`_uid()[:8]`-style random hex slice. Hex is
+    digit-bearing most draws, and a code that lands one usually reads as
+    ordinary test data - until an assertion checks that a refusal message does
+    NOT mention a specific quantity substring and the warehouse's own random
+    suffix happens to contain it (`ZZT-BRW-712c` tripping
+    `assert "12" not in reason`; this file's actual flake,
+    `test_re_confirming_a_larger_reserve_only_the_increase_competes_and_is_
+    named_in_the_refusal`). Base-26 letters can never contain a digit, so that
+    class of collision cannot recur.
+
+    Monotonic within this process, so two calls anywhere in this file's run
+    never repeat. Cross-worker uniqueness needs no extra help: every row this
+    file writes lives inside `_pg_fixture.blank_session`, which rolls back at
+    teardown and, ahead of that, runs on a scratch schema
+    (`zzs_blank_<pid>_<hex>`) private to the xdist worker process
+    (`_pg_fixture.blank_schema_engine`) - two workers' codes cannot collide
+    even if they matched exactly.
+    """
+    n = next(_SUFFIX_SEQ) + 1
+    letters = []
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        letters.append(chr(ord("A") + rem))
+    return "".join(reversed(letters))
+
+
 def _sorento(db) -> str:
     return db.execute(text("select id from companies where code = 'SRT'")).scalar()
 
@@ -68,15 +102,15 @@ def _user(db, name: str) -> str:
 
 
 def _product(db, *, discontinued: bool = False) -> Product:
-    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name="Set")
+    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_suffix()}", uom_name="Set")
     category = ProductCategory(
-        id=_uid(), category_code=f"ZZT-{_uid()[:8]}", category_name=f"{MARKER} cat"
+        id=_uid(), category_code=f"ZZT-{_suffix()}", category_name=f"{MARKER} cat"
     )
     db.add_all([uom, category])
     db.flush()
     row = Product(
         id=_uid(),
-        product_code=f"ZZT-{_uid()[:8]}",
+        product_code=f"ZZT-{_suffix()}",
         product_name=f"{MARKER} Basin",
         category_id=category.id,
         base_uom_id=uom.id,
@@ -122,7 +156,7 @@ def _core_so(db, company_id: str):
     so = SalesOrder(
         id=_uid(),
         company_id=company_id,
-        so_number=f"ZZT-CORE-{_uid()[:8]}",
+        so_number=f"ZZT-CORE-{_suffix()}",
         status="open",
         demand_class="project",
     )
@@ -156,7 +190,7 @@ def _project_so(db, project, *, status=SO_STATUS_PUBLISHED, so_id=None):
         id=_uid(),
         company_id=project.company_id,
         project_id=project.id,
-        provisional_ref=f"ZZT-PSO-{_uid()[:8]}",
+        provisional_ref=f"ZZT-PSO-{_suffix()}",
         area_group="TOWER",
         status=status,
         # The reconciled core sales order. Set wherever the assertion turns on the review
@@ -310,8 +344,8 @@ def api():
             title=f"{MARKER} Tuju Residences",
         )
         product = _product(db)
-        own_wh = _warehouse(db, f"ZZT-OWN-{_uid()[:4]}", segment="project")
-        pool_wh = _warehouse(db, f"ZZT-BRW-{_uid()[:4]}", segment="dealer")
+        own_wh = _warehouse(db, f"ZZT-OWN-{_suffix()}", segment="project")
+        pool_wh = _warehouse(db, f"ZZT-BRW-{_suffix()}", segment="dealer")
         own_wh.pool_warehouse_id = pool_wh.id
         db.flush()
         db.commit()
@@ -703,7 +737,7 @@ def test_publishing_an_amendment_supersedes_the_active_decision(api):
     db.commit()
 
     ocn = OrderChangeNotice(
-        id=_uid(), company_id=world.company_id, ocn_number=f"ZZT-OCN-{_uid()[:8]}",
+        id=_uid(), company_id=world.company_id, ocn_number=f"ZZT-OCN-{_suffix()}",
         project_id=world.project.id, project_sales_order_id=order.id,
         approver_id=world.eling, approved_at=None,
     )
@@ -845,7 +879,7 @@ def test_borrow_without_a_reason_is_refused(api):
     """AC-B09/AC-C03: a Borrow component with a blank reason must fail confirmation."""
     client, world = api
     db = world.db
-    other_wh = _warehouse(db, f"ZZT-OTH-{_uid()[:4]}")
+    other_wh = _warehouse(db, f"ZZT-OTH-{_suffix()}")
     _stock(db, world.product, other_wh, on_hand=100)
     order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
@@ -877,7 +911,7 @@ def test_cross_project_borrow_writes_an_accepted_claim_directly_with_no_requeste
 
     client, world = api
     db = world.db
-    donor_wh = _warehouse(db, f"ZZT-DNR-{_uid()[:4]}")
+    donor_wh = _warehouse(db, f"ZZT-DNR-{_suffix()}")
     _stock(db, world.product, donor_wh, on_hand=100)
     farah = _user(db, f"{MARKER} Farah")
     donor_project = register_project(
@@ -943,7 +977,7 @@ def test_a_borrow_that_leaves_the_donor_short_raises_an_order_inquiry_for_the_do
 
     client, world = api
     db = world.db
-    donor_wh = _warehouse(db, f"ZZT-SHORT-{_uid()[:4]}")
+    donor_wh = _warehouse(db, f"ZZT-SHORT-{_suffix()}")
     _stock(db, world.product, donor_wh, on_hand=100)
     # The donor's own book: 90 of that 100 is already owed to somebody.
     theirs = _core_so(db, world.company_id)
@@ -1003,7 +1037,7 @@ def test_a_borrow_a_donor_can_afford_raises_nothing(api):
 
     client, world = api
     db = world.db
-    donor_wh = _warehouse(db, f"ZZT-RICH-{_uid()[:4]}")
+    donor_wh = _warehouse(db, f"ZZT-RICH-{_suffix()}")
     _stock(db, world.product, donor_wh, on_hand=100)
 
     order = _project_so(db, world.project)
@@ -1046,7 +1080,7 @@ def test_re_confirming_the_same_borrow_does_not_stack_a_second_shortfall_row(api
 
     client, world = api
     db = world.db
-    donor_wh = _warehouse(db, f"ZZT-SHORT-{_uid()[:4]}")
+    donor_wh = _warehouse(db, f"ZZT-SHORT-{_suffix()}")
     _stock(db, world.product, donor_wh, on_hand=100)
     theirs = _core_so(db, world.company_id)
     _core_line(db, theirs, world.product, donor_wh, qty_ordered="90")
@@ -1188,7 +1222,7 @@ def test_a_cross_company_project_so_is_denied_without_a_leak():
             title=f"{MARKER} Mocha Residences",
         )
         other_product = _product(db)
-        other_wh = _warehouse(db, f"ZZT-OTHWH-{_uid()[:4]}")
+        other_wh = _warehouse(db, f"ZZT-OTHWH-{_suffix()}")
         other_order = _project_so(db, other_project)
         other_core_so = _core_so(db, other_id)
         other_core_line = _core_line(db, other_core_so, other_product, other_wh, qty_ordered="10")
@@ -1389,7 +1423,7 @@ def _behind_ours(core_so):
     the sales-order number. `ZZT-ZCORE-*` sorts after `ZZT-PSO-*`; the default `ZZT-CORE-*`
     sorts before it and would put this order AHEAD of ours.
     """
-    core_so.so_number = f"ZZT-ZCORE-{_uid()[:8]}"
+    core_so.so_number = f"ZZT-ZCORE-{_suffix()}"
     return core_so
 
 
@@ -1614,7 +1648,7 @@ def test_a_donor_hole_counts_what_other_confirmed_borrows_already_hold_there(api
 
     client, world = api
     db = world.db
-    donor_wh = _warehouse(db, f"ZZT-TWICE-{_uid()[:4]}")
+    donor_wh = _warehouse(db, f"ZZT-TWICE-{_suffix()}")
     _stock(db, world.product, donor_wh, on_hand=100)
     theirs = _core_so(db, world.company_id)
     _core_line(db, theirs, world.product, donor_wh, qty_ordered="60")
@@ -1759,7 +1793,7 @@ def test_a_shortfall_purchasing_already_placed_is_netted_off_the_next_revision(a
 
     client, world = api
     db = world.db
-    donor_wh = _warehouse(db, f"ZZT-PLACED-{_uid()[:4]}")
+    donor_wh = _warehouse(db, f"ZZT-PLACED-{_suffix()}")
     _stock(db, world.product, donor_wh, on_hand=100)
     theirs = _core_so(db, world.company_id)
     _core_line(db, theirs, world.product, donor_wh, qty_ordered="90")
@@ -1929,8 +1963,13 @@ def test_re_confirming_a_larger_reserve_only_the_increase_competes_and_is_named_
     body = second.json()
     failing = body["failing_lines"]
     assert len(failing) == 1 and failing[0]["line_no"] == 10
-    assert "2" in failing[0]["reason"]
-    assert "12" not in failing[0]["reason"]
+    # Quote the exact phrase `_check_line` composes (`f"{warehouse} now has {room}
+    # free for this line, and {ask} was asked for."` in project_supply_service.py)
+    # rather than a bare digit search: a bare "12" (the whole resubmitted qty, which
+    # must NOT be named) is a substring a random warehouse code could also contain
+    # (`ZZT-BRW-712c`), which is exactly how this assertion flaked.
+    assert "and 2 was asked for" in failing[0]["reason"]
+    assert "and 12 was asked for" not in failing[0]["reason"]
 
     from app.models.project_so import SOSupplyDecision
 
@@ -1953,8 +1992,8 @@ def test_re_confirming_the_reserve_at_a_different_location_competes_fully(api):
     """
     client, world = api
     db = world.db
-    other_pool = _warehouse(db, f"ZZT-OTHERPOOL-{_uid()[:4]}")
-    other_owner = _warehouse(db, f"ZZT-OTHEROWN-{_uid()[:4]}", pool_warehouse_id=other_pool.id)
+    other_pool = _warehouse(db, f"ZZT-OTHERPOOL-{_suffix()}")
+    other_owner = _warehouse(db, f"ZZT-OTHEROWN-{_suffix()}", pool_warehouse_id=other_pool.id)
     _stock(db, world.product, world.pool_wh, on_hand=10)
     # `other_pool` has no stock at all.
     order = _project_so(db, world.project)
