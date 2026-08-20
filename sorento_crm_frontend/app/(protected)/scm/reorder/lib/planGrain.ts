@@ -21,6 +21,12 @@
 
 export type PlanGrain = 'product' | 'location';
 
+/** `decisionLockReason`'s own wording for the Product-grain case, exported so a caller that
+ *  wants to say MORE than the flat sentence (fix-cluster, 2026-08-20: whether THIS row's
+ *  product actually has a Product-sheet decision, per `PlanLinesGrid`'s read-only cell) can
+ *  recognise it without duplicating the string. */
+export const DECIDED_AT_PRODUCT_GRAIN = 'Decided at Product grain';
+
 /** The two run fields every grain question is answered from. */
 export interface RunGrainState {
   /** Stamped once at run creation. NULL only on a legacy run. */
@@ -72,6 +78,6 @@ export function decisionLockReason(
   if (isLegacyRun(run)) return 'Legacy run - read only. Create a new plan to decide.';
   if (run.decision_grain === surface) return null;
   return run.decision_grain === 'product'
-    ? 'Decided at Product grain'
+    ? DECIDED_AT_PRODUCT_GRAIN
     : 'Decided at Location grain';
 }

@@ -605,6 +605,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             secondaryActions={reportLinks}
             decisionsReadOnly={!!locationLockReason}
             readOnlyReason={locationLockReason}
+            onOpenProductSheet={() => selectView('order_summary')}
             groupByChannel={groupByChannel}
           />
         </>

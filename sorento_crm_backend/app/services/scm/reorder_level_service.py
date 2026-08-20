@@ -188,8 +188,14 @@ def get_levels(db: Session, product_ids: list[str],
         # The product-wide row is always in scope: it is the fallback for every location.
         where_wh = " AND (rl.warehouse_id IS NULL OR rl.warehouse_id = ANY(CAST(:whs AS uuid[])))"
         params["whs"] = _texts(warehouse_ids)
+    # DISTINCT ON, not a bare SELECT: `(product_id, warehouse_id)` is not unique - a stray
+    # scope-less write (see `_existing`) can leave a second row behind - and a query with no
+    # ORDER BY handed the plan whichever duplicate Postgres happened to read last. Preferring
+    # the row with a LEVEL SET, then the most recently touched one, means a level-NULL
+    # engine-suggestion duplicate never shadows the row that actually carries the number.
     rows = db.execute(text(f"""
-        SELECT rl.id::text AS id, rl.product_id::text AS product_id,
+        SELECT DISTINCT ON (rl.product_id, rl.warehouse_id)
+               rl.id::text AS id, rl.product_id::text AS product_id,
                rl.warehouse_id::text AS warehouse_id, rl.level, rl.source,
                rl.suggested_level, rl.suggested_at, rl.suggestion_basis,
                rl.amended_level, rl.amended_at, rl.amended_by, rl.notes
@@ -197,18 +203,35 @@ def get_levels(db: Session, product_ids: list[str],
          WHERE rl.product_id = ANY(CAST(:pids AS uuid[]))
            {where_wh}
            {("AND " + co) if co else ""}
+         ORDER BY rl.product_id, rl.warehouse_id,
+                  (rl.level IS NULL) ASC, rl.updated_at DESC NULLS LAST, rl.created_at DESC
     """), params).mappings().all()
     return {(r["product_id"], r["warehouse_id"]): dict(r) for r in rows}
 
 
 def resolve_level(levels: dict[tuple[str, Optional[str]], dict], product_id: str,
                   warehouse_id: Optional[str]) -> Optional[dict]:
-    """The per-location row wins; the product-wide row is the fallback. None when neither
-    exists, which is NOT the same as a level of 0 and must not be planned as one."""
+    """The per-location row wins, but only when it actually carries a level. None when
+    neither exists, which is NOT the same as a level of 0 and must not be planned as one.
+
+    A per-location row with `level IS NULL` is not a competing level - it is an engine
+    suggestion row (see `store_suggestion`), which writes `suggested_level` without ever
+    setting `level`. Letting that row win produced `needs_level` for an item that has a
+    perfectly good product-wide (AutoCount) level sitting one row down. So the LEVEL falls
+    through to the product-wide row when the location row has none of its own; the location
+    row's own suggestion/amendment fields are kept, because those genuinely are per-location.
+    """
     if warehouse_id is not None:
         hit = levels.get((product_id, warehouse_id))
+        wide = levels.get((product_id, None))
         if hit is not None:
-            return hit
+            if hit.get("level") is not None or wide is None:
+                return hit
+            merged = dict(hit)
+            merged["level"] = wide.get("level")
+            merged["source"] = wide.get("source")
+            return merged
+        return wide
     return levels.get((product_id, None))
 
 
@@ -249,8 +272,16 @@ def store_suggestion(db: Session, *, product_id: str, warehouse_id: Optional[str
 
     This is the whole point of keeping two columns. A refresh that moved `level` would be the
     engine deciding for the buyer, which is the behaviour this basis exists to end.
+
+    Matched loosely on company (`strict_company=False`): a suggestion is a system-computed
+    row, not a buyer's owned figure, so the natural key is really `(product_id,
+    warehouse_id)`. A prior refresh that ran scope-less left a `company_id IS NULL` row
+    behind; matching strictly on the CURRENT call's company_id could never find it and kept
+    inserting a fresh duplicate every refresh. Loose matching finds and UPDATES whichever row
+    is already there (JOIN-based idempotent semantics - "set where mismatch", never "insert
+    where absent", per the backfill lesson).
     """
-    row = _existing(db, product_id, warehouse_id, company_id)
+    row = _existing(db, product_id, warehouse_id, company_id, strict_company=False)
     now = datetime.utcnow()
     payload = {"pid": product_id, "wid": warehouse_id, "sl": suggested_level,
                "basis": json.dumps(basis), "co": company_id, "now": now}
@@ -345,7 +376,29 @@ def _f(v) -> Optional[float]:
 
 
 def _existing(db: Session, product_id: str, warehouse_id: Optional[str],
-              company_id: Optional[str]) -> Optional[dict]:
+              company_id: Optional[str], *, strict_company: bool = True) -> Optional[dict]:
+    """The row for this `(product, warehouse)`.
+
+    `strict_company=True` (a buyer's own level - `upsert_level`/`accept_suggestion`) requires
+    an exact company match, NULL included: two tenants never share a hand-set level.
+    `strict_company=False` (`store_suggestion`) matches on `(product_id, warehouse_id)` alone
+    and, when more than one row exists there, prefers the one whose company matches the
+    current call before falling back to the most recently touched - so a scope-correct
+    refresh still finds and updates a stray scope-less row instead of duplicating it.
+    """
+    if strict_company:
+        row = db.execute(text("""
+            SELECT id::text AS id, product_id::text AS product_id,
+                   warehouse_id::text AS warehouse_id, level, source, suggested_level,
+                   suggested_at, suggestion_basis, notes, company_id::text AS company_id
+              FROM scm.reorder_level
+             WHERE product_id = CAST(:pid AS uuid)
+               AND COALESCE(warehouse_id::text, :zero) = COALESCE(CAST(:wid AS text), :zero)
+               AND COALESCE(company_id::text, :zero) = COALESCE(CAST(:co AS text), :zero)
+        """), {"pid": product_id, "wid": warehouse_id, "co": company_id,
+               "zero": _ZERO_UUID}).mappings().first()
+        return dict(row) if row else None
+
     row = db.execute(text("""
         SELECT id::text AS id, product_id::text AS product_id,
                warehouse_id::text AS warehouse_id, level, source, suggested_level,
@@ -353,7 +406,9 @@ def _existing(db: Session, product_id: str, warehouse_id: Optional[str],
           FROM scm.reorder_level
          WHERE product_id = CAST(:pid AS uuid)
            AND COALESCE(warehouse_id::text, :zero) = COALESCE(CAST(:wid AS text), :zero)
-           AND COALESCE(company_id::text, :zero) = COALESCE(CAST(:co AS text), :zero)
+         ORDER BY (COALESCE(company_id::text, :zero) = COALESCE(CAST(:co AS text), :zero)) DESC,
+                  updated_at DESC NULLS LAST, created_at DESC
+         LIMIT 1
     """), {"pid": product_id, "wid": warehouse_id, "co": company_id,
            "zero": _ZERO_UUID}).mappings().first()
     return dict(row) if row else None

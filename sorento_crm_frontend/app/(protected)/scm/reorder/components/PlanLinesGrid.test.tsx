@@ -169,7 +169,9 @@ describe('PlanLinesGrid - the netting is on the row', () => {
                        outstanding_po: 2, order_qty: 14 })]);
     expect(screen.getByText('SO')).toBeInTheDocument();
     expect(screen.getByText('SPO')).toBeInTheDocument();
-    expect(screen.getByText('PO')).toBeInTheDocument();
+    // Fix-cluster (2026-08-20): retitled "PO" -> "PO outstanding" so a 0 there stops
+    // reading as "the plan itself has no PO column" - see PlanLinesGrid.tsx.
+    expect(screen.getByText('PO outstanding')).toBeInTheDocument();
     const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
     expect(within(row).getByText('24')).toBeInTheDocument(); // SO (needed)
     expect(within(row).getByText('5')).toBeInTheDocument(); // on hand
@@ -666,9 +668,10 @@ describe('the column story - result first, explanation after (2026-08-11 markup)
     expect(at('Suggested qty')).toBeGreaterThan(at('Order type'));
     expect(at('SO')).toBeGreaterThan(at('Suggested qty'));
     expect(at('SPO')).toBeGreaterThan(at('On hand'));
-    expect(at('PO')).toBeGreaterThan(at('SPO'));
+    // Fix-cluster (2026-08-20): retitled "PO" -> "PO outstanding" - see PlanLinesGrid.tsx.
+    expect(at('PO outstanding')).toBeGreaterThan(at('SPO'));
     // Chapter 2: ONE Decision cell carries the suggestion AND takes it (merged, 2026-08-12).
-    expect(at('Decision')).toBeGreaterThan(at('PO'));
+    expect(at('Decision')).toBeGreaterThan(at('PO outstanding'));
     // Chapter 3: price and supplier first, the total they produce after.
     expect(at('Suggested price')).toBeGreaterThan(at('Decision'));
     expect(at('Suggested supplier')).toBeGreaterThan(at('Suggested price'));

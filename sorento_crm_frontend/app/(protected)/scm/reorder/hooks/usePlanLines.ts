@@ -36,7 +36,7 @@ import {
   type PriceAdvice,
 } from '../lib/priceAdvice';
 import { trajectoryKey, type ChannelTrendEntry, type TrajectoryEntry } from '../lib/trajectory';
-import type { PlanChannel } from '../lib/planLineGrouping';
+import { isGroupedLine, type PlanChannel } from '../lib/planLineGrouping';
 import type { ProductPhotoStatus } from '../components/ProductPhotoPopover';
 import { levelKey, type LevelSuggestion } from '../lib/levelSuggestion';
 import type { PoReceipt } from '../lib/poCover';
@@ -301,9 +301,27 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [movementThresholdPct],
   );
 
-  /** The level suggestion for a line's product+location. Undefined = no opinion. */
+  /**
+   * The level suggestion for a line's product+location. Undefined = no opinion.
+   *
+   * A Product-grain row's `warehouse_id` is null (`planLineGrouping.ts` groups to one row
+   * per product; there IS no single warehouse), so its own key (`${pid}:`) is one the
+   * backend never writes - `suggestions_for_run` only ever emits real `(product,
+   * warehouse)` pairs. Falling back across the group's own MEMBER rows (each a genuine
+   * per-location pair) is the fix: it reuses the location suggestion a member already has
+   * rather than inventing a product-wide aggregate for a figure (a stocking trigger) that
+   * is not naturally summable across locations the way a quantity is.
+   */
   const levelFor = useCallback(
     (line: PlanLine): LevelSuggestion | undefined => {
+      if (isGroupedLine(line)) {
+        for (const member of line.__group.members) {
+          const key = levelKey(member.product_id, member.warehouse_id);
+          const hit = key ? levels.data?.suggestions[key] : undefined;
+          if (hit) return hit;
+        }
+        return undefined;
+      }
       const key = levelKey(line.product_id, line.warehouse_id);
       return key ? levels.data?.suggestions[key] : undefined;
     },
@@ -318,9 +336,27 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [purchaseTrend.data],
   );
 
-  /** S15: the open PO lines carrying this product to this warehouse. Empty = none. */
+  /**
+   * S15: the open PO lines carrying this product to this warehouse. Empty = none.
+   *
+   * A Product-grain row's own key (`${pid}:`) does not exist in `po_book` for the same
+   * reason `levelFor` above falls back: grouping never invents a warehouse. Unlike a
+   * level, receipts genuinely ARE a per-location list that sums cleanly, so the group's
+   * figure is every member's own receipts concatenated - the same "what is actually
+   * inbound across this product's locations" reading the summed `on_hand`/`net_position`
+   * fields already give the row.
+   */
   const poFor = useCallback(
     (line: PlanLine): PoReceipt[] => {
+      if (isGroupedLine(line)) {
+        const out: PoReceipt[] = [];
+        for (const member of line.__group.members) {
+          const key = levelKey(member.product_id, member.warehouse_id);
+          const hit = key ? poBook.data?.po_book[key] : undefined;
+          if (hit) out.push(...hit);
+        }
+        return out;
+      }
       const key = levelKey(line.product_id, line.warehouse_id);
       return (key ? poBook.data?.po_book[key] : undefined) ?? [];
     },

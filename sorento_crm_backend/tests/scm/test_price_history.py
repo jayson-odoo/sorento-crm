@@ -247,13 +247,21 @@ def test_a_draft_the_plan_itself_proposed_is_not_something_we_paid(db_price_worl
     assert all(p.unit_cost != 99.0 for p in (entry.last, entry.previous) if p)
 
 
-def test_another_suppliers_price_for_the_same_product_is_not_borrowed(db_price_world):
-    """The buyer asked for the last price from THAT supplier. A cheaper price from a
-    different supplier is a different negotiation and cannot stand in for it."""
+def test_another_suppliers_price_is_surfaced_labelled_never_as_this_suppliers_own(db_price_world):
+    """The buyer asked for the last price from THAT supplier, and this supplier has never
+    sold us this product - `no_history` would be correct read alone. But the product DOES
+    have a priced purchase, just under a different supplier, so "never bought this" is a
+    different, more alarming claim than the truth. Fix-cluster (2026-08-20): surfaced as a
+    distinct `other_supplier_price` code, carrying the OTHER supplier's name explicitly -
+    never substituted in as if it were this supplier's own quote."""
     entry = db_price_world["history"][db_price_world["other_key"]]
+    known = db_price_world["known_supplier"]
 
-    assert entry.advice == "no_history"
-    assert entry.last is None
+    assert entry.advice == "other_supplier_price"
+    assert entry.last is not None
+    assert entry.last.unit_cost == 12.0
+    assert entry.other_supplier_code == known.supplier_code
+    assert entry.other_supplier_name == known.supplier_name
 
 
 def test_a_free_of_charge_line_is_not_our_last_price(db_price_world):
@@ -344,6 +352,7 @@ def db_price_world():
             "history": history,
             "key": f"{product.id}:{known.supplier_code}",
             "other_key": f"{product.id}:{fresh.supplier_code}",
+            "known_supplier": known,
         }
 
 

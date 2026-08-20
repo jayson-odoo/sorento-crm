@@ -36,6 +36,7 @@ export function PlanLinesSection({
   secondaryActions,
   decisionsReadOnly = false,
   readOnlyReason = null,
+  onOpenProductSheet,
   groupByChannel = false,
 }: {
   runId: string | null;
@@ -54,6 +55,9 @@ export function PlanLinesSection({
   /** The run is decided at the Product grain, or is legacy: read and drill only. */
   decisionsReadOnly?: boolean;
   readOnlyReason?: string | null;
+  /** Forwarded to `PlanLinesGrid`'s "Decided at Product grain" read-only cell - switches
+   *  the page to the Product sheet (Order summary). Omit to render plain text there. */
+  onOpenProductSheet?: () => void;
   /** Forwarded to `PlanLinesGrid` (5.3): group the grid into one row per (product,
    *  channel) instead of one row per (product, warehouse). The caller derives this from
    *  the run's own stamped `decision_grain` (`lib/planGrain.ts`'s `shouldGroupByChannel`),
@@ -69,6 +73,30 @@ export function PlanLinesSection({
   const setDecidedFilter = onDecidedFilterChange ?? setOwnDecidedFilter;
 
   const planLines = usePlanLines(runId, !!runId);
+
+  /**
+   * Fix-cluster (2026-08-20): which products have a real decision somewhere - a client-side
+   * mirror of `_belongs_on_the_book` (`summary_order_service.py`), so `PlanLinesGrid`'s
+   * "Decided at Product grain" read-only cell can tell "the Product sheet decided this" from
+   * "no decision exists anywhere, this product is level-blocked" instead of one flat
+   * sentence for both. Read off `planLines.lines` - the FULL, unfiltered set the backend
+   * itself scans - never `visibleLines`, whose covered-row default filter must not change
+   * which products this reads as decided.
+   *
+   * Exception rows are not fetched into this grid at all (their own review flow, see
+   * `planLine.ts`), so a product whose ONLY buy-eligible signal is an unsizeable exception
+   * (a confirmed Project Buy the engine could not size for want of a supplier) is the one
+   * case this cannot see and reads as level-blocked even though the summary sheet holds a
+   * row for it off that exception.
+   */
+  const belongsOnBook = useMemo(() => {
+    const ids = new Set<string>();
+    for (const l of planLines.lines) {
+      if (!l.product_id) continue;
+      if (l.rec.type === 'buy' || (l.rec.project_need ?? 0) > 0) ids.add(l.product_id);
+    }
+    return ids;
+  }, [planLines.lines]);
 
   /**
    * Manual mode hides not-breached covered rows by default (user feedback, 2026-08-12:
@@ -160,6 +188,8 @@ export function PlanLinesSection({
         secondaryActions={secondaryActions}
         decisionsReadOnly={decisionsReadOnly}
         readOnlyReason={readOnlyReason}
+        belongsOnBookProductIds={belongsOnBook}
+        onOpenProductSheet={onOpenProductSheet}
         groupByChannel={groupByChannel}
         lines={visibleLines}
         decisions={planLines.decisions}

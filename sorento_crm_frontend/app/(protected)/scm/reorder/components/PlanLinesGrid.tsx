@@ -85,6 +85,7 @@ import {
   type PlanChannelGroupMeta,
 } from '../lib/planLineGrouping';
 import { channelTrendLine, type ChannelTrendEntry } from '../lib/trajectory';
+import { DECIDED_AT_PRODUCT_GRAIN } from '../lib/planGrain';
 
 /**
  * ONE grid for every line of a plan.
@@ -457,6 +458,8 @@ export function PlanLinesGrid({
   runId,
   decisionsReadOnly = false,
   readOnlyReason = null,
+  belongsOnBookProductIds,
+  onOpenProductSheet,
   groupByChannel = false,
   isLoading,
 }: {
@@ -534,6 +537,18 @@ export function PlanLinesGrid({
   decisionsReadOnly?: boolean;
   /** What the disabled control says, in place of the decision cell's own controls. */
   readOnlyReason?: string | null;
+  /**
+   * Fix-cluster (2026-08-20): which products actually have a Summary Order Report row
+   * (`_belongs_on_the_book`, `summary_order_service.py`, mirrored client-side off the
+   * plan's own loaded lines - see `PlanLinesSection`). Only consulted when
+   * `readOnlyReason` is the "Decided at Product grain" message, to tell "a real decision
+   * lives on the Product sheet" apart from "no decision exists anywhere - this product is
+   * level-blocked", which the flat `readOnlyReason` string could not say on its own.
+   */
+  belongsOnBookProductIds?: Set<string>;
+  /** Switches the page to the Product sheet (Order summary). Powers the "open it" link
+   *  next to a row this run HAS decided at Product grain. Omit to render plain text. */
+  onOpenProductSheet?: () => void;
   /**
    * Product-grain runs only (5.3, follow-up 19-20 Aug): group the fetched per-warehouse
    * rows into one row per PRODUCT - "1 line of retail, 1 line of project" folded into ONE
@@ -1053,7 +1068,9 @@ export function PlanLinesGrid({
       {
         id: 'outstanding_po',
         accessorFn: (row) => row.rec.outstanding_po ?? 0,
-        header: ({ column }) => <DataGridColumnHeader title="PO" visibility column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="PO outstanding" visibility column={column} />
+        ),
         // The mirror of the SO cell's order-trend popup: who we bought it from, when, and
         // at what cost - the same interaction, on the buy side.
         cell: ({ row }) => (
@@ -1069,7 +1086,7 @@ export function PlanLinesGrid({
         ),
         size: 80,
         enableSorting: true,
-        meta: { headerTitle: 'PO (on order)', skeleton: <Skeleton className="h-4 w-10" /> },
+        meta: { headerTitle: 'PO outstanding (on order)', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       {
         id: 'suggested',
@@ -1367,38 +1384,85 @@ export function PlanLinesGrid({
         // place to see the suggestion and take it. Wider than either of the two columns it
         // replaces used to be alone, since it now carries what both of them said.
         header: ({ column }) => <DataGridColumnHeader title="Decision" visibility column={column} />,
-        cell: ({ row }) =>
+        cell: ({ row }) => {
+          const line = row.original;
           // A group row is never a decision surface (5.3/5.4) - it is a summed READING,
           // and its `id` names no real recommendation to write a decision against. Checked
           // ahead of `decisionsReadOnly` so this holds even if a future caller groups
           // without also passing the read-only flag; in practice grouping is only ever on
           // for a Product-grain run, which already carries `decisionsReadOnly` from the
           // caller (5.4: Location recommendations are read-only under Product grain too).
-          decisionsReadOnly || isGroupedLine(row.original) ? (
-            // Disabled and explained, never silently inert: the buyer needs to know
-            // WHICH screen owns this decision (AC-F02).
+          if (!decisionsReadOnly && !isGroupedLine(line)) {
+            return (
+              <StopClick>
+                <PlanLineDecisionCell
+                  line={line}
+                  decision={decisions[line.id]}
+                  cover={coverFor?.(line) ?? NO_COVER}
+                  poReceipts={poFor?.(line) ?? []}
+                  trend={trendFor?.(line)}
+                  economics={economicsFor?.(line)}
+                  healthThresholds={healthThresholds}
+                  onDecide={(next) => onDecide(line, next)}
+                  onClear={() => onClear(line)}
+                />
+              </StopClick>
+            );
+          }
+          // Fix-cluster (2026-08-20): "Decided at Product grain" used to be one flat
+          // sentence on every row, whether or not THIS product has a decision anywhere at
+          // all. `belongsOnBookProductIds` (mirrors `_belongs_on_the_book`,
+          // `summary_order_service.py`) tells "a real decision lives on the Product sheet"
+          // apart from "no decision exists anywhere - nobody set a level to plan it
+          // against" - the flat sentence could not say which, and the second case is not
+          // actually locked at all, it is just unreachable from here.
+          if (
+            readOnlyReason === DECIDED_AT_PRODUCT_GRAIN &&
+            belongsOnBookProductIds &&
+            line.product_id
+          ) {
+            const onBook = belongsOnBookProductIds.has(line.product_id);
+            if (onBook) {
+              return onOpenProductSheet ? (
+                <button
+                  type="button"
+                  className="text-2xs text-primary underline decoration-dotted underline-offset-2"
+                  data-testid={`decision-read-only-${line.id}`}
+                  onClick={onOpenProductSheet}
+                >
+                  Decided on the Product sheet - open it
+                </button>
+              ) : (
+                <span
+                  className="text-2xs text-muted-foreground"
+                  data-testid={`decision-read-only-${line.id}`}
+                >
+                  Decided on the Product sheet
+                </span>
+              );
+            }
+            return (
+              <span
+                className="text-2xs text-muted-foreground"
+                data-testid={`decision-read-only-${line.id}`}
+                title="No Summary Order Report row exists for this product - nobody has set the AutoCount level it would be planned against"
+              >
+                No product decision exists - level-blocked
+              </span>
+            );
+          }
+          // Disabled and explained, never silently inert: the buyer needs to know
+          // WHICH screen owns this decision (AC-F02).
+          return (
             <span
               className="text-2xs text-muted-foreground"
-              data-testid={`decision-read-only-${row.original.id}`}
+              data-testid={`decision-read-only-${line.id}`}
               title={readOnlyReason ?? 'Decided at another grain'}
             >
               {readOnlyReason ?? 'Decided at another grain'}
             </span>
-          ) : (
-          <StopClick>
-          <PlanLineDecisionCell
-            line={row.original}
-            decision={decisions[row.original.id]}
-            cover={coverFor?.(row.original) ?? NO_COVER}
-            poReceipts={poFor?.(row.original) ?? []}
-            trend={trendFor?.(row.original)}
-            economics={economicsFor?.(row.original)}
-            healthThresholds={healthThresholds}
-            onDecide={(next) => onDecide(row.original, next)}
-            onClear={() => onClear(row.original)}
-          />
-          </StopClick>
-          ),
+          );
+        },
         size: 340,
         enableSorting: false,
         enableHiding: false,
@@ -1406,6 +1470,7 @@ export function PlanLinesGrid({
       },
     ],
     [decisions, onDecide, onClear, runId, decisionsReadOnly, readOnlyReason,
+     belongsOnBookProductIds, onOpenProductSheet,
      coverFor, priceFor, cheaperFor, trendFor, channelTrendFor, groupByChannel, dynamicChannels,
      levelFor, onAmendLevel, poFor, purchaseTrendFor, purchaseTrendWindowMonths,
      onOpenPurchaseTrend, hasPhotoFor, photoStatus, onOpenPhoto, economicsFor, healthThresholds,
