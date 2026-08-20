@@ -432,8 +432,23 @@ function DataGridTableEmpty() {
 
   return (
     <tr>
-      <td colSpan={totalColumns} className="text-center text-muted-foreground py-6">
-        {props.emptyMessage || 'No data available'}
+      {/*
+        The cell spans every column, so on a listing wider than its scroll container
+        a CENTRED message is centred on the TABLE, not on what the user can see: at
+        1280px the stock-inquiries grid is 2459px wide and its "No data available"
+        landed ~600px past the right edge, so an empty result read as a blank band.
+        That is worst exactly where it matters most - a sticky filter that matches
+        nothing is otherwise indistinguishable from data loss.
+
+        The message is start-aligned and sticky instead, so it sits under the first
+        column at any table width and follows the horizontal scroll. `px-4` is the
+        default cell padding, so it lines up with the first column's content rather
+        than hugging the border.
+      */}
+      <td colSpan={totalColumns} className="p-0 text-muted-foreground">
+        <div className="sticky start-0 w-fit px-4 py-6 text-start">
+          {props.emptyMessage || 'No data available'}
+        </div>
       </td>
     </tr>
   );

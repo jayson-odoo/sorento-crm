@@ -270,7 +270,16 @@ def upsert_list_column_config(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
 
     try:
-        data = body.model_dump(exclude_none=True)
+        # A PARTIAL update, not a replace. Two writers share this row: DataGrid's
+        # column hook writes columnOrder/Visibility/Sizing from inside the grid, the
+        # page's view hook writes sorting/filters/filtersVersion from above it. A
+        # whole-blob replace made each one wipe the other's keys, which reads as
+        # flaky persistence rather than as a bug.
+        #
+        # `exclude_unset` (NOT exclude_none) is what separates "I am not writing that
+        # key" from "clear that key to null" - the distinction the Clear affordance on
+        # the active-filter chip needs.
+        incoming = body.model_dump(exclude_unset=True, mode="json")
         row = (
             db.query(UserListColumnConfig)
             .filter(
@@ -279,6 +288,10 @@ def upsert_list_column_config(
             )
             .first()
         )
+        existing = (_config_dict(getattr(row, "config", None)) or {}) if row else {}
+        merged = {**existing, **incoming}
+        # An explicitly-null key is a clear, so it is dropped rather than stored.
+        data = {k: v for k, v in merged.items() if v is not None}
         if row:
             setattr(row, "config", data)
         else:

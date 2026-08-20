@@ -84,6 +84,15 @@ export type ListToolbarFilters =
       /** Whether any custom filter is currently active (drives the "On" badge + count). */
       active?: boolean;
       activeCount?: number;
+      /**
+       * When supplied AND `active`, the toolbar states the filter on screen as a chip
+       * with a clear affordance, above the grid and without opening the filter menu.
+       * A sticky filter the user did not set this session is otherwise indistinguishable
+       * from missing data (PLAN-listing-view-memory, AC-C1/AC-C2).
+       *
+       * The PAGE owns `label`: only it can put its own filter values into words.
+       */
+      activeSummary?: { label: string; onClear: () => void };
       content: ReactNode;
     };
 
@@ -341,6 +350,11 @@ export function DataGridListToolbar<TData extends object>({
     selectAllMatching?.onClear();
   };
 
+  // Rendered only for a custom filter that is BOTH active and self-describing, so a
+  // listing that supplies no summary keeps exactly today's layout (AC-C3).
+  const activeFilterSummary =
+    filters?.kind === 'custom' && filters.active ? filters.activeSummary : undefined;
+
   const exportButtonEl =
     exportConfig === false ? null : exportEnabled ? (
       <Button
@@ -505,6 +519,32 @@ export function DataGridListToolbar<TData extends object>({
           {primaryAction}
         </div>
       </div>
+
+      {/* Active-filter chip (AC-C1). Its own row, so it neither competes with the
+          toolbar buttons for width at 375px nor disappears behind the bulk strip. */}
+      {activeFilterSummary ? (
+        <div className="flex w-full flex-wrap items-center gap-2">
+          <span className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-full border border-border bg-muted/50 ps-3 pe-1 text-xs font-medium">
+            <Filter className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate" title={activeFilterSummary.label}>
+              {activeFilterSummary.label}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              mode="icon"
+              shape="circle"
+              className="size-6 shrink-0 p-0"
+              onClick={activeFilterSummary.onClear}
+              aria-label={`Clear filter: ${activeFilterSummary.label}`}
+              title="Clear filter"
+            >
+              <X className="size-3.5" />
+            </Button>
+          </span>
+        </div>
+      ) : null}
 
       {/* "Select all N records" banner (Odoo pattern, D4/F). */}
       {showSelectAllBanner && selectAllMatching ? (

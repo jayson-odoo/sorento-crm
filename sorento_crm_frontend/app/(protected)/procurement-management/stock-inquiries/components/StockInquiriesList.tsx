@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -32,6 +32,7 @@ import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { revisionBadgeLabel, withRevisionSuffix } from '@/lib/document-number';
+import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
 import { useStockInquiries } from '../hooks/useStockInquiries';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -40,22 +41,54 @@ import { STOCK_INQUIRY_STATUS_LABELS } from '../types/stockInquiry.types';
 import StockInquiryBulkDeleteDialog from './StockInquiryBulkDeleteDialog';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 
+/**
+ * The listing's shipped default, used until the user has left one behind.
+ *
+ * A revision is new work for whoever reads the list, so it sorts as if created
+ * then rather than staying buried at its original submission date.
+ * `last_activity_at` resolves server-side to coalesce(last_revised_at, created_at).
+ */
+const DEFAULT_SORTING: SortingState = [{ id: 'last_activity_at', desc: true }];
+
+/**
+ * Shape of what this page stores in the opaque `filters` blob. BUMP THIS whenever
+ * `StockInquiriesFilters` changes, so blobs written by the old shape are discarded
+ * rather than applied (AC-B4).
+ */
+const FILTERS_VERSION = 1;
+
+type StockInquiriesFilters = { statuses: string[] };
+
 export default function StockInquiriesList() {
   const router = useRouter();
+  const pathname = usePathname();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
   });
-  // A revision is new work for the reader, so it sorts as if created then, not
-  // buried at its original submission date. `last_activity_at` resolves server-side
-  // to coalesce(last_revised_at, created_at).
-  const [sorting, setSorting] = useState<SortingState>([
-    { id: 'last_activity_at', desc: true },
-  ]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+
+  // The sort and the status filter are remembered per user. `pathname` is the same
+  // listing key DataGrid derives for the column preferences, so both writers address
+  // one row. Page number and search text are deliberately NOT remembered.
+  const {
+    sorting,
+    setSorting,
+    filters: viewFilters,
+    setFilters: setViewFilters,
+    isLoading: isViewPrefsLoading,
+  } = useListingViewPreferences<StockInquiriesFilters>({
+    listingKey: pathname,
+    defaultSorting: DEFAULT_SORTING,
+    filtersVersion: FILTERS_VERSION,
+  });
+
+  const statusFilter = useMemo(
+    () => viewFilters?.statuses ?? [],
+    [viewFilters],
+  );
 
   const { data, isLoading, refetch, isFetching } = useStockInquiries({
     pageIndex: pagination.pageIndex,
@@ -63,6 +96,8 @@ export default function StockInquiriesList() {
     sorting,
     searchQuery,
     statuses: statusFilter,
+    // One fetch, with the remembered view already applied (AC-B3).
+    enabled: !isViewPrefsLoading,
   });
 
   const handleRowClick = (row: StockInquiry) => {
@@ -84,12 +119,27 @@ export default function StockInquiriesList() {
     router.push(`/procurement-management/stock-inquiries/${inquiryId}${qs}`);
   };
 
-  const toggleStatusFilter = (value: string) => {
-    setStatusFilter((prev) =>
-      prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value],
-    );
+  const applyStatusFilter = (next: string[]) => {
+    // An empty selection is stored as no filter at all, so returning shows the
+    // unfiltered listing (AC-C2).
+    setViewFilters(next.length ? { statuses: next } : null);
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   };
+
+  const toggleStatusFilter = (value: string) => {
+    applyStatusFilter(
+      statusFilter.includes(value)
+        ? statusFilter.filter((v) => v !== value)
+        : [...statusFilter, value],
+    );
+  };
+
+  const statusFilterLabel = (() => {
+    const labels = statusFilter.map((v) => STOCK_INQUIRY_STATUS_LABELS[v] ?? v);
+    if (labels.length === 0) return '';
+    if (labels.length === 1) return labels[0];
+    return `${labels[0]} +${labels.length - 1} more`;
+  })();
 
   const columns = useMemo<ColumnDef<StockInquiry>[]>(
     () => [
@@ -380,7 +430,7 @@ export default function StockInquiriesList() {
     <DataGrid
       table={table}
       recordCount={data?.pagination.total || 0}
-      isLoading={isLoading}
+      isLoading={isLoading || isViewPrefsLoading}
       onRowClick={handleRowClick}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
@@ -414,6 +464,10 @@ export default function StockInquiriesList() {
               kind: 'custom',
               active: statusFilter.length > 0,
               activeCount: statusFilter.length,
+              activeSummary: {
+                label: statusFilterLabel,
+                onClear: () => applyStatusFilter([]),
+              },
               content: (
                 <div className="space-y-1">
                   <div className="px-1 py-1 text-xs font-medium text-muted-foreground">
@@ -454,10 +508,7 @@ export default function StockInquiriesList() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => {
-                            setStatusFilter([]);
-                            setPagination((p) => ({ ...p, pageIndex: 0 }));
-                          }}
+                          onClick={() => applyStatusFilter([])}
                         >
                           Clear filters
                         </Button>

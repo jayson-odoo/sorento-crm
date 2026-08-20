@@ -46,6 +46,25 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   }),
 }));
 
+// The list holds its data query until the remembered view resolves; under jsdom
+// nothing answers that request, so without this stub the grid sits on skeletons.
+vi.mock(
+  '@/lib/listing-column-preferences/listColumnPreferencesService',
+  () => ({
+    getUserListColumnConfig: vi.fn(async (listingKey: string) => ({
+      listing_key: listingKey,
+      config: null,
+    })),
+    upsertUserListColumnConfig: vi.fn(
+      async (listingKey: string, config: unknown) => ({
+        listing_key: listingKey,
+        config,
+      }),
+    ),
+    resetUserListColumnConfig: vi.fn(async () => undefined),
+  }),
+);
+
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() },
 }));
@@ -68,7 +87,9 @@ import StockInquiriesList from './StockInquiriesList';
 import type { StockInquiry } from '../types/stockInquiry.types';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
-function inquiry(over: Partial<StockInquiry> = {}): StockInquiry {
+function inquiry(
+  over: Partial<Record<keyof StockInquiry, unknown>> = {},
+): StockInquiry {
   return {
     id: 'si-1',
     inquiry_number: 'SI-26-0184',
@@ -118,7 +139,7 @@ describe('StockInquiriesList last activity column', () => {
     expect(screen.queryByText('Created')).not.toBeInTheDocument();
   });
 
-  it('shows "Revised <date>" for a revised row and a bare created date otherwise', () => {
+  it('shows "Revised <date>" for a revised row and a bare created date otherwise', async () => {
     mockList([
       inquiry({
         id: 'si-revised',
@@ -147,7 +168,8 @@ describe('StockInquiriesList last activity column', () => {
     const revisedText = `Revised ${formatExpected('2026-07-15T00:00:00')}`;
     const createdText = formatExpected('2026-07-03T00:00:00');
 
-    expect(screen.getByText(revisedText)).toBeInTheDocument();
+    // Rows arrive once the remembered view resolves and releases the data query.
+    expect(await screen.findByText(revisedText)).toBeInTheDocument();
     expect(screen.getByText(createdText)).toBeInTheDocument();
     // The revised row's own created date must NOT appear - last_revised_at wins.
     expect(

@@ -4,8 +4,10 @@
  * The "Rev N" badge and the `-R{n}` document-number suffix both come off the
  * denormalized `revision_no` already on the row: no per-row query.
  *
- * Mocks: next/navigation, sonner, the data hook, and the listing-column
- * preferences hook (required for any DataGrid list test).
+ * Mocks: next/navigation, sonner, the data hook, the listing-column preferences
+ * hook (required for any DataGrid list test), and the preferences SERVICE - the
+ * list gates its data query on the remembered view having resolved, and under
+ * jsdom nothing answers that request, so the grid would sit on skeletons.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -37,6 +39,21 @@ vi.mock('next/navigation', () => ({
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
+}));
+
+// The real `useListingViewPreferences` runs; only its transport is stubbed, so the
+// list's "wait for the remembered view, then fetch once" gate is exercised rather
+// than mocked away. No stored view here, so the listing gets its shipped defaults.
+vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => ({
+  getUserListColumnConfig: vi.fn(async (listingKey: string) => ({
+    listing_key: listingKey,
+    config: null,
+  })),
+  upsertUserListColumnConfig: vi.fn(async (listingKey: string, config: unknown) => ({
+    listing_key: listingKey,
+    config,
+  })),
+  resetUserListColumnConfig: vi.fn(async () => undefined),
 }));
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
@@ -95,29 +112,30 @@ beforeEach(() => {
 });
 
 describe('StockInquiriesList revision surfacing', () => {
-  it('shows no badge and a bare number at revision 0', () => {
+  it('shows no badge and a bare number at revision 0', async () => {
     mockList([inquiry({ revision_no: 0 })]);
     renderList();
-    expect(screen.getByText('SI-26-0184')).toBeInTheDocument();
+    // Rows arrive once the remembered view resolves and releases the data query.
+    expect(await screen.findByText('SI-26-0184')).toBeInTheDocument();
     expect(screen.queryByText(/^Rev \d+$/)).not.toBeInTheDocument();
   });
 
-  it('shows "Rev 2" and the -R2 suffixed number once revised', () => {
+  it('shows "Rev 2" and the -R2 suffixed number once revised', async () => {
     mockList([inquiry({ id: 'si-2', revision_no: 2 })]);
     renderList();
-    expect(screen.getByText('Rev 2')).toBeInTheDocument();
+    expect(await screen.findByText('Rev 2')).toBeInTheDocument();
     expect(screen.getByText('SI-26-0184-R2')).toBeInTheDocument();
     expect(screen.queryByText('SI-26-0184')).not.toBeInTheDocument();
   });
 
-  it('renders the badge per row without any extra request', () => {
+  it('renders the badge per row without any extra request', async () => {
     mockList([
       inquiry({ id: 'si-1', inquiry_number: 'SI-26-0001', revision_no: 0 }),
       inquiry({ id: 'si-2', inquiry_number: 'SI-26-0002', revision_no: 1 }),
       inquiry({ id: 'si-3', inquiry_number: 'SI-26-0003', revision_no: 5 }),
     ]);
     renderList();
-    expect(screen.getByText('SI-26-0001')).toBeInTheDocument();
+    expect(await screen.findByText('SI-26-0001')).toBeInTheDocument();
     expect(screen.getByText('SI-26-0002-R1')).toBeInTheDocument();
     expect(screen.getByText('SI-26-0003-R5')).toBeInTheDocument();
     expect(screen.getByText('Rev 1')).toBeInTheDocument();

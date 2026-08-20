@@ -158,4 +158,75 @@ describe('DataGridListToolbar', () => {
     expect(screen.getByRole('button', { name: /actions/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^import$/i })).toBeNull();
   });
+  it('states an active custom filter as a chip above the grid (AC-C1)', () => {
+    render(
+      <Harness
+        toolbarProps={{
+          exportConfig: false,
+          filters: {
+            kind: 'custom',
+            active: true,
+            activeCount: 1,
+            activeSummary: { label: 'Pending purchasing', onClear: () => {} },
+            content: <div>filter body</div>,
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText('Pending purchasing')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /clear filter: pending purchasing/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('renders no chip when the filter is not active (AC-C3)', () => {
+    render(
+      <Harness
+        toolbarProps={{
+          exportConfig: false,
+          filters: {
+            kind: 'custom',
+            active: false,
+            activeSummary: { label: 'Pending purchasing', onClear: () => {} },
+            content: <div>filter body</div>,
+          },
+        }}
+      />,
+    );
+    expect(screen.queryByText('Pending purchasing')).toBeNull();
+  });
+
+  it('renders no chip for a listing that supplies no summary (AC-C3)', () => {
+    render(
+      <Harness
+        toolbarProps={{
+          exportConfig: false,
+          filters: { kind: 'custom', active: true, activeCount: 2, content: <div>filter body</div> },
+        }}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /clear filter/i })).toBeNull();
+    // The count badge on the Filters button is unchanged.
+    expect(screen.getByRole('button', { name: /filters/i })).toHaveTextContent('2');
+  });
+
+  it('fires the chip clear handler (AC-C2)', () => {
+    const onClear = vi.fn();
+    render(
+      <Harness
+        toolbarProps={{
+          exportConfig: false,
+          filters: {
+            kind: 'custom',
+            active: true,
+            activeCount: 1,
+            activeSummary: { label: 'Responded', onClear },
+            content: <div>filter body</div>,
+          },
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /clear filter: responded/i }));
+    expect(onClear).toHaveBeenCalledTimes(1);
+  });
 });
