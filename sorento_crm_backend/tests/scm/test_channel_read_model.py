@@ -677,6 +677,46 @@ def test_recommendations_api_carries_the_sheet_leg_beside_the_confirmed_need(scm
         assert row["unclassified_need"] == 0
 
 
+def test_recommendations_api_carries_the_committed_split_summing_to_outstanding_sales(
+    scm_app,
+):
+    """front-planning follow-up (19-20 Aug): `project_committed` / `retail_committed` /
+    `unclassified_committed` - the RAW `committed_v` split the grouped Buy view's channel
+    columns sum across a product's locations - must reach the wire alongside
+    `outstanding_sales` (`committed`) and sum to it exactly, the same invariant
+    `committed_v` guarantees per location (AC-F07).
+    """
+    from fastapi.testclient import TestClient  # noqa: PLC0415
+
+    app, db = _client(scm_app, "purchasing")
+    wid = _mk_warehouse(db, "ZZTCHRM-RUN-E")
+    pid = _mk_product(db, "ZZTCHRM-RUN-E")
+    _mk_stock(db, pid, wid, 0)
+    _link(db, pid, _mk_supplier(db, "ZZTCHRM Run Supplier E"), moq=None, mult=None)
+    _core_line_for_run(db, pid, wid, qty=30, demand_class="retail")
+    _core_line_for_run(db, pid, wid, qty=18, demand_class="project",
+                       demand_origin="scm_order_inquiry")
+    _core_line_for_run(db, pid, wid, qty=7, demand_class=None)
+    db.flush()
+
+    created = run_svc.create_run(db, ["ZZTCHRM-RUN-E"], "warehouse", enqueue=False)
+    run_svc.run_reorder(created["run_id"], db=db)
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/reorder-runs/{created['run_id']}/recommendations",
+                    params={"page": 1, "limit": 50})
+        assert res.status_code == 200, res.text
+        row = next(r for r in res.json()["data"] if r["sku"] == "ZZTCHRM-RUN-E")
+        assert row["project_committed"] == 18
+        assert row["retail_committed"] == 30
+        assert row["unclassified_committed"] == 7
+        assert row["outstanding_sales"] == 55
+        assert (
+            row["project_committed"] + row["retail_committed"]
+            + row["unclassified_committed"]
+        ) == row["outstanding_sales"]
+
+
 # --------------------------------------------------------------------------- #
 # channel disjointness, end to end through the REAL engine and the freeze
 # --------------------------------------------------------------------------- #

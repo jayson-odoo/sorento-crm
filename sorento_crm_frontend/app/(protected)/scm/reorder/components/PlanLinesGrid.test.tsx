@@ -989,23 +989,34 @@ describe('PlanLinesGrid - product photo on the row (AC-7)', () => {
   });
 });
 
-describe('PlanLinesGrid - product-grain channel grouping (5.3)', () => {
-  // The captain's TPE-9204 complaint: 1 product across 3 warehouses (1 bare-site Retail,
-  // 2 suffixed-bin Project) must read as "1 line of retail, 1 line of project".
+describe('PlanLinesGrid - product-grain channel grouping (5.3 follow-up, 19-20 Aug)', () => {
+  // The captain's refined ask, superseding the first (product, channel) cut: 1 product
+  // across 3 warehouses (1 bare-site Retail, 2 suffixed-bin Project) collapses into ONE
+  // row per PRODUCT, with Project/Retail as dynamic COLUMNS on that single row - "instead
+  // of 1 column SO, 1 column project, 1 column retail, it should be 2 columns".
   const retail = line({
     id: 'a', warehouse_id: 'w-brw', warehouse_code: 'BRW', warehouse_name: 'Butterworth',
     segment: 'dealer', rank: 1, order_qty: 3,
+    retail_committed: 6, project_committed: 0, unclassified_committed: 0, project_need: 0,
   });
   const projectIb = line({
     id: 'b', warehouse_id: 'w-ib', warehouse_code: 'BRW-IB', warehouse_name: 'BRW - IB',
     segment: 'project', rank: 2, order_qty: 4,
+    retail_committed: 0, project_committed: 5, unclassified_committed: 0, project_need: 3,
   });
   const projectIr = line({
     id: 'c', warehouse_id: 'w-ir', warehouse_code: 'BRW-IR', warehouse_name: 'BRW - IR',
     segment: 'project', rank: 3, order_qty: 5,
+    retail_committed: 0, project_committed: 2, unclassified_committed: 0, project_need: 1,
   });
 
-  function renderGroupedGrid(lines: PlanLine[]) {
+  function renderGroupedGrid(
+    lines: PlanLine[],
+    channelTrendFor?: (productId: string | null, channel: 'project' | 'retail' | 'unclassified') =>
+      { verdict: 'rising' | 'holding' | 'falling' | 'quiet' | 'no_history'; recent_qty: number;
+        previous_qty: number; change_pct: number | null; window_months: number;
+        avg_day: number | null } | undefined,
+  ) {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
@@ -1017,17 +1028,11 @@ describe('PlanLinesGrid - product-grain channel grouping (5.3)', () => {
           groupByChannel
           decisionsReadOnly
           readOnlyReason="Decided at Product grain"
+          channelTrendFor={channelTrendFor}
           staleAfterDays={180}
         />
       </QueryClientProvider>,
     );
-  }
-
-  // "Project" / "Retail" also appear as plain <option> text in the (mocked) Order-type
-  // filter select, so a bare `getByText` is ambiguous - the order-type BADGE is the only
-  // element carrying `data-slot="badge"`.
-  function orderTypeBadges(label: string): HTMLElement[] {
-    return screen.getAllByText(label).filter((el) => el.getAttribute('data-slot') === 'badge');
   }
 
   it('an ungrouped (Location-grain) plan renders the fixture exactly as before: 3 rows', () => {
@@ -1038,45 +1043,98 @@ describe('PlanLinesGrid - product-grain channel grouping (5.3)', () => {
     expect(screen.getByText('BRW - IR')).toBeInTheDocument();
   });
 
-  it('collapses the same 3 rows into 2 once grouped - one Retail, one Project', () => {
-    renderGroupedGrid([retail, projectIb, projectIr]);
-    expect(screen.getAllByText('SKU-1')).toHaveLength(2);
-    expect(orderTypeBadges('Retail')).toHaveLength(1);
-    expect(orderTypeBadges('Project')).toHaveLength(1);
+  it('an ungrouped plan still carries the Order-type badge and the fixed SO/channel columns', () => {
+    renderGrid([retail]);
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).toContain('Order type');
+    expect(heads.some((h) => h.includes('SO'))).toBe(true);
   });
 
-  it('the Project row shows both locations, joined, in the Location column', () => {
+  it('collapses all 3 rows of the same product into a SINGLE row once grouped', () => {
     renderGroupedGrid([retail, projectIb, projectIr]);
-    expect(screen.getByText('BRW - IB, BRW - IR')).toBeInTheDocument();
-    expect(screen.getByText('Butterworth')).toBeInTheDocument();
+    expect(screen.getAllByText('SKU-1')).toHaveLength(1);
+  });
+
+  it('the group row carries every location, joined, in the Location column', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    expect(screen.getByText('Butterworth, BRW - IB, BRW - IR')).toBeInTheDocument();
+  });
+
+  it('grouped mode drops the Order-type badge column and the SO/Project/Retail/Unclassified fixed columns', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).not.toContain('Order type');
+    expect(heads).not.toContain('SO');
+    expect(heads).not.toContain('Unclass.');
+  });
+
+  it('renders dynamic channel columns off what is actually present - Project and Retail here', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).toContain('Project');
+    expect(heads).toContain('Retail');
+    expect(heads).not.toContain('Unclassified');
+  });
+
+  it('each channel column shows that channel\'s open demand, summed across the product\'s locations', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).getByText('7')).toBeInTheDocument(); // project: 0 + 5 + 2
+    expect(within(row).getByText('6')).toBeInTheDocument(); // retail: 6 + 0 + 0
+  });
+
+  it('the channel column carries a trend subline sourced from channelTrendFor, per channel', () => {
+    const channelTrendFor = vi.fn((productId: string | null, channel: string) =>
+      channel === 'project'
+        ? { verdict: 'rising' as const, recent_qty: 10, previous_qty: 5, change_pct: 100,
+            window_months: 12, avg_day: 2.5 }
+        : undefined,
+    );
+    renderGroupedGrid([retail, projectIb, projectIr], channelTrendFor);
+    expect(channelTrendFor).toHaveBeenCalledWith('p1', 'project');
+    expect(screen.getByText(/Orders rising - consider more/)).toBeInTheDocument();
+    expect(screen.getByText(/avg 2.5\/day/)).toBeInTheDocument();
   });
 
   it('sums order qty across the group\'s warehouses', () => {
     renderGroupedGrid([retail, projectIb, projectIr]);
-    const projectRow = orderTypeBadges('Project')[0].closest('tr') as HTMLElement;
-    expect(within(projectRow).getByText('9')).toBeInTheDocument(); // 4 + 5
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).getByText('12')).toBeInTheDocument(); // 3 + 4 + 5
   });
 
-  it('expanding the Project row reveals its 2 underlying location rows', () => {
+  it('expanding the group row reveals its 3 underlying per-warehouse rows', () => {
     renderGroupedGrid([retail, projectIb, projectIr]);
     expect(screen.queryByText('BRW - IB')).not.toBeInTheDocument();
-    fireEvent.click(orderTypeBadges('Project')[0]);
+    fireEvent.click(screen.getByText('SKU-1'));
+    expect(screen.getByText('Butterworth')).toBeInTheDocument();
     expect(screen.getByText('BRW - IB')).toBeInTheDocument();
     expect(screen.getByText('BRW - IR')).toBeInTheDocument();
   });
 
-  it('a group row is always read-only, regardless of which SKU', () => {
+  it('a group row is always read-only', () => {
     renderGroupedGrid([retail, projectIb, projectIr]);
-    expect(screen.getAllByTestId(/^decision-read-only-group:/)).toHaveLength(2);
+    expect(screen.getAllByTestId(/^decision-read-only-group:/)).toHaveLength(1);
+    expect(screen.getAllByText('Decided at Product grain')).toHaveLength(1);
   });
 
-  it('a warehouse with no persisted segment groups on its own Unclassified line, not Retail', () => {
+  it('a warehouse with no persisted segment still folds into the SAME group row, adding an Unclassified column', () => {
     const unmapped = line({
       id: 'd', sku: 'SKU-1', warehouse_id: 'w-x', warehouse_code: 'WHX', warehouse_name: 'Unmapped',
-      segment: null, rank: 4,
+      segment: null, rank: 4, unclassified_committed: 1,
     });
     renderGroupedGrid([retail, unmapped]);
-    expect(orderTypeBadges('Unclassified')).toHaveLength(1);
-    expect(orderTypeBadges('Retail')).toHaveLength(1); // the real dealer group only
+    expect(screen.getAllByText('SKU-1')).toHaveLength(1);
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).toContain('Unclassified');
+  });
+
+  it('an ungrouped-mode plan keeps the fixed SO/Project/Retail/Unclassified need columns, not the dynamic channel ones', () => {
+    // Ungrouped mode has its own "Project"/"Retail" headers too (the fixed `project_need`
+    // / `retail_need` columns) - what distinguishes grouped mode is `Order type` being
+    // absent and `Unclass.` present, both pinned in the earlier assertions above.
+    renderGrid([retail]);
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).toContain('Order type');
+    expect(heads).toContain('Unclass.');
   });
 });
