@@ -426,7 +426,22 @@ def test_every_company_id_table_is_registered():
     # owned rather than derived through the batch because every row write and read is BY
     # ROW, keyed straight off `batch_id`/`row_id`, the same reason `plan_exception` and
     # `so_amendments` are owned beside their own parents rather than left to a join.
-    expected_owned = 115
+    #
+    # PLAN-scm-proforma-to-spo.md adds 2 more link tables: `proforma_invoice_shipment_link`
+    # (migration 405) records where a proforma invoice line's goods actually went - the draft
+    # inbound shipment line the "convert" action made for it, or why it made none - and
+    # `shipment_line_spo_link` (migration 406) records the next hop, where a shipment line's
+    # demand actually went - the SPO line "Create SPO" made for it, or why it made none. Both
+    # are owned rather than derived through their parent because the write path is idempotent
+    # BY the link row (a second convert / second "Create SPO" is refused by finding an
+    # existing row), the same shape as `so_amendments` beside `plan_exception`.
+    #
+    # PLAN-scm-reorder-decision-to-autocount.md adds 1: `plan_row_decision` (migration 408) is
+    # the buyer's CURRENT decision on one recommendation row - buy / use stock / use an
+    # existing PO / skip, or a mixture - kept CURRENT rather than append-only. Owned because it
+    # is that company's own decision queue, the same reason `recommendation_override` beside
+    # it is owned.
+    expected_owned = 118
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
