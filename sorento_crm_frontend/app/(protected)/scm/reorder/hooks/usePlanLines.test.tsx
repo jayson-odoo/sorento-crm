@@ -25,6 +25,7 @@ const getProductEconomics = vi.fn();
 const getProductImages = vi.fn();
 const amendLevelSuggestion = vi.fn();
 const recordLifecycleDecision = vi.fn();
+const setMoqOverride = vi.fn();
 
 vi.mock('../services/reorderRunService', () => ({
   getBuyRecommendationsForCash: (...a: unknown[]) => getBuyRecommendationsForCash(...a),
@@ -41,6 +42,7 @@ vi.mock('../services/reorderRunService', () => ({
   getProductImages: (...a: unknown[]) => getProductImages(...a),
   amendLevelSuggestion: (...a: unknown[]) => amendLevelSuggestion(...a),
   recordLifecycleDecision: (...a: unknown[]) => recordLifecycleDecision(...a),
+  setMoqOverride: (...a: unknown[]) => setMoqOverride(...a),
 }));
 
 import { usePlanLines } from './usePlanLines';
@@ -64,6 +66,12 @@ beforeEach(() => {
   getPoBook.mockReset().mockResolvedValue({ po_book: {} });
   getProductEconomics.mockReset().mockResolvedValue({ products: {}, thresholds: {} });
   getProductImages.mockReset().mockResolvedValue({ has_image: {} });
+  amendLevelSuggestion.mockReset().mockResolvedValue(undefined);
+  recordLifecycleDecision.mockReset().mockResolvedValue(undefined);
+  setMoqOverride.mockReset().mockResolvedValue({
+    recommendation_id: 'r1', moq: null, moq_is_override: false, master_moq: null,
+    order_qty: null, recommended_qty: null, cash_impact: null,
+  });
 });
 
 describe('usePlanLines - purchase trend is lazy, not eager', () => {
@@ -219,5 +227,80 @@ describe('usePlanLines - the photo map is lazy too, and one call for the whole r
 
     await waitFor(() => expect(result.current.photoStatus).toBe('error'));
     expect(result.current.isError).toBe(false);
+  });
+});
+
+/**
+ * 20 Aug live test (commit cefa08670): the buyer's own MoQ. An ungrouped row writes its
+ * own single recommendation; a grouped PRODUCT row writes the SAME override to every
+ * member (MoQ is a supplier/product fact, not a per-location one - `planLineGrouping.ts`).
+ * Either way the write must invalidate the buy/covered fetches so a fresh page load and
+ * this session never drift apart.
+ */
+describe('usePlanLines - updateMoq (20 Aug live test)', () => {
+  it('an ungrouped row writes exactly one recommendation', async () => {
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalled());
+
+    const line = { rec: { id: 'r1' } } as never;
+    await act(async () => {
+      await result.current.updateMoq(line, 15);
+    });
+
+    expect(setMoqOverride).toHaveBeenCalledTimes(1);
+    expect(setMoqOverride).toHaveBeenCalledWith('r1', 15);
+  });
+
+  it('a grouped product row writes the same override to every member', async () => {
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalled());
+
+    const grouped = {
+      rec: { id: 'group-p1' },
+      __group: {
+        members: [{ rec: { id: 'r1' } }, { rec: { id: 'r2' } }, { rec: { id: 'r3' } }],
+      },
+    } as never;
+    await act(async () => {
+      await result.current.updateMoq(grouped, 15);
+    });
+
+    expect(setMoqOverride).toHaveBeenCalledTimes(3);
+    expect(setMoqOverride).toHaveBeenCalledWith('r1', 15);
+    expect(setMoqOverride).toHaveBeenCalledWith('r2', 15);
+    expect(setMoqOverride).toHaveBeenCalledWith('r3', 15);
+    // never the synthetic group row's own id - it is not a real recommendation
+    expect(setMoqOverride).not.toHaveBeenCalledWith('group-p1', 15);
+  });
+
+  it('clearing (null) is sent through the same way as setting a value', async () => {
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalled());
+
+    const line = { rec: { id: 'r1' } } as never;
+    await act(async () => {
+      await result.current.updateMoq(line, null);
+    });
+
+    expect(setMoqOverride).toHaveBeenCalledWith('r1', null);
+  });
+
+  it('invalidates the buy and covered plan-lines queries so the grid refetches', async () => {
+    getBuyRecommendationsForCash.mockResolvedValue([]);
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalledTimes(1));
+
+    const line = { rec: { id: 'r1' } } as never;
+    await act(async () => {
+      await result.current.updateMoq(line, 15);
+    });
+
+    // the invalidated queries refetch - the buy fetch runs again beyond the initial mount
+    await waitFor(() =>
+      expect(getBuyRecommendationsForCash).toHaveBeenCalledTimes(2),
+    );
+    await waitFor(() =>
+      expect(getCoveredRecommendations).toHaveBeenCalledTimes(2),
+    );
   });
 });

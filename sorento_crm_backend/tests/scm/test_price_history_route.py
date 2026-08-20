@@ -51,9 +51,14 @@ def _mk_product(db, code):
 
 
 def _mk_supplier(db, code):
+    # `is_active` is NOT NULL in Postgres with no server default (only a Python-side
+    # `default=True` on the model, which raw text() SQL never sees) - name it
+    # explicitly, or a freshly-migrated CI database rejects the insert. See
+    # BL-036 / the identical `supplier_code` divergence this mirrors.
     sid = str(uuid.uuid4())
     db.execute(text(
-        "INSERT INTO suppliers (id, supplier_code, supplier_name) VALUES (:id, :c, :c)"
+        "INSERT INTO suppliers (id, supplier_code, supplier_name, is_active) "
+        "VALUES (:id, :c, :c, true)"
     ), {"id": sid, "c": f"{MARKER} {code}"})
     return sid
 
