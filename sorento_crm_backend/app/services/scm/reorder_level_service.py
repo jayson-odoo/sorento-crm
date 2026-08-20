@@ -296,12 +296,18 @@ def store_suggestion(db: Session, *, product_id: str, warehouse_id: Optional[str
         # A fresh suggestion clears any amendment: the buyer amended THAT number, and
         # carrying their edit under a recomputed one would present a stale judgement as
         # current (S14).
+        #
+        # `company_id = COALESCE(company_id, :co)` heals a legacy scope-less row the moment
+        # a scoped refresh touches it, instead of leaving it NULL-company forever - a row
+        # this loose match keeps finding and re-updating every refresh. A row that already
+        # carries a company keeps it; this never overwrites one company's row with another's.
         db.execute(text("""
             UPDATE scm.reorder_level
                SET suggested_level = :sl, suggested_at = :now,
                    suggestion_basis = CAST(:basis AS jsonb),
                    amended_level = NULL, amended_at = NULL, amended_by = NULL,
-                   updated_at = :now
+                   updated_at = :now,
+                   company_id = COALESCE(company_id, :co)
              WHERE id = :id
         """), {**payload, "id": row["id"]})
 

@@ -285,7 +285,7 @@ describe('usePlanLines - updateMoq (20 Aug live test)', () => {
     expect(setMoqOverride).toHaveBeenCalledWith('r1', null);
   });
 
-  it('invalidates the buy and covered plan-lines queries so the grid refetches', async () => {
+  it('invalidates the buy, covered and disposition plan-lines queries so the grid refetches', async () => {
     getBuyRecommendationsForCash.mockResolvedValue([]);
     const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
     await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalledTimes(1));
@@ -295,12 +295,75 @@ describe('usePlanLines - updateMoq (20 Aug live test)', () => {
       await result.current.updateMoq(line, 15);
     });
 
-    // the invalidated queries refetch - the buy fetch runs again beyond the initial mount
+    // the invalidated queries refetch - each fetch runs again beyond the initial mount.
+    // `disposition` is included (fix-cluster, 20 Aug 2026, S8 nit): a disposition row's
+    // own MOQ-driven figures went stale after a save until this was added.
     await waitFor(() =>
       expect(getBuyRecommendationsForCash).toHaveBeenCalledTimes(2),
     );
     await waitFor(() =>
       expect(getCoveredRecommendations).toHaveBeenCalledTimes(2),
     );
+    await waitFor(() =>
+      expect(getAllDispositionRecommendations).toHaveBeenCalledTimes(2),
+    );
+  });
+
+  it('a single rejected write on an ungrouped row still rejects, after refreshing the grid', async () => {
+    // S8: the group write is now `Promise.allSettled`, not `Promise.all` - this pins that
+    // an ungrouped (single-member) failure still surfaces as a rejection for the caller
+    // (PlanMoqCell) to report, rather than being swallowed here.
+    setMoqOverride.mockReset().mockRejectedValue(new Error('Failed to save the MOQ.'));
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalled());
+
+    const line = { rec: { id: 'r1' } } as never;
+    await expect(
+      act(async () => {
+        await result.current.updateMoq(line, 15);
+      }),
+    ).rejects.toThrow('Failed to save the MOQ.');
+
+    // The grid still refreshes - nothing here silently leaves the row on a stale value.
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalledTimes(2));
+  });
+
+  it('a partial group failure is reported WITH the count, not silently averaged away', async () => {
+    // S8: a grouped write is not atomic. Two of three members save; the caller must be
+    // told it was partial, not just that "it failed" or - worse - nothing at all.
+    setMoqOverride
+      .mockReset()
+      .mockResolvedValueOnce({
+        recommendation_id: 'r1', moq: 15, moq_is_override: true, master_moq: 10,
+        order_qty: null, recommended_qty: null, cash_impact: null,
+      })
+      .mockRejectedValueOnce(new Error('Network error.'))
+      .mockResolvedValueOnce({
+        recommendation_id: 'r3', moq: 15, moq_is_override: true, master_moq: 10,
+        order_qty: null, recommended_qty: null, cash_impact: null,
+      });
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalled());
+
+    const grouped = {
+      rec: { id: 'group-p1' },
+      __group: {
+        members: [{ rec: { id: 'r1' } }, { rec: { id: 'r2' } }, { rec: { id: 'r3' } }],
+      },
+    } as never;
+
+    let caught: Error | undefined;
+    await act(async () => {
+      try {
+        await result.current.updateMoq(grouped, 15);
+      } catch (err) {
+        caught = err as Error;
+      }
+    });
+
+    expect(caught?.message).toContain('1 of 3 locations did not save');
+    // The two that DID succeed are not held back by the one that failed.
+    expect(setMoqOverride).toHaveBeenCalledTimes(3);
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalledTimes(2));
   });
 });

@@ -386,17 +386,36 @@ export function usePlanLines(runId: string | null, enabled = true) {
    * row writes its own single recommendation. Either way the write returns the recalculated
    * figures, but this still invalidates the underlying fetches so the numbers a fresh page
    * load would see and the numbers this session shows never drift apart.
+   *
+   * S8 (code review, 20 Aug 2026): the per-member writes are NOT atomic - `Promise.allSettled`,
+   * not `Promise.all`, so one rejection cannot hide the members that DID save. Every query is
+   * still invalidated afterwards regardless of outcome, so the grid reflects which members
+   * actually changed rather than a stale figure that papers over a group half applied. A
+   * failure is re-thrown (with the count, on a grouped line) rather than swallowed here, so
+   * the caller - which owns the input the buyer is looking at - is the one that tells them.
    */
   const updateMoq = useCallback(
     async (line: PlanLine, moq: number | null) => {
       const recIds = isGroupedLine(line)
         ? line.__group.members.map((m) => m.rec.id)
         : [line.rec.id];
-      await Promise.all(recIds.map((id) => setMoqOverride(id, moq)));
+      const results = await Promise.allSettled(recIds.map((id) => setMoqOverride(id, moq)));
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'buy'] }),
         qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'covered'] }),
+        qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'disposition'] }),
       ]);
+      const failures = results.filter(
+        (r): r is PromiseRejectedResult => r.status === 'rejected',
+      );
+      if (failures.length === 0) return;
+      const reason = failures[0].reason;
+      const detail = reason instanceof Error ? reason.message : 'Failed to save the MOQ.';
+      throw new Error(
+        recIds.length > 1
+          ? `${detail} (${failures.length} of ${recIds.length} locations did not save)`
+          : detail,
+      );
     },
     [qc, runId],
   );

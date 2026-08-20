@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { EM_DASH, fmtInt } from '../../lib/format';
 
@@ -64,6 +65,11 @@ export function PlanMoqCell({
 
   const value = draft ?? (moq === null ? '' : String(moq));
 
+  // S8 (code review, 20 Aug 2026): both branches below now report failure rather than
+  // going quiet - `void commit()` on blur means a rejected `onChange` used to be an
+  // unhandled promise rejection nobody saw. The message is whatever the service layer
+  // already extracted (`extractApiError`, or `usePlanLines.updateMoq`'s own partial-group
+  // count on top of it), so this is the one place it is actually shown.
   const commit = async () => {
     if (draft === null) return; // untouched - nothing to save
     const trimmed = draft.trim();
@@ -71,6 +77,8 @@ export function PlanMoqCell({
       setSaving(true);
       try {
         await onChange(null);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Could not save the MOQ.');
       } finally {
         setSaving(false);
         setDraft(null);
@@ -78,11 +86,18 @@ export function PlanMoqCell({
       return;
     }
     const parsed = Number(trimmed);
-    if (!Number.isFinite(parsed) || parsed < 0) return;
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      // Left uncommitted rather than silently reverted - the buyer's typed text stays on
+      // screen to fix, with the reason it did not save.
+      toast.error('MOQ must be a whole number of 0 or more.');
+      return;
+    }
     // Typing the master figure back is a withdrawal, not an override.
     setSaving(true);
     try {
       await onChange(parsed === masterMoq ? null : parsed);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not save the MOQ.');
     } finally {
       setSaving(false);
       setDraft(null);

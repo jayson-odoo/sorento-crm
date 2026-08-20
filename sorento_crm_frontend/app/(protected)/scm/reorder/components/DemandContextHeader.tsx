@@ -30,18 +30,26 @@ export interface DemandContextFields {
  * hidden. The whole header is omitted only when the response predates the field (both
  * quantities absent) - the same cached/legacy convention `describeDemandTotals` already
  * uses for the committed-total split.
+ *
+ * Both windows are FULL calendar months, and stop at the end of last month - the same
+ * boundary `trajectory_service.demand_context_for_product` shares with the plan's own
+ * trend verdict (`trajectory_for_run`), on purpose, so this figure and the verdict badge
+ * elsewhere on the row can never disagree about what "recent" means (S9, code review 20
+ * Aug 2026). Labelled "full months" here rather than quietly including today's partial
+ * one, which would say more than the number actually counts.
  */
 export function DemandContextHeader({ data }: { data: DemandContextFields }) {
   if (data.project_12m_qty == null && data.retail_3m_qty == null) return null;
   const projectMonths = data.project_window_months ?? 12;
   const retailMonths = data.retail_window_months ?? 3;
+  const title = 'Full calendar months only - the month in progress is not counted yet.';
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1.5">
-      <Badge variant="info" appearance="light" size="sm" className="font-normal">
-        {`Project, last ${projectMonths} months: ${fmtInt(data.project_12m_qty ?? 0)}`}
+      <Badge variant="info" appearance="light" size="sm" className="font-normal" title={title}>
+        {`Project, last ${projectMonths} full months: ${fmtInt(data.project_12m_qty ?? 0)}`}
       </Badge>
-      <Badge variant="success" appearance="light" size="sm" className="font-normal">
-        {`Retail, last ${retailMonths} months: ${fmtInt(data.retail_3m_qty ?? 0)}`}
+      <Badge variant="success" appearance="light" size="sm" className="font-normal" title={title}>
+        {`Retail, last ${retailMonths} full months: ${fmtInt(data.retail_3m_qty ?? 0)}`}
       </Badge>
     </div>
   );

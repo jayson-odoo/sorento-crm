@@ -153,4 +153,43 @@ describe('RunPlanningModal (M8-D5)', () => {
     expect(screen.queryByText(/Select at least one product/i)).not.toBeInTheDocument();
     expect(screen.getByText('Leave empty to plan every product.')).toBeInTheDocument();
   });
+
+  describe('Plan until (nit, code review 20 Aug 2026: a past date silently plans zero demand)', () => {
+    it('sets the date input\'s own min to today, so the picker cannot offer the past', () => {
+      renderModal();
+      const input = screen.getByLabelText('Plan until') as HTMLInputElement;
+      // Local calendar date, matching the component's own `todayDateInputValue()` - never
+      // `toISOString()`'s UTC one, which can read a day off near midnight.
+      const now = new Date();
+      const today = [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, '0'),
+        String(now.getDate()).padStart(2, '0'),
+      ].join('-');
+      expect(input.min).toBe(today);
+    });
+
+    it('blocks submit with a past cutoff and explains why, even if typed past the min', () => {
+      const { onSubmit } = renderModal();
+      fireEvent.click(screen.getByLabelText('Kuala Lumpur DC'));
+      fireEvent.change(screen.getByLabelText('Plan until'), { target: { value: '2000-01-01' } });
+      fireEvent.click(screen.getByRole('button', { name: /Generate plan/i }));
+
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(screen.getByText(/Plan until cannot be in the past/i)).toBeInTheDocument();
+    });
+
+    it('accepts today and a future date', () => {
+      const { onSubmit } = renderModal();
+      fireEvent.click(screen.getByLabelText('Kuala Lumpur DC'));
+      fireEvent.change(screen.getByLabelText('Plan until'), { target: { value: '2099-12-31' } });
+      fireEvent.click(screen.getByRole('button', { name: /Generate plan/i }));
+
+      expect(onSubmit).toHaveBeenCalledWith({
+        warehouse_codes: ['WH-KL'],
+        product_codes: [],
+        plan_horizon_date: '2099-12-31',
+      });
+    });
+  });
 });

@@ -262,6 +262,9 @@ def test_another_suppliers_price_is_surfaced_labelled_never_as_this_suppliers_ow
     assert entry.last.unit_cost == 12.0
     assert entry.other_supplier_code == known.supplier_code
     assert entry.other_supplier_name == known.supplier_name
+    # Fix-cluster (2026-08-20): age_days must be recomputed off the OTHER supplier's own
+    # purchase date, not left at the no_history None - else the popup interpolates "null".
+    assert entry.age_days == (AS_OF - date(2020, 10, 20)).days
 
 
 def test_a_free_of_charge_line_is_not_our_last_price(db_price_world):

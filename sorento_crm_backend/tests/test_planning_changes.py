@@ -1834,6 +1834,92 @@ def test_apply_returns_a_dropped_bystander_in_returned_to_review(api):
     assert buy_row_sibling.state == INQUIRY_CANCELLED
 
 
+def test_apply_of_an_already_challenged_revision_still_reports_its_bystanders(api):
+    """S4 (fix-cluster, 20 Aug 2026): the headline case the report was built for, and the one
+    the first version of the fix could not actually reach. `_apply_one_order` used to read the
+    ORDER's `active_decision` as "the previous revision" - but a revision a drift challenge
+    already flipped to CHALLENGED (the state a GET on the supply page, or an earlier apply,
+    leaves behind) is not `active_decision` any more, so `previous_decision` read None and the
+    whole report short-circuited to []. This is the same drift as the test above, except the
+    challenge has ALREADY happened by the time Apply runs - `active_decision` is None from the
+    first line of `_apply_one_order`, not merely mutated mid-flight."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_line_target = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="12",
+                                   required_date=date(2026, 9, 4))
+    core_line_sibling = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="8",
+                                    required_date=date(2026, 9, 4))
+    order = _project_so(db, world.project, so_id=core_so.id, status=SO_STATUS_PUBLISHED,
+                         autocount_doc_no=core_so.so_number)
+    line_target = _project_line(db, order, line_no=1, product=world.product,
+                                 core_line=core_line_target)
+    line_sibling = _project_line(db, order, line_no=2, product=world.product,
+                                  core_line=core_line_sibling)
+    db.commit()
+
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line_target.id, buy_qty="12", buy_reason="Nothing free elsewhere."),
+        _line_payload(line_sibling.id, buy_qty="8", buy_reason="Nothing free elsewhere."),
+    ]})
+
+    core_line_target.qty_ordered = Decimal("14")
+    db.flush()
+
+    # The drift challenge runs BEFORE the batch exists at all - exactly what a CS user
+    # opening the supply page would trigger, days before a book upload is even imported.
+    from app.services.project_supply_service import ProjectSupplyService
+
+    supply = ProjectSupplyService(db)
+    expected_reason = supply.challenge_if_drifted(order)
+    assert expected_reason, "the qty drift on the target line must be caught"
+    db.commit()
+
+    from app.models.project_so import SOSupplyDecision
+
+    challenged = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .one()
+    )
+    assert challenged.state == "challenged"  # confirmed: apply enters with NO active decision
+
+    changed_target = _diff_change(
+        QTY_CHANGED, core_line_target, doc_number=core_so.so_number, item_code="ZZT-TARGET",
+        location=world.own_wh.warehouse_code, old_date=date(2026, 9, 4),
+        new_date=date(2026, 9, 4), old_qty="12", new_qty="14",
+    )
+    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed_target])
+    batch = planning_change_service.build_batch(
+        db, diff, applied_line_ids={id(changed_target): str(core_line_target.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    out = planning_change_service.get_batch(db, str(batch.id))
+    row = out["orders"][0]["rows"][0]
+    planning_change_service.set_row_decision(db, str(batch.id), row["id"], "confirm")
+    db.commit()
+
+    result = planning_change_service.apply(db, str(batch.id), world.actor)
+    db.commit()
+    assert result["failed_orders"] == [], result["failed_orders"]
+    assert result["applied_orders"] == [core_so.so_number]
+
+    # The fix: the report fires even though the order entered Apply with no ACTIVE decision
+    # at all, only a CHALLENGED one.
+    assert len(result["returned_to_review"]) == 1
+    returned = result["returned_to_review"][0]
+    assert returned["so_number"] == core_so.so_number
+    assert returned["line_nos"] == [2]
+    assert returned["line_count"] == len(returned["line_nos"])
+    # The genuine drift reason travels through, not the generic "Reconfirmed by CS." caption
+    # `_write_decision` stamps on an ACTIVE row it supersedes (this row was never ACTIVE
+    # again once challenged, so that caption is never written here at all).
+    assert returned["reason"] == expected_reason
+    assert returned["reason"] != "Reconfirmed by CS."
+
+
 def test_apply_of_a_genuinely_unconfirmable_target_line_still_fails_with_its_reason(api):
     """The fix above stops a BYSTANDER line from being re-validated - it must not also stop
     the line the batch actually decided from being checked. A target line whose own

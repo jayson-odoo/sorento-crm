@@ -1975,6 +1975,14 @@ class ProjectOrderInquiryService:
                 row.created_at or datetime.max,
             )
 
+        # S5 (code review, 20 Aug 2026): hoisted OUT of the per-product loop below.
+        # `factors_for_demand_rows` resolves `active_policy(db)` itself whenever `weights`/
+        # `class_weights` is left None - an uncached query - so leaving it unset here issued
+        # one identical query PER PRODUCT GROUP (300 products, 300 queries) for a policy row
+        # that cannot change mid-call. Resolved once and passed explicitly into every group;
+        # the grouping/scoring semantics are unchanged, only the resolution moved.
+        weights, class_weights = priority.policy_weights(priority.active_policy(self.db))
+
         ranked: List[OrderInquiryRow] = []
         for key in group_order:
             group_rows = groups[key]
@@ -1993,7 +2001,9 @@ class ProjectOrderInquiryService:
                         "demand_class": "project",
                     }
                 )
-            factors_by_row = priority.factors_for_demand_rows(self.db, demand_rows)
+            factors_by_row = priority.factors_for_demand_rows(
+                self.db, demand_rows, weights=weights, class_weights=class_weights
+            )
             scores = priority.scores_for(factors_by_row)
             ranked.extend(sorted(group_rows, key=lambda r: _sort_key(r, scores)))
 

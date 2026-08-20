@@ -11,7 +11,12 @@
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { toast } from 'sonner';
 import { PlanMoqCell } from './PlanMoqCell';
+
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
+}));
 
 describe('PlanMoqCell - read-only (no onChange, or disabled)', () => {
   it('shows the effective MoQ plainly, with no input', () => {
@@ -92,15 +97,46 @@ describe('PlanMoqCell - editable, not overridden', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('a negative or non-numeric entry is rejected silently, never sent as an override', () => {
+  it('a negative or non-numeric entry is rejected, never sent as an override, and says so', () => {
+    // S8 (code review, 20 Aug 2026): dropping an invalid edit used to give the buyer no
+    // feedback at all - it just silently did not save.
     const onChange = vi.fn();
     render(<PlanMoqCell moq={100} masterMoq={100} isOverride={false} onChange={onChange} />);
 
-    const input = screen.getByLabelText('MOQ');
+    const input = screen.getByLabelText('MOQ') as HTMLInputElement;
     fireEvent.change(input, { target: { value: '-5' } });
     fireEvent.blur(input);
 
     expect(onChange).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith('MOQ must be a whole number of 0 or more.');
+    // Left on screen to fix, not silently reverted.
+    expect(input.value).toBe('-5');
+  });
+
+  it('a failed save is reported with a toast, not left as an unhandled rejection', async () => {
+    // S8: `void commit()` on blur means a rejected onChange used to vanish with nothing
+    // shown to the buyer.
+    const onChange = vi.fn().mockRejectedValue(new Error('Failed to save the MOQ.'));
+    render(<PlanMoqCell moq={100} masterMoq={100} isOverride={false} onChange={onChange} />);
+
+    const input = screen.getByLabelText('MOQ');
+    fireEvent.change(input, { target: { value: '15' } });
+    fireEvent.blur(input);
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith(15));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to save the MOQ.'));
+  });
+
+  it('a rejected withdrawal (clearing to empty) is also reported', async () => {
+    const onChange = vi.fn().mockRejectedValue(new Error('Failed to save the MOQ.'));
+    render(<PlanMoqCell moq={15} masterMoq={100} isOverride onChange={onChange} />);
+
+    const input = screen.getByLabelText('MOQ');
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.blur(input);
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith(null));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to save the MOQ.'));
   });
 });
 

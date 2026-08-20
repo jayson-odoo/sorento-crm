@@ -51,18 +51,19 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from sqlalchemy.orm.exc import MultipleResultsFound
+
 from app.database import SessionLocal
 from app.models.order import SalesOrder
 from app.models.project_so import (
-    ALLOC_SOURCE_BRW,
-    ALLOC_SOURCE_GROUP_TAKE,
+    ALLOC_RESERVE_SOURCES,
     ALLOC_SOURCE_ORDER,
-    ALLOC_SOURCE_OWN,
     DECISION_ACTIVE,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
@@ -79,9 +80,18 @@ SO_NUMBER = "SO349754"
 CASE_A_ITEM_CODE = "WESERP10B"
 CASE_B_ITEM_CODE = "SRTWC287A-RL"
 _ZERO = Decimal("0")
-_RESERVE_SOURCE_TYPES = (ALLOC_SOURCE_OWN, ALLOC_SOURCE_BRW, ALLOC_SOURCE_GROUP_TAKE)
+# S6 (code review, 20 Aug 2026): the SAME tuple `SOLineAllocation`'s own reserve sources are
+# defined by (`app/models/project_so.py`) - imported, not re-typed, so the two can never drift.
+_RESERVE_SOURCE_TYPES = ALLOC_RESERVE_SOURCES
 _CASE_A_NOTE_MARKER = "repair_20aug_placed_double_counts: netted against a real placed row"
 _CASE_B_REASON_MARKER = "repair_20aug_placed_double_counts: already covered by a placed purchase order"
+# S6: the commit that shipped the netting fix this script repairs AFTER the fact
+# (`5d77fd821`, "planning sees a placed row as supply", 2026-08-20 18:56:19 +0800 = this UTC
+# value). A raised row created from that point on was ALREADY netted against its placed
+# supply by the fixed code path, so subtracting `placed_qty` from it a second time here would
+# under-raise a line that was never wrong. Only a row older than the fix - the actual
+# regression this script exists to clean up - is ever a candidate.
+_FIX_DEPLOYED_AT_UTC = datetime(2026, 8, 20, 10, 56, 19)
 
 
 def _dec(value: Any) -> Decimal:
@@ -90,22 +100,47 @@ def _dec(value: Any) -> Decimal:
     return Decimal(str(value))
 
 
+class _AmbiguousMatch(Exception):
+    """Raised by `_one_or_warn` so an ambiguous lookup aborts `_find_order` outright, rather
+    than falling through to a DIFFERENT lookup that might silently pick the wrong company."""
+
+
+def _one_or_warn(query, label: str) -> Optional[Any]:
+    """`.one_or_none()`, but a cross-company duplicate is reported and raises `_AmbiguousMatch`
+    rather than `MultipleResultsFound` killing the run mid-way (S6: this script has no company
+    scope of its own - it queries every company - and `SO_NUMBER` is only unique within one)."""
+    try:
+        return query.one_or_none()
+    except MultipleResultsFound:
+        rows = query.all()
+        print(
+            f"  WARNING: {label} matched {len(rows)} rows across companies "
+            f"({[r.id for r in rows]}) - this script has no way to pick the right one. "
+            "Scope it to a company before running."
+        )
+        raise _AmbiguousMatch(label)
+
+
 def _find_order(db) -> Optional[ProjectSalesOrder]:
-    order = (
-        db.query(ProjectSalesOrder)
-        .filter(ProjectSalesOrder.autocount_doc_no == SO_NUMBER)
-        .one_or_none()
-    )
-    if order is not None:
-        return order
-    core = db.query(SalesOrder).filter(SalesOrder.so_number == SO_NUMBER).one_or_none()
-    if core is None:
+    try:
+        order = _one_or_warn(
+            db.query(ProjectSalesOrder).filter(ProjectSalesOrder.autocount_doc_no == SO_NUMBER),
+            f"project_sales_order for {SO_NUMBER}",
+        )
+        if order is not None:
+            return order
+        core = _one_or_warn(
+            db.query(SalesOrder).filter(SalesOrder.so_number == SO_NUMBER),
+            f"sales_order for {SO_NUMBER}",
+        )
+        if core is None:
+            return None
+        return _one_or_warn(
+            db.query(ProjectSalesOrder).filter(ProjectSalesOrder.so_id == core.id),
+            f"project_sales_order for core sales order {core.id}",
+        )
+    except _AmbiguousMatch:
         return None
-    return (
-        db.query(ProjectSalesOrder)
-        .filter(ProjectSalesOrder.so_id == core.id)
-        .one_or_none()
-    )
 
 
 def _inquiry_rows_for_item(db, order: ProjectSalesOrder, item_code: str) -> List[OrderInquiryRow]:
@@ -144,6 +179,18 @@ def repair_case_a(db, order: ProjectSalesOrder, *, apply: bool) -> None:
     row = raised[0]
     if _CASE_A_NOTE_MARKER in (row.note or ""):
         print(f"  row {row.id}: already repaired (marker present) - skipping")
+        return
+    # S6: the marker lives on THIS row's own note, but a reconfirm between diagnosis and
+    # --apply cancels the original buggy row and raises a NEW one - already correctly
+    # netted by the fixed code path, and carrying no marker of its own. A row created at or
+    # after the fix's own deploy time is never the regression this script exists to clean
+    # up, marker or not, so subtracting `placed_qty` from it would under-raise a line that
+    # was never wrong.
+    if row.created_at is not None and row.created_at >= _FIX_DEPLOYED_AT_UTC:
+        print(
+            f"  row {row.id}: created {row.created_at} (at or after the netting fix) - "
+            "already correctly netted by the fixed code path, not this regression. Skipping."
+        )
         return
 
     before = _dec(row.qty)
@@ -200,6 +247,19 @@ def repair_case_b(db, order: ProjectSalesOrder, *, apply: bool) -> None:
 
     if placed_qty <= _ZERO or not placed:
         print("  nothing to repair (no placed row found)")
+        return
+    # S6: `_inquiry_rows_for_item` filters by item code only. If this item sits on TWO
+    # lines of the same SO, `placed` can hold rows from both, and `placed_qty` would sum
+    # both lines' supply into a trim applied to whichever line `placed[0]` happens to be
+    # on - taking one line's placed quantity out of a DIFFERENT line's reserve. Mirrors
+    # Case A's own "expected exactly one, found N - skip rather than guess" guard.
+    distinct_lines = {r.so_line_id for r in placed}
+    if len(distinct_lines) != 1:
+        print(
+            f"  WARNING: placed rows span {len(distinct_lines)} different sales-order "
+            f"lines ({sorted(str(x) for x in distinct_lines)}) - skipping rather than "
+            "guessing which line to trim"
+        )
         return
     so_line_id = placed[0].so_line_id
     if not so_line_id:

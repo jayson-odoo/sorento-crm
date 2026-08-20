@@ -459,9 +459,16 @@ def price_history_for_run(
             other = other_supplier.get(pair["product_id"])
             hist = history.get(pair["product_id"])
             if other is not None:
+                other_purchase = other["purchase"]
+                other_age_days = (
+                    (as_of - other_purchase.issue_date).days
+                    if other_purchase.issue_date
+                    else None
+                )
                 advice = advice._replace(
                     advice="other_supplier_price",
-                    last=other["purchase"],
+                    last=other_purchase,
+                    age_days=other_age_days,
                     other_supplier_code=other["supplier_code"],
                     other_supplier_name=other["supplier_name"],
                 )

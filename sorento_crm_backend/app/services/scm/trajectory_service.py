@@ -79,6 +79,16 @@ def demand_context_for_product(
     """
     as_of = as_of or date.today()
     windows = _windows(db)
+    # S9 (code review, 20 Aug 2026): `until` is the first of THIS month, so the window is
+    # full calendar months only and never includes today's partial one - on the 20th,
+    # "last 3 months" reads May/June/July, not a fifth of August. Deliberately kept this
+    # way rather than extending `until` to today: this module's own docstring promise is
+    # that this figure "can never disagree with the verdict the grouped Buy view already
+    # renders for the same product" (`trajectory_for_run`, same `until`), and that verdict
+    # excludes the partial month for a reason of its own (a window ending mid-month reads
+    # as demand always falling - see the comment on `trajectory_for_run`). Extending only
+    # THIS function's window would break that agreement instead of fixing the label. The
+    # honest fix is labelling it "full months" - done in `DemandContextHeader.tsx`.
     until = _month_shift(as_of, 0)
     since_project = _month_shift(until, -windows["project_months"])
     since_retail = _month_shift(until, -windows["retail_months"])

@@ -382,3 +382,53 @@ def test_turning_pooled_netting_on_lets_the_sibling_cover(scm_app):
     rows = _pool_pair(db, "ZZTW-POOLON", root_stock=5000, bin_stock=0)
     assert not [r for r in rows if r["rec_type"] == "buy"], \
         "5,000 on the shared root covers the shortage, so nothing is bought"
+
+
+# --- S3: a scope-less suggestion row is healed, not written every refresh and read never ---
+
+def test_a_scope_less_suggestion_row_is_healed_to_the_scoped_refresh_that_touches_it(scm_app):
+    """A prior scope-less write (or a bug that shipped one) leaves `company_id IS NULL`.
+    `store_suggestion` matches loosely on `(product_id, warehouse_id)` and finds that row
+    again, but until now its UPDATE never stamped a company on it - so the suggestion was
+    rewritten every refresh and never surfaced to a company-scoped read. A scoped refresh
+    must both find AND heal the row, and a scoped read must then see it."""
+    from app.models.base import set_company_scope
+
+    from tests.scm.conftest import SORENTO_COMPANY_ID
+
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-LVL-HEAL")
+    pid = _mk_product(db, f"ZZTP-HEAL-{uuid.uuid4().hex[:6]}")
+    db.flush()
+
+    # A scope-less write, as a legacy scope-less refresh would have left behind.
+    set_company_scope(db, None)
+    rl.store_suggestion(db, product_id=pid, warehouse_id=wid, suggested_level=10.0, basis={})
+    db.flush()
+    before = db.execute(text(
+        "SELECT company_id FROM scm.reorder_level WHERE product_id = :p AND warehouse_id = :w"
+    ), {"p": pid, "w": wid}).mappings().one()
+    assert before["company_id"] is None
+
+    # A scoped refresh touches the same row.
+    set_company_scope(db, frozenset({SORENTO_COMPANY_ID}))
+    rl.store_suggestion(db, product_id=pid, warehouse_id=wid, suggested_level=12.0,
+                        basis={}, company_id=SORENTO_COMPANY_ID)
+    db.flush()
+
+    healed = db.execute(text(
+        "SELECT company_id::text AS company_id, suggested_level FROM scm.reorder_level "
+        "WHERE product_id = :p AND warehouse_id = :w"
+    ), {"p": pid, "w": wid}).mappings().one()
+    assert healed["company_id"] == SORENTO_COMPANY_ID
+    assert float(healed["suggested_level"]) == 12.0
+
+    # And it did not fork into a second row.
+    count = db.execute(text(
+        "SELECT count(*) FROM scm.reorder_level WHERE product_id = :p AND warehouse_id = :w"
+    ), {"p": pid, "w": wid}).scalar()
+    assert count == 1
+
+    # A scoped read now sees it, which it never would with the row left at NULL company.
+    levels = rl.get_levels(db, [pid], [wid])
+    assert levels[(pid, wid)]["suggested_level"] is not None

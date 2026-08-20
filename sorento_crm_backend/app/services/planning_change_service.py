@@ -82,6 +82,7 @@ from app.models.project_so import (
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
+    SOSupplyDecision,
 )
 from app.models.projects import Project
 from app.models.scm import ItemClassification
@@ -1592,6 +1593,7 @@ def _bystander_returned_to_review(
     so_number: str,
     previous_decision,
     previous_frozen: Dict[str, dict],
+    previous_reason: Optional[str],
     handled_line_ids: set,
     revised: bool,
 ) -> List[dict]:
@@ -1601,11 +1603,14 @@ def _bystander_returned_to_review(
     one that just silently returned nine bystander lines to review. This does NOT change
     what gets carried (still nothing, from a challenged revision, or a materially-superseded
     one) - it only NAMES what already happened, derived from the decision rows themselves
-    rather than guessed: a line the PREVIOUS active revision covered that the new one (or,
-    for a material-change supersede, no revision at all) does not, and that THIS batch never
-    decided about at all - `handled_line_ids` already covers kept/confirmed/replanned/
-    released/retired/reduced lines, which are visible on the batch's own rows and are not
-    "silent"."""
+    rather than guessed: a line the PREVIOUS revision (whatever its state - `previous_decision`
+    is the order's LATEST decision as it stood before this apply, ACTIVE or CHALLENGED alike)
+    covered that the new one (or, for a material-change supersede, no revision at all) does
+    not, and that THIS batch never decided about at all - `handled_line_ids` already covers
+    kept/confirmed/replanned/released/retired/reduced lines, which are visible on the batch's
+    own rows and are not "silent". `previous_reason` is read by the caller AFTER the apply
+    runs, by id, so it reflects the genuine drift/supersede reason `confirm()`/
+    `supersede_for_material_change()` write onto this row - not a caption read too early."""
     if not revised or previous_decision is None or not previous_frozen:
         return []
     pso_id = str(order.id)
@@ -1621,13 +1626,16 @@ def _bystander_returned_to_review(
         .all()
         if r[0] is not None
     )
-    reason = previous_decision.superseded_reason or (
+    reason = previous_reason or (
         "The confirmed revision no longer matched the sales order."
     )
     return [
         {
             "so_number": so_number,
-            "line_count": len(bystander_ids),
+            # Derived from `line_nos`, not `bystander_ids`: a bystander line with no
+            # `line_no` is dropped from the list, and the count must match what is shown,
+            # never a larger number the reader cannot account for.
+            "line_count": len(line_nos),
             "line_nos": line_nos,
             "reason": reason,
         }
@@ -1655,6 +1663,19 @@ def _apply_one_order(
         else (latest_decision.revision_no if latest_decision else 0)
     )
     frozen = supply.frozen_lines_of(active_decision)
+    # Fix-cluster (20 Aug 2026, S4): `latest_decision`, not `active_decision`, is what the
+    # bystander report needs. The headline case IS a CHALLENGED revision - a drift challenge
+    # leaves it the latest row but no longer ACTIVE, so `active_decision` reads None and the
+    # report silently has nothing to compare against, in exactly the case it exists to catch.
+    # `previous_frozen_for_report` is read here, before `confirm()`/`supersede_for_material_
+    # change()` run below - both call `challenge_if_drifted`/`_write_decision`, which mutate
+    # THIS SAME ORM-tracked row in place, and a drift challenge can drop it out of
+    # `active_decision` entirely. The REASON, by contrast, is read back by id AFTER the apply
+    # (below) rather than off this pre-run reference: the genuine drift reason is only known
+    # once `challenge_if_drifted` runs inside `confirm()`, so reading it now would just get
+    # None and hide it behind the generic fallback every time.
+    previous_frozen_for_report = supply.frozen_lines_of(latest_decision)
+    previous_decision_id_for_report = str(latest_decision.id) if latest_decision else None
 
     accepted = [
         r
@@ -1771,8 +1792,20 @@ def _apply_one_order(
         )
         revised = True
 
+    # Read the previous revision's OWN reason back by id, now that `confirm()`/
+    # `supersede_for_material_change()` have run: the genuine drift reason
+    # (`challenge_if_drifted`) or supersede reason is only written during that call, so
+    # reading it any earlier would just see None and hide it behind the generic fallback.
+    previous_reason_for_report = (
+        db.query(SOSupplyDecision.superseded_reason)
+        .filter(SOSupplyDecision.id == previous_decision_id_for_report)
+        .scalar()
+        if previous_decision_id_for_report
+        else None
+    )
     returned_to_review = _bystander_returned_to_review(
-        db, supply, order, so_number, active_decision, frozen, handled_line_ids, revised
+        db, supply, order, so_number, latest_decision, previous_frozen_for_report,
+        previous_reason_for_report, handled_line_ids, revised,
     )
 
     demand_rows, inquiry_counts = _oi_demand_rows(db, live, so_number)

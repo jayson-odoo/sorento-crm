@@ -1421,3 +1421,56 @@ def test_auto_place_scores_a_product_the_same_alone_or_beside_an_unrelated_produ
     # must not have flipped which of these two won the only PO line for THEIR product.
     assert older_b.state == INQUIRY_PLACED, result_b
     assert sooner_b.state == INQUIRY_RAISED
+
+
+def test_auto_place_resolves_the_active_policy_once_not_once_per_product(api):
+    """S5 (code review, 20 Aug 2026): `_rank_raised_rows` groups raised rows by product and
+    scores each group separately (the fix above). `factors_for_demand_rows` resolves
+    `active_policy(db)` itself whenever `weights`/`class_weights` is left unset - an
+    uncached query - so calling it once per group turned auto-place across N products into
+    N identical policy queries. The active policy cannot change mid-call, so it is resolved
+    ONCE and passed into every group explicitly; this pins the call count, not just the
+    ranking outcome, so a regression that drops the explicit `weights=`/`class_weights=`
+    argument fails here even if it happens not to flip any single test's winner."""
+    from unittest import mock
+
+    client, db, world, user_id = api
+    _policy(db, {"document_age": 1.0}, {"project": 1.0})
+    _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="10", expected_date=date(2026, 9, 1),
+    )
+    _po_line(
+        db, world["company_id"], world["po"], world["other_product"], world["warehouse"],
+        qty_ordered="10", expected_date=date(2026, 9, 1),
+    )
+    for product in (world["product"], world["other_product"]):
+        _competing_row(
+            db, world["company_id"], world["project"],
+            published_at=datetime(2020, 1, 1), delivery_date=date(2026, 12, 1),
+            qty="10", item_code=product.product_code,
+        )
+        _competing_row(
+            db, world["company_id"], world["project"],
+            published_at=datetime(2026, 8, 1), delivery_date=date(2026, 9, 5),
+            qty="10", item_code=product.product_code,
+        )
+    db.commit()
+
+    from app.models.base import company_scope
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+    from app.services.scm import priority
+
+    with company_scope(db, frozenset({world["company_id"]})):
+        with mock.patch.object(
+            priority, "active_policy", wraps=priority.active_policy
+        ) as spy:
+            result = ProjectOrderInquiryService(db).auto_place_for_products(
+                None, actor_user_id=user_id, trigger="test"
+            )
+            db.commit()
+
+    assert result["products_touched"] == 2
+    # Two products competed for two scarce PO lines, so the ranking ran twice - but the
+    # policy behind it is resolved once, not once per product.
+    assert spy.call_count == 1, "the active policy must be resolved once per auto-place run"

@@ -41,6 +41,17 @@ export interface ManualPlanInputs {
   plan_horizon_date: string;
 }
 
+/** Today, as the `YYYY-MM-DD` a `<input type="date">` needs - local calendar date, not
+ *  `toISOString()`'s UTC one, which reads as yesterday or tomorrow depending on the
+ *  browser's own offset. */
+function todayDateInputValue(): string {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 /**
  * SCM M8 (slice D) - "Manual plan" on-demand run inputs. The scheduled daily run
  * (all warehouses, full budget) fires without this modal; this is the manual
@@ -85,10 +96,19 @@ export function RunPlanningModal({
     setError(null);
   }, [open]);
 
+  const today = todayDateInputValue();
+
   const submit = () => {
     setError(null);
     if (warehouses.length === 0) {
       setError('Select at least one warehouse to plan for.');
+      return;
+    }
+    // A past cutoff nets every open line against demand that "must" have been needed
+    // before today, which is every line - the run then silently returns zero demand
+    // rather than saying why (nit, code review 20 Aug 2026).
+    if (horizon && horizon < today) {
+      setError('Plan until cannot be in the past - it would leave the run with no demand.');
       return;
     }
     onSubmit({
@@ -176,6 +196,7 @@ export function RunPlanningModal({
             <Input
               id="manual-horizon"
               type="date"
+              min={today}
               value={horizon}
               onChange={(e) => setHorizon(e.target.value)}
             />
