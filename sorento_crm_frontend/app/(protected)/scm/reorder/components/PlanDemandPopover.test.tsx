@@ -157,4 +157,75 @@ describe('PlanDemandPopover', () => {
 
     expect(screen.getByText(/raised from forecast demand/i)).toBeInTheDocument();
   });
+
+  // SF-8: the source chip (SO / OI / OI confirmed) and its title, per line.
+  describe('source chip', () => {
+    it('renders SO with "Direct sales order" for a direct sales-order line', async () => {
+      stub(demand({ lines: [{ ...demand().lines[0], source: 'sales_order' }] }));
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+      await open();
+
+      const chip = screen.getByText('SO');
+      expect(chip).toBeInTheDocument();
+      expect(chip).toHaveAttribute('title', 'Direct sales order');
+    });
+
+    it('renders OI with "From an Order Inquiry (project channel)" for an order-inquiry line', async () => {
+      stub(demand({ lines: [{ ...demand().lines[0], source: 'order_inquiry' }] }));
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+      await open();
+
+      const chip = screen.getByText('OI');
+      expect(chip).toBeInTheDocument();
+      expect(chip).toHaveAttribute('title', 'From an Order Inquiry (project channel)');
+    });
+
+    it('renders "OI confirmed" with "Confirmed for buy by CS" for a CS-confirmed line', async () => {
+      stub(demand({ lines: [{ ...demand().lines[0], source: 'order_inquiry_confirmed' }] }));
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+      await open();
+
+      const chip = screen.getByText('OI confirmed');
+      expect(chip).toBeInTheDocument();
+      expect(chip).toHaveAttribute('title', 'Confirmed for buy by CS');
+    });
+
+    it('renders no chip at all when the line carries no source', async () => {
+      stub(demand({ lines: [{ ...demand().lines[0], source: null }] }));
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+      await open();
+
+      expect(screen.queryByText('SO')).not.toBeInTheDocument();
+      expect(screen.queryByText('OI')).not.toBeInTheDocument();
+      expect(screen.queryByText('OI confirmed')).not.toBeInTheDocument();
+    });
+  });
+
+  // SF-8 / N-6: the channel-split totals line under the scope sentence.
+  describe('the totals line (project/retail/unclassified split)', () => {
+    it('renders the split when the payload carries any of the three totals', async () => {
+      stub(demand({ project_total: 6, retail_total: 4, unclassified_total: 0 }));
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+      await open();
+
+      expect(screen.getByText('Project 6 - Retail 4')).toBeInTheDocument();
+    });
+
+    it('adds the Unclassified part only when it is nonzero', async () => {
+      stub(demand({ project_total: 6, retail_total: 4, unclassified_total: 3 }));
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+      await open();
+
+      expect(screen.getByText('Project 6 - Retail 4 - Unclassified 3')).toBeInTheDocument();
+    });
+
+    it('hides the totals line entirely on a legacy payload carrying none of the three fields', async () => {
+      // `demand()` is the legacy fixture shape - no project_total/retail_total/unclassified_total.
+      stub(demand());
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+      await open();
+
+      expect(screen.queryByText(/^Project /)).not.toBeInTheDocument();
+    });
+  });
 });

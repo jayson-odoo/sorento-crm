@@ -152,9 +152,9 @@ describe('ProductLocationsPopover - data state (AC-F07 / AC-F08)', () => {
     renderPopover(state({ data: BLUE_LOCATIONS }));
     openPopover();
     const rows = screen.getByTestId('location-rows');
-    expect(screen.getByRole('columnheader', { name: 'Project' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Retail' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Unclass.' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Project need' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Retail need' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Unclass. need' })).toBeInTheDocument();
     const brw = within(rows).getByText('BRW').closest('tr') as HTMLElement;
     expect(brw).toHaveTextContent('120'); // project_need
     expect(brw).toHaveTextContent('55'); // retail_need

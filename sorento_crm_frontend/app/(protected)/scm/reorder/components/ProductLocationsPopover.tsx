@@ -122,9 +122,35 @@ export function ProductLocationsPopover({
                   <thead className="sticky top-0 bg-muted/60 text-muted-foreground">
                     <tr>
                       <th className="px-2 py-1.5 text-start font-medium">Location</th>
-                      <th className="px-2 py-1.5 text-end font-medium">Project</th>
-                      <th className="px-2 py-1.5 text-end font-medium">Retail</th>
-                      <th className="px-2 py-1.5 text-end font-medium">Unclass.</th>
+                      {/* These three are the row's `_need` figures - the CONFIRMED-for-buy
+                          / already-netted leg (same fields PlanLinesGrid's ungrouped grid
+                          labels "Project need" / "Retail need" / "Unclassified need"), NOT
+                          a per-location split of a grouped row's channel columns (those read
+                          `*_committed`, the channel's WHOLE open demand, and this endpoint
+                          does not carry a location-level committed split at all - see
+                          `app/services/scm/summary_order_service.py::locations` and
+                          `OrderSummaryLocationRowOut` in `app/schemas/scm_order_summary.py`,
+                          backend). Captain caught this exact mislabel on SRT-H3005: a bare
+                          "Project"/"Retail" header here reads as the same fact as the group
+                          row's channel cell, and it is not. */}
+                      <th
+                        className="px-2 py-1.5 text-end font-medium"
+                        title="Confirmed unplaced Project Buy. Firm: Retail netting never reduces it"
+                      >
+                        Project need
+                      </th>
+                      <th
+                        className="px-2 py-1.5 text-end font-medium"
+                        title="Retail-class need, after the normal netting of free supply"
+                      >
+                        Retail need
+                      </th>
+                      <th
+                        className="px-2 py-1.5 text-end font-medium"
+                        title="Demand whose sales order carries no demand class. Not in the actionable need"
+                      >
+                        Unclass. need
+                      </th>
                       <th className="px-2 py-1.5 text-end font-medium">Stock</th>
                       <th className="px-2 py-1.5 text-end font-medium">SPO</th>
                       <th className="px-2 py-1.5 text-end font-medium">PO</th>

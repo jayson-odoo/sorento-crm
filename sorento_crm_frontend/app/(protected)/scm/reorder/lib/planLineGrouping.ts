@@ -23,12 +23,27 @@
  * as an info aside on the Project cell rather than as the cell's own figure.
  *
  * This is a PRESENTATION grouping, not a new calculation: the per-warehouse rows stay the
- * stored facts, and grouping only sums the shared display fields across a product's
- * warehouses. A group row's `rec` is a synthetic aggregate that exists purely so the grid's
- * existing per-rec cell renderers (`numCell`, the product-keyed popovers) work unmodified on
- * it; it is never sent anywhere and never decided over directly (`decisionsReadOnly` is
- * already true on every Product-grain run - 5.4 - so a group row is read/drill only exactly
- * like the rows it summarizes).
+ * stored facts, and grouping only sums or carries the shared display fields across a
+ * product's warehouses. A group row's `rec` is a synthetic aggregate that exists purely so
+ * the grid's existing per-rec cell renderers (`numCell`, the product-keyed popovers) work
+ * unmodified on it; it is never sent anywhere and never decided over directly
+ * (`decisionsReadOnly` is already true on every Product-grain run - 5.4 - so a group row is
+ * read/drill only exactly like the rows it summarizes).
+ *
+ * Supplier / price / MOQ are PRODUCT facts, not per-location facts (captain's ruling,
+ * 20 Aug): supplier selection is per supplier-product and never varies by warehouse. Verified
+ * on the live run a52b6221 - 4,281 products, zero with more than one distinct `supplier_id`
+ * or `unit_cost` across their warehouse rows. So a group row CARRIES the value through when
+ * every member agrees, and only falls back to "not on file" on a genuine conflict (which the
+ * live data shows does not happen today) - it never invents a figure nobody computed, it just
+ * stops discarding one everybody already computed identically.
+ *
+ * A dash on one of these three fields is NOT one fact - it is two, and they read differently
+ * to the buyer. "No member of this group carries a supplier/price/MOQ at all" is a data gap
+ * (same as an ungrouped row's own "not on file" dash). "Two or more members carry DIFFERENT
+ * values" is a genuine conflict the grouping cannot silently resolve. `__group.conflicts`
+ * (below) names which of the three actually landed in the second bucket, so a cell renderer
+ * can tell them apart instead of reading every null the same way.
  */
 import type { PlanLine } from './planLine';
 import type { ReorderRecommendation } from '../types/reorder.types';
@@ -85,13 +100,20 @@ export function presentChannels(lines: Pick<PlanLine, 'rec'>[]): PlanChannel[] {
   );
 }
 
+/** The three product facts that can genuinely conflict across a group's members (see the
+ *  file header). Price means `unit_cost` - the Suggested price cell does not yet branch on
+ *  this (out of scope here), but the fact is computed uniformly with the other two so it is
+ *  available the moment it does. */
+export type PlanChannelConflictField = 'supplier' | 'price' | 'moq';
+
 /** What one grouped PRODUCT row carries, beyond the `PlanLine` shape every existing cell
  *  renderer already knows how to read. */
 export interface PlanChannelGroupMeta {
-  /** The per-warehouse lines this row summarizes, in their existing rank order. Every
-   *  location-level fact (price, supplier, MOQ, AutoCount level, ...) lives here, not on
-   *  the group row, because those are per-location facts and summing them would invent a
-   *  figure nobody computed. */
+  /** The per-warehouse lines this row summarizes, in their existing rank order. Genuine
+   *  location-level facts (AutoCount level, safety stock's own warehouse split, ...) live
+   *  here, not on the group row. Supplier / price / MOQ are carried onto the group row
+   *  itself when uniform across members (captain's 20 Aug ruling, see file header); `members`
+   *  is still where a caller reads them per warehouse, and where the expand view drills in. */
   members: PlanLine[];
   /** Every member's warehouse label, always the FULL list (used for the Location cell's
    *  title even when the cell itself shows a shortened "N locations"). */
@@ -109,6 +131,11 @@ export interface PlanChannelGroupMeta {
    *  Project cell ("N confirmed for buy"), never as the cell's own figure, since the cell
    *  states the channel's whole open demand like its siblings do. */
   projectConfirmedQty: number | null;
+  /** Which of supplier/price/MOQ genuinely CONFLICT across this group's members (two or more
+   *  distinct non-null values) - the field reads null on the row precisely when it is a
+   *  member of this set. A field that is null WITHOUT being in `conflicts` means no member
+   *  carries it at all, a data gap rather than a disagreement (see the file header). */
+  conflicts: Set<PlanChannelConflictField>;
 }
 
 export interface GroupedPlanLine extends PlanLine {
@@ -139,6 +166,84 @@ function minOrNull(values: Array<number | null | undefined>): number | null {
   return min;
 }
 
+/**
+ * The shared value across a product's warehouse rows when every non-null value agrees, else
+ * null on a genuine conflict. This is the "product fact, not a per-location fact" rule
+ * (captain's 20 Aug ruling): supplier/price/MOQ never legitimately vary by warehouse, so a
+ * group row carries the value through rather than discarding it - it only reads null when
+ * the members actually disagree (or none of them carry the fact at all).
+ *
+ * `keyOf` lets object values (a supplier choice) be compared by an identity field (its code)
+ * rather than by reference, since two members' supplier objects are never `===` even when
+ * they describe the same supplier.
+ */
+function uniformOrNull<T>(
+  values: Array<T | null | undefined>,
+  keyOf: (v: T) => string | number = (v) => v as unknown as string | number,
+): T | null {
+  let result: T | null = null;
+  let key: string | number | null = null;
+  for (const v of values) {
+    if (v === null || v === undefined) continue;
+    const k = keyOf(v);
+    if (key === null) {
+      key = k;
+      result = v;
+    } else if (k !== key) {
+      return null;
+    }
+  }
+  return result;
+}
+
+/** Result of `uniformAcrossMembers`: the carried-through value (or null), whether the
+ *  members genuinely disagreed, and which member the value came from (null when there was
+ *  no winner - nobody carried the fact, or two-plus of them conflicted). */
+interface UniformAcrossMembers<T> {
+  value: T | null;
+  conflict: boolean;
+  memberIndex: number | null;
+}
+
+/**
+ * Like `uniformOrNull`, but keyed off the MEMBER LIST directly rather than a pre-extracted
+ * array of values, so a caller gets back two things `uniformOrNull` cannot distinguish: (1)
+ * whether a null result means a genuine CONFLICT (two-plus members disagree) versus every
+ * member simply lacking the fact, and (2) which member's own value won, so a caller can read
+ * that SAME member's associated fields (e.g. its alternatives shortlist) instead of
+ * defaulting to `members[0]`, which is not necessarily the member that carried the fact at
+ * all (S7b).
+ *
+ * `isAbsent` lets a caller skip a value that is present but is itself a "nothing here"
+ * placeholder (rather than null/undefined) - unused today since every field this grouping
+ * reads for supplier/price/MOQ is genuinely null when absent, not a placeholder object.
+ */
+function uniformAcrossMembers<M, T>(
+  members: M[],
+  valueOf: (m: M) => T | null | undefined,
+  keyOf: (v: T) => string | number = (v) => v as unknown as string | number,
+  isAbsent: (v: T) => boolean = () => false,
+): UniformAcrossMembers<T> {
+  let value: T | null = null;
+  let key: string | number | null = null;
+  let memberIndex: number | null = null;
+  let conflict = false;
+  members.forEach((m, i) => {
+    const v = valueOf(m);
+    if (v === null || v === undefined || isAbsent(v)) return;
+    const k = keyOf(v);
+    if (key === null) {
+      key = k;
+      value = v;
+      memberIndex = i;
+    } else if (k !== key) {
+      conflict = true;
+    }
+  });
+  if (conflict) return { value: null, conflict: true, memberIndex: null };
+  return { value, conflict: false, memberIndex };
+}
+
 /** Compact display text for the Location column - joined codes while short, else a count
  *  (5.3: "the Buy view groups ... Location column shows the warehouse codes joined
  *  compactly ... or 'n locations'"). */
@@ -148,12 +253,26 @@ export function locationLabel(codes: string[]): string {
 }
 
 /** One synthetic `ReorderRecommendation` standing in for a product's summed warehouses.
- *  Only the fields the grid actually reads for a group row are aggregated; every other
- *  field is left at its neutral/null default so the existing cells' OWN null handling
- *  (which already renders "not on file" honestly) applies rather than inventing a value -
- *  price, supplier, MOQ and AutoCount level are per-location facts and are never summed. */
+ *  Fields the grid reads for a group row are either summed (a true per-location quantity,
+ *  e.g. `net_position`, `outstanding_sales`) or carried through uniform-or-null (a PRODUCT
+ *  fact that happens to be stored per warehouse row, e.g. `supplier`, `unit_cost`, `moq`,
+ *  `order_multiple` - captain's 20 Aug ruling, see file header). Every other field is left
+ *  at its neutral/null default so the existing cells' OWN null handling (which already
+ *  renders "not on file" honestly) applies rather than inventing a value. AutoCount level
+ *  stays per-location (never carried) - it is genuinely a warehouse-level stock setting. */
 function buildGroupRec(members: PlanLine[]): ReorderRecommendation {
   const first = members[0];
+  const supplierResult = uniformAcrossMembers(
+    members,
+    (m) => m.rec.supplier,
+    (s) => s.supplier_code,
+  );
+  const supplier = supplierResult.value;
+  // The WINNING member's own alternatives, not `first`'s - `first` may be a member that
+  // carries no supplier at all while a later member is the one whose value actually won
+  // (S7b: a group's alternatives shortlist belongs to whoever supplied the figure).
+  const supplierMember =
+    supplierResult.memberIndex !== null ? members[supplierResult.memberIndex] : null;
   return {
     id: `group:${first.product_id ?? first.sku}`,
     type: 'buy',
@@ -180,8 +299,8 @@ function buildGroupRec(members: PlanLine[]): ReorderRecommendation {
     reason_label: null,
     confidence: null,
     sample_size: 0,
-    supplier: null,
-    alternatives: [],
+    supplier,
+    alternatives: supplierMember ? supplierMember.rec.alternatives : [],
     is_exception: false,
     disposition_action: null,
     transfer_flag: null,
@@ -194,11 +313,11 @@ function buildGroupRec(members: PlanLine[]): ReorderRecommendation {
     service_level: null,
     safety_days: null,
     review_days: null,
-    moq: null,
-    order_multiple: null,
+    moq: uniformOrNull(members.map((m) => m.rec.moq)),
+    order_multiple: uniformOrNull(members.map((m) => m.rec.order_multiple)),
     policy_type: null,
     supplier_selection: null,
-    unit_cost: null,
+    unit_cost: uniformOrNull(members.map((m) => m.rec.unit_cost)),
     cash_impact: null,
     rank: minOrNull(members.map((m) => m.rankOrder)),
     rank_score: null,
@@ -254,6 +373,28 @@ function buildGroupedLine(members: PlanLine[], channels: PlanChannel[]): Grouped
     retail: sumOrNull(members.map((m) => m.rec.retail_committed)),
     unclassified: sumOrNull(members.map((m) => m.rec.unclassified_committed)),
   };
+  // Supplier is a PRODUCT fact (captain's 20 Aug ruling, see file header): carry the
+  // member's own supplier object through when every location agrees, and only fall back to
+  // the empty placeholder on a genuine conflict. Keyed off `rec.supplier` (null when a
+  // member has none) rather than the adapted `m.supplier` placeholder object (`code: ''`
+  // when absent) - the placeholder is a display convenience, not a fact, and comparing IT
+  // for uniformity previously read "one member has S1, the other has no supplier" as a
+  // conflict between 'S1' and '' instead of recognising the second member simply had
+  // nothing to disagree with (S7a). Price and the alternatives shortlist follow the same
+  // read: the alternatives belong to the WINNING member, not `first` (S7b).
+  const supplierResult = uniformAcrossMembers(
+    members,
+    (m) => m.rec.supplier,
+    (s) => s.supplier_code,
+  );
+  const supplierMember =
+    supplierResult.memberIndex !== null ? members[supplierResult.memberIndex] : null;
+  const priceResult = uniformAcrossMembers(members, (m) => m.rec.unit_cost);
+  const moqResult = uniformAcrossMembers(members, (m) => m.rec.moq);
+  const conflicts = new Set<PlanChannelConflictField>();
+  if (supplierResult.conflict) conflicts.add('supplier');
+  if (priceResult.conflict) conflicts.add('price');
+  if (moqResult.conflict) conflicts.add('moq');
   return {
     id: rec.id,
     rank: rankOrder ?? 0,
@@ -262,26 +403,29 @@ function buildGroupedLine(members: PlanLine[], channels: PlanChannel[]): Grouped
     type: 'buy',
     order_qty,
     original_order_qty: order_qty,
-    // Never summed - a per-unit price averaged across locations would misstate what any
-    // one PO actually costs. The Suggested price / Total cost cells fall back to their own
-    // "no price on file" reading, same as any other uncosted line.
-    unit_cost: null,
-    currency: null,
-    unit_cost_base: null,
+    // Carried when every location's own price agrees, null on a genuine conflict - see the
+    // file header (captain's 20 Aug ruling). The Suggested price / Total cost cells still
+    // fall back to their own "no price on file" reading whenever it comes back null,
+    // exactly as any other uncosted line does.
+    unit_cost: priceResult.value,
+    currency: uniformOrNull(members.map((m) => m.currency)),
+    unit_cost_base: uniformOrNull(members.map((m) => m.unit_cost_base)),
     net,
     days_cover,
     forecast_daily_demand,
     warehouse: locationLabel(locationCodes),
-    supplier: { code: '', name: '', unit_cost: null, lead_time_days: 0 },
+    supplier: supplierMember
+      ? supplierMember.supplier
+      : { code: '', name: '', unit_cost: null, lead_time_days: 0 },
     order_qty_inputs: {
       safety_stock: sumOrNull(members.map((m) => m.order_qty_inputs.safety_stock)),
       reorder_point: sumOrNull(members.map((m) => m.order_qty_inputs.reorder_point)),
       order_up_to: sumOrNull(members.map((m) => m.order_qty_inputs.order_up_to)),
       rounded_qty: order_qty,
-      moq: null,
-      order_multiple: null,
+      moq: moqResult.value,
+      order_multiple: uniformOrNull(members.map((m) => m.order_qty_inputs.order_multiple)),
     },
-    alternatives: [],
+    alternatives: supplierMember ? supplierMember.alternatives : [],
     product_id: first.product_id ?? null,
     warehouse_id: null,
     rec,
@@ -294,12 +438,14 @@ function buildGroupedLine(members: PlanLine[], channels: PlanChannel[]): Grouped
       channels,
       channelQty,
       projectConfirmedQty: sumOrNull(members.map((m) => m.rec.project_need)),
+      conflicts,
     },
   };
 }
 
 /**
- * One row per PRODUCT, summing the shared display fields across the product's warehouses.
+ * One row per PRODUCT, summing or carrying-through-when-uniform the shared display fields
+ * across the product's warehouses.
  * Channel is analysis inside the row (`__group.channelQty`), never row identity (5.3).
  * Preserves the input's own order: a group is placed at the position of its FIRST member,
  * so a plan already rank-sorted stays rank-sorted (5.1 governs the plan-grain policy this

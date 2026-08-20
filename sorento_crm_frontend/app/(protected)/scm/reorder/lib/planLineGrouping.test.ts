@@ -181,11 +181,11 @@ describe('groupPlanLinesByChannel - the TPE-9204 case (one row per PRODUCT)', ()
     expect(isGroupedLine(retail)).toBe(false);
   });
 
-  it('never sums a price - a group row has no opinion on cost', () => {
+  it('carries a single member\'s own price/supplier straight through - a lone group has nothing to conflict with (captain, 20 Aug: product facts, not per-location)', () => {
     const [group] = groupPlanLinesByChannel([retail]);
-    expect(group.unit_cost).toBeNull();
-    expect(group.unit_cost_base).toBeNull();
-    expect(group.rec.unit_cost).toBeNull();
+    expect(group.unit_cost).toBe(10);
+    expect(group.supplier.code).toBe('S1');
+    expect(group.rec.unit_cost).toBe(10);
   });
 
   it('preserves a null shared fact as null rather than reading it as zero', () => {
@@ -244,5 +244,51 @@ describe('groupPlanLinesByChannel - the TPE-9204 case (one row per PRODUCT)', ()
     // Each product's own members stay isolated - no cross-product bleed into either sum.
     expect(groups[0].__group.members).toEqual([retail]);
     expect(groups[1].__group.members).toEqual([other]);
+  });
+});
+
+describe('supplier/price/MOQ are product facts (captain, 20 Aug ruling): carried when uniform, dashed on conflict', () => {
+  // Same product, same supplier/price/MOQ on every member - verified on the live run to be
+  // the overwhelmingly common case (see the file header). `cash_impact` is scaled with
+  // `order_qty` so the derived `unit_cost_base` (cash_impact / order_qty) also lands on the
+  // same figure for both members, isolating the assertion to the carry-through rule itself.
+  const uniformA = line({ id: 'u1', warehouse_id: 'w-u1', rank: 20, order_qty: 5, cash_impact: 50, moq: 50 });
+  const uniformB = line({ id: 'u2', warehouse_id: 'w-u2', rank: 21, order_qty: 8, cash_impact: 80, moq: 50 });
+
+  it('carries supplier/price/MOQ through onto the group row when every member agrees', () => {
+    const [group] = groupPlanLinesByChannel([uniformA, uniformB]);
+    expect(group.unit_cost).toBe(10);
+    expect(group.unit_cost_base).toBe(10);
+    expect(group.rec.unit_cost).toBe(10);
+    expect(group.supplier.code).toBe('S1');
+    expect(group.rec.supplier?.supplier_code).toBe('S1');
+    expect(group.order_qty_inputs.moq).toBe(50);
+    expect(group.rec.moq).toBe(50);
+  });
+
+  it('a single-member group carries that one member\'s facts through the same way', () => {
+    const [group] = groupPlanLinesByChannel([uniformA]);
+    expect(group.unit_cost).toBe(10);
+    expect(group.supplier.code).toBe('S1');
+    expect(group.order_qty_inputs.moq).toBe(50);
+  });
+
+  it('falls back to null / no-supplier on a genuine conflict, never inventing a figure', () => {
+    const conflicting = line({
+      id: 'u3', warehouse_id: 'w-u3', rank: 22, order_qty: 5, cash_impact: 100, moq: 80,
+      supplier: {
+        supplier_code: 'S2', supplier_name: 'Other Co', unit_cost: 20,
+        lead_time_days: 10, composite_score: 0, is_primary: false,
+      },
+      unit_cost: 20,
+    });
+    const [group] = groupPlanLinesByChannel([uniformA, conflicting]);
+    expect(group.unit_cost).toBeNull();
+    expect(group.unit_cost_base).toBeNull();
+    expect(group.rec.unit_cost).toBeNull();
+    expect(group.supplier.code).toBe('');
+    expect(group.rec.supplier).toBeNull();
+    expect(group.order_qty_inputs.moq).toBeNull();
+    expect(group.rec.moq).toBeNull();
   });
 });

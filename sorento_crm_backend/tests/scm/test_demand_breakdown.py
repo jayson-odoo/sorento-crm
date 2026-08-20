@@ -474,3 +474,158 @@ def test_a_customer_row_of_another_company_never_names_this_order(scm_app):
 
     assert label["ZZTSO-XCO"] == "Debtor ZZT-XCO1"
     assert label["ZZTSO-XCO-BARE"] == "No customer on order"
+
+
+# --- provenance: which feed a line came off, and the top-level channel totals -----
+# (20 Aug live ask - "for project is order inquiry, for retail is sales order directly")
+
+def test_a_sheet_leg_line_is_tagged_order_inquiry(scm_app):
+    """`demand_origin='scm_order_inquiry'` on the order is what makes a project-class
+    line count at all (S13b) - and it is also what earns it the `order_inquiry` tag."""
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-SRC1")
+    pid = _mk_product(db, f"ZZTP-SRC1-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _so(db, pid, wid, 12, order_type="project", number="ZZTSO-SRC1")
+    _link(db, pid, _mk_supplier(db, "ZZT Src1 Supplier"), moq=None, mult=None)
+    db.flush()
+
+    out = dbs.demand_for_recommendation(db, _rec(db, ["ZZTW-SRC1"], pid))
+
+    assert len(out["lines"]) == 1
+    assert out["lines"][0]["source"] == "order_inquiry"
+
+
+def test_a_direct_so_line_is_tagged_sales_order(scm_app):
+    """"for dealer side is exactly based on the sales order" - a retail-class line off the
+    ordinary book, no sheet involved, is tagged `sales_order`."""
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-SRC2")
+    pid = _mk_product(db, f"ZZTP-SRC2-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _so(db, pid, wid, 9, order_type="retail", number="ZZTSO-SRC2")
+    _link(db, pid, _mk_supplier(db, "ZZT Src2 Supplier"), moq=None, mult=None)
+    db.flush()
+
+    out = dbs.demand_for_recommendation(db, _rec(db, ["ZZTW-SRC2"], pid))
+
+    assert len(out["lines"]) == 1
+    assert out["lines"][0]["source"] == "sales_order"
+
+
+def test_a_confirmed_oi_leg_line_appears_exactly_once_tagged_confirmed(scm_app):
+    """Front planning section 4 / `scm.committed_v`'s own two-leg split, mirrored here: a
+    confirmed decision's Buy residual is the ONLY reading of that line - the sheet leg the
+    core order might otherwise have produced never shows beside it (would double-count)."""
+    from tests.scm.test_channel_read_model import _confirmed_leg
+
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-SRC3")
+    pid = _mk_product(db, f"ZZTP-SRC3-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=8)
+    _link(db, pid, _mk_supplier(db, "ZZT Src3 Supplier"), moq=None, mult=None)
+    db.flush()
+
+    out = dbs.demand_for_recommendation(db, _rec(db, ["ZZTW-SRC3"], pid))
+
+    confirmed = [l for l in out["lines"] if l["source"] == "order_inquiry_confirmed"]
+    assert len(confirmed) == 1
+    assert confirmed[0]["qty"] == 8
+    assert confirmed[0]["demand_class"] == "project"
+    # The sheet leg for the SAME core order does not also appear - once, not twice.
+    assert len(out["lines"]) == 1
+
+
+def test_the_top_level_totals_sum_the_lines_by_channel(scm_app):
+    """`project_total` / `retail_total` / `unclassified_total` are drawn off the SAME
+    lines the popover lists, over every source - sheet, direct SO, and confirmed OI."""
+    from tests.scm.test_channel_read_model import _confirmed_leg
+
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-SRC4")
+    pid = _mk_product(db, f"ZZTP-SRC4-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _so(db, pid, wid, 7, order_type="retail", number="ZZTSO-SRC4-R")
+    _so(db, pid, wid, 3, order_type=None, number="ZZTSO-SRC4-U")
+    _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=8)
+    _link(db, pid, _mk_supplier(db, "ZZT Src4 Supplier"), moq=None, mult=None)
+    db.flush()
+
+    out = dbs.demand_for_recommendation(db, _rec(db, ["ZZTW-SRC4"], pid))
+
+    assert out["project_total"] == 8.0
+    assert out["retail_total"] == 7.0
+    assert out["unclassified_total"] == 3.0
+    assert out["project_total"] + out["retail_total"] + out["unclassified_total"] == sum(
+        l["qty"] for l in out["lines"]
+    )
+
+
+# --- SF-1 / SF-2: totals stay uncapped past `limit`, on BOTH legs -----------------
+
+def test_sf1_shown_and_total_respect_the_cap_on_both_legs(scm_app):
+    """SF-1: the confirmed OI leg had NO `LIMIT` at all while the sheet leg capped at
+    `limit` - so past the cap `total`/`shown` disagreed with what was actually returned.
+    `limit=2` against 3 rows on EACH leg pins that both legs are now capped the same way,
+    and that `total` still counts every row that exists, not just the ones shown."""
+    from tests.scm.test_channel_read_model import _confirmed_leg
+
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-CAP1")
+    pid = _mk_product(db, f"ZZTP-CAP1-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _so(db, pid, wid, 5, order_type="retail", number="ZZTSO-CAP1-R1")
+    _so(db, pid, wid, 6, order_type="retail", number="ZZTSO-CAP1-R2")
+    _so(db, pid, wid, 4, order_type=None, number="ZZTSO-CAP1-R3")
+    for _ in range(3):
+        _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=3)
+    _link(db, pid, _mk_supplier(db, "ZZT Cap1 Supplier"), moq=None, mult=None)
+    db.flush()
+
+    out = dbs.demand_for_recommendation(db, _rec(db, ["ZZTW-CAP1"], pid), limit=2)
+
+    sheet_shown = [l for l in out["lines"] if l["source"] != "order_inquiry_confirmed"]
+    confirmed_shown = [l for l in out["lines"] if l["source"] == "order_inquiry_confirmed"]
+    assert len(sheet_shown) == 2, "sheet leg still capped at limit"
+    assert len(confirmed_shown) == 2, "confirmed leg is now capped at limit too"
+    assert out["shown"] == 4 == len(out["lines"])
+    assert out["total"] == 6, "3 sheet rows + 3 confirmed rows, uncapped"
+
+
+def test_sf2_channel_totals_are_read_off_the_uncapped_set(scm_app):
+    """SF-2: `project_total`/`retail_total`/`unclassified_total`/`committed_total` were
+    summed off the CAPPED line list - past `limit` they undercounted. `limit=2` against
+    more lines than that on each channel (and on the confirmed leg) pins that the totals
+    still reflect every line that exists."""
+    from tests.scm.test_channel_read_model import _confirmed_leg
+
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-CAP2")
+    pid = _mk_product(db, f"ZZTP-CAP2-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _so(db, pid, wid, 5, order_type="retail", number="ZZTSO-CAP2-R1")
+    _so(db, pid, wid, 6, order_type="retail", number="ZZTSO-CAP2-R2")
+    _so(db, pid, wid, 4, order_type=None, number="ZZTSO-CAP2-U1")
+    for _ in range(3):
+        _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=3)
+    _link(db, pid, _mk_supplier(db, "ZZT Cap2 Supplier"), moq=None, mult=None)
+    db.flush()
+
+    out = dbs.demand_for_recommendation(db, _rec(db, ["ZZTW-CAP2"], pid), limit=2)
+
+    assert out["shown"] == 4, "the sanity check: this is deliberately less than the totals"
+    assert out["retail_total"] == 11.0, "5 + 6, both retail lines, though only 2 are shown"
+    assert out["unclassified_total"] == 4.0
+    assert out["project_total"] == 9.0, "3 confirmed rows x 3, though only 2 are shown"
+    assert out["committed_total"] == 24.0, "15 sheet + 9 confirmed, all uncapped"
+    assert (
+        out["project_total"] + out["retail_total"] + out["unclassified_total"]
+        == out["committed_total"]
+    )

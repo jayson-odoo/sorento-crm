@@ -142,7 +142,9 @@ describe('ReorderPlanningView - opens to today (M8-D3)', () => {
     renderView();
     expect(screen.getByText(/Today's plan · /)).toBeInTheDocument();
     expect(screen.getByText('plan-lines-grid')).toBeInTheDocument();
-    expect(screen.getByText('plan-assistant')).toBeInTheDocument();
+    // PlanAssistant was removed from this screen (captain, 20 Aug: "remove these") -
+    // its absence is now the contract.
+    expect(screen.queryByText('plan-assistant')).not.toBeInTheDocument();
   });
 });
 

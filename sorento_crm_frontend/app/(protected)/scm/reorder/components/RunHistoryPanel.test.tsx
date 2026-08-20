@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import type { ReorderRunHistoryItem } from '../services/reorderRunService';
 
 const useReorderRunHistory = vi.fn();
@@ -114,5 +114,62 @@ describe('RunHistoryPanel', () => {
     mockHistory({ isLoading: true });
     const { container } = render(<RunHistoryPanel selectedRunId={null} onSelect={vi.fn()} />);
     expect(within(container).getByLabelText('Loading run history')).toBeTruthy();
+  });
+
+  // SF-6 / initialSelectRunId: the `?plan=<id>` deep-link is resolved against the first page
+  // of runs once it loads, reported back via onSelect, and never re-tried.
+  describe('initialSelectRunId (?plan= deep-link resolution)', () => {
+    it('resolves a known id against the loaded page and reports it back via onSelect, once', async () => {
+      const onSelect = vi.fn();
+      const wanted = item({ run_id: 'run-deep-link' });
+      mockHistory({
+        data: {
+          data: [wanted, item({ run_id: 'run-other' })],
+          pagination: { page: 1, limit: 8, total: 2, total_pages: 1 },
+        },
+      });
+      const { rerender } = render(
+        <RunHistoryPanel
+          selectedRunId={null}
+          onSelect={onSelect}
+          initialSelectRunId="run-deep-link"
+        />,
+      );
+
+      await waitFor(() => expect(onSelect).toHaveBeenCalledWith(wanted));
+      expect(onSelect).toHaveBeenCalledTimes(1);
+
+      // A later re-render (e.g. the page's own selection state changing) does not re-trigger
+      // the resolution - tried at most once.
+      rerender(
+        <RunHistoryPanel
+          selectedRunId="run-deep-link"
+          onSelect={onSelect}
+          initialSelectRunId="run-deep-link"
+        />,
+      );
+      expect(onSelect).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores an id that is not on the loaded page - falls back silently, onSelect never called', async () => {
+      const onSelect = vi.fn();
+      mockHistory({
+        data: {
+          data: [item({ run_id: 'run-other' })],
+          pagination: { page: 1, limit: 8, total: 1, total_pages: 1 },
+        },
+      });
+      render(
+        <RunHistoryPanel
+          selectedRunId={null}
+          onSelect={onSelect}
+          initialSelectRunId="run-unknown"
+        />,
+      );
+
+      // Nothing to await for a negative case beyond letting effects flush.
+      await waitFor(() => expect(screen.getByText('Run history')).toBeTruthy());
+      expect(onSelect).not.toHaveBeenCalled();
+    });
   });
 });

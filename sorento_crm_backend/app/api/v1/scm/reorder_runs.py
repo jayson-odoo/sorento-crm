@@ -43,6 +43,7 @@ from app.services.scm import (
 from app.services.error_handler import AppException
 from app.services.scm import reorder_run_service as svc
 from app.services.scm import demand_source_service
+from app.services.scm import location_stock_service
 from app.services.scm import unplanned_demand_service
 from app.services.scm import demand_breakdown_service
 from app.services.scm.money import BASE_CURRENCY
@@ -262,6 +263,23 @@ def get_set_aside_demand(
     from reading as demand silently going missing. Whole-book, like unlocated-demand: it
     describes the CURRENT book, not a frozen run."""
     return demand_source_service.set_aside_project_demand(db)
+
+
+# Above ``/reorder-runs/{run_id}`` for the same route-shadowing reason as its neighbours.
+@router.get("/reorder-runs/location-stock")
+def get_location_stock(
+    product_id: str = Query(...),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Live per-location stock for one product - the Buy row's expand panel (20 Aug live ask).
+
+    On hand, SO qty, SPO qty, available, reserved and held-by-decisions per ACTIVE
+    warehouse, in one call instead of one location at a time. Reuses the same
+    per-location readers the fulfilment board's stock drill-down composes, so this popup
+    and that page can never disagree about what a location is carrying.
+    """
+    return location_stock_service.location_stock_for_product(db, product_id)
 
 
 @router.get("/reorder-runs/{run_id}", response_model=ReorderRunStatusResponse)

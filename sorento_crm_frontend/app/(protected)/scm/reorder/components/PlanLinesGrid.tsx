@@ -28,8 +28,11 @@ import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/compon
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { cn } from '@/lib/utils';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EM_DASH, fmtDecimal, fmtInt, fmtMoney, fmtSigned } from '../../lib/format';
+import { useLocationStock } from '../hooks/useReorderRun';
+import type { LocationStockLocation } from '../services/reorderRunService';
 import {
   PLAN_LINE_STATUS_LABEL,
   PLAN_LINE_STATUS_ORDER,
@@ -216,32 +219,81 @@ function numCell(value: number | null | undefined) {
 }
 
 /**
- * Whether this member has anything at all to show - SO, either side of the channel split,
- * on hand, SPO, PO, or a suggested qty. A location where every one of those reads zero adds
- * nothing to the drill and is noise on the way to the ones that do (captain, 19 Aug: "if 0
- * quantity why show here"). A figure the run genuinely never populated (null/undefined) is
- * NOT the same claim as a stated zero - it counts as "nothing to show" here too, since a
- * location with no stated data AND no zero data still has nothing worth a drill row.
+ * Whether this member has anything at all to show - either side of the channel split, or a
+ * suggested qty. A location where every one of those reads zero adds nothing to the drill and
+ * is noise on the way to the ones that do (captain, 19 Aug: "if 0 quantity why show here"). A
+ * figure the run genuinely never populated (null/undefined) is NOT the same claim as a stated
+ * zero - it counts as "nothing to show" here too, since a location with no stated data AND no
+ * zero data still has nothing worth a drill row.
+ *
+ * N-1 (reviewer, 20 Aug): gated on the COLUMNS this panel actually renders - the three
+ * `*_committed` splits and `order_qty` - not on `outstanding_sales`/`on_hand`/`incoming_spo`/
+ * `outstanding_po`, which this rebuilt panel no longer shows at all (those moved to the LIVE
+ * on-hand/SPO/available columns below, sourced from `useLocationStock`, not the frozen `rec`).
+ * A member alive only via a frozen `outstanding_po` figure the panel never renders would
+ * otherwise pass this gate and still show an all-dash row.
  */
 function memberHasActivity(m: PlanLine): boolean {
   const figures = [
-    m.rec.outstanding_sales,
-    m.rec.project_need,
-    m.rec.retail_need,
-    m.rec.unclassified_need,
-    m.rec.on_hand,
-    m.rec.incoming_spo,
-    m.rec.outstanding_po,
+    m.rec.project_committed,
+    m.rec.retail_committed,
+    m.rec.unclassified_committed,
     m.order_qty,
   ];
   return figures.some((v) => typeof v === 'number' && v !== 0);
 }
 
+/** A live stock cell while the fetch is in flight, honest about not knowing yet. */
+function liveCellSkeleton() {
+  return <Skeleton className="ml-auto h-3 w-8" />;
+}
+
+/**
+ * One LIVE figure for a member's warehouse, or an honest "nothing here" when the live
+ * response never named this location at all (never a fabricated 0 - see the file's other
+ * `numCell`, same reasoning). `negative` mirrors `CellStockTable`'s own tone for Available
+ * (`app/(protected)/project-sales/fulfilment-planning/components/CellStockTable.tsx`):
+ * signed and never clamped, coloured only when it actually runs below zero.
+ */
+function liveCell(value: number | null | undefined, negative?: boolean) {
+  if (value === null || value === undefined) {
+    return (
+      <span className="text-muted-foreground" title="No live stock data for this location">
+        {EM_DASH}
+      </span>
+    );
+  }
+  return (
+    <span className={cn('tabular-nums', negative && value < 0 && 'text-destructive')}>
+      {fmtInt(value)}
+    </span>
+  );
+}
+
 /**
  * The drill under a grouped PRODUCT row - the per-warehouse rows it summed, unsummed, one
  * per line (5.3/5.4: Location grain stays a read and drill view under Product grain;
- * nothing here is a decision). Every location-only fact that a group row cannot show
- * (price, supplier, MOQ, AutoCount level) lives on these rows, not the group.
+ * nothing here is a decision).
+ *
+ * The Project / Retail / Unclass. columns read the FROZEN COMMITTED split
+ * (`project_committed` etc.), the same figures the group row's channel columns read - NOT
+ * the engine's `project_need` / `retail_need`. Those two are different facts with
+ * misleading names here: `project_need` is only the CONFIRMED-for-buy leg (0 with no CS
+ * decision), and `retail_need` is the netted sized buy, which swallows the project SHEET
+ * leg - so a location whose demand was 100% project-class read "Retail 1,872" (captain,
+ * SRT-H3005 BRW-BB, 20 Aug). There is no SO column: the split sums to the SO figure by
+ * construction, so stating both said the same thing twice (captain, same day). Unclass. is
+ * rendered only when some visible member actually carries a nonzero figure for it - the
+ * captain's own words are "nothing should be unclassified", so a column that would read all
+ * zeros is a column that should not exist here at all.
+ *
+ * On hand / Reserved / Free / SPO / Available are a SEPARATE chapter: LIVE, fetched from
+ * the location-stock endpoint the moment the panel mounts (which is to say, on expand -
+ * `GroupMembersPanel` only ever renders under an expanded row). This is the "fulfilment
+ * planning" read the captain asked for - what the book says RIGHT NOW, not what the plan
+ * committed to when it ran - joined onto each frozen member row by warehouse id (falling
+ * back to warehouse code for a payload that predates the id). A member the live response
+ * never named is an honest dash, not a fabricated zero.
  *
  * All-zero locations are filtered out (`memberHasActivity`) - UNLESS filtering would empty
  * the panel entirely, in which case every member is shown anyway: a group row only exists
@@ -251,65 +303,124 @@ function memberHasActivity(m: PlanLine): boolean {
  */
 function GroupMembersPanel({
   group,
+  runId,
   onOpenMember,
 }: {
   group: PlanChannelGroupMeta;
+  /** Threaded to each member's own demand popover (below), same as the ungrouped grid's
+   *  SO/product cells already do. */
+  runId: string | null;
   onOpenMember: (rec: ReorderRecommendation) => void;
 }) {
   const active = group.members.filter(memberHasActivity);
   const visible = active.length > 0 ? active : group.members;
+  const showUnclassified = visible.some((m) => (m.rec.unclassified_committed ?? 0) !== 0);
+  const productId = group.members[0]?.product_id ?? null;
+  const { data: liveStock, isLoading: liveLoading } = useLocationStock(productId, true);
+
+  const liveByWarehouse = useMemo(() => {
+    const byId = new Map<string, LocationStockLocation>();
+    const byCode = new Map<string, LocationStockLocation>();
+    for (const loc of liveStock?.locations ?? []) {
+      if (loc.warehouse_id) byId.set(loc.warehouse_id, loc);
+      if (loc.warehouse_code) byCode.set(loc.warehouse_code, loc);
+    }
+    return { byId, byCode };
+  }, [liveStock]);
+
+  function liveFor(m: PlanLine): LocationStockLocation | undefined {
+    const id = m.warehouse_id ?? m.rec.warehouse_id ?? null;
+    if (id) {
+      const hit = liveByWarehouse.byId.get(id);
+      if (hit) return hit;
+    }
+    const code = m.rec.warehouse_code;
+    return code ? liveByWarehouse.byCode.get(code) : undefined;
+  }
+
   return (
     <div className="border-t bg-muted/30 px-5 py-3">
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr className="text-muted-foreground">
-              <th className="px-2 py-1 text-left font-medium">Location</th>
-              <th className="px-2 py-1 text-right font-medium">SO</th>
+              <th className="max-w-28 px-2 py-1 text-left font-medium">Location</th>
               <th className="px-2 py-1 text-right font-medium">Project</th>
               <th className="px-2 py-1 text-right font-medium">Retail</th>
-              <th className="px-2 py-1 text-right font-medium">Unclass.</th>
+              {showUnclassified ? (
+                <th className="px-2 py-1 text-right font-medium">Unclass.</th>
+              ) : null}
               <th className="px-2 py-1 text-right font-medium">On hand</th>
+              <th className="px-2 py-1 text-right font-medium">Reserved</th>
+              <th className="px-2 py-1 text-right font-medium">Free</th>
               <th className="px-2 py-1 text-right font-medium">SPO</th>
-              <th className="px-2 py-1 text-right font-medium">PO</th>
+              <th className="px-2 py-1 text-right font-medium">Available</th>
               <th className="px-2 py-1 text-right font-medium">Suggested qty</th>
             </tr>
           </thead>
           <tbody>
-            {visible.map((m) => (
-              <tr
-                key={m.id}
-                className="cursor-pointer border-t border-border/60 hover:bg-muted/60"
-                onClick={() => onOpenMember(m.rec)}
-              >
-                <td className="max-w-40 truncate px-2 py-1" title={m.warehouse}>
-                  {m.warehouse}
-                </td>
-                <td className="px-2 py-1 text-right tabular-nums">
-                  {numCell(m.rec.outstanding_sales)}
-                </td>
-                <td className="px-2 py-1 text-right tabular-nums">
-                  {numCell(m.rec.project_need)}
-                </td>
-                <td className="px-2 py-1 text-right tabular-nums">
-                  {numCell(m.rec.retail_need)}
-                </td>
-                <td className="px-2 py-1 text-right tabular-nums">
-                  {numCell(m.rec.unclassified_need)}
-                </td>
-                <td className="px-2 py-1 text-right tabular-nums">{numCell(m.rec.on_hand)}</td>
-                <td className="px-2 py-1 text-right tabular-nums">
-                  {numCell(m.rec.incoming_spo)}
-                </td>
-                <td className="px-2 py-1 text-right tabular-nums">
-                  {numCell(m.rec.outstanding_po)}
-                </td>
-                <td className="px-2 py-1 text-right tabular-nums">{fmtInt(m.order_qty)}</td>
-              </tr>
-            ))}
+            {visible.map((m) => {
+              const live = liveFor(m);
+              return (
+                <tr
+                  key={m.id}
+                  className="cursor-pointer border-t border-border/60 hover:bg-muted/60"
+                  onClick={() => onOpenMember(m.rec)}
+                >
+                  <td className="max-w-28 truncate px-2 py-1" title={m.warehouse}>
+                    {m.warehouse}
+                  </td>
+                  {/* N-4 (reviewer): ONE popover per member row - it carries the whole
+                      location's demand, not a per-channel slice, so mounting it a second time
+                      on the Retail cell just let clicking Retail open the same Project content
+                      under a misleading trigger. Lives on the Project cell. */}
+                  <td className="px-2 py-1 text-right tabular-nums">
+                    <span className="inline-flex items-center justify-end gap-0.5">
+                      {numCell(m.rec.project_committed)}
+                      <StopClick>
+                        <PlanDemandPopover
+                          runId={runId}
+                          recId={m.id}
+                          label={`Demand behind ${m.warehouse}`}
+                        />
+                      </StopClick>
+                    </span>
+                  </td>
+                  <td className="px-2 py-1 text-right tabular-nums">
+                    {numCell(m.rec.retail_committed)}
+                  </td>
+                  {showUnclassified ? (
+                    <td className="px-2 py-1 text-right tabular-nums">
+                      {numCell(m.rec.unclassified_committed)}
+                    </td>
+                  ) : null}
+                  <td className="px-2 py-1 text-right">
+                    {liveLoading ? liveCellSkeleton() : liveCell(live?.on_hand)}
+                  </td>
+                  <td className="px-2 py-1 text-right">
+                    {liveLoading ? liveCellSkeleton() : liveCell(live?.reserved)}
+                  </td>
+                  <td className="px-2 py-1 text-right">
+                    {liveLoading ? liveCellSkeleton() : liveCell(live?.free)}
+                  </td>
+                  <td className="px-2 py-1 text-right">
+                    {liveLoading ? liveCellSkeleton() : liveCell(live?.spo_qty)}
+                  </td>
+                  <td className="px-2 py-1 text-right">
+                    {liveLoading ? liveCellSkeleton() : liveCell(live?.available, true)}
+                  </td>
+                  <td className="px-2 py-1 text-right tabular-nums">{fmtInt(m.order_qty)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
+      {liveStock?.as_of ? (
+        <p className="mt-2 text-2xs text-muted-foreground">
+          Live stock as of {formatDateTimeInMalaysia(liveStock.as_of)}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -535,6 +646,26 @@ export function PlanLinesGrid({
     [groupByChannel, lines],
   );
 
+  // Channel-column totals (captain follow-up, 2026-08-20: "I wonder what is the total for
+  // project & retail, anyway to indicate that in a nice way"). Summed over `tableData` -
+  // the FILTERED, grouped rows on screen right now, not the whole run - so the figure
+  // moves with search/status/side/etc. the way the grid itself does. `tableData` in
+  // grouped mode is already one row per product with no member subrows folded in, so
+  // nothing here is double-counted.
+  const channelTotals = useMemo(() => {
+    const totals: Partial<Record<PlanChannel, number>> = {};
+    if (!groupByChannel) return { totals, count: 0 };
+    for (const line of tableData) {
+      if (!isGroupedLine(line)) continue;
+      for (const channel of dynamicChannels) {
+        const v = line.__group.channelQty[channel];
+        if (v === null || v === undefined) continue;
+        totals[channel] = (totals[channel] ?? 0) + v;
+      }
+    }
+    return { totals, count: tableData.length };
+  }, [groupByChannel, tableData, dynamicChannels]);
+
   /**
    * The Suggested-qty popover's own open/close bug (user feedback, 2026-08-12: "after I
    * tick, it shouldn't close the popup").
@@ -690,7 +821,11 @@ export function PlanLinesGrid({
           // panel; only a group row (below) ever turns that on.
           expandedContent: (line: PlanLine) =>
             isGroupedLine(line) ? (
-              <GroupMembersPanel group={line.__group} onOpenMember={(rec) => setDetailRec(rec)} />
+              <GroupMembersPanel
+                group={line.__group}
+                runId={runId ?? null}
+                onOpenMember={(rec) => setDetailRec(rec)}
+              />
             ) : null,
         },
       },
@@ -852,6 +987,20 @@ export function PlanLinesGrid({
             header: ({ column }) => (
               <DataGridColumnHeader title={PLAN_CHANNEL_LABEL[channel]} visibility column={column} />
             ),
+            // A total of the rows on screen right now (not the whole run), lined up under
+            // its own column the way a spreadsheet totals a column - so it reads with the
+            // header above it and needs no caption of its own.
+            footer: () => {
+              const value = channelTotals.totals[channel];
+              return (
+                <span
+                  className="tabular-nums text-muted-foreground"
+                  title={`Total across the ${channelTotals.count} product${channelTotals.count === 1 ? '' : 's'} listed`}
+                >
+                  {value !== undefined ? fmtInt(value) : EM_DASH}
+                </span>
+              );
+            },
             cell: ({ row }) => {
               const line = row.original;
               if (!isGroupedLine(line)) return null;
@@ -1026,10 +1175,15 @@ export function PlanLinesGrid({
           <DataGridColumnHeader title="Suggested supplier" visibility column={column} />
         ),
         cell: ({ row }) =>
-          isGroupedLine(row.original) ? (
-            // A supplier is a per-location fact (5.3) - summing it would invent a choice
-            // nobody made, and `PlanSupplierCell`'s own "No supplier linked" fallback would
-            // be a false claim here. Expand the row to see each location's own supplier.
+          isGroupedLine(row.original) &&
+          row.original.supplier?.code === '' &&
+          row.original.__group.conflicts.has('supplier') ? (
+            // Supplier is a PRODUCT fact carried through when every location agrees
+            // (captain's 20 Aug ruling) - this dash means the group's own locations
+            // genuinely disagree on supplier, a real conflict rather than a suppressed fact.
+            // When no member carries a supplier at all (not a conflict), fall through to
+            // `PlanSupplierCell`, whose own fallback already reads "No supplier linked to
+            // this product" - the same data-gap wording an ungrouped row gets.
             <span className="text-muted-foreground" title="Varies by location - expand to see each one">
               {EM_DASH}
             </span>
@@ -1159,16 +1313,19 @@ export function PlanLinesGrid({
         // is where the silence ends.
         cell: ({ row }) => {
           const line = row.original;
-          if (isGroupedLine(line)) {
-            // The supplier's MOQ is a per-location fact too (5.3) - it is never absent the
-            // way a real no-MOQ line is, it just varies by which location you expand into.
+          const moq = line.order_qty_inputs?.moq ?? null;
+          if (isGroupedLine(line) && moq === null && line.__group.conflicts.has('moq')) {
+            // MOQ is a PRODUCT fact carried through when every location agrees (captain's
+            // 20 Aug ruling) - this dash means the group's own locations genuinely disagree,
+            // a real conflict rather than a suppressed fact. When no member carries an MOQ
+            // at all (not a conflict), fall through to the shared "no MOQ on file" branch
+            // below - the same data-gap wording an ungrouped row gets.
             return (
               <span className="text-muted-foreground" title="Varies by location - expand to see each one">
                 {EM_DASH}
               </span>
             );
           }
-          const moq = line.order_qty_inputs?.moq ?? null;
           if (!line.purchasable || moq === null) {
             return (
               <span className="text-muted-foreground" title="No MOQ on file for this supplier">
@@ -1252,7 +1409,7 @@ export function PlanLinesGrid({
      coverFor, priceFor, cheaperFor, trendFor, channelTrendFor, groupByChannel, dynamicChannels,
      levelFor, onAmendLevel, poFor, purchaseTrendFor, purchaseTrendWindowMonths,
      onOpenPurchaseTrend, hasPhotoFor, photoStatus, onOpenPhoto, economicsFor, healthThresholds,
-     onDecideLifecycle, staleAfterDays, renderSuggestedQtyCell],
+     onDecideLifecycle, staleAfterDays, renderSuggestedQtyCell, channelTotals],
   );
 
   // The story order (see the header comment): each chapter leads with its result and is

@@ -22,7 +22,7 @@ import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { resetRunDecisions } from '../services/reorderRunService';
-import { decisionLockReason, planGrainLabel, isLegacyRun, shouldGroupByChannel } from '../lib/planGrain';
+import { decisionLockReason, shouldGroupByChannel } from '../lib/planGrain';
 import { PlanExceptionsView } from './PlanExceptionsView';
 import { PoWorklistView } from './PoWorklistView';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
@@ -40,7 +40,6 @@ import type { ReorderRunHistoryItem } from '../services/reorderRunService';
 import { PlanLinesSection } from './PlanLinesSection';
 import type { PlanTotals } from '../lib/planDecisions';
 import { UploadDataMenu } from './UploadDataMenu';
-import { PlanAssistant } from './PlanAssistant';
 import { PlanMethodologySheet } from './PlanMethodologySheet';
 import { ReorderStatTiles, type ReorderPlanView } from './ReorderStatTiles';
 import { RunHistoryPanel } from './RunHistoryPanel';
@@ -125,6 +124,21 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   // A history-selected run overrides today's; null = show today's default run.
   const [selectedRun, setSelectedRun] = useState<ReorderRunHistoryItem | null>(null);
 
+  // The run on screen belongs in the URL (captain, 2026-08-20: "the URL better show the
+  // plan that I am looking at now for better reference"). `?plan=` - NOT `?run=`, which
+  // this page already reads (`?run=1` auto-opens the Manual plan modal via `autoOpenRun`,
+  // see page.tsx). Read once on mount - this component sits too deep for a Suspense
+  // boundary to be worth adding just for `useSearchParams`, and reading `window.location`
+  // once is the simplest thing that answers this. `RunHistoryPanel` resolves the id
+  // against the runs it has loaded and reports the match back via `onSelect`; an unknown
+  // id just leaves the default showing.
+  const [initialRunIdFromUrl, setInitialRunIdFromUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const plan = new URLSearchParams(window.location.search).get('plan');
+    if (plan) setInitialRunIdFromUrl(plan);
+  }, []);
+
   const today = useTodayRun();
   const todayData = today.data ?? null;
   // A property of the demand book, not of the run on screen, so it is read once here and
@@ -138,6 +152,18 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
 
   const currentItem = selectedRun ?? todayData;
   const currentRunId = currentItem?.run_id ?? null;
+
+  // Keep `?plan=<id>` in step with what's on screen via `replaceState` - no navigation,
+  // no remount, HMR state survives. The default (today's) run stamps it too, not only an
+  // explicit history pick, so a copied URL is always specific to the plan being looked at.
+  useEffect(() => {
+    if (!currentRunId || typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('plan') === currentRunId) return;
+    url.searchParams.set('plan', currentRunId);
+    window.history.replaceState(window.history.state, '', url);
+  }, [currentRunId]);
+
   const isToday =
     !!todayData && currentRunId === todayData.run_id && todayData.is_today;
 
@@ -359,18 +385,9 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
           <h2 className="text-lg font-semibold">
             {isPastRun ? `Plan · ${dateLabel}, ${timeLabel}` : `Today's plan · ${dateLabel}`}
           </h2>
-          {/* The run's stamped Plan grain. A fact about the run, never a selector:
-              plan grain is admin policy and this run took it at creation (AC-F01). */}
-          {currentItem ? (
-            <Badge
-              variant={isLegacyRun(currentItem) ? 'secondary' : 'info'}
-              appearance="light"
-              size="sm"
-              data-testid="plan-grain-chip"
-            >
-              {planGrainLabel(currentItem)}
-            </Badge>
-          ) : null}
+          {/* The plan-grain chip lived here until the captain removed it (20 Aug: "remove
+              these") - the grain still governs behavior via decisionLockReason /
+              shouldGroupByChannel; it is just not announced in the header any more. */}
           <PlanMethodologySheet
             runContext={{
               dateLabel,
@@ -562,11 +579,9 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         // not entered. The money question now comes last, in PlanBudgetReview, asked of the
         // decisions that were actually made.
         <>
-          <PlanAssistant
-            runId={currentRunId}
-            onApplyProposalLine={plan.applyProposalLine}
-            onApplyActions={plan.applyActions}
-          />
+          {/* PlanAssistant sat here until the captain removed it from this screen
+              (20 Aug: "remove these"). The component and its plumbing survive for the
+              surfaces that still mount it. */}
           <PlanLinesSection
             runId={currentRunId}
             decidedFilter={decidedFilter}
@@ -583,6 +598,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
       <RunHistoryPanel
         selectedRunId={currentRunId}
         onSelect={(run) => setSelectedRun(run)}
+        initialSelectRunId={initialRunIdFromUrl}
       />
 
       <RunPlanningModal

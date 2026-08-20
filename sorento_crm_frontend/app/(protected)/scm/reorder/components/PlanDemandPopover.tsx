@@ -44,14 +44,50 @@ export function describeDemandScope(data: PlanDemand): string {
   return `${fmtInt(data.committed_total)} committed${at}${pool}${unlocated}`;
 }
 
+/**
+ * A quiet second line under the scope sentence: how the committed total splits by
+ * channel (captain follow-up, 20 Aug). `null` when the response carries none of the
+ * three totals - a cached/legacy payload predating the field - so the caller renders
+ * nothing rather than a line of zeros nobody stated.
+ */
+export function describeDemandTotals(data: PlanDemand): string | null {
+  if (
+    data.project_total === undefined &&
+    data.retail_total === undefined &&
+    data.unclassified_total === undefined
+  ) {
+    return null;
+  }
+  const parts = [
+    `Project ${fmtInt(data.project_total ?? 0)}`,
+    `Retail ${fmtInt(data.retail_total ?? 0)}`,
+  ];
+  if (data.unclassified_total) parts.push(`Unclassified ${fmtInt(data.unclassified_total)}`);
+  return parts.join(' - ');
+}
+
+/** What each `PlanDemandLine.source` chip says, and the fuller sentence its title spells
+ *  out (captain: "for project is order inquiry, for retail is sales order directly"). */
+const SOURCE_CHIP: Record<string, { chip: string; title: string }> = {
+  sales_order: { chip: 'SO', title: 'Direct sales order' },
+  order_inquiry: { chip: 'OI', title: 'From an Order Inquiry (project channel)' },
+  order_inquiry_confirmed: { chip: 'OI confirmed', title: 'Confirmed for buy by CS' },
+};
+
 function PlanDemandBody({ runId, recId }: { runId: string | null; recId: string }) {
   const { data, isLoading, isError, error } = useRecommendationDemand(runId, recId, true);
+  // N-6 (reviewer): computed once - `describeDemandTotals` was called twice for the same
+  // `data`, once to decide whether to render the line and again to render it.
+  const demandTotals = data ? describeDemandTotals(data) : null;
   return (
     <>
       <div className="border-b px-3 py-2">
         <div className="text-xs font-semibold">Demand behind this row</div>
         {data ? (
           <p className="mt-0.5 text-2xs text-muted-foreground">{describeDemandScope(data)}</p>
+        ) : null}
+        {demandTotals ? (
+          <p className="mt-0.5 text-2xs text-muted-foreground">{demandTotals}</p>
         ) : null}
       </div>
       {isLoading ? (
@@ -88,6 +124,17 @@ function PlanDemandBody({ runId, recId }: { runId: string | null; recId: string 
                     >
                       {l.warehouse_code ?? 'No location'}
                     </Badge>
+                    {l.source && SOURCE_CHIP[l.source] ? (
+                      <Badge
+                        variant="secondary"
+                        appearance="light"
+                        size="sm"
+                        className="font-normal text-muted-foreground"
+                        title={SOURCE_CHIP[l.source].title}
+                      >
+                        {SOURCE_CHIP[l.source].chip}
+                      </Badge>
+                    ) : null}
                     {l.order_type ? <span className="capitalize">{l.order_type}</span> : null}
                     {l.required_date ? <span>needed {l.required_date}</span> : null}
                   </div>

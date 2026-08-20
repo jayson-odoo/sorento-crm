@@ -10,6 +10,7 @@ import {
   getCoveredRecommendations,
   getNeedsLevelRecommendations,
   getCustomerOrders,
+  getLocationStock,
   getProductImage,
   getRecommendationDemand,
   getReorderRun,
@@ -405,6 +406,26 @@ export function useAllDispositionRecommendations(runId: string | null, enabled: 
     queryFn: () => getAllDispositionRecommendations(runId as string),
     enabled: enabled && !!runId,
     staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+/**
+ * The LIVE per-warehouse stock position for one product (the grouped Buy view's expand
+ * panel - captain: "we should show something like fulfilment planning"). Fetched ON EXPAND,
+ * per product, never for the whole plan: hundreds of collapsed group rows must not each
+ * carry a subscription for a panel nobody opened, the same reasoning as the demand drill
+ * and the product photo above. A short 15s `staleTime` (well under the 60s+ used elsewhere
+ * in this file) reflects that this is a live-book read, not a frozen plan fact - re-opening
+ * the same product a minute later should see the book move.
+ */
+export function useLocationStock(productId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'location-stock', productId],
+    queryFn: () => getLocationStock(productId as string),
+    enabled: enabled && !!productId,
+    staleTime: 15_000,
     refetchOnWindowFocus: false,
     retry: 1,
   });

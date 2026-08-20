@@ -19,6 +19,20 @@ netted per location unless the run netted its pool together. Listing the whole p
 regardless answered a question nobody asked - the buyer looking at BRW-BB was shown
 BRW-IB's orders and a total larger than the SO figure printed on their own row. So the
 scope is the set the RUN netted, and is stated in the header when it is the pool.
+
+PROVENANCE (20 Aug live ask): "for project is order inquiry, for retail is sales order
+directly". Every line carries a `source` - `order_inquiry` when the order the sheet-leg
+line belongs to was created BY the Order Inquiry feed (`demand_origin`), `sales_order`
+when it was not (the retail book, straight off AutoCount). A THIRD source,
+`order_inquiry_confirmed`, is the leg the sheet-leg query cannot show at all: once CS
+confirms a line, its sheet quantity leaves this query by design (`PLAN_DEMAND_LINE_SQL`'s
+`NOT EXISTS`) and the confirmed Buy residual on `projects.order_inquiry_rows` becomes the
+only Project reading of it - `scm.committed_v`'s own two-leg split, mirrored here so the
+popover's total and the netted figure never disagree. The two legs are mutually exclusive
+PER LINE by construction: a core line only ever appears in the confirmed leg here if an
+active decision's `line_snapshots` names it, and that is exactly the condition
+`PLAN_DEMAND_LINE_SQL` excludes it on in the sheet leg - so summing both is additive,
+never double-counted.
 """
 from __future__ import annotations
 
@@ -29,7 +43,15 @@ from sqlalchemy.orm import Session
 
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.scm.customer_label import CUSTOMER_JOIN_ON, CUSTOMER_LABEL_SQL
-from app.services.scm.demand import PLAN_DEMAND_LINE_SQL, PLAN_DEMAND_ORDER_SQL
+from app.services.scm.demand import (
+    ACTIVE_DECISION_STATE,
+    BUY_VERB,
+    ORDER_INQUIRY_ORIGIN,
+    PLAN_DEMAND_LINE_SQL,
+    PLAN_DEMAND_ORDER_SQL,
+    PROJECT_CLASS,
+    UNPLACED_INQUIRY_STATE,
+)
 
 # One screen's worth. A pool with thousands of lines is a reading problem, not a listing
 # problem, and the total is reported separately so the cap is never silent.
@@ -130,7 +152,8 @@ def demand_for_recommendation(db: Session, rec_id: str,
     if rec is None:
         return {"lines": [], "total": 0, "shown": 0, "committed_total": 0.0,
                 "unlocated_total": 0.0, "locations": [], "scope": "warehouse",
-                "pool_code": None}
+                "pool_code": None, "project_total": 0.0, "retail_total": 0.0,
+                "unclassified_total": 0.0}
 
     # Unlocated demand was attributed to exactly one location per product, so it belongs to
     # this row only when THIS row is the one carrying it.
@@ -149,6 +172,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
 
     sql = f"""
         SELECT so.so_number, so.order_type, so.demand_class, so.order_date,
+               so.demand_origin,
                sol.required_date, w.warehouse_code, sol.unit_price,
                {CUSTOMER_LABEL_SQL} AS customer_label,
                {qty} AS qty
@@ -178,15 +202,27 @@ def demand_for_recommendation(db: Session, rec_id: str,
 
     members, scope, pool_code = _scope_for(db, rec, total_for)
 
+    limit_n = max(1, int(limit or DEFAULT_LIMIT))
     params: dict[str, Any] = {"pid": rec["product_id"], "members": members, **co_params}
     rows = db.execute(text(
         sql + " ORDER BY sol.required_date NULLS LAST, so.so_number LIMIT :limit"
-    ), {**params, "limit": max(1, int(limit or DEFAULT_LIMIT))}).mappings().all()
+    ), {**params, "limit": limit_n}).mappings().all()
+    # SF-2: `project_qty`/`retail_qty`/`unclassified_qty` are read off this SAME uncapped
+    # aggregate (never off the capped `rows`/`all_lines` fetched below), the same way
+    # `committed`/`unlocated` already were - so the by-channel totals stay correct past the
+    # display cap instead of only summing whatever page happened to be returned.
     totals = db.execute(text(
         f"SELECT count(*) AS n, COALESCE(sum(qty), 0) AS committed, "
-        f"       COALESCE(sum(qty) FILTER (WHERE warehouse_code IS NULL), 0) AS unlocated "
+        f"       COALESCE(sum(qty) FILTER (WHERE warehouse_code IS NULL), 0) AS unlocated, "
+        f"       COALESCE(sum(qty) FILTER (WHERE demand_class = :project_class), 0) "
+        f"           AS project_qty, "
+        f"       COALESCE(sum(qty) FILTER (WHERE demand_class IS NOT NULL "
+        f"                                    AND demand_class <> :project_class), 0) "
+        f"           AS retail_qty, "
+        f"       COALESCE(sum(qty) FILTER (WHERE demand_class IS NULL), 0) "
+        f"           AS unclassified_qty "
         f"FROM ({sql}) t"
-    ), params).mappings().first()
+    ), {**params, "project_class": PROJECT_CLASS}).mappings().first()
 
     lines = [
         {
@@ -205,21 +241,114 @@ def demand_for_recommendation(db: Session, rec_id: str,
             # and a line the extract carries no price for says nothing rather than 0.
             "customer_label": r["customer_label"],
             "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
+            # "for project is order inquiry, for retail is sales order directly" - which
+            # feed wrote the order this line belongs to.
+            "source": (
+                "order_inquiry" if r["demand_origin"] == ORDER_INQUIRY_ORIGIN
+                else "sales_order"
+            ),
         }
         for r in rows
     ]
+
+    # The CONFIRMED Order-Inquiry leg (front planning 6.3 / `scm.committed_v`'s own
+    # second UNION ALL leg) - the sheet-leg query above cannot show it at all, because
+    # `PLAN_DEMAND_LINE_SQL` excludes exactly the core lines it covers. Same join shape as
+    # `summary_order_service._earliest_project_need_dates`. Scoped to `members`, the SAME
+    # locations the sheet leg was scoped to, so a pooled row's confirmed evidence is the
+    # pool's and a per-location row's is that location's alone.
+    confirmed_rows: list[Any] = []
+    confirmed_n = 0
+    confirmed_total = 0.0
+    if members:
+        # SF-1: unlike the sheet leg above, this had NO `LIMIT` at all - past the cap the
+        # sheet leg's `total`/`shown` were already correct and this leg's were not, so the
+        # combined figures disagreed with what was actually returned. Same shape as the
+        # sheet leg: a base query with no ORDER BY/LIMIT, a capped fetch for the lines the
+        # FE renders, and a separate uncapped count/sum for the totals.
+        confirmed_base_sql = f"""
+            SELECT so.so_number, so.order_type, so.order_date,
+                   oir.delivery_date AS required_date, w.warehouse_code,
+                   psl.unit_price AS unit_price,
+                   {CUSTOMER_LABEL_SQL} AS customer_label,
+                   oir.qty AS qty
+            FROM projects.order_inquiry_rows oir
+            JOIN projects.so_supply_decisions d
+              ON d.id = oir.supply_decision_id AND d.state = :active_state
+            JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
+            JOIN sales_order_lines sol ON sol.id = psl.core_sales_order_line_id
+            JOIN sales_orders so ON so.id = sol.sales_order_id
+            LEFT JOIN warehouses w ON w.id = sol.warehouse_id
+            LEFT JOIN customers c ON {CUSTOMER_JOIN_ON}
+            WHERE oir.verb = :buy_verb
+              AND oir.state = :unplaced_state
+              AND oir.qty > 0
+              AND sol.product_id::text = :pid
+              AND sol.warehouse_id::text = ANY(:members)
+              {("AND " + co) if co else ""}
+        """
+        confirmed_params = {
+            "pid": rec["product_id"], "members": members,
+            "active_state": ACTIVE_DECISION_STATE, "buy_verb": BUY_VERB,
+            "unplaced_state": UNPLACED_INQUIRY_STATE, **co_params,
+        }
+        confirmed_rows = db.execute(text(
+            confirmed_base_sql
+            + " ORDER BY oir.delivery_date NULLS LAST, so.so_number LIMIT :limit"
+        ), {**confirmed_params, "limit": limit_n}).mappings().all()
+        confirmed_totals = db.execute(text(
+            f"SELECT count(*) AS n, COALESCE(sum(qty), 0) AS qty FROM ({confirmed_base_sql}) t"
+        ), confirmed_params).mappings().first()
+        confirmed_n = int(confirmed_totals["n"] or 0)
+        confirmed_total = float(confirmed_totals["qty"] or 0)
+
+    confirmed_lines = [
+        {
+            "so_number": r["so_number"],
+            "warehouse_code": r["warehouse_code"],
+            "is_unlocated": r["warehouse_code"] is None,
+            "order_type": r["order_type"],
+            "demand_class": PROJECT_CLASS,
+            "order_date": r["order_date"].isoformat() if r["order_date"] else None,
+            "required_date": r["required_date"].isoformat() if r["required_date"] else None,
+            "qty": float(r["qty"] or 0),
+            "customer_label": r["customer_label"],
+            "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
+            "source": "order_inquiry_confirmed",
+        }
+        for r in confirmed_rows
+    ]
+
+    all_lines = sorted(
+        lines + confirmed_lines,
+        key=lambda ln: (ln["required_date"] is None, ln["required_date"] or "",
+                        ln["so_number"] or ""),
+    )
+
     return {
-        "lines": lines,
-        "total": int(totals["n"] or 0),
-        "shown": len(lines),
-        "committed_total": float(totals["committed"] or 0),
+        "lines": all_lines,
+        "total": int(totals["n"] or 0) + confirmed_n,
+        "shown": len(all_lines),
+        # The confirmed leg IS inside `project_committed` (`scm.committed_v`), so it
+        # belongs in the same total the sheet leg's committed figure already reports -
+        # additive, never a double count (see the module docstring's PROVENANCE note).
+        # `confirmed_total` is the UNCAPPED sum (SF-1/SF-2), never `sum(l["qty"] for l in
+        # confirmed_lines)`, which would undercount past the display cap.
+        "committed_total": float(totals["committed"] or 0) + confirmed_total,
         "unlocated_total": float(totals["unlocated"] or 0),
         # Where the demand actually sits, so "why BRW when I ordered for BRW-IB" is answered
         # by the row itself rather than by opening every order.
-        "locations": sorted({(r["warehouse_code"] or "No location") for r in rows}),
+        "locations": sorted({(ln["warehouse_code"] or "No location") for ln in all_lines}),
         # Which set of locations the list was drawn from, and the pool's name when it is
         # the pool. Without it a pooled total reads as this bin's, which is the reading
         # the whole popover exists to correct.
         "scope": scope,
         "pool_code": pool_code,
+        # SF-2: read off the UNCAPPED `totals`/`confirmed_total` figures, never off
+        # `all_lines` (the capped display set) - past the cap the two diverged. The
+        # confirmed leg is entirely project-class by construction (S13b), so its whole
+        # uncapped sum lands on `project_total`.
+        "project_total": float(totals["project_qty"] or 0) + confirmed_total,
+        "retail_total": float(totals["retail_qty"] or 0),
+        "unclassified_total": float(totals["unclassified_qty"] or 0),
     }

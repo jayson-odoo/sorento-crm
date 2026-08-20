@@ -30,6 +30,21 @@ if (!window.matchMedia) {
   });
 }
 
+// The grouped-expand panel's live per-location figures (`GroupMembersPanel`) come off
+// `useLocationStock`, a real network fetch this suite has no server behind. Mocked so the
+// "skeleton while loading / values after / EM_DASH for an unmatched location / negative
+// Available in destructive tone" tests below control exactly what the panel sees, instead
+// of asserting against whatever a failed jsdom fetch happens to leave in react-query state.
+const locationStockState: {
+  isLoading: boolean;
+  data: { as_of: string; locations: Array<Record<string, unknown>> } | undefined;
+} = { isLoading: false, data: undefined };
+
+vi.mock('../hooks/useReorderRun', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../hooks/useReorderRun')>();
+  return { ...actual, useLocationStock: () => locationStockState };
+});
+
 // The filter popover uses the standard SearchableSelect. Mock it as a native <select> so
 // the options are in the DOM without driving a cmdk popover - the assertions here are
 // about which ROWS survive a filter, not about popover mechanics.
@@ -119,7 +134,11 @@ function renderGrid(
   return { onDecide, onClear };
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  locationStockState.isLoading = false;
+  locationStockState.data = undefined;
+});
 
 describe('PlanLinesGrid - one list', () => {
   it('shows every kind of line in the same table', () => {
@@ -1186,5 +1205,257 @@ describe('PlanLinesGrid - product-grain channel grouping (5.3 follow-up, 19-20 A
     const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
     expect(heads).toContain('Order type');
     expect(heads).toContain('Unclass.');
+  });
+
+  // Supplier / price / MOQ are PRODUCT facts (captain, 20 Aug ruling): carried onto the
+  // group row when every member agrees, dashed only on a genuine conflict.
+  it('carries the Suggested supplier through onto the group row when every member agrees', () => {
+    // None of the 3 fixtures override supplier - all Acme/S1, so the group is uniform. The
+    // supplier cell itself renders the name rather than a dash (MOQ is untested here - none
+    // of these 3 fixtures carry one, which is its own "no MOQ on file" case, not a conflict).
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Acme')).toBeInTheDocument();
+  });
+
+  it('dashes the Suggested supplier when the group\'s members genuinely disagree', () => {
+    // Both members share the same MOQ so only the SUPPLIER cell is in conflict here - an
+    // incidental MOQ mismatch would also dash the MOQ cell and muddy which cell is under test.
+    const sameSupplier = line({
+      id: 'same-supplier', warehouse_id: 'w-same-supplier', segment: 'dealer', rank: 9, moq: 50,
+    });
+    const otherSupplier = line({
+      id: 'conflict', warehouse_id: 'w-conflict', segment: 'dealer', rank: 10, moq: 50,
+      supplier: { supplier_code: 'S2', supplier_name: 'Other Co', unit_cost: 20,
+                  lead_time_days: 10, composite_score: 0, is_primary: false },
+      unit_cost: 20,
+    });
+    renderGroupedGrid([sameSupplier, otherSupplier]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).queryByText('Acme')).not.toBeInTheDocument();
+    expect(within(row).queryByText('Other Co')).not.toBeInTheDocument();
+    expect(within(row).getByText('50')).toBeInTheDocument(); // MOQ carried, uniform
+    expect(within(row).getByTitle('Varies by location - expand to see each one')).toBeInTheDocument();
+  });
+
+  it('carries a uniform MOQ through onto the group row', () => {
+    const moqA = line({
+      id: 'mqa', warehouse_id: 'w-mqa', segment: 'dealer', rank: 11, order_qty: 3, moq: 50,
+    });
+    const moqB = line({
+      id: 'mqb', warehouse_id: 'w-mqb', segment: 'project', rank: 12, order_qty: 4, moq: 50,
+    });
+    renderGroupedGrid([moqA, moqB]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).getByText('50')).toBeInTheDocument();
+  });
+
+  it('dashes the MOQ when the group\'s members carry different MOQs', () => {
+    const moqA = line({
+      id: 'mqc', warehouse_id: 'w-mqc', segment: 'dealer', rank: 13, order_qty: 3, moq: 50,
+    });
+    const moqB = line({
+      id: 'mqd', warehouse_id: 'w-mqd', segment: 'project', rank: 14, order_qty: 4, moq: 80,
+    });
+    renderGroupedGrid([moqA, moqB]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).queryByText('50')).not.toBeInTheDocument();
+    expect(within(row).queryByText('80')).not.toBeInTheDocument();
+    expect(within(row).getByTitle('Varies by location - expand to see each one')).toBeInTheDocument();
+  });
+
+  it('a single-member group carries its one member\'s supplier and MOQ straight through', () => {
+    const solo = line({
+      id: 'solo', product_id: 'p-solo', sku: 'SOLO-1', warehouse_id: 'w-solo',
+      segment: 'dealer', rank: 15, moq: 40,
+    });
+    renderGroupedGrid([solo]);
+    const row = screen.getByText('SOLO-1').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Acme')).toBeInTheDocument();
+    expect(within(row).getByText('40')).toBeInTheDocument();
+  });
+
+  it('searching a grouped grid with a supplier conflict on it does not crash, and still finds the row by product', () => {
+    const otherSupplier = line({
+      id: 'conflict2', warehouse_id: 'w-conflict2', segment: 'dealer', rank: 16,
+      supplier: { supplier_code: 'S2', supplier_name: 'Other Co', unit_cost: 20,
+                  lead_time_days: 10, composite_score: 0, is_primary: false },
+      unit_cost: 20,
+    });
+    renderGroupedGrid([retail, otherSupplier]);
+    const search = screen.getByPlaceholderText('Search product, location, or supplier');
+    fireEvent.change(search, { target: { value: 'SKU-1' } });
+    expect(screen.getByText('SKU-1')).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: 'no such product' } });
+    expect(screen.queryByText('SKU-1')).not.toBeInTheDocument();
+  });
+});
+
+describe('PlanLinesGrid - grouped-expand live location-stock cells (20 Aug live ask)', () => {
+  // Same shape as the 5.3 grouping fixtures above (1 product, 2 warehouses), scoped to its
+  // own describe so `locationStockState` can be driven per test without disturbing the
+  // grouping suite's own assumptions about the live fetch.
+  const locA = line({
+    id: 'live-a', warehouse_id: 'w-live-a', warehouse_code: 'BRW', warehouse_name: 'Butterworth',
+    segment: 'dealer', rank: 1, order_qty: 3,
+    retail_committed: 6, project_committed: 0, unclassified_committed: 0, project_need: 0,
+  });
+  const locB = line({
+    id: 'live-b', warehouse_id: 'w-live-b', warehouse_code: 'BRW-IB', warehouse_name: 'BRW - IB',
+    segment: 'project', rank: 2, order_qty: 4,
+    retail_committed: 0, project_committed: 5, unclassified_committed: 0, project_need: 3,
+  });
+
+  function renderLiveGroupedGrid(lines: PlanLine[]) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <PlanLinesGrid
+          lines={lines}
+          decisions={{}}
+          onDecide={vi.fn()}
+          onClear={vi.fn()}
+          groupByChannel
+          decisionsReadOnly
+          readOnlyReason="Decided at Product grain"
+          staleAfterDays={180}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  function availableCell(warehouseLabel: string): HTMLElement {
+    const row = screen.getByText(warehouseLabel).closest('tr') as HTMLElement;
+    // Location, Project, Retail, On hand, Reserved, Free, SPO, Available, Suggested qty -
+    // no Unclass. column here since neither fixture carries a nonzero unclassified figure.
+    const cells = within(row).getAllByRole('cell');
+    return cells[7];
+  }
+
+  it('shows a skeleton in every live cell while the location-stock fetch is in flight', () => {
+    locationStockState.isLoading = true;
+    locationStockState.data = undefined;
+    const { container } = renderLiveGroupedGrid([locA, locB]);
+
+    fireEvent.click(screen.getByText('SKU-1'));
+
+    expect(screen.getByText('Butterworth')).toBeInTheDocument();
+    // On hand, Reserved, Free, SPO, Available - 5 live cells per visible location.
+    expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBe(10);
+  });
+
+  it('renders the live figures once the fetch resolves, joined onto each member by warehouse id', () => {
+    locationStockState.isLoading = false;
+    locationStockState.data = {
+      as_of: '2026-08-20T09:00:00',
+      locations: [
+        {
+          warehouse_id: 'w-live-a', warehouse_code: 'BRW',
+          on_hand: 50, reserved: 5, held_by_decisions: 0, free: 45, so_qty: 20, spo_qty: 10,
+          available: 35,
+        },
+      ],
+    };
+    renderLiveGroupedGrid([locA, locB]);
+
+    fireEvent.click(screen.getByText('SKU-1'));
+
+    const matchedRow = screen.getByText('Butterworth').closest('tr') as HTMLElement;
+    expect(within(matchedRow).getByText('50')).toBeInTheDocument(); // on hand
+    expect(within(matchedRow).getByText('45')).toBeInTheDocument(); // free
+    expect(within(matchedRow).getByText('10')).toBeInTheDocument(); // spo
+    expect(within(matchedRow).getByText('35')).toBeInTheDocument(); // available
+    expect(screen.getByText(/Live stock as of/)).toBeInTheDocument();
+  });
+
+  it('a member the live response never named reads as an honest dash, not a fabricated zero', () => {
+    locationStockState.isLoading = false;
+    locationStockState.data = {
+      as_of: '2026-08-20T09:00:00',
+      locations: [
+        {
+          warehouse_id: 'w-live-a', warehouse_code: 'BRW',
+          on_hand: 50, reserved: 5, held_by_decisions: 0, free: 45, so_qty: 20, spo_qty: 10,
+          available: 35,
+        },
+      ],
+    };
+    renderLiveGroupedGrid([locA, locB]);
+
+    fireEvent.click(screen.getByText('SKU-1'));
+
+    const cell = availableCell('BRW - IB');
+    expect(within(cell).getByText('-')).toBeInTheDocument();
+    expect(within(cell).getByTitle('No live stock data for this location')).toBeInTheDocument();
+  });
+
+  it('a negative Available - oversold - renders in the destructive tone, never clamped to zero', () => {
+    locationStockState.isLoading = false;
+    locationStockState.data = {
+      as_of: '2026-08-20T09:00:00',
+      locations: [
+        {
+          warehouse_id: 'w-live-a', warehouse_code: 'BRW',
+          on_hand: 8, reserved: 0, held_by_decisions: 0, free: 8, so_qty: 20, spo_qty: 0,
+          available: -12,
+        },
+      ],
+    };
+    renderLiveGroupedGrid([locA, locB]);
+
+    fireEvent.click(screen.getByText('SKU-1'));
+
+    const cell = availableCell('Butterworth');
+    const span = cell.querySelector('span') as HTMLElement;
+    expect(span.textContent).toContain('12');
+    expect(span.className).toContain('text-destructive');
+  });
+
+  // N-5: `LocationStockLocation.warehouse_code` is `string | null` (backend Optional) - a
+  // member with no warehouse_id at all still has to join to its live row, by warehouse_code.
+  it('joins a member with no warehouse_id to its live location by warehouse_code (fallback join)', () => {
+    const locC = line({
+      id: 'live-c', warehouse_id: null, warehouse_code: 'BRW-IR', warehouse_name: 'BRW - IR',
+      segment: 'project', rank: 3, order_qty: 2,
+      retail_committed: 0, project_committed: 0, unclassified_committed: 0, project_need: 0,
+    });
+    locationStockState.isLoading = false;
+    locationStockState.data = {
+      as_of: '2026-08-20T09:00:00',
+      locations: [
+        {
+          // A different warehouse_id than the member's (which has none) - the id lookup must
+          // fail and fall through to the code lookup for this to join at all.
+          warehouse_id: 'w-unrelated', warehouse_code: 'BRW-IR',
+          on_hand: 77, reserved: 2, held_by_decisions: 0, free: 75, so_qty: 5, spo_qty: 1,
+          available: 66,
+        },
+      ],
+    };
+    renderLiveGroupedGrid([locC]);
+
+    fireEvent.click(screen.getByText('SKU-1'));
+
+    const cell = availableCell('BRW - IR');
+    expect(within(cell).getByText('66')).toBeInTheDocument();
+  });
+
+  // N-4: exactly one demand popover per member row (previously mounted on both the Project
+  // AND Retail cells, with identical rec-wide content - clicking Retail opened the whole
+  // location's demand under a misleading trigger).
+  it('mounts exactly one demand popover per member row', () => {
+    locationStockState.isLoading = false;
+    locationStockState.data = undefined;
+    renderLiveGroupedGrid([locA, locB]);
+
+    fireEvent.click(screen.getByText('SKU-1'));
+
+    expect(
+      screen.getByRole('button', { name: 'Demand behind Butterworth' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Demand behind BRW - IB' })).toBeInTheDocument();
+    expect(
+      screen.getAllByRole('button', { name: /^Demand behind /i }),
+    ).toHaveLength(2);
   });
 });

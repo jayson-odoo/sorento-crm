@@ -596,6 +596,14 @@ export interface PlanDemandLine {
   customer_label: string;
   /** What they pay for it, when the order line carries a price. */
   unit_price: number | null;
+  /**
+   * Provenance (captain: "for project is order inquiry, for retail is sales order
+   * directly"): which document this line traces back to. `order_inquiry_confirmed` is
+   * the CS-confirmed-for-buy leg (`project_need`); a bare `order_inquiry` is still
+   * awaiting that confirmation. Optional - absent on a cached response that predates
+   * the field.
+   */
+  source?: 'sales_order' | 'order_inquiry' | 'order_inquiry_confirmed' | null;
 }
 
 export interface PlanDemand {
@@ -611,6 +619,50 @@ export interface PlanDemand {
   scope: 'warehouse' | 'pool';
   /** The pool root's code, when the scope is the pool. Null otherwise. */
   pool_code: string | null;
+  /**
+   * The channel split of `committed_total` (captain follow-up, 20 Aug). Optional - a
+   * cached response taken before this field shipped carries none of the three, so a
+   * caller must guard rather than assume they travel together.
+   */
+  project_total?: number | null;
+  retail_total?: number | null;
+  unclassified_total?: number | null;
+}
+
+/** One warehouse's LIVE stock position for a product (captain: "fulfilment planning" style
+ *  drill under the grouped Buy view's expand panel). Unlike the frozen `PlanDemand` figures
+ *  above, this reads the book as it stands right now - `as_of` says when. All-zero locations
+ *  are already dropped server-side, so a location present here has SOMETHING to show.
+ *  `available` is signed and never clamped: a negative figure IS the shortfall. */
+export interface LocationStockLocation {
+  warehouse_id: string;
+  /** N-5 (reviewer): backend emits this Optional - a location the extract can't attribute a
+   *  code to still comes through as a row, not a dropped one. */
+  warehouse_code: string | null;
+  on_hand: number;
+  reserved: number;
+  held_by_decisions: number;
+  free: number;
+  so_qty: number;
+  spo_qty: number;
+  available: number;
+}
+
+export interface LocationStockResponse {
+  product_id: string;
+  as_of: string;
+  locations: LocationStockLocation[];
+}
+
+/** GET /api/v1/scm/reorder-runs/location-stock?product_id=<uuid> - live per-warehouse stock
+ *  for one product, fetched on demand (the grouped Buy view's expand panel, per product). */
+export async function getLocationStock(productId: string): Promise<LocationStockResponse> {
+  const qs = new URLSearchParams({ product_id: productId });
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/location-stock?${qs.toString()}`);
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, 'Failed to load live stock by location'));
+  }
+  return res.json();
 }
 
 /** GET /api/v1/scm/reorder-runs/{run}/recommendations/{rec}/demand */
