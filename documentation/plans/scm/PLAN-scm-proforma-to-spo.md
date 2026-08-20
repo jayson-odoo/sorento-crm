@@ -1,9 +1,13 @@
 # PLAN - a proforma invoice becomes an SPO: convert, match, net, hand to AutoCount
 
-**Status:** Journey + three shaping decisions approved by the captain, 20 Aug 2026 (live
-session, while testing the new proforma screen). AMENDED the same evening: the flow now
-bends through the packing list (see the Amendment section - it supersedes parts of the
-original decisions and journey below).
+**Status:** BOTH halves BUILT (20-21 Aug 2026). Journey + three shaping decisions approved
+by the captain, 20 Aug 2026 (live session, while testing the new proforma screen). AMENDED
+the same evening: the flow now bends through the packing list (see the Amendment section -
+it supersedes parts of the original decisions and journey below). Still open: reconciling a
+REAL packing-list upload onto an existing DRAFT shipment row (unstarted since the first
+half - see the "STILL NOT built" note at the end of the second half's write-up), and
+AutoCount book-import reconciliation of a CRM SPO by number (explicitly out of scope both
+halves, noted where each is relevant).
 
 **First half BUILT, 20 Aug 2026 (same evening):** the PI -> DRAFT INBOUND SHIPMENT convert
 from the Amendment's first decision. What shipped:
@@ -45,15 +49,104 @@ from the Amendment's first decision. What shipped:
   one-invoice selection). Both land on `/scm/incoming?shipment=<shipment_number>` on
   success (human-readable number in the URL, never the id) - `IncomingContainersView` reads
   the param once and pre-selects the matching row.
-- NOT built (the next slice): the "Create SPO" action off the shipment, and reconciling a
-  REAL packing-list upload onto this exact draft shipment row (today a later
+- NOT built at the time: the "Create SPO" action off the shipment, and reconciling a REAL
+  packing-list upload onto this exact draft shipment row (today a later
   `/scm/packing-lists/apply` for the same container creates its own shipment unless it
   happens to share a shipment/container number - the draft's `shipment_number` is its own
   `SHIP-DRAFT-...` series precisely so it never COLLIDES with a real upload's derived
-  number, but nothing yet makes the two MERGE). That merge is unstarted work for whoever
-  picks up the SPO half.
+  number, but nothing yet makes the two MERGE). That merge is STILL unstarted (see below).
 
-Implementation session for the remainder (Create SPO) starts here.
+**Second half BUILT, 21 Aug 2026 - "Create SPO" off a shipment.** What shipped:
+
+- `GET /api/v1/scm/inbound-shipments/{shipment_id}/spo-suggestion` (permission
+  `scm.dashboard.view`) - per shipment line: the PACKED quantity (`quantity_shipped`, the
+  Amendment's own correction - never the PI's invoiced figure), what an OPEN purchase order
+  to the SAME supplier already covers (matched by `product_id`; a `po_ref` stated on the PI
+  line(s) this shipment line came from PINS the match to that one document - the plan's "the
+  stated ref outranks inference" - via the `proforma_invoice_shipment_link` table migration
+  405 added; a shipment with no PI provenance at all, i.e. a real packing-list upload,
+  simply has none and falls back to plain product matching), and on hand + incoming SPO
+  company-wide (the same `scm.net_position_v` figures `container_request_service` reads).
+  `suggested_qty = packed - po_covered - on_hand - incoming_spo`, floored at 0, editable. A
+  line with nothing left to ask for reads `covered: true` (unticked by default, `reason`
+  says why); a line with no supplier recorded (the n8n PDF path) reads `cannot_convert:
+  true` and cannot be selected at all. `already_converted: true` + `existing_spos` when this
+  shipment already has SPOs from a prior run - `lines` is empty and the caller shows the
+  existing SPOs instead of a confirm screen.
+- `POST /api/v1/scm/inbound-shipments/{shipment_id}/spo` (permission `scm.reorder.run`,
+  same as the packing-list apply and PI-convert writes) - body
+  `{lines: [{shipment_line_id, qty, include}]}`, EVERY shipment line, ticked or not (the
+  "read view and write view share a structure" rule applied to a confirm screen: a line the
+  buyer left unticked still needs to be accounted for in the one action, not silently
+  dropped). Writes ONE `purchase_orders` header **per supplier** represented on the
+  shipment - a container is routinely several factories' goods, and AutoCount POs are per
+  supplier too - status `active`, `purchase_order_lines.line_status = 'open'`, so a CRM SPO
+  counts as incoming/ordered the moment it exists, per the original decision. Number series:
+  `NumberingService` doc_type `purchase_order_crm_spo`, prefix `CRM-SPO-...` (or a random
+  `CRM-SPO-<hex8>` fallback when no rule is configured) - distinct from every AutoCount
+  pattern (`######-S####`, `SPO-####/##-####`) AND from the CRM's own canonical
+  `PO-{year}/{month}-####` series (`decision_service`), so an AutoCount import can never
+  collide with a number this action minted.
+  - **Source marker: `crm_spo`** (`spo_conversion_service.SOURCE_SYSTEM`), on both
+    `purchase_orders.source_system` and `purchase_order_lines.source_system`. Every consumer
+    that reads `source_system` was checked before picking it: `scm.po_ordered_v` /
+    `scm.on_order_v` (migration 337) carry NO source predicate at all - only status/line
+    status - so a `crm_spo` row is admitted identically to an AutoCount row (see the
+    visibility answer below); `outstanding_import_service`'s "never revive a HISTORY line"
+    guard keys off `history_sources.HISTORY_SOURCE_SYSTEMS`, which `crm_spo` is correctly
+    NOT a member of (a CRM SPO is a live open line, never history); `purchase_order_service.
+    _source_label` now maps it to `"crm"` (FE: "Created in CRM", `PurchaseOrderDetail.tsx`'s
+    `SOURCE_LABELS`) so the PO detail page names it honestly rather than folding it into
+    "Manual" (nobody keyed it by hand) or "Imported history" (it did not come from
+    AutoCount).
+  - **Provenance:** `scm.shipment_line_spo_link` (migration 406), one row per shipment line
+    "Create SPO" touched - pointing at the new SPO line, or carrying `unmatched_reason`
+    ("Already covered...", "No supplier recorded...", "Not selected.") - the same shape
+    `proforma_invoice_shipment_link` uses. The PI -> SPO trail the journey describes is the
+    COMPOSITION of the two link tables (PI line -> shipment line -> SPO line), exactly as
+    the Amendment specified; nothing merges them into one row.
+  - **Idempotency:** ANY existing link row for a shipment refuses a second "Create SPO"
+    with a 409 naming the SPO(s) already made - never a silent double.
+  - **Draft shipments convert too** (guard #5's explicit allowance): the FE copy says so
+    plainly ("Draft shipment - based on this draft's own packed quantities, not a real
+    packing list yet") so nobody reads a draft-based SPO as sized off a real container.
+- **`scm.po_ordered_v` / `scm.on_order_v` visibility, decided and verified:** a CRM SPO
+  line is admitted to `po_ordered_v` ("ordered") IMMEDIATELY - that view has no
+  `source_system` predicate, only `status IN (active, received, partial, closed)` AND
+  `line_status = 'open'`, both of which `create()` sets - proven by a smoke run reading the
+  view straight after `create()` (100 = 40 pre-existing PO + 60 new CRM SPO, for one
+  product). It is DELIBERATELY NOT admitted to `on_order_v` - that view reads exclusively
+  from `spo_allocations`, which is a separate, later, explicit WAREHOUSE decision
+  (`allocation_suggestion_service.approve` / `SPOAllocationService.create_allocation`) this
+  action does not take on the buyer's behalf. This mirrors the codebase's own existing
+  precedent exactly: `po_history_service`'s SPO-history rows are "deliberately NOT written
+  to `spo_allocations`" for the identical reason. So a fresh CRM SPO shows as ORDERED
+  everywhere immediately (reorder netting's own `outstanding_po` context, the PO book, the
+  container request's `outstanding_po` column) and becomes INCOMING supply only once
+  somebody allocates it to a warehouse - same as any other SPO, CRM-made or AutoCount-made.
+- **The AutoCount handoff worksheet:** `GET /api/v1/scm/inbound-shipments/{id}/
+  spo-worksheet/export` (`.xlsx`, same `openpyxl` pattern as `consolidated_packing_list`'s
+  export) - one sheet, per-supplier rows of model/description/qty/unit cost/currency plus
+  the CRM SPO number for reference during reconciliation. 404 until "Create SPO" has
+  actually run on the shipment - there is nothing to hand off before that.
+- **Reconciliation** (the next AutoCount book import matching a CRM SPO by number) is
+  explicitly OUT OF SCOPE, as this plan's design notes said - the worksheet is the handoff,
+  the office keys it in by hand, and a future importer would need to decide the match key
+  (this plan's own open question, never answered: number vs supplier+date+lines). Not
+  extended here.
+- FE: a "Create SPO" panel on `/scm/incoming` (`CreateSpoPanel.tsx`), always rendered
+  beside the packing list and allocation panels once a shipment is selected - line-grain,
+  pre-checked, editable qty, covered/unmatched lines visible and explained, same "panel not
+  modal" convention the page already uses for `AllocationPanel`. On success: toast naming
+  the created SPO number(s); "Download worksheet" becomes available once a shipment has
+  been converted (`already_converted: true` swaps the confirm screen for the existing-SPO
+  chips + the download button). No UUIDs in the UI - only `po_number` / `item_code` /
+  `supplier_name` ever render.
+- **STILL NOT built** - flagged again for whoever picks this domain back up: reconciling a
+  REAL packing-list upload onto an existing DRAFT shipment row (the merge named above,
+  unstarted since the first half); and any price-variance ALERTING between the PI/packing-
+  list cost and a matched PO's cost (out of scope per the original design notes - the two
+  prices are shown side by side on the suggestion, no gate).
 
 **Serves:** the proforma UAC's own named "next task" (the PI-vs-PO verification screen this
 plan absorbs) - `scm-proforma-invoice-acceptance-criteria.md`. Depends on the proforma FE

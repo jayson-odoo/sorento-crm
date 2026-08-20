@@ -38,6 +38,7 @@ from app.services.scm import (
     consolidated_packing_list,
     loading_plan_service,
     packing_list_service,
+    spo_conversion_service,
     supplier_inventory_service,
     supplier_notice_service,
 )
@@ -494,6 +495,18 @@ class AllocationApproval(BaseModel):
     decisions: list[AllocationDecision] = Field(..., min_length=1)
 
 
+class SpoLineConfirm(BaseModel):
+    shipment_line_id: str
+    qty: float = Field(0, ge=0)
+    include: bool = False
+
+
+class SpoCreateRequest(BaseModel):
+    lines: list[SpoLineConfirm] = Field(
+        ..., min_length=1, description="Every line on the shipment, ticked or not"
+    )
+
+
 @router.post("/packing-lists/preview")
 async def preview_packing_list(
     file: UploadFile = File(..., description="The pre-load list or packing list"),
@@ -738,3 +751,56 @@ def approve_allocations(
     )
     db.commit()
     return out
+
+
+@router.get("/inbound-shipments/{shipment_id}/spo-suggestion")
+def spo_suggestion(
+    shipment_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """"Create SPO" screen: per shipment line, the suggested SPO quantity - packed, minus
+    what an open PO already covers, minus stock/incoming - and why a line is covered or
+    cannot convert. `already_converted: true` when this shipment already has SPOs (409 on
+    the write below); the caller shows the existing SPOs instead of the confirm screen.
+    """
+    return spo_conversion_service.suggest(db, shipment_id)
+
+
+@router.post("/inbound-shipments/{shipment_id}/spo", status_code=status.HTTP_201_CREATED)
+def create_spo(
+    shipment_id: str,
+    body: SpoCreateRequest,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """One CRM SPO per supplier represented on this shipment, from the confirmed lines.
+
+    Refused (409) if this shipment already has one - re-running "Create SPO" must not
+    double what the office is asked to key into AutoCount.
+    """
+    out = spo_conversion_service.create(
+        db,
+        shipment_id,
+        [ln.model_dump() for ln in body.lines],
+        actor=_actor(current_user),
+    )
+    db.commit()
+    return out
+
+
+@router.get("/inbound-shipments/{shipment_id}/spo-worksheet/export")
+def export_spo_worksheet(
+    shipment_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The AutoCount handoff: exactly what to key, per supplier. 404 until "Create SPO" has
+    actually run on this shipment."""
+    payload = spo_conversion_service.worksheet_payload(db, shipment_id)
+    filename = spo_conversion_service.export_filename(payload)
+    return Response(
+        content=spo_conversion_service.to_xlsx(payload),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

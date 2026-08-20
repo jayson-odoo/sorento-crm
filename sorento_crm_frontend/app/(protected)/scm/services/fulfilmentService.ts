@@ -810,3 +810,119 @@ export async function downloadPackingListExport(
     `${fallbackName || 'container'}-packing-list.xlsx`;
   saveBlobAs(await res.blob(), filename);
 }
+
+/**
+ * "Create SPO" - the shipment's uncovered lines become a real CRM purchase order
+ * (`PLAN-scm-proforma-to-spo.md`'s Amendment, second decision: "Separate button after
+ * packing-list apply"). The BASE quantity is the PACKED figure (`quantity_shipped`), never
+ * the PI's invoiced one.
+ *
+ * ── BACKEND CONTRACT (app/api/v1/scm/fulfilment.py) ─────────────────────────
+ *  GET  /api/v1/scm/inbound-shipments/{id}/spo-suggestion -> 200 SpoSuggestion. Auth:
+ *       `scm.dashboard.view`. `already_converted: true` when this shipment already has
+ *       SPOs from a prior run - `lines` is empty and `existing_spos` names them instead.
+ *  POST /api/v1/scm/inbound-shipments/{id}/spo -> 201 SpoCreateResult. Body:
+ *       { lines: [{shipment_line_id, qty, include}] } - EVERY line on the shipment, ticked
+ *       or not. 409 when this shipment was already converted (names the existing SPOs).
+ *       Auth: `scm.reorder.run` (a PO-book write, same permission the packing-list apply
+ *       and PI-convert paths use).
+ *  GET  /api/v1/scm/inbound-shipments/{id}/spo-worksheet/export -> 200 .xlsx bytes. The
+ *       AutoCount handoff - what to key, per supplier. 404 until "Create SPO" has run.
+ *
+ * One SPO per SUPPLIER represented on the shipment - a container is routinely several
+ * factories, and AutoCount POs are per supplier too. A line with no supplier recorded
+ * (the n8n PDF path) cannot convert; a line already covered by an open PO or by stock
+ * reads as covered, unticked by default, one line saying why.
+ */
+export type SpoMatchedBy = 'po_ref' | 'product' | null;
+
+export interface SpoSuggestionLine {
+  shipment_line_id: string;
+  product_id: string;
+  item_code: string | null;
+  product_name: string | null;
+  supplier_id: string | null;
+  supplier_name: string | null;
+  packed_qty: number;
+  po_covered_qty: number;
+  matched_po_number: string | null;
+  matched_by: SpoMatchedBy;
+  on_hand: number;
+  incoming_spo: number;
+  /** `packed - po_covered_qty - on_hand - incoming_spo`, floored at 0 - editable. */
+  suggested_qty: number;
+  /** Nothing left to ask for on this line - shown, unticked by default. */
+  covered: boolean;
+  /** No supplier recorded on this shipment line - cannot become an SPO line at all. */
+  cannot_convert: boolean;
+  /** Why a line is `covered` or `cannot_convert`. Null on a line that needs an SPO. */
+  reason: string | null;
+  unit_cost: number | null;
+  currency: string | null;
+}
+
+export interface SpoRef {
+  purchase_order_id: string;
+  po_number: string | null;
+  supplier_id: string | null;
+  supplier_name: string | null;
+}
+
+export interface SpoSuggestion {
+  shipment_id: string;
+  shipment_number: string | null;
+  shipment_status: string | null;
+  /** True when this shipment already has SPOs from a prior "Create SPO" - `lines` is empty
+   *  and the caller shows `existing_spos` instead of a confirm screen. */
+  already_converted: boolean;
+  existing_spos: SpoRef[];
+  lines: SpoSuggestionLine[];
+}
+
+export interface SpoConfirmLine {
+  shipment_line_id: string;
+  qty: number;
+  include: boolean;
+}
+
+export interface CreatedSpo extends SpoRef {
+  currency: string | null;
+  lines: number;
+  qty: number;
+}
+
+export interface SpoCreateResult {
+  shipment_id: string;
+  shipment_number: string | null;
+  created_spos: CreatedSpo[];
+  skipped: { shipment_line_id: string; item_code: string | null; reason: string }[];
+}
+
+export async function getSpoSuggestion(shipmentId: string): Promise<SpoSuggestion> {
+  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/spo-suggestion`);
+  return readJson<SpoSuggestion>(res, 'Failed to work out what this container still needs an SPO for');
+}
+
+export async function createSpo(
+  shipmentId: string,
+  lines: SpoConfirmLine[],
+): Promise<SpoCreateResult> {
+  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/spo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lines }),
+  });
+  return readJson<SpoCreateResult>(res, 'Failed to create the SPO');
+}
+
+export async function downloadSpoWorksheet(
+  shipmentId: string,
+  fallbackName?: string | null,
+): Promise<void> {
+  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/spo-worksheet/export`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to export the SPO worksheet'));
+  const filename =
+    filenameFromContentDisposition(res.headers.get('Content-Disposition')) ??
+    `${fallbackName || 'container'}-spo-worksheet.xlsx`;
+  saveBlobAs(await res.blob(), filename);
+}

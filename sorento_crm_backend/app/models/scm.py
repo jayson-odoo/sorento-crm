@@ -1408,3 +1408,54 @@ class ProformaInvoiceShipmentLink(Base, CompanyScopedMixin):
         Index("uq_scm_pi_shipment_link_line", "proforma_invoice_line_id", unique=True),
         {"schema": "scm"},
     )
+
+
+class ShipmentLineSpoLink(Base, CompanyScopedMixin):
+    """Where a shipment line's demand actually went: the CRM SPO line "Create SPO" made for
+    it, or why it made none (`PLAN-scm-proforma-to-spo.md`'s "Separate button after
+    packing-list apply" decision, 20 Aug evening).
+
+    Completes the trail the Amendment describes as two links composed - PI line -> shipment
+    line (`ProformaInvoiceShipmentLink`, migration 405) and shipment line -> SPO line (this
+    table). A shipment line reached from a real packing-list upload with no PI behind it at
+    all still gets a row here; the PI half of the trail is simply absent for it.
+
+    One row per shipment line "Create SPO" touched - matched (points at the new SPO
+    line) or skipped, with `unmatched_reason` naming why (already covered by an open PO,
+    covered by stock, no supplier on the line, or simply left unticked). Existence of ANY
+    row for a shipment is what makes a second "Create SPO" on it refused rather than
+    silently doubling what the office is asked to key into AutoCount - the same idempotency
+    shape `ProformaInvoiceShipmentLink` uses for the PI convert.
+    """
+    __tablename__ = "shipment_line_spo_link"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    inbound_shipment_id = Column(
+        UUID(as_uuid=False), ForeignKey("inbound_shipments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    inbound_shipment_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("inbound_shipment_lines.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    purchase_order_id = Column(
+        UUID(as_uuid=False), ForeignKey("purchase_orders.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    purchase_order_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("purchase_order_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    #: Why this line has no `purchase_order_line_id` - e.g. "Already covered by PO-...", "No
+    #: supplier recorded on this line", "Not selected". Null on a real link.
+    unmatched_reason = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_scm_shipment_spo_link_shipment", "inbound_shipment_id"),
+        Index("ix_scm_shipment_spo_link_po", "purchase_order_id"),
+        # One conversion outcome per shipment line, ever - what makes a second "Create SPO"
+        # attempt on an already-converted shipment detectable rather than a silent duplicate.
+        Index("uq_scm_shipment_spo_link_line", "inbound_shipment_line_id", unique=True),
+        {"schema": "scm"},
+    )

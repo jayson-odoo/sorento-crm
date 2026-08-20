@@ -33,6 +33,7 @@ from app.models.product import Product
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 from app.services.scm.history_sources import PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE
+from app.services.scm.spo_conversion_service import SOURCE_SYSTEM as CRM_SPO_SOURCE
 
 # Mirror of ``scm.on_order_v``'s status filter (M4-D5/D6): a PO counts as incoming
 # supply only in these statuses AND while it still has an unreceived OPEN line.
@@ -55,6 +56,8 @@ _IMPORT_SOURCES = (PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE)
 def _source_label(source_system: Optional[str]) -> str:
     if source_system == _REC_SOURCE:
         return "recommendation"
+    if source_system == CRM_SPO_SOURCE:
+        return "crm"
     if source_system in _IMPORT_SOURCES:
         return "import"
     return "manual"

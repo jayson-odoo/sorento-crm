@@ -13,11 +13,13 @@ import { getIncomingShipments, type IncomingShipment } from '../../services/fulf
 import { PackingListUploadDialog } from './PackingListUploadDialog';
 import { ConsolidatedPackingListPanel } from './ConsolidatedPackingListPanel';
 import { AllocationPanel } from './AllocationPanel';
+import { CreateSpoPanel } from './CreateSpoPanel';
 
 /**
- * Ms Tee's steps four and five: read the packing list, then decide what each container draws
- * down. Two panels rather than two pages, because the second is only ever reached from the
- * first and a page transition between them would lose which container she was looking at.
+ * Ms Tee's steps four, five and the "Create SPO" hand-off: read the packing list, decide what
+ * still needs an SPO, then what each container draws down. Panels rather than pages, because
+ * each is only ever reached from the container list and a page transition between them would
+ * lose which container she was looking at.
  */
 
 export function IncomingContainersView() {
@@ -135,6 +137,8 @@ export function IncomingContainersView() {
       )}
 
       <ConsolidatedPackingListPanel shipmentId={selected} />
+
+      {selected ? <CreateSpoPanel shipmentId={selected} /> : null}
 
       {selected ? <AllocationPanel shipmentId={selected} /> : null}
 

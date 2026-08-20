@@ -49,6 +49,7 @@ const statusBadge = (s: string): BadgeDef =>
 const SOURCE_LABELS: Record<NonNullable<PurchaseOrder['source']>, string> = {
   recommendation: 'Reorder recommendation',
   import: 'Imported history',
+  crm: 'Created in CRM',
   manual: 'Manual',
 };
 

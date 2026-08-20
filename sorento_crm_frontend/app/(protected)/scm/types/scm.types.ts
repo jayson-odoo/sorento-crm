@@ -428,8 +428,9 @@ export interface PurchaseOrder {
   is_on_order?: boolean;
   /** How the PO originated - `recommendation` = drafted from an accepted reorder
    *  recommendation (Slice B); `import` = arrived through the purchase-history upload;
+   *  `crm` = created by "Create SPO" off an inbound shipment (PLAN-scm-proforma-to-spo.md);
    *  `manual` = created directly. */
-  source?: 'recommendation' | 'import' | 'manual';
+  source?: 'recommendation' | 'import' | 'crm' | 'manual';
   /** Goods-receipt reference once a GR has been created from this PO (M4-D6). */
   gr_reference?: string | null;
 }
