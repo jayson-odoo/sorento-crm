@@ -211,6 +211,15 @@ class InboundShipment(Base, CompanyScopedMixin):
         Index("ix_inbound_shipments_container_number", "shipping_container_number"),
         # "Which containers are still open" drives the tracking poll (~77/day).
         Index("ix_inbound_shipments_eta_delay_date", "eta_delay_date"),
+        # No `CheckConstraint` here on purpose, even though one exists on the shared
+        # local/prod database (`inbound_shipments_shipment_status_check`, added outside any
+        # migration in this repo - see `coverage_service.py`'s note). Several existing
+        # `blank_session()` tests drive this column through values that constraint would
+        # reject (`completed`, `partial_received` - dead aliases per that same note); adding
+        # it here would make those pre-existing tests fail against a `create_all` schema for
+        # a reason unrelated to what they are testing. Migration 405 still extends the LIVE
+        # constraint with `draft`; this column's vocabulary just is not additionally
+        # enforced on a scratch schema.
     )
 
 

@@ -17,10 +17,11 @@ forget - a raw supplier SELECT written here would have bypassed the ORM's filter
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, Query, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -35,6 +36,20 @@ router = APIRouter()
 # by migration 375.
 _UPLOAD = require_permission("scm.proforma_invoice.upload")
 _READ = require_permission("scm.dashboard.view")
+# The convert action WRITES an inbound shipment, so it sits behind the same permission the
+# packing-list channel's own writes use (`fulfilment.py`'s `_WRITE`), not the proforma
+# upload permission - it is a shipment write that happens to be triggered from this screen.
+_SHIPMENT_WRITE = require_permission("scm.reorder.run")
+
+
+class ConvertToDraftShipmentRequest(BaseModel):
+    proforma_invoice_ids: List[str] = Field(
+        ..., min_length=1, description="One or more proforma invoices to draft into one shipment."
+    )
+
+
+class BulkDeleteRequest(BaseModel):
+    ids: List[str] = Field(default_factory=list)
 
 
 def _actor(user: Optional[dict]) -> Optional[str]:
@@ -100,6 +115,40 @@ async def apply_proforma_invoice(
         source_ref=file.filename,
         actor=_actor(current_user),
     )
+    db.commit()
+    return out
+
+
+@router.post("/proforma-invoices/convert-to-draft-shipment", status_code=status.HTTP_201_CREATED)
+def convert_proforma_invoices_to_draft_shipment(
+    payload: ConvertToDraftShipmentRequest = Body(...),
+    current_user: dict = Depends(_SHIPMENT_WRITE),
+    db: Session = Depends(get_db),
+):
+    """One or more proforma invoices become one DRAFT inbound shipment (`/scm/incoming`).
+
+    A container is routinely several factories' PIs landing in the same box, so more than
+    one invoice - from different suppliers - is not a mistake; every shipment line still
+    carries its own supplier. The real packing list, when it arrives, is uploaded through
+    the existing `/scm/packing-lists/apply` path, unchanged by this action.
+    """
+    out = proforma_invoice_service.convert_to_draft_shipment(
+        db, payload.proforma_invoice_ids, created_by=(current_user or {}).get("id")
+    )
+    db.commit()
+    return out
+
+
+@router.post("/proforma-invoices/bulk-delete")
+def bulk_delete_proforma_invoices(
+    payload: BulkDeleteRequest = Body(...),
+    _user: dict = Depends(_UPLOAD),
+    db: Session = Depends(get_db),
+):
+    """Hard delete several proforma invoices at once. A PI already converted to a draft
+    shipment is refused, not silently skipped - the response names which ones and why.
+    """
+    out = proforma_invoice_service.bulk_delete(db, payload.ids)
     db.commit()
     return out
 

@@ -1354,3 +1354,57 @@ class ProformaInvoiceLine(Base, CompanyScopedMixin):
         Index("ix_scm_proforma_invoice_line_po_ref", "po_ref"),
         {"schema": "scm"},
     )
+
+
+class ProformaInvoiceShipmentLink(Base, CompanyScopedMixin):
+    """Where a proforma invoice line's goods actually went: the draft inbound shipment line
+    created from it (the packing-list amendment, 20 Aug evening -
+    `PLAN-scm-proforma-to-spo.md`).
+
+    One row per PI line that the convert action touched. A link table rather than a column on
+    `ProformaInvoiceLine`, because the later reconciliation against the REAL packing list can
+    split one PI line's quantity across more than one shipment line - the same reason the next
+    slice's PI-line -> SPO-line trail is also planned as a link table, not a column.
+
+    `inbound_shipment_line_id` is nullable for the row that records a SKIP rather than a link:
+    a PI line with no catalogue product match still needs its story told on the PI detail page
+    ("where did this line go"), and `unmatched_reason` is that story. `inbound_shipment_id`
+    is carried on every row (matched or skipped) so "which shipment did this PI convert into"
+    answers without a null-line join.
+
+    Existence of ANY row for a PI is what makes a second convert of the same PI idempotent -
+    the service refuses it, naming the shipment this row already points at, rather than
+    creating a second draft silently.
+    """
+    __tablename__ = "proforma_invoice_shipment_link"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    proforma_invoice_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.proforma_invoice.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    proforma_invoice_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.proforma_invoice_line.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    inbound_shipment_id = Column(
+        UUID(as_uuid=False), ForeignKey("inbound_shipments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    inbound_shipment_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("inbound_shipment_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    #: Why this line has no `inbound_shipment_line_id` - e.g. "no catalogue product match".
+    #: Null on a real link.
+    unmatched_reason = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_scm_pi_shipment_link_invoice", "proforma_invoice_id"),
+        Index("ix_scm_pi_shipment_link_shipment", "inbound_shipment_id"),
+        # One conversion outcome per PI line, ever - this is what makes a second convert
+        # attempt on an already-converted PI detectable rather than a silent duplicate.
+        Index("uq_scm_pi_shipment_link_line", "proforma_invoice_line_id", unique=True),
+        {"schema": "scm"},
+    )

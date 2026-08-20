@@ -2,49 +2,80 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { FileText, Trash2, Upload } from 'lucide-react';
+import { toast } from 'sonner';
+import { FileText, LoaderCircle, Trash2, Upload } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useFulfilmentSuppliers } from '../../hooks/useFulfilment';
-import { useDeleteProformaInvoice, useProformaInvoices } from '../../hooks/useProformaInvoices';
+import {
+  useBulkDeleteProformaInvoices,
+  useConvertProformaInvoicesToDraftShipment,
+  useDeleteProformaInvoice,
+  useProformaInvoices,
+} from '../../hooks/useProformaInvoices';
+import { BulkActionsMenu } from '../../components/BulkActionsMenu';
 import type { ProformaInvoiceListRow } from '../../services/proformaInvoiceService';
 import { EM_DASH, fmtDate, fmtInt, fmtSupplierCost } from '../../lib/format';
 import { ProformaUploadDialog } from './ProformaUploadDialog';
+import { buildProformaBulkActions } from '../lib/proformaBulkActions';
 
 /**
  * What is on file per supplier: the priced document the loading plan and the eventual
  * PI-vs-PO check both read from. Upload writes it; nothing here edits a line once it has
  * landed - a proforma is the supplier's document, and the correction path is re-upload
  * (updates in place, AC-P1.4) or delete.
+ *
+ * Two bulk actions share ONE selection (the captain's ask): "Convert N to draft shipment"
+ * drafts one inbound shipment from every selected invoice, any suppliers - a container is
+ * routinely several factories' PIs, so multi-select is the natural pick-more-than-one
+ * surface for it. "Delete N" hard-deletes, refusing (named, not silently skipped) any
+ * invoice already converted - same shape as the PO book's bulk delete.
  */
 
 const UPLOAD_PERMISSION = 'scm.proforma_invoice.upload';
+const CONVERT_PERMISSION = 'scm.reorder.run';
 
 export function ProformaInvoicesView() {
+  const router = useRouter();
   const suppliers = useFulfilmentSuppliers();
   const canUpload = useHasPermission(UPLOAD_PERMISSION);
+  const canConvert = useHasPermission(CONVERT_PERMISSION);
   const [supplierId, setSupplierId] = useState<string | null>(null);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [uploadOpen, setUploadOpen] = useState(false);
   const [deleteRow, setDeleteRow] = useState<ProformaInvoiceListRow | null>(null);
+  const [bulkDeleteIds, setBulkDeleteIds] = useState<string[] | null>(null);
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
+    setRowSelection({});
   }, [supplierId]);
 
   const { data, isLoading } = useProformaInvoices(supplierId, {
@@ -52,11 +83,16 @@ export function ProformaInvoicesView() {
     offset: pagination.pageIndex * pagination.pageSize,
   });
   const deleteInvoice = useDeleteProformaInvoice();
+  const convertToDraftShipment = useConvertProformaInvoicesToDraftShipment();
+  const bulkDeleteInvoices = useBulkDeleteProformaInvoices();
 
   const rows = useMemo<ProformaInvoiceListRow[]>(() => data?.data ?? [], [data]);
 
   const columns = useMemo<ColumnDef<ProformaInvoiceListRow>[]>(
     () => [
+      buildSelectColumn<ProformaInvoiceListRow>({
+        rowLabel: (row) => `Select ${row.original.pi_number}`,
+      }),
       {
         accessorKey: 'pi_number',
         header: ({ column }) => <DataGridColumnHeader title="PI number" column={column} />,
@@ -196,12 +232,69 @@ export function ProformaInvoicesView() {
     data: rows,
     pageCount: Math.ceil(total / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination },
+    state: { pagination, rowSelection },
     onPaginationChange: setPagination,
+    onRowSelectionChange: setRowSelection,
+    enableRowSelection: true,
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
+  });
+
+  const selectedIds = table.getSelectedRowModel().rows.map((r) => r.original.id);
+
+  const runConvert = async () => {
+    if (!selectedIds.length) return;
+    try {
+      const result = await convertToDraftShipment.mutateAsync(selectedIds);
+      table.resetRowSelection();
+      const skippedMsg =
+        result.lines_skipped > 0
+          ? ` (${result.lines_skipped} line${result.lines_skipped === 1 ? '' : 's'} could not be matched to a product and were skipped)`
+          : '';
+      toast.success(
+        `Draft shipment ${result.shipment_number ?? ''} created with ${result.lines_created} line${
+          result.lines_created === 1 ? '' : 's'
+        }${skippedMsg}`,
+      );
+      router.push(
+        result.shipment_number
+          ? `/scm/incoming?shipment=${encodeURIComponent(result.shipment_number)}`
+          : '/scm/incoming',
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to draft a shipment');
+    }
+  };
+
+  const runBulkDelete = async () => {
+    if (!bulkDeleteIds) return;
+    try {
+      const res = await bulkDeleteInvoices.mutateAsync(bulkDeleteIds);
+      table.resetRowSelection();
+      const deletedMsg = `Deleted ${res.deleted} proforma invoice${res.deleted === 1 ? '' : 's'}`;
+      if (res.blocked.length > 0) {
+        const names = res.blocked
+          .map((b) => `${b.pi_number} (already converted to ${b.shipment_number ?? 'a shipment'})`)
+          .join(', ');
+        toast.error(`${deletedMsg} - could not delete: ${names}`);
+      } else {
+        toast.success(deletedMsg);
+      }
+      setBulkDeleteIds(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete proforma invoices');
+    }
+  };
+
+  const bulkActions = buildProformaBulkActions(
+    { selectedCount: selectedIds.length },
+    { onConvert: runConvert, onDelete: () => setBulkDeleteIds(selectedIds) },
+  ).filter((a) => {
+    if (a.key === 'bulk-convert') return canConvert;
+    if (a.key === 'bulk-delete') return canUpload;
+    return true;
   });
 
   return (
@@ -230,12 +323,22 @@ export function ProformaInvoicesView() {
                   clearable
                 />
               </div>
-              {canUpload ? (
-                <Button onClick={() => setUploadOpen(true)}>
-                  <Upload className="size-4" />
-                  Upload proforma invoice
-                </Button>
-              ) : null}
+              <div className="flex flex-wrap items-center gap-2">
+                {selectedIds.length > 0 ? (
+                  <>
+                    <span className="text-xs text-muted-foreground">
+                      {fmtInt(selectedIds.length)} selected
+                    </span>
+                    <BulkActionsMenu actions={bulkActions} />
+                  </>
+                ) : null}
+                {canUpload ? (
+                  <Button onClick={() => setUploadOpen(true)}>
+                    <Upload className="size-4" />
+                    Upload proforma invoice
+                  </Button>
+                ) : null}
+              </div>
             </div>
           </CardHeader>
           {!isLoading && rows.length === 0 ? (
@@ -288,6 +391,43 @@ export function ProformaInvoicesView() {
         }}
         successMessage="Proforma invoice deleted."
       />
+
+      {/* Bulk delete - AlertDialog + destructive button per ADR-PRODUCT-STANDARDS, same
+          shape as the PO book's bulk delete. Reports which invoices were BLOCKED (already
+          converted to a draft shipment) rather than silently deleting only some. */}
+      <AlertDialog open={!!bulkDeleteIds} onOpenChange={(o) => !o && setBulkDeleteIds(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm delete</AlertDialogTitle>
+            <AlertDialogDescription>
+              {bulkDeleteIds
+                ? `Delete ${fmtInt(bulkDeleteIds.length)} proforma invoice${
+                    bulkDeleteIds.length === 1 ? '' : 's'
+                  }? This action cannot be undone.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setBulkDeleteIds(null)}
+              disabled={bulkDeleteInvoices.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={runBulkDelete}
+              disabled={bulkDeleteInvoices.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {bulkDeleteInvoices.isPending ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : null}
+              Delete
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

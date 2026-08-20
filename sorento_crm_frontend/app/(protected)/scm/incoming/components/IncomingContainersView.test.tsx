@@ -26,6 +26,10 @@ if (!window.matchMedia) {
   });
 }
 
+vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: ({
     value,

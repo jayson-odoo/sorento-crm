@@ -31,6 +31,20 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => true,
+}));
+
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/scm/proforma-invoices/pi-1',
+  useRouter: () => ({ push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
+
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
 const state = {
   data: undefined as ProformaInvoiceDetailData | undefined,
   isLoading: false,
@@ -43,6 +57,10 @@ vi.mock('../../../hooks/useProformaInvoices', () => ({
   // row is not enough to show a pager (see RecordNavigation's `items.length < 2` guard), so
   // it stays hidden and out of these tests' way without a dedicated navigation test.
   useProformaInvoices: () => ({ data: undefined, isLoading: false }),
+  useConvertProformaInvoicesToDraftShipment: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
 }));
 
 import { ProformaInvoiceDetail } from './ProformaInvoiceDetail';
@@ -80,8 +98,12 @@ function detail(over: Partial<ProformaInvoiceDetailData> = {}): ProformaInvoiceD
         remark: null,
         product_code: 'ITEM-1',
         matched: true,
+        shipment_id: null,
+        shipment_number: null,
+        unmatched_reason: null,
       },
     ],
+    converted_shipments: [],
     ...over,
   };
 }
@@ -134,6 +156,7 @@ describe('ProformaInvoiceDetail - loading / error / data states', () => {
           id: 'line-2', line_no: 2, row_number: 3, item_code: 'ZZ-NOPE',
           description: 'Unknown part', qty: 5, uom: 'PCS', unit_price: 20, amount: 100,
           po_ref: null, remark: null, product_code: null, matched: false,
+          shipment_id: null, shipment_number: null, unmatched_reason: null,
         },
       ],
     });

@@ -3,8 +3,57 @@
 **Status:** Journey + three shaping decisions approved by the captain, 20 Aug 2026 (live
 session, while testing the new proforma screen). AMENDED the same evening: the flow now
 bends through the packing list (see the Amendment section - it supersedes parts of the
-original decisions and journey below). NOT yet implemented - queued behind the
-20 Aug demo-follow-ups batch. Implementation session starts here.
+original decisions and journey below).
+
+**First half BUILT, 20 Aug 2026 (same evening):** the PI -> DRAFT INBOUND SHIPMENT convert
+from the Amendment's first decision. What shipped:
+
+- `POST /api/v1/scm/proforma-invoices/convert-to-draft-shipment` (body
+  `{proforma_invoice_ids: string[]}`, permission `scm.reorder.run` - the same one the
+  packing-list apply path writes under, not the proforma-upload permission). One or more
+  PIs, any suppliers, become ONE `inbound_shipments` row with `shipment_status = 'draft'`
+  (a new value in that column's vocabulary - migration 405 extends the live check
+  constraint; deliberately NOT declared on the SQLAlchemy model, so `blank_session()` tests
+  that already drive the column through dead legacy values keep passing - see the comment
+  at `InboundShipment.__table_args__`). Every shipment line carries its OWN `supplier_id`
+  from the PI it came from - the multi-supplier-per-container rule, migration 374 -
+  matching (product, supplier) PI lines across the selected invoices are merged onto one
+  shipment line (quantity summed, cost quantity-weighted-averaged), never onto the header.
+- Provenance: `scm.proforma_invoice_shipment_link` (one row per PI line touched by a
+  convert - unique on `proforma_invoice_line_id`), pointing at the shipment line it became,
+  or carrying `unmatched_reason` when the convert could not carry it across (no catalogue
+  product match, or no positive quantity - `inbound_shipment_lines.product_id` is NOT
+  NULL, so these are reported, never silently dropped). A partial match still creates the
+  shipment; only a selection with NOTHING convertible is refused (422).
+  `proforma_invoice_service.serialize()` reads this back as `converted_shipments` (header)
+  and per-line `shipment_id`/`shipment_number`/`unmatched_reason`, so a PI shows where each
+  line went from its own detail page.
+  - the packing-list -> SPO trail (next slice) is a SEPARATE link, per the Amendment's
+    "PI line -> shipment line (draft), and shipment line -> SPO line" composition - not
+    built by this slice.
+- Idempotency: a PI with ANY existing link row is refused with a 409 naming the invoice and
+  the shipment it already went to, rather than silently doubling what counts as incoming.
+  `bulk_delete` and the single `DELETE` both refuse (never cascade) a converted PI for the
+  same reason, naming the shipment.
+- Also folded into this pass (captain, same evening, same files): bulk delete on
+  `/scm/proforma-invoices`, mirroring the PO book's bulk delete (commit d6f048f3d) -
+  `POST /api/v1/scm/proforma-invoices/bulk-delete`, row-selection + one "Actions" dropdown
+  shared with Convert, AlertDialog confirmation naming the count.
+- FE: the "Convert to draft shipment" action lives on BOTH the proforma-invoices LIST
+  (multi-select via the shared select column + Actions dropdown - the natural surface for
+  picking more than one PI into one container) AND the single-PI detail page (same action,
+  one-invoice selection). Both land on `/scm/incoming?shipment=<shipment_number>` on
+  success (human-readable number in the URL, never the id) - `IncomingContainersView` reads
+  the param once and pre-selects the matching row.
+- NOT built (the next slice): the "Create SPO" action off the shipment, and reconciling a
+  REAL packing-list upload onto this exact draft shipment row (today a later
+  `/scm/packing-lists/apply` for the same container creates its own shipment unless it
+  happens to share a shipment/container number - the draft's `shipment_number` is its own
+  `SHIP-DRAFT-...` series precisely so it never COLLIDES with a real upload's derived
+  number, but nothing yet makes the two MERGE). That merge is unstarted work for whoever
+  picks up the SPO half.
+
+Implementation session for the remainder (Create SPO) starts here.
 
 **Serves:** the proforma UAC's own named "next task" (the PI-vs-PO verification screen this
 plan absorbs) - `scm-proforma-invoice-acceptance-criteria.md`. Depends on the proforma FE
@@ -34,8 +83,8 @@ Two shaping decisions (captain, same session):
 
 | Question | Decision |
 | --- | --- |
-| What does "convert PI to packing list" do? | **Draft shipment from PIs.** Pick one or more PIs -> the system creates a DRAFT inbound shipment (`/scm/incoming`) pre-filled with their lines. When the agent's real packing list arrives, it is uploaded onto the same shipment and replaces/reconciles the draft, showing PI-vs-packed differences. |
-| When is the SPO created? | **Separate button after packing-list apply.** The shipment page gets a "Create SPO" action she presses when ready. Suggestion logic as originally planned (match open PO lines by product / stated po_ref / delivery date, net on hand + incoming SPO), but the BASE quantity is the PACKED qty, not the invoice qty. |
+| What does "convert PI to packing list" do? | **Draft shipment from PIs.** Pick one or more PIs -> the system creates a DRAFT inbound shipment (`/scm/incoming`) pre-filled with their lines. When the agent's real packing list arrives, it is uploaded onto the same shipment and replaces/reconciles the draft, showing PI-vs-packed differences. **BUILT** (20 Aug evening, this session) - see the Status line at the top for the endpoint, the `draft` status, the provenance table and where the FE action lives. The "uploaded onto the SAME shipment" half is NOT built: a real packing-list upload today creates its OWN shipment unless it happens to share a number with the draft (the draft's `SHIP-DRAFT-...` series exists precisely so it never collides) - merging the two is unstarted, flagged for whoever builds the SPO half. |
+| When is the SPO created? | **Separate button after packing-list apply.** The shipment page gets a "Create SPO" action she presses when ready. Suggestion logic as originally planned (match open PO lines by product / stated po_ref / delivery date, net on hand + incoming SPO), but the BASE quantity is the PACKED qty, not the invoice qty. **NOT BUILT** - this is the remaining half of this plan. |
 
 Consequences for the sections below:
 
@@ -44,8 +93,9 @@ Consequences for the sections below:
   page to the inbound shipment page.
 - The original "Out of scope: auto-creating inbound shipments" is REVERSED - creating the
   draft shipment from PIs is exactly the convert function.
-- PI-line links now run PI line -> shipment line (draft), and shipment line -> SPO line;
-  the PI -> SPO trail is the composition of the two.
+- PI-line links now run PI line -> shipment line (draft) - BUILT, `scm.proforma_invoice_
+  shipment_link` - and shipment line -> SPO line - NOT BUILT, next slice; the PI -> SPO
+  trail is the composition of the two.
 
 ## Journey (original - screen placement superseded by the Amendment above)
 

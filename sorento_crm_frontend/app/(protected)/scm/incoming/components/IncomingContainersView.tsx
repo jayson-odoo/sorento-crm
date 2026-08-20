@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Boxes, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -35,6 +36,26 @@ export function IncomingContainersView() {
     refetchOnWindowFocus: false,
   });
   const imported = shipments.data ?? [];
+
+  // Landing here from a "Convert to draft shipment" / "Create SPO" hand-off carries the
+  // human-readable shipment NUMBER (never an id) as `?shipment=`, so the caller lands on
+  // it pre-selected rather than having to find it in the list again. Consumed once, the
+  // first time it matches a row - a later manual click must be free to change the
+  // selection without the param fighting it on the next render. Depends on `shipments.data`
+  // itself, not the `imported` fallback array - the latter is a fresh `[]` reference every
+  // render while data is still loading, which would otherwise re-run this effect forever.
+  const searchParams = useSearchParams();
+  const deepLinkedShipment = searchParams.get('shipment');
+  const consumedDeepLink = useRef(false);
+  useEffect(() => {
+    if (!deepLinkedShipment || consumedDeepLink.current) return;
+    const match = shipments.data?.find((s) => s.shipment_number === deepLinkedShipment);
+    if (match) {
+      setSelected(match.shipment_id);
+      consumedDeepLink.current = true;
+    }
+  }, [deepLinkedShipment, shipments.data]);
+
   // Whose lines the upload will become. The file itself never says, so the supplier chosen
   // here is the only answer, and an upload without one is refused by the server.
   const supplierName =

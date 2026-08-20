@@ -2,13 +2,15 @@
 
 import { useMemo } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   getCoreRowModel,
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { ArrowLeft, FileText } from 'lucide-react';
+import { toast } from 'sonner';
+import { ArrowLeft, Boxes, FileText } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardHeading, CardTable, CardTitle } from '@/components/ui/card';
@@ -17,10 +19,16 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useProformaInvoice } from '../../../hooks/useProformaInvoices';
+import { useHasPermission } from '@/hooks/usePermissions';
+import {
+  useConvertProformaInvoicesToDraftShipment,
+  useProformaInvoice,
+} from '../../../hooks/useProformaInvoices';
 import { EM_DASH, fmtDate, fmtQty, fmtSupplierCost } from '../../../lib/format';
 import type { ProformaInvoiceLine } from '../../../services/proformaInvoiceService';
 import ProformaInvoiceNavigation from '../../components/ProformaInvoiceNavigation';
+
+const CONVERT_PERMISSION = 'scm.reorder.run';
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -32,9 +40,34 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 export function ProformaInvoiceDetail({ id }: { id: string }) {
+  const router = useRouter();
+  const canConvert = useHasPermission(CONVERT_PERMISSION);
   const { data, isLoading, isError } = useProformaInvoice(id);
+  const convertToDraftShipment = useConvertProformaInvoicesToDraftShipment();
 
   const lines = useMemo<ProformaInvoiceLine[]>(() => data?.lines ?? [], [data]);
+
+  const runConvert = async () => {
+    try {
+      const result = await convertToDraftShipment.mutateAsync([id]);
+      const skippedMsg =
+        result.lines_skipped > 0
+          ? ` (${result.lines_skipped} line${result.lines_skipped === 1 ? '' : 's'} could not be matched to a product and were skipped)`
+          : '';
+      toast.success(
+        `Draft shipment ${result.shipment_number ?? ''} created with ${result.lines_created} line${
+          result.lines_created === 1 ? '' : 's'
+        }${skippedMsg}`,
+      );
+      router.push(
+        result.shipment_number
+          ? `/scm/incoming?shipment=${encodeURIComponent(result.shipment_number)}`
+          : '/scm/incoming',
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to draft a shipment');
+    }
+  };
 
   const columns = useMemo<ColumnDef<ProformaInvoiceLine>[]>(
     () => [
@@ -133,6 +166,35 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         size: 130,
         meta: { headerTitle: 'PO ref' },
       },
+      {
+        id: 'shipment',
+        header: ({ column }) => <DataGridColumnHeader title="Went to" column={column} />,
+        cell: ({ row }) => {
+          const line = row.original;
+          if (line.shipment_number) {
+            return (
+              <Link
+                href={`/scm/incoming?shipment=${encodeURIComponent(line.shipment_number)}`}
+                className="truncate font-medium text-primary hover:underline"
+                title={`Open shipment ${line.shipment_number}`}
+              >
+                {line.shipment_number}
+              </Link>
+            );
+          }
+          if (line.unmatched_reason) {
+            return (
+              <span className="truncate text-muted-foreground" title={line.unmatched_reason}>
+                {line.unmatched_reason}
+              </span>
+            );
+          }
+          return <span className="text-muted-foreground">{EM_DASH}</span>;
+        },
+        size: 170,
+        enableSorting: false,
+        meta: { headerTitle: 'Went to' },
+      },
     ],
     [data?.currency],
   );
@@ -193,6 +255,18 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
               {data.currency ? <Badge variant="secondary">{data.currency}</Badge> : null}
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {data.converted_shipments.length === 0 && canConvert ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={runConvert}
+                  disabled={convertToDraftShipment.isPending}
+                >
+                  <Boxes className="size-4" />
+                  Convert to draft shipment
+                </Button>
+              ) : null}
               <ProformaInvoiceNavigation invoiceId={id} />
               {backLink}
             </div>
@@ -215,6 +289,23 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
           <Field label="Source file">{data.source_ref ?? EM_DASH}</Field>
           <Field label="Uploaded by">{data.uploaded_by ?? EM_DASH}</Field>
           <Field label="Uploaded on">{fmtDate(data.created_at)}</Field>
+          <Field label="Draft shipment">
+            {data.converted_shipments.length === 0 ? (
+              EM_DASH
+            ) : (
+              <div className="flex flex-col gap-0.5">
+                {data.converted_shipments.map((s) => (
+                  <Link
+                    key={s.shipment_id}
+                    href={`/scm/incoming?shipment=${encodeURIComponent(s.shipment_number ?? '')}`}
+                    className="text-primary hover:underline"
+                  >
+                    {s.shipment_number ?? EM_DASH}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </Field>
         </div>
       </Card>
 

@@ -4,6 +4,8 @@ import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
+  bulkDeleteProformaInvoices,
+  convertProformaInvoicesToDraftShipment,
   deleteProformaInvoice,
   getProformaInvoice,
   listProformaInvoices,
@@ -58,5 +60,34 @@ export function useDeleteProformaInvoice() {
       void qc.invalidateQueries({ queryKey: [...KEY, 'list'] });
     },
     onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/** Same "no success toast here" shape as the single delete above - the caller's own
+ *  AlertDialog reports the outcome (deleted count + any blocked/converted invoices). */
+export function useBulkDeleteProformaInvoices() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkDeleteProformaInvoices(ids),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: [...KEY, 'list'] });
+    },
+  });
+}
+
+/** Draft a shipment from one or more selected invoices. Invalidates both the proforma list
+ *  (their trail now shows where they went) and the invoice detail (converted_shipments +
+ *  per-line shipment_number) for every invoice just converted. The caller navigates to
+ *  `/scm/incoming` on success - this hook only owns the write + cache invalidation. */
+export function useConvertProformaInvoicesToDraftShipment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (invoiceIds: string[]) => convertProformaInvoicesToDraftShipment(invoiceIds),
+    onSuccess: (result) => {
+      void qc.invalidateQueries({ queryKey: [...KEY, 'list'] });
+      result.invoices.forEach((inv) => {
+        void qc.invalidateQueries({ queryKey: [...KEY, 'detail', inv.id] });
+      });
+    },
   });
 }

@@ -37,6 +37,12 @@ vi.mock('sonner', () => ({
   },
 }));
 
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/scm/proforma-invoices',
+  useRouter: () => ({ push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
@@ -89,11 +95,21 @@ const state = {
   data: undefined as { data: ProformaInvoiceListRow[]; total: number } | undefined,
   isLoading: false,
   deleteInvoice: vi.fn(),
+  convertInvoices: vi.fn(),
+  bulkDeleteInvoices: vi.fn(),
 };
 
 vi.mock('../../hooks/useProformaInvoices', () => ({
   useProformaInvoices: () => ({ data: state.data, isLoading: state.isLoading }),
   useDeleteProformaInvoice: () => ({ mutateAsync: state.deleteInvoice }),
+  useConvertProformaInvoicesToDraftShipment: () => ({
+    mutateAsync: state.convertInvoices,
+    isPending: false,
+  }),
+  useBulkDeleteProformaInvoices: () => ({
+    mutateAsync: state.bulkDeleteInvoices,
+    isPending: false,
+  }),
 }));
 
 import { ProformaInvoicesView } from './ProformaInvoicesView';
@@ -133,6 +149,17 @@ beforeEach(() => {
   state.data = { data: [], total: 0 };
   state.isLoading = false;
   state.deleteInvoice = vi.fn().mockResolvedValue(undefined);
+  state.convertInvoices = vi.fn().mockResolvedValue({
+    shipment_id: 'ship-1',
+    shipment_number: 'SHIP-DRAFT-1',
+    shipment_status: 'draft',
+    supplier_id: null,
+    lines_created: 1,
+    lines_skipped: 0,
+    invoices: [],
+    unmatched: [],
+  });
+  state.bulkDeleteInvoices = vi.fn().mockResolvedValue({ deleted: 0, blocked: [] });
   hasPermission.mockReturnValue(true);
 });
 
