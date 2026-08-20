@@ -252,13 +252,26 @@ def _seed_world(db, company_id: str, user_id: str) -> dict:
     """
     from app.services.project_service import register_project
 
+    # Titles deliberately dissimilar (not "Project One"/"Project Two", which
+    # differ by one word) AND `block_threshold` pinned above 1.0 - the maximum
+    # possible trigram score - so `find_clashes`' `score >= block` path can
+    # never fire regardless of what the random suffix draws. This test seeds
+    # two projects for company-scoped isolation, not clash behaviour, and the
+    # shared MARKER prefix already put "Project One"/"Project Two"'s score
+    # close enough to the 0.70 block bar that the second registration
+    # sometimes 409'd against the first before either row was ever placed
+    # (project_already_registered, killed main's deploy attempt 3). Pinning
+    # the threshold also immunises this seed against another xdist worker
+    # concurrently mutating the shared `system_settings` clash-threshold row
+    # (`resolve_thresholds` reads it live), which a title change alone would
+    # not.
     project1 = register_project(
         db, company_id=company_id, actor_user_id=user_id, developer_party_id=None,
-        title=f"{MARKER} Project One {_uid()[:6]}",
+        title=f"{MARKER} Alpha Quay {_uid()[:6]}", block_threshold=2.0,
     )
     project2 = register_project(
         db, company_id=company_id, actor_user_id=user_id, developer_party_id=None,
-        title=f"{MARKER} Project Two {_uid()[:6]}",
+        title=f"{MARKER} Zeta Ridge {_uid()[:6]}", block_threshold=2.0,
     )
 
     product_a = _product(db, company_id, f"ZZT-PA-{_uid()[:6]}")
