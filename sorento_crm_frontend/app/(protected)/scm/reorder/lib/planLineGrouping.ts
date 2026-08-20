@@ -330,6 +330,10 @@ function buildGroupRec(members: PlanLine[]): ReorderRecommendation {
     // the channel columns (`__group.channelQty`) are the honest read, not this field.
     segment: null,
     on_hand: sumOrNull(members.map((m) => m.rec.on_hand)),
+    // Same treatment as `on_hand`: each member already carries its OWN pool-vs-bin split
+    // (captain, 20 Aug), so summing it across the group gives the product's total
+    // project-held stock without this file re-deciding which locations count.
+    project_on_hand: sumOrNull(members.map((m) => m.rec.project_on_hand)),
     incoming_spo: sumOrNull(members.map((m) => m.rec.incoming_spo)),
     outstanding_po: sumOrNull(members.map((m) => m.rec.outstanding_po)),
     outstanding_sales: sumOrNull(members.map((m) => m.rec.outstanding_sales)),

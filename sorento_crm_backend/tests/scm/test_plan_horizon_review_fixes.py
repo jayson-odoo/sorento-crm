@@ -88,8 +88,9 @@ def _warehouse(db) -> Warehouse:
 # B2 - `_unlocated_demand_map`: the ~97% path now honours the horizon
 # =============================================================================
 
-def _unlocated_line(db, product_id, qty, *, required_date=None) -> SalesOrderLine:
-    so = SalesOrder(id=_u(), so_number=_code("SO"), status="open")
+def _unlocated_line(db, product_id, qty, *, required_date=None,
+                    demand_class=None) -> SalesOrderLine:
+    so = SalesOrder(id=_u(), so_number=_code("SO"), status="open", demand_class=demand_class)
     db.add(so)
     db.flush()
     line = SalesOrderLine(
@@ -115,13 +116,17 @@ def test_unlocated_demand_beyond_the_horizon_is_excluded(db):
 
 def test_unlocated_demand_with_no_date_stays_in(db):
     """Undated demand is still demand - never excluded by a cutoff it carries no date to
-    compare against. Same shipped rule as `demand.horizon_committed_select_sql`."""
+    compare against. Same shipped rule as `demand.horizon_committed_select_sql`.
+
+    The line's `demand_class` is unset, so the whole 40 lands in the `unclassified`
+    bucket (front-planning follow-up: the map splits by channel the same way a located
+    line would, see `test_unlocated_demand_map_splits_by_channel_like_a_located_line`)."""
     p = _product(db)
     _unlocated_line(db, p.id, 40, required_date=None)
 
     result = svc._unlocated_demand_map(db, [p.id], horizon=date(2026, 12, 31))
 
-    assert result == {str(p.id): 40.0}
+    assert result == {str(p.id): {"project": 0.0, "retail": 0.0, "unclassified": 40.0}}
 
 
 def test_unlocated_demand_within_the_horizon_stays_in(db):
@@ -130,18 +135,38 @@ def test_unlocated_demand_within_the_horizon_stays_in(db):
 
     result = svc._unlocated_demand_map(db, [p.id], horizon=date(2026, 12, 31))
 
-    assert result == {str(p.id): 25.0}
+    assert result == {str(p.id): {"project": 0.0, "retail": 0.0, "unclassified": 25.0}}
 
 
 def test_unlocated_demand_map_unhorizoned_counts_every_date(db):
     """`horizon=None` (a run created before this column existed, or with the field left
-    empty) must reproduce the pre-horizon query exactly - a distant date is still counted."""
+    empty) must reproduce the pre-horizon query's TOTAL exactly - a distant date is still
+    counted (the map now also splits that total by channel, pinned separately)."""
     p = _product(db)
     _unlocated_line(db, p.id, 40, required_date=date(2030, 1, 1))
 
     result = svc._unlocated_demand_map(db, [p.id], horizon=None)
 
-    assert result == {str(p.id): 40.0}
+    assert result == {str(p.id): {"project": 0.0, "retail": 0.0, "unclassified": 40.0}}
+
+
+def test_unlocated_demand_map_splits_by_channel_like_a_located_line(db):
+    """front-planning follow-up (20 Aug): the split mirrors `scm.committed_v`'s own rule
+    for a LOCATED line - `demand_class='project'` -> project, a stated non-project class
+    -> retail, `NULL` -> unclassified - so an unlocated line lands classified exactly as
+    a located one of the same class would, and the three always sum to the line's own
+    qty (AC-F07's invariant, held here rather than only at the view)."""
+    p = _product(db)
+    _unlocated_line(db, p.id, 10)
+    _unlocated_line(db, p.id, 20)  # same product, two lines, same NULL class - summed
+    other = _product(db)
+    _unlocated_line(db, other.id, 5, demand_class="project")
+    _unlocated_line(db, other.id, 7, demand_class="retail")
+
+    result = svc._unlocated_demand_map(db, [p.id, other.id], horizon=None)
+
+    assert result[str(p.id)] == {"project": 0.0, "retail": 0.0, "unclassified": 30.0}
+    assert result[str(other.id)] == {"project": 5.0, "retail": 7.0, "unclassified": 0.0}
 
 
 # =============================================================================

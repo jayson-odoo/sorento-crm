@@ -32,12 +32,13 @@ MARKER = "ZZLS"
 URL = "/api/v1/scm/reorder-runs/location-stock"
 
 
-def _warehouse(db) -> Warehouse:
+def _warehouse(db, *, segment: str | None = None) -> Warehouse:
     wh = Warehouse(
         id=str(uuid.uuid4()),
         warehouse_code=f"{MARKER}-WH-{uuid.uuid4().hex[:8]}",
         warehouse_name=f"{MARKER} warehouse",
         is_active=True,
+        segment=segment,
     )
     db.add(wh)
     db.flush()
@@ -125,6 +126,9 @@ def test_location_stock_composes_on_hand_so_and_spo_into_a_signed_available(scm_
     loc = body["locations"][0]
     assert loc["warehouse_id"] == str(wh.id)
     assert loc["warehouse_code"] == wh.warehouse_code
+    # No segment set, so it counts (captain, 20 Aug) - a site nobody has classified is
+    # not assumed to be a project bin.
+    assert loc["is_pool"] is True
     assert loc["on_hand"] == 50
     assert loc["reserved"] == 0
     assert loc["held_by_decisions"] == 0
@@ -133,6 +137,27 @@ def test_location_stock_composes_on_hand_so_and_spo_into_a_signed_available(scm_
     assert loc["spo_qty"] == 5
     # Signed, never clamped: on_hand - so_qty + spo_qty.
     assert loc["available"] == 35
+
+
+def test_location_stock_flags_a_project_segment_location_as_not_pool(scm_app):
+    """Captain, 20 Aug: `on_hand` shown here is a per-location fact and is never zeroed -
+    a project bin's own stock is real and visible. `is_pool` is the discriminator the
+    reorder engine's OWN counted `on_hand` uses (a project-segment location's stock is
+    not usable supply there), so this panel and the engine's figure for the same location
+    can never disagree about which side of the line it sits on."""
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    product = w.product("A")
+    wh = _warehouse(db, segment="project")
+    _on_hand(db, product.id, wh, 80)
+
+    r = TestClient(app).get(URL, params={"product_id": str(product.id)})
+
+    assert r.status_code == 200, r.text
+    loc = r.json()["locations"][0]
+    assert loc["is_pool"] is False
+    assert loc["on_hand"] == 80, "still shown - the panel never hides it"
 
 
 def test_location_stock_for_a_product_with_no_stock_anywhere_is_empty_locations(scm_app):

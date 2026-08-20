@@ -50,12 +50,22 @@ def location_stock_for_product(db: Session, product_id: str) -> dict[str, Any]:
     supply = ProjectSupplyService(db)
 
     warehouses = (
-        db.query(Warehouse.id, Warehouse.warehouse_code)
+        db.query(Warehouse.id, Warehouse.warehouse_code, Warehouse.segment)
         .filter(Warehouse.is_active.is_(True))
         .all()
     )
     warehouse_ids = [str(w.id) for w in warehouses]
     code_by_id = {str(w.id): w.warehouse_code for w in warehouses}
+    # `segment` is the test ('project' on a bin, everything else - 'dealer' or unset -
+    # counts) - never the code's naming convention (project_supply_service.
+    # _site_pool_warehouses warns the same about the hyphen suffix). This mirrors the
+    # reorder engine's own test (reorder_run_service._planning_rows) so this panel's
+    # `on_hand` and the engine's counted `on_hand` for the SAME location can never
+    # disagree about which side of the dealer/project line it sits on (captain, 20 Aug:
+    # pool-only counted supply). NOT `pool_warehouse_id`: that FK also drives the
+    # unrelated fulfilment-pool netting opt-in, whose members are not necessarily
+    # project-segment locations.
+    is_pool_by_id = {str(w.id): (w.segment != "project") for w in warehouses}
 
     levels = supply.stock_levels_by_location([product_id])
     held = supply.held_stock_by_location([product_id])
@@ -99,6 +109,10 @@ def location_stock_for_product(db: Session, product_id: str) -> dict[str, Any]:
         locations.append({
             "warehouse_id": wid,
             "warehouse_code": code_by_id.get(wid),
+            # Whether THIS location's own stock is counted by the reorder engine's
+            # `on_hand` (pool-only, captain 20 Aug) or is project-held supply that is
+            # visible here but not counted there.
+            "is_pool": is_pool_by_id.get(wid, True),
             "on_hand": float(on_hand),
             "reserved": float(reserved),
             "held_by_decisions": float(held_qty),
