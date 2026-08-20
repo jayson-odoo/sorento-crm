@@ -1,0 +1,295 @@
+'use client';
+
+import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import {
+  ColumnDef,
+  PaginationState,
+  getCoreRowModel,
+  useReactTable,
+} from '@tanstack/react-table';
+import { FileText, Trash2, Upload } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { DataGridTable } from '@/components/ui/data-grid-table';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { Label } from '@/components/ui/label';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { useFulfilmentSuppliers } from '../../hooks/useFulfilment';
+import { useDeleteProformaInvoice, useProformaInvoices } from '../../hooks/useProformaInvoices';
+import type { ProformaInvoiceListRow } from '../../services/proformaInvoiceService';
+import { EM_DASH, fmtDate, fmtInt, fmtSupplierCost } from '../../lib/format';
+import { ProformaUploadDialog } from './ProformaUploadDialog';
+
+/**
+ * What is on file per supplier: the priced document the loading plan and the eventual
+ * PI-vs-PO check both read from. Upload writes it; nothing here edits a line once it has
+ * landed - a proforma is the supplier's document, and the correction path is re-upload
+ * (updates in place, AC-P1.4) or delete.
+ */
+
+const UPLOAD_PERMISSION = 'scm.proforma_invoice.upload';
+
+export function ProformaInvoicesView() {
+  const suppliers = useFulfilmentSuppliers();
+  const canUpload = useHasPermission(UPLOAD_PERMISSION);
+  const [supplierId, setSupplierId] = useState<string | null>(null);
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [deleteRow, setDeleteRow] = useState<ProformaInvoiceListRow | null>(null);
+
+  useEffect(() => {
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [supplierId]);
+
+  const { data, isLoading } = useProformaInvoices(supplierId, {
+    limit: pagination.pageSize,
+    offset: pagination.pageIndex * pagination.pageSize,
+  });
+  const deleteInvoice = useDeleteProformaInvoice();
+
+  const rows = useMemo<ProformaInvoiceListRow[]>(() => data?.data ?? [], [data]);
+
+  const columns = useMemo<ColumnDef<ProformaInvoiceListRow>[]>(
+    () => [
+      {
+        accessorKey: 'pi_number',
+        header: ({ column }) => <DataGridColumnHeader title="PI number" column={column} />,
+        cell: ({ row }) => (
+          <Link
+            href={`/scm/proforma-invoices/${row.original.id}`}
+            className="font-medium text-primary hover:underline"
+            title={`Open ${row.original.pi_number}`}
+          >
+            {row.original.pi_number}
+          </Link>
+        ),
+        size: 170,
+        enableSorting: false,
+        meta: { headerTitle: 'PI number' },
+      },
+      {
+        id: 'supplier',
+        header: ({ column }) => <DataGridColumnHeader title="Supplier" column={column} />,
+        cell: ({ row }) => (
+          <div className="flex flex-col">
+            <span className="truncate" title={row.original.supplier_name ?? undefined}>
+              {row.original.supplier_name ?? EM_DASH}
+            </span>
+            {row.original.supplier_code ? (
+              <span className="text-xs text-muted-foreground">{row.original.supplier_code}</span>
+            ) : null}
+          </div>
+        ),
+        size: 200,
+        enableSorting: false,
+        meta: { headerTitle: 'Supplier' },
+      },
+      {
+        accessorKey: 'invoice_date',
+        header: ({ column }) => <DataGridColumnHeader title="Invoice date" column={column} />,
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">{fmtDate(row.original.invoice_date)}</span>
+        ),
+        size: 120,
+        enableSorting: false,
+        meta: { headerTitle: 'Invoice date' },
+      },
+      {
+        accessorKey: 'container_no',
+        header: ({ column }) => <DataGridColumnHeader title="Container" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate" title={row.original.container_no ?? undefined}>
+            {row.original.container_no ?? EM_DASH}
+          </span>
+        ),
+        size: 130,
+        enableSorting: false,
+        meta: { headerTitle: 'Container' },
+      },
+      {
+        accessorKey: 'bl_no',
+        header: ({ column }) => <DataGridColumnHeader title="BL" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate" title={row.original.bl_no ?? undefined}>
+            {row.original.bl_no ?? EM_DASH}
+          </span>
+        ),
+        size: 120,
+        enableSorting: false,
+        meta: { headerTitle: 'BL' },
+      },
+      {
+        accessorKey: 'currency',
+        header: ({ column }) => <DataGridColumnHeader title="Currency" column={column} />,
+        cell: ({ row }) => row.original.currency ?? EM_DASH,
+        size: 90,
+        enableSorting: false,
+        meta: { headerTitle: 'Currency' },
+      },
+      {
+        accessorKey: 'line_count',
+        header: ({ column }) => <DataGridColumnHeader title="Lines" column={column} />,
+        cell: ({ row }) => fmtInt(row.original.line_count),
+        size: 80,
+        enableSorting: false,
+        meta: { headerTitle: 'Lines', headerClassName: 'text-right', cellClassName: 'text-right tabular-nums' },
+      },
+      {
+        accessorKey: 'total_amount',
+        header: ({ column }) => <DataGridColumnHeader title="Total" column={column} />,
+        cell: ({ row }) => fmtSupplierCost(row.original.total_amount, row.original.currency),
+        size: 130,
+        enableSorting: false,
+        meta: { headerTitle: 'Total', headerClassName: 'text-right', cellClassName: 'text-right tabular-nums' },
+      },
+      {
+        id: 'uploaded',
+        header: ({ column }) => <DataGridColumnHeader title="Uploaded" column={column} />,
+        cell: ({ row }) => (
+          <div className="flex flex-col">
+            <span className="text-muted-foreground">{fmtDate(row.original.created_at)}</span>
+            {row.original.uploaded_by ? (
+              <span className="truncate text-xs text-muted-foreground" title={row.original.uploaded_by}>
+                {row.original.uploaded_by}
+              </span>
+            ) : null}
+          </div>
+        ),
+        size: 150,
+        enableSorting: false,
+        meta: { headerTitle: 'Uploaded' },
+      },
+      {
+        id: 'actions',
+        header: '',
+        cell: ({ row }) => (
+          <div className="flex items-center justify-end">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1 px-2 text-xs text-destructive hover:text-destructive"
+              onClick={() => setDeleteRow(row.original)}
+            >
+              <Trash2 className="size-3.5" />
+              Delete
+            </Button>
+          </div>
+        ),
+        size: 90,
+        enableHiding: false,
+        enableSorting: false,
+      },
+    ],
+    [],
+  );
+
+  const total = data?.total ?? 0;
+
+  const table = useReactTable({
+    columns,
+    data: rows,
+    pageCount: Math.ceil(total / pagination.pageSize),
+    getRowId: (row) => row.id,
+    state: { pagination },
+    onPaginationChange: setPagination,
+    getCoreRowModel: getCoreRowModel(),
+    manualPagination: true,
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+  });
+
+  return (
+    <div className="space-y-3">
+      <DataGrid
+        table={table}
+        recordCount={total}
+        isLoading={isLoading}
+        tableLayout={{ width: 'fixed', columnsResizable: true }}
+        emptyMessage="No proforma invoice read yet. Upload the supplier's proforma workbook to hold its priced lines."
+      >
+        <Card>
+          <CardHeader className="block py-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div className="min-w-0">
+                <Label className="text-xs text-muted-foreground" htmlFor="proforma-supplier-filter">
+                  Supplier
+                </Label>
+                <SearchableSelect
+                  id="proforma-supplier-filter"
+                  className="mt-1 w-72"
+                  value={supplierId ?? ''}
+                  onChange={(v: string) => setSupplierId(v || null)}
+                  options={suppliers.data ?? []}
+                  placeholder="All suppliers"
+                  clearable
+                />
+              </div>
+              {canUpload ? (
+                <Button onClick={() => setUploadOpen(true)}>
+                  <Upload className="size-4" />
+                  Upload proforma invoice
+                </Button>
+              ) : null}
+            </div>
+          </CardHeader>
+          {!isLoading && rows.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 p-10 text-center">
+              <FileText className="size-6 text-muted-foreground" />
+              <p className="text-sm font-medium">
+                {supplierId ? 'No proforma invoice on file for this supplier.' : 'No proforma invoice read yet.'}
+              </p>
+              {canUpload ? (
+                <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)}>
+                  <Upload className="size-4" />
+                  Upload proforma invoice
+                </Button>
+              ) : null}
+            </div>
+          ) : (
+            <>
+              <CardTable>
+                <ScrollArea>
+                  <DataGridTable />
+                  <ScrollBar orientation="horizontal" />
+                </ScrollArea>
+              </CardTable>
+              <CardFooter>
+                <DataGridPagination />
+              </CardFooter>
+            </>
+          )}
+        </Card>
+      </DataGrid>
+
+      {/* No `onApplied` auto-close here: the dialog's own result summary ("Created N,
+          updated M") would never paint if the parent closed it the instant the apply
+          finished. The dialog invalidates the list on apply regardless of this prop; the
+          user dismisses it themselves once they have read the result (footer flips
+          Cancel -> Close, S8). */}
+      <ProformaUploadDialog open={uploadOpen} onOpenChange={setUploadOpen} />
+
+      <ConfirmDeleteDialog
+        open={!!deleteRow}
+        onOpenChange={(o) => !o && setDeleteRow(null)}
+        title="Confirm delete"
+        description={
+          deleteRow
+            ? `This action cannot be undone. This deletes proforma invoice ${deleteRow.pi_number} and every line it carries.`
+            : ''
+        }
+        onDelete={async () => {
+          if (deleteRow) await deleteInvoice.mutateAsync(deleteRow.id);
+        }}
+        successMessage="Proforma invoice deleted."
+      />
+    </div>
+  );
+}
+
+export default ProformaInvoicesView;

@@ -393,6 +393,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'scm.reorder.run',
       },
       {
+        title: 'Proforma Invoices',
+        path: '/scm/proforma-invoices',
+        permission: 'scm.dashboard.view',
+      },
+      {
         title: 'Policies',
         path: '/scm/policies',
         permission: 'scm.policy.manage',
