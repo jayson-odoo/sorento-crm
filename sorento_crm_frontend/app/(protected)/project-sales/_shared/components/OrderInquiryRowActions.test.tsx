@@ -95,6 +95,45 @@ describe('OrderInquiryRowActions: rows Place on PO does not apply to', () => {
 
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
+
+  it('renders no Place on PO action when the row carries hasOpenPoLine=false', () => {
+    // The backend's own `has_open_po_line` says nothing is left to tag - a "Place on PO"
+    // that opens on an empty dialog reads as a bug, not an empty state, so the row offers
+    // nothing at all rather than an offer with nothing behind it.
+    renderActions(
+      <OrderInquiryRowActions
+        rowId="row-1"
+        verb="ORDER"
+        state="raised"
+        qty="10"
+        hasOpenPoLine={false}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /Place on PO/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('offers Place on PO when hasOpenPoLine is left unstated (default true)', () => {
+    // An omitted flag never HIDES the offer - only an explicit false does.
+    renderActions(<OrderInquiryRowActions rowId="row-1" verb="ORDER" state="raised" qty="10" />);
+
+    expect(screen.getByRole('button', { name: /Place on PO/ })).toBeInTheDocument();
+  });
+
+  it('offers Place on PO when hasOpenPoLine is explicitly true', () => {
+    renderActions(
+      <OrderInquiryRowActions
+        rowId="row-1"
+        verb="ORDER"
+        state="raised"
+        qty="10"
+        hasOpenPoLine
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /Place on PO/ })).toBeInTheDocument();
+  });
 });
 
 describe('OrderInquiryRowActions: a placed row', () => {

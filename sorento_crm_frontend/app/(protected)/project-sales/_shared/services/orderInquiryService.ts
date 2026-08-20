@@ -1,9 +1,12 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
+  AutoPlaceRequest,
+  AutoPlaceResult,
   OrderInquiryDetail,
   OrderInquiryListEnvelope,
   OrderInquiryListParams,
+  OrderInquiryPoAllocation,
   OrderInquiryPoCandidate,
   OrderInquiryRow,
   OrderInquirySummary,
@@ -100,20 +103,39 @@ export async function markOrderInquiryRows(
   return response.json();
 }
 
-/* --------------------------------------------------------- Place on PO (section G)
+/* --------------------------------------------------------- Place on PO (section G, G2)
  *
- * API CONTRACT (backend section G).
+ * API CONTRACT (backend section G, reworked G2 20 Aug - placements happen automatically;
+ * this dialog is override + audit).
  *
  *   GET  {BASE}/order-inquiry-rows/{rowId}/po-candidates
- *        -> OrderInquiryPoCandidate[], soonest expected_date first. 409 when the row is
- *        not a raised ORDER/RESERVE & ORDER row.
+ *        -> OrderInquiryPoCandidate[], soonest expected_date first, ties by document
+ *        sequence. Each candidate carries `default_take` - the cascade's own preview of
+ *        what it would take off that line. 409 when the row is not a raised
+ *        ORDER/RESERVE & ORDER row.
  *
  *   POST {BASE}/order-inquiry-rows/{rowId}/place-on-po  { po_line_id }
- *        -> OrderInquiryRowOut, state 'placed'. 409 naming the shortfall when the line's
+ *        -> OrderInquiryRowOut, state 'placed'. The original single-line shape,
+ *        unchanged: one line, no split. 409 naming the shortfall when the line's
  *        remaining balance cannot cover the row.
+ *
+ *   POST {BASE}/order-inquiry-rows/{rowId}/place-on-po  { allocations: [{po_line_id, qty}] }
+ *        -> OrderInquiryRowOut, the FIRST row the call touched (the row reused on full
+ *        coverage, the first new split row on a partial one). A row several lines cover
+ *        SPLITS server-side - refetch the rows list to see every row the call wrote.
+ *        409 `order_inquiry_over_allocated` when the allocations total more than the
+ *        row's own quantity; 409 `order_inquiry_po_line_short` naming the line that
+ *        cannot cover what was asked of it.
  *
  *   POST {BASE}/order-inquiry-rows/{rowId}/unplace
  *        -> OrderInquiryRowOut, state back to 'raised'. 409 when the row is not placed.
+ *        Works on a split row exactly as on an unsplit one.
+ *
+ *   POST {BASE}/order-inquiries/auto-place  { product_ids? }
+ *        -> AutoPlaceResult { placed_rows, allocations, products_touched }. Runs the
+ *        cascade now, over every raised row of the named products (or of every product
+ *        carrying one, when `product_ids` is omitted). Idempotent - a second call with
+ *        the same products places nothing further.
  *
  * Permission is the same as `mark`: `projects.order_inquiry.action`.
  */
@@ -128,7 +150,7 @@ export async function getOrderInquiryPoCandidates(
 }
 
 /** Tag a raised row onto one outstanding PO line - the captain's "quantity to be ordered
- * is deducted". */
+ * is deducted". The original single-line shape. */
 export async function placeOrderInquiryRowOnPo(
   rowId: string,
   poLineId: string,
@@ -143,13 +165,51 @@ export async function placeOrderInquiryRowOnPo(
   return response.json();
 }
 
-/** Untag: the row goes back to raised. */
+/**
+ * Tag a raised row across one or more outstanding PO lines - the cascade shape (G2), one
+ * call. The row may split server-side; the caller reads back the FIRST row the call
+ * touched and refetches the rows list to see the rest.
+ */
+export async function placeOrderInquiryRowOnPoAllocations(
+  rowId: string,
+  allocations: OrderInquiryPoAllocation[],
+): Promise<OrderInquiryRow> {
+  const response = await apiFetch(`${BASE}/order-inquiry-rows/${rowId}/place-on-po`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ allocations }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to place this row on a purchase order'));
+  return response.json();
+}
+
+/** Untag: the row goes back to raised. Works on a split row exactly as on an unsplit one. */
 export async function unplaceOrderInquiryRow(rowId: string): Promise<OrderInquiryRow> {
   const response = await apiFetch(`${BASE}/order-inquiry-rows/${rowId}/unplace`, {
     method: 'POST',
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to unplace this row'));
+  return response.json();
+}
+
+/**
+ * Run the cascade now (G2 rule 4) - the worklist's "Auto-place". Every raised
+ * ORDER/RESERVE & ORDER row of the named products, or of every product carrying one when
+ * `product_ids` is omitted, tagged to its own open PO lines, earliest expected date
+ * first. Idempotent: a second call with the same products places nothing further.
+ */
+export async function autoPlaceOrderInquiryRows(
+  params: AutoPlaceRequest = {},
+): Promise<AutoPlaceResult> {
+  const response = await apiFetch(`${BASE}/order-inquiries/auto-place`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to run the auto-place pass'));
   return response.json();
 }
 

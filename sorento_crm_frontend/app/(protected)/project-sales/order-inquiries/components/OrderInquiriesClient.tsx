@@ -10,7 +10,16 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { AlertTriangle, Download, LayoutGrid, List, PackageSearch, Search, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  Download,
+  LayoutGrid,
+  List,
+  PackageSearch,
+  Search,
+  Wand2,
+  X,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import {
   Alert,
@@ -31,6 +40,7 @@ import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { AutoPlaceOrderInquiryDialog } from '../../_shared/components/AutoPlaceOrderInquiryDialog';
 import {
   useOrderInquiryWorklist,
   useOrderInquiryWorklistSummary,
@@ -142,6 +152,7 @@ export function OrderInquiriesClient() {
   const [projectFilter, setProjectFilter] = React.useState('');
   const [raisedDate, setRaisedDate] = React.useState('');
   const [exporting, setExporting] = React.useState(false);
+  const [autoPlacing, setAutoPlacing] = React.useState(false);
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize: 25,
@@ -572,6 +583,14 @@ export function OrderInquiriesClient() {
                 // month, is the file anyone outside the system reads - so the generic
                 // selection-scoped export is replaced rather than offered beside it.
                 exportConfig={false}
+                secondaryActions={[
+                  {
+                    key: 'auto-place',
+                    label: 'Auto-place',
+                    icon: Wand2,
+                    onClick: () => setAutoPlacing(true),
+                  },
+                ]}
                 primaryAction={
                   <Button type="button" onClick={() => void handleExport()} disabled={exporting}>
                     <Download className="size-4" aria-hidden />
@@ -608,6 +627,8 @@ export function OrderInquiriesClient() {
           </Card>
         </DataGrid>
       )}
+
+      <AutoPlaceOrderInquiryDialog open={autoPlacing} onOpenChange={setAutoPlacing} />
     </div>
   );
 }

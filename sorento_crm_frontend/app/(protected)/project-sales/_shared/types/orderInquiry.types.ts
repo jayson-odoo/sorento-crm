@@ -73,6 +73,12 @@ export interface OrderInquiryRow {
    */
   po_ref?: string | null;
   po_line_id?: string | null;
+  /**
+   * Whether this row's own product still has an outstanding purchase-order line to tag
+   * (section G). The row action only offers "Place on PO" when this is true - no dead
+   * end where the dialog opens just to say there is nothing to tag.
+   */
+  has_open_po_line?: boolean;
 
   state: OrderInquiryState | string;
   actioned_at?: string | null;
@@ -150,6 +156,8 @@ export interface OrderInquiryWorklistRow {
    * fulfilment location. Blank when neither is known.
    */
   location?: string | null;
+  /** Same as `OrderInquiryRow.has_open_po_line`, for this cross-project worklist. */
+  has_open_po_line?: boolean;
   /** Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`), off the same core
    * sales order the S/O no column reaches. Null when the row reaches no core order, or
    * that order carries no agent. */
@@ -272,13 +280,30 @@ export interface OrderInquiryMatrixCell {
   rows: OrderInquiryWorklistRow[];
 }
 
-/* --------------------------------------------------------- Place on PO (section G)
+/* --------------------------------------------------------- Place on PO (section G, G2)
  *
  * "identify which outstanding PO has quantity to fulfil this order inquiry, tag it, and
- * the quantity to be ordered is deducted" (the captain, 20 Aug). One raised ORDER row is
- * tagged to one open supplier PO line; the row leaves `state = 'raised'` and the reorder
- * engine stops suggesting it. Untag ("Unplace") returns it.
+ * the quantity to be ordered is deducted" (the captain, 20 Aug). A raised ORDER row is
+ * tagged to one or more open supplier PO lines; the row leaves `state = 'raised'` and the
+ * reorder engine stops suggesting it. Untag ("Unplace") returns it.
+ *
+ * G2 (the captain, live-testing G, 20 Aug afternoon): placement now happens
+ * AUTOMATICALLY - the cascade tags every raised row it can, earliest PO line first, ties
+ * by document sequence, partial coverage allowed, POs only (never SPO-). This dialog
+ * survives as OVERRIDE + AUDIT, not as the workflow: it opens already showing the
+ * cascade's own preview (`default_take` per candidate), lets the taken quantity be
+ * adjusted per line, and posts the whole allocation in one call. A row several lines
+ * cover SPLITS on the backend - one row per PO line taken - so a placement can return
+ * more than one row.
  */
+
+/** One EXISTING tag already on a candidate's PO line - the row's expand. */
+export interface OrderInquiryPoCandidateClaim {
+  so_number?: string | null;
+  item_code?: string | null;
+  qty: string;
+  placed_date?: string | null;
+}
 
 /** One open supplier PO line the row could be tagged to, soonest `expected_date` first. */
 export interface OrderInquiryPoCandidate {
@@ -297,4 +322,33 @@ export interface OrderInquiryPoCandidate {
   covers: boolean;
   /** The earliest candidate that covers the row. At most one candidate carries this. */
   recommended: boolean;
+  /** The line's own held price. Blank when the purchase order carries none. */
+  unit_cost?: string | null;
+  currency?: string | null;
+  /** The row's expand: every OTHER row already tagged onto this same PO line. */
+  claims: OrderInquiryPoCandidateClaim[];
+  /**
+   * What the cascade would take off THIS line for THIS row (G2) - server-computed by the
+   * SAME walk `auto_place_for_products` runs, so the dialog's preview and the auto pass
+   * can never disagree. `"0"` when the cascade never reaches this line.
+   */
+  default_take: string;
+}
+
+/** One line of a cascade placement - this row takes `qty` off `po_line_id`. */
+export interface OrderInquiryPoAllocation {
+  po_line_id: string;
+  qty: string;
+}
+
+/** `POST .../order-inquiries/auto-place` (G2 rule 4) - the worklist's "Auto-place". */
+export interface AutoPlaceRequest {
+  /** Omitted: every product carrying a raised ORDER/RESERVE & ORDER row. */
+  product_ids?: string[];
+}
+
+export interface AutoPlaceResult {
+  placed_rows: number;
+  allocations: number;
+  products_touched: number;
 }

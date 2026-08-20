@@ -277,6 +277,7 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
             itemCode={row.original.item_code}
             qty={row.original.qty}
             poLabel={row.original.po_number}
+            hasOpenPoLine={row.original.has_open_po_line}
           />
         ),
       },

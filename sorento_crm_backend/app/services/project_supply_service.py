@@ -2569,6 +2569,7 @@ class ProjectSupplyService:
                 list(checked) + [(entry.line, entry, entry.fact) for entry in carried],
             ),
         )
+        self._auto_place_after_confirm(buy_lines, actor_user_id=actor_user_id)
         decided = len(checked) + len(carried)
         return {
             "revision_no": decision.revision_no,
@@ -2581,6 +2582,42 @@ class ProjectSupplyService:
             "lines_decided": decided,
             "lines_undecided": max(len(self.lines_of(str(order.id))) - decided, 0),
         }
+
+    def _auto_place_after_confirm(
+        self, buy_lines: Sequence[Dict[str, Any]], *, actor_user_id: str
+    ) -> None:
+        """G2 rule 4: a decision confirm is one of the three moments the cascade runs -
+        the rows `refresh_for_decision` just raised may already have an outstanding PO
+        line waiting for them, and the captain's ask was that placement never waits on a
+        person clicking it.
+
+        Best-effort on purpose, in a SAVEPOINT, mirroring
+        `ProjectOrderInquiryService._hand_to_purchasing`: the confirm itself already
+        succeeded (the decision and the inquiry rows are written) by the time this runs,
+        so a failure here must not turn that success into a 500 the retry cannot repair -
+        it would only repeat the placement, since re-running finds nothing left to place
+        for a row already tagged.
+        """
+        product_ids = {
+            entry["line"].product_id for entry in buy_lines if entry["line"].product_id
+        }
+        if not product_ids:
+            return
+        try:
+            with self.db.begin_nested():
+                from app.services.project_order_inquiry_service import (
+                    ProjectOrderInquiryService,
+                )
+
+                ProjectOrderInquiryService(self.db).auto_place_for_products(
+                    list(product_ids),
+                    actor_user_id=actor_user_id,
+                    trigger="decision_confirm",
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "supply confirmed, but the order-inquiry auto-place pass failed (%s)", exc
+            )
 
     def _borrow_shortfalls(
         self,

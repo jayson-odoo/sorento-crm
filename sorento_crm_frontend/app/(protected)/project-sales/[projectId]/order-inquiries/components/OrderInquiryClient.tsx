@@ -341,6 +341,7 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
             itemCode={row.original.item_code}
             qty={row.original.qty}
             poLabel={row.original.po_ref}
+            hasOpenPoLine={row.original.has_open_po_line}
           />
         ),
       },

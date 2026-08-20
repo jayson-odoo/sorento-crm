@@ -21,6 +21,7 @@ export function OrderInquiryRowActions({
   itemCode,
   qty,
   poLabel,
+  hasOpenPoLine = true,
 }: {
   rowId: string;
   verb: string;
@@ -29,6 +30,13 @@ export function OrderInquiryRowActions({
   qty: string;
   /** What to name in the Unplace confirm - the PO number this row is tagged to. */
   poLabel?: string | null;
+  /**
+   * Whether this row's own product still has an outstanding PO line (the backend's
+   * `has_open_po_line`). Defaults true - an omitted flag never HIDES the offer, only an
+   * explicit false does; a "Place on PO" that opens on nothing to tag reads as a bug,
+   * not an empty state.
+   */
+  hasOpenPoLine?: boolean;
 }) {
   const [placing, setPlacing] = React.useState(false);
   const [unplacing, setUnplacing] = React.useState(false);
@@ -55,7 +63,7 @@ export function OrderInquiryRowActions({
     );
   }
 
-  if (state !== 'raised' || !PLACEABLE_VERBS.includes(verb)) return null;
+  if (state !== 'raised' || !PLACEABLE_VERBS.includes(verb) || !hasOpenPoLine) return null;
 
   return (
     <>

@@ -54,7 +54,10 @@ from app.models.project_so import (
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
 from app.models.sales_agent import SalesAgent
 from app.services.error_handler import AppException
-from app.services.project_order_inquiry_service import project_customer_label
+from app.services.project_order_inquiry_service import (
+    ProjectOrderInquiryService,
+    project_customer_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +229,7 @@ _COLUMNS = (
     _RAISED_AT.label("raised_at"),
     _SO_DATE.label("so_date"),
     _SO_NUMBER.label("so_number"),
+    Product.id.label("product_id"),
     Product.product_name.label("product_name"),
     _CUSTOMER_NAME.label("customer_name"),
     Project.id.label("project_id"),
@@ -436,13 +440,42 @@ class OrderInquiryWorklistService:
             .limit(limit)
             .all()
         )
+        product_by_row, open_products = self._open_po_line_context(rows)
         return {
-            "data": [self._serialize(row) for row in rows],
+            "data": [self._serialize(row, product_by_row, open_products) for row in rows],
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
 
-    def _serialize(self, row) -> Dict[str, Any]:
+    def _open_po_line_context(self, rows) -> Tuple[Dict[str, Optional[str]], set]:
+        """`has_open_po_line` for a whole PAGE, bulk-answered once. Row id -> product id
+        (the line's own reconciled product first, the item code second - the same
+        precedence `ProjectOrderInquiryService._resolve_product_id` uses per row), and the
+        SET of those products that still have an outstanding PO line."""
+        by_code = {row.item_code for row in rows if not row.product_id and row.item_code}
+        code_products = (
+            dict(
+                self.db.query(Product.product_code, Product.id)
+                .filter(Product.product_code.in_(list(by_code)))
+                .all()
+            )
+            if by_code
+            else {}
+        )
+        product_by_row: Dict[str, Optional[str]] = {
+            row.id: row.product_id or code_products.get(row.item_code) for row in rows
+        }
+        open_products = ProjectOrderInquiryService(self.db).open_po_line_product_ids(
+            set(product_by_row.values())
+        )
+        return product_by_row, open_products
+
+    def _serialize(
+        self,
+        row,
+        product_by_row: Optional[Dict[str, Optional[str]]] = None,
+        open_products: Optional[set] = None,
+    ) -> Dict[str, Any]:
         return {
             "id": row.id,
             "so_date": row.so_date,
@@ -458,6 +491,9 @@ class OrderInquiryWorklistService:
             "supplier_id": row.supplier_id,
             "po_number": row.po_number,
             "location": row.location,
+            "has_open_po_line": bool(
+                product_by_row and open_products and product_by_row.get(row.id) in open_products
+            ),
             "agent_code": row.agent_code,
             "agent_label": row.agent_label,
             "state": row.state,

@@ -21,6 +21,8 @@ from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.project_order_inquiry import (
+    AutoPlaceRequest,
+    AutoPlaceResult,
     MarkInquiryRowsRequest,
     OrderInquiryDetail,
     OrderInquiryPoCandidate,
@@ -359,13 +361,55 @@ async def place_order_inquiry_row_on_po(
     current_user: dict = Depends(require_permission(ACTION)),
     db: Session = Depends(get_db),
 ):
-    """Tag a raised row to one outstanding PO line - "the quantity to be ordered is
-    deducted" (the captain, section G)."""
+    """Tag a raised row to an outstanding PO line - "the quantity to be ordered is
+    deducted" (the captain, section G). The original single-line shape (`po_line_id`)
+    is unchanged; `allocations` is the G2 cascade override, one or more
+    `{po_line_id, qty}` lines in one call - the row may split (see
+    `ProjectOrderInquiryService.place_on_po_allocations`), so the response is the FIRST
+    row the call touched (the reused row on full coverage, the first new split row on a
+    partial one); every row it wrote is visible on the next listing refresh."""
     try:
         validate_uuid_path(row_id, resource="Order inquiry row")
-        validate_uuid_path(payload.po_line_id, resource="Purchase order line")
-        body = ProjectOrderInquiryService(db).place_on_po(
-            row_id, payload.po_line_id, actor_user_id=current_user["id"]
+        service = ProjectOrderInquiryService(db)
+        if payload.allocations:
+            for allocation in payload.allocations:
+                validate_uuid_path(allocation.po_line_id, resource="Purchase order line")
+            written = service.place_on_po_allocations(
+                row_id,
+                [
+                    {"po_line_id": allocation.po_line_id, "qty": allocation.qty}
+                    for allocation in payload.allocations
+                ],
+                actor_user_id=current_user["id"],
+            )
+            body = written[0]
+        else:
+            validate_uuid_path(payload.po_line_id, resource="Purchase order line")
+            body = service.place_on_po(
+                row_id, payload.po_line_id, actor_user_id=current_user["id"]
+            )
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/order-inquiries/auto-place", response_model=AutoPlaceResult)
+async def auto_place_order_inquiries(
+    payload: AutoPlaceRequest,
+    current_user: dict = Depends(require_permission(ACTION)),
+    db: Session = Depends(get_db),
+):
+    """Run the cascade now (G2 rule 4, the worklist's "Auto-place"): every raised
+    ORDER/RESERVE & ORDER row of the named products - or of every product carrying one,
+    when `product_ids` is omitted - tagged to its own open PO lines, earliest expected
+    date first. Idempotent: a second call with the same products places nothing more."""
+    try:
+        for product_id in payload.product_ids or []:
+            validate_uuid_path(product_id, resource="Product")
+        body = ProjectOrderInquiryService(db).auto_place_for_products(
+            payload.product_ids, actor_user_id=current_user["id"], trigger="worklist"
         )
         db.commit()
         return body

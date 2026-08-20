@@ -1096,6 +1096,8 @@ class ProjectOrderInquiryService:
             return []
         context, names = self._context_for(rows)
         traces = self._decision_traces(rows)
+        product_by_row = self._resolve_product_ids_bulk(rows)
+        open_products = self.open_po_line_product_ids(set(product_by_row.values()))
         out: List[Dict[str, Any]] = []
         for row in rows:
             meta = context.get(row.order_inquiry_id, {})
@@ -1125,6 +1127,7 @@ class ProjectOrderInquiryService:
                     "spo_ref": row.spo_ref,
                     "po_ref": row.po_ref,
                     "po_line_id": row.po_line_id,
+                    "has_open_po_line": product_by_row.get(row.id) in open_products,
                     "covered_by": row.covered_by,
                     "note": row.note,
                     "state": row.state,
@@ -1374,6 +1377,76 @@ class ProjectOrderInquiryService:
     # a row to `placed` is what removes it from the reorder engine's suggestion, with no
     # view change and no silent hole where "mark actioned" used to cover it with nothing
     # to show for it.
+    #
+    # G2 (the captain, 20 Aug, live-testing the shipped feature): "we need to link
+    # already at first already instead of suggesting and needing the users to click 1 by
+    # 1" - placements now happen AUTOMATICALLY (`auto_place_for_products`, cascading from
+    # the earliest expected-date PO line, ties by document sequence, partial coverage
+    # allowed, POs only - never SPO-). The dialog survives as override + audit, not as
+    # the workflow: `place_on_po` (one line) and `place_on_po_allocations` (a cascade,
+    # possibly several lines) are both still here for a human to use by exception.
+
+    def _open_po_lines_for_product(
+        self, product_id: str
+    ) -> List[Tuple[PurchaseOrderLine, PurchaseOrder, Optional[Supplier], Decimal]]:
+        """Open PO lines of one product, in CASCADE ORDER - soonest `expected_date`
+        first, ties broken by document sequence (the PO's own number, then the line's
+        own id) - netted for what other PLACED rows already tagged. The ONE query both
+        the dialog's candidates and the auto-place cascade walk, so the two can never
+        disagree (G2 rule 1).
+
+        SPO- prefixed documents are never candidates here (G2 rule 3, "those are SPO,
+        not PO" - the captain, live-testing): "Place on PO" tags an outstanding PURCHASE
+        ORDER, never a scheduled purchase order. SPO coverage stays the ladder engine's
+        job (`net_demand` / `_pools` above), untouched by this feature.
+        """
+        tagged = self._tagged_by_po_line()
+        rows = (
+            self.db.query(PurchaseOrderLine, PurchaseOrder, Supplier)
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
+            .filter(
+                PurchaseOrderLine.product_id == product_id,
+                PurchaseOrderLine.line_status == "open",
+                PurchaseOrder.po_number.notlike("SPO-%"),
+            )
+            .order_by(
+                PurchaseOrderLine.expected_date.asc().nulls_last(),
+                PurchaseOrder.po_number.asc(),
+                PurchaseOrderLine.id.asc(),
+            )
+            .all()
+        )
+        out: List[Tuple[PurchaseOrderLine, PurchaseOrder, Optional[Supplier], Decimal]] = []
+        for line, po, supplier in rows:
+            balance = _dec(line.qty_ordered) - _dec(line.qty_received)
+            remaining = balance - tagged.get(line.id, _ZERO)
+            if remaining > _ZERO:
+                out.append((line, po, supplier, remaining))
+        return out
+
+    @staticmethod
+    def _cascade_take(
+        lines: Sequence[Tuple[PurchaseOrderLine, PurchaseOrder, Optional[Supplier], Decimal]],
+        need: Decimal,
+    ) -> List[Tuple[str, Decimal]]:
+        """G2 rule 2, "take from the earliest PO, then subsequently from subsequent PO":
+        `min(remaining balance, still needed)` off each line in the order it is given,
+        until the need is covered or the candidates run out. Partial coverage is allowed
+        - a `need` bigger than every line's remaining balance combined simply returns
+        less than `need`, and it is the CALLER's job to decide what an unfinished walk
+        means for the row (the uncovered remainder stays a raised Buy).
+        """
+        still = need
+        takes: List[Tuple[str, Decimal]] = []
+        for line, _po, _supplier, remaining in lines:
+            if still <= _ZERO:
+                break
+            take = remaining if remaining < still else still
+            if take > _ZERO:
+                takes.append((line.id, take))
+                still -= take
+        return takes
 
     def po_candidates_for_row(self, row_id: str) -> List[Dict[str, Any]]:
         """Open PO lines of this row's own product, soonest `expected_date` first.
@@ -1381,7 +1454,9 @@ class ProjectOrderInquiryService:
         `remaining` already nets what OTHER placed rows have tagged onto the same line -
         the reason two rows can never be pointed at the same PO quantity - so `covers`
         and `recommended` are both answered against what is ACTUALLY left, not the line's
-        raw balance.
+        raw balance. `default_take` is the cascade's own preview (G2): what
+        `auto_place_for_products` would take off THIS line for THIS row, computed by the
+        SAME walk - the dialog's starting point, not a second opinion.
         """
         row = self._row_or_404(row_id)
         self._assert_placeable(row)
@@ -1393,28 +1468,12 @@ class ProjectOrderInquiryService:
                 code="order_inquiry_no_product",
             )
         need = _dec(row.qty)
-        tagged = self._tagged_by_po_line()
-        lines = (
-            self.db.query(PurchaseOrderLine, PurchaseOrder, Supplier)
-            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-            .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
-            .filter(
-                PurchaseOrderLine.product_id == product_id,
-                PurchaseOrderLine.line_status == "open",
-            )
-            .order_by(
-                PurchaseOrderLine.expected_date.asc().nulls_last(),
-                PurchaseOrderLine.id.asc(),
-            )
-            .all()
-        )
+        lines = self._open_po_lines_for_product(product_id)
+        cascade = dict(self._cascade_take(lines, need))
+        claims_by_line = self._placed_claims_by_po_line([line.id for line, _po, _s, _r in lines])
         candidates: List[Dict[str, Any]] = []
-        for line, po, supplier in lines:
-            balance = _dec(line.qty_ordered) - _dec(line.qty_received)
-            already = tagged.get(line.id, _ZERO)
-            remaining = balance - already
-            if remaining <= _ZERO:
-                continue
+        for line, po, supplier, remaining in lines:
+            already = _dec(line.qty_ordered) - _dec(line.qty_received) - remaining
             candidates.append(
                 {
                     "po_line_id": line.id,
@@ -1427,6 +1486,12 @@ class ProjectOrderInquiryService:
                     "remaining": _qty_str(remaining),
                     "covers": remaining >= need,
                     "recommended": False,
+                    "default_take": _qty_str(cascade.get(line.id, _ZERO)),
+                    "unit_cost": (
+                        _qty_str(_dec(line.unit_cost)) if line.unit_cost is not None else None
+                    ),
+                    "currency": line.currency,
+                    "claims": claims_by_line.get(line.id, []),
                 }
             )
         recommended = next((c for c in candidates if c["covers"]), None)
@@ -1434,11 +1499,61 @@ class ProjectOrderInquiryService:
             recommended["recommended"] = True
         return candidates
 
+    def _apply_placement(
+        self,
+        row: OrderInquiryRow,
+        line: PurchaseOrderLine,
+        po: Optional[PurchaseOrder],
+        supplier: Optional[Supplier],
+        *,
+        actor_user_id: str,
+        auto_trigger: Optional[str] = None,
+    ) -> None:
+        """The write half of a placement, shared by a single manual tag, a cascade split
+        row and an auto placement: stamp the note, set the tag, write the audit claim.
+
+        `auto_trigger` names WHY this happened without a person clicking it (G2 rule 4:
+        "every auto placement writes the same OrderLinkClaim evidence with an auto
+        marker") - appended to the row's OWN note, which is already this feature's
+        evidence field (`"Placed on <po> (<supplier>), expected <date>"`), rather than a
+        new column: `OrderLinkClaim` carries no free-text field to reuse instead
+        (`source` is a closed 30-char vocabulary another feed also writes), so the note a
+        person already reads on the row is where "how did this happen" is answered.
+        """
+        po_number = po.po_number if po else "an unnamed purchase order"
+        supplier_name = supplier.supplier_name if supplier else "unknown supplier"
+        expected = line.expected_date.isoformat() if line.expected_date else "no date"
+        stamp = f"Placed on {po_number} ({supplier_name}), expected {expected}"
+        if auto_trigger:
+            stamp = f"{stamp}; auto: {auto_trigger}"
+        row.note = f"{row.note}; {stamp}" if row.note else stamp
+        row.po_ref = po_number if po else None
+        row.po_line_id = line.id
+        row.state = INQUIRY_PLACED
+        row.actioned_by = actor_user_id
+        row.actioned_at = datetime.utcnow()
+
+        if po:
+            so_number, item_code, core_line_id = self._claim_identity(row)
+            order_link_service.claim_placed_on_po(
+                self.db,
+                company_id=row.company_id,
+                so_number=so_number,
+                po_number=po.po_number,
+                item_code=item_code,
+                so_line_id=core_line_id,
+                po_line_id=line.id,
+            )
+
     def place_on_po(
         self, row_id: str, po_line_id: str, *, actor_user_id: str
     ) -> Dict[str, Any]:
-        """Tag this row to one open PO line. The captain's "quantity to be ordered is
-        deducted" - the deduction IS the row leaving `state = 'raised'`."""
+        """Tag this row to ONE open PO line. The captain's "quantity to be ordered is
+        deducted" - the deduction IS the row leaving `state = 'raised'`.
+
+        The single-line shape section G shipped with, kept byte-for-byte: a row a human
+        places on one line that covers it whole never becomes a split.
+        """
         row = self._row_or_404(row_id)
         self._assert_placeable(row)
 
@@ -1492,32 +1607,258 @@ class ProjectOrderInquiryService:
             if po and po.supplier_id
             else None
         )
-        po_number = po.po_number if po else "an unnamed purchase order"
-        supplier_name = supplier.supplier_name if supplier else "unknown supplier"
-        expected = line.expected_date.isoformat() if line.expected_date else "no date"
-        stamp = f"Placed on {po_number} ({supplier_name}), expected {expected}"
-        row.note = f"{row.note}; {stamp}" if row.note else stamp
-        row.po_ref = po_number if po else None
-        row.po_line_id = line.id
-        row.state = INQUIRY_PLACED
-        row.actioned_by = actor_user_id
-        row.actioned_at = datetime.utcnow()
-
-        if po:
-            so_number, item_code, core_line_id = self._claim_identity(row)
-            order_link_service.claim_placed_on_po(
-                self.db,
-                company_id=row.company_id,
-                so_number=so_number,
-                po_number=po.po_number,
-                item_code=item_code,
-                so_line_id=core_line_id,
-                po_line_id=line.id,
-            )
+        self._apply_placement(row, line, po, supplier, actor_user_id=actor_user_id)
 
         self.db.flush()
         self._refresh_inquiry_states({row.order_inquiry_id})
         return self.serialize_rows([row])[0]
+
+    def place_on_po_allocations(
+        self,
+        row_id: str,
+        allocations: Sequence[Dict[str, Any]],
+        *,
+        actor_user_id: str,
+        auto_trigger: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Tag this row across ONE OR MORE outstanding PO lines - the cascade shape (G2
+        rule 2), used by both the reworked dialog (a person adjusting the cascade's own
+        preview) and `auto_place_for_products` (nobody adjusting it at all).
+
+        **Multi-line coverage shape: SPLIT, one row per allocation.**
+        `order_inquiry_rows` holds exactly one `po_line_id` (migration 400) - a row a
+        single PO line cannot cover whole has nowhere to hold a second tag, so it is
+        split into one row per PO line taken, the same way this module already treats a
+        quantity that outgrows one instruction (`_write`/`net_demand` writing one row per
+        `DemandPlan`, never packing several coverages onto one row). The FIRST allocation
+        reuses the row that was already raised - the ordinary single-line case, still the
+        common one, therefore changes nothing about the row's own identity or the ids
+        anything else already points at (`supply_decision_id`, an existing claim); every
+        FURTHER allocation is a brand-new row carrying the same `so_line_id` / item code /
+        delivery date / `supply_decision_id` as the row it split from.
+
+        **Partial coverage keeps the netting honest.** `committed_v`'s confirmed leg
+        counts a `raised` ORDER row and nothing else (demand.py); a `placed` row leaves
+        it. So when the allocations do not cover the row's whole quantity, the ORIGINAL
+        row is left `raised` at the REMAINING quantity instead of being reused for an
+        allocation - every placed allocation becomes its own new `placed` row, and the
+        genuinely still-needed remainder never quietly leaves the confirmed leg. Either
+        way `sum(qty of every row this call touches) == the row's qty before the call`.
+        """
+        row = self._row_or_404(row_id)
+        self._assert_placeable(row)
+        if not allocations:
+            raise AppException(
+                status_code=422,
+                message="Name at least one purchase order line.",
+                code="order_inquiry_no_allocations",
+            )
+        product_id = self._resolve_product_id(row)
+        if not product_id:
+            raise AppException(
+                status_code=409,
+                message="This row names no product to match a purchase order line against.",
+                code="order_inquiry_no_product",
+            )
+
+        need = _dec(row.qty)
+        tagged = self._tagged_by_po_line()
+        line_ids = [str(entry["po_line_id"]) for entry in allocations if entry.get("po_line_id")]
+        lines = (
+            self.db.query(PurchaseOrderLine, PurchaseOrder, Supplier)
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
+            .filter(PurchaseOrderLine.id.in_(line_ids))
+            .all()
+        )
+        by_id = {line.id: (line, po, supplier) for line, po, supplier in lines}
+
+        resolved: List[
+            Tuple[PurchaseOrderLine, Optional[PurchaseOrder], Optional[Supplier], Decimal]
+        ] = []
+        claimed_within_call: Dict[str, Decimal] = {}
+        total_alloc = _ZERO
+        for entry in allocations:
+            po_line_id = str(entry.get("po_line_id") or "")
+            qty = _dec(entry.get("qty"))
+            if qty <= _ZERO:
+                continue
+            found = by_id.get(po_line_id)
+            if found is None:
+                raise AppException(
+                    status_code=404,
+                    message="That purchase order line no longer exists.",
+                    code="po_line_not_found",
+                )
+            line, po, supplier = found
+            if line.line_status != "open":
+                raise AppException(
+                    status_code=409,
+                    message="That purchase order line is no longer open.",
+                    code="order_inquiry_po_line_closed",
+                )
+            if str(line.product_id) != str(product_id):
+                raise AppException(
+                    status_code=409,
+                    message="That purchase order line is not for this row's product.",
+                    code="order_inquiry_product_mismatch",
+                )
+            balance = _dec(line.qty_ordered) - _dec(line.qty_received)
+            already = tagged.get(line.id, _ZERO) + claimed_within_call.get(line.id, _ZERO)
+            remaining = balance - already
+            if remaining < qty:
+                raise AppException(
+                    status_code=409,
+                    message=(
+                        f"{po.po_number if po else 'That line'} has {_qty_str(remaining)} "
+                        f"left, {_qty_str(qty - remaining)} short of the {_qty_str(qty)} "
+                        "allocated to it."
+                    ),
+                    code="order_inquiry_po_line_short",
+                )
+            claimed_within_call[line.id] = already + qty - tagged.get(line.id, _ZERO)
+            resolved.append((line, po, supplier, qty))
+            total_alloc += qty
+
+        if not resolved:
+            raise AppException(
+                status_code=422,
+                message="Name at least one purchase order line.",
+                code="order_inquiry_no_allocations",
+            )
+        if total_alloc > need:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{_qty_str(total_alloc)} allocated is more than the {_qty_str(need)} "
+                    "this row needs."
+                ),
+                code="order_inquiry_over_allocated",
+            )
+
+        remainder = need - total_alloc
+        full_coverage = remainder <= _ZERO
+        written: List[OrderInquiryRow] = []
+        for index, (line, po, supplier, qty) in enumerate(resolved):
+            if full_coverage and index == 0:
+                target = row
+                target.qty = qty
+            else:
+                target = OrderInquiryRow(
+                    company_id=row.company_id,
+                    order_inquiry_id=row.order_inquiry_id,
+                    so_line_id=row.so_line_id,
+                    item_code=row.item_code,
+                    qty=qty,
+                    delivery_date=row.delivery_date,
+                    stock_location=row.stock_location,
+                    verb=row.verb,
+                    covered_by=row.covered_by,
+                    supply_decision_id=row.supply_decision_id,
+                    state=INQUIRY_RAISED,
+                )
+                self.db.add(target)
+                self.db.flush()
+            self._apply_placement(
+                target, line, po, supplier, actor_user_id=actor_user_id, auto_trigger=auto_trigger
+            )
+            written.append(target)
+
+        if not full_coverage:
+            # `row` was never reused for an allocation above - it stays `raised`, only its
+            # quantity shrinks to what the cascade could not cover.
+            row.qty = remainder
+
+        self.db.flush()
+        self._refresh_inquiry_states({row.order_inquiry_id})
+        return self.serialize_rows(written)
+
+    def auto_place_for_products(
+        self,
+        product_ids: Optional[Sequence[str]],
+        *,
+        actor_user_id: str,
+        trigger: str,
+    ) -> Dict[str, Any]:
+        """The bulk, idempotent cascade pass (G2 rule 1: "we need to link already at
+        first already instead of suggesting and needing the users to click 1 by 1").
+
+        Every RAISED, placeable row of the named products - or of every product with one,
+        when `product_ids` is omitted - is cascaded against its own open PO lines, OLDEST
+        NEED FIRST (`delivery_date`, then `created_at`, so the row purchasing has been
+        waiting on longest gets first claim on what just came in). A second run places
+        nothing further: a row this pass placed (or split) is no longer `raised`, so it
+        drops out of the very query that feeds the next run - the idempotence the three
+        triggers (import, decision confirm, the worklist button) all rely on.
+
+        `trigger` is stamped onto every placement it makes (`_apply_placement`'s
+        `auto_trigger`), so "why is this placed" is always answerable from the row's own
+        note - never a silent placement with nothing to show for it.
+        """
+        query = self.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.state == INQUIRY_RAISED,
+            OrderInquiryRow.verb.in_(_PLACEABLE_VERBS),
+        )
+        if product_ids:
+            wanted = [pid for pid in product_ids if pid]
+            so_line_ids = [
+                line_id
+                for (line_id,) in self.db.query(ProjectSalesOrderLine.id).filter(
+                    ProjectSalesOrderLine.product_id.in_(wanted)
+                )
+            ]
+            codes = [
+                code
+                for (code,) in self.db.query(Product.product_code).filter(
+                    Product.id.in_(wanted)
+                )
+                if code
+            ]
+            conditions = []
+            if so_line_ids:
+                conditions.append(OrderInquiryRow.so_line_id.in_(so_line_ids))
+            if codes:
+                conditions.append(OrderInquiryRow.item_code.in_(codes))
+            if not conditions:
+                return {"placed_rows": 0, "allocations": 0, "products_touched": 0}
+            query = query.filter(or_(*conditions))
+
+        rows = query.order_by(
+            OrderInquiryRow.delivery_date.asc().nulls_last(),
+            OrderInquiryRow.created_at.asc(),
+        ).all()
+
+        placed_rows = 0
+        allocation_count = 0
+        products_touched: set = set()
+        for row in rows:
+            product_id = self._resolve_product_id(row)
+            if not product_id:
+                continue
+            need = _dec(row.qty)
+            if need <= _ZERO:
+                continue
+            lines = self._open_po_lines_for_product(product_id)
+            if not lines:
+                continue
+            takes = self._cascade_take(lines, need)
+            if not takes:
+                continue
+            written = self.place_on_po_allocations(
+                row.id,
+                [{"po_line_id": line_id, "qty": qty} for line_id, qty in takes],
+                actor_user_id=actor_user_id,
+                auto_trigger=trigger,
+            )
+            placed_rows += len(written)
+            allocation_count += len(takes)
+            products_touched.add(str(product_id))
+
+        return {
+            "placed_rows": placed_rows,
+            "allocations": allocation_count,
+            "products_touched": len(products_touched),
+        }
 
     def unplace(self, row_id: str, *, actor_user_id: str) -> Dict[str, Any]:
         """Untag: the row goes back to `raised` and the reorder engine sees it again."""
@@ -1596,6 +1937,76 @@ class ProjectOrderInquiryService:
                 return product[0]
         return None
 
+    def _resolve_product_ids_bulk(
+        self, rows: Sequence[OrderInquiryRow]
+    ) -> Dict[str, Optional[str]]:
+        """Row id -> product id, the SAME precedence as `_resolve_product_id` (the
+        reconciled line's product first, the item code second), but one query per source
+        rather than one per row - the batch version a listing needs."""
+        so_line_ids = {row.so_line_id for row in rows if row.so_line_id}
+        item_codes = {row.item_code for row in rows if row.item_code}
+        line_products = (
+            dict(
+                self.db.query(
+                    ProjectSalesOrderLine.id, ProjectSalesOrderLine.product_id
+                )
+                .filter(ProjectSalesOrderLine.id.in_(list(so_line_ids)))
+                .all()
+            )
+            if so_line_ids
+            else {}
+        )
+        code_products = (
+            dict(
+                self.db.query(Product.product_code, Product.id)
+                .filter(Product.product_code.in_(list(item_codes)))
+                .all()
+            )
+            if item_codes
+            else {}
+        )
+        out: Dict[str, Optional[str]] = {}
+        for row in rows:
+            product_id = line_products.get(row.so_line_id) if row.so_line_id else None
+            if not product_id and row.item_code:
+                product_id = code_products.get(row.item_code)
+            out[row.id] = product_id
+        return out
+
+    def open_po_line_product_ids(self, product_ids: Sequence[Optional[str]]) -> set:
+        """Which of these products still has an outstanding PO line left, once every
+        OTHER placed row's tag is netted off - the exact predicate `po_candidates_for_row`
+        answers per row, computed ONCE for a whole listing (`has_open_po_line`) so the
+        flag and the dialog can never disagree. SPO- prefixed documents are excluded here
+        too (G2 rule 3) - the same join `_open_po_lines_for_product` filters on, so this
+        flag can never promise a candidate the cascade would refuse.
+        """
+        wanted = {pid for pid in product_ids if pid}
+        if not wanted:
+            return set()
+        tagged = self._tagged_by_po_line()
+        lines = (
+            self.db.query(
+                PurchaseOrderLine.id,
+                PurchaseOrderLine.product_id,
+                PurchaseOrderLine.qty_ordered,
+                PurchaseOrderLine.qty_received,
+            )
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .filter(
+                PurchaseOrderLine.product_id.in_(list(wanted)),
+                PurchaseOrderLine.line_status == "open",
+                PurchaseOrder.po_number.notlike("SPO-%"),
+            )
+            .all()
+        )
+        open_products: set = set()
+        for line_id, product_id, qty_ordered, qty_received in lines:
+            remaining = _dec(qty_ordered) - _dec(qty_received) - tagged.get(line_id, _ZERO)
+            if remaining > _ZERO:
+                open_products.add(str(product_id))
+        return open_products
+
     def _tagged_by_po_line(self) -> Dict[str, Decimal]:
         """What every currently PLACED row already claims, per PO line - the netting
         that stops two rows tagging the same purchase-order quantity."""
@@ -1609,6 +2020,40 @@ class ProjectOrderInquiryService:
             .all()
         )
         return {po_line_id: _dec(qty) for po_line_id, qty in rows}
+
+    def _placed_claims_by_po_line(
+        self, po_line_ids: Sequence[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Every OTHER row already tagged onto these lines - the nested table a candidate's
+        expand shows (section G, the row's own expand). Read straight off the placed rows
+        themselves: the tag IS the evidence."""
+        if not po_line_ids:
+            return {}
+        rows = (
+            self.db.query(OrderInquiryRow, ProjectSalesOrder)
+            .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+            .join(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
+            )
+            .filter(
+                OrderInquiryRow.po_line_id.in_(list(po_line_ids)),
+                OrderInquiryRow.state == INQUIRY_PLACED,
+            )
+            .order_by(OrderInquiryRow.actioned_at.asc())
+            .all()
+        )
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for row, order in rows:
+            out.setdefault(row.po_line_id, []).append(
+                {
+                    "so_number": order.autocount_doc_no or order.provisional_ref,
+                    "item_code": row.item_code,
+                    "qty": _qty_str(_dec(row.qty)),
+                    "placed_date": row.actioned_at,
+                }
+            )
+        return out
 
     def _claim_identity(
         self, row: OrderInquiryRow

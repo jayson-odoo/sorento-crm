@@ -50,11 +50,14 @@ from app.services import project_seed_service
 
 from ._pg_fixture import blank_session, pg_session
 from .test_so_supply_confirmation import (
+    _client as _confirm_client,
     _core_line as _confirm_core_line,
     _core_so as _confirm_core_so,
+    _line_payload as _confirm_line_payload,
     _product as _confirm_product,
     _project_line as _confirm_project_line,
     _project_so as _confirm_project_so,
+    _restore as _confirm_restore,
     _sorento as _confirm_sorento,
     _user as _confirm_user,
     _warehouse as _confirm_warehouse,
@@ -326,6 +329,66 @@ def test_candidates_are_netted_by_what_other_placed_rows_already_tagged(api):
     assert body[0]["already_tagged"] == "20"
     assert body[0]["remaining"] == "30"
     assert body[0]["covers"] is True
+
+
+def test_candidates_claims_array_names_every_other_row_tagged_with_price(api):
+    """The candidate's expand (section G): every OTHER row already tagged to the line,
+    one by one, plus the line's own held price - not just the `already_tagged` total."""
+    client, db, world, _user_id = api
+    line = _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="50", expected_date=date(2026, 9, 10),
+    )
+    line.unit_cost = Decimal("12.75")
+    line.currency = "MYR"
+    db.flush()
+    db.commit()
+
+    row_a = _row(db, world["company_id"], world["inquiry"], qty="20", item_code=world["product"].product_code)
+    placed_a = client.post(
+        f"{BASE}/order-inquiry-rows/{row_a.id}/place-on-po", json={"po_line_id": line.id}
+    )
+    assert placed_a.status_code == 200, placed_a.text
+
+    row_b = _row(db, world["company_id"], world["inquiry"], qty="15", item_code=world["product"].product_code)
+    placed_b = client.post(
+        f"{BASE}/order-inquiry-rows/{row_b.id}/place-on-po", json={"po_line_id": line.id}
+    )
+    assert placed_b.status_code == 200, placed_b.text
+
+    row_c = _row(db, world["company_id"], world["inquiry"], qty="10", item_code=world["product"].product_code)
+    response = client.get(f"{BASE}/order-inquiry-rows/{row_c.id}/po-candidates")
+
+    assert response.status_code == 200, response.text
+    candidate = next(c for c in response.json() if c["po_line_id"] == line.id)
+    assert candidate["already_tagged"] == "35"
+    assert candidate["unit_cost"] == "12.75"
+    assert candidate["currency"] == "MYR"
+
+    claims = candidate["claims"]
+    assert len(claims) == 2
+    so_numbers = {claim["so_number"] for claim in claims}
+    assert so_numbers == {world["order"].autocount_doc_no}
+    qtys = sorted(claim["qty"] for claim in claims)
+    assert qtys == ["15", "20"]
+    for claim in claims:
+        assert claim["placed_date"] is not None
+
+
+def test_candidates_unit_cost_and_currency_are_blank_when_the_line_carries_none(api):
+    client, db, world, _user_id = api
+    line = _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"], qty_ordered="10",
+    )
+    row = _row(db, world["company_id"], world["inquiry"], qty="5", item_code=world["product"].product_code)
+
+    response = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
+
+    assert response.status_code == 200, response.text
+    candidate = response.json()[0]
+    assert candidate["unit_cost"] is None
+    assert candidate["currency"] is None
+    assert candidate["claims"] == []
 
 
 def test_candidates_409_for_a_verb_that_is_not_placeable(api):
@@ -603,6 +666,84 @@ def test_the_worklist_state_filter_placed_returns_only_placed_rows(api):
     assert raised_row.id not in ids
 
 
+# ---------------------------------------------------------- has_open_po_line
+
+
+def test_has_open_po_line_is_true_on_the_per_project_listing_and_flips_false_once_placed(api):
+    """The per-project OI rows listing (`GET .../order-inquiry-rows`): true while the
+    row's own product still has an open PO line with remaining balance, false once a
+    placement consumes it - the same predicate `po-candidates` answers, computed once for
+    the whole page."""
+    client, db, world, _user_id = api
+    line = _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="20", expected_date=date(2026, 9, 5),
+    )
+    row_a = _row(db, world["company_id"], world["inquiry"], qty="20", item_code=world["product"].product_code)
+
+    before = client.get(f"{BASE}/projects/{world['project'].id}/order-inquiry-rows")
+    assert before.status_code == 200, before.text
+    row_a_out = next(r for r in before.json()["data"] if r["id"] == row_a.id)
+    assert row_a_out["has_open_po_line"] is True
+
+    placed = client.post(
+        f"{BASE}/order-inquiry-rows/{row_a.id}/place-on-po", json={"po_line_id": line.id}
+    )
+    assert placed.status_code == 200, placed.text
+
+    row_b = _row(db, world["company_id"], world["inquiry"], qty="5", item_code=world["product"].product_code)
+    after = client.get(f"{BASE}/projects/{world['project'].id}/order-inquiry-rows")
+    assert after.status_code == 200, after.text
+    row_b_out = next(r for r in after.json()["data"] if r["id"] == row_b.id)
+    assert row_b_out["has_open_po_line"] is False, (
+        "the line's whole remaining balance is already claimed by row_a"
+    )
+
+
+def test_has_open_po_line_is_false_for_a_product_with_no_open_po_line_at_all(api):
+    client, db, world, _user_id = api
+    row = _row(
+        db, world["company_id"], world["inquiry"], qty="5",
+        item_code=world["other_product"].product_code,
+    )
+
+    response = client.get(f"{BASE}/projects/{world['project'].id}/order-inquiry-rows")
+
+    assert response.status_code == 200, response.text
+    row_out = next(r for r in response.json()["data"] if r["id"] == row.id)
+    assert row_out["has_open_po_line"] is False
+
+
+def test_has_open_po_line_on_the_cross_project_worklist_flips_false_once_placed(api):
+    """The same flag, on the cross-project worklist (`GET /order-inquiries`) purchasing
+    actually works from - it must never disagree with the per-project listing."""
+    client, db, world, _user_id = api
+    line = _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="12", expected_date=date(2026, 9, 12),
+    )
+    row_a = _row(
+        db, world["company_id"], world["inquiry"], qty="12",
+        item_code=world["product"].product_code,
+    )
+
+    before = client.get(f"{BASE}/order-inquiries", params={"query": world["product"].product_code})
+    assert before.status_code == 200, before.text
+    row_a_out = next(r for r in before.json()["data"] if r["id"] == row_a.id)
+    assert row_a_out["has_open_po_line"] is True
+
+    placed = client.post(
+        f"{BASE}/order-inquiry-rows/{row_a.id}/place-on-po", json={"po_line_id": line.id}
+    )
+    assert placed.status_code == 200, placed.text
+
+    row_b = _row(db, world["company_id"], world["inquiry"], qty="3", item_code=world["product"].product_code)
+    after = client.get(f"{BASE}/order-inquiries", params={"query": world["product"].product_code})
+    assert after.status_code == 200, after.text
+    row_b_out = next(r for r in after.json()["data"] if r["id"] == row_b.id)
+    assert row_b_out["has_open_po_line"] is False
+
+
 # -------------------------------------------------------------- netting proof
 
 
@@ -688,3 +829,383 @@ def test_placing_leaves_committed_v_confirmed_leg_and_unplacing_restores_it():
         assert confirmed_committed() == Decimal("40"), (
             "unplacing must return the row to raised so the reorder engine counts it again"
         )
+
+
+# ------------------------------------------------------------------ G2 - auto-place (20 Aug)
+#
+# "We need to link already at first already instead of suggesting and needing the users
+# to click 1 by 1" (the captain, live-testing G). Placements now happen AUTOMATICALLY,
+# cascading from the earliest expected-date PO line, ties by document sequence, partial
+# coverage allowed, POs only - never SPO-. The dialog survives as override + audit.
+
+
+def test_candidates_are_ordered_by_document_sequence_when_expected_dates_tie(api):
+    """G2 rule 2's tie-break. Both lines carry the SAME `expected_date`, so only the PO's
+    own number - the document sequence - decides which is "earliest"."""
+    client, db, world, _user_id = api
+    po_b = _po(db, world["company_id"], world["supplier"], f"ZZT-PO-B-{_uid()[:6]}")
+    line_b = _po_line(
+        db, world["company_id"], po_b, world["product"], world["warehouse"],
+        qty_ordered="10", expected_date=date(2026, 9, 5),
+    )
+    po_a = _po(db, world["company_id"], world["supplier"], f"ZZT-PO-A-{_uid()[:6]}")
+    line_a = _po_line(
+        db, world["company_id"], po_a, world["product"], world["warehouse"],
+        qty_ordered="10", expected_date=date(2026, 9, 5),
+    )
+    row = _row(db, world["company_id"], world["inquiry"], qty="15", item_code=world["product"].product_code)
+
+    response = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [c["po_line_id"] for c in body] == [line_a.id, line_b.id]
+    # The cascade preview (`default_take`) walks the SAME order: the earlier document
+    # takes its whole balance first, the later one takes only what is left.
+    assert body[0]["default_take"] == "10"
+    assert body[1]["default_take"] == "5"
+
+
+def test_spo_prefixed_documents_are_never_candidates_the_flag_or_the_cascade(api):
+    """G2 rule 3, "those are SPO, not PO" - the captain. An SPO- document offers nothing
+    to Place on PO, at any of the three places this feature reads open PO lines from."""
+    client, db, world, user_id = api
+    spo_po = _po(db, world["company_id"], world["supplier"], f"SPO-{_uid()[:8]}")
+    _po_line(
+        db, world["company_id"], spo_po, world["product"], world["warehouse"], qty_ordered="50",
+    )
+    row = _row(db, world["company_id"], world["inquiry"], qty="10", item_code=world["product"].product_code)
+
+    candidates = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
+    assert candidates.status_code == 200, candidates.text
+    assert candidates.json() == []
+
+    listing = client.get(f"{BASE}/projects/{world['project'].id}/order-inquiry-rows")
+    assert listing.status_code == 200, listing.text
+    row_out = next(r for r in listing.json()["data"] if r["id"] == row.id)
+    assert row_out["has_open_po_line"] is False
+
+    from app.models.base import company_scope
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    with company_scope(db, frozenset({world["company_id"]})):
+        result = ProjectOrderInquiryService(db).auto_place_for_products(
+            [world["product"].id], actor_user_id=user_id, trigger="test"
+        )
+    db.commit()
+    assert result == {"placed_rows": 0, "allocations": 0, "products_touched": 0}
+    db.refresh(row)
+    assert row.state == INQUIRY_RAISED
+
+
+def test_allocations_cascade_earliest_first_and_split_the_row(api):
+    """G2 rule 2: "take from the earliest PO, then subsequently from subsequent PO".
+    Multi-line coverage shape: the row SPLITS - the first allocation reuses the row
+    already raised, every further allocation is a brand-new row of its own."""
+    client, db, world, _user_id = api
+    early = _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="15", expected_date=date(2026, 9, 1),
+    )
+    later = _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="20", expected_date=date(2026, 9, 10),
+    )
+    row = _row(db, world["company_id"], world["inquiry"], qty="25", item_code=world["product"].product_code)
+
+    response = client.post(
+        f"{BASE}/order-inquiry-rows/{row.id}/place-on-po",
+        json={
+            "allocations": [
+                {"po_line_id": early.id, "qty": "15"},
+                {"po_line_id": later.id, "qty": "10"},
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["id"] == row.id, "the first allocation reuses the row already raised"
+    assert body["po_line_id"] == early.id
+    assert body["qty"] == "15"
+
+    rows = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.order_inquiry_id == world["inquiry"].id)
+        .all()
+    )
+    assert len(rows) == 2
+    split = next(r for r in rows if r.id != row.id)
+    assert split.state == INQUIRY_PLACED
+    assert split.po_line_id == later.id
+    assert split.qty == Decimal("10")
+    assert split.so_line_id == row.so_line_id
+    assert split.item_code == row.item_code
+    reused = next(r for r in rows if r.id == row.id)
+    assert reused.qty + split.qty == Decimal("25"), "the split never drops or invents quantity"
+
+
+def test_allocations_over_the_rows_own_need_are_refused(api):
+    client, db, world, _user_id = api
+    line_a = _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"], qty_ordered="20",
+    )
+    line_b = _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"], qty_ordered="20",
+    )
+    row = _row(db, world["company_id"], world["inquiry"], qty="10", item_code=world["product"].product_code)
+
+    response = client.post(
+        f"{BASE}/order-inquiry-rows/{row.id}/place-on-po",
+        json={
+            "allocations": [
+                {"po_line_id": line_a.id, "qty": "6"},
+                {"po_line_id": line_b.id, "qty": "6"},
+            ]
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "order_inquiry_over_allocated"
+
+
+def test_unplacing_one_split_row_leaves_the_other_placed(api):
+    client, db, world, _user_id = api
+    early = _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="10", expected_date=date(2026, 9, 1),
+    )
+    later = _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="10", expected_date=date(2026, 9, 10),
+    )
+    row = _row(db, world["company_id"], world["inquiry"], qty="20", item_code=world["product"].product_code)
+
+    placed = client.post(
+        f"{BASE}/order-inquiry-rows/{row.id}/place-on-po",
+        json={
+            "allocations": [
+                {"po_line_id": early.id, "qty": "10"},
+                {"po_line_id": later.id, "qty": "10"},
+            ]
+        },
+    )
+    assert placed.status_code == 200, placed.text
+
+    split = (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.order_inquiry_id == world["inquiry"].id,
+            OrderInquiryRow.id != row.id,
+        )
+        .first()
+    )
+    assert split is not None
+
+    unplaced = client.post(f"{BASE}/order-inquiry-rows/{split.id}/unplace")
+    assert unplaced.status_code == 200, unplaced.text
+    assert unplaced.json()["state"] == INQUIRY_RAISED
+
+    db.refresh(row)
+    assert row.state == INQUIRY_PLACED
+    assert row.po_line_id == early.id
+
+
+def test_auto_place_for_products_is_idempotent(api):
+    client, db, world, user_id = api
+    _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="50", expected_date=date(2026, 9, 1),
+    )
+    row = _row(db, world["company_id"], world["inquiry"], qty="20", item_code=world["product"].product_code)
+
+    from app.models.base import company_scope
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    with company_scope(db, frozenset({world["company_id"]})):
+        first = ProjectOrderInquiryService(db).auto_place_for_products(
+            None, actor_user_id=user_id, trigger="test"
+        )
+        db.commit()
+        second = ProjectOrderInquiryService(db).auto_place_for_products(
+            None, actor_user_id=user_id, trigger="test"
+        )
+        db.commit()
+
+    assert first == {"placed_rows": 1, "allocations": 1, "products_touched": 1}
+    assert second == {"placed_rows": 0, "allocations": 0, "products_touched": 0}
+    db.refresh(row)
+    assert row.state == INQUIRY_PLACED
+    assert "auto: test" in (row.note or "")
+
+
+def test_auto_place_route_places_raised_rows_and_reports_totals(api):
+    client, db, world, _user_id = api
+    _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="50", expected_date=date(2026, 9, 1),
+    )
+    row = _row(db, world["company_id"], world["inquiry"], qty="20", item_code=world["product"].product_code)
+
+    response = client.post(f"{BASE}/order-inquiries/auto-place", json={})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body == {"placed_rows": 1, "allocations": 1, "products_touched": 1}
+    db.refresh(row)
+    assert row.state == INQUIRY_PLACED
+
+
+def test_a_reader_cannot_trigger_auto_place(reader_api):
+    client, db, world, _user_id = reader_api
+
+    response = client.post(f"{BASE}/order-inquiries/auto-place", json={})
+
+    assert response.status_code == 403
+
+
+def test_a_decision_confirm_auto_places_the_buy_row_it_raises():
+    """G2 rule 4, second of the three triggers: a decision confirm that raises a Buy
+    cascades it against the product's own open PO lines in the SAME transaction, best
+    effort. No `pg_session` needed here - only the row's own state is asserted, not
+    `committed_v`, which the netting tests above already prove independently."""
+    from app.models.base import company_scope
+    from app.services.project_service import register_project
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        user_id = _confirm_user(db, f"{MARKER} Confirm Buyer")
+        project = register_project(
+            db, company_id=company_id, actor_user_id=user_id, developer_party_id=None,
+            title=f"{MARKER} Confirm Residences",
+        )
+        product = _confirm_product(db)
+        warehouse = _confirm_warehouse(db, f"ZZT-CF-{_uid()[:4]}")
+        core_so = _confirm_core_so(db, company_id)
+        core_line = _confirm_core_line(db, core_so, product, warehouse, qty_ordered="20")
+        order = _confirm_project_so(db, project, so_id=core_so.id)
+        line = _confirm_project_line(db, order, line_no=10, product=product, core_line=core_line)
+
+        supplier = _supplier(db, company_id, f"{MARKER} Confirm Supplier")
+        po = _po(db, company_id, supplier, f"ZZT-PO-{_uid()[:8]}")
+        po_line = _po_line(
+            db, company_id, po, product, warehouse, qty_ordered="30", expected_date=date(2026, 9, 15),
+        )
+        db.commit()
+
+        client, originals = _confirm_client(db, user_id)
+        try:
+            with company_scope(db, frozenset({company_id})):
+                response = client.post(
+                    f"{BASE}/sales-orders/{order.id}/confirm",
+                    json={"lines": [_confirm_line_payload(line.id, buy_qty="20")]},
+                )
+        finally:
+            _confirm_restore(originals)
+
+        assert response.status_code == 200, response.text
+        assert response.json()["inquiry_rows_created"] == 1
+
+        row = (
+            db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
+            .first()
+        )
+        assert row is not None
+        assert row.state == INQUIRY_PLACED, "the confirm hook must cascade the Buy it just raised"
+        assert row.po_line_id == po_line.id
+        assert "auto: decision_confirm" in (row.note or "")
+
+
+def test_partial_allocation_leaves_the_remainder_raised_and_in_committed_v():
+    """Partial coverage (G2 rule 2) proven against the view the reorder engine actually
+    reads: 40 owed, only 25 on an open PO line - the placed 25 leaves the confirmed leg,
+    the still-needed 15 stays in it, and the split never drops or invents quantity."""
+    from app.models.base import company_scope
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    with pg_session() as db:
+        company_id = _confirm_sorento(db)
+        user_id = _confirm_user(db, f"{MARKER} Partial Buyer")
+        product = _confirm_product(db)
+        warehouse = _confirm_warehouse(db, f"ZZT-PT-{str(product.id)[:4]}")
+
+        core_so = _confirm_core_so(db, company_id)
+        core_line = _confirm_core_line(db, core_so, product, warehouse, qty_ordered="40")
+        from app.services.project_service import register_project
+
+        project = register_project(
+            db, company_id=company_id, actor_user_id=user_id, developer_party_id=None,
+            title=f"{MARKER} Partial Netting Residences",
+        )
+        order = _confirm_project_so(db, project, so_id=core_so.id)
+        line = _confirm_project_line(db, order, line_no=10, product=product, core_line=core_line)
+
+        decision = SOSupplyDecision(
+            id=_uid(), company_id=company_id, project_sales_order_id=order.id, revision_no=1,
+            state="active", line_snapshots=[{"line_no": 10}], confirmed_by=user_id,
+            confirmed_at=datetime.utcnow(),
+        )
+        db.add(decision)
+        db.flush()
+
+        inquiry = OrderInquiry(
+            id=_uid(), company_id=company_id, project_sales_order_id=order.id, state=INQUIRY_RAISED,
+        )
+        db.add(inquiry)
+        db.flush()
+        row = OrderInquiryRow(
+            id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id, so_line_id=line.id,
+            item_code=product.product_code, qty=Decimal("40"), verb=IV_ORDER, state=INQUIRY_RAISED,
+            supply_decision_id=decision.id,
+        )
+        db.add(row)
+
+        supplier = _supplier(db, company_id, f"{MARKER} Partial Supplier")
+        po = _po(db, company_id, supplier, f"ZZT-PO-{_uid()[:8]}")
+        po_line = _po_line(
+            db, company_id, po, product, warehouse, qty_ordered="25", expected_date=date(2026, 9, 20),
+        )
+        db.commit()
+
+        def confirmed_committed() -> Decimal:
+            value = db.execute(
+                text(
+                    "SELECT COALESCE(SUM(project_confirmed_committed), 0) "
+                    "FROM scm.committed_v WHERE product_id = :pid AND warehouse_id = :wid"
+                ),
+                {"pid": product.id, "wid": warehouse.id},
+            ).scalar()
+            return Decimal(str(value))
+
+        assert confirmed_committed() == Decimal("40")
+
+        service = ProjectOrderInquiryService(db)
+        with company_scope(db, frozenset({company_id})):
+            written = service.place_on_po_allocations(
+                row.id, [{"po_line_id": po_line.id, "qty": "25"}], actor_user_id=user_id,
+            )
+        db.commit()
+        assert len(written) == 1
+        assert written[0]["state"] == INQUIRY_PLACED
+        assert written[0]["qty"] == "25"
+
+        db.expire_all()
+        assert confirmed_committed() == Decimal("15"), (
+            "only the still-raised remainder counts toward the confirmed leg once part of "
+            "the row is placed"
+        )
+
+        rows = (
+            db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.order_inquiry_id == inquiry.id)
+            .all()
+        )
+        assert len(rows) == 2
+        raised = next(r for r in rows if r.state == INQUIRY_RAISED)
+        placed = next(r for r in rows if r.state == INQUIRY_PLACED)
+        assert raised.id == row.id
+        assert raised.qty == Decimal("15")
+        assert placed.qty == Decimal("25")
+        assert raised.qty + placed.qty == Decimal("40"), "the split never drops or invents quantity"

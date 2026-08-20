@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
+  autoPlaceOrderInquiryRows,
   getOrderInquiryPoCandidates,
   getOrderInquirySummary,
   getOrderInquiryWorklistSummary,
@@ -11,10 +12,13 @@ import {
   listOrderInquiryWorklist,
   markOrderInquiryRows,
   placeOrderInquiryRowOnPo,
+  placeOrderInquiryRowOnPoAllocations,
   unplaceOrderInquiryRow,
 } from '../services/orderInquiryService';
 import type {
+  AutoPlaceRequest,
   OrderInquiryListParams,
+  OrderInquiryPoAllocation,
   OrderInquiryWorklistParams,
 } from '../types/orderInquiry.types';
 
@@ -174,6 +178,22 @@ export function useOrderInquiryPlacementMutations() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  /** The G2 cascade shape: one or more `{po_line_id, qty}` lines in one call. */
+  const placeAllocations = useMutation({
+    mutationFn: ({
+      rowId,
+      allocations,
+    }: {
+      rowId: string;
+      allocations: OrderInquiryPoAllocation[];
+    }) => placeOrderInquiryRowOnPoAllocations(rowId, allocations),
+    onSuccess: () => {
+      invalidateAfterPlacement();
+      toast.success('Placed on the purchase order');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const unplace = useMutation({
     mutationFn: (rowId: string) => unplaceOrderInquiryRow(rowId),
     onSuccess: () => {
@@ -183,5 +203,30 @@ export function useOrderInquiryPlacementMutations() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { place, unplace };
+  return { place, placeAllocations, unplace };
+}
+
+/**
+ * Run the cascade now (G2 rule 4) - the worklist's "Auto-place". Invalidates the same
+ * query families a single placement does, since a bulk pass can touch any of them.
+ */
+export function useAutoPlaceOrderInquiryRows() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (params: AutoPlaceRequest = {}) => autoPlaceOrderInquiryRows(params),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_ROWS_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_SUMMARY_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
+      toast.success(
+        `${result.placed_rows} row${result.placed_rows === 1 ? '' : 's'} placed across ` +
+          `${result.allocations} allocation${result.allocations === 1 ? '' : 's'}`,
+      );
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 }

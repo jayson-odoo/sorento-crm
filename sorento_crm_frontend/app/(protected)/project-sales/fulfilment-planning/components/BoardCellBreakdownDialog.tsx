@@ -812,6 +812,13 @@ function sumOf(
  * A BORROW term appears only when there is one, and there only ever is on a covered row: the
  * engine proposes no Borrow, but a confirmed line states the composition a person made, and a
  * balance that dropped it would not add up to what is owed.
+ *
+ * When the terms do NOT sum to what is owed, the gap is stated as "uncovered" rather than
+ * printing an equation that fails its own arithmetic (captain, 20 Aug: an SO line edited
+ * 12 -> 14 against a frozen revision-2 decision read "14 owed = 0 reserve + 0 incoming +
+ * 12 buy", which is "sus" - the decision's coverage is a snapshot, the owed is live, and
+ * the 2 the decision does not cover is the fact the reader needs; confirming a new
+ * revision trues it up).
  */
 function cellBalanceLine(cell: BoardCell): string {
   const of = (kind: string) =>
@@ -824,11 +831,14 @@ function cellBalanceLine(cell: BoardCell): string {
     0,
   );
   const borrowed = of('borrow');
+  const covered = of('reserve') + of('timely_spo') + borrowed + of('buy');
+  const uncovered = owed - covered;
   return [
     `${fromMinor(owed)} owed = ${fromMinor(of('reserve'))} reserve`,
     `${fromMinor(of('timely_spo'))} incoming`,
     ...(borrowed > 0 ? [`${fromMinor(borrowed)} borrow`] : []),
     `${fromMinor(of('buy'))} buy`,
+    ...(uncovered > 0 ? [`${fromMinor(uncovered)} uncovered - confirm a new revision`] : []),
   ].join(' + ');
 }
 

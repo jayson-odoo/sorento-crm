@@ -237,6 +237,26 @@ Design:
 - Known adjacent hole, logged not fixed here: `sales_order_lines.purchasing_status='ordered'`
   is not excluded from `committed_v` (double-count risk independent of this feature).
 
+**G2 - 20 Aug afternoon rulings (captain, live-testing the shipped G):**
+
+1. **Auto-place, not click-by-click.** "We need to link already at first already instead of
+   suggesting and needing the users to click 1 by 1." The system creates the placements
+   itself whenever a raised ORDER row and outstanding PO lines for its product both exist;
+   the user reviews and UNPLACES by exception. The dialog survives as override + audit
+   (see what was auto-placed, unplace, place manually), not as the workflow.
+2. **Cascade from the earliest.** "Take from the earliest PO, then subsequently from
+   subsequent PO": allocation splits the needed qty across PO lines in soonest
+   `expected_date` order (ties by document sequence), each line giving
+   `min(remaining balance, still needed)`, partial coverage allowed - the uncovered
+   remainder stays a raised Buy. This REPLACES G's single-line "recommend the earliest
+   line whose remaining balance covers the row".
+3. **POs only.** SPO- prefixed documents are not Place-on-PO candidates (and the PO book
+   page filters them out) - "those are SPO, not PO". SPO coverage stays the engine's job.
+4. Auto-place runs idempotently at three moments: after an outstanding PO book import,
+   after an OI decision confirm spawns/updates ORDER rows, and on demand from a worklist
+   "Auto-place" action. Every auto placement writes the same OrderLinkClaim evidence with
+   an auto marker; unplace always available.
+
 ## 8. Open questions (captain)
 
 1. Plain site pools (BRW 892k on hand, MWH, DC1, WH3): still a RESERVE source for a BRW-BB line,

@@ -36,6 +36,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 const listOrderInquiryWorklist = vi.fn();
 const getOrderInquiryWorklistSummary = vi.fn();
 const downloadOrderInquiryWorklistXlsx = vi.fn();
+const autoPlaceOrderInquiryRows = vi.fn();
 
 vi.mock('../../_shared/services/orderInquiryService', () => ({
   listOrderInquiryWorklist: (...args: unknown[]) => listOrderInquiryWorklist(...args),
@@ -43,6 +44,7 @@ vi.mock('../../_shared/services/orderInquiryService', () => ({
     getOrderInquiryWorklistSummary(...args),
   downloadOrderInquiryWorklistXlsx: (...args: unknown[]) =>
     downloadOrderInquiryWorklistXlsx(...args),
+  autoPlaceOrderInquiryRows: (...args: unknown[]) => autoPlaceOrderInquiryRows(...args),
 }));
 
 const saveBlobAs = vi.fn();
@@ -448,6 +450,53 @@ describe('OrderInquiriesClient', () => {
       renderClient();
 
       expect(await screen.findByText('No inquiries in this view')).toBeInTheDocument();
+    });
+  });
+
+  describe('Auto-place (G2 rule 4)', () => {
+    it('confirms before running the cascade, naming what it does', async () => {
+      renderClient();
+      await screen.findByText('SO385126');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Auto-place' }));
+
+      expect(
+        screen.getByText(
+          'Automatically tag raised order rows to outstanding PO lines, earliest first?',
+        ),
+      ).toBeInTheDocument();
+      expect(autoPlaceOrderInquiryRows).not.toHaveBeenCalled();
+    });
+
+    it('runs the cascade on confirm and reports what it placed', async () => {
+      autoPlaceOrderInquiryRows.mockResolvedValue({
+        placed_rows: 4,
+        allocations: 5,
+        products_touched: 3,
+      });
+      renderClient();
+      await screen.findByText('SO385126');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Auto-place' }));
+      const dialog = await screen.findByRole('alertdialog');
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Auto-place' }));
+
+      await waitFor(() => expect(autoPlaceOrderInquiryRows).toHaveBeenCalledWith({}));
+    });
+
+    it('closes the confirm without running anything on Cancel', async () => {
+      renderClient();
+      await screen.findByText('SO385126');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Auto-place' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      expect(
+        screen.queryByText(
+          'Automatically tag raised order rows to outstanding PO lines, earliest first?',
+        ),
+      ).not.toBeInTheDocument();
+      expect(autoPlaceOrderInquiryRows).not.toHaveBeenCalled();
     });
   });
 });
