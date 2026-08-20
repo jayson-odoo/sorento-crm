@@ -808,33 +808,31 @@ class ProjectOrderInquiryService:
     # ------------------------------------------------------------ stock location
 
     def _stock_location(self, so_line_id: str) -> Optional[str]:
-        """The warehouse on a CONFIRMED allocation (AC-H5), or nothing at all.
+        """The line's OWN fulfilment warehouse (AC-H5), or nothing at all.
 
-        Never a default. An unconfirmed line leaves the column empty on the screen and
-        in the spreadsheet, which is the honest answer: nobody has said yet where this
-        is coming from. A split across two locations prints both, because collapsing it
-        to the larger one would tell purchasing something that is not true.
+        One row names one location: the amendment row is a Buy/schedule instruction the
+        same way `refresh_for_decision`'s ORDER row is, and its destination is where the
+        CORE reconciled line is fulfilled from, not a list of every reserve/borrow
+        location a past confirmation drew on to cover it (those live on the confirmed
+        decision's snapshots, not here). Joining several warehouses with `" / "` used to
+        read as a real place purchasing could act on; it never was one - mirrors
+        `ProjectSupplyService._restamp_stock_location`.
+
+        Never a default the other way either: a line with no reconciled core line, or a
+        core line with no warehouse set, leaves the column empty - nobody has said yet
+        where this is coming from.
         """
-        rows = (
-            self.db.query(Warehouse.warehouse_code, SOLineAllocation.qty)
-            .join(Warehouse, Warehouse.id == SOLineAllocation.warehouse_id)
-            .filter(
-                SOLineAllocation.so_line_id == so_line_id,
-                SOLineAllocation.confirmed_at.isnot(None),
-                SOLineAllocation.warehouse_id.isnot(None),
+        row = (
+            self.db.query(Warehouse.warehouse_code)
+            .join(SalesOrderLine, SalesOrderLine.warehouse_id == Warehouse.id)
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.core_sales_order_line_id == SalesOrderLine.id,
             )
-            .all()
+            .filter(ProjectSalesOrderLine.id == so_line_id)
+            .first()
         )
-        if not rows:
-            return None
-        ordered = sorted(rows, key=lambda row: (-_dec(row[1]), row[0] or ""))
-        seen: List[str] = []
-        for code, _qty in ordered:
-            if code and code not in seen:
-                seen.append(code)
-        if not seen:
-            return None
-        return " / ".join(seen)[:80]
+        return row[0] if row and row[0] else None
 
     # -------------------------------------------------------- the SCM handoff
 

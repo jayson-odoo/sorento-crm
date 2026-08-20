@@ -390,6 +390,47 @@ def test_confirming_a_balanced_multi_line_so_writes_one_active_decision_with_gro
     assert {a.so_line_id for a in allocations} == {line1.id, line2.id}
 
 
+def test_a_composition_spanning_pool_reserve_and_buy_still_names_one_location(api):
+    """AC-H5: the ORDER row is the line's OWN fulfilment location, never a join of every
+    warehouse the composition touched. A composition mixing a pool Reserve with a Buy
+    residual used to stamp `"<own> + <pool>"` on the line - unreadable by purchasing, and
+    unable to ever match a borrow-shortfall row netted by `(item_code, stock_location)`.
+    """
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=30)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id,
+                    reserve=[{"warehouse_id": world.pool_wh.id, "qty": "30"}],
+                    buy_qty="20",
+                )
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["inquiry_rows_created"] == 1
+
+    from app.models.project_so import IV_ORDER, OrderInquiryRow
+
+    rows = db.query(OrderInquiryRow).filter(OrderInquiryRow.verb == IV_ORDER).all()
+    assert len(rows) == 1
+    assert rows[0].stock_location == world.own_wh.warehouse_code
+    assert " + " not in (rows[0].stock_location or "")
+
+    db.refresh(line)
+    assert line.stock_location == world.own_wh.warehouse_code
+
+
 # --------------------------------------------------------------------------- rollback
 
 

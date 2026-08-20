@@ -3174,21 +3174,19 @@ class ProjectSupplyService:
     def _restamp_stock_location(
         self, line: ProjectSalesOrderLine, entry: Any, fact: _LineFacts
     ) -> None:
-        """AC-H5, from this revision's components: what the inquiry row quotes."""
-        codes: List[str] = []
-        for item in list(entry.reserve or []) + list(entry.borrow or []):
-            if _dec(item.qty) <= _ZERO:
-                continue
-            warehouse = self._warehouse_row(str(item.warehouse_id))
-            code = warehouse.warehouse_code if warehouse else None
-            if code and code not in codes:
-                codes.append(code)
-        # A pure-Buy line names no source warehouse, but it is exactly the line that
-        # becomes an inquiry row, and purchasing reads the location off that row: fall
-        # back to the fulfilment location rather than handing over a blank.
-        if not codes and fact.own_code:
-            codes.append(fact.own_code)
-        line.stock_location = " + ".join(codes) if codes else None
+        """AC-H5: the inquiry row names ONE location, always - the line's OWN fulfilment
+        warehouse.
+
+        The ORDER row is the buy purchasing places; its destination is the fulfilment
+        location, not a description of every reserve/borrow component that ALSO covered
+        this line's demand. A joined string of every component's warehouse (previously
+        `" + "`-joined here) is not a real location, so it could never match a
+        borrow-shortfall row netted by `(item_code, stock_location)`, and it read as one
+        row naming two places. The composition itself is still on the confirmed
+        decision's snapshots (`_snapshot`) for anyone who needs it; this field is
+        purely where the Buy goes.
+        """
+        line.stock_location = fact.own_code or None
 
     # ------------------------------------------------------------------- facts
 

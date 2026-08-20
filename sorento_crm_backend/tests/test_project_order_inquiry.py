@@ -3,9 +3,10 @@
 The netting arithmetic is proven without a database in
 ``test_project_order_inquiry_engine.py``. What is proven HERE is everything the engine
 cannot see: that deriving writes the rows once and only once, that a pre-order on the
-same project actually reaches the engine as a pool, that the stock location comes from a
-CONFIRMED allocation and is left empty when there is not one, that purchasing gets a task
-rather than an email, and that the spreadsheet comes out with the client's own headings.
+same project actually reaches the engine as a pool, that the ORDER row's stock location
+is whatever the line was stamped with (never invented, never joined - AC-H5) and is left
+empty when there is not one, that purchasing gets a task rather than an email, and that
+the spreadsheet comes out with the client's own headings.
 
 **Publish no longer derives, and neither does anything else on the SO path**
 (PLAN-scm-front-planning.md section 4, AC-D01). `derive_for_sales_order` and its pool
@@ -52,7 +53,6 @@ from app.models.project_so import (
     ProjectSalesOrder,
     ProjectSalesOrderLine,
     SOAmendment,
-    SOLineAllocation,
 )
 from app.models.projects import TASK_LINK_ORDER_INQUIRY, ProjectTask
 from app.models.user import User
@@ -171,22 +171,6 @@ def _warehouse(db, code: str) -> Warehouse:
     return row
 
 
-def _confirm_allocation(db, line, warehouse, qty, *, user_id: str, confirmed: bool = True):
-    row = SOLineAllocation(
-        id=_uid(),
-        company_id=line.company_id,
-        so_line_id=line.id,
-        source_type="own",
-        warehouse_id=warehouse.id if warehouse else None,
-        qty=Decimal(qty),
-        confirmed_by=user_id if confirmed else None,
-        confirmed_at=datetime.utcnow() if confirmed else None,
-    )
-    db.add(row)
-    db.flush()
-    return row
-
-
 def _inbound_spo(db, product, *, spo_number: str, qty: int, eta: date, landed: bool = False):
     supplier = Supplier(
         id=_uid(), supplier_code=f"ZZT-{_uid()[:8]}", supplier_name=f"{MARKER} supplier"
@@ -252,6 +236,12 @@ def _confirmed_inquiry(db, order, *, actor_user_id, buy=None):
 
     ``buy`` defaults to each line's full quantity, which is what a line nothing covers
     resolves to and what these cases were originally written against.
+
+    ``stock_location`` is read straight off ``line.stock_location`` - exactly what
+    ``ProjectSupplyService._write_decision`` does after ``_restamp_stock_location`` has
+    stamped it (AC-H5, single location, never a component join). Tests that want a
+    location on the row set ``line.stock_location`` themselves rather than going through
+    a real confirmation.
     """
     from app.models.project_so import SOSupplyDecision
 
@@ -292,7 +282,7 @@ def _confirmed_inquiry(db, order, *, actor_user_id, buy=None):
                 "item_code": service._product_code(line.product_id),
                 "buy_qty": Decimal(str(buy)) if buy is not None else Decimal(str(line.qty)),
                 "required_date": line.delivery_date,
-                "stock_location": service._stock_location(line.id),
+                "stock_location": line.stock_location,
             }
             for line in lines
         ],
@@ -388,28 +378,28 @@ def test_deriving_twice_does_not_double_the_rows(seeded):
     )
 
 
-def test_a_confirmed_allocation_becomes_the_stock_location(seeded):
-    """AC-H5. The location on the instruction is the source somebody confirmed."""
+def test_a_stamped_line_becomes_the_stock_location(seeded):
+    """AC-H5. The ORDER row's location is whatever the confirming service stamped on
+    the line - ``ProjectSupplyService._restamp_stock_location``, exercised elsewhere.
+    """
     db, company_id, owner = seeded
     project = _project(db, company_id, owner)
     order = _sales_order(db, project)
     line = _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
-    _confirm_allocation(db, line, _warehouse(db, "BRW-BB"), "600", user_id=owner)
+    line.stock_location = "BRW-BB"
+    db.flush()
 
     inquiry = _confirmed_inquiry(db, order, actor_user_id=owner)
 
     assert [row.stock_location for row in _rows(db, inquiry.id)] == ["BRW-BB"]
 
 
-def test_an_unconfirmed_allocation_leaves_the_location_empty(seeded):
+def test_an_unstamped_line_leaves_the_location_empty(seeded):
     """Never invented. Nobody has said where this comes from, so the column says nothing."""
     db, company_id, owner = seeded
     project = _project(db, company_id, owner)
     order = _sales_order(db, project)
-    line = _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
-    _confirm_allocation(
-        db, line, _warehouse(db, "BRW-BB"), "600", user_id=owner, confirmed=False
-    )
+    _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
 
     inquiry = _confirmed_inquiry(db, order, actor_user_id=owner)
 
@@ -427,17 +417,70 @@ def test_no_allocation_at_all_leaves_the_location_empty(seeded):
     assert [row.stock_location for row in _rows(db, inquiry.id)] == [None]
 
 
-def test_a_split_allocation_prints_both_locations(seeded):
+def test_a_multi_component_composition_still_names_one_location(seeded):
+    """AC-H5: one row names ONE location, even when Reserve/Borrow drew on several
+    warehouses to cover the rest of the line. That composition lives on the confirmed
+    decision's snapshots, not on this column - a joined string here read as a real
+    place purchasing could act on, and it never was one.
+    """
     db, company_id, owner = seeded
     project = _project(db, company_id, owner)
     order = _sales_order(db, project)
     line = _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
-    _confirm_allocation(db, line, _warehouse(db, "BRW-BB"), "400", user_id=owner)
-    _confirm_allocation(db, line, _warehouse(db, "SRT-KL"), "200", user_id=owner)
+    # A multi-location composition still stamps the line's OWN fulfilment location,
+    # not a join of every warehouse Reserve/Borrow happened to draw on.
+    line.stock_location = "BRW-BB"
+    db.flush()
 
     inquiry = _confirmed_inquiry(db, order, actor_user_id=owner)
 
-    assert [row.stock_location for row in _rows(db, inquiry.id)] == ["BRW-BB / SRT-KL"]
+    assert [row.stock_location for row in _rows(db, inquiry.id)] == ["BRW-BB"]
+
+
+def test_stock_location_resolves_the_reconciled_core_lines_own_warehouse(seeded):
+    """`_stock_location` (the amendment path, AC-H5) is the single fulfilment warehouse
+    of the reconciled CORE line - never a join of Reserve/Borrow components.
+    """
+    from app.models.order import SalesOrder, SalesOrderLine
+
+    db, company_id, owner = seeded
+    project = _project(db, company_id, owner)
+    order = _sales_order(db, project)
+    product = _product(db, "CB6633")
+    warehouse = _warehouse(db, "BRW-IR")
+    core_so = SalesOrder(
+        id=_uid(), company_id=company_id, so_number=f"ZZT-CORE-{_uid()[:8]}"
+    )
+    db.add(core_so)
+    db.flush()
+    core_line = SalesOrderLine(
+        id=_uid(),
+        company_id=company_id,
+        sales_order_id=core_so.id,
+        product_id=product.id,
+        warehouse_id=warehouse.id,
+        qty_ordered=Decimal("10"),
+        qty_delivered=Decimal("0"),
+        required_date=date(2027, 1, 7),
+    )
+    db.add(core_line)
+    db.flush()
+    line = _line(db, order, product, "10", date(2027, 1, 7))
+    line.core_sales_order_line_id = core_line.id
+    db.flush()
+
+    service = ProjectOrderInquiryService(db)
+    assert service._stock_location(line.id) == "BRW-IR"
+
+
+def test_stock_location_is_empty_with_no_reconciled_core_line(seeded):
+    db, company_id, owner = seeded
+    project = _project(db, company_id, owner)
+    order = _sales_order(db, project)
+    line = _line(db, order, _product(db, "CB6633"), "10", date(2027, 1, 7))
+
+    service = ProjectOrderInquiryService(db)
+    assert service._stock_location(line.id) is None
 
 
 # ------------------------------------------------------------------ amendments
