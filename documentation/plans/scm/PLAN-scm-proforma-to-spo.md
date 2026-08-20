@@ -1,7 +1,9 @@
 # PLAN - a proforma invoice becomes an SPO: convert, match, net, hand to AutoCount
 
 **Status:** Journey + three shaping decisions approved by the captain, 20 Aug 2026 (live
-session, while testing the new proforma screen). NOT yet implemented - queued behind the
+session, while testing the new proforma screen). AMENDED the same evening: the flow now
+bends through the packing list (see the Amendment section - it supersedes parts of the
+original decisions and journey below). NOT yet implemented - queued behind the
 20 Aug demo-follow-ups batch. Implementation session starts here.
 
 **Serves:** the proforma UAC's own named "next task" (the PI-vs-PO verification screen this
@@ -16,7 +18,36 @@ plan absorbs) - `scm-proforma-invoice-acceptance-criteria.md`. Depends on the pr
 | Grain? | **Line-level, pre-checked.** One screen per PI: every line pre-selected with a suggested qty; the buyer unticks or trims before converting. |
 | POs and stock? | **Match PO + net stock.** A PI line matching an open PO line to the same supplier LINKS to it (already ordered - no new SPO line, shown as covered). The rest net against on hand + incoming SPO, the same arithmetic as the container request. Components visible, qty editable. |
 
-## Journey
+## Amendment - the flow bends through the packing list (captain, 20 Aug evening)
+
+Live-tested with the real documents
+(`fulfilment_example_files/KAILU形式发票(Sorento)260717.xlsx` and `FSCU8103365.xlsx`), the
+captain corrected the flow: **PI -> packing list -> SPO**. The SPO is built from the
+PACKING LIST (what actually ships), not from the PI. Grounding from the files:
+
+- A PI is ONE factory's invoice: model, qty, unit price, and sometimes our PO doc no
+  (`202605-S0060`) on the line.
+- A packing list is ONE CONTAINER consolidating SEVERAL factories' PIs (FSCU8103365 packs
+  AFANNI + CAIZHOU + KAILU + IDC), with vessel dates, cartons, CBM, weights.
+
+Two shaping decisions (captain, same session):
+
+| Question | Decision |
+| --- | --- |
+| What does "convert PI to packing list" do? | **Draft shipment from PIs.** Pick one or more PIs -> the system creates a DRAFT inbound shipment (`/scm/incoming`) pre-filled with their lines. When the agent's real packing list arrives, it is uploaded onto the same shipment and replaces/reconciles the draft, showing PI-vs-packed differences. |
+| When is the SPO created? | **Separate button after packing-list apply.** The shipment page gets a "Create SPO" action she presses when ready. Suggestion logic as originally planned (match open PO lines by product / stated po_ref / delivery date, net on hand + incoming SPO), but the BASE quantity is the PACKED qty, not the invoice qty. |
+
+Consequences for the sections below:
+
+- The original decision "converting creates a CRM SPO + AutoCount handoff" STANDS, but its
+  source document is now the packing list; the journey's screen moves from the PI detail
+  page to the inbound shipment page.
+- The original "Out of scope: auto-creating inbound shipments" is REVERSED - creating the
+  draft shipment from PIs is exactly the convert function.
+- PI-line links now run PI line -> shipment line (draft), and shipment line -> SPO line;
+  the PI -> SPO trail is the composition of the two.
+
+## Journey (original - screen placement superseded by the Amendment above)
 
 Actor: Ms Tee, on a proforma detail page (`/scm/proforma-invoices/{id}`) - the supplier has
 sent the PI for what they are packing.
