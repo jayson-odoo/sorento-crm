@@ -48,11 +48,18 @@ export function useOrderInquirySummary(projectId: string | undefined) {
 /**
  * Purchasing's own worklist: every raised row, across every project AND every adopted
  * AutoCount order, which belongs to no project and is therefore reachable nowhere else.
+ *
+ * `enabled` lets a caller hold the request off until it is actually needed - the
+ * calendar view's day drilldown, for one, has nothing to ask for until a day is picked.
  */
-export function useOrderInquiryWorklist(params: OrderInquiryWorklistParams = {}) {
+export function useOrderInquiryWorklist(
+  params: OrderInquiryWorklistParams = {},
+  options: { enabled?: boolean } = {},
+) {
   return useQuery({
     queryKey: [ORDER_INQUIRY_WORKLIST_KEY, params],
     queryFn: () => listOrderInquiryWorklist(params),
+    enabled: options.enabled,
     // Every filter and every page is a new key, so without this the grid empties itself
     // between the press and the answer and the page jumps under the cursor.
     placeholderData: (previous) => previous,
@@ -66,10 +73,14 @@ export function useOrderInquiryWorklist(params: OrderInquiryWorklistParams = {})
  * month AXIS (`by_month`) is the one thing the server computes ignoring that filter, so
  * the control that changes month never empties itself.
  */
-export function useOrderInquiryWorklistSummary(params: OrderInquiryWorklistParams = {}) {
+export function useOrderInquiryWorklistSummary(
+  params: OrderInquiryWorklistParams = {},
+  options: { enabled?: boolean } = {},
+) {
   return useQuery({
     queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY, params],
     queryFn: () => getOrderInquiryWorklistSummary(params),
+    enabled: options.enabled,
     // Above all here: the month strip is inside this answer, so without it pressing a
     // month makes the control you just used vanish until the next answer lands.
     placeholderData: (previous) => previous,

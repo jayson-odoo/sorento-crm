@@ -149,15 +149,23 @@ def order_inquiry_worklist_summary(
     state: Optional[Literal["raised", "actioned", "cancelled"]] = Query(None),
     project_id: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
+    month: Optional[str] = Query(
+        None,
+        description=(
+            "`YYYY-MM`. When given, the response also carries `by_day` - the calendar "
+            "view's day cells for that one month, with every other filter still applied."
+        ),
+    ),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
     """The strip above the list, and the month / supplier / project controls beside it."""
     try:
         return OrderInquiryWorklistService(db).summary(
+            month=month,
             **_worklist_filters(
                 query, delivery_month, raised_date, state, project_id, supplier_id
-            )
+            ),
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

@@ -171,6 +171,13 @@ export interface OrderInquiryWorklistParams {
   limit?: number;
   sort?: string;
   dir?: 'asc' | 'desc';
+  /**
+   * `YYYY-MM`. Summary-only: asks the summary to also carry `by_day`, the calendar
+   * view's day cells for that one month. Separate from `delivery_month` because the
+   * calendar's own displayed month and the list's delivery-month filter are two
+   * different things - paging the calendar must not narrow the list underneath it.
+   */
+  month?: string;
 }
 
 export interface OrderInquiryWorklistEnvelope {
@@ -195,6 +202,26 @@ export interface OrderInquiryFacet {
   rows: number;
 }
 
+/** One chip's worth: an item code and verb, summed across every row raised for it. */
+export interface OrderInquiryDayItem {
+  item_code?: string | null;
+  qty: string;
+  verb: OrderInquiryVerb | string;
+}
+
+/**
+ * One cell on the calendar. `top` is EVERY distinct item/verb group that day owes,
+ * largest quantity first, uncapped - the screen decides how many chips fit and folds
+ * the rest into "+N more" rather than the server guessing a cut.
+ */
+export interface OrderInquiryDayTotal {
+  /** `YYYY-MM-DD`. */
+  date: string;
+  rows: number;
+  qty: string;
+  top: OrderInquiryDayItem[];
+}
+
 export interface OrderInquiryWorklistSummary {
   /** The visible set: every filter applied, the month included. */
   total_rows: number;
@@ -213,4 +240,6 @@ export interface OrderInquiryWorklistSummary {
   by_month: OrderInquiryMonthTotal[];
   suppliers: OrderInquiryFacet[];
   projects: OrderInquiryFacet[];
+  /** The calendar view's day cells for one month. Empty unless `month` was asked for. */
+  by_day: OrderInquiryDayTotal[];
 }

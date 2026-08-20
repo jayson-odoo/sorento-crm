@@ -746,6 +746,96 @@ def test_the_summary_offers_the_suppliers_and_projects_actually_present(api):
     assert [entry["id"] for entry in body["projects"]] == [seeded["project"].id]
 
 
+# -------------------------------------------------------------------- by_day
+
+
+def test_by_day_is_empty_unless_a_month_is_asked_for(api):
+    client, _db, _company_id, _seeded = api
+
+    body = client.get(f"{LIST}/summary").json()
+
+    assert body["by_day"] == []
+
+
+def test_by_day_groups_rows_by_delivery_date_within_the_month(api):
+    client, _db, _company_id, seeded = api
+
+    body = client.get(f"{LIST}/summary", params={"month": "2026-01"}).json()
+
+    days = {entry["date"]: entry for entry in body["by_day"]}
+    assert set(days) == {"2026-01-19"}
+    assert days["2026-01-19"]["rows"] == 1
+    assert days["2026-01-19"]["qty"] == "85"
+    assert days["2026-01-19"]["top"] == [
+        {
+            "item_code": seeded["adopted_row"].item_code,
+            "qty": "85",
+            "verb": seeded["adopted_row"].verb,
+        }
+    ]
+
+    march = client.get(f"{LIST}/summary", params={"month": "2026-03"}).json()
+    march_days = {entry["date"]: entry for entry in march["by_day"]}
+    assert set(march_days) == {"2026-03-02"}
+    assert march_days["2026-03-02"]["rows"] == 1
+    assert march_days["2026-03-02"]["qty"] == "91"
+
+
+def test_by_day_respects_the_state_and_supplier_filters(api):
+    client, db, company_id, seeded = api
+    placed = _placed_supply(db, company_id, seeded["adopted_row"])
+
+    matching_state = client.get(
+        f"{LIST}/summary", params={"month": "2026-01", "state": INQUIRY_ACTIONED}
+    ).json()
+    assert {entry["date"] for entry in matching_state["by_day"]} == {"2026-01-19"}
+
+    other_state = client.get(
+        f"{LIST}/summary", params={"month": "2026-01", "state": INQUIRY_RAISED}
+    ).json()
+    # The undated row is `raised` too but has no delivery date, so it never earns a cell.
+    assert other_state["by_day"] == []
+
+    by_supplier = client.get(
+        f"{LIST}/summary",
+        params={"month": "2026-01", "supplier_id": placed["supplier"].id},
+    ).json()
+    assert {entry["date"] for entry in by_supplier["by_day"]} == {"2026-01-19"}
+
+
+def test_by_day_reuses_the_same_month_validator_as_the_month_strip(api):
+    client, _db, _company_id, _seeded = api
+
+    response = client.get(f"{LIST}/summary", params={"month": "not-a-month"})
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "invalid_delivery_month"
+
+
+def test_by_day_groups_two_items_raised_the_same_day_into_two_chips(api):
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["adopted_row"].order_inquiry_id)
+    second = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=f"ZZT-SECOND-{_uid()[:6]}",
+        qty="20",
+        delivery_date=date(2026, 1, 19),
+    )
+    db.commit()
+
+    body = client.get(f"{LIST}/summary", params={"month": "2026-01"}).json()
+
+    day = next(entry for entry in body["by_day"] if entry["date"] == "2026-01-19")
+    assert day["rows"] == 2
+    assert day["qty"] == "105"
+    codes = {chip["item_code"] for chip in day["top"]}
+    assert codes == {seeded["adopted_row"].item_code, second.item_code}
+    # Largest quantity first.
+    assert day["top"][0]["item_code"] == seeded["adopted_row"].item_code
+
+
 # -------------------------------------------------------------------- export
 
 

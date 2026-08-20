@@ -113,12 +113,17 @@ export async function markOrderInquiryRows(
  *        unknown value is a 422, never a silent fall back to the default.
  *
  *   GET  {BASE}/order-inquiries/summary
- *        the same filters, no paging
+ *        the same filters, no paging, plus `month=YYYY-MM` (summary-only)
  *        -> { total_rows, total_qty, by_state,
- *             by_month: [{month,label,rows,qty}], suppliers: [], projects: [] }
+ *             by_month: [{month,label,rows,qty}], suppliers: [], projects: [],
+ *             by_day: [{date,rows,qty,top:[{item_code,qty,verb}]}] }
  *        The totals honour every filter. The three AXES each ignore their own filter on
  *        purpose: they are the screen's controls, and a control that empties itself the
  *        moment it is used cannot be used a second time.
+ *        `by_day` is empty unless `month` is given; it is the calendar view's own day
+ *        cells for that one month, every other filter still applied. `top` is EVERY
+ *        distinct item/verb group that day owes, largest quantity first, uncapped - the
+ *        screen picks how many chips fit and folds the rest into "+N more".
  *
  *   GET  {BASE}/order-inquiries/export
  *        the same filters, no paging -> xlsx, one sheet per delivery month.
@@ -142,6 +147,7 @@ function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
       state: params.state,
       project_id: params.project_id,
       supplier_id: params.supplier_id,
+      month: params.month,
     },
   );
 }

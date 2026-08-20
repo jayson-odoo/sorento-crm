@@ -10,6 +10,7 @@
  * the prototype and the tests means a test cannot pass against a row the screen never saw.
  */
 import type {
+  OrderInquiryDayTotal,
   OrderInquiryWorklistRow,
   OrderInquiryWorklistSummary,
 } from '../types/orderInquiry.types';
@@ -119,4 +120,25 @@ export const MOCK_WORKLIST_SUMMARY: OrderInquiryWorklistSummary = {
     { id: 'proj-4', label: 'SDB @ Gombak', rows: 1 },
     { id: 'proj-9', label: 'Eko Titiwangsa', rows: 1 },
   ],
+  // Empty by default - only the calendar view asks for `month`, and the summary carries
+  // day cells only for the month it was asked about.
+  by_day: [],
 };
+
+/**
+ * A single calendar day carrying four distinct item/verb groups, so the day-cell fixture
+ * exercises both the chip rendering AND the "+N more" fold (the cell shows three chips).
+ */
+export const MOCK_WORKLIST_BY_DAY: OrderInquiryDayTotal[] = [
+  {
+    date: '2026-01-19',
+    rows: 3,
+    qty: '150',
+    top: [
+      { item_code: 'SRTWC8605-SC-RL', qty: '85', verb: 'ORDER' },
+      { item_code: 'SRTWB5400', qty: '35', verb: 'ORDER' },
+      { item_code: 'BT012-CR', qty: '20', verb: 'CANCEL_BALANCE' },
+      { item_code: 'ZZT-EXTRA', qty: '10', verb: 'ORDER' },
+    ],
+  },
+];

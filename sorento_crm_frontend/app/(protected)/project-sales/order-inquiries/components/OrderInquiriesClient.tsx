@@ -2,53 +2,51 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { format } from 'date-fns';
 import {
-  ColumnDef,
   PaginationState,
   SortingState,
   getCoreRowModel,
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Download, Info, Search, X } from 'lucide-react';
+import { CalendarDays, Download, List, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
-import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { formatDateInMalaysia } from '@/lib/helpers';
-import {
-  OrderInquiryStatePill,
-  OrderInquiryVerbPill,
-} from '../../_shared/components/OrderInquiryVerbPill';
 import {
   useOrderInquiryWorklist,
   useOrderInquiryWorklistSummary,
 } from '../../_shared/hooks/useOrderInquiry';
-import {
-  deliveryMonthLabel,
-  formatInquiryQty,
-  orderInquiryRowHref,
-} from '../../_shared/lib/orderInquiryWorklist';
+import { deliveryMonthLabel, formatInquiryQty } from '../../_shared/lib/orderInquiryWorklist';
 import { saveBlobAs } from '../../_shared/services/fileDownload';
 import { downloadOrderInquiryWorklistXlsx } from '../../_shared/services/orderInquiryService';
-import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
+import { OrderInquiryCalendarView } from './OrderInquiryCalendarView';
+import { OrderInquiryDayDrilldown } from './OrderInquiryDayDrilldown';
+import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
 
 const STATE_OPTIONS = [
   { value: 'raised', label: 'Raised' },
   { value: 'actioned', label: 'Actioned' },
   { value: 'cancelled', label: 'Cancelled' },
 ];
+
+type OrderInquiryView = 'list' | 'calendar';
+
+/** Persisted in the URL as `?view=calendar`. List is the default the page shipped as. */
+function viewFrom(value: string | null): OrderInquiryView {
+  return value === 'calendar' ? 'calendar' : 'list';
+}
 
 /**
  * Purchasing's own order inquiry, across every project and every adopted sales order.
@@ -58,14 +56,29 @@ const STATE_OPTIONS = [
  * ADOPTED AutoCount order raises belong to no project at all, so before this page existed
  * they were reachable only from the one sales order that raised them.
  *
- * The shape is the spreadsheet purchasing already works from: their columns, their order,
- * one sheet per delivery MONTH. So the month is the primary control here rather than one
- * filter among many, and the export writes the same workbook back out.
+ * Two ways to read the same worklist (D1, the captain: "instead of putting the months at
+ * the top, we should have a calendar view"):
+ *   - List: their own spreadsheet's columns, their order, unpaged filters including a
+ *     delivery-month select. Everything the page has always been.
+ *   - Calendar: a month grid, one cell per delivery day, with the day's row/qty totals
+ *     and its biggest items as chips. Clicking a day narrows the SAME list below the grid
+ *     to that one day - reusing the list's own columns and the list's own table, rather
+ *     than a slide-over with a second column set invented for it.
+ * Both views read whatever state/supplier/project/query/raised-date filters are already
+ * set; only the List view carries the toolbar that sets them, so there is one filter UI
+ * rather than two that could disagree.
  *
  * Nothing is authored here. A row is derived when CS confirms supply, which is the only
  * moment the instruction is true, so there is no Add button and there never should be.
  */
 export function OrderInquiriesClient() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const [view, setView] = React.useState<OrderInquiryView>(() =>
+    viewFrom(searchParams.get('view')),
+  );
   const [search, setSearch] = React.useState('');
   const [debounced, setDebounced] = React.useState('');
   const [month, setMonth] = React.useState('');
@@ -81,6 +94,29 @@ export function OrderInquiriesClient() {
   const [sorting, setSorting] = React.useState<SortingState>([
     { id: 'delivery_date', desc: false },
   ]);
+  // The calendar's own displayed month - independent of the list's `delivery_month`
+  // filter, because paging the calendar must not narrow the list underneath it. Defaults
+  // to a shared `?delivery_month=` deep link when one is present, else the current month.
+  const [calendarMonth, setCalendarMonth] = React.useState(
+    () => searchParams.get('delivery_month') || format(new Date(), 'yyyy-MM'),
+  );
+  const [selectedDay, setSelectedDay] = React.useState<string | null>(null);
+
+  // Only `view` travels in the URL (D1). `replace`, not `push`: switching views is not a
+  // place in history to go back to.
+  React.useEffect(() => {
+    const next = new URLSearchParams(searchParams.toString());
+    if (view === 'list') next.delete('view');
+    else next.set('view', view);
+    const query = next.toString();
+    if (query === searchParams.toString()) return;
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [view, pathname, router, searchParams]);
+
+  // A day drawn from a month that is no longer on screen is not a selection anymore.
+  React.useEffect(() => {
+    setSelectedDay(null);
+  }, [calendarMonth]);
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => setDebounced(search.trim()), 300);
@@ -116,8 +152,35 @@ export function OrderInquiriesClient() {
     [filters, pagination, sorting],
   );
 
-  const list = useOrderInquiryWorklist(params);
+  const list = useOrderInquiryWorklist(params, { enabled: view === 'list' });
   const summary = useOrderInquiryWorklistSummary(filters);
+
+  // The calendar's own request: the same filters MINUS delivery_month (the calendar names
+  // its own range through `month` instead), plus that range.
+  const calendarFilters = React.useMemo(
+    () => ({
+      query: debounced || undefined,
+      raised_date: raisedDate || undefined,
+      state: stateFilter || undefined,
+      supplier_id: supplierFilter || undefined,
+      project_id: projectFilter || undefined,
+      month: calendarMonth,
+    }),
+    [debounced, raisedDate, stateFilter, supplierFilter, projectFilter, calendarMonth],
+  );
+  const calendarSummary = useOrderInquiryWorklistSummary(calendarFilters, {
+    enabled: view === 'calendar',
+  });
+  const dayDrilldownFilters = React.useMemo(
+    () => ({
+      query: debounced || undefined,
+      raised_date: raisedDate || undefined,
+      state: stateFilter || undefined,
+      supplier_id: supplierFilter || undefined,
+      project_id: projectFilter || undefined,
+    }),
+    [debounced, raisedDate, stateFilter, supplierFilter, projectFilter],
+  );
 
   const rows = React.useMemo(() => list.data?.data ?? [], [list.data]);
   const total = list.data?.total ?? 0;
@@ -126,224 +189,7 @@ export function OrderInquiriesClient() {
     debounced || month || stateFilter || supplierFilter || projectFilter || raisedDate,
   );
 
-  const columns = React.useMemo<ColumnDef<OrderInquiryWorklistRow>[]>(
-    () => [
-      {
-        accessorKey: 'so_date',
-        header: ({ column }) => <DataGridColumnHeader title="SO date" column={column} />,
-        size: 120,
-        meta: { headerTitle: 'SO date', skeleton: <Skeleton className="h-4 w-20" /> },
-        cell: ({ row }) =>
-          row.original.so_date ? (
-            <span className="whitespace-nowrap">
-              {formatDateInMalaysia(row.original.so_date)}
-            </span>
-          ) : (
-            <Muted>No date</Muted>
-          ),
-      },
-      {
-        accessorKey: 'so_number',
-        header: ({ column }) => <DataGridColumnHeader title="S/O no" column={column} />,
-        size: 150,
-        meta: { headerTitle: 'S/O no', skeleton: <Skeleton className="h-4 w-20" /> },
-        // The way in. An adopted row reaches the CORE sales order and an authored one its
-        // project document; a row that can reach neither is plain text rather than a link
-        // that answers 404.
-        cell: ({ row }) => {
-          const reference = row.original.so_number ?? 'Not numbered';
-          const href = orderInquiryRowHref(row.original);
-          if (!href)
-            return (
-              <span className="block truncate" title={reference}>
-                {reference}
-              </span>
-            );
-          return (
-            <Link
-              href={href}
-              className="block truncate font-medium text-primary hover:underline"
-              title={reference}
-            >
-              {reference}
-            </Link>
-          );
-        },
-      },
-      {
-        accessorKey: 'item_code',
-        header: ({ column }) => <DataGridColumnHeader title="Item code" column={column} />,
-        size: 180,
-        meta: { headerTitle: 'Item code', skeleton: <Skeleton className="h-4 w-24" /> },
-        cell: ({ row }) => (
-          <div className="min-w-0">
-            <span className="block truncate font-medium" title={row.original.item_code ?? ''}>
-              {row.original.item_code || <Muted>Unresolved</Muted>}
-            </span>
-            {/* Only when it says something the code does not: plenty of products are
-                named after their own code, and printing it twice reads as a defect. */}
-            {row.original.product_name &&
-              row.original.product_name !== row.original.item_code && (
-                <span
-                  className="block truncate text-xs text-muted-foreground"
-                  title={row.original.product_name}
-                >
-                  {row.original.product_name}
-                </span>
-              )}
-          </div>
-        ),
-      },
-      {
-        accessorKey: 'qty',
-        header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
-        size: 90,
-        meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
-        cell: ({ row }) => (
-          <span className="tabular-nums">{formatInquiryQty(row.original.qty)}</span>
-        ),
-      },
-      {
-        accessorKey: 'delivery_date',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Delivery date" column={column} />
-        ),
-        size: 140,
-        meta: { headerTitle: 'Delivery date', skeleton: <Skeleton className="h-4 w-20" /> },
-        cell: ({ row }) =>
-          row.original.delivery_date ? (
-            <span className="whitespace-nowrap">
-              {formatDateInMalaysia(row.original.delivery_date)}
-            </span>
-          ) : (
-            <Muted>No date</Muted>
-          ),
-      },
-      {
-        accessorKey: 'project_customer',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Project / customer" column={column} />
-        ),
-        size: 260,
-        meta: {
-          headerTitle: 'Project / customer',
-          skeleton: <Skeleton className="h-4 w-40" />,
-        },
-        cell: ({ row }) =>
-          row.original.project_customer ? (
-            <span className="block truncate" title={row.original.project_customer}>
-              {row.original.project_customer}
-            </span>
-          ) : (
-            <Muted>Not attributed</Muted>
-          ),
-      },
-      {
-        accessorKey: 'location',
-        header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
-        size: 130,
-        meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-16" /> },
-        // Where the PO gets placed for, not where the item is bought TO. Blank when
-        // nobody has stamped a location and the line has no fulfilment warehouse either -
-        // never a dash standing in for "unknown".
-        cell: ({ row }) =>
-          row.original.location ? (
-            <span className="block truncate" title={row.original.location}>
-              {row.original.location}
-            </span>
-          ) : null,
-      },
-      {
-        accessorKey: 'supplier',
-        header: ({ column }) => <DataGridColumnHeader title="Supplier" column={column} />,
-        size: 150,
-        meta: { headerTitle: 'Supplier', skeleton: <Skeleton className="h-4 w-20" /> },
-        // Blank means nobody has placed it yet, exactly as a blank cell does on their
-        // sheet. Never filled in with a guess at who would supply it.
-        cell: ({ row }) =>
-          row.original.supplier ? (
-            <span className="block truncate" title={row.original.supplier}>
-              {row.original.supplier}
-            </span>
-          ) : (
-            <Muted>Not placed</Muted>
-          ),
-      },
-      {
-        accessorKey: 'po_number',
-        header: ({ column }) => <DataGridColumnHeader title="PO no" column={column} />,
-        size: 150,
-        meta: { headerTitle: 'PO no', skeleton: <Skeleton className="h-4 w-20" /> },
-        cell: ({ row }) =>
-          row.original.po_number ? (
-            <span className="block truncate tabular-nums" title={row.original.po_number}>
-              {row.original.po_number}
-            </span>
-          ) : (
-            <Muted>Not placed</Muted>
-          ),
-      },
-      {
-        accessorKey: 'verb',
-        header: ({ column }) => <DataGridColumnHeader title="Instruction" column={column} />,
-        size: 210,
-        meta: { headerTitle: 'Instruction', skeleton: <Skeleton className="h-4 w-24" /> },
-        // The verb is what purchasing DOES with the row: an ORDER and a BORROW SHORTFALL both
-        // cost money, a CANCEL BALANCE takes it back, and the state alone tells them apart
-        // from nothing. The server's own sentence ("Borrowed N for SOxxx line n; CODE goes
-        // short by q") is the reasoning behind the verb, not the instruction itself, so it
-        // moves behind the info icon rather than sitting inline under the pill.
-        // Qty already has its own column; repeating it here duplicated the number rather
-        // than adding to it.
-        cell: ({ row }) => (
-          <div className="flex min-w-0 items-center gap-1.5">
-            <OrderInquiryVerbPill verb={row.original.verb} />
-            {row.original.note && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    mode="icon"
-                    variant="ghost"
-                    size="sm"
-                    aria-label="Why this instruction"
-                    className="size-5 shrink-0 text-muted-foreground"
-                  >
-                    <Info className="size-3.5" aria-hidden />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs break-words">
-                  {row.original.note}
-                </TooltipContent>
-              </Tooltip>
-            )}
-          </div>
-        ),
-      },
-      {
-        accessorKey: 'state',
-        header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
-        size: 120,
-        meta: { headerTitle: 'State', skeleton: <Skeleton className="h-4 w-16" /> },
-        cell: ({ row }) => <OrderInquiryStatePill state={row.original.state} />,
-      },
-      {
-        accessorKey: 'raised_at',
-        header: ({ column }) => <DataGridColumnHeader title="Raised" column={column} />,
-        size: 130,
-        meta: { headerTitle: 'Raised', skeleton: <Skeleton className="h-4 w-20" /> },
-        cell: ({ row }) =>
-          row.original.raised_at ? (
-            <span className="whitespace-nowrap">
-              {formatDateInMalaysia(row.original.raised_at)}
-            </span>
-          ) : (
-            <Muted>Unknown</Muted>
-          ),
-      },
-    ],
-    [],
-  );
+  const columns = useOrderInquiryWorklistColumns();
 
   const table = useReactTable({
     data: rows,
@@ -375,6 +221,7 @@ export function OrderInquiriesClient() {
   }
 
   const filtersActiveCount =
+    (month ? 1 : 0) +
     (stateFilter ? 1 : 0) +
     (supplierFilter ? 1 : 0) +
     (projectFilter ? 1 : 0) +
@@ -402,209 +249,243 @@ export function OrderInquiriesClient() {
         </div>
       </header>
 
-      {/* The month is the primary control, because the sheet this replaces is one tab per
-          delivery month and that is the unit purchasing plans in. */}
-      <nav
-        aria-label="Delivery month"
-        className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 p-2"
+      {/* List | Calendar (D1): the list reads the spreadsheet's own columns one page at a
+          time; the calendar reads the same rows by delivery day, which is the shape
+          purchasing actually plans a month in. A toggle, not two pages, because it is the
+          same worklist either way. */}
+      <div
+        className="inline-flex rounded-md border border-input"
+        role="group"
+        aria-label="Order inquiry view"
       >
         <Button
           type="button"
           size="sm"
-          variant={month === '' ? 'primary' : 'ghost'}
-          onClick={() => setMonth('')}
+          variant={view === 'list' ? 'primary' : 'ghost'}
+          className="rounded-e-none"
+          aria-pressed={view === 'list'}
+          onClick={() => setView('list')}
         >
-          All months
+          <List className="size-4" aria-hidden />
+          List
         </Button>
-        {months.map((entry) => (
-          <Button
-            key={entry.month}
-            type="button"
-            size="sm"
-            variant={month === entry.month ? 'primary' : 'ghost'}
-            onClick={() => setMonth(entry.month)}
-          >
-            {entry.label ?? deliveryMonthLabel(entry.month) ?? entry.month}
-            <span className="ms-1.5 text-xs opacity-70">{entry.rows}</span>
-          </Button>
-        ))}
-        {months.length === 0 && !summary.isLoading && (
-          <span className="px-2 text-sm text-muted-foreground">
-            No delivery months yet
-          </span>
-        )}
-      </nav>
+        <Button
+          type="button"
+          size="sm"
+          variant={view === 'calendar' ? 'primary' : 'ghost'}
+          className="rounded-s-none border-s border-input"
+          aria-pressed={view === 'calendar'}
+          onClick={() => setView('calendar')}
+        >
+          <CalendarDays className="size-4" aria-hidden />
+          Calendar
+        </Button>
+      </div>
 
-      <DataGrid
-        table={table}
-        recordCount={total}
-        isLoading={list.isLoading}
-        listingKey="projects.projects.view::order-inquiry-worklist"
-        tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-        emptyMessage={
-          <div className="px-6 py-10 text-center">
-            <p className="text-sm font-semibold">
-              {filtered ? 'No rows match' : 'Nothing has been raised yet'}
-            </p>
-            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              {filtered
-                ? 'Clear the month and the filters to see everything purchasing has been told to buy.'
-                : 'Confirming supply in Fulfilment Planning raises the rows purchasing acts on.'}
-            </p>
-            {!filtered && (
-              <Button asChild variant="outline" className="mt-4">
-                <Link href="/project-sales/fulfilment-planning">
-                  Open Fulfilment Planning
-                </Link>
-              </Button>
-            )}
-          </div>
-        }
-      >
-        <Card>
-          <CardHeader className="block">
-            <DataGridListToolbar
-              table={table}
-              searchSlot={
-                <div className="relative w-full max-w-xs">
-                  <Search
-                    className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                    aria-hidden
-                  />
-                  <Input
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder="Search S/O, item, product or customer…"
-                    className="ps-9"
-                    aria-label="Search order inquiry rows"
-                  />
-                  {search && (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                      onClick={() => setSearch('')}
-                      aria-label="Clear search"
-                    >
-                      <X />
-                    </Button>
-                  )}
-                </div>
-              }
-              filters={{
-                kind: 'custom',
-                active: filtersActiveCount > 0,
-                activeCount: filtersActiveCount,
-                content: (
-                  <div className="space-y-3">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">State</Label>
-                      <SearchableSelect
-                        value={stateFilter}
-                        onChange={setStateFilter}
-                        clearable
-                        options={STATE_OPTIONS}
-                        placeholder="Every state"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">Supplier</Label>
-                      <SearchableSelect
-                        value={supplierFilter}
-                        onChange={setSupplierFilter}
-                        clearable
-                        options={(summary.data?.suppliers ?? []).map((entry) => ({
-                          value: entry.id,
-                          label: entry.label,
-                        }))}
-                        placeholder="Every supplier"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">Project</Label>
-                      <SearchableSelect
-                        value={projectFilter}
-                        onChange={setProjectFilter}
-                        clearable
-                        options={(summary.data?.projects ?? []).map((entry) => ({
-                          value: entry.id,
-                          label: entry.label,
-                        }))}
-                        placeholder="Every project"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground" htmlFor="raised-on">
-                        Raised on
-                      </Label>
-                      <Input
-                        id="raised-on"
-                        type="date"
-                        value={raisedDate}
-                        onChange={(event) => setRaisedDate(event.target.value)}
-                      />
-                    </div>
-                    {filtersActiveCount > 0 && (
+      {view === 'calendar' ? (
+        <div className="space-y-5">
+          <Card className="p-4">
+            <OrderInquiryCalendarView
+              month={calendarMonth}
+              onMonthChange={setCalendarMonth}
+              byDay={calendarSummary.data?.by_day ?? []}
+              isLoading={calendarSummary.isLoading}
+              selectedDay={selectedDay}
+              onSelectDay={setSelectedDay}
+            />
+          </Card>
+          {selectedDay && (
+            <OrderInquiryDayDrilldown
+              day={selectedDay}
+              monthFilters={dayDrilldownFilters}
+              onClose={() => setSelectedDay(null)}
+            />
+          )}
+        </div>
+      ) : (
+        <DataGrid
+          table={table}
+          recordCount={total}
+          isLoading={list.isLoading}
+          listingKey="projects.projects.view::order-inquiry-worklist"
+          tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+          emptyMessage={
+            <div className="px-6 py-10 text-center">
+              <p className="text-sm font-semibold">
+                {filtered ? 'No rows match' : 'Nothing has been raised yet'}
+              </p>
+              <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                {filtered
+                  ? 'Clear the month and the filters to see everything purchasing has been told to buy.'
+                  : 'Confirming supply in Fulfilment Planning raises the rows purchasing acts on.'}
+              </p>
+              {!filtered && (
+                <Button asChild variant="outline" className="mt-4">
+                  <Link href="/project-sales/fulfilment-planning">
+                    Open Fulfilment Planning
+                  </Link>
+                </Button>
+              )}
+            </div>
+          }
+        >
+          <Card>
+            <CardHeader className="block">
+              <DataGridListToolbar
+                table={table}
+                searchSlot={
+                  <div className="relative w-full max-w-xs">
+                    <Search
+                      className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                      aria-hidden
+                    />
+                    <Input
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder="Search S/O, item, product or customer…"
+                      className="ps-9"
+                      aria-label="Search order inquiry rows"
+                    />
+                    {search && (
                       <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => {
-                          setStateFilter('');
-                          setSupplierFilter('');
-                          setProjectFilter('');
-                          setRaisedDate('');
-                        }}
+                        mode="icon"
+                        variant="dim"
+                        className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
+                        onClick={() => setSearch('')}
+                        aria-label="Clear search"
                       >
-                        Clear filters
+                        <X />
                       </Button>
                     )}
                   </div>
-                ),
-              }}
-              // Their own workbook, with their own headings and a sheet per delivery
-              // month, is the file anyone outside the system reads - so the generic
-              // selection-scoped export is replaced rather than offered beside it.
-              exportConfig={false}
-              primaryAction={
-                <Button type="button" onClick={() => void handleExport()} disabled={exporting}>
-                  <Download className="size-4" aria-hidden />
-                  {exporting ? 'Preparing…' : 'Export Excel'}
-                </Button>
-              }
-              onRefresh={() => {
-                void list.refetch();
-                void summary.refetch();
-              }}
-              isRefreshing={list.isFetching && !list.isLoading}
-            />
-          </CardHeader>
-          <CardTable>
-            {list.isError ? (
-              <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">
-                <h2 className="text-sm font-semibold text-destructive">
-                  The order inquiry could not be loaded
-                </h2>
-                <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                  {list.error instanceof Error ? list.error.message : 'Try again shortly.'}
-                </p>
-              </div>
-            ) : (
-              <ScrollArea>
-                <DataGridTable />
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
-            )}
-          </CardTable>
-          <CardFooter>
-            <DataGridPagination />
-          </CardFooter>
-        </Card>
-      </DataGrid>
+                }
+                filters={{
+                  kind: 'custom',
+                  active: filtersActiveCount > 0,
+                  activeCount: filtersActiveCount,
+                  content: (
+                    <div className="space-y-3">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">
+                          Delivery month
+                        </Label>
+                        <SearchableSelect
+                          value={month}
+                          onChange={setMonth}
+                          clearable
+                          options={months.map((entry) => ({
+                            value: entry.month,
+                            label: `${entry.label ?? deliveryMonthLabel(entry.month) ?? entry.month} (${entry.rows})`,
+                          }))}
+                          placeholder="Every month"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">State</Label>
+                        <SearchableSelect
+                          value={stateFilter}
+                          onChange={setStateFilter}
+                          clearable
+                          options={STATE_OPTIONS}
+                          placeholder="Every state"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">Supplier</Label>
+                        <SearchableSelect
+                          value={supplierFilter}
+                          onChange={setSupplierFilter}
+                          clearable
+                          options={(summary.data?.suppliers ?? []).map((entry) => ({
+                            value: entry.id,
+                            label: entry.label,
+                          }))}
+                          placeholder="Every supplier"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">Project</Label>
+                        <SearchableSelect
+                          value={projectFilter}
+                          onChange={setProjectFilter}
+                          clearable
+                          options={(summary.data?.projects ?? []).map((entry) => ({
+                            value: entry.id,
+                            label: entry.label,
+                          }))}
+                          placeholder="Every project"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground" htmlFor="raised-on">
+                          Raised on
+                        </Label>
+                        <Input
+                          id="raised-on"
+                          type="date"
+                          value={raisedDate}
+                          onChange={(event) => setRaisedDate(event.target.value)}
+                        />
+                      </div>
+                      {filtersActiveCount > 0 && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => {
+                            setMonth('');
+                            setStateFilter('');
+                            setSupplierFilter('');
+                            setProjectFilter('');
+                            setRaisedDate('');
+                          }}
+                        >
+                          Clear filters
+                        </Button>
+                      )}
+                    </div>
+                  ),
+                }}
+                // Their own workbook, with their own headings and a sheet per delivery
+                // month, is the file anyone outside the system reads - so the generic
+                // selection-scoped export is replaced rather than offered beside it.
+                exportConfig={false}
+                primaryAction={
+                  <Button type="button" onClick={() => void handleExport()} disabled={exporting}>
+                    <Download className="size-4" aria-hidden />
+                    {exporting ? 'Preparing…' : 'Export Excel'}
+                  </Button>
+                }
+                onRefresh={() => {
+                  void list.refetch();
+                  void summary.refetch();
+                }}
+                isRefreshing={list.isFetching && !list.isLoading}
+              />
+            </CardHeader>
+            <CardTable>
+              {list.isError ? (
+                <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">
+                  <h2 className="text-sm font-semibold text-destructive">
+                    The order inquiry could not be loaded
+                  </h2>
+                  <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                    {list.error instanceof Error ? list.error.message : 'Try again shortly.'}
+                  </p>
+                </div>
+              ) : (
+                <ScrollArea>
+                  <DataGridTable />
+                  <ScrollBar orientation="horizontal" />
+                </ScrollArea>
+              )}
+            </CardTable>
+            <CardFooter>
+              <DataGridPagination />
+            </CardFooter>
+          </Card>
+        </DataGrid>
+      )}
     </div>
   );
-}
-
-function Muted({ children }: { children: React.ReactNode }) {
-  return <span className="text-muted-foreground">{children}</span>;
 }

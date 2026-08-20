@@ -27,7 +27,7 @@ export const VERB_LABEL: Record<string, string> = {
  * not. Amber is money about to be spent, emerald is money already spent, sky is a change
  * to something already on order, red is a cancellation.
  */
-const PALETTE_KEY: Record<string, string> = {
+export const VERB_PALETTE_KEY: Record<string, string> = {
   ORDER: 'pending',
   RESERVE_AND_ORDER: 'pending',
   PRE_ORDERED_DO_NOT_ORDER: 'processed_by_cs',
@@ -54,7 +54,7 @@ export function OrderInquiryVerbPill({ verb }: { verb: string }) {
   const label = VERB_LABEL[verb] ?? verb;
   return (
     <span
-      className={`${STATUS_PILL_BASE} normal-case ${statusPillClass(PALETTE_KEY[verb] ?? 'draft')}`}
+      className={`${STATUS_PILL_BASE} normal-case ${statusPillClass(VERB_PALETTE_KEY[verb] ?? 'draft')}`}
       title={label}
     >
       {label}
