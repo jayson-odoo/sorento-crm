@@ -133,13 +133,25 @@ def blank_schema_engine():
                 "projects": f"{name}_projects",
             }
         )
-        with scoped.connect() as connection:
+        # AUTOCOMMIT, so each CREATE TABLE / ADD CONSTRAINT / CREATE INDEX commits
+        # and RELEASES ITS LOCKS as it goes.
+        #
+        # Building the whole model inside one transaction holds a lock on every
+        # object at once - well over a thousand - and Postgres sizes its shared
+        # lock table from `max_locks_per_transaction` (64 by default). One worker
+        # fits; four xdist workers each building their own scratch schema at the
+        # same time do not, and the loser dies mid-DDL with "out of shared memory"
+        # in whatever test happened to be first. It reads as an unrelated flake -
+        # the traceback names a random file's fixture - and it got worse every
+        # time the model grew a table.
+        with scoped.connect().execution_options(
+            isolation_level="AUTOCOMMIT"
+        ) as connection:
             # The Sorento company row is seeded by the ``after_create`` DDL event on
             # the companies table (tests/conftest.py), which fires here during
             # create_all — so every owned insert's auto-stamped company_id resolves
             # against the FK. Nothing to seed by hand.
             Base.metadata.create_all(connection, checkfirst=False)
-            connection.commit()
 
         _BLANK["engine"] = scoped
         _BLANK["name"] = name
