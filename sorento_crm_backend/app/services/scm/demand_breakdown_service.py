@@ -52,6 +52,7 @@ from app.services.scm.demand import (
     PROJECT_CLASS,
     UNPLACED_INQUIRY_STATE,
 )
+from app.services.scm.trajectory_service import demand_context_for_product
 
 # One screen's worth. A pool with thousands of lines is a reading problem, not a listing
 # problem, and the total is reported separately so the cap is never silent.
@@ -153,7 +154,9 @@ def demand_for_recommendation(db: Session, rec_id: str,
         return {"lines": [], "total": 0, "shown": 0, "committed_total": 0.0,
                 "unlocated_total": 0.0, "locations": [], "scope": "warehouse",
                 "pool_code": None, "project_total": 0.0, "retail_total": 0.0,
-                "unclassified_total": 0.0}
+                "unclassified_total": 0.0, "project_12m_qty": 0.0, "retail_3m_qty": 0.0,
+                "project_window_months": None, "retail_window_months": None,
+                "demand_context_as_of": None}
 
     # Unlocated demand was attributed to exactly one location per product, so it belongs to
     # this row only when THIS row is the one carrying it.
@@ -325,6 +328,12 @@ def demand_for_recommendation(db: Session, rec_id: str,
                         ln["so_number"] or ""),
     )
 
+    # Trailing-window context (captain, 20 Aug follow-up): the past year's project orders /
+    # past 3 months' retail orders for THIS product, so the buyer can judge whether to top
+    # up the quantity - separate from `committed_total`/`project_total` above, which are the
+    # still-OPEN demand this row was netted against, not the historical order flow.
+    context = demand_context_for_product(db, rec["product_id"])
+
     return {
         "lines": all_lines,
         "total": int(totals["n"] or 0) + confirmed_n,
@@ -351,4 +360,9 @@ def demand_for_recommendation(db: Session, rec_id: str,
         "project_total": float(totals["project_qty"] or 0) + confirmed_total,
         "retail_total": float(totals["retail_qty"] or 0),
         "unclassified_total": float(totals["unclassified_qty"] or 0),
+        "project_12m_qty": context["project_qty"],
+        "retail_3m_qty": context["retail_qty"],
+        "project_window_months": context["project_months"],
+        "retail_window_months": context["retail_months"],
+        "demand_context_as_of": context["as_of"],
     }

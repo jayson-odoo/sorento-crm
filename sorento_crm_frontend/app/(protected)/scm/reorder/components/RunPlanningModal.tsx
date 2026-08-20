@@ -17,7 +17,9 @@ import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useProductOptions, useWarehouseOptions } from '../../hooks/useScmOptions';
 
-/** Manual-plan inputs (M8-D5, revised): warehouse(s) + budget ONLY. No market-insight
+/** Manual-plan inputs (M8-D5, revised; captain 20 Aug dropped the cash budget field -
+ *  budget stays a backend/post-run capability only, tightened afterwards on the plan
+ *  via `CashBudgetPanel`/`applyBudget`, never set at launch). No market-insight
  *  toggle - market never enters a run; it reaches the plan only through the chat
  *  (Slice E). The legacy `buy_scope` is removed. Warehouse is now MULTI-select (pick
  *  several, or Select all) so a manual run can cover any subset like the daily run. */
@@ -30,7 +32,6 @@ export interface ManualPlanInputs {
    * `buy_scope` category filter.
    */
   product_codes: string[];
-  budget: number;
   /**
    * "Plan until" (captain, 20 Aug). **Empty means no horizon** - every open SO line is
    * planned regardless of when it is needed, today's behaviour. `YYYY-MM-DD` when set;
@@ -58,7 +59,6 @@ export function RunPlanningModal({
 }) {
   const [warehouses, setWarehouses] = useState<string[]>([]);
   const [products, setProducts] = useState<string[]>([]);
-  const [budget, setBudget] = useState('72000');
   const [horizon, setHorizon] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -81,7 +81,6 @@ export function RunPlanningModal({
     if (!open) return;
     setWarehouses([]);
     setProducts([]);
-    setBudget('72000');
     setHorizon('');
     setError(null);
   }, [open]);
@@ -98,7 +97,6 @@ export function RunPlanningModal({
       // one is the exception, and forcing a pick would make every run harder than
       // the daily one it stands in for.
       product_codes: products,
-      budget: Number(budget) || 0,
       // Empty = no horizon (today's behaviour): every open SO line is planned
       // regardless of when it is needed.
       plan_horizon_date: horizon,
@@ -168,25 +166,6 @@ export function RunPlanningModal({
             />
             <p className="mt-1 text-2xs text-muted-foreground">
               Leave empty to plan every product.
-            </p>
-          </div>
-
-          <div>
-            <Label htmlFor="manual-budget" className="mb-1 block">
-              Cash budget (RM)
-            </Label>
-            <Input
-              id="manual-budget"
-              type="number"
-              inputMode="numeric"
-              min={0}
-              step={500}
-              value={budget}
-              onChange={(e) => setBudget(e.target.value)}
-              className="tabular-nums"
-            />
-            <p className="mt-1 text-2xs text-muted-foreground">
-              You can tighten this on the plan afterwards to defer lower-ranked buys.
             </p>
           </div>
 

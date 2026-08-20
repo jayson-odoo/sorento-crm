@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { fmtInt, fmtSupplierCost } from '../../lib/format';
+import { DemandContextHeader } from './DemandContextHeader';
 import { orderInquiryWorklistHref } from '../lib/orderInquiryLink';
 import { useRecommendationDemand } from '../hooks/useReorderRun';
 import type { PlanDemand } from '../services/reorderRunService';
@@ -122,6 +123,7 @@ function PlanDemandBody({ runId, recId }: { runId: string | null; recId: string 
         {demandTotals ? (
           <p className="mt-0.5 text-2xs text-muted-foreground">{demandTotals}</p>
         ) : null}
+        {data ? <DemandContextHeader data={data} /> : null}
       </div>
       {isLoading ? (
         <div className="space-y-2 p-3">

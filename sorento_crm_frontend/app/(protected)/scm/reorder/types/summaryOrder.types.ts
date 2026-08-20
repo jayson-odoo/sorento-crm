@@ -287,6 +287,18 @@ export interface OrderSummaryDemandDrill {
   dealer_lines?: DealerDemandLine[];
   /** Populated when `kind` is `unclassified`, empty otherwise. */
   unclassified_lines: UnclassifiedDemandLine[];
+  /**
+   * Trailing-window historical order context (captain, 20 Aug follow-up): "for project
+   * here, you need to show the past year project order for this item; for retail, the
+   * last 3 months, for user to judge whether to top up the quantity ordered." Distinct
+   * from `total_qty` (still-open demand) - this is the flow of orders PLACED over the
+   * window, whatever their status today.
+   */
+  project_12m_qty?: number | null;
+  retail_3m_qty?: number | null;
+  project_window_months?: number | null;
+  retail_window_months?: number | null;
+  demand_context_as_of?: string | null;
 }
 
 /**

@@ -62,6 +62,7 @@ from app.services.scm.demand import (
 from app.services.scm.reorder_engine import allocate as eng_allocate
 from app.services.scm.reorder_engine import round_order_qty as eng_round_order_qty
 from app.services.scm.cost_capture_service import cost_variance
+from app.services.scm.trajectory_service import demand_context_for_product
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
 log = logging.getLogger(__name__)
@@ -970,6 +971,12 @@ def demand_drill(db: Session, product_code: str, *, kind: str) -> dict:
     unclassified_lines.sort(key=lambda x: (x["ordered_date"] is None,
                                            x["ordered_date"] or ""))
 
+    # Trailing-window context (captain, 20 Aug follow-up): the past year's project orders /
+    # past 3 months' retail orders for this product, so the reader can judge whether to top
+    # up the quantity - separate from `total_qty` above, which is still-OPEN demand, not the
+    # historical order flow.
+    context = demand_context_for_product(db, str(product.id))
+
     return {
         "product_code": product.product_code,
         "kind": kind,
@@ -980,6 +987,11 @@ def demand_drill(db: Session, product_code: str, *, kind: str) -> dict:
         # payload keeps rendering.
         "dealer_lines": retail_lines,
         "unclassified_lines": unclassified_lines,
+        "project_12m_qty": context["project_qty"],
+        "retail_3m_qty": context["retail_qty"],
+        "project_window_months": context["project_months"],
+        "retail_window_months": context["retail_months"],
+        "demand_context_as_of": context["as_of"],
     }
 
 

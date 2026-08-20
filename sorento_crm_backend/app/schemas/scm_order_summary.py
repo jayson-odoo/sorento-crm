@@ -175,6 +175,16 @@ class OrderSummaryDemandDrillOut(BaseModel):
     # keeps rendering.
     dealer_lines: List[DealerDemandLineOut] = Field(default_factory=list)
     unclassified_lines: List[UnclassifiedDemandLineOut] = Field(default_factory=list)
+    # Trailing-window historical order context (captain, 20 Aug follow-up): "for project
+    # here, you need to show the past year project order for this item; for retail, the
+    # last 3 months, for user to judge whether to top up the quantity ordered." Distinct
+    # from `total_qty` (still-open demand): this is the flow of orders PLACED, whatever
+    # their status today.
+    project_12m_qty: float = 0.0
+    retail_3m_qty: float = 0.0
+    project_window_months: Optional[int] = None
+    retail_window_months: Optional[int] = None
+    demand_context_as_of: Optional[str] = None
 
 
 class SupplierCandidateOut(BaseModel):

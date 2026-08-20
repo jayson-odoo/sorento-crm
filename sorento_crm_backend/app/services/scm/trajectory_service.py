@@ -30,6 +30,7 @@ from app.services.scm.customer_label import (
     CUSTOMER_LABEL_SQL,
     customer_key_filter,
 )
+from app.services.scm.demand import PROJECT_CLASS
 from app.services.scm.trajectory import (
     DEFAULT_PROJECT_MONTHS,
     DEFAULT_RETAIL_MONTHS,
@@ -56,6 +57,66 @@ def _windows(db: Session) -> dict[str, int]:
     return {
         "retail_months": int(row[0]) if row and row[0] else DEFAULT_RETAIL_MONTHS,
         "project_months": int(row[1]) if row and row[1] else DEFAULT_PROJECT_MONTHS,
+    }
+
+
+def demand_context_for_product(
+    db: Session, product_id: str, *, as_of: Optional[date] = None,
+) -> dict[str, Any]:
+    """The trailing-window ordered qty for ONE product, split project vs retail.
+
+    Captain (20 Aug), on the demand drills: "for project here, you need to show the past
+    year project order for this item; for retail, the last 3 months, for user to judge
+    whether to top up the quantity ordered." This reuses the SAME windows this module
+    already computes the plan's own trajectory verdicts with (`_windows`, defaulting to 12
+    project / 3 retail months, configurable on `scm.reorder_policy`) and the same channel
+    split (`sales_orders.demand_class`), so the number a drill shows can never disagree with
+    the verdict the grouped Buy view already renders for the same product.
+
+    What counts as "ordered" here is the flow of orders PLACED (`qty_ordered`), whatever
+    their status today - the same reading `trajectory_for_run` uses, and deliberately not
+    the still-open committed figure the popover already shows above this line.
+    """
+    as_of = as_of or date.today()
+    windows = _windows(db)
+    until = _month_shift(as_of, 0)
+    since_project = _month_shift(until, -windows["project_months"])
+    since_retail = _month_shift(until, -windows["retail_months"])
+    since = min(since_project, since_retail)
+
+    co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="dcp")
+    co_clause = f"AND {co}" if co else ""
+    row = db.execute(text(f"""
+        SELECT
+            COALESCE(SUM(sol.qty_ordered) FILTER (
+                WHERE so.demand_class = :project_class
+                  AND so.order_date >= :since_project AND so.order_date < :until
+            ), 0) AS project_qty,
+            COALESCE(SUM(sol.qty_ordered) FILTER (
+                WHERE so.demand_class IS DISTINCT FROM :project_class
+                  AND so.order_date >= :since_retail AND so.order_date < :until
+            ), 0) AS retail_qty
+        FROM sales_order_lines sol
+        JOIN sales_orders so ON so.id = sol.sales_order_id
+        WHERE sol.product_id = CAST(:product_id AS uuid)
+          AND so.order_date >= :since AND so.order_date < :until
+          {co_clause}
+    """), {
+        "product_id": product_id,
+        "project_class": PROJECT_CLASS,
+        "since": since,
+        "since_project": since_project,
+        "since_retail": since_retail,
+        "until": until,
+        **co_params,
+    }).mappings().first()
+
+    return {
+        "project_qty": float(row["project_qty"] or 0) if row else 0.0,
+        "retail_qty": float(row["retail_qty"] or 0) if row else 0.0,
+        "project_months": windows["project_months"],
+        "retail_months": windows["retail_months"],
+        "as_of": as_of.isoformat(),
     }
 
 

@@ -1,11 +1,13 @@
 /**
  * SCM M8 - RunPlanningModal (M8-D5, revised + AC-B8a). Manual-plan inputs are
- * warehouse(s), products and budget. NO market-insight toggle (market never enters a
- * run), and the legacy `buy_scope` input is gone (planning is always per-warehouse).
- * Warehouse is MULTI-select with a Select-all shortcut and at least one is required;
- * products are MULTI-select and OPTIONAL, where empty means every product, so
- * existing behaviour and the scheduled daily run are unchanged. Submit emits
- * { warehouse_codes, product_codes, budget }.
+ * warehouse(s) and products - NO cash budget field (captain, 20 Aug: budget is a
+ * backend/post-run-only capability, tightened on the plan afterwards). NO
+ * market-insight toggle (market never enters a run), and the legacy `buy_scope`
+ * input is gone (planning is always per-warehouse). Warehouse is MULTI-select with a
+ * Select-all shortcut and at least one is required; products are MULTI-select and
+ * OPTIONAL, where empty means every product, so existing behaviour and the scheduled
+ * daily run are unchanged. Submit emits { warehouse_codes, product_codes,
+ * plan_horizon_date }.
  *
  * SearchableMultiSelect + the option hooks are stubbed so the pick is deterministic.
  */
@@ -87,15 +89,16 @@ function renderModal(over: Partial<React.ComponentProps<typeof RunPlanningModal>
 beforeEach(() => vi.clearAllMocks());
 
 describe('RunPlanningModal (M8-D5)', () => {
-  it('shows the warehouse(s), products and budget inputs, and no market toggle or buy_scope', () => {
+  it('shows the warehouse(s) and products inputs, and no cash budget, market toggle or buy_scope', () => {
     renderModal();
     expect(screen.getByText('Manual plan')).toBeInTheDocument();
     expect(screen.getByText('Warehouses')).toBeInTheDocument();
     expect(screen.getByLabelText('Select warehouses')).toBeInTheDocument();
     expect(screen.getByText('Products')).toBeInTheDocument();
     expect(screen.getByLabelText('All products')).toBeInTheDocument();
-    expect(screen.getByLabelText(/Cash budget/i)).toBeInTheDocument();
-    // No market insight toggle and no buy-scope (network/warehouse) selector.
+    // No cash budget field (captain, 20 Aug), no market insight toggle and no
+    // buy-scope (network/warehouse) selector.
+    expect(screen.queryByLabelText(/Cash budget/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/market/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/buy scope/i)).not.toBeInTheDocument();
   });
@@ -107,15 +110,13 @@ describe('RunPlanningModal (M8-D5)', () => {
     expect(screen.getByText(/Select at least one warehouse/i)).toBeInTheDocument();
   });
 
-  it('emits { warehouse_codes, product_codes, budget } on submit (M8-D5 / AC-B8a)', () => {
+  it('emits { warehouse_codes, product_codes, plan_horizon_date } on submit (M8-D5 / AC-B8a)', () => {
     const { onSubmit } = renderModal();
     fireEvent.click(screen.getByLabelText('Johor Bahru DC'));
-    fireEvent.change(screen.getByLabelText(/Cash budget/i), { target: { value: '50000' } });
     fireEvent.click(screen.getByRole('button', { name: /Generate plan/i }));
     expect(onSubmit).toHaveBeenCalledWith({
       warehouse_codes: ['WH-JB'],
       product_codes: [],
-      budget: 50000,
       plan_horizon_date: '',
     });
   });
@@ -127,7 +128,6 @@ describe('RunPlanningModal (M8-D5)', () => {
     expect(onSubmit).toHaveBeenCalledWith({
       warehouse_codes: ['WH-KL', 'WH-JB'],
       product_codes: [],
-      budget: 72000,
       plan_horizon_date: '',
     });
   });
@@ -140,7 +140,6 @@ describe('RunPlanningModal (M8-D5)', () => {
     expect(onSubmit).toHaveBeenCalledWith({
       warehouse_codes: ['WH-KL'],
       product_codes: ['SRTWT7408'],
-      budget: 72000,
       plan_horizon_date: '',
     });
   });

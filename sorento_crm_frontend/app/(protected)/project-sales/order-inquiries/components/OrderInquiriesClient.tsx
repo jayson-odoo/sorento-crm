@@ -147,8 +147,13 @@ export function OrderInquiriesClient() {
   const [view, setView] = React.useState<OrderInquiryView>(() =>
     viewFrom(searchParams.get('view')),
   );
-  const [search, setSearch] = React.useState('');
-  const [debounced, setDebounced] = React.useState('');
+  // Sourced from `?query=` on mount (captain: the demand drill's click-through -
+  // `orderInquiryWorklistHref` - lands here with an SO number already in the URL), and
+  // kept URL-synced the same way as `view`/`rows`/`granularity` below, so a link to a
+  // filtered worklist is shareable. `debounced` starts at the same value as `search` so
+  // the deep link filters on first render rather than after a 300ms flash of "every row".
+  const [search, setSearch] = React.useState(() => searchParams.get('query') ?? '');
+  const [debounced, setDebounced] = React.useState(() => searchParams.get('query') ?? '');
   const [month, setMonth] = React.useState('');
   const [stateFilter, setStateFilter] = React.useState('');
   const [supplierFilter, setSupplierFilter] = React.useState('');
@@ -172,8 +177,9 @@ export function OrderInquiriesClient() {
   );
   const [openCell, setOpenCell] = React.useState<OrderInquiryMatrixCell | null>(null);
 
-  // `view`, `rows` and `granularity` travel in the URL, so a link to the Schedule view is
-  // shareable. `replace`, not `push`: turning a dial is not a place in history to go back to.
+  // `view`, `rows`, `granularity` and `query` travel in the URL, so a link to the Schedule
+  // view or a filtered search is shareable. `replace`, not `push`: turning a dial (or
+  // typing a search) is not a place in history to go back to.
   React.useEffect(() => {
     const next = new URLSearchParams(searchParams.toString());
     if (view === 'list') next.delete('view');
@@ -182,10 +188,12 @@ export function OrderInquiriesClient() {
     else next.set('rows', matrixAxis);
     if (matrixGranularity === 'week') next.delete('granularity');
     else next.set('granularity', matrixGranularity);
-    const query = next.toString();
-    if (query === searchParams.toString()) return;
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  }, [view, matrixAxis, matrixGranularity, pathname, router, searchParams]);
+    if (debounced) next.set('query', debounced);
+    else next.delete('query');
+    const nextQuery = next.toString();
+    if (nextQuery === searchParams.toString()) return;
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+  }, [view, matrixAxis, matrixGranularity, debounced, pathname, router, searchParams]);
 
   // A cell drawn from one axis/granularity is not a selection under a different one.
   React.useEffect(() => {

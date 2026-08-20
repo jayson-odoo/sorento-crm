@@ -8,11 +8,10 @@
  * SO number, item code, product code/name, customer and project in one `ILIKE`, so an SO
  * number scopes the worklist to exactly that line's inquiry the moment the param is read.
  *
- * HALF-WIRED ON PURPOSE: `OrderInquiriesClient.tsx` (owned by another lane; out of scope
- * here) currently URL-syncs only `view` / `rows` / `granularity` - its `query` search box
- * is local `useState('')`, not sourced from `useSearchParams()`. So this link is correct
- * and ready today but lands on an UNFILTERED worklist until that page reads `?query=`
- * on mount. Do not rename this param without updating the backend filter it mirrors.
+ * `OrderInquiriesClient.tsx` initialises its search box from `?query=` on mount and keeps
+ * it URL-synced alongside `view` / `rows` / `granularity`, so this link lands on the
+ * FILTERED worklist. Do not rename this param without updating the backend filter it
+ * mirrors AND that page's `useSearchParams().get('query')` read.
  */
 export function orderInquiryWorklistHref(soNumber: string): string {
   return `/project-sales/order-inquiries?query=${encodeURIComponent(soNumber)}`;
