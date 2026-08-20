@@ -85,3 +85,50 @@ class BulkConfirmResult(BaseModel):
 
 class CreateGrResult(BaseModel):
     gr_reference: str
+
+
+# ---------------------------------------------------------------------------
+# S16 (captain 21 Aug) — the row decision: buy / use stock / use PO / skip, or a
+# mixture. Mirrors the FE model at `reorder/lib/planDecisions.ts` (PlanDecision).
+# ---------------------------------------------------------------------------
+
+class StockTakeIn(BaseModel):
+    location: str  # warehouse CODE — never a UUID from the UI
+    qty: float = Field(..., gt=0)
+
+
+class StockTakeOut(BaseModel):
+    location: str
+    location_name: Optional[str] = None
+    qty: float
+
+
+class RecordPlanRowDecisionRequest(BaseModel):
+    kind: str  # buy | use_stock | use_po | skip | mixture
+    buy_qty: Optional[float] = Field(None, ge=0)
+    stock_takes: List[StockTakeIn] = Field(default_factory=list)
+    po_qty: Optional[float] = Field(None, ge=0)
+    po_refs: List[str] = Field(default_factory=list)  # existing PO numbers, display-only
+    reason_text: Optional[str] = None
+
+
+class PlanRowDecision(BaseModel):
+    recommendation_id: str
+    kind: str
+    buy_qty: Optional[float] = None
+    stock_takes: List[StockTakeOut] = Field(default_factory=list)
+    po_qty: Optional[float] = None
+    po_refs: List[str] = Field(default_factory=list)
+    reason_text: Optional[str] = None
+    # Staged like Accept/Adjust — populated only once Confirm decisions has drafted the
+    # buy portion into a PO.
+    draft_po_number: Optional[str] = None
+    draft_po_id: Optional[str] = None
+
+
+class PlanRowDecisionListResponse(BaseModel):
+    data: List[PlanRowDecision]
+    # The "N of Total made" header's numerator/denominator, counted server-side off what
+    # is actually persisted (not client session state).
+    decided_count: int
+    total_count: int

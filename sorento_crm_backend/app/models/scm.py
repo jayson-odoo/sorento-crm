@@ -412,6 +412,72 @@ class RecommendationOverride(Base, CompanyScopedMixin):
     )
 
 
+class PlanRowDecision(Base, CompanyScopedMixin):
+    """The buyer's CURRENT decision on one recommendation row - buy / use stock / use an
+    existing PO / skip, or a mixture of the first three.
+
+    > captain, 21 Aug (third time this fix requested): "I want the decision made here...
+    > there is only buy / use stock / use SPO / mixture, right" - the results grid used to
+    > send the buyer to the product sheet to decide ("Decided on the Product sheet - open
+    > it"); this is that decision, recorded on the row.
+
+    ONE row per recommendation, kept CURRENT rather than append-only like
+    ``RecommendationOverride`` — "record a decision" replaces whatever was there,
+    "clear a decision" deletes the row outright, so `undecided` is the absence of a row
+    here exactly as it is the absence of an entry in the FE's own in-memory
+    `PlanDecisionMap` (`reorder/lib/planDecisions.ts`) before this landed.
+
+    Recorded on ANY decidable rec_type (buy / covered / needs_level / disposition) -
+    the captain's question was the same shape for every row on the grid, not just buy
+    recs, so this is guarded only by ``plan_grain.assert_not_legacy`` (a closed run
+    stays read-only) and NEVER by ``decision_grain``: a product-grain run's grouped
+    product fans this write out one member recommendation id at a time, the same way
+    ``reorder_run_service.set_moq_override`` already fans a MoQ edit out to every
+    member — the write itself does not need to know which grain it landed on.
+    ``confirm_decisions`` stays LOCATION-grain gated (unchanged): a product-grain run
+    never drafts an internal ``purchase_orders`` row at all — it hands Joey a worklist
+    to key in AutoCount instead — so this table's buy portion only ever reaches a
+    draft PO on a location-grain run.
+
+    ``use_stock`` records the buyer's INTENTION only - no stock is reserved or held by
+    writing this row. An actual hold would collide with the project-sales ladder's own
+    reservations against the same stock (`PLAN-scm-reorder-decision-to-autocount.md`,
+    open question, answered: intention-only, never a reservation).
+    """
+    __tablename__ = "plan_row_decision"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    recommendation_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("scm.reorder_recommendation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind = Column(String(20), nullable=False)  # buy | use_stock | use_po | skip | mixture
+    buy_qty = Column(Numeric, nullable=True)
+    #: [{location: warehouse CODE, location_name, qty}] — the bins the buyer named for
+    #: the stock portion. Never a UUID on the wire (mirrors override_supplier_code).
+    stock_takes = Column(JSONB, nullable=True)
+    po_qty = Column(Numeric, nullable=True)
+    #: PO numbers the "use PO" portion points at — display-only, no FK (the existing PO
+    #: book is read by number elsewhere; this is the buyer's own note of which one(s)).
+    po_refs = Column(JSONB, nullable=True)
+    reason_text = Column(Text, nullable=True)
+    decided_by = Column(String, nullable=True)
+    decided_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    recommendation = relationship("ReorderRecommendation")
+
+    __table_args__ = (
+        Index(
+            "uq_scm_plan_row_decision_recommendation_id", "recommendation_id", unique=True
+        ),
+        {"schema": "scm"},
+    )
+
+
 class OverrideReason(Base):
     """Master vocabulary of override reason codes (LLM classifies into these)."""
     __tablename__ = "override_reason"
