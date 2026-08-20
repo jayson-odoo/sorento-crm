@@ -182,6 +182,30 @@ def _act_as(db: Session, company_id: str) -> None:
     set_company_scope(db, frozenset({company_id}))
 
 
+def _schema_isolates_supplier_code(db: Session, probing_company: str, code: str) -> bool:
+    """Whether this schema enforces `supplier_code` uniqueness PER COMPANY.
+
+    True on the migrated (production) schema (migration 305, `uq_suppliers_company_
+    supplier_code`). False on a `create_all` schema (CI's `bootstrap_env`, and the blank
+    scratch schemas): `suppliers.supplier_code` still declares a bare `unique=True` on
+    the MODEL there, so a second supplier under a DIFFERENT company (`probing_company`)
+    but the SAME code, already held by another company, is rejected outright - which is
+    exactly what the back-create path this test exercises would attempt. Probed with a
+    savepoint that is always rolled back: this reads the constraint, it does not seed a
+    row, so it cannot affect the row counts the caller asserts afterwards.
+    """
+    savepoint = db.begin_nested()
+    try:
+        db.add(Supplier(id=_u(), supplier_code=code, supplier_name=f"{MARKER} probe",
+                        is_active=True, company_id=probing_company))
+        db.flush()
+    except IntegrityError:
+        savepoint.rollback()
+        return False
+    savepoint.rollback()
+    return True
+
+
 def _seed_duplicate_or_skip(db: Session, obj, why: str) -> None:
     """Insert a row that duplicates a code already held by the other company.
 
@@ -568,6 +592,14 @@ def test_a_creditor_code_owned_only_by_another_company_gets_its_own_row_back_cre
     FROM suppliers WHERE supplier_code = ...` still finds company B's row every time,
     whatever the row order, and that row must never be the one this purchase order attaches
     to, nor may this creation touch it.
+
+    Only reachable on the schema that lets two companies each hold `supplier_code`
+    (`_schema_isolates_supplier_code`, same reason as `_seed_duplicate_or_skip` below): a
+    `create_all` schema still enforces the model's bare `unique=True` on the column, so
+    the back-create insert itself would collide with company B's row there, and `apply()`
+    correctly leaves the creditor unresolved rather than crash the upload (see the
+    `IntegrityError` handling in `outstanding_import_service.apply`) - a real, safe
+    behaviour on that schema, just not the one this test is about.
     """
     db = world.db
     _requires_po_aliases(db)
@@ -575,6 +607,9 @@ def test_a_creditor_code_owned_only_by_another_company_gets_its_own_row_back_cre
     creditor = _code("CRED")[:50]
     world.product(item, world.a)
     b_supplier_id = world.supplier(creditor, world.b)
+    if not _schema_isolates_supplier_code(db, world.a, creditor):
+        pytest.skip("this schema enforces a globally unique supplier_code, so company A "
+                    "cannot back-create its own row under a code company B already holds")
     po_number = _code("PO")
 
     _act_as(db, world.a)
