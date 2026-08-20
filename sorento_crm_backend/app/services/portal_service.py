@@ -24,7 +24,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 from uuid import UUID
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
@@ -714,7 +714,11 @@ class PortalService:
                         StockInquiry.status.ilike(like),
                     )
                 )
-            rows = query.order_by(StockInquiry.created_at.desc()).all()
+            # A revision is new work for the reader, so it sorts as if created then.
+            rows = query.order_by(
+                func.coalesce(StockInquiry.last_revised_at, StockInquiry.created_at).desc(),
+                StockInquiry.id.asc(),
+            ).all()
             return [self._serialize_stock_inquiry_summary(r) for r in rows]
         # purchase_request / sponsorship_form
         query = self.db.query(PurchaseRequestHeader).filter(
@@ -747,7 +751,11 @@ class PortalService:
                     PurchaseRequestHeader.id.in_(line_subq),
                 )
             )
-        rows = query.order_by(PurchaseRequestHeader.created_at.desc()).all()
+        # A revision is new work for the reader, so it sorts as if created then.
+        rows = query.order_by(
+            func.coalesce(PurchaseRequestHeader.last_revised_at, PurchaseRequestHeader.created_at).desc(),
+            PurchaseRequestHeader.id.asc(),
+        ).all()
         return [self._serialize_request_summary(r) for r in rows]
 
     # ---------- Detail ----------
@@ -849,12 +857,15 @@ class PortalService:
             )
             row_status = (getattr(row, "status", None) or "").strip().lower()
             row_status_rejected = row_status == "rejected"
-            # A `responded` stock inquiry that the salesperson reopens is submit-only,
-            # mirroring `rejected` - no parking it back in draft.
+            # A `responded` stock inquiry can only be changed through Revise -
+            # mirroring `rejected`, which can only progress via Submit - no parking
+            # either back in a plain draft save.
             row_status_responded = row_status == "responded"
             if approval_rejected or row_status_rejected or row_status_responded:
-                # A rejected/responded submission can only progress via Submit;
-                # salesperson cannot park it back in draft.
+                if row_status_responded:
+                    raise handle_validation_error(
+                        "This submission can only be changed through Revise."
+                    )
                 raise handle_validation_error(
                     "This submission must be resent via Submit — draft saves are disabled."
                 )
@@ -898,10 +909,9 @@ class PortalService:
                 )
             row.status = "submitted"
         elif kind == "stock_inquiry":
-            # `responded` is included so a salesperson can act on purchasing's
-            # clarifying reply (edit + resubmit) without waiting for a formal
-            # purchasing_reject. Resubmit re-runs project-sales vetting.
-            if previous_status not in ("draft", "rejected", "responded"):
+            # A `responded` inquiry is read-only on this path - it changes only
+            # through the revision endpoint (`PortalRevisionService.revise`).
+            if previous_status not in ("draft", "rejected"):
                 raise handle_validation_error(
                     f"Cannot submit stock inquiry with status {previous_status!r}."
                 )
@@ -1748,11 +1758,11 @@ class PortalService:
             "document_number": display_document_number(row) or row.inquiry_number,
             "status": row.status,
             "rejection_reason": row.rejection_reason,
-            "is_editable": bool(row.portal_draft_at)
-            or row.status == "rejected"
-            or row.status == "responded",
+            "is_editable": bool(row.portal_draft_at) or row.status == "rejected",
             "is_draft": row.portal_draft_at is not None,
             "created_at": row.created_at.isoformat() if row.created_at else None,
+            "last_revised_at": row.last_revised_at.isoformat() if row.last_revised_at else None,
+            "revision_no": int(row.revision_no or 0),
             "product_code": row.product_code,
             "project_name": row.project_name,
             "project_customer": row.project_customer,
@@ -1810,6 +1820,8 @@ class PortalService:
             "is_editable": is_editable,
             "is_draft": row.portal_draft_at is not None,
             "created_at": row.created_at.isoformat() if row.created_at else None,
+            "last_revised_at": row.last_revised_at.isoformat() if row.last_revised_at else None,
+            "revision_no": int(row.revision_no or 0),
             "project_title": row.project_title,
             "customer_name": row.customer_name,
             "sponsor_subject": row.sponsor_subject,

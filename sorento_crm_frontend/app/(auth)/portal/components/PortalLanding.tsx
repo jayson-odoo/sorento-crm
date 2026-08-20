@@ -49,6 +49,7 @@ import {
   statusLabel,
 } from '../lib/portal-client';
 import { complaintStatusLabel, complaintStatusPillClass } from '@/lib/complaint-status';
+import { revisionBadgeLabel } from '@/lib/document-number';
 import {
   portalDetailPath,
   portalNewPath,
@@ -642,9 +643,14 @@ function SubmissionCard({
         </Badge>
       )}
       <div className="space-y-1 pr-[45%]">
-        <p className="text-base font-semibold break-words" title={primary}>
-          {primary}
-        </p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <p className="text-base font-semibold break-words" title={primary}>
+            {primary}
+          </p>
+          {revisionBadgeLabel(row.revision_no) && (
+            <Badge variant="secondary">{revisionBadgeLabel(row.revision_no)}</Badge>
+          )}
+        </div>
       </div>
       <div className="space-y-1 mt-1">
         {meta.product && (
@@ -665,10 +671,16 @@ function SubmissionCard({
             {meta.customer}
           </p>
         )}
-        {row.created_at && (
+        {row.last_revised_at ? (
           <p className="text-xs text-muted-foreground">
-            {new Date(row.created_at).toLocaleDateString(undefined, { dateStyle: 'medium' })}
+            Revised {new Date(row.last_revised_at).toLocaleDateString(undefined, { dateStyle: 'medium' })}
           </p>
+        ) : (
+          row.created_at && (
+            <p className="text-xs text-muted-foreground">
+              {new Date(row.created_at).toLocaleDateString(undefined, { dateStyle: 'medium' })}
+            </p>
+          )
         )}
         {row.rejection_reason && (
           <p className="text-xs text-destructive line-clamp-2">{row.rejection_reason}</p>

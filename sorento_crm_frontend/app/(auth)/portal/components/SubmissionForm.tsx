@@ -9,6 +9,8 @@ import {
   ChevronRight,
   FileText,
   History,
+  Info,
+  Lock,
   Plus,
   Sparkles,
   Trash2,
@@ -24,6 +26,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Alert, AlertContent, AlertDescription, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -340,6 +343,17 @@ function fieldSpansFullWidth(f: FieldDef): boolean {
   );
 }
 
+/** Sits beneath a `FROZEN_ON_REVISE` field's control - the requestor is the
+ *  routing key, so a revision can only view it, never move it. */
+function FrozenHint() {
+  return (
+    <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+      <Lock className="size-3" />
+      Locked during a revision. Ask the office to change the requestor.
+    </p>
+  );
+}
+
 interface Props {
   kind: PortalSubmissionKind;
   submissionId?: string;
@@ -387,11 +401,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   );
   const showLines = HAS_LINES.includes(kind);
   const isEditable = useMemo(
-    () =>
-      !detail ||
-      detail.is_draft ||
-      detail.status === 'rejected' ||
-      detail.status === 'responded',
+    () => !detail || detail.is_draft || detail.status === 'rejected',
     [detail],
   );
   const revisionPolicy = detail?.revision ?? null;
@@ -1089,19 +1099,23 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     return <div className="p-6 text-sm text-muted-foreground">Loading...</div>;
   }
 
-  const statusBadge = detail?.is_draft
+  // Revising reads as Draft everywhere the badge appears - nothing is sent
+  // until "Send revision", so the pill must not still claim the old status.
+  const statusBadge = reviseMode
     ? { label: 'Draft', variant: 'warning' as const }
-    : detail?.status
-      ? {
-          label: statusLabel(detail.status),
-          variant:
-            detail.status === 'rejected'
-              ? ('destructive' as const)
-              : detail.status === 'approved' || detail.status === 'responded'
-                ? ('success' as const)
-                : ('secondary' as const),
-        }
-      : null;
+    : detail?.is_draft
+      ? { label: 'Draft', variant: 'warning' as const }
+      : detail?.status
+        ? {
+            label: statusLabel(detail.status),
+            variant:
+              detail.status === 'rejected'
+                ? ('destructive' as const)
+                : detail.status === 'approved' || detail.status === 'responded'
+                  ? ('success' as const)
+                  : ('secondary' as const),
+          }
+        : null;
 
   // Purchasing / technical response shown at top for salesperson once responded. Hidden when empty.
   const responseInfo = (() => {
@@ -1196,6 +1210,22 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
             </div>
           )}
         </div>
+      )}
+
+      {reviseMode && (
+        <Alert variant="warning" appearance="light" data-testid="revising-banner">
+          <AlertIcon>
+            <Info />
+          </AlertIcon>
+          <AlertContent>
+            <AlertTitle>
+              Revising - revision {(detail?.revision_no ?? 0) + 1} (not sent yet)
+            </AlertTitle>
+            <AlertDescription>
+              Nothing is saved until you press Send revision. {restartSentence}
+            </AlertDescription>
+          </AlertContent>
+        </Alert>
       )}
 
       {kind === 'stock_inquiry' ? (
@@ -1507,12 +1537,13 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               {saving ? 'Saving...' : 'Save as draft'}
             </Button>
           )}
-          <Button
-            onClick={() => setConfirmOpen(true)}
-            disabled={!isEditable || saving || submitting}
-          >
-            {submitting ? 'Submitting...' : 'Submit'}
-          </Button>
+          {/* A read-only form has nothing to submit: a responded inquiry changes
+              only through Revise, so a disabled Submit would just be a tease. */}
+          {isEditable && (
+            <Button onClick={() => setConfirmOpen(true)} disabled={saving || submitting}>
+              {submitting ? 'Submitting...' : 'Submit'}
+            </Button>
+          )}
         </div>
       )}
     </>
@@ -1774,6 +1805,7 @@ function StockInquiryFormSection({
             disabled={!isEditable || frozenFields?.has('salesperson_contact_id')}
             contactOption={resolveContactOption?.(fieldByName.salesperson_contact_id)}
           />
+          {frozenFields?.has('salesperson_contact_id') && <FrozenHint />}
         </InquiryFormTableRow>
         <InquiryFormTableRow label="Product code">
           <FieldControl
@@ -2002,6 +2034,7 @@ function ComplaintFormSection({
                 disabled={!isEditable || frozenFields?.has(f.name)}
                 contact={contact}
               />
+              {frozenFields?.has(f.name) && <FrozenHint />}
             </div>
           ))}
           {complaintLines && setComplaintLines && (
@@ -2074,6 +2107,7 @@ function PurchaseRequestFormSection({
                         : undefined
                     }
                   />
+                  {frozenFields?.has(f.name) && <FrozenHint />}
                 </div>
               ))}
           </div>

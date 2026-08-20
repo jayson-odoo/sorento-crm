@@ -75,6 +75,10 @@ export interface PortalSubmissionSummary {
   is_editable: boolean;
   is_draft: boolean;
   created_at: string | null;
+  /** Denormalized revision counter (UAC N) - 0/null means never revised. */
+  revision_no?: number | null;
+  /** Set the moment a revision lands, so a list can sort/label by it. */
+  last_revised_at?: string | null;
   // Optional kind-specific summary fields surfaced for the mobile card layout.
   product_code?: string | null;
   project_title?: string | null;
