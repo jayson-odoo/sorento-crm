@@ -1,0 +1,776 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  CellContext,
+  ColumnDef,
+  PaginationState,
+  getCoreRowModel,
+  getPaginationRowModel,
+  useReactTable,
+} from '@tanstack/react-table';
+import {
+  Download,
+  LayoutGrid,
+  LoaderCircle,
+  PackageSearch,
+  RefreshCw,
+  Send,
+  Table2,
+  Upload,
+} from 'lucide-react';
+import { toast } from 'sonner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Button } from '@/components/ui/button';
+import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { Skeleton } from '@/components/ui/skeleton';
+import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { cn } from '@/lib/utils';
+import { EM_DASH, fmtInt } from '../../lib/format';
+import {
+  useContainerRequestBuild,
+  useSendContainerRequest,
+  useSupplierNotices,
+} from '../../hooks/useFulfilment';
+import {
+  getNoticeDocumentUrl,
+  type ContainerRequestRow,
+  type ContainerRequestSoLine,
+  type SupplierNotice,
+} from '../../services/fulfilmentService';
+import { RankFactorsPopover } from './RankFactorsPopover';
+import { SoLinesDrillPopover } from './SoLinesDrillPopover';
+import { ContainerRequestScheduleMatrix } from './ContainerRequestScheduleMatrix';
+import {
+  buildContainerRequestMatrix,
+  type ContainerRequestMatrixAxis,
+  type ContainerRequestMatrixGranularity,
+} from './containerRequestMatrix';
+
+/**
+ * Stage 1 of Ms Tee's journey (PLAN-scm-loading-plan-demand-first.md, amended section 4/6b -
+ * 20 Aug afternoon): what to ask this supplier for, before any container is chosen. ONE
+ * table over the whole stock list - a stock-list product with no open demand still gets a row
+ * (`has_demand: false`, muted, unranked), so nothing the stock list holds vanishes into a
+ * second table. The product set and the quantities are both derived - off the supplier's
+ * stock list and the outstanding sales-order book - so the only three decisions left to her
+ * are the supplier (picked above this section), any quantity she disagrees with, and Send.
+ */
+
+const NOTICE_STATUS_LABEL: Record<SupplierNotice['status'], string> = {
+  pending: 'Queued',
+  sent: 'Sent',
+  failed: 'Failed',
+  skipped: 'Not sent',
+};
+
+const NOTICE_CHANNEL_LABEL: Record<SupplierNotice['channel'], string> = {
+  email: 'Email',
+  chat: 'Chat',
+};
+
+const MATRIX_AXIS_OPTIONS = [
+  { value: 'product', label: 'Product' },
+  { value: 'order', label: 'Order' },
+];
+
+const MATRIX_GRANULARITY_OPTIONS = [
+  { value: 'day', label: 'Day' },
+  { value: 'week', label: 'Week' },
+  { value: 'month', label: 'Month' },
+];
+
+/** A source older than this reads as "trust this less" rather than a hard error - the figures
+ *  built off it are still real, just possibly overtaken by an upload nobody has run yet. */
+const STALE_AFTER_DAYS = 7;
+
+function isStaleSource(iso: string | null): boolean {
+  if (!iso) return false;
+  const ms = Date.now() - new Date(iso).getTime();
+  return ms > STALE_AFTER_DAYS * 24 * 60 * 60 * 1000;
+}
+
+/** The stamp's own date, +time when the source ISO actually carries one - `stock_list_as_of`
+ *  is a bare date (`supplier_inventory.as_of`), the other three are timestamps. Naive-UTC
+ *  timestamps must go through `formatDateTimeInMalaysia` (parses as UTC, renders MYT) - a bare
+ *  `new Date(iso)` reads the naive string as local time and lands 8h early. */
+function formatSourceStamp(iso: string | null): string {
+  if (!iso) return EM_DASH;
+  return iso.includes('T') ? formatDateTimeInMalaysia(iso) : formatDateInMalaysia(iso);
+}
+
+function SourceStamp({ label, iso }: { label: string; iso: string | null }) {
+  const stale = isStaleSource(iso);
+  return (
+    <span className={cn(stale && 'text-amber-600')} title={stale ? 'Consider re-uploading' : undefined}>
+      {label} {formatSourceStamp(iso)}
+    </span>
+  );
+}
+
+export function ContainerRequestSection({
+  supplierId,
+  supplierName,
+  onUploadStockList,
+}: {
+  supplierId: string;
+  supplierName: string;
+  onUploadStockList: () => void;
+}) {
+  const build = useContainerRequestBuild(supplierId);
+  const send = useSendContainerRequest();
+  const notices = useSupplierNotices(supplierId);
+
+  const [overrides, setOverrides] = useState<Record<string, number>>({});
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
+  const [confirming, setConfirming] = useState(false);
+  const [view, setView] = useState<'table' | 'schedule'>('table');
+  const [matrixAxis, setMatrixAxis] = useState<ContainerRequestMatrixAxis>('product');
+  const [matrixGranularity, setMatrixGranularity] =
+    useState<ContainerRequestMatrixGranularity>('week');
+  const [openingDocId, setOpeningDocId] = useState<string | null>(null);
+
+  const rows = useMemo(() => build.data?.rows ?? [], [build.data]);
+  const soLines = useMemo(() => build.data?.lines ?? [], [build.data]);
+
+  const linesByProduct = useMemo(() => {
+    const map = new Map<string, ContainerRequestSoLine[]>();
+    for (const l of soLines) {
+      const arr = map.get(l.product_id);
+      if (arr) arr.push(l);
+      else map.set(l.product_id, [l]);
+    }
+    return map;
+  }, [soLines]);
+
+  const matrix = useMemo(
+    () => buildContainerRequestMatrix(soLines, matrixAxis, matrixGranularity),
+    [soLines, matrixAxis, matrixGranularity],
+  );
+
+  // A fresh suggestion replaces whatever she had edited into the previous one - "refresh" is
+  // asking the system to look again, not "keep my edits and re-rank around them".
+  useEffect(() => {
+    const seed: Record<string, number> = {};
+    for (const r of rows) seed[r.product_id] = r.suggested_qty;
+    setOverrides(seed);
+  }, [rows]);
+
+  const overridesRef = useRef(overrides);
+  overridesRef.current = overrides;
+
+  const qtyFor = (row: ContainerRequestRow) => overrides[row.product_id] ?? row.suggested_qty;
+
+  const showUnclassified = rows.some((r) => r.unclassified_qty !== 0);
+
+  const lines = useMemo(
+    () =>
+      rows.map((r) => ({ product_id: r.product_id, qty: qtyFor(r) })).filter((l) => l.qty > 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, overrides],
+  );
+  const totalQty = lines.reduce((sum, l) => sum + l.qty, 0);
+
+  // A row edited to 0 leaves the request without being deleted from the grid - she can still
+  // see and change her mind about it, it just does not go on the document.
+  const renderQtyCell = useCallback((ctx: CellContext<ContainerRequestRow, unknown>) => {
+    const original = ctx.row.original;
+    const qty = overridesRef.current[original.product_id] ?? original.suggested_qty;
+    return (
+      <Input
+        type="number"
+        min={0}
+        className="h-8 w-24 tabular-nums"
+        value={qty}
+        title="need - on hand - SPO - PO, floored at 0"
+        onChange={(e) => {
+          const next = Math.max(0, Number(e.target.value) || 0);
+          setOverrides((prev) => ({ ...prev, [original.product_id]: next }));
+        }}
+      />
+    );
+  }, []);
+
+  const columns = useMemo<ColumnDef<ContainerRequestRow>[]>(
+    () => [
+      {
+        id: 'rank',
+        header: ({ column }) => <DataGridColumnHeader title="Rank" column={column} />,
+        cell: ({ row }) => {
+          const original = row.original;
+          const muted = original.has_demand === false;
+          return (
+            <div className="flex items-center gap-1">
+              <span
+                className={cn('tabular-nums', muted ? 'text-muted-foreground/60' : 'text-muted-foreground')}
+              >
+                {original.rank ?? EM_DASH}
+              </span>
+              {!muted ? (
+                <RankFactorsPopover
+                  line={{ rank_score: original.rank_score, factors: original.rank_factors }}
+                />
+              ) : null}
+            </div>
+          );
+        },
+        size: 110,
+        enableSorting: false,
+        meta: { headerTitle: 'Rank' },
+      },
+      {
+        id: 'product',
+        header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
+        cell: ({ row }) => {
+          const original = row.original;
+          const muted = original.has_demand === false;
+          return (
+            <div className={cn('flex min-w-0 flex-col', muted && 'opacity-70')}>
+              <span className="truncate font-medium" title={original.item_code ?? ''}>
+                {original.item_code ?? EM_DASH}
+              </span>
+              <span
+                className="truncate text-2xs text-muted-foreground"
+                title={original.product_name ?? ''}
+              >
+                {original.product_name ?? EM_DASH}
+              </span>
+            </div>
+          );
+        },
+        size: 210,
+        enableSorting: false,
+        meta: { headerTitle: 'Product' },
+      },
+      {
+        id: 'suggested_qty',
+        header: ({ column }) => <DataGridColumnHeader title="Suggested qty" column={column} />,
+        cell: renderQtyCell,
+        size: 140,
+        enableSorting: false,
+        meta: { headerTitle: 'Suggested qty' },
+      },
+      {
+        id: 'open_so_need',
+        header: ({ column }) => <DataGridColumnHeader title="Need" column={column} />,
+        cell: ({ row }) => {
+          const original = row.original;
+          if (original.has_demand === false) {
+            return (
+              <span className="text-2xs text-muted-foreground" title="gross open SO demand">
+                No open demand
+              </span>
+            );
+          }
+          return (
+            <span className="tabular-nums" title="gross open SO demand">
+              {fmtInt(original.open_so_need)}
+            </span>
+          );
+        },
+        size: 100,
+        enableSorting: false,
+        meta: { headerTitle: 'Need' },
+      },
+      {
+        accessorKey: 'project_qty',
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        cell: ({ row }) => (
+          <span className="tabular-nums">{fmtInt(row.original.project_qty)}</span>
+        ),
+        size: 90,
+        enableSorting: false,
+        meta: { headerTitle: 'Project' },
+      },
+      {
+        accessorKey: 'retail_qty',
+        header: ({ column }) => <DataGridColumnHeader title="Retail" column={column} />,
+        cell: ({ row }) => <span className="tabular-nums">{fmtInt(row.original.retail_qty)}</span>,
+        size: 90,
+        enableSorting: false,
+        meta: { headerTitle: 'Retail' },
+      },
+      ...(showUnclassified
+        ? [
+            {
+              accessorKey: 'unclassified_qty',
+              header: ({ column }) => (
+                <DataGridColumnHeader title="Unclassified" column={column} />
+              ),
+              cell: ({ row }) => (
+                <span className="tabular-nums">{fmtInt(row.original.unclassified_qty)}</span>
+              ),
+              size: 100,
+              enableSorting: false,
+              meta: { headerTitle: 'Unclassified' },
+            } as ColumnDef<ContainerRequestRow>,
+          ]
+        : []),
+      {
+        accessorKey: 'on_hand',
+        header: ({ column }) => <DataGridColumnHeader title="On hand" column={column} />,
+        cell: ({ row }) => <span className="tabular-nums">{fmtInt(row.original.on_hand)}</span>,
+        size: 90,
+        enableSorting: false,
+        meta: { headerTitle: 'On hand' },
+      },
+      {
+        accessorKey: 'incoming_spo',
+        header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
+        cell: ({ row }) => (
+          <span className="tabular-nums" title="SPO already on the water">
+            {fmtInt(row.original.incoming_spo)}
+          </span>
+        ),
+        size: 80,
+        enableSorting: false,
+        meta: { headerTitle: 'SPO' },
+      },
+      {
+        accessorKey: 'outstanding_po',
+        header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
+        cell: ({ row }) => (
+          <span className="tabular-nums" title="placed but not yet shipped">
+            {fmtInt(row.original.outstanding_po)}
+          </span>
+        ),
+        size: 80,
+        enableSorting: false,
+        meta: { headerTitle: 'PO' },
+      },
+      {
+        accessorKey: 'earliest_required_date',
+        header: ({ column }) => <DataGridColumnHeader title="Earliest need-by" column={column} />,
+        cell: ({ row }) => (
+          <span className="tabular-nums">
+            {row.original.earliest_required_date
+              ? formatDateInMalaysia(row.original.earliest_required_date)
+              : EM_DASH}
+          </span>
+        ),
+        size: 130,
+        enableSorting: false,
+        meta: { headerTitle: 'Earliest need-by' },
+      },
+      {
+        accessorKey: 'so_count',
+        header: ({ column }) => <DataGridColumnHeader title="Open SOs" column={column} />,
+        cell: ({ row }) => {
+          const original = row.original;
+          const productLines = linesByProduct.get(original.product_id) ?? [];
+          if (!original.so_count || productLines.length === 0) {
+            return <span className="tabular-nums">{fmtInt(original.so_count)}</span>;
+          }
+          return (
+            <SoLinesDrillPopover
+              title={`${original.item_code ?? original.product_name ?? 'This product'} - open SOs`}
+              lines={productLines}
+              trigger={
+                <button
+                  type="button"
+                  className="rounded-sm tabular-nums underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                >
+                  {fmtInt(original.so_count)}
+                </button>
+              }
+            />
+          );
+        },
+        size: 90,
+        enableSorting: false,
+        meta: { headerTitle: 'Open SOs' },
+      },
+      {
+        id: 'holding',
+        header: ({ column }) => <DataGridColumnHeader title="They hold" column={column} />,
+        cell: ({ row }) => (
+          <div className="flex flex-col text-2xs">
+            <span className="tabular-nums">{fmtInt(row.original.qty_packed)} packed</span>
+            <span className="tabular-nums text-muted-foreground">
+              {fmtInt(row.original.qty_unfinished)} unfinished
+            </span>
+          </div>
+        ),
+        size: 110,
+        enableSorting: false,
+        meta: { headerTitle: 'They hold' },
+      },
+    ],
+    [showUnclassified, renderQtyCell, linesByProduct],
+  );
+
+  const table = useReactTable({
+    columns,
+    data: rows,
+    getRowId: (row) => row.product_id,
+    state: { pagination },
+    onPaginationChange: setPagination,
+    getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+    enableSorting: false,
+  });
+
+  const requestNotices = (notices.data ?? []).filter(
+    (n) => n.notice_type === 'container_request',
+  );
+
+  const canSend = lines.length > 0 && totalQty > 0 && !send.isPending;
+
+  function confirmSend() {
+    send.mutate(
+      { supplierId, supplierName, lines },
+      { onSuccess: () => setConfirming(false) },
+    );
+  }
+
+  // Duplicated from `SupplierNoticePanel.openDocument` rather than generalizing that panel to
+  // take an arbitrary notices list: its header couples the document list to ONE action
+  // (`useApproveLoadingPlan`, keyed on a `planId` this stage does not have) - reshaping it to
+  // also drive `useSendContainerRequest` risked the panel's own, already-covered tests for a
+  // few lines of overlap. Noted per the CLAUDE.md lesson on not silently duplicating shared
+  // list/detail rendering: this IS a duplication, made deliberately and in the open.
+  async function openDocument(notice: SupplierNotice) {
+    setOpeningDocId(notice.id);
+    try {
+      const { url } = await getNoticeDocumentUrl(notice.id);
+      window.open(url, '_blank', 'noopener');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setOpeningDocId(null);
+    }
+  }
+
+  // SF-4 (reviewer): what has already been sent to this supplier does not disappear just
+  // because the build is loading, errored, or has nothing to suggest right now - it is its own
+  // fact, independent of the current suggestion. Rendered on every branch below.
+  const noticesCard = (
+    <Card className="p-4">
+      <h3 className="text-sm font-semibold">Requests sent to {supplierName}</h3>
+      {requestNotices.length === 0 ? (
+        <p className="mt-2 rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
+          Nothing sent to this supplier yet.
+        </p>
+      ) : (
+        <div className="mt-2 divide-y divide-border rounded-lg border">
+          {requestNotices.map((n) => (
+            <div
+              key={n.id}
+              className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-medium">{NOTICE_CHANNEL_LABEL[n.channel]}</span>
+                  <span className={cn(STATUS_PILL_BASE, statusPillClass(n.status))}>
+                    {NOTICE_STATUS_LABEL[n.status]}
+                  </span>
+                  {n.recipient ? (
+                    <span
+                      className="truncate text-2xs text-muted-foreground"
+                      title={n.recipient}
+                    >
+                      {n.recipient}
+                    </span>
+                  ) : null}
+                </div>
+                <p className="mt-0.5 text-2xs text-muted-foreground">
+                  {n.last_error ||
+                    n.status_reason ||
+                    (n.sent_at ? `Sent ${formatDateInMalaysia(n.sent_at)}` : EM_DASH)}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="text-2xs text-muted-foreground">{n.line_count} products</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!n.has_document || openingDocId === n.id}
+                  onClick={() => openDocument(n)}
+                >
+                  {openingDocId === n.id ? (
+                    <LoaderCircle className="size-4 animate-spin" />
+                  ) : (
+                    <Download className="size-4" />
+                  )}
+                  Document
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+
+  if (build.isLoading) {
+    return (
+      <div className="space-y-4">
+        <Card className="p-4">
+          <Skeleton className="h-6 w-64" />
+          <Skeleton className="mt-3 h-24 w-full rounded-lg" />
+        </Card>
+        {noticesCard}
+      </div>
+    );
+  }
+
+  if (build.isError) {
+    return (
+      <div className="space-y-4">
+        <Card className="flex flex-col items-center gap-3 p-8 text-center">
+          <p className="text-sm font-medium text-destructive">{build.error.message}</p>
+          <Button variant="outline" size="sm" onClick={() => build.refetch()}>
+            <RefreshCw className="size-4" />
+            Try again
+          </Button>
+        </Card>
+        {noticesCard}
+      </div>
+    );
+  }
+
+  if (!build.data || build.data.stock_list_as_of === null) {
+    return (
+      <div className="space-y-4">
+        <Card className="flex flex-col items-center gap-3 p-10 text-center">
+          <span className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+            <Upload className="size-5" />
+          </span>
+          <p className="text-sm font-medium">No stock list for {supplierName} yet.</p>
+          <p className="text-2xs text-muted-foreground">
+            The request is built from what their stock list says is theirs. Upload it to see
+            what to ask for.
+          </p>
+          <Button size="sm" onClick={onUploadStockList}>
+            <Upload className="size-4" />
+            Upload stock list
+          </Button>
+        </Card>
+        {noticesCard}
+      </div>
+    );
+  }
+
+  if (rows.length === 0) {
+    return (
+      <div className="space-y-4">
+        <Card className="flex flex-col items-center gap-3 p-10 text-center">
+          <span className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+            <PackageSearch className="size-5" />
+          </span>
+          <p className="text-sm font-medium">No open customer demand for what {supplierName} supplies.</p>
+          <p className="text-2xs text-muted-foreground">
+            As of {formatDateInMalaysia(build.data.stock_list_as_of)}, nothing on their stock
+            list has an outstanding sales order behind it, and nothing on it carries any
+            quantity.
+          </p>
+        </Card>
+        {noticesCard}
+      </div>
+    );
+  }
+
+  const sources = build.data.sources;
+
+  return (
+    <div className="space-y-4">
+      <DataGrid
+        table={table}
+        recordCount={rows.length}
+        tableLayout={{ width: 'fixed', columnsResizable: true }}
+        emptyMessage="No open customer demand for what this supplier supplies."
+      >
+        <Card>
+          <CardHeader className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold">What to ask {supplierName} for</h3>
+              {/* The freshness strip (captain, "plan with trusted data"): a source older than
+                  a week reads in a warning tone rather than a hard block - the figures are
+                  still real, just possibly stale. */}
+              <p className="text-2xs text-muted-foreground">
+                <SourceStamp label="SO book" iso={sources.so_book_as_of} /> -{' '}
+                <SourceStamp label="PO book" iso={sources.po_book_as_of} /> -{' '}
+                <SourceStamp label="SPO" iso={sources.spo_as_of} /> -{' '}
+                <SourceStamp label="Stock list" iso={sources.stock_list_as_of} />
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => build.refetch()}
+                disabled={build.isFetching}
+              >
+                {build.isFetching ? (
+                  <LoaderCircle className="size-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-4" />
+                )}
+                Refresh suggestion
+              </Button>
+              <Button size="sm" onClick={() => setConfirming(true)} disabled={!canSend}>
+                {send.isPending ? (
+                  <LoaderCircle className="size-4 animate-spin" />
+                ) : (
+                  <Send className="size-4" />
+                )}
+                Send to supplier
+              </Button>
+            </div>
+          </CardHeader>
+
+          <div className="flex flex-col gap-3 border-t border-border px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+            <div
+              className="inline-flex rounded-md border border-input"
+              role="group"
+              aria-label="Request view"
+            >
+              <Button
+                type="button"
+                size="sm"
+                variant={view === 'table' ? 'primary' : 'ghost'}
+                className="rounded-e-none"
+                aria-pressed={view === 'table'}
+                onClick={() => setView('table')}
+              >
+                <Table2 className="size-4" aria-hidden />
+                Table
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={view === 'schedule' ? 'primary' : 'ghost'}
+                className="rounded-s-none border-s border-input"
+                aria-pressed={view === 'schedule'}
+                onClick={() => setView('schedule')}
+              >
+                <LayoutGrid className="size-4" aria-hidden />
+                Schedule
+              </Button>
+            </div>
+
+            {view === 'schedule' ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="request-matrix-rows" className="text-xs text-muted-foreground">
+                    Rows
+                  </Label>
+                  <div className="w-32">
+                    <SearchableSelect
+                      id="request-matrix-rows"
+                      value={matrixAxis}
+                      onChange={(v) => setMatrixAxis(v as ContainerRequestMatrixAxis)}
+                      options={MATRIX_AXIS_OPTIONS}
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="request-matrix-by" className="text-xs text-muted-foreground">
+                    By
+                  </Label>
+                  <div className="w-32">
+                    <SearchableSelect
+                      id="request-matrix-by"
+                      value={matrixGranularity}
+                      onChange={(v) => setMatrixGranularity(v as ContainerRequestMatrixGranularity)}
+                      options={MATRIX_GRANULARITY_OPTIONS}
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          {view === 'table' ? (
+            <>
+              <CardTable>
+                <ScrollArea>
+                  <DataGridTable />
+                  <ScrollBar orientation="horizontal" />
+                </ScrollArea>
+              </CardTable>
+              <CardFooter>
+                <DataGridPagination />
+              </CardFooter>
+            </>
+          ) : matrix.rows.length === 0 ? (
+            <div className="p-6 text-center">
+              <p className="text-sm font-medium">No open sales-order lines behind this request.</p>
+              <p className="mt-1 text-2xs text-muted-foreground">
+                The schedule reads the same open SO lines the Table view totals - nothing to
+                bucket by date yet.
+              </p>
+            </div>
+          ) : (
+            <div className="p-4">
+              <ContainerRequestScheduleMatrix
+                buckets={matrix.buckets}
+                rows={matrix.rows}
+                rowHeader={matrixAxis === 'order' ? 'Order' : 'Product'}
+                cells={matrix.cells}
+              />
+            </div>
+          )}
+        </Card>
+      </DataGrid>
+
+      {/* SF-4 (reviewer): always rendered, with an explicit empty state - "nothing sent yet" is
+          a state she needs to see, not infer from an absent section. Shared with the early
+          returns above so every branch of this component shows the same fact. */}
+      {noticesCard}
+
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Send this request to {supplierName}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {lines.length} product{lines.length === 1 ? '' : 's'}, {fmtInt(totalQty)} units in
+              total. The supplier receives the request document by email when an address is on
+              file; the document is available either way.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {send.isError ? (
+            <p className="text-xs text-destructive">{send.error.message}</p>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                // Radix closes an Action on click by default; the send is async and can fail,
+                // so closing is deferred to the mutation's own onSuccess instead - a failure
+                // then leaves the dialog open with the error on it, per the CRUD standard.
+                e.preventDefault();
+                confirmSend();
+              }}
+              disabled={send.isPending}
+            >
+              Send
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+export default ContainerRequestSection;

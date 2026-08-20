@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   approveLoadingPlan,
+  buildContainerRequest,
   createLoadingPlan,
   deleteLoadingPlan,
   getConsolidatedPackingList,
@@ -12,9 +13,12 @@ import {
   getLoadingPlan,
   getLoadingPlans,
   getPlanNotices,
+  getSupplierNotices,
   getSupplierStock,
   getUnfinishedStock,
+  sendContainerRequest,
   updateLoadingPlan,
+  type ContainerRequestLine,
   type LoadingPlan,
   type LoadingPlanRequest,
 } from '../services/fulfilmentService';
@@ -25,7 +29,14 @@ const KEY = ['scm', 'fulfilment'] as const;
 const cold = { staleTime: 5 * 60_000, refetchOnWindowFocus: false, retry: 1 } as const;
 
 export function useFulfilmentSuppliers() {
-  return useQuery({ queryKey: [...KEY, 'suppliers'], queryFn: getFulfilmentSuppliers, ...cold });
+  // Wrapped (not passed bare): `getFulfilmentSuppliers` now takes an optional server-search
+  // `query` (S8-followup) - react-query would otherwise call it with its own
+  // QueryFunctionContext in that slot.
+  return useQuery({
+    queryKey: [...KEY, 'suppliers'],
+    queryFn: () => getFulfilmentSuppliers(),
+    ...cold,
+  });
 }
 
 export function useContainerSizes() {
@@ -142,6 +153,50 @@ export function useApproveLoadingPlan() {
       const sent = out.notices.filter((n) => n.status === 'sent').length;
       if (sent) toast.success(`Notice sent on ${sent === 1 ? '1 channel' : `${sent} channels`}.`);
       else toast.warning('Notice created. No channel could send it, so send the document by hand.');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/**
+ * Stage 1 - the container request (PLAN-scm-loading-plan-demand-first.md). A pure read, so a
+ * query the supplier picker drives directly - the same auto-fetch-on-select shape as
+ * `useSupplierStock` / `useLoadingPlans` - rather than a mutation Ms Tee has to fire herself;
+ * "Refresh suggestion" is this query's own `refetch`.
+ */
+export function useContainerRequestBuild(supplierId: string | null) {
+  return useQuery({
+    queryKey: [...KEY, 'container-request', supplierId],
+    queryFn: () => buildContainerRequest(supplierId as string),
+    enabled: !!supplierId,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** Every notice sent to this supplier, either stage - the caller filters by `notice_type`. */
+export function useSupplierNotices(supplierId: string | null) {
+  return useQuery({
+    queryKey: [...KEY, 'notices', 'supplier', supplierId],
+    queryFn: () => getSupplierNotices(supplierId as string),
+    enabled: !!supplierId,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useSendContainerRequest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      supplierId,
+      lines,
+    }: {
+      supplierId: string;
+      supplierName: string;
+      lines: ContainerRequestLine[];
+    }) => sendContainerRequest(supplierId, lines),
+    onSuccess: (_out, { supplierId, supplierName }) => {
+      void qc.invalidateQueries({ queryKey: [...KEY, 'notices', 'supplier', supplierId] });
+      toast.success(`Request sent to ${supplierName}.`);
     },
     onError: (e: Error) => toast.error(e.message),
   });

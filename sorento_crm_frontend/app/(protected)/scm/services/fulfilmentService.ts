@@ -307,9 +307,22 @@ export async function deleteLoadingPlan(id: string): Promise<void> {
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete the loading plan'));
 }
 
-/** Suppliers, from the existing procurement select. Value is the id the API needs. */
-export async function getFulfilmentSuppliers(): Promise<{ value: string; label: string }[]> {
-  const res = await apiFetch('/api/v1/procurement/suppliers/select');
+/**
+ * Suppliers, from the existing procurement select. Value is the id the API needs.
+ *
+ * The endpoint caps at 100 rows (`app/api/v1/procurement/suppliers.py`), so a bare no-query
+ * call is only ever a first page - fine for a short client-filtered pool, silently wrong for
+ * a book of hundreds of suppliers where the one somebody wants is past row 100 and simply
+ * never reachable by typing its name. `query` ilikes code + name server-side and is the fix:
+ * pass it (typically from `SearchableSelect`'s own `fetchOptions`, which already debounces
+ * and re-queries as the user types) rather than fetching the unfiltered page once and
+ * filtering it client-side.
+ */
+export async function getFulfilmentSuppliers(
+  query?: string,
+): Promise<{ value: string; label: string }[]> {
+  const qs = query?.trim() ? `?query=${encodeURIComponent(query.trim())}` : '';
+  const res = await apiFetch(`/api/v1/procurement/suppliers/select${qs}`);
   const rows = await readJson<{ id: string; supplier_name: string }[]>(
     res,
     'Failed to load suppliers',
@@ -366,6 +379,125 @@ export async function getNoticeDocumentUrl(
 ): Promise<{ url: string; filename: string | null }> {
   const res = await apiFetch(`/api/v1/scm/supplier-notices/${noticeId}/document`);
   return readJson(res, 'Failed to open the notice document');
+}
+
+/**
+ * Stage 1 - the container request (demand-first, PLAN-scm-loading-plan-demand-first.md,
+ * amended section 4 - 20 Aug afternoon).
+ *
+ * `build` is a pure read: ONE table over every product on the supplier's current stock list.
+ * Rows with open sales-order need (`has_demand: true`) are ranked against the ACTIVE
+ * Fulfilment Priority policy and carry a NETTED `suggested_qty`
+ * (`max(open_so_need - on_hand - incoming_spo - outstanding_po, 0)`) - the gross
+ * `open_so_need` and the three stock figures stay on the row so the arithmetic is visible.
+ * Rows on the stock list with no open need (`has_demand: false`) sort after them, suggested 0,
+ * unranked - nothing the stock list holds vanishes in the merge. `include_lines=true` (always
+ * requested by this FE - the matrix and the SO drill both need it) adds the flat open-SO lines
+ * behind every demand row. `send` turns Ms Tee's reviewed lines into a notice through the same
+ * S8 machinery `approveLoadingPlan` uses.
+ *
+ * ── BACKEND CONTRACT (app/api/v1/scm/container_requests.py) ────────────────
+ *  POST /api/v1/scm/container-requests/build?include_lines=true -> 200 ContainerRequestBuild.
+ *       Auth: `scm.dashboard.view`.
+ *  POST /api/v1/scm/container-requests       -> 201 { notices, document_filename }. Auth: `scm.reorder.run`.
+ */
+export interface ContainerRequestRow {
+  product_id: string;
+  item_code: string | null;
+  product_name: string | null;
+  /** Gross outstanding SO need, all classes - what the Need column shows. */
+  open_so_need: number;
+  /** NETTED against on_hand / incoming_spo / outstanding_po, floored at 0 - the editable ask. */
+  suggested_qty: number;
+  on_hand: number;
+  incoming_spo: number;
+  outstanding_po: number;
+  /** Gross split - explains the NEED, not the netted `suggested_qty`. */
+  project_qty: number;
+  retail_qty: number;
+  unclassified_qty: number;
+  earliest_required_date: string | null;
+  so_count: number;
+  qty_packed: number;
+  qty_unfinished: number;
+  cbm_per_unit: number | null;
+  row_as_of: string | null;
+  /** Null on a `has_demand: false` row - nothing to rank it by. */
+  rank: number | null;
+  rank_score: number | null;
+  rank_factors: RankFactor[];
+  /** False for a stock-list product with no open sales-order need behind it - still shown
+   *  (one table), just unranked and muted. */
+  has_demand: boolean;
+}
+
+/** One open SO line behind a demand row - `include_lines=true` on the build. Flat, so the FE
+ *  can bucket them into a schedule matrix or answer "which order does this cover" without a
+ *  second fetch. `sum(qty per product) === that row's open_so_need`. */
+export interface ContainerRequestSoLine {
+  product_id: string;
+  item_code: string | null;
+  so_number: string | null;
+  customer_label: string | null;
+  demand_class: string | null;
+  order_date: string | null;
+  required_date: string | null;
+  qty: number;
+}
+
+/** The latest ingest per document family - "as of when" for every figure the build shows. */
+export interface ContainerRequestSources {
+  so_book_as_of: string | null;
+  po_book_as_of: string | null;
+  spo_as_of: string | null;
+  stock_list_as_of: string | null;
+}
+
+export interface ContainerRequestBuild {
+  supplier_id: string;
+  /** Null when this supplier has no stock list applied yet - the FE's cue for the "upload a
+   *  stock list first" empty state. */
+  stock_list_as_of: string | null;
+  rows: ContainerRequestRow[];
+  sources: ContainerRequestSources;
+  /** Present when the build was called with `include_lines=true` (always, from this FE). */
+  lines?: ContainerRequestSoLine[];
+}
+
+export async function buildContainerRequest(supplierId: string): Promise<ContainerRequestBuild> {
+  const res = await apiFetch('/api/v1/scm/container-requests/build?include_lines=true', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ supplier_id: supplierId }),
+  });
+  return readJson<ContainerRequestBuild>(res, 'Failed to work out what to ask this supplier for');
+}
+
+export interface ContainerRequestLine {
+  product_id: string;
+  qty: number;
+}
+
+export async function sendContainerRequest(
+  supplierId: string,
+  lines: ContainerRequestLine[],
+): Promise<{ notices: SupplierNotice[]; document_filename: string }> {
+  const res = await apiFetch('/api/v1/scm/container-requests', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ supplier_id: supplierId, lines }),
+  });
+  return readJson(res, 'Failed to send the request to the supplier');
+}
+
+/** Every notice this supplier has ever been sent, across both stages - filtered client-side
+ *  to `notice_type` where a caller needs only one stage's history. */
+export async function getSupplierNotices(supplierId: string): Promise<SupplierNotice[]> {
+  const res = await apiFetch(
+    `/api/v1/scm/supplier-notices?supplier_id=${encodeURIComponent(supplierId)}`,
+  );
+  const body = await readJson<{ data: SupplierNotice[] }>(res, 'Failed to load the notices');
+  return body.data;
 }
 
 /**

@@ -3,7 +3,7 @@
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { EM_DASH, fmtDecimal } from '../../lib/format';
-import type { LoadingPlanLine } from '../../services/fulfilmentService';
+import type { RankFactor } from '../../services/fulfilmentService';
 
 /**
  * Why this line ranked where it did (AC-E7).
@@ -25,7 +25,17 @@ function pct(v: number | null): string {
   return v === null ? EM_DASH : `${Math.round(v * 100)}%`;
 }
 
-export function RankFactorsPopover({ line }: { line: LoadingPlanLine }) {
+/**
+ * Shared with the Stage 1 container-request grid (`ContainerRequestSection`), which carries
+ * `rank_score` / `rank_factors` on a row shape that is not a `LoadingPlanLine` - the prop is
+ * the subset both actually use, not the loading-plan line itself.
+ */
+export interface RankedLine {
+  rank_score: number | null;
+  factors: RankFactor[];
+}
+
+export function RankFactorsPopover({ line }: { line: RankedLine }) {
   const score = fmtDecimal(line.rank_score, 2);
   return (
     <Popover>

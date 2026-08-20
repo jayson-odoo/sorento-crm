@@ -11,10 +11,14 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const success = vi.fn();
+const error = vi.fn();
 const createLoadingPlan = vi.fn();
+const buildContainerRequest = vi.fn();
+const sendContainerRequest = vi.fn();
+const getSupplierNotices = vi.fn();
 
 vi.mock('sonner', () => ({
-  toast: { success: (...a: unknown[]) => success(...a), error: vi.fn() },
+  toast: { success: (...a: unknown[]) => success(...a), error: (...a: unknown[]) => error(...a) },
 }));
 
 vi.mock('../services/fulfilmentService', () => ({
@@ -27,9 +31,12 @@ vi.mock('../services/fulfilmentService', () => ({
   getLoadingPlans: vi.fn(),
   applyStockList: vi.fn(),
   previewStockList: vi.fn(),
+  buildContainerRequest: (...a: unknown[]) => buildContainerRequest(...a),
+  sendContainerRequest: (...a: unknown[]) => sendContainerRequest(...a),
+  getSupplierNotices: (...a: unknown[]) => getSupplierNotices(...a),
 }));
 
-import { useBuildLoadingPlan } from './useFulfilment';
+import { useBuildLoadingPlan, useContainerRequestBuild, useSendContainerRequest } from './useFulfilment';
 
 function wrapper({ children }: { children: React.ReactNode }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -38,7 +45,11 @@ function wrapper({ children }: { children: React.ReactNode }) {
 
 beforeEach(() => {
   success.mockReset();
+  error.mockReset();
   createLoadingPlan.mockReset();
+  buildContainerRequest.mockReset();
+  sendContainerRequest.mockReset();
+  getSupplierNotices.mockReset();
 });
 
 describe('useBuildLoadingPlan', () => {
@@ -68,5 +79,55 @@ describe('useBuildLoadingPlan', () => {
 
     await waitFor(() => expect(success).toHaveBeenCalled());
     expect(success).toHaveBeenCalledWith('Planned 34 of 68 cbm.');
+  });
+});
+
+describe('useContainerRequestBuild', () => {
+  it('does not fetch with no supplier chosen yet', () => {
+    const { result } = renderHook(() => useContainerRequestBuild(null), { wrapper });
+
+    expect(result.current.fetchStatus).toBe('idle');
+    expect(buildContainerRequest).not.toHaveBeenCalled();
+  });
+
+  it('fetches the build once a supplier is chosen', async () => {
+    buildContainerRequest.mockResolvedValue({
+      supplier_id: 'sup-1', stock_list_as_of: '2026-08-18T00:00:00', rows: [], not_on_stock_list: 0,
+    });
+    const { result } = renderHook(() => useContainerRequestBuild('sup-1'), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(buildContainerRequest).toHaveBeenCalledWith('sup-1');
+    expect(result.current.data?.supplier_id).toBe('sup-1');
+  });
+});
+
+describe('useSendContainerRequest', () => {
+  it('sends the lines and toasts the supplier by name, not id', async () => {
+    sendContainerRequest.mockResolvedValue({ notices: [], document_filename: 'x.pdf' });
+    const { result } = renderHook(() => useSendContainerRequest(), { wrapper });
+
+    result.current.mutate({
+      supplierId: 'sup-1',
+      supplierName: 'Foshan Ceramics',
+      lines: [{ product_id: 'p1', qty: 10 }],
+    });
+
+    await waitFor(() => expect(success).toHaveBeenCalled());
+    expect(sendContainerRequest).toHaveBeenCalledWith('sup-1', [{ product_id: 'p1', qty: 10 }]);
+    expect(success).toHaveBeenCalledWith('Request sent to Foshan Ceramics.');
+  });
+
+  it('surfaces the server\'s own failure message rather than a generic one', async () => {
+    sendContainerRequest.mockRejectedValue(new Error('This supplier has no email on file.'));
+    const { result } = renderHook(() => useSendContainerRequest(), { wrapper });
+
+    result.current.mutate({
+      supplierId: 'sup-1', supplierName: 'Foshan Ceramics',
+      lines: [{ product_id: 'p1', qty: 10 }],
+    });
+
+    await waitFor(() => expect(error).toHaveBeenCalledWith('This supplier has no email on file.'));
+    expect(success).not.toHaveBeenCalled();
   });
 });

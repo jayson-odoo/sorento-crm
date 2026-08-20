@@ -19,7 +19,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -28,22 +28,23 @@ import { EM_DASH, fmtInt, fmtTrimmedDecimal } from '../../lib/format';
 import {
   useBuildLoadingPlan,
   useContainerSizes,
-  useFulfilmentSuppliers,
   useLoadingPlans,
   useRerunLoadingPlan,
   useStockListApplied,
   useSupplierStock,
   useUnfinishedStock,
 } from '../../hooks/useFulfilment';
-import type {
-  DeferralReason,
-  LoadingLineStatus,
-  LoadingPlan,
-  LoadingPlanLine,
+import {
+  getFulfilmentSuppliers,
+  type DeferralReason,
+  type LoadingLineStatus,
+  type LoadingPlan,
+  type LoadingPlanLine,
 } from '../../services/fulfilmentService';
 import { StockListUploadDialog } from './StockListUploadDialog';
 import { SupplierNoticePanel } from './SupplierNoticePanel';
 import { RankFactorsPopover } from './RankFactorsPopover';
+import { ContainerRequestSection } from './ContainerRequestSection';
 
 /**
  * Ms Tee's screen: what goes on the next container from one supplier.
@@ -107,6 +108,12 @@ function cbm(value: number | null | undefined): string {
 
 export function LoadingPlanView() {
   const [supplierId, setSupplierId] = useState('');
+  // The picked option's own label, alongside the id - server-searched (below), so the
+  // screen's title and every downstream string cannot assume the chosen supplier sits in
+  // whatever unfiltered first page happens to be cached (S8-followup, same fix as the
+  // proforma upload dialog: a supplier past the `/select` endpoint's 100-row cap is otherwise
+  // unreachable by typing its name here).
+  const [supplierOption, setSupplierOption] = useState<SearchableSelectOption | null>(null);
   const [containerType, setContainerType] = useState('');
   const [containerCount, setContainerCount] = useState(1);
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -114,7 +121,6 @@ export function LoadingPlanView() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
 
-  const suppliers = useFulfilmentSuppliers();
   const sizes = useContainerSizes();
   const stock = useSupplierStock(supplierId || null);
   const unfinished = useUnfinishedStock(supplierId || null);
@@ -134,8 +140,7 @@ export function LoadingPlanView() {
     setPlanId(null);
   }, [supplierId]);
 
-  const supplierName =
-    suppliers.data?.find((s) => s.value === supplierId)?.label ?? 'this supplier';
+  const supplierName = supplierOption?.label ?? 'this supplier';
 
   const plan: LoadingPlan | null =
     (build.data && build.data.supplier_id === supplierId ? build.data : null) ??
@@ -279,8 +284,14 @@ export function LoadingPlanView() {
               id="loading-plan-supplier"
               value={supplierId}
               onChange={setSupplierId}
-              options={suppliers.data ?? []}
-              placeholder={suppliers.isLoading ? 'Loading suppliers...' : 'Choose a supplier'}
+              onOptionChange={setSupplierOption}
+              // Server-searched (S8-followup): the `/select` endpoint ilikes code + name and
+              // caps at 100 rows, so a client-filtered static list silently hid any supplier
+              // past that page. `fetchOptions` re-queries as the user types (debounced by
+              // `SearchableSelect` itself).
+              fetchOptions={(query) => getFulfilmentSuppliers(query)}
+              selectedOption={supplierOption ?? undefined}
+              placeholder="Choose a supplier"
               className="mt-1 w-full sm:w-80"
             />
           </div>
@@ -308,6 +319,20 @@ export function LoadingPlanView() {
         </Card>
       ) : (
         <>
+          {/* Stage 1 of Ms Tee's journey (PLAN-scm-loading-plan-demand-first.md): what to ask
+              for, ahead of any CBM decision. Stage order IS the journey order. */}
+          <h2 className="text-sm font-semibold text-muted-foreground">
+            Stage 1 · Request (what we need)
+          </h2>
+          <ContainerRequestSection
+            supplierId={supplierId}
+            supplierName={supplierName}
+            onUploadStockList={() => setUploadOpen(true)}
+          />
+
+          <h2 className="pt-2 text-sm font-semibold text-muted-foreground">
+            Stage 2 · Container plan (CBM fit)
+          </h2>
           <Card className="p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">

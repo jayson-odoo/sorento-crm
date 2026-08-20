@@ -33,8 +33,25 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
+// The supplier picker is server-searched now (S8-followup, same fix as the proforma upload
+// dialog): `SearchableSelect` calls `fetchOptions('', 0)` on open, so the real component is
+// kept (not stubbed) and only `getFulfilmentSuppliers` is overridden here - `importOriginal`
+// keeps every other export real, since `StockListUploadDialog` / `SupplierNoticePanel` /
+// `ContainerRequestSection` all import other functions off this same module and none of them
+// are exercised by this suite.
+const getFulfilmentSuppliers = vi.fn(
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async (_query?: string) => [{ value: 'sup-1', label: 'Foshan Ceramics' }],
+);
+vi.mock('../../services/fulfilmentService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/fulfilmentService')>();
+  return {
+    ...actual,
+    getFulfilmentSuppliers: (query?: string) => getFulfilmentSuppliers(query),
+  };
+});
+
 const state = {
-  suppliers: [{ value: 'sup-1', label: 'Foshan Ceramics' }],
   sizes: [{ code: '40HQ', label: '40ft high cube', cbm: 68, is_default: true }],
   stock: { supplier_id: 'sup-1', as_of: '2026-07-31', rows: [] as unknown[] },
   unfinished: [] as unknown[],
@@ -45,7 +62,6 @@ const build = vi.fn();
 const rerun = vi.fn();
 
 vi.mock('../../hooks/useFulfilment', () => ({
-  useFulfilmentSuppliers: () => ({ data: state.suppliers, isLoading: false }),
   useContainerSizes: () => ({ data: state.sizes, isLoading: false }),
   useSupplierStock: () => ({ data: state.stock, isLoading: false }),
   useUnfinishedStock: () => ({ data: state.unfinished, isLoading: false }),
@@ -58,6 +74,13 @@ vi.mock('../../hooks/useFulfilment', () => ({
   // SupplierNoticePanel.test.tsx; here it only has to not explode.
   usePlanNotices: () => ({ data: [], isLoading: false }),
   useApproveLoadingPlan: () => ({ mutate: vi.fn(), isPending: false }),
+  // Stage 1's own section renders inside this view too. Its behaviour is covered in
+  // ContainerRequestSection.test.tsx; here it only has to not explode - `isLoading: true`
+  // keeps it on its own skeleton so it never collides with what this file asserts about
+  // Stage 2.
+  useContainerRequestBuild: () => ({ data: undefined, isLoading: true, isError: false, isFetching: false, refetch: vi.fn() }),
+  useSendContainerRequest: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
+  useSupplierNotices: () => ({ data: [] }),
 }));
 
 let buildResult: unknown = undefined;
@@ -145,6 +168,7 @@ async function chooseSupplier() {
 beforeEach(() => {
   build.mockReset();
   rerun.mockReset();
+  getFulfilmentSuppliers.mockClear();
   buildResult = undefined;
   rerunResult = undefined;
   state.stock = { supplier_id: 'sup-1', as_of: '2026-07-31', rows: [] };
