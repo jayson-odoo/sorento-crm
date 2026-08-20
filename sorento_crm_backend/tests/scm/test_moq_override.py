@@ -12,7 +12,7 @@ The contract under test:
     correct AT THE COLUMN, not only at read time. `inputs` (AC-M3.11's freeze) is the one
     thing that never moves - a fresh run with no override still matches it byte-for-byte.
   * Setting an override re-rounds `order_qty` through the SAME `reorder_engine.round_order_qty`
-    the run itself used, off the row's FROZEN `recommended_qty` — the need never moves,
+    the run itself used, off the row's FROZEN `recommended_qty` - the need never moves,
     only the rounding rung.
   * `cash_impact` follows the re-rounded qty (in BASE_CURRENCY).
   * Clearing (`moq: null`) reverts to the frozen master figure (`inputs.moq`), and PERSISTS
@@ -25,14 +25,14 @@ The contract under test:
     isolation, and 403 without `scm.reorder.run`.
 
 Two fixture styles, matching the shape of what each test needs:
-  * `db` (`pg_session`) for the plain service-level tests and the company-isolation test —
+  * `db` (`pg_session`) for the plain service-level tests and the company-isolation test -
     a run + rec is hand-built directly via the ORM (the same idiom
     `tests/scm/test_order_summary_routes.py` uses), which is enough surface for a function
     that only ever touches one recommendation row.
   * `scm_app` (`tests.scm.conftest`) + `TestClient` for the endpoint tests (auth, HTTP
     validation, the live list read).
 
-Postgres only, marker-prefixed, every test seeds its own chain — nothing borrowed with
+Postgres only, marker-prefixed, every test seeds its own chain - nothing borrowed with
 ``LIMIT 1`` beyond the `scm_app` reference row `ensure_reference_data` seeds fresh in every
 savepoint.
 """
@@ -69,7 +69,7 @@ def _code(stem: str) -> str:
 
 
 # =============================================================================
-# `db` fixture — plain pg_session, own savepoint, for the ORM-direct tests
+# `db` fixture - plain pg_session, own savepoint, for the ORM-direct tests
 # =============================================================================
 
 @pytest.fixture()
@@ -98,7 +98,7 @@ def _mk_rec(db, run_id, product_id, *, warehouse_id=None, rec_type="buy",
            unit_cost=60, currency="MYR", rate_to_base=1.0,
            company_id=None) -> ReorderRecommendation:
     """A frozen buy row, master-rounded exactly the way the engine would have rounded
-    it — `round_order_qty` is the SAME helper `recalc_rounded_qty` reuses, so the master
+    it - `round_order_qty` is the SAME helper `recalc_rounded_qty` reuses, so the master
     figures here and the override figures under test come from one source of truth."""
     rounded = eng.round_order_qty(float(recommended_qty), master_moq, order_multiple)
     cash_impact = round(rounded * unit_cost, 2)
@@ -139,7 +139,7 @@ def _mk_chain(db, *, company_id=None, master_moq=100, order_multiple=None,
 
 
 # =============================================================================
-# happy path — set / clear, reround, cash follows, need never moves (AC: MoQ override)
+# happy path - set / clear, reround, cash follows, need never moves (AC: MoQ override)
 # =============================================================================
 
 def test_setting_an_override_re_rounds_order_qty_and_cash_follows_it(db):
@@ -198,7 +198,7 @@ def test_override_changes_rounding_but_never_recommended_qty_or_inputs(db):
 
 def test_override_with_order_multiple_re_rounds_through_the_same_engine_helper(db):
     """The override composes with order-multiple rounding exactly like the engine would:
-    floor at MoQ, then round UP to the nearest multiple — proving `recalc_rounded_qty`
+    floor at MoQ, then round UP to the nearest multiple - proving `recalc_rounded_qty`
     is not a second copy of the arithmetic."""
     f = _mk_chain(db, master_moq=100, order_multiple=50, recommended_qty=40, unit_cost=60)
     rec = f["rec"]
@@ -212,7 +212,7 @@ def test_override_with_order_multiple_re_rounds_through_the_same_engine_helper(d
 
 
 # =============================================================================
-# validation — 404 unknown rec, 422 negative/non-numeric (service layer)
+# validation - 404 unknown rec, 422 negative/non-numeric (service layer)
 # =============================================================================
 
 def test_unknown_recommendation_id_is_a_404(db):
@@ -276,7 +276,7 @@ def test_an_already_decided_rec_refuses_further_moq_changes(db):
 
 
 # =============================================================================
-# company isolation — another company's recommendation is not reachable
+# company isolation - another company's recommendation is not reachable
 # =============================================================================
 
 @pytest.fixture()
@@ -314,7 +314,7 @@ def test_this_companys_own_recommendation_is_reachable(db, two_companies):
 
 
 # =============================================================================
-# HTTP endpoint — auth, validation, and the live list read
+# HTTP endpoint - auth, validation, and the live list read
 # =============================================================================
 
 def _mk_http_chain(db, *, master_moq=100, order_multiple=None, recommended_qty=40,

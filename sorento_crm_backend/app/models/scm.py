@@ -277,7 +277,7 @@ class ReorderRun(Base, CompanyScopedMixin):
     # "Plan until" (captain, 20 Aug): demand needed AFTER this date is excluded from the
     # run's netting; NULL (the default) plans every open SO line regardless of need date,
     # unchanged from before this column existed. Stamped once at creation, like
-    # decision_grain — a per-RUN choice, not a live policy, so it cannot move under a run
+    # decision_grain - a per-RUN choice, not a live policy, so it cannot move under a run
     # already planned.
     plan_horizon_date = Column(Date, nullable=True)
     policy_snapshot_ref = Column(String, nullable=True)

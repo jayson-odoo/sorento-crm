@@ -2399,12 +2399,12 @@ def net_breakdown(db: Session, product_id: str,
 
 
 # ===========================================================================
-# MoQ override (20 Aug live test) — the buyer's own figure, recalculated live
+# MoQ override (20 Aug live test) - the buyer's own figure, recalculated live
 # ===========================================================================
 
 def effective_moq(inputs: Optional[dict], moq_override: Optional[float]) -> tuple[
         Optional[float], bool]:
-    """(moq, is_override) — the buyer's own figure when set, else the frozen master
+    """(moq, is_override) - the buyer's own figure when set, else the frozen master
     value the engine rounded against at run time (``inputs.moq``)."""
     if moq_override is not None:
         return float(moq_override), True
@@ -2415,7 +2415,7 @@ def effective_moq(inputs: Optional[dict], moq_override: Optional[float]) -> tupl
 def recalc_rounded_qty(recommended_qty, moq: Optional[float],
                        order_multiple) -> Optional[float]:
     """Re-derive ``rounded_qty`` off the row's FROZEN ``recommended_qty`` (need is
-    unchanged — only the rounding rung moves) through the SAME helper the engine used,
+    unchanged - only the rounding rung moves) through the SAME helper the engine used,
     so an override can never drift from a fresh run's arithmetic."""
     if recommended_qty is None:
         return None

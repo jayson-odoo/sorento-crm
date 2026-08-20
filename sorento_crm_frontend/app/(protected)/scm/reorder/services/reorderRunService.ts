@@ -930,7 +930,7 @@ export async function amendLevelSuggestion(input: {
  *
  * Backend contract: `PUT /api/v1/scm/recommendations/{rec_id}/moq` body `{moq}` →
  * `{recommendation_id, moq, moq_is_override, master_moq, order_qty, recommended_qty,
- * cash_impact}` — the recalculated figures, so the caller can patch the row in place
+ * cash_impact}` - the recalculated figures, so the caller can patch the row in place
  * rather than waiting on a full plan-lines refetch.
  */
 export async function setMoqOverride(

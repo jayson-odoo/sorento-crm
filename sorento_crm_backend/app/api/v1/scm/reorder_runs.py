@@ -867,7 +867,7 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         allocation = [{"warehouse_code": a.get("warehouse_code"),
                        "warehouse_name": a.get("warehouse_name"),
                        "qty": a.get("qty")} for a in r["allocation"]]
-    # The buyer's own MoQ (20 Aug live test) — master data drifts and they cannot wait
+    # The buyer's own MoQ (20 Aug live test) - master data drifts and they cannot wait
     # for a re-run to fix it. `set_moq_override` already persists the recalculated
     # `rounded_qty` / `cash_impact` onto the row (every other consumer reads those columns
     # straight, with no override-awareness of its own), so this is a defensive re-derive
@@ -953,7 +953,7 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         "service_level": inp.get("service_level"),
         "safety_days": inp.get("safety_days"),
         "review_days": inp.get("review_days"),
-        # Effective MoQ (the buyer's override when set, else the frozen master figure) —
+        # Effective MoQ (the buyer's override when set, else the frozen master figure) -
         # what `order_qty` above was actually rounded against. `master_moq` and
         # `moq_is_override` let the cell show both ("master 12") and mark the row edited.
         "moq": eff_moq if is_priced else inp.get("moq"),
