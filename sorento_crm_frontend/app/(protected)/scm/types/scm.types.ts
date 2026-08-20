@@ -398,6 +398,8 @@ export interface PurchaseOrderLine {
   qty_ordered: number;
   qty_received: number;
   uom: string;
+  /** The line's own destination - location is a line fact, never a header one. */
+  warehouse_code?: string | null;
 }
 
 export interface PurchaseOrder {

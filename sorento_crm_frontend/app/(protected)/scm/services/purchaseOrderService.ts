@@ -31,6 +31,13 @@
  *   POST /purchase-orders/{id}/create-gr
  *        → 200 { gr_reference } · creates a goods receipt from an active PO,
  *          stamping received qty (M4-D6). Not available on drafts.
+ *   POST /purchase-orders/bulk-delete   body { ids: string[] }
+ *        → 200 { deleted, unplaced_rows } · hard delete (captain, 20 Aug: "give
+ *          me an option to bulk delete purchase orders ... maybe need to
+ *          recreate"). `unplaced_rows` is how many order-inquiry rows had been
+ *          placed on one of the deleted POs' lines and were put back on the
+ *          board (`state` back to `raised`) rather than left pointing at supply
+ *          that no longer exists.
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
@@ -61,6 +68,13 @@ export interface PurchaseOrderListQuery {
    * line shows no cost, since the plan now reads its cost from this book.
    */
   productCode?: string | null;
+  /**
+   * true = still expecting delivery; false = the complement (drafts, cancelled, fully
+   * received); omitted/null = every status. The buyer's "at a glance" question (the
+   * captain, 20 Aug: "how do i know the open PO / outstanding PO") - mirrors each row's
+   * own `is_on_order` flag, so the filter and the badge can never disagree.
+   */
+  outstanding?: boolean | null;
 }
 
 /** What we last paid for a SKU. `null` when we have never bought it; a recorded 0 is 0. */
@@ -118,6 +132,7 @@ export async function getPurchaseOrders(
       status: params.status ?? undefined,
       supplier: params.supplier ?? undefined,
       product_code: params.productCode || undefined,
+      outstanding: params.outstanding ?? undefined,
     },
   );
   const res = await apiFetch(`${BASE}?${sp.toString()}`);
@@ -144,6 +159,26 @@ export async function bulkConfirmPurchaseOrders(ids: string[]): Promise<{ confir
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to confirm purchase orders'));
   return (await res.json()) as { confirmed_count: number };
+}
+
+/** How many order-inquiry rows had to be unplaced because the PO they were placed on
+ * was deleted out from under them. */
+export interface BulkDeletePurchaseOrdersResult {
+  deleted: number;
+  unplaced_rows: number;
+}
+
+/** Hard delete purchase orders. POST /purchase-orders/bulk-delete. */
+export async function bulkDeletePurchaseOrders(
+  ids: string[],
+): Promise<BulkDeletePurchaseOrdersResult> {
+  const res = await apiFetch(`${BASE}/bulk-delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete purchase orders'));
+  return (await res.json()) as BulkDeletePurchaseOrdersResult;
 }
 
 /** Create a goods receipt from an active PO (M4-D6). Returns the GR reference. */

@@ -7,9 +7,10 @@ po_number, GR by its reference.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -29,6 +30,17 @@ _READ = require_permission_with_api_key("scm.dashboard.view")
 _WRITE = require_permission_with_api_key("scm.reorder.run")
 
 
+class BulkDeleteRequest(BaseModel):
+    ids: List[str] = Field(default_factory=list)
+
+
+class BulkDeleteResult(BaseModel):
+    deleted: int
+    #: Order-inquiry rows placed on one of the deleted POs' lines that were unplaced -
+    #: put back on the board rather than left pointing at supply that no longer exists.
+    unplaced_rows: int
+
+
 @router.get("/purchase-orders", response_model=PurchaseOrderListResponse)
 def list_purchase_orders(
     page: int = Query(1, ge=1),
@@ -42,6 +54,15 @@ def list_purchase_orders(
         None,
         description="Keep only orders carrying this SKU, and report what we last paid for it.",
     ),
+    outstanding: Optional[bool] = Query(
+        None,
+        description=(
+            "true = still expecting delivery (mirrors scm.po_ordered_v: status in "
+            "active/received/partial/closed AND an open line with qty_ordered > "
+            "qty_received); false = the complement (drafts, cancelled, fully received). "
+            "Omitted = every status."
+        ),
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(_READ),
 ):
@@ -52,9 +73,14 @@ def list_purchase_orders(
     from this book. The response carries a `product_cost` block beside the rows: the most
     recent priced line, or null when we have never bought it. A recorded 0 comes back as 0,
     because free and never-bought are different answers.
+
+    `outstanding` is the buyer's "at a glance" question (the captain, 20 Aug: "how do i know
+    the open PO / outstanding PO") - the PO book's own `is_on_order` flag as a list filter,
+    so it can never disagree with what a row's own badge says.
     """
     return PurchaseOrderService(db).list(
-        page, limit, sort, dir, query, status, supplier, product_code=product_code,
+        page, limit, sort, dir, query, status, supplier,
+        product_code=product_code, outstanding=outstanding,
     )
 
 
@@ -66,6 +92,19 @@ def bulk_confirm_purchase_orders(
 ):
     """Confirm draft POs → active + canonical PO number (M4-D6). Idempotent."""
     return PurchaseOrderService(db).bulk_confirm(payload.ids, (_user or {}).get("id"))
+
+
+@router.post("/purchase-orders/bulk-delete", response_model=BulkDeleteResult)
+def bulk_delete_purchase_orders(
+    payload: BulkDeleteRequest = Body(...),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_WRITE),
+):
+    """Hard delete purchase orders (captain, 20 Aug: "give me an option to bulk delete
+    purchase orders ... maybe need to recreate"). Any order-inquiry row placed on a
+    deleted PO's line is unplaced first, not left dangling - see the service docstring.
+    """
+    return PurchaseOrderService(db).bulk_delete(payload.ids, (_user or {}).get("id"))
 
 
 @router.post("/purchase-orders/{po_id}/create-gr", response_model=CreateGrResult)

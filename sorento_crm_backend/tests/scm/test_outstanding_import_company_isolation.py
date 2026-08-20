@@ -524,11 +524,13 @@ def test_a_debtor_code_held_by_both_companies_links_the_active_one(world):
 # --------------------------------------------------------------------------- #
 # 5. suppliers / the creditor code on the purchase-order book
 # --------------------------------------------------------------------------- #
-# The PO book adds a third company-scoped lookup, and it gets the same treatment as the
-# other two for the same reason: suppliers are company-scoped, every company carries its
-# own creditor list, and a code resolved across the boundary attaches this company's
-# incoming shipment to a supplier it does not buy from - which is then who gets chased,
-# scored for lateness, and paid.
+# The PO book adds a third company-scoped lookup, and reads/writes are isolated the same
+# way as the other two for the same reason: suppliers are company-scoped, every company
+# carries its own creditor list, and a code resolved across the boundary attaches this
+# company's incoming shipment to a supplier it does not buy from - which is then who gets
+# chased, scored for lateness, and paid. One difference from the other two: an unresolved
+# creditor code is now back-created (`_Binding.party_back_create`), so "never resolved"
+# below means "never resolved to company B's own row" - company A gets its own.
 
 def _po_supplier_code(db: Session, po_number: str):
     """The supplier code on the written purchase order, read with raw SQL on purpose."""
@@ -539,24 +541,40 @@ def _po_supplier_code(db: Session, po_number: str):
     ), {"po": po_number}).scalar()
 
 
+def _po_supplier(db: Session, po_number: str):
+    """(supplier id, company_id) on the written purchase order, read with raw SQL on
+    purpose - the back-create test below needs to tell "attached to company B's own row"
+    apart from "a distinct row created for company A that happens to share the code"."""
+    return db.execute(text(
+        "SELECT s.id::text, s.company_id::text FROM purchase_orders po "
+        "LEFT JOIN suppliers s ON s.id = po.supplier_id "
+        "WHERE po.po_number = :po"
+    ), {"po": po_number}).fetchone()
+
+
 def _requires_po_aliases(db: Session) -> None:
     if not db.execute(text("SELECT 1 FROM import_field_alias "
                            "WHERE doc_type = 'outstanding_po' LIMIT 1")).scalar():
         pytest.skip("no outstanding_po aliases seeded in this database")
 
 
-def test_a_creditor_code_owned_only_by_another_company_is_never_resolved(world):
-    """Company A does not buy from this creditor. The code must be reported, not borrowed.
+def test_a_creditor_code_owned_only_by_another_company_gets_its_own_row_back_created(world):
+    """Company A does not buy from this creditor - not company B's row, and never borrowed.
 
-    The deterministic half of the pair: a raw `SELECT ... FROM suppliers WHERE
-    supplier_code = ...` finds company B's row every time, whatever the row order.
+    Since the back-create AC (`outstanding_import_service.py`, `_Binding.party_back_create`)
+    this is no longer "reported and left unlinked forever": company A's `apply()` creates
+    its OWN minimal supplier under the SAME code, exactly as it would for a code nobody
+    anywhere held. The isolation property under test does not change - a raw `SELECT ...
+    FROM suppliers WHERE supplier_code = ...` still finds company B's row every time,
+    whatever the row order, and that row must never be the one this purchase order attaches
+    to, nor may this creation touch it.
     """
     db = world.db
     _requires_po_aliases(db)
     item = _code("ITEM")
     creditor = _code("CRED")[:50]
     world.product(item, world.a)
-    world.supplier(creditor, world.b)
+    b_supplier_id = world.supplier(creditor, world.b)
     po_number = _code("PO")
 
     _act_as(db, world.a)
@@ -566,10 +584,21 @@ def test_a_creditor_code_owned_only_by_another_company_is_never_resolved(world):
     assert [(i.field, i.value) for i in preview.resolution_issues] == [
         ("creditor_code", creditor)
     ]
+    assert db.execute(
+        text("SELECT count(*) FROM suppliers WHERE supplier_code = :c"), {"c": creditor}
+    ).scalar() == 1, "preview must not write"
 
-    svc.apply(db, file, PO)
-    assert _po_supplier_code(db, po_number) is None, \
+    out = svc.apply(db, file, PO)
+
+    supplier_id, company_id = _po_supplier(db, po_number)
+    assert _po_supplier_code(db, po_number) == creditor
+    assert company_id == world.a, "the created supplier was not stamped with company A"
+    assert supplier_id != b_supplier_id, \
         "the purchase order was attached to another company's supplier"
+    assert out["suppliers_created"] == 1
+    assert db.execute(
+        text("SELECT count(*) FROM suppliers WHERE supplier_code = :c"), {"c": creditor}
+    ).scalar() == 2, "company A must get its own row, company B's must be untouched"
 
 
 def test_a_creditor_code_held_by_both_companies_resolves_to_the_active_one(world):
