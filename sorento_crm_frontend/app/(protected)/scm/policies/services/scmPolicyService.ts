@@ -43,6 +43,16 @@
  *    reorder_policy row's policy_type (S1, UAC A). Read gated scm.dashboard.view,
  *    write gated scm.config.manage - same route family as dead-stock-days.
  *
+ *  GET    /api/v1/scm/policies/fulfilment-priority  → FulfilmentPriorityPolicy
+ *  PUT    /api/v1/scm/policies/fulfilment-priority   body FulfilmentPriorityWrite
+ *    → FulfilmentPriorityPolicy
+ *    The single active `scm.priority_policy` row - ranking factor weights, demand-class
+ *    weights, and the ladder-v2 reorder-coverage-date/cross-group-borrow settings
+ *    (PLAN-demo-followups-19aug-ladder-v2.md C1/C2). `reorder_coverage_until` is a calendar
+ *    date (`YYYY-MM-DD` or `null`), not a rolling day count. A PUT writes a NEW revision and
+ *    activates it; the previous row is kept, deactivated. Gated `scm.policy.manage`, same as
+ *    every other policy family.
+ *
  * Server-authoritative validation (mirrored client-side for UX) - AC-VAL-*,
  * AC-CFG-2, AC-SUP-2 - returns 422 via the global AppException handler.
  * ============================================================================
@@ -55,6 +65,8 @@ import type {
   AbcXyzWrite,
   CoverScopeSetting,
   CoverScopeWrite,
+  FulfilmentPriorityPolicy,
+  FulfilmentPriorityWrite,
   PlanningMode,
   PlanningModeWrite,
   ReorderPolicyRow,
@@ -231,6 +243,28 @@ export async function saveCoverScope(body: CoverScopeWrite): Promise<CoverScopeS
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the cover setting'));
   return (await res.json()) as CoverScopeSetting;
+}
+
+// ── Fulfilment priority (single active `scm.priority_policy` row) ──────────
+
+const FULFILMENT_BASE = `${BASE}/fulfilment-priority`;
+
+export async function getFulfilmentPriority(): Promise<FulfilmentPriorityPolicy> {
+  const res = await apiFetch(FULFILMENT_BASE);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load fulfilment priority'));
+  return (await res.json()) as FulfilmentPriorityPolicy;
+}
+
+export async function saveFulfilmentPriority(
+  body: FulfilmentPriorityWrite,
+): Promise<FulfilmentPriorityPolicy> {
+  const res = await apiFetch(FULFILMENT_BASE, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save fulfilment priority'));
+  return (await res.json()) as FulfilmentPriorityPolicy;
 }
 
 // ── Resolution preview ──────────────────────────────────────────────────────

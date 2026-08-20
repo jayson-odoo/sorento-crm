@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { AlertCircle, Info } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -8,7 +9,9 @@ import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/compon
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { EM_DASH, fmtInt } from '../../lib/format';
+import { DemandContextHeader } from './DemandContextHeader';
 import { dayLabel } from '../lib/coverageTimeline';
+import { orderInquiryWorklistHref } from '../lib/orderInquiryLink';
 import { fmtQty } from '../lib/qtyPrecision';
 import { useOrderSummaryDemand } from '../hooks/useSummaryOrder';
 import type { OrderSummaryDemandKind } from '../types/summaryOrder.types';
@@ -131,6 +134,12 @@ export function DemandDrillPopover({
               </Badge>
             </div>
 
+            {data && (data.project_12m_qty != null || data.retail_3m_qty != null) ? (
+              <div className="border-b px-3 py-2">
+                <DemandContextHeader data={data} />
+              </div>
+            ) : null}
+
             {isLoading ? (
               <div className="space-y-2 p-3" aria-label="Loading contributing lines" aria-busy="true">
                 {Array.from({ length: 3 }).map((_, i) => (
@@ -187,7 +196,17 @@ function ProjectLines({
               {line.project_name}
             </div>
             <div className="truncate text-2xs text-muted-foreground">
-              {line.so_number}
+              {/* Click-through to the Order Inquiry worklist, scoped to this SO (captain,
+                  20 Aug). Project demand only - this line's whole reason for being here IS
+                  an Order Inquiry, so there is always something on the other end. */}
+              <Link
+                href={orderInquiryWorklistHref(line.so_number)}
+                onClick={(e) => e.stopPropagation()}
+                className="font-medium text-foreground hover:text-primary hover:underline"
+                title={`Open ${line.so_number} on the Order Inquiry worklist`}
+              >
+                {line.so_number}
+              </Link>
               {line.line_no !== null && line.line_no !== undefined ? ` line ${line.line_no}` : ''} ·{' '}
               {line.warehouse_code ? `${line.warehouse_code} · ` : ''}
               needed {line.required_date ? dayLabel(line.required_date) : 'no date'}

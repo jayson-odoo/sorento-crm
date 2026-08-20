@@ -43,6 +43,7 @@ from app.services.scm import (
 from app.services.error_handler import AppException
 from app.services.scm import reorder_run_service as svc
 from app.services.scm import demand_source_service
+from app.services.scm import location_stock_service
 from app.services.scm import unplanned_demand_service
 from app.services.scm import demand_breakdown_service
 from app.services.scm.money import BASE_CURRENCY
@@ -89,6 +90,7 @@ def create_reorder_run(
         budget_id=payload.budget_id,
         actor=(_user or {}).get("id"),
         include_market=payload.include_market,
+        plan_horizon_date=payload.plan_horizon_date,
     )
     if response is not None:
         response.status_code = 202
@@ -115,7 +117,7 @@ def list_reorder_runs(
     ).scalar() or 0
     rows = db.execute(text(f"""
         SELECT id, status, buy_scope, warehouse_ids, started_at, finished_at, run_log,
-               decision_grain, front_planning_contract_version
+               decision_grain, front_planning_contract_version, plan_horizon_date
         FROM scm.reorder_run
         {where}
         ORDER BY started_at DESC NULLS LAST, created_at DESC
@@ -197,6 +199,7 @@ def _list_item(r, code_by_id: dict, buy_counts: dict[str, int] | None = None) ->
         "summary": summary,
         "decision_grain": r["decision_grain"],
         "front_planning_contract_version": r["front_planning_contract_version"],
+        "plan_horizon_date": _iso(r["plan_horizon_date"]),
     }
 
 
@@ -264,6 +267,23 @@ def get_set_aside_demand(
     return demand_source_service.set_aside_project_demand(db)
 
 
+# Above ``/reorder-runs/{run_id}`` for the same route-shadowing reason as its neighbours.
+@router.get("/reorder-runs/location-stock")
+def get_location_stock(
+    product_id: str = Query(...),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Live per-location stock for one product - the Buy row's expand panel (20 Aug live ask).
+
+    On hand, SO qty, SPO qty, available, reserved and held-by-decisions per ACTIVE
+    warehouse, in one call instead of one location at a time. Reuses the same
+    per-location readers the fulfilment board's stock drill-down composes, so this popup
+    and that page can never disagree about what a location is carrying.
+    """
+    return location_stock_service.location_stock_for_product(db, product_id)
+
+
 @router.get("/reorder-runs/{run_id}", response_model=ReorderRunStatusResponse)
 def get_reorder_run(
     run_id: str,
@@ -275,7 +295,7 @@ def get_reorder_run(
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="crg")
     row = db.execute(text(
         "SELECT id, status, buy_scope, error_text, run_log, decision_grain, "
-        "       front_planning_contract_version FROM scm.reorder_run "
+        "       front_planning_contract_version, plan_horizon_date FROM scm.reorder_run "
         f"WHERE id = :id AND {co or 'true'}"
     ), {"id": run_id, **co_params}).mappings().first()
     if not row:
@@ -302,6 +322,7 @@ def get_reorder_run(
         "summary": summary,
         "decision_grain": row["decision_grain"],
         "front_planning_contract_version": row["front_planning_contract_version"],
+        "plan_horizon_date": _iso(row["plan_horizon_date"]),
     }
 
 
@@ -310,6 +331,18 @@ def recommendation_demand(
     run_id: str,
     rec_id: str,
     limit: int = Query(200, ge=1, le=1000),
+    # Narrows to one channel's lines (captain's own preferred fix, 20 Aug: a separate
+    # drill icon per Project/Retail/Unclassified cell instead of one that carries
+    # everything). Unrecognised/omitted is unfiltered - `demand_for_recommendation`
+    # normalises it, so this never has to validate the enum itself.
+    channel: Optional[str] = Query(None),
+    # "product" widens the drill to every recommendation this run wrote for the SAME
+    # product (21 Aug live ask: the grouped Buy view's TOP product-grain row needs the
+    # same drill trigger the per-location group panel already has, and that row's own
+    # channel cells sum across every one of the product's locations). Anything else is
+    # the existing single-row scope - `demand_for_recommendation` normalises it the same
+    # tolerant way `channel` already is.
+    scope: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
@@ -318,7 +351,9 @@ def recommendation_demand(
     Answers "why is it bought into BRW when I ordered for BRW-IB, and why so many" from the
     row itself: pooled netting is the reason, and the orders are the evidence."""
     svc.assert_run_visible(db, run_id)
-    return demand_breakdown_service.demand_for_recommendation(db, rec_id, limit)
+    return demand_breakdown_service.demand_for_recommendation(
+        db, rec_id, limit, channel, scope
+    )
 
 
 @router.get("/reorder-runs/{run_id}/cover-sources")
@@ -425,6 +460,14 @@ def list_price_history(
                 "standing_currency": a.standing_currency,
                 "standing_gap_pct": a.standing_gap_pct,
                 "free_of_charge_lines": a.free_of_charge_lines,
+                "other_supplier_code": a.other_supplier_code,
+                "other_supplier_name": a.other_supplier_name,
+                "history_last_date": (
+                    a.history_last_date.isoformat() if a.history_last_date else None
+                ),
+                "history_doc_number": a.history_doc_number,
+                "history_po_count": a.history_po_count,
+                "history_total_qty": a.history_total_qty,
             }
             for key, a in history.items()
         },
@@ -722,7 +765,7 @@ def list_recommendations(
     rows = db.execute(text(f"""
         SELECT rr.id, rr.rec_type, rr.product_id, rr.warehouse_id, rr.net_position, rr.reorder_point,
                rr.days_of_cover, rr.rounded_qty, rr.recommended_qty, rr.confidence_band,
-               rr.allocation, rr.inputs,
+               rr.allocation, rr.inputs, rr.moq_override,
                rr.rank, rr.rank_score, rr.unit_cost, rr.cash_impact, rr.funding_status,
                rr.currency, rr.rate_to_base, rr.rate_as_of, rr.status,
                p.product_code, p.product_name,
@@ -781,17 +824,46 @@ def apply_reorder_run_budget(
     return svc.apply_run_budget(db, run_id, float(budget))
 
 
+@router.put("/recommendations/{rec_id}/moq")
+def set_recommendation_moq(
+    rec_id: str,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_RUN),
+):
+    """Set (or clear) the buyer's own MoQ for one row (20 Aug live test): "MoQ is
+    varying, we need a place for the user to input it, and when they change it, our
+    calculation should recalculate." ``{moq: number}`` overrides; ``{moq: null}`` or an
+    absent key clears it back to the frozen master figure. Mutates planning state
+    (a decision-adjacent input, same as Accept/Adjust/Reject) → ``scm.reorder.run``.
+
+    NOT grain-guarded (21 Aug fix): a MoQ override is an input to the suggestion, not a
+    location decision, so a product-grain run takes it exactly like a location-grain one.
+    Legacy-run (AC-F10) and lifecycle (a row already accepted/adjusted/dismissed refuses
+    further MoQ changes) are still guarded inside ``set_moq_override`` itself.
+
+    Returns the recalculated ``order_qty`` / ``cash_impact`` so the plan grid can update
+    the row in place, without waiting on a full re-run."""
+    moq = payload.get("moq")
+    if moq is not None and (isinstance(moq, bool) or not isinstance(moq, (int, float))):
+        raise AppException(status_code=422, message="MoQ must be a number or null.")
+    result = svc.set_moq_override(db, rec_id, float(moq) if moq is not None else None)
+    return result
+
+
 @router.get("/recommendations/{rec_id}/explain-net")
 def explain_recommendation_net(
     rec_id: str,
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    """M8-A1 — net-breakdown drill: ``on_hand`` / ``on_order`` / ``committed`` / ``net``
-    for the rec's product×warehouse plus the list of OPEN sales-order lines behind
-    ``committed`` (each navigable — SO number, customer, qty, order date), summing to the
-    committed figure. Read-only; no numeric write. IDs resolve to human-readable
-    SO number + customer name (no UUIDs surface)."""
+    """M8-A1 — net-breakdown drill: ``on_hand`` / ``on_order`` / ``po_ordered`` /
+    ``committed`` / ``net`` for the rec's product×warehouse plus the list of OPEN
+    sales-order lines behind ``committed`` (each navigable — SO number, customer, qty,
+    order date), summing to the committed figure. ``po_ordered`` (21 Aug fix) is the
+    outstanding PO leg the sizing engine already nets into ``net``, so
+    ``on_hand + on_order + po_ordered - committed == net``. Read-only; no numeric write.
+    IDs resolve to human-readable SO number + customer name (no UUIDs surface)."""
     return svc.explain_net(db, rec_id)
 
 
@@ -812,6 +884,22 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         allocation = [{"warehouse_code": a.get("warehouse_code"),
                        "warehouse_name": a.get("warehouse_name"),
                        "qty": a.get("qty")} for a in r["allocation"]]
+    # The buyer's own MoQ (20 Aug live test) - master data drifts and they cannot wait
+    # for a re-run to fix it. `set_moq_override` already persists the recalculated
+    # `rounded_qty` / `cash_impact` onto the row (every other consumer reads those columns
+    # straight, with no override-awareness of its own), so this is a defensive re-derive
+    # off the row's FROZEN `recommended_qty` through the SAME rounding helper, not the
+    # only place the override is honoured. `inputs` never changes (AC-M3.11).
+    moq_override = _f(r.get("moq_override")) if is_priced else None
+    eff_moq, moq_is_override = svc.effective_moq(inp, moq_override)
+    if moq_is_override:
+        eff_rounded = svc.recalc_rounded_qty(
+            r["recommended_qty"], eff_moq, inp.get("order_multiple"))
+        eff_cash_impact = svc._cash_impact_in_base(
+            eff_rounded, r["unit_cost"], r["currency"], r["rate_to_base"], r["rate_as_of"])
+    else:
+        eff_rounded = r["rounded_qty"]
+        eff_cash_impact = r["cash_impact"]
     return {
         "id": r["id"],
         "type": r["rec_type"],
@@ -836,8 +924,8 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         "allocation": allocation,
         # A ``covered`` row carries a quantity too: it is what buying anyway would cost
         # you, and without it the choice between stock and a purchase has one side missing.
-        "order_qty": (_f(r["rounded_qty"])
-                      if r["rec_type"] in ("buy", "covered") else None),
+        # Reflects the buyer's MoQ override when set (see `eff_rounded` above).
+        "order_qty": _f(eff_rounded) if is_priced else None,
         # Pre-rounding order qty (order-up-to − net) so the derivation popup can show
         # the raw figure BEFORE MoQ / pack-multiple rounding lands on `order_qty`.
         "recommended_qty": (_f(r["recommended_qty"])
@@ -882,7 +970,12 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         "service_level": inp.get("service_level"),
         "safety_days": inp.get("safety_days"),
         "review_days": inp.get("review_days"),
-        "moq": inp.get("moq"),
+        # Effective MoQ (the buyer's override when set, else the frozen master figure) -
+        # what `order_qty` above was actually rounded against. `master_moq` and
+        # `moq_is_override` let the cell show both ("master 12") and mark the row edited.
+        "moq": eff_moq if is_priced else inp.get("moq"),
+        "master_moq": inp.get("moq") if is_priced else None,
+        "moq_is_override": moq_is_override if is_priced else False,
         "order_multiple": inp.get("order_multiple"),
         # --- S10: the weekly checklist, so the row answers "should I order this" alone ---
         "segment": r["segment"],
@@ -904,6 +997,13 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         # so it is inside `retail_need` and is shown as evidence, not as an extra addend.
         "project_sheet_need": inp.get("project_sheet_need"),
         "unclassified_need": inp.get("unclassified_need"),
+        # front-planning follow-up (19-20 Aug): the raw `committed_v` split - this row's
+        # OPEN demand by channel (a superset of `project_need`, which is only the
+        # confirmed-for-buy leg). The Product view's channel columns sum these across a
+        # product's locations and the three always sum to `outstanding_sales` above.
+        "project_committed": inp.get("project_committed"),
+        "retail_committed": inp.get("retail_committed"),
+        "unclassified_committed": inp.get("unclassified_committed"),
         # True when the run is decided at Product grain, or is legacy. The row is still a
         # read and drill row; only its decision controls are closed (AC-F02, AC-F09).
         "decisions_read_only": decisions_read_only,
@@ -932,7 +1032,8 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         # reads as an arithmetic error.
         "unit_cost": _f(r["unit_cost"]) if is_priced else None,
         "currency": (r["currency"] if is_priced else None),
-        "cash_impact": _f(r["cash_impact"]) if is_priced else None,
+        # Reflects the buyer's MoQ override when set (see `eff_cash_impact` above).
+        "cash_impact": _f(eff_cash_impact) if is_priced else None,
         "base_currency": BASE_CURRENCY if is_priced else None,
         "rate_to_base": _f(r["rate_to_base"]) if is_priced else None,
         "rate_as_of": (r["rate_as_of"].isoformat()
@@ -941,7 +1042,7 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         # priced it) and `no_rate` (priced, in money we cannot convert) send the buyer to
         # two different screens, so "needs cost" alone would send half of them to the
         # wrong one.
-        "cost_status": _cost_status(r, inp, is_buy),
+        "cost_status": _cost_status(r, inp, is_buy, eff_cash_impact),
         "missing_rate_currencies": (
             list((inp.get("supplier_reason") or {}).get("missing_rates") or [])
             if is_buy else []
@@ -959,17 +1060,19 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
     }
 
 
-def _cost_status(r, inp: dict, is_buy: bool) -> Optional[str]:
+def _cost_status(r, inp: dict, is_buy: bool, cash_impact=None) -> Optional[str]:
     """`ok`, `no_cost`, or `no_rate` - which of the two reasons a buy has no cash figure.
 
     Both currently land in the same `needs_cost` funding bucket, which is right (a human
     has to look at them either way), but the fix differs: one is "buy it once so we know
     what it costs", the other is "enter a rate for CNY". A single label would send half the
-    rows to the wrong screen.
+    rows to the wrong screen. ``cash_impact`` defaults to the persisted column; the caller
+    passes the MoQ-override-effective figure so the status still agrees with the qty shown.
     """
     if not is_buy:
         return None
-    if r["cash_impact"] is not None:
+    effective = r["cash_impact"] if cash_impact is None else cash_impact
+    if effective is not None:
         return "ok"
     if r["unit_cost"] is None:
         return "no_cost"

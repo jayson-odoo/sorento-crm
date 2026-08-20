@@ -67,6 +67,7 @@ vi.mock('../../hooks/useSalesOrders', () => ({
     isFetching: false,
     refetch: vi.fn(),
   }),
+  useSalesOrderAgents: () => ({ data: [], isLoading: false }),
   useCreateSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -144,7 +145,14 @@ describe('SalesOrdersList - upload outstanding sales orders', () => {
   it('opens the real, unforked outstanding-upload dialog scoped to sales orders', async () => {
     renderList();
 
-    fireEvent.click(screen.getByRole('button', { name: /Upload outstanding sales orders/i }));
+    // Two secondary actions (Refresh, Upload) collapse into the shared "Actions" dropdown -
+    // open it first, the same as the Delivery Orders list. Radix's dropdown trigger opens on
+    // pointerdown, not click - same reason `openFilters()` in the filters suite uses it.
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), {
+      ctrlKey: false,
+      button: 0,
+    });
+    fireEvent.click(await screen.findByText('Upload outstanding sales orders'));
 
     expect(
       await screen.findByRole('heading', { name: /Upload outstanding sales orders/i }),
@@ -154,7 +162,11 @@ describe('SalesOrdersList - upload outstanding sales orders', () => {
   it('invalidates the sales-orders list and the reorder plan queries once the upload queues', async () => {
     const { invalidateSpy } = renderList();
 
-    fireEvent.click(screen.getByRole('button', { name: /Upload outstanding sales orders/i }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), {
+      ctrlKey: false,
+      button: 0,
+    });
+    fireEvent.click(await screen.findByText('Upload outstanding sales orders'));
     await screen.findByRole('heading', { name: /Upload outstanding sales orders/i });
 
     fireEvent.change(screen.getByLabelText('Outstanding orders file'), {

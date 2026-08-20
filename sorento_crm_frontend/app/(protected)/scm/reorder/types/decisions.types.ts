@@ -68,3 +68,64 @@ export interface ConfirmDecisionsResult {
   confirmed_count: number;
   po_count: number;
 }
+
+/**
+ * S16 (captain, 21 Aug, 3rd time requested): the row decision - buy / use stock /
+ * use PO / skip, or a mixture - recorded directly on a plan row. Mirrors the backend
+ * schemas at `app/schemas/scm_decisions.py` (`RecordPlanRowDecisionRequest` /
+ * `PlanRowDecision`). `mixture` is the ONLY value not in `PlanDecisionKind`
+ * (`lib/planDecisions.ts`) - that FE type never needed a fifth choice, because a
+ * mixture is one decision carrying several parts, not a separate branch; the kind
+ * sent to the backend is DERIVED from those parts (`planDecisionKind`).
+ */
+export type PlanRowDecisionKind = 'buy' | 'use_stock' | 'use_po' | 'skip' | 'mixture';
+
+/** One bin the buyer is drawing stock from. Location is a warehouse CODE - never a
+ *  UUID from the UI. */
+export interface StockTakeIn {
+  location: string;
+  qty: number;
+}
+
+/** The server's own echo of a stock take, with the human location name alongside
+ *  the code it was recorded against. */
+export interface StockTakeOut {
+  location: string;
+  location_name: string | null;
+  qty: number;
+}
+
+/** Body of `POST .../recommendations/{rec_id}/decision`. */
+export interface RecordPlanRowDecisionPayload {
+  kind: PlanRowDecisionKind;
+  buy_qty?: number;
+  stock_takes?: StockTakeIn[];
+  po_qty?: number;
+  po_refs?: string[];
+  reason_text?: string;
+}
+
+/** The persisted row decision, as the backend returns it (record, clear-idempotent
+ *  read, and the run-wide list). */
+export interface PlanRowDecision {
+  recommendation_id: string;
+  kind: PlanRowDecisionKind;
+  buy_qty: number | null;
+  stock_takes: StockTakeOut[];
+  po_qty: number | null;
+  po_refs: string[];
+  reason_text: string | null;
+  /** Staged like Accept/Adjust - populated only once Confirm decisions has drafted
+   *  the buy portion into a PO. Null until then. */
+  draft_po_number: string | null;
+  draft_po_id: string | null;
+}
+
+/** `GET .../reorder-runs/{run_id}/plan-row-decisions`. */
+export interface PlanRowDecisionListResponse {
+  data: PlanRowDecision[];
+  /** The results-grid header's ("N of Total made") numerator/denominator, counted
+   *  server-side off what is actually persisted - never off client session state. */
+  decided_count: number;
+  total_count: number;
+}

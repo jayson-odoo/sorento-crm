@@ -10,7 +10,7 @@
  * Pure, and deliberately separate from the grid: the ordering rule in particular is an acceptance
  * criterion (AC-FP04, total and stable) and is worth asserting without mounting a table.
  */
-import type { FulfilmentPlanningRow } from '../types/fulfilmentPlanning.types';
+import type { FulfilmentPlanningRow, PlanRow } from '../types/fulfilmentPlanning.types';
 import { fromMinor, toMinor } from './supplyComposition';
 
 /**
@@ -98,4 +98,45 @@ export function sortByEarliestRequired(
     }
     return (planningRowReference(left) ?? '').localeCompare(planningRowReference(right) ?? '');
   });
+}
+
+/**
+ * Where a Plans page row's identity column links to: the sales order it decided (D1).
+ *
+ * The PROJECT SO sheet wins when the decision's order has one - that page is the composition
+ * itself and the one Amend lives on, which is what a row on this page is FOR. The plain SCM
+ * document is the fallback, for the decisions this page also lists that belong to an order
+ * nobody has registered to a project. A row with neither renders plain text rather than a link
+ * that 404s.
+ *
+ * Deliberately the opposite priority from `planningRowSalesOrderHref`: that helper serves the
+ * worklist, where the identity column's whole job is "open the underlying document" and the
+ * core order is the more useful destination for a not-yet-planned row. Here the row already
+ * IS a decision, so the sheet that shows its composition and its Amend is the more useful one.
+ */
+export function planRowHref(row: PlanRow): string | null {
+  if (row.project_id && row.project_sales_order_id) {
+    return `/project-sales/${row.project_id}/sales-orders/${row.project_sales_order_id}`;
+  }
+  if (row.sales_order_id) return `/scm/sales-orders/${row.sales_order_id}`;
+  return null;
+}
+
+/**
+ * Where a Plans page row's second action, "Open on board", links to: the Fulfilment
+ * Planning board filtered to the order the decision was made on (19 Aug follow-up).
+ *
+ * The captain wants to revisit the board he planned on, not just re-read the sheet
+ * `planRowHref` opens - the board is where a decided line shows as "Confirmed rev N"
+ * beside whatever changed since. Same `?orders=<so_number>` contract the rest of the
+ * app already uses to deep-link into the board (planning-changes' "Open on the board",
+ * a cell drawer's `board_link`): sales-order NUMBERS, never ids.
+ *
+ * A row with no `so_number` at all has nothing to filter the board to, so this answers
+ * null rather than linking to the whole unfiltered board under an action that reads
+ * "open on board" - that promise is specific to THIS order.
+ */
+export function planBoardHref(row: PlanRow): string | null {
+  if (!row.so_number) return null;
+  return `/project-sales/fulfilment-planning?orders=${encodeURIComponent(row.so_number)}`;
 }

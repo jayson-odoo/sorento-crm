@@ -151,20 +151,22 @@ def world(db):
 
 
 def _core_so_line(db, *, product_id, warehouse_id, qty=10, delivered=0, demand_class=None,
-                  demand_origin=None, status="open", line_status="open"):
+                  demand_origin=None, status="open", line_status="open",
+                  sales_agent_id=None, unit_price=None):
     """One core `public.sales_order_lines` row with its own header. Reusable by the
     view-level tests (`world`-shaped) and the recommendation-snapshot tests, which only
     have bare ids off `tests.scm.test_m3_run`'s raw-SQL builders."""
     so = SalesOrder(
         id=_u(), so_number=_code("SO"), status=status,
         demand_class=demand_class, demand_origin=demand_origin,
+        sales_agent_id=sales_agent_id,
     )
     db.add(so)
     db.flush()
     line = SalesOrderLine(
         id=_u(), sales_order_id=so.id, product_id=product_id, warehouse_id=warehouse_id,
         qty_ordered=qty, qty_delivered=delivered, line_status=line_status,
-        required_date=_today() + timedelta(days=14),
+        required_date=_today() + timedelta(days=14), unit_price=unit_price,
     )
     db.add(line)
     db.flush()
@@ -306,7 +308,8 @@ def test_project_class_without_sheet_origin_or_decision_is_set_aside(db, world):
 # --------------------------------------------------------------------------- #
 
 def _confirmed_leg(db, *, product_id, warehouse_id, buy_qty, decision_state="active",
-                    inquiry_state=None, core_line=None):
+                    inquiry_state=None, core_line=None, sales_agent_id=None,
+                    unit_price=None):
     """The full section-4 chain: a Project SO whose core SO line is reconciled, with one
     Buy-verb Order Inquiry row pointing at an `active` `SOSupplyDecision`.
 
@@ -334,6 +337,7 @@ def _confirmed_leg(db, *, product_id, warehouse_id, buy_qty, decision_state="act
         so, core_line = _core_so_line(
             db, product_id=product_id, warehouse_id=warehouse_id, qty=buy_qty,
             demand_class="project", demand_origin=None,
+            sales_agent_id=sales_agent_id,
         )
 
     owner_id = _u()
@@ -354,6 +358,7 @@ def _confirmed_leg(db, *, product_id, warehouse_id, buy_qty, decision_state="act
         id=_u(), company_id=SORENTO_COMPANY_ID, project_sales_order_id=pso.id,
         line_no=1, product_id=product_id, qty=buy_qty,
         core_sales_order_line_id=core_line.id,
+        **({"unit_price": unit_price} if unit_price is not None else {}),
     )
     db.add(pso_line)
     db.flush()
@@ -675,6 +680,46 @@ def test_recommendations_api_carries_the_sheet_leg_beside_the_confirmed_need(scm
         assert row["project_need"] == 0, "nothing confirmed here, so nothing is firm"
         assert row["project_sheet_need"] == 20, "the sheet quantity must reach the wire"
         assert row["unclassified_need"] == 0
+
+
+def test_recommendations_api_carries_the_committed_split_summing_to_outstanding_sales(
+    scm_app,
+):
+    """front-planning follow-up (19-20 Aug): `project_committed` / `retail_committed` /
+    `unclassified_committed` - the RAW `committed_v` split the grouped Buy view's channel
+    columns sum across a product's locations - must reach the wire alongside
+    `outstanding_sales` (`committed`) and sum to it exactly, the same invariant
+    `committed_v` guarantees per location (AC-F07).
+    """
+    from fastapi.testclient import TestClient  # noqa: PLC0415
+
+    app, db = _client(scm_app, "purchasing")
+    wid = _mk_warehouse(db, "ZZTCHRM-RUN-E")
+    pid = _mk_product(db, "ZZTCHRM-RUN-E")
+    _mk_stock(db, pid, wid, 0)
+    _link(db, pid, _mk_supplier(db, "ZZTCHRM Run Supplier E"), moq=None, mult=None)
+    _core_line_for_run(db, pid, wid, qty=30, demand_class="retail")
+    _core_line_for_run(db, pid, wid, qty=18, demand_class="project",
+                       demand_origin="scm_order_inquiry")
+    _core_line_for_run(db, pid, wid, qty=7, demand_class=None)
+    db.flush()
+
+    created = run_svc.create_run(db, ["ZZTCHRM-RUN-E"], "warehouse", enqueue=False)
+    run_svc.run_reorder(created["run_id"], db=db)
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/reorder-runs/{created['run_id']}/recommendations",
+                    params={"page": 1, "limit": 50})
+        assert res.status_code == 200, res.text
+        row = next(r for r in res.json()["data"] if r["sku"] == "ZZTCHRM-RUN-E")
+        assert row["project_committed"] == 18
+        assert row["retail_committed"] == 30
+        assert row["unclassified_committed"] == 7
+        assert row["outstanding_sales"] == 55
+        assert (
+            row["project_committed"] + row["retail_committed"]
+            + row["unclassified_committed"]
+        ) == row["outstanding_sales"]
 
 
 # --------------------------------------------------------------------------- #

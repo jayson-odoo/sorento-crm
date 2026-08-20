@@ -30,6 +30,12 @@ export type PriceAdviceCode =
   | 'zero_cost'
   /** Never bought from this supplier. Not the same as an old price. */
   | 'no_history'
+  /** Never bought from THIS supplier, but we have paid another one for it - a best-effort
+   *  figure, never substituted in as this supplier's own price. */
+  | 'other_supplier_price'
+  /** We have bought this before, but the record carries no price and no supplier code
+   *  (the structured SPO extract's own shape) - honest facts, not "never bought". */
+  | 'history_without_price'
   /** A price with no date on it, so its age cannot be vouched for. */
   | 'unknown_age'
   /** Older than the window the business treats as current. */
@@ -50,6 +56,14 @@ export interface PriceAdvice {
   standing_currency: string | null;
   standing_gap_pct: number | null;
   free_of_charge_lines: number;
+  /** `other_supplier_price` only - who `last` was actually bought from. */
+  other_supplier_code?: string | null;
+  other_supplier_name?: string | null;
+  /** `history_without_price` only - the facts the extract still carries without a price. */
+  history_last_date?: string | null;
+  history_doc_number?: string | null;
+  history_po_count?: number | null;
+  history_total_qty?: number | null;
 }
 
 export interface PriceHistoryPayload {
@@ -70,6 +84,8 @@ export interface PriceHistoryPayload {
 export const PRICE_ADVICE_LABEL: Record<PriceAdviceCode, string> = {
   zero_cost: 'Fix zero price',
   no_history: 'Get a quote',
+  other_supplier_price: 'Confirm price',
+  history_without_price: 'No price on file',
   unknown_age: 'Confirm price',
   stale: 'Ask new price',
   moving: 'Confirm price',
@@ -88,6 +104,8 @@ export const PRICE_ADVICE_TONE: Record<PriceAdviceCode, 'danger' | 'warning' | '
   moving: 'warning',
   unknown_age: 'warning',
   no_history: 'neutral',
+  other_supplier_price: 'neutral',
+  history_without_price: 'neutral',
   recent: 'ok',
 };
 
@@ -103,8 +121,10 @@ export const PRICE_ADVICE_SORT: Record<PriceAdviceCode, number> = {
   unknown_age: 1,
   stale: 2,
   moving: 3,
-  no_history: 4,
-  recent: 5,
+  other_supplier_price: 4,
+  history_without_price: 5,
+  no_history: 6,
+  recent: 7,
 };
 
 /** Days as something a person says out loud. `840` means nothing; "2 years 4 months" does. */
@@ -142,6 +162,18 @@ export function describeLastPurchase(p: PricePurchase | null): string | null {
  * moment they want to verify it.
  */
 export function rowFact(a: PriceAdvice): string {
+  if (a.advice === 'history_without_price') {
+    const count = a.history_po_count ?? 0;
+    const bought = count > 0 ? `${count} PO${count === 1 ? '' : 's'}` : 'Bought before';
+    const last = a.history_last_date ? `, last ${a.history_last_date}` : '';
+    return `${bought}${last} - extract carries no price`;
+  }
+  if (a.advice === 'other_supplier_price' && a.last) {
+    const age = humanAge(a.age_days);
+    const paid = `Last paid ${money(a.last.unit_cost, a.last.currency)}`;
+    const from = a.other_supplier_name ? ` from ${a.other_supplier_name}` : '';
+    return age ? `${paid}${from}, ${age}` : `${paid}${from}, date unknown`;
+  }
   if (!a.last) return 'Never bought from this supplier';
   const age = humanAge(a.age_days);
   const paid = `Last paid ${money(a.last.unit_cost, a.last.currency)}`;
@@ -167,6 +199,14 @@ export function describePriceAdvice(a: PriceAdvice | undefined, staleAfterDays: 
         : 'The plan is costing this at zero, so any quantity looks free. Price it before ordering.';
     case 'no_history':
       return 'No purchase from this supplier on record. Ask them to quote.';
+    case 'other_supplier_price':
+      return paid
+        ? `Never bought this from this supplier. We paid ${paid}${a.other_supplier_name ? ` to ${a.other_supplier_name}` : ' to another supplier'}, ${age}. Best-effort only - confirm before ordering.`
+        : 'Never bought this from this supplier, and we have no priced purchase from anyone else either. Ask them to quote.';
+    case 'history_without_price':
+      return a.history_po_count
+        ? `We have bought this before - ${a.history_po_count} PO${a.history_po_count === 1 ? '' : 's'}${a.history_last_date ? `, most recently ${a.history_last_date}` : ''} - but the record carries no price. Ask the supplier to quote.`
+        : 'No purchase from this supplier on record. Ask them to quote.';
     case 'unknown_age':
       return `We paid ${paid}, but the order carries no date, so how current it is cannot be checked. Confirm it with the supplier.`;
     case 'stale':

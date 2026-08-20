@@ -71,6 +71,26 @@ function cellOf(lines: BoardDemandLine[], freeStock: Record<string, string> = {}
   return buildBoard(lines, { today: TODAY, freeStock }).cells[0];
 }
 
+/**
+ * Opens the info icon beside one row's source strip and reads the sentence(s) behind it (A3,
+ * PLAN-demo-followups-19aug-ladder-v2.md): the rung reason and the fair-share note used to be
+ * a `title` attribute and a always-visible line under the strip; both now live in one Radix
+ * Tooltip, reached the same way a mouse would - `pointerEnter` the trigger, then read the
+ * ACCESSIBLE copy of its content (`role="tooltip"`), which Radix mounts as a second,
+ * visually-hidden node alongside the visible one so a plain `.textContent` on the visible copy
+ * would double the text.
+ *
+ * Opened via `focus` rather than a pointer event: Radix's trigger only opens on `pointermove`
+ * (never `pointerenter`, which jsdom does not synthesize the same way a real mouse does) unless
+ * it is delay-gated, while `focus` calls the tooltip's own `onOpen` directly - keyboard users
+ * reach the same tooltip this way, so it is also the more honest simulation.
+ */
+async function sourceNoteOf(key: string): Promise<string> {
+  fireEvent.focus(screen.getByTestId(`source-info-${key}`));
+  const tooltip = await screen.findByRole('tooltip');
+  return tooltip.textContent ?? '';
+}
+
 function renderDialog(
   lines: BoardDemandLine[],
   freeStock: Record<string, string> = {},
@@ -217,14 +237,19 @@ describe('BoardCellBreakdownDialog: the table', () => {
     expect(screen.getAllByText('BRW-BB').length).toBeGreaterThan(0);
   });
 
-  it('shows where the quantity is sourced from, with the reason the rule wrote', () => {
-    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+  it('shows where the quantity is sourced from, with the reason the rule wrote', async () => {
+    const lines = [demand({ qty: '100' })];
+    const freeStock = { 'WESERP10B|BRW-BB': '40' };
+    const key = cellOf(lines, freeStock).contributions[0].key;
+    renderDialog(lines, freeStock);
 
     expect(screen.getByText(/Reserve 40/)).toBeInTheDocument();
     expect(screen.getByText(/Buy 60/)).toBeInTheDocument();
-    expect(
-      screen.getByTitle(/Free unclaimed stock at BRW-BB covers this much by the delivery date\./),
-    ).toBeInTheDocument();
+    // The rule's own sentence is behind the info icon now, not a plain `title` - so the
+    // numbers above stay directly readable and only the prose needs a hover.
+    expect(await sourceNoteOf(key)).toContain(
+      'Free unclaimed stock at BRW-BB covers this much by the delivery date.',
+    );
   });
 
   it('says when the stock was already committed to earlier demand (13.5)', () => {
@@ -831,15 +856,17 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
   }
 
   function renderServerCell(sources: BoardContribution['sources']) {
+    const cell = serverCell(sources);
     render(
       <BoardCellBreakdownDialog
-        cell={serverCell(sources)}
+        cell={cell}
         bucketLabel="28 Sep 2026"
         draft={{}}
         onDecide={vi.fn()}
         onClose={vi.fn()}
       />,
     );
+    return cell;
   }
 
   /**
@@ -866,8 +893,8 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
    * are inside the engine's own sentence. So the sentence is what must be reachable, and
    * nothing may render a placeholder where the null fields would have gone.
    */
-  it('keeps the engine’s sentence reachable, and never renders a blank for the null fields', () => {
-    renderServerCell([
+  it('keeps the engine’s sentence reachable, and never renders a blank for the null fields', async () => {
+    const cell = renderServerCell([
       {
         kind: 'timely_spo',
         qty: '15',
@@ -878,11 +905,9 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
       },
     ]);
 
-    expect(
-      screen.getByTitle(
-        /SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the delivery date\./,
-      ),
-    ).toBeInTheDocument();
+    expect(await sourceNoteOf(cell.contributions[0].key)).toContain(
+      'SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the delivery date.',
+    );
     expect(screen.queryByText('null')).not.toBeInTheDocument();
     expect(screen.queryByText('undefined')).not.toBeInTheDocument();
   });
@@ -950,20 +975,25 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
     );
   }
 
-  function shareNoteOf(cell: BoardCell): string {
-    return (
-      screen.getByTestId(`share-note-${cell.contributions[0].key}`).textContent ?? ''
-    );
+  /**
+   * The share note now lives inside the same tooltip the rung reason does (A3), reached by the
+   * shared `sourceNoteOf` helper - so a `.toContain` rather than `.toBe` where the reason is
+   * also present, and both sentences may show up in the one tooltip.
+   */
+  function shareNoteOf(cell: BoardCell): Promise<string> {
+    return sourceNoteOf(cell.contributions[0].key);
   }
 
-  it('says how many lines were ahead, what they wanted, and what was left here', () => {
+  it('says how many lines were ahead, what they wanted, and what was left here', async () => {
     const cell = captainsCell();
     renderCell(cell);
 
-    expect(shareNoteOf(cell)).toBe('6 lines ahead wanting 388 · 627 left for this line at BRW-BB');
+    expect(await shareNoteOf(cell)).toContain(
+      '6 lines ahead wanting 388 · 627 left for this line at BRW-BB',
+    );
   });
 
-  it('says the line was first in the queue when nothing was ahead of it', () => {
+  it('says the line was first in the queue when nothing was ahead of it', async () => {
     const cell = captainsCell({
       so_qty_ahead: '0',
       lines_ahead: 0,
@@ -971,14 +1001,14 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
     });
     renderCell(cell);
 
-    expect(shareNoteOf(cell)).toBe('First in the queue at BRW-BB · 1015 left for this line');
+    expect(await shareNoteOf(cell)).toContain('First in the queue at BRW-BB · 1015 left for this line');
   });
 
-  it('counts a single line ahead in the singular', () => {
+  it('counts a single line ahead in the singular', async () => {
     const cell = captainsCell({ so_qty_ahead: '60', lines_ahead: 1, available_to_this_line: '40' });
     renderCell(cell);
 
-    expect(shareNoteOf(cell)).toBe('1 line ahead wanting 60 · 40 left for this line at BRW-BB');
+    expect(await shareNoteOf(cell)).toContain('1 line ahead wanting 60 · 40 left for this line at BRW-BB');
   });
 
   /**
@@ -986,7 +1016,7 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
    * second source with its own queue. Live: a line reading "0 left for it" still reserved 9 from
    * the pool. So the sentence states what remained and claims nothing about what may be taken.
    */
-  it('states both when the reserve exceeds what was left at this line’s own location', () => {
+  it('states both when the reserve exceeds what was left at this line’s own location', async () => {
     const cell = captainsCell({
       so_qty_ahead: '1015',
       lines_ahead: 12,
@@ -1004,20 +1034,18 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
     renderCell(cell);
 
     expect(screen.getByText(/Reserve 9 at BRW/)).toBeInTheDocument();
-    expect(shareNoteOf(cell)).toBe(
-      '12 lines ahead wanting 1015 · 0 left for this line at BRW-BB',
-    );
+    const note = await shareNoteOf(cell);
+    expect(note).toContain('12 lines ahead wanting 1015 · 0 left for this line at BRW-BB');
     // Never a verdict on the reserve: the pool is a second source, so "0 left" does not mean
     // nothing may be reserved.
-    expect(shareNoteOf(cell)).not.toContain('Reserve');
-    expect(shareNoteOf(cell)).not.toContain('cannot');
+    expect(note).not.toContain('cannot');
   });
 
   /**
    * The whole pile and this line's share are different numbers and are never shown under one
    * label - the captain's card reads Available -8013 at BRW-BB and 627 left for this line.
    */
-  it('never prints the pile’s Available as the line’s share, or the other way round', () => {
+  it('never prints the pile’s Available as the line’s share, or the other way round', async () => {
     const cell = {
       ...captainsCell(),
       locations: [
@@ -1038,13 +1066,17 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
     expect(position).not.toContain('627');
     expect(position).not.toContain('left for this line');
 
-    expect(shareNoteOf(cell)).toContain('627 left for this line');
-    expect(shareNoteOf(cell)).not.toContain('Available');
-    expect(shareNoteOf(cell)).not.toContain('-8013');
+    const note = await shareNoteOf(cell);
+    expect(note).toContain('627 left for this line');
+    expect(note).not.toContain('Available');
+    expect(note).not.toContain('-8013');
   });
 
-  /** Absent is absent: a line the server said nothing about gets no sentence, never a 0. */
-  it('says nothing at all when the server sent no share for the line', () => {
+  /**
+   * Absent is absent: a line the server sent no SHARE for gets no share sentence, never a 0 -
+   * even though the row still carries the rule's own reason and so still shows the icon.
+   */
+  it('says nothing at all when the server sent no share for the line', async () => {
     const cell = captainsCell({
       so_qty_ahead: undefined,
       lines_ahead: undefined,
@@ -1052,13 +1084,11 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
     });
     renderCell(cell);
 
-    expect(
-      screen.queryByTestId(`share-note-${cell.contributions[0].key}`),
-    ).not.toBeInTheDocument();
+    expect(await shareNoteOf(cell)).not.toContain('left for this line');
   });
 
   /** A line with no location has no own pile to be queued at, so it has nothing to say here. */
-  it('says nothing for a line whose sales order states no location', () => {
+  it('says nothing for a line whose sales order states no location', async () => {
     const cell = cellOf([demand({ fulfilment_location: null })]);
     const unplannable = {
       ...cell,
@@ -1073,13 +1103,11 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
     };
     renderCell(unplannable);
 
-    expect(
-      screen.queryByTestId(`share-note-${cell.contributions[0].key}`),
-    ).not.toBeInTheDocument();
+    expect(await shareNoteOf(unplannable)).not.toContain('left for this line');
   });
 
   /** The fixture emits the same three fields, queued the way the server queues them. */
-  it('reads the queue the board fixture built, line by line', () => {
+  it('reads the queue the board fixture built, line by line', async () => {
     const cell = cellOf(
       [
         demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a', qty: '60' }),
@@ -1089,12 +1117,12 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
     );
     renderCell(cell);
 
-    expect(
-      screen.getByTestId(`share-note-${cell.contributions[0].key}`).textContent,
-    ).toBe('First in the queue at BRW-BB · 100 left for this line');
-    expect(
-      screen.getByTestId(`share-note-${cell.contributions[1].key}`).textContent,
-    ).toBe('1 line ahead wanting 60 · 40 left for this line at BRW-BB');
+    expect(await sourceNoteOf(cell.contributions[0].key)).toContain(
+      'First in the queue at BRW-BB · 100 left for this line',
+    );
+    expect(await sourceNoteOf(cell.contributions[1].key)).toContain(
+      '1 line ahead wanting 60 · 40 left for this line at BRW-BB',
+    );
   });
 });
 
@@ -1368,8 +1396,8 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   }
 
   it('walks every rung in order, including the ones that gave nothing', () => {
-    const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
-    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+    const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
+    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
     const key = cell.contributions[0].key;
 
     const button = screen.getByTestId(`trail-info-${key}`);
@@ -1380,44 +1408,50 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       ...screen.getByTestId(`trail-${key}`).querySelectorAll('tbody tr[data-step]'),
     ].map((row) => row.querySelectorAll('td')[1]?.textContent);
     expect(sources).toEqual([
-      'Reserve at BRW-BB',
-      'Pool',
+      'This location (BRW-BB)',
       'Incoming (SPO)',
-      'Borrow',
+      'Pool BRW-BB',
+      'Group take',
+      'Group borrow',
+      'Cross-group borrow',
       'Buy',
     ]);
   });
 
   it('states what each rung held, offered, gave, and what was still owed after it', () => {
-    const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
-    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+    // Ladder v2's whole-line rule (section E rule 6): the pool holds exactly what is owed, so
+    // it is proposed in full and the buy rung shows "Not needed" rather than a partial mix.
+    const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
+    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
     const key = cell.contributions[0].key;
     openTrail(key);
 
     // # | Source | Had | Ahead | For this line | Took | Still owed | Outcome
-    expect(stepCells(key, 'reserve_own')).toEqual([
-      '1',
-      'Reserve at BRW-BB',
-      '40',
+    expect(stepCells(key, 'pool')).toEqual([
+      '3',
+      'Pool BRW-BB',
+      '100',
       '-',
-      '40',
-      '40',
-      '60',
+      '100',
+      '100',
+      '0',
       'Took',
     ]);
     expect(stepCells(key, 'buy')).toEqual([
-      '5',
+      '7',
       'Buy',
       '-',
       '-',
-      '60',
-      '60',
       '0',
-      'Took',
+      '0',
+      '0',
+      'Not needed',
     ]);
   });
 
   it('names the queue that was ahead of the line at its own location', () => {
+    // S4 of the 19 August review: the queue is named on the READ-ONLY own-location rung,
+    // never on the pool - the pool nets its own (different) book before it is offered.
     const lines = [
       demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a', qty: '60' }),
       demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b', qty: '40' }),
@@ -1429,14 +1463,16 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
 
     expect(stepCells(second, 'reserve_own')).toEqual([
       '1',
-      'Reserve at BRW-BB',
+      'This location (BRW-BB)',
       '70',
       '60 across 1 line',
       '10',
-      '10',
-      '30',
-      'Took',
+      '0',
+      '40',
+      'Not eligible',
     ]);
+    // The pool rung itself carries no queue of its own in this fixture.
+    expect(stepCells(second, 'pool')[3]).toBe('-');
   });
 
   it('says a rung was skipped by a rule rather than leaving it out', () => {
@@ -1445,8 +1481,8 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     const key = cell.contributions[0].key;
     openTrail(key);
 
-    expect(stepCells(key, 'reserve_pool')).toContain('Not eligible');
-    expect(screen.getByText('no shared pool')).toBeInTheDocument();
+    expect(stepCells(key, 'group_take')).toContain('Nothing left');
+    expect(screen.getByText('no ownership group')).toBeInTheDocument();
   });
 
   it('says there is no plan at all for a line whose order states no location', () => {
@@ -1504,6 +1540,8 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   }
 
   it('says in words why each rung ended the way it did', () => {
+    // S4 of the 19 August review: the queue's own sentence lives on the READ-ONLY own
+    // location rung, the one rung `BoardTrailPopover` opens the whole queue from.
     const cell = rankedCell(queueOfFive(), { 'WESERP10B|BRW-BB': '40' });
     renderCell(cell);
     const last = cell.contributions[cell.contributions.length - 1].key;
@@ -1511,7 +1549,10 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
 
     const trail = screen.getByTestId(`trail-${last}`);
     expect(trail.textContent).toContain(
-      '40 on hand, but 4 lines with an earlier delivery date rank ahead and want 400 - none is left for this line.',
+      '0 left at BRW-BB after 400 owed to 4 lines ranked ahead of this line.',
+    );
+    expect(trail.textContent).toContain(
+      'stock at BRW-BB is committed to whichever sales order is queued for it',
     );
     expect(screen.getByTestId(`trail-why-${last}-buy`).textContent).toBe(
       'Nothing left to take, so the remainder is bought.',
@@ -1528,7 +1569,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
 
     const trail = screen.getByTestId(`trail-${last}`);
     expect(trail.textContent).toContain(
-      '40 on hand, but 4 lines with an earlier delivery date rank ahead and want 400 - none is left for this line.',
+      '0 left at BRW-BB after 400 owed to 4 lines ranked ahead of this line.',
     );
     expect(trail.textContent).not.toContain('Ahead of this line');
     expect(trail.querySelectorAll('[data-testid^="trail-ahead-line-"]')).toHaveLength(0);
@@ -1561,7 +1602,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   it('says a Borrow was found and left alone, and names the donors', () => {
     const cell = cellOf([demand({ qty: '100' })]);
     const contribution = cell.contributions[0];
-    const borrow = contribution.trail?.find((step) => step.kind === 'borrow');
+    const borrow = contribution.trail?.find((step) => step.kind === 'cross_group_borrow');
     Object.assign(borrow ?? {}, {
       opening: '25',
       offered: '25',
@@ -1572,21 +1613,25 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     renderCell(cell);
     openTrail(contribution.key);
 
-    const why = screen.getByTestId(`trail-why-${contribution.key}-borrow`);
+    const why = screen.getByTestId(`trail-why-${contribution.key}-cross_group_borrow`);
     expect(why.textContent).toContain('Use Amend to borrow');
     expect(screen.getByText('MWH-IB 20 · BRW 5')).toBeInTheDocument();
   });
 
-  it('leaves the source strip, the share note and the Contested chip exactly as they were', () => {
+  it('leaves the source strip, the share note and the Contested chip exactly as they were', async () => {
     const lines = [
       demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 1, qty: '100', required_date: '2026-09-04' }),
       demand({ sales_order_id: 'so-b', so_number: 'SO398322', line_no: 2, qty: '100', required_date: '2026-09-02' }),
     ];
-    renderDialog(lines, { 'WESERP10B|BRW-BB': '100' });
+    const freeStock = { 'WESERP10B|BRW-BB': '100' };
+    const cell = cellOf(lines, freeStock);
+    renderDialog(lines, freeStock);
 
     expect(screen.getByText(/Reserve 100/)).toBeInTheDocument();
     expect(screen.getByText('Contested')).toBeInTheDocument();
-    expect(screen.getAllByTestId(/^share-note-/).length).toBe(2);
+    // Both rows still carry a share sentence, now behind the icon rather than always visible.
+    expect(await sourceNoteOf(cell.contributions[0].key)).toContain('left for this line');
+    expect(await sourceNoteOf(cell.contributions[1].key)).toContain('left for this line');
   });
 
   /**
@@ -1596,14 +1641,14 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
    * selling / discontinued, to see if we can take from BRW?" - and, on `Pool BRW | Had 0` beside
    * an Inventory screen showing `Available 1`: "why it shows 0?"
    */
-  it('opens the own rung with no hot-selling verdict in words, and shows no chip for an ordinary item', () => {
+  it('opens the pool rung with no hot-selling verdict in words, and shows no chip for an ordinary item', () => {
     const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
     const key = cell.contributions[0].key;
     openTrail(key);
 
-    expect(screen.getByTestId(`trail-why-${key}-reserve_own`).textContent).toBe(
-      'First in the queue here; this line takes 40.',
+    expect(screen.getByTestId(`trail-why-${key}-pool`).textContent).toBe(
+      'BRW-BB offers 40; this line takes 40.',
     );
     // An unflagged item is the ordinary case: no badge saying so.
     expect(screen.queryByTestId(`trail-flags-${key}`)).not.toBeInTheDocument();
@@ -1710,10 +1755,10 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     expect(screen.queryByTestId(`trail-flags-${key}`)).not.toBeInTheDocument();
   });
 
-  it('lays the pool pile out under rung 2 - on hand, SO, SPO, available, free, claimed ahead, left', () => {
+  it('lays the pool pile out under the pool rung - on hand, SO, SPO, available, free, claimed ahead, left', () => {
     const cell = cellOf([demand({ qty: '1' })]);
     const contribution = cell.contributions[0];
-    const pool = contribution.trail?.find((step) => step.kind === 'reserve_pool');
+    const pool = contribution.trail?.find((step) => step.kind === 'pool');
     // The captain's B2155-NL-BLUE rung: BRW holds 1, its own line ahead claims it, 0 left.
     Object.assign(pool ?? {}, {
       location: 'BRW',
@@ -1743,8 +1788,8 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     renderCell(cell);
     openTrail(contribution.key);
 
-    expect(stepCells(contribution.key, 'reserve_pool').slice(1, 3)).toEqual(['Pool BRW', '0']);
-    expect(screen.getByTestId(`trail-why-${contribution.key}-reserve_pool`).textContent).toBe(
+    expect(stepCells(contribution.key, 'pool').slice(1, 3)).toEqual(['Pool BRW', '0']);
+    expect(screen.getByTestId(`trail-why-${contribution.key}-pool`).textContent).toBe(
       "BRW holds 1 on hand (Available 1 in stock), but BRW's own orders ranked ahead of this line claim 1, so 0 is left.",
     );
     const table = screen.getByTestId(`trail-pool-${contribution.key}`);
@@ -1755,12 +1800,12 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   });
 
   it('shows no pool sub-table when there is no shared pool', () => {
-    const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
-    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+    const cell = cellOf([demand({ qty: '100' })]);
+    renderDialog([demand({ qty: '100' })]);
     const key = cell.contributions[0].key;
     openTrail(key);
 
-    expect(screen.getByTestId(`trail-why-${key}-reserve_pool`).textContent).toBe(
+    expect(screen.getByTestId(`trail-why-${key}-pool`).textContent).toBe(
       'No shared pool for this product.',
     );
     expect(screen.queryByTestId(`trail-pool-${key}`)).not.toBeInTheDocument();
@@ -1882,12 +1927,13 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
     expect(screen.getByText('Borrow 10 from MWH-IB · Buy 33')).toBeInTheDocument();
   });
 
-  it('says nothing about a queue it is not in', () => {
+  it('says nothing about a queue it is not in', async () => {
     // "0 left for this line" is a claim about a contest. A covered line left the contest, which
-    // is exactly why the pile's own queue does not hold it.
+    // is exactly why the pile's own queue does not hold it - even though the frozen composition
+    // still carries its own reasons behind the icon.
     renderDialog([covered()]);
 
-    expect(screen.queryByTestId(/^share-note-/)).not.toBeInTheDocument();
+    expect(await sourceNoteOf('so-a|1|WESERP10B|2026-08-31')).not.toContain('left for this line');
   });
 
   it('replaces the ladder with the one fact there is: when it was confirmed', () => {

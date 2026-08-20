@@ -67,6 +67,7 @@ const AGENT: SalesAgent = {
   follow_up: false,
   person_label: 'Sean',
   demand_class: 'project',
+  location_group: 'BB',
   source: 'import',
   created_at: '2026-08-01T00:00:00',
   updated_at: null,
@@ -100,25 +101,28 @@ describe('EditSalesAgentModal', () => {
     expect(selectProps.current?.clearable).toBe(true);
   });
 
-  it('shows the agent code and prefills both fields', () => {
+  it('shows the agent code and prefills every field', () => {
     renderModal();
 
     expect(screen.getByText('Edit SEAN III')).toBeInTheDocument();
     expect(screen.getByLabelText('Person')).toHaveValue('Sean');
     expect(screen.getByLabelText('Demand class')).toHaveValue('project');
+    expect(screen.getByLabelText('Location group')).toHaveValue('BB');
   });
 
-  it('saves the edited label and class', async () => {
+  it('saves the edited label, class and location group', async () => {
     const props = renderModal();
 
     fireEvent.change(screen.getByLabelText('Person'), { target: { value: 'Sean Lim' } });
     fireEvent.change(screen.getByLabelText('Demand class'), { target: { value: 'retail' } });
+    fireEvent.change(screen.getByLabelText('Location group'), { target: { value: '  hp  ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() =>
       expect(props.onSave).toHaveBeenCalledWith({
         person_label: 'Sean Lim',
         demand_class: 'retail',
+        location_group: 'HP',
       }),
     );
   });
@@ -130,18 +134,43 @@ describe('EditSalesAgentModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() =>
-      expect(props.onSave).toHaveBeenCalledWith({ person_label: 'Sean', demand_class: null }),
+      expect(props.onSave).toHaveBeenCalledWith({
+        person_label: 'Sean',
+        demand_class: null,
+        location_group: 'BB',
+      }),
+    );
+  });
+
+  it('clearing the location group sends null rather than an empty string', async () => {
+    const props = renderModal();
+
+    fireEvent.change(screen.getByLabelText('Location group'), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(props.onSave).toHaveBeenCalledWith({
+        person_label: 'Sean',
+        demand_class: 'project',
+        location_group: null,
+      }),
     );
   });
 
   it('a blank person is sent as null', async () => {
-    const props = renderModal({ agent: { ...AGENT, person_label: null, demand_class: null } });
+    const props = renderModal({
+      agent: { ...AGENT, person_label: null, demand_class: null, location_group: null },
+    });
 
     fireEvent.change(screen.getByLabelText('Person'), { target: { value: '   ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() =>
-      expect(props.onSave).toHaveBeenCalledWith({ person_label: null, demand_class: null }),
+      expect(props.onSave).toHaveBeenCalledWith({
+        person_label: null,
+        demand_class: null,
+        location_group: null,
+      }),
     );
   });
 

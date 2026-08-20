@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class OrderInquiryRowOut(BaseModel):
@@ -41,6 +41,15 @@ class OrderInquiryRowOut(BaseModel):
     spo_ref: Optional[str] = None
     covered_by: Optional[str] = None
     note: Optional[str] = None
+    # The outstanding supplier PO this row was tagged to (section G). Blank until
+    # "Place on PO" is used; never a guess at what would cover it.
+    po_ref: Optional[str] = None
+    po_line_id: Optional[str] = None
+    # Whether the row's OWN product still has an outstanding purchase-order line to tag
+    # (the captain, 20 Aug: a "Place on PO" offer with nothing behind it reads as a bug,
+    # not an empty state). Computed with the SAME predicate `po-candidates` answers, so
+    # the flag and the dialog can never disagree.
+    has_open_po_line: bool = False
 
     state: str
     actioned_at: Optional[datetime] = None
@@ -94,6 +103,33 @@ class OrderInquiryWorklistRow(BaseModel):
     # the confirmed allocation's warehouse for a plan/confirmed row, otherwise the line's
     # own fulfilment location. Blank when neither is known.
     location: Optional[str] = None
+    # What flows to reorder planning, for this row's own SO line (the captain, 20 Aug: "show
+    # the quantity, quantity taken from PO, and the remaining quantity, cause this is what
+    # flows to reorder planning"). `taken_from_po` sums every SIBLING placed ORDER row on the
+    # same line - the PO no cell links to one PO, but a line may have been covered across
+    # several; `remaining_open` sums every raised ORDER row on the line, which is exactly
+    # `committed_v`'s confirmed leg (`verb='ORDER' AND state='raised'`) - what still counts as
+    # demand to the reorder engine. On a raised row that includes itself. `0` for a row with
+    # no `so_line_id` (an amendment exception row traces to none).
+    #
+    # Both figures are scoped to `verb='ORDER'` SIBLINGS, always - including for a row whose
+    # OWN verb is not `ORDER` (the captain, 21 Aug: an ADVANCE row read "Taken from PO 432 /
+    # Remaining 0", technically correct about its ORDER siblings, but read as "handled" next
+    # to an unactioned date change of its own). The frontend mutes these two cells with an
+    # honest per-verb label instead of a figure whenever `verb != 'ORDER'`
+    # (`orderInquiryWorklist.ts`'s `flowExclusionLabel`) - this schema still always ships the
+    # real ORDER-sibling numbers, so nothing here needs to change to keep that true.
+    taken_from_po: str = "0"
+    remaining_open: str = "0"
+    # Same as `OrderInquiryRowOut.has_open_po_line` - whether this row's own product
+    # still has an outstanding PO line, computed the same way so the two listings that
+    # render "Place on PO" can never disagree with the dialog.
+    has_open_po_line: bool = False
+    # Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`), read off the same core
+    # sales order the SO DATE / S/O NO columns already join to. Null on an authored row
+    # that reaches no core order and on one whose core order carries no agent.
+    agent_code: Optional[str] = None
+    agent_label: Optional[str] = None
     state: str
     raised_at: Optional[datetime] = None
     verb: str
@@ -104,6 +140,10 @@ class OrderInquiryWorklistRow(BaseModel):
     project_sales_order_id: Optional[str] = None
     core_sales_order_id: Optional[str] = None
     is_adopted: bool = False
+    # The placed purchase order this row traces to (same coalesce the PO NO column reads),
+    # so the "PO no" cell's popup can address `GET .../order-inquiries/po/{po_id}` without
+    # a second lookup. Null on a row nobody has placed yet.
+    po_id: Optional[str] = None
 
 
 class OrderInquiryMonthTotal(BaseModel):
@@ -146,3 +186,144 @@ class OrderInquiryWorklistSummary(BaseModel):
 class MarkInquiryRowsRequest(BaseModel):
     row_ids: List[str] = Field(..., min_length=1)
     state: str = Field(..., description="raised, actioned or cancelled")
+
+
+class OrderInquiryPoCandidateClaim(BaseModel):
+    """One EXISTING tag already on this candidate's PO line - the row's expand (section G,
+    "the captain, 20 Aug"). Read straight off the placed rows themselves: the tag IS the
+    evidence, so there is nothing else to derive it from.
+    """
+
+    so_number: Optional[str] = None
+    item_code: Optional[str] = None
+    qty: str
+    placed_date: Optional[datetime] = None
+
+
+class OrderInquiryPoCandidate(BaseModel):
+    """One open supplier PO line this row could be tagged to (section G).
+
+    Ordered soonest `expected_date` first; `recommended` marks the earliest one whose
+    `remaining` balance covers the row's whole quantity. `already_tagged` is what OTHER
+    placed rows already claim off this same line, so `remaining` is never a promise this
+    line cannot keep. `claims` names those OTHER rows one by one - the row's expand.
+    """
+
+    po_line_id: str
+    po_number: str
+    supplier_name: Optional[str] = None
+    expected_date: Optional[date] = None
+    qty_ordered: str
+    qty_received: str
+    already_tagged: str
+    remaining: str
+    covers: bool
+    recommended: bool = False
+    # The line's own held price, when the PO carries one. Never a guess.
+    unit_cost: Optional[str] = None
+    currency: Optional[str] = None
+    claims: List[OrderInquiryPoCandidateClaim] = []
+    # What the cascade (G2, 20 Aug: "take from the earliest PO, then subsequently from
+    # subsequent PO") would take off THIS line for THIS row - `0` when the cascade never
+    # reaches this line (already covered by an earlier one, or nothing is left to cover).
+    # Server-computed by the SAME walk `auto_place_for_products` runs, so the dialog's
+    # preview and the auto pass can never disagree; the dialog offers it as an editable
+    # starting point, not the only answer.
+    default_take: str = "0"
+
+
+class PlaceOnPoAllocation(BaseModel):
+    """One line of a cascade placement: this row takes `qty` off `po_line_id`."""
+
+    po_line_id: str
+    qty: str
+
+
+class PlaceOnPoRequest(BaseModel):
+    po_line_id: Optional[str] = Field(
+        None, description="Single-line placement (the original section G shape)."
+    )
+    # G2 rework: several PO lines can cover one row. Mutually exclusive with `po_line_id`
+    # - a caller either names one line directly or hands over the whole allocation.
+    allocations: Optional[List[PlaceOnPoAllocation]] = Field(
+        None, description="Cascade placement: one or more {po_line_id, qty} lines."
+    )
+
+    @model_validator(mode="after")
+    def _names_something_to_place(self) -> "PlaceOnPoRequest":
+        if not self.po_line_id and not self.allocations:
+            raise ValueError("Name a purchase order line, or a list of allocations.")
+        return self
+
+
+class AutoPlaceRequest(BaseModel):
+    """G2 rule 4: run the cascade now. Omitted `product_ids` means every product that
+    currently has a raised ORDER/RESERVE & ORDER row - the worklist's own "Auto-place"."""
+
+    product_ids: Optional[List[str]] = None
+
+
+class AutoPlaceResult(BaseModel):
+    placed_rows: int = 0
+    allocations: int = 0
+    products_touched: int = 0
+
+
+class UnplaceAllRequest(BaseModel):
+    """"Unplace all" for the CURRENT worklist scope (the captain, 20-21 Aug: it operates
+    on whatever the list is filtered to - one product when the filters happen to narrow
+    to one, every placed row when they do not). The SAME filter shape `GET
+    /order-inquiries` takes, minus `state` - this is always about placed rows, whatever
+    else is filtered - and no `product_ids`: the worklist paginates server-side, so a
+    client-derived product list would silently miss rows behind page 1. Every field
+    omitted means every placed row in the company.
+    """
+
+    query: Optional[str] = None
+    delivery_month: Optional[str] = None
+    raised_date: Optional[str] = None
+    project_id: Optional[str] = None
+    supplier_id: Optional[str] = None
+
+
+class UnplaceAllResult(BaseModel):
+    unplaced: int = 0
+
+
+class UnplaceAllPreview(BaseModel):
+    """The confirm dialog's own numbers, resolved server-side against the SAME filters
+    `unplace-all` itself reads - never derived from whatever page of the worklist happens
+    to be loaded in the browser. `product_code`/`product_name` are set only when EVERY
+    matching row resolves to the same product; otherwise both stay null and the dialog
+    speaks only of the count."""
+
+    count: int = 0
+    product_code: Optional[str] = None
+    product_name: Optional[str] = None
+
+
+class OrderInquiryPoDetailLine(BaseModel):
+    """One line of the purchase order behind a placed worklist row - the "PO no" cell's
+    popup (the captain, 20 Aug). Read straight off `purchase_order_lines`, never netted
+    against other rows' claims - that reading belongs to the "Place on PO" candidates,
+    not to a plain look at what was ordered."""
+
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    qty_ordered: str
+    qty_received: str
+    remaining: str
+    location: Optional[str] = None
+
+
+class OrderInquiryPoDetail(BaseModel):
+    """The PO popup's whole answer: the header purchasing already reads off the sheet,
+    plus every line, not only the one this row happened to be tagged to."""
+
+    id: str
+    po_number: str
+    supplier_code: Optional[str] = None
+    supplier_name: Optional[str] = None
+    expected_date: Optional[date] = None
+    status: str
+    lines: List[OrderInquiryPoDetailLine] = []

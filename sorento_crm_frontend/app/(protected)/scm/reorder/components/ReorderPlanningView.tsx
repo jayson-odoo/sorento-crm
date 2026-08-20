@@ -22,7 +22,7 @@ import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { resetRunDecisions } from '../services/reorderRunService';
-import { decisionLockReason, planGrainLabel, isLegacyRun } from '../lib/planGrain';
+import { legacyLockReason, shouldGroupByChannel } from '../lib/planGrain';
 import { PlanExceptionsView } from './PlanExceptionsView';
 import { PoWorklistView } from './PoWorklistView';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
@@ -36,17 +36,17 @@ import {
 } from '../hooks/useReorderRun';
 import { useReorderPlan } from '../hooks/useReorderPlan';
 import { decisionsKey } from '../hooks/useDecisions';
+import { planRowDecisionsKey } from '../hooks/usePlanLines';
 import type { ReorderRunHistoryItem } from '../services/reorderRunService';
 import { PlanLinesSection } from './PlanLinesSection';
 import type { PlanTotals } from '../lib/planDecisions';
 import { UploadDataMenu } from './UploadDataMenu';
-import { PlanAssistant } from './PlanAssistant';
 import { PlanMethodologySheet } from './PlanMethodologySheet';
 import { ReorderStatTiles, type ReorderPlanView } from './ReorderStatTiles';
 import { RunHistoryPanel } from './RunHistoryPanel';
 import { RunPlanningModal, type ManualPlanInputs } from './RunPlanningModal';
 import { SummaryOrderReportView } from './SummaryOrderReportView';
-import { DATE_LOCALE, DATE_PARTS, fmtInt } from '../../lib/format';
+import { DATE_LOCALE, DATE_PARTS, fmtDate, fmtInt } from '../../lib/format';
 
 /** Parse a naive-UTC ISO string as UTC, then format date / time in Malaysia.
  *
@@ -89,9 +89,15 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const [decidedFilter, setDecidedFilter] = useState<'all' | 'undecided' | 'decided'>('all');
   const toggleUndecidedFilter = () =>
     setDecidedFilter((f) => (f === 'undecided' ? 'all' : 'undecided'));
-  // Reported up from `PlanLinesSection` (which owns the actual decisions state) every time
-  // the decided/undecided split changes, so the tile can show it without a second copy.
+  // Reported up from `PlanLinesSection` every time the decided/undecided split changes, so
+  // the tile can show CASH figures without a second copy of `planTotals`.
   const [progressTotals, setProgressTotals] = useState<PlanTotals | null>(null);
+  // S16: the "N of Total made" COUNT, separately - the server's own figure
+  // (`GET .../plan-row-decisions`), not derived from `progressTotals` above (which counts
+  // whatever is currently filtered/grouped on screen, not what is actually persisted).
+  const [decisionProgress, setDecisionProgress] = useState<{ decided: number; total: number } | null>(
+    null,
+  );
 
   const selectView = (next: ReorderPlanView) => setView(next);
   // Order summary / Plan exceptions / PO worklist have no row in the one grid to filter
@@ -125,6 +131,21 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   // A history-selected run overrides today's; null = show today's default run.
   const [selectedRun, setSelectedRun] = useState<ReorderRunHistoryItem | null>(null);
 
+  // The run on screen belongs in the URL (captain, 2026-08-20: "the URL better show the
+  // plan that I am looking at now for better reference"). `?plan=` - NOT `?run=`, which
+  // this page already reads (`?run=1` auto-opens the Manual plan modal via `autoOpenRun`,
+  // see page.tsx). Read once on mount - this component sits too deep for a Suspense
+  // boundary to be worth adding just for `useSearchParams`, and reading `window.location`
+  // once is the simplest thing that answers this. `RunHistoryPanel` resolves the id
+  // against the runs it has loaded and reports the match back via `onSelect`; an unknown
+  // id just leaves the default showing.
+  const [initialRunIdFromUrl, setInitialRunIdFromUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const plan = new URLSearchParams(window.location.search).get('plan');
+    if (plan) setInitialRunIdFromUrl(plan);
+  }, []);
+
   const today = useTodayRun();
   const todayData = today.data ?? null;
   // A property of the demand book, not of the run on screen, so it is read once here and
@@ -138,6 +159,18 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
 
   const currentItem = selectedRun ?? todayData;
   const currentRunId = currentItem?.run_id ?? null;
+
+  // Keep `?plan=<id>` in step with what's on screen via `replaceState` - no navigation,
+  // no remount, HMR state survives. The default (today's) run stamps it too, not only an
+  // explicit history pick, so a copied URL is always specific to the plan being looked at.
+  useEffect(() => {
+    if (!currentRunId || typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('plan') === currentRunId) return;
+    url.searchParams.set('plan', currentRunId);
+    window.history.replaceState(window.history.state, '', url);
+  }, [currentRunId]);
+
   const isToday =
     !!todayData && currentRunId === todayData.run_id && todayData.is_today;
 
@@ -156,15 +189,16 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const plan = useReorderPlan(currentRunId, view === 'buy' && !!currentRunId);
 
   /**
-   * Whether THIS run's per-location decisions are actionable (AC-F02 / AC-F09).
-   *
-   * Read off the run's own stamped grain, not off the current policy setting: an
-   * existing run keeps the grain it was created with, so changing the policy must
-   * not make an old run's decisions suddenly writable (AC-F10). Under Product
-   * policy the per-location view stays open as a read and drill view - it is never
-   * retired - and only its decision controls go quiet.
+   * Whether the plan row's decision control is actionable (S16, captain 21 Aug, 3rd time
+   * requested: "I want the decision made here"). The row is a decision surface at every
+   * grain now - grouped included, via fan-out - so grain no longer locks it. The one run
+   * that genuinely cannot record here is one that predates the front-planning contract
+   * (`legacyLockReason`, `lib/planGrain.ts`); its decisions are history.
    */
-  const locationLockReason = decisionLockReason(currentItem, 'location');
+  const rowDecisionLockReason = legacyLockReason(currentItem);
+  // 5.3: "1 line of retail, 1 line of project" - the Buy view groups its per-warehouse
+  // rows into one row per (product, channel) whenever THIS run is stamped Product grain.
+  const groupByChannel = shouldGroupByChannel(currentItem);
 
   const summary = currentItem?.summary ?? null;
   const { date: dateLabel, time: timeLabel } = labelsFor(currentItem?.started_at ?? null);
@@ -235,6 +269,8 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
       // Empty = every product (AC-B8a), which is what the scheduled daily run does.
       product_codes: inputs.product_codes,
       budget_id: null,
+      // Empty = no horizon (today's behaviour). Captain, 20 Aug.
+      plan_horizon_date: inputs.plan_horizon_date || null,
     });
     toast.info('Generating manual plan...');
   };
@@ -252,6 +288,11 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
       setResetOpen(false);
       plan.resetLocal(); // drop the FE decision overlay so stale pins/rejects clear too
       void queryClient.invalidateQueries({ queryKey: decisionsKey(currentRunId) });
+      // S16: the backend also drops every `plan_row_decision` on the run (see
+      // `reset_run_decisions`'s own `plan_row_decisions_cleared` count) - invalidate the
+      // cache this screen reads them through, or the header + row cells keep showing
+      // decisions the reset just cleared until an unrelated refetch happens to fire.
+      void queryClient.invalidateQueries({ queryKey: planRowDecisionsKey(currentRunId) });
       void queryClient.invalidateQueries({ queryKey: ['scm', 'reorder', 'cash-recs', currentRunId] });
       void queryClient.invalidateQueries({ queryKey: ['scm', 'reorder', 'dispositions', currentRunId] });
       void queryClient.invalidateQueries({ queryKey: todayRunKey });
@@ -356,16 +397,21 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
           <h2 className="text-lg font-semibold">
             {isPastRun ? `Plan · ${dateLabel}, ${timeLabel}` : `Today's plan · ${dateLabel}`}
           </h2>
-          {/* The run's stamped Plan grain. A fact about the run, never a selector:
-              plan grain is admin policy and this run took it at creation (AC-F01). */}
-          {currentItem ? (
+          {/* The plan-grain chip lived here until the captain removed it (20 Aug: "remove
+              these") - the grain still governs `shouldGroupByChannel`'s grouping (S16, 21
+              Aug: it no longer locks the row's own decision, only a legacy run does - see
+              `legacyLockReason`); it is just not announced in the header any more. */}
+          {/* Planning horizon (captain, 20 Aug): only shown when this run was launched
+              with one - an unhorizoned run (every run before this feature, and every
+              scheduled daily one) says nothing extra. */}
+          {currentItem?.plan_horizon_date ? (
             <Badge
-              variant={isLegacyRun(currentItem) ? 'secondary' : 'info'}
+              variant="secondary"
               appearance="light"
               size="sm"
-              data-testid="plan-grain-chip"
+              title="Demand needed after this date was excluded from this plan's netting. Demand with no date is always counted."
             >
-              {planGrainLabel(currentItem)}
+              Until {fmtDate(currentItem.plan_horizon_date)}
             </Badge>
           ) : null}
           <PlanMethodologySheet
@@ -441,9 +487,15 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         </div>
       ) : null}
 
-      {/* Project demand CS has not put on an Order Inquiry. NOT in the plan, by the user's
-          own rule - the inquiry is the demand for the project side - and counted here so a
-          smaller-than-expected plan explains itself instead of looking like lost data. */}
+      {/* Project demand the Order Inquiry import never named. NOT in the plan, by the
+          user's own rule - the inquiry is the demand for the project side - and counted
+          here so a smaller-than-expected plan explains itself instead of looking like
+          lost data.
+
+          Wording note (live diagnosis, 20 Aug): "waiting on an Order Inquiry" implied the
+          orders the plan DOES count have one - 598 of 605 do not, they are retail/direct
+          sales-order lines the split never asked to have one. The predicate this reports
+          is order-level, not line-level: a project-class order the import never named. */}
       {setAside.data && setAside.data.orders > 0 ? (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-sky-500/40 bg-sky-500/5 px-3 py-2 text-sm">
           <Info className="size-4 shrink-0 text-sky-600" aria-hidden />
@@ -455,8 +507,8 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             <span className="font-medium text-foreground tabular-nums">
               {fmtInt(setAside.data.orders)}
             </span>{' '}
-            project order{setAside.data.orders === 1 ? '' : 's'} are waiting on an Order
-            Inquiry, so this plan leaves them out.
+            project order{setAside.data.orders === 1 ? '' : 's'} the Order Inquiry import
+            never named, so this plan leaves them out.
             {setAside.data.sample.length ? (
               <>
                 {' '}
@@ -531,8 +583,8 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
       ) : null}
 
       <ReorderStatTiles
-        decided={progressTotals?.decided ?? 0}
-        total={progressTotals ? progressTotals.decided + progressTotals.undecided : 0}
+        decided={decisionProgress?.decided ?? 0}
+        total={decisionProgress?.total ?? 0}
         cashCommitted={progressTotals?.cost ?? 0}
         cashTotal={summary?.total_cash_impact ?? 0}
         undecidedFilterActive={decidedFilter === 'undecided'}
@@ -559,19 +611,19 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         // not entered. The money question now comes last, in PlanBudgetReview, asked of the
         // decisions that were actually made.
         <>
-          <PlanAssistant
-            runId={currentRunId}
-            onApplyProposalLine={plan.applyProposalLine}
-            onApplyActions={plan.applyActions}
-          />
+          {/* PlanAssistant sat here until the captain removed it from this screen
+              (20 Aug: "remove these"). The component and its plumbing survive for the
+              surfaces that still mount it. */}
           <PlanLinesSection
             runId={currentRunId}
             decidedFilter={decidedFilter}
             onDecidedFilterChange={setDecidedFilter}
             onTotalsChange={setProgressTotals}
+            onDecisionProgressChange={setDecisionProgress}
             secondaryActions={reportLinks}
-            decisionsReadOnly={!!locationLockReason}
-            readOnlyReason={locationLockReason}
+            decisionsReadOnly={!!rowDecisionLockReason}
+            readOnlyReason={rowDecisionLockReason}
+            groupByChannel={groupByChannel}
           />
         </>
       )}
@@ -579,6 +631,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
       <RunHistoryPanel
         selectedRunId={currentRunId}
         onSelect={(run) => setSelectedRun(run)}
+        initialSelectRunId={initialRunIdFromUrl}
       />
 
       <RunPlanningModal

@@ -64,3 +64,29 @@ export function formatInquiryQty(qty?: string | null): string {
   if (!/^-?\d+(\.\d+)?$/.test(text)) return text;
   return text.includes('.') ? text.replace(/\.?0+$/, '') : text;
 }
+
+/**
+ * Why "Taken from PO" / "Remaining" should NOT print a figure for this row's own verb
+ * (the captain, 21 Aug: an ADVANCE row read "Taken from PO 432 / Remaining 0" - both real
+ * `ORDER`-sibling totals on the same SO line, correctly summed, but sitting beside an
+ * unactioned date change they read as "fully handled"). Both aggregates are scoped to
+ * `verb = 'ORDER'` siblings only
+ * (`OrderInquiryWorklistService._quantity_flow_by_so_line`), so any other verb's row is
+ * shown what that scoping actually means for it, rather than a number that looks like an
+ * answer about ITSELF. `null` for an `ORDER` row - it IS what the aggregate is about, so
+ * the figure stands.
+ */
+const NON_ORDER_FLOW_LABEL: Record<string, string> = {
+  ADVANCE: 'Date change',
+  DELAY: 'Date change',
+  CHANGE_SO: 'SO changed',
+  CANCEL_BALANCE: 'Balance cancelled',
+  PRE_ORDERED_DO_NOT_ORDER: 'Pre-ordered',
+  ALREADY_INBOUND: 'Already inbound',
+  RELEASE: 'Released',
+};
+
+export function flowExclusionLabel(verb: string): string | null {
+  if (verb === 'ORDER') return null;
+  return NON_ORDER_FLOW_LABEL[verb] ?? 'Not an ORDER row';
+}

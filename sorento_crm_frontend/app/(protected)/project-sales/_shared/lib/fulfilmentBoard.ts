@@ -25,6 +25,7 @@ import type {
   BoardDraft,
   BoardOrderStanding,
   BoardRowAxis,
+  ConfirmBorrowComponent,
   ConfirmLine,
   ConfirmReserveComponent,
 } from '../types/fulfilmentPlanning.types';
@@ -314,6 +315,14 @@ function lineFor(
           donor_project_id: row.donor_project_id ?? null,
           qty: row.qty,
           reason: row.reason,
+          // Ladder v2 group borrow (section E.4): round-tripped so the confirmation
+          // checks this row against the donor line's live commitment, not free stock.
+          donor_core_line_id: row.donor_core_line_id ?? null,
+          donor_so_number: row.donor_so_number ?? null,
+          donor_line_no: row.donor_line_no ?? null,
+          donor_agent_code: row.donor_agent_code ?? null,
+          same_agent: row.same_agent ?? false,
+          donor_required_date: row.donor_required_date ?? null,
         })),
       buy_qty: fromMinor(buy),
       buy_reason: buyReason,
@@ -361,15 +370,40 @@ function lineFor(
     project_line_id: contribution.project_line_id,
     timely_spo_qty: fromMinor(incoming),
     reserve,
-    // The board never PROPOSES a Borrow: it crosses locations, and the board allocates per
-    // (product, location) only (13.7, deviation 8). One composed by hand in the editor takes
-    // the branch above.
-    borrow: [],
+    // Ladder v2 (section E rules 4/5): group borrow and cross-group borrow are now
+    // AUTO-PROPOSED, so an approved-as-is line can carry one - posted verbatim, the same
+    // way `reserve` is, because it was the engine's own donor and reason, not a person's.
+    borrow: borrowComponents(contribution),
     buy_qty: fromMinor(buy),
     buy_reason: buyReason,
     // Present only on the legacy single-number amendment, which is still an override.
     amend_reason: decision.verdict === 'amended' ? decision.reason : undefined,
   };
+}
+
+/**
+ * The engine's own auto-proposed borrows (group / cross-group, section E rules 4/5),
+ * posted exactly as the proposal named them - donor, warehouse and reason included. An
+ * approved line never edits these, so there is nothing to re-derive: a source without an
+ * addressable warehouse is dropped rather than posted as a guess, the same rule
+ * `reserveWarehouses` follows.
+ */
+function borrowComponents(contribution: BoardContribution): ConfirmBorrowComponent[] {
+  return contribution.sources
+    .filter((source) => source.kind === 'borrow' && source.warehouse_id && toMinor(source.qty) > 0)
+    .map((source) => ({
+      source: 'other_location',
+      warehouse_id: source.warehouse_id as string,
+      donor_project_id: null,
+      qty: source.qty,
+      reason: source.reason,
+      donor_core_line_id: source.donor_core_line_id ?? null,
+      donor_so_number: source.donor_so_number ?? null,
+      donor_line_no: source.donor_line_no ?? null,
+      donor_agent_code: source.donor_agent_code ?? null,
+      same_agent: source.same_agent ?? false,
+      donor_required_date: source.donor_required_date ?? null,
+    }));
 }
 
 /** An amendment composed in the editor, which replaces whatever was there before. */
@@ -710,6 +744,52 @@ export function boardAxis(
 /** Sales-order numbers, customer names and project labels all read best in their own order. */
 function byLabel(left: BoardAxisRow, right: BoardAxisRow): number {
   return left.label.localeCompare(right.label);
+}
+
+/**
+ * The proposal, as one line of text - the same summary a cell's own composition strip shows,
+ * read off a single contribution rather than a cell (D2, the board's List view).
+ *
+ * A line with no proposal reads what it IS rather than a blank cell: unplannable states the
+ * reason, and a line that is neither unplannable nor holds a source is "Nothing proposed",
+ * never an empty string a table would render as a gap nobody can explain.
+ */
+export function proposalSummaryFor(contribution: BoardContribution): string {
+  if (contribution.unplannable) return 'Needs a location';
+  const parts = contribution.sources
+    .filter((source) => toMinor(source.qty) > 0)
+    .map((source) => `${sourceLabel(source)} ${source.qty}${sourceSuffix(source)}`);
+  return parts.length > 0 ? parts.join(' · ') : 'Nothing proposed';
+}
+
+/**
+ * The word a source reads as, ladder v2's own rung vocabulary
+ * (`PLAN-demo-followups-19aug-ladder-v2.md` section E) where it names one: Pool / Group
+ * take / Group borrow / Cross-group borrow, rather than the bare "Reserve" / "Borrow" the
+ * balance-invariant `kind` carries. A source with no rung (incoming, buy, a pre-v2 row)
+ * reads by its kind, unchanged.
+ */
+function sourceLabel(source: BoardContribution['sources'][number]): string {
+  if (source.rung === 'pool') return 'Pool';
+  if (source.rung === 'group_take') return 'Group take';
+  if (source.rung === 'group_borrow') return 'Group borrow';
+  if (source.rung === 'cross_group_borrow') return 'Cross-group borrow';
+  if (source.kind === 'reserve') return 'Reserve';
+  if (source.kind === 'timely_spo') return 'Incoming';
+  if (source.kind === 'buy') return 'Buy';
+  if (source.kind === 'borrow') return 'Borrow';
+  return 'Cannot be sourced';
+}
+
+/** "at MWH-BB", or "from SO371334 line 2" for a group borrow, which names a donor SO. */
+function sourceSuffix(source: BoardContribution['sources'][number]): string {
+  if (source.rung === 'group_borrow' && source.donor_so_number) {
+    const line = source.donor_line_no !== null && source.donor_line_no !== undefined
+      ? ` line ${source.donor_line_no}`
+      : '';
+    return ` from ${source.donor_so_number}${line}`;
+  }
+  return source.location ? ` at ${source.location}` : '';
 }
 
 /**

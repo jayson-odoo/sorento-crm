@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from app.api.v1.scm import (
     analytics,
     config,
+    container_requests,
     coverage,
     dashboard,
     decisions,
@@ -46,5 +47,6 @@ router.include_router(order_summary.router)
 router.include_router(plan_exceptions.router)
 router.include_router(purchase_history.router)
 router.include_router(fulfilment.router)
+router.include_router(container_requests.router)
 router.include_router(proforma_invoices.router)
 router.include_router(simulation.router)

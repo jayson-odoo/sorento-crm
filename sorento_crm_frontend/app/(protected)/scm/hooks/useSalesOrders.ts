@@ -6,6 +6,7 @@ import {
   createSalesOrder,
   deleteSalesOrder,
   getSalesOrder,
+  getSalesOrderAgents,
   getSalesOrders,
   updateSalesOrder,
 } from '../services/salesOrderService';
@@ -26,6 +27,9 @@ interface UseSalesOrdersParams {
   customerId?: string | null;
   /** Keep only orders with quantity still owed. `false` narrows nothing. */
   outstanding?: boolean;
+  salesAgentId?: string | null;
+  /** The planning class: 'project' | 'retail' | 'unclassified'. Null for all. */
+  demandClass?: string | null;
 }
 
 export function useSalesOrders(params: UseSalesOrdersParams) {
@@ -45,6 +49,8 @@ export function useSalesOrders(params: UseSalesOrdersParams) {
         dateTo: params.dateTo ?? null,
         customerId: params.customerId ?? null,
         outstanding: params.outstanding ?? false,
+        salesAgentId: params.salesAgentId ?? null,
+        demandClass: params.demandClass ?? null,
       }),
     staleTime: 10_000,
     refetchOnWindowFocus: false,
@@ -59,6 +65,17 @@ export function useSalesOrder(id: string | null) {
     queryFn: () => getSalesOrder(id as string),
     enabled: !!id,
     staleTime: 5_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+/** Active sales agents, for the Agent filter and the detail page's Agent select. */
+export function useSalesOrderAgents() {
+  return useQuery({
+    queryKey: ['scm', 'sales-order-agents'],
+    queryFn: getSalesOrderAgents,
+    staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
     retry: 1,
   });

@@ -140,6 +140,44 @@ describe('ReorderExplanationDialog', () => {
     expect(screen.getByText('High confidence')).toBeInTheDocument();
   });
 
+  it('names a missing review period in words, never "- days" (21 Aug fix)', () => {
+    render(
+      <ReorderExplanationDialog
+        rec={rec({ review_days: null })}
+        open
+        onOpenChange={() => {}}
+      />,
+    );
+    const oupStep = screen.getByText('Order-up-to target').parentElement?.parentElement;
+    expect(oupStep?.textContent).toContain('no review period set for this policy');
+    expect(oupStep?.textContent).not.toMatch(/- days/);
+  });
+
+  it('names a missing lead time in words, never "- days" (21 Aug fix)', () => {
+    render(
+      <ReorderExplanationDialog
+        rec={rec({ lead_time_days: null, lead_time_source: null })}
+        open
+        onOpenChange={() => {}}
+      />,
+    );
+    const leadStep = screen.getByText('Lead time').parentElement?.parentElement;
+    expect(leadStep?.textContent).toContain('no lead time on file');
+    expect(leadStep?.textContent).not.toMatch(/- days/);
+  });
+
+  it('names the outstanding PO leg in Net position\'s arithmetic when it is nonzero (21 Aug fix)', () => {
+    render(
+      <ReorderExplanationDialog
+        rec={rec({ outstanding_po: 50 })}
+        open
+        onOpenChange={() => {}}
+      />,
+    );
+    const netStep = screen.getByText('Net position').parentElement?.parentElement;
+    expect(netStep?.textContent).toContain('On hand + on order + open PO − committed');
+  });
+
   it('explains a DISPOSITION recommendation with the demand behind its days-of-cover', () => {
     render(
       <ReorderExplanationDialog

@@ -274,6 +274,27 @@ export function FulfilmentPlanningClient() {
         meta: { headerTitle: 'Customer', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
+        // Who sold it. Not sortable - `agent_code` is not in `FULFILMENT_PLANNING_SORT_FIELDS`
+        // - so the map below leaves it a plain header rather than offering a control the
+        // server cannot honour.
+        id: 'agent_code',
+        header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
+        cell: ({ row }) =>
+          row.original.agent_code ? (
+            <span
+              className="block truncate tabular-nums"
+              title={row.original.agent_label ?? row.original.agent_code}
+            >
+              {row.original.agent_code}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">Not stated</span>
+          ),
+        size: 110,
+        minSize: 90,
+        meta: { headerTitle: 'Agent', skeleton: <Skeleton className="h-4 w-14" /> },
+      },
+      {
         // Named for the field the server sorts on, so the grid's column id, the sort key and
         // the wire field are one word rather than three that have to be kept in step.
         id: 'project_label',

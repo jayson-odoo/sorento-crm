@@ -66,6 +66,19 @@ export interface OrderQtyRounding {
 }
 
 /**
+ * "Nd label", or `null` when the day count itself is absent (21 Aug fix).
+ *
+ * The ledger used to glue `fmtInt(null)` (the em-dash, `-`) straight onto the unit -
+ * `-d review`, `-d lead` - which reads as a formatting bug, not as "no review period is
+ * configured for this policy". The caller renders a real sentence in that case instead
+ * (see `AutoDerivation`); this only ever returns a term worth showing.
+ */
+export function daysTerm(days: number | null | undefined, label: string): string | null {
+  if (days == null) return null;
+  return `${Math.round(days)}d ${label}`;
+}
+
+/**
  * The rounding a RECORDED buy goes through, wherever the buyer typed it.
  *
  * The ledger replayed `roundOrderQty` and the two other controls did not, so accepting a

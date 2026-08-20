@@ -30,7 +30,14 @@ export interface PlanRowOrderQtyInputs {
   reorder_point: number | null;
   order_up_to: number | null;
   rounded_qty: number;
+  /** The MoQ actually applied - the buyer's own override when set, else the frozen
+   *  master figure (20 Aug live test). */
   moq: number | null;
+  /** The frozen master figure, even while overridden - lets the MOQ cell show
+   *  "master N" beside the buyer's edit. */
+  master_moq: number | null;
+  /** True when `moq` is the buyer's own figure rather than the master value. */
+  moq_is_override: boolean;
   order_multiple: number | null;
 }
 
@@ -173,6 +180,8 @@ export function recToPlanRow(rec: ReorderRecommendation): M8PlanRow {
       order_up_to: rec.order_up_to,
       rounded_qty: orderQty,
       moq: rec.moq,
+      master_moq: rec.master_moq ?? null,
+      moq_is_override: rec.moq_is_override ?? false,
       order_multiple: rec.order_multiple,
     },
     alternatives: supplierOptionsFor(rec),

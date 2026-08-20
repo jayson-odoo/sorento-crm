@@ -9,8 +9,10 @@
  *
  *  1) Net breakdown (M8-A1)
  *     GET /api/v1/scm/recommendations/{rec_id}/explain-net
- *       → 200 { on_hand, on_order, committed, net,
+ *       → 200 { on_hand, on_order, po_ordered, committed, net,
  *               committed_sos: [{ so_number, qty, customer_name, order_date }] }
+ *       (21 Aug fix: `po_ordered` is a NEW leg - the sizing engine nets the open PO book
+ *        into `net`, so `on_hand + on_order + po_ordered - committed == net`.)
  *
  *  2) Days-cover demand (M8-A2)
  *     GET /api/v1/scm/analytics/explain/demand?product_id=&warehouse_id=
@@ -30,10 +32,14 @@ export interface NetCommittedSo {
   order_date: string | null;
 }
 
-/** Net breakdown for a rec's product×warehouse (M8-A1). */
+/** Net breakdown for a rec's product×warehouse (M8-A1).
+ *
+ * `po_ordered` (21 Aug fix) is the outstanding PO leg the sizing engine already nets into
+ * `net` - `on_hand + on_order + po_ordered - committed == net`. */
 export interface NetBreakdownResult {
   on_hand: number;
   on_order: number;
+  po_ordered: number;
   committed: number;
   net: number;
   committed_sos: NetCommittedSo[];

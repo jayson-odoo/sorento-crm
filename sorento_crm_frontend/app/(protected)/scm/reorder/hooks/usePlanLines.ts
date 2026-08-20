@@ -4,8 +4,10 @@ import { useCallback, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   amendLevelSuggestion,
+  clearPlanRowDecision,
   getCoverSources,
   getLevelSuggestions,
+  getPlanRowDecisions,
   getPoBook,
   getPriceHistory,
   getProductEconomics,
@@ -13,10 +15,12 @@ import {
   getPurchaseTrend,
   getTrajectory,
   recordLifecycleDecision,
+  recordPlanRowDecision,
   getBuyRecommendationsForCash,
   getAllDispositionRecommendations,
   getCoveredRecommendations,
   getNeedsLevelRecommendations,
+  setMoqOverride,
 } from '../services/reorderRunService';
 import { toPlanLines, type PlanLine } from '../lib/planLine';
 import {
@@ -27,7 +31,13 @@ import {
   type TakenByWarehouse,
 } from '../lib/coverPlan';
 import { poolWarehouseIdOf } from '../lib/planLine';
-import { planTotals, type PlanDecision, type PlanDecisionMap } from '../lib/planDecisions';
+import {
+  planTotals,
+  serverDecisionsToMap,
+  toRecordPlanRowDecisionPayload,
+  type PlanDecision,
+  type PlanDecisionMap,
+} from '../lib/planDecisions';
 import type { ProductEconomics } from '../lib/productHealth';
 import {
   cheaperAlternative,
@@ -35,7 +45,8 @@ import {
   type CheaperAlternative,
   type PriceAdvice,
 } from '../lib/priceAdvice';
-import { trajectoryKey, type TrajectoryEntry } from '../lib/trajectory';
+import { trajectoryKey, type ChannelTrendEntry, type TrajectoryEntry } from '../lib/trajectory';
+import { isGroupedLine, type PlanChannel } from '../lib/planLineGrouping';
 import type { ProductPhotoStatus } from '../components/ProductPhotoPopover';
 import { levelKey, type LevelSuggestion } from '../lib/levelSuggestion';
 import type { PoReceipt } from '../lib/poCover';
@@ -49,12 +60,19 @@ import type { ProductPurchaseTrend } from '../lib/purchaseTrend';
  * is a field on it. No budget appears anywhere in this hook - it is a question for the review
  * panel, asked of the finished decisions.
  *
- * Decisions are client state for now. They are staged the same way the old screen staged
- * accept and adjust, so persisting them is a matter of posting each one; that lands with the
- * confirm step rather than here, so a half-made decision is never written to the run.
+ * Decisions (S16, captain 21 Aug) are the server's own - `decisions` below is the persisted
+ * `plan_row_decision` list (`GET .../plan-row-decisions`) folded back into the FE's
+ * `PlanDecisionMap`, and `decide`/`clear` write straight through to
+ * `POST`/`DELETE .../recommendations/{rec_id}/decision`. There is no local decision
+ * state left to drift out of step with it.
  */
+/** Cache key for the run's persisted row decisions (S16) - exported so a caller that
+ *  clears a run's decisions server-side (the demo Reset action) can invalidate it. */
+export const planRowDecisionsKey = (runId: string | null) => ['plan-lines', runId, 'row-decisions'];
+
 export function usePlanLines(runId: string | null, enabled = true) {
   const on = Boolean(runId) && enabled;
+  const qc = useQueryClient();
 
   const buys = useQuery({
     queryKey: ['plan-lines', runId, 'buy'],
@@ -83,6 +101,16 @@ export function usePlanLines(runId: string | null, enabled = true) {
     enabled: on,
     // A missing pool means "nothing to cover from", which is a safe reading: the plan then
     // proposes buying, which is what it did before cover existed.
+    retry: false,
+  });
+
+  /** S16: every row decision persisted on this run, plus the "N of Total made" header's
+   *  own server-counted decided/total (see `usePlanLines.decidedCount` /
+   *  `.totalDecidableCount` below). */
+  const planRowDecisions = useQuery({
+    queryKey: planRowDecisionsKey(runId),
+    queryFn: () => getPlanRowDecisions(runId as string),
+    enabled: on,
     retry: false,
   });
 
@@ -201,24 +229,81 @@ export function usePlanLines(runId: string | null, enabled = true) {
         ? 'error'
         : 'loading';
 
-  const [decisions, setDecisions] = useState<Record<string, PlanDecision | undefined>>({});
+  /**
+   * The server's persisted decisions, folded into the FE's own shape - see
+   * `serverDecisionsToMap`. `cover.data?.sources` resolves each stock take's warehouse
+   * CODE back to an id (the server only ever stores/returns the code).
+   */
+  const decisions = useMemo<PlanDecisionMap>(
+    () => serverDecisionsToMap(planRowDecisions.data?.data ?? [], lines, cover.data?.sources ?? {}),
+    [planRowDecisions.data, lines, cover.data],
+  );
 
-  const decide = useCallback((line: PlanLine, next: PlanDecision) => {
-    setDecisions((d) => ({ ...d, [line.id]: next }));
-  }, []);
+  /** The header's own "N of Total made" - counted server-side, never off this session's
+   *  own state (S16). */
+  const decidedCount = planRowDecisions.data?.decided_count ?? 0;
+  const totalDecidableCount = planRowDecisions.data?.total_count ?? 0;
 
-  // Delete the key rather than storing a falsy decision: `undecided` is the absence of an
-  // entry, and every count in `planTotals` reads it that way.
-  const clear = useCallback((line: PlanLine) => {
-    setDecisions((d) => {
-      const next = { ...d };
-      delete next[line.id];
-      return next;
-    });
-  }, []);
+  /**
+   * Record a row decision. A GROUPED (product-grain) line fans the SAME decision out to
+   * every member recommendation id, exactly the way `updateMoq` already fans a MOQ edit
+   * out - this hook is the only place that knows a group row is several real rows
+   * underneath. `Promise.allSettled`, not `Promise.all` (S8, code review 20 Aug, same
+   * doctrine as `updateMoq`): one member's failure must not hide the members that DID
+   * save. Every query is invalidated regardless of outcome, so the grid reflects what
+   * actually changed; a failure is re-thrown (with the count, on a grouped line) for the
+   * caller - which owns the control the buyer is looking at - to toast.
+   */
+  const decide = useCallback(
+    async (line: PlanLine, next: PlanDecision) => {
+      const recIds = isGroupedLine(line)
+        ? line.__group.members.map((m) => m.rec.id)
+        : [line.rec.id];
+      const payload = toRecordPlanRowDecisionPayload(next);
+      const results = await Promise.allSettled(
+        recIds.map((id) => recordPlanRowDecision(id, payload)),
+      );
+      await qc.invalidateQueries({ queryKey: planRowDecisionsKey(runId) });
+      const failures = results.filter(
+        (r): r is PromiseRejectedResult => r.status === 'rejected',
+      );
+      if (failures.length === 0) return;
+      const reason = failures[0].reason;
+      const detail = reason instanceof Error ? reason.message : 'Failed to record the decision.';
+      throw new Error(
+        recIds.length > 1
+          ? `${detail} (${failures.length} of ${recIds.length} locations did not save)`
+          : detail,
+      );
+    },
+    [qc, runId],
+  );
+
+  /** Withdraw a row decision back to undecided - the same per-member fan-out as `decide`. */
+  const clear = useCallback(
+    async (line: PlanLine) => {
+      const recIds = isGroupedLine(line)
+        ? line.__group.members.map((m) => m.rec.id)
+        : [line.rec.id];
+      const results = await Promise.allSettled(recIds.map((id) => clearPlanRowDecision(id)));
+      await qc.invalidateQueries({ queryKey: planRowDecisionsKey(runId) });
+      const failures = results.filter(
+        (r): r is PromiseRejectedResult => r.status === 'rejected',
+      );
+      if (failures.length === 0) return;
+      const reason = failures[0].reason;
+      const detail = reason instanceof Error ? reason.message : 'Failed to clear the decision.';
+      throw new Error(
+        recIds.length > 1
+          ? `${detail} (${failures.length} of ${recIds.length} locations did not save)`
+          : detail,
+      );
+    },
+    [qc, runId],
+  );
 
   const totals = useMemo(
-    () => planTotals(lines, decisions as PlanDecisionMap),
+    () => planTotals(lines, decisions),
     [lines, decisions],
   );
 
@@ -300,9 +385,27 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [movementThresholdPct],
   );
 
-  /** The level suggestion for a line's product+location. Undefined = no opinion. */
+  /**
+   * The level suggestion for a line's product+location. Undefined = no opinion.
+   *
+   * A Product-grain row's `warehouse_id` is null (`planLineGrouping.ts` groups to one row
+   * per product; there IS no single warehouse), so its own key (`${pid}:`) is one the
+   * backend never writes - `suggestions_for_run` only ever emits real `(product,
+   * warehouse)` pairs. Falling back across the group's own MEMBER rows (each a genuine
+   * per-location pair) is the fix: it reuses the location suggestion a member already has
+   * rather than inventing a product-wide aggregate for a figure (a stocking trigger) that
+   * is not naturally summable across locations the way a quantity is.
+   */
   const levelFor = useCallback(
     (line: PlanLine): LevelSuggestion | undefined => {
+      if (isGroupedLine(line)) {
+        for (const member of line.__group.members) {
+          const key = levelKey(member.product_id, member.warehouse_id);
+          const hit = key ? levels.data?.suggestions[key] : undefined;
+          if (hit) return hit;
+        }
+        return undefined;
+      }
       const key = levelKey(line.product_id, line.warehouse_id);
       return key ? levels.data?.suggestions[key] : undefined;
     },
@@ -317,9 +420,27 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [purchaseTrend.data],
   );
 
-  /** S15: the open PO lines carrying this product to this warehouse. Empty = none. */
+  /**
+   * S15: the open PO lines carrying this product to this warehouse. Empty = none.
+   *
+   * A Product-grain row's own key (`${pid}:`) does not exist in `po_book` for the same
+   * reason `levelFor` above falls back: grouping never invents a warehouse. Unlike a
+   * level, receipts genuinely ARE a per-location list that sums cleanly, so the group's
+   * figure is every member's own receipts concatenated - the same "what is actually
+   * inbound across this product's locations" reading the summed `on_hand`/`net_position`
+   * fields already give the row.
+   */
   const poFor = useCallback(
     (line: PlanLine): PoReceipt[] => {
+      if (isGroupedLine(line)) {
+        const out: PoReceipt[] = [];
+        for (const member of line.__group.members) {
+          const key = levelKey(member.product_id, member.warehouse_id);
+          const hit = key ? poBook.data?.po_book[key] : undefined;
+          if (hit) out.push(...hit);
+        }
+        return out;
+      }
       const key = levelKey(line.product_id, line.warehouse_id);
       return (key ? poBook.data?.po_book[key] : undefined) ?? [];
     },
@@ -327,7 +448,6 @@ export function usePlanLines(runId: string | null, enabled = true) {
   );
 
   /** S14: record (or withdraw, with null) the buyer's own figure beside the engine's. */
-  const qc = useQueryClient();
   const amendLevel = useCallback(
     async (s: LevelSuggestion, amended: number | null) => {
       await amendLevelSuggestion({
@@ -340,12 +460,66 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [qc, runId],
   );
 
+  /**
+   * 20 Aug live test: record (or withdraw, with null) the buyer's own MoQ for a line.
+   *
+   * Grouped rows apply the SAME override to every member (MOQ is a supplier/product fact,
+   * not a per-location one - captain's 20 Aug ruling in `planLineGrouping.ts`); an ungrouped
+   * row writes its own single recommendation. Either way the write returns the recalculated
+   * figures, but this still invalidates the underlying fetches so the numbers a fresh page
+   * load would see and the numbers this session shows never drift apart.
+   *
+   * S8 (code review, 20 Aug 2026): the per-member writes are NOT atomic - `Promise.allSettled`,
+   * not `Promise.all`, so one rejection cannot hide the members that DID save. Every query is
+   * still invalidated afterwards regardless of outcome, so the grid reflects which members
+   * actually changed rather than a stale figure that papers over a group half applied. A
+   * failure is re-thrown (with the count, on a grouped line) rather than swallowed here, so
+   * the caller - which owns the input the buyer is looking at - is the one that tells them.
+   */
+  const updateMoq = useCallback(
+    async (line: PlanLine, moq: number | null) => {
+      const recIds = isGroupedLine(line)
+        ? line.__group.members.map((m) => m.rec.id)
+        : [line.rec.id];
+      const results = await Promise.allSettled(recIds.map((id) => setMoqOverride(id, moq)));
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'buy'] }),
+        qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'covered'] }),
+        qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'disposition'] }),
+      ]);
+      const failures = results.filter(
+        (r): r is PromiseRejectedResult => r.status === 'rejected',
+      );
+      if (failures.length === 0) return;
+      const reason = failures[0].reason;
+      const detail = reason instanceof Error ? reason.message : 'Failed to save the MOQ.';
+      throw new Error(
+        recIds.length > 1
+          ? `${detail} (${failures.length} of ${recIds.length} locations did not save)`
+          : detail,
+      );
+    },
+    [qc, runId],
+  );
+
   /** The order trend for a line's product+side. Undefined = no opinion, render nothing. */
   const trendFor = useCallback(
     (line: PlanLine): TrajectoryEntry | undefined => {
       const key = trajectoryKey(line.product_id, line.rec.segment);
       return key ? trend.data?.series[key] : undefined;
     },
+    [trend.data],
+  );
+
+  /**
+   * The order trend for one PRODUCT'S channel (5.3 grouped view - "what is the trend in
+   * project, what is the trend in retail"). Additive to `trendFor` above, which stays keyed
+   * by warehouse segment for the ungrouped grid; this reads `channel_trends`, keyed by
+   * `sales_orders.demand_class`. Undefined = no opinion, render nothing.
+   */
+  const channelTrendFor = useCallback(
+    (productId: string | null, channel: PlanChannel): ChannelTrendEntry | undefined =>
+      productId ? trend.data?.channel_trends?.[productId]?.[channel] : undefined,
     [trend.data],
   );
 
@@ -369,14 +543,20 @@ export function usePlanLines(runId: string | null, enabled = true) {
 
   return {
     lines,
-    decisions: decisions as PlanDecisionMap,
+    decisions,
     decide,
     clear,
+    // The "N of Total made" header's own server-counted figures (S16) - the caller no
+    // longer derives them from `decisions`/`totals`, which count whatever is on screen
+    // right now rather than what the backend actually holds.
+    decidedCount,
+    totalDecidableCount,
     totals,
     coverFor,
     priceFor,
     cheaperFor,
     trendFor,
+    channelTrendFor,
     levelFor,
     poFor,
     purchaseTrendFor,
@@ -395,6 +575,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
       dead_turnover_months: 6,
     },
     amendLevel,
+    updateMoq,
     levelSuggestions: levels.data?.suggestions ?? {},
     staleAfterDays: prices.data?.stale_after_days ?? 180,
     coverSources: cover.data?.sources ?? {},

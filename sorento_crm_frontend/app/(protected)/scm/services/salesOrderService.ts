@@ -4,16 +4,32 @@
  * ============================================================================
  * Mounted under `require_module_enabled_with_api_key("scm")` at
  * `/api/v1/scm/sales-orders`. Reads gate on `scm.dashboard.view`; writes gate on
- * `scm.reorder.run`. No UUIDs surfaced - SO identified by so_number in the UI,
- * addressed by id in the path. `uom` is display-only (product base UOM) and is
- * NOT sent on write; the BE stamps it from the product.
+ * `scm.reorder.run`. No UUIDs surfaced - SO identified by so_number in the UI, a line's
+ * warehouse by its code, addressed by id in the path.
  *
  *   GET    /sales-orders            list (page/limit/sort/dir/query/status/priority/source,
-                                   date_from/date_to/customer_id/outstanding)
+                                   date_from/date_to/customer_id/outstanding/sales_agent_id,
+                                   demand_class: project | retail | unclassified)
+ *   GET    /sales-orders/agents     sales-agent options for the Agent filter/select. Gated on
+ *                                   `scm.dashboard.view` - the same read permission as this
+ *                                   whole router - rather than the sales-agents master's own
+ *                                   `master_data.sales_agents.view`, which a role like
+ *                                   Purchasing does not hold.
+ *   GET    /sales-orders/uoms       active unit-of-measure options for the line UoM select.
+ *                                   Same `scm.dashboard.view` gate as `agents` above, for the
+ *                                   same reason - not the master data `/units-of-measure
+ *                                   /select`'s `master_data.units_of_measure.view`.
  *   GET    /sales-orders/{id}       single
  *   POST   /sales-orders            create (order_type, customer_code, priority,
- *                                   requested_delivery_date?, lines:[{sku,qty_ordered}])
- *   PUT    /sales-orders/{id}       update (partial)
+ *                                   requested_delivery_date?, sales_agent_id?,
+ *                                   lines:[{sku,qty_ordered}])
+ *   PUT    /sales-orders/{id}       update (partial; lines:[{id?,sku,qty_ordered,
+ *                                   warehouse_code?,required_date?,uom?}] upserts by id/SKU).
+ *                                   Response is `SalesOrder` plus `planning_change_batch`
+ *                                   ({id, order_count, line_count} | null) - set when the
+ *                                   edit changed a project-linked line's qty/date, the SAME
+ *                                   reaction an uploaded book raises
+ *                                   (`outstandingImportService`'s own `planning_change_batch`).
  *   DELETE /sales-orders/{id}       hard delete (204)
  *   POST   /sales-orders/{id}/create-do   → { sales_order, do_number }
  * ============================================================================
@@ -41,15 +57,24 @@ export interface SalesOrderListQuery {
   customerId?: string | null;
   /** Keep only orders with quantity still owed. `false` narrows nothing. */
   outstanding?: boolean;
+  salesAgentId?: string | null;
+  /** The planning class: 'project' | 'retail' | 'unclassified' (demand_class IS NULL).
+   *  Omit for all. */
+  demandClass?: string | null;
 }
 
 /**
- * Strip the display-only `uom` from each line - the BE derives it.
- *
  * `lines` rides through only when the caller sent it. Omitted (not `[]`, not present
  * with the key at all - `JSON.stringify` drops an `undefined` property), an update PUT
- * leaves the order's lines untouched on the BE; sending it, even unchanged, would
- * replace every line and drop whatever warehouse each was assigned.
+ * leaves the order's lines untouched on the BE; sending it, even unchanged, upserts every
+ * line in the array (matched by `id`, or by SKU when a line carries none).
+ *
+ * Per line, `id` / `warehouse_code` / `required_date` / `uom` are forwarded AS GIVEN - the
+ * BE reads `model_fields_set`, so a key this object never had (not `undefined` inside an
+ * object that HAS the key, but the key genuinely absent) leaves that line's stored value
+ * alone, while `null`/`''` clears it. `JSON.stringify` drops an `undefined`-valued key
+ * entirely, which is what makes "the caller never touched this field" reach the BE as
+ * "the key is absent" rather than as an explicit clear.
  */
 function toWritePayload(data: SalesOrderFormData) {
   return {
@@ -57,7 +82,18 @@ function toWritePayload(data: SalesOrderFormData) {
     customer_code: data.customer_code,
     priority: data.priority,
     requested_delivery_date: data.requested_delivery_date ?? null,
-    lines: data.lines?.map((l) => ({ sku: l.sku, qty_ordered: l.qty_ordered })),
+    // `null` here is an explicit "clear the agent", not "leave it alone" - the BE
+    // distinguishes a field it never received from one sent as `null` via
+    // `model_fields_set`, and this key is always present in the JSON body.
+    sales_agent_id: data.sales_agent_id ?? null,
+    lines: data.lines?.map((l) => ({
+      id: l.id,
+      sku: l.sku,
+      qty_ordered: l.qty_ordered,
+      ...(l.warehouse_code !== undefined ? { warehouse_code: l.warehouse_code } : {}),
+      ...(l.required_date !== undefined ? { required_date: l.required_date } : {}),
+      ...(l.uom !== undefined ? { uom: l.uom } : {}),
+    })),
   };
 }
 
@@ -84,6 +120,8 @@ export async function getSalesOrders(
       // Only when ON. Sending `outstanding=false` would put a param on the URL that means
       // "no filter", which then rides into the detail URL and reads as an active filter.
       outstanding: params.outstanding ? 'true' : undefined,
+      sales_agent_id: params.salesAgentId || undefined,
+      demand_class: params.demandClass || undefined,
     },
   );
   const res = await apiFetch(`${BASE}?${sp.toString()}`);
@@ -108,10 +146,26 @@ export async function createSalesOrder(data: SalesOrderFormData): Promise<SalesO
   return res.json();
 }
 
+/** The planning-change batch a save raised, when the edit changed a project-linked line's
+ *  qty/date - the SAME reaction an uploaded book raises for the identical change
+ *  (`PLAN-so-book-diff-replanning.md` section 2). Same shape as
+ *  `outstandingImportService`'s `OutstandingPlanningChangeBatch`. */
+export interface SalesOrderPlanningChangeBatch {
+  id: string;
+  order_count: number;
+  line_count: number;
+}
+
+/** `SalesOrder` plus the batch THIS save raised. `null` on every save that raised nothing -
+ *  most of them, and every create/read (this field only ever comes back from the PUT). */
+export interface SalesOrderUpdateResult extends SalesOrder {
+  planning_change_batch: SalesOrderPlanningChangeBatch | null;
+}
+
 export async function updateSalesOrder(
   id: string,
   data: SalesOrderFormData,
-): Promise<SalesOrder> {
+): Promise<SalesOrderUpdateResult> {
   const res = await apiFetch(`${BASE}/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -124,6 +178,49 @@ export async function updateSalesOrder(
 export async function deleteSalesOrder(id: string): Promise<void> {
   const res = await apiFetch(`${BASE}/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete sales order'));
+}
+
+/** One `sales_agents` row, as `GET /sales-orders/agents` serves it. */
+export interface SalesOrderAgent {
+  id: string;
+  sales_agent: string;
+  person_label: string | null;
+  location_group: string | null;
+}
+
+/**
+ * Active sales agents, for the list's Agent filter and the detail page's Agent select.
+ *
+ * Served off THIS router (`scm.dashboard.view`) rather than the sales-agents master's own
+ * `GET /master-data/sales-agents/` (`master_data.sales_agents.view`) - a role that can read
+ * SCM sales orders does not necessarily hold the master-data permission too, and would
+ * otherwise 403 on this select alone.
+ */
+export async function getSalesOrderAgents(): Promise<SalesOrderAgent[]> {
+  const res = await apiFetch(`${BASE}/agents`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load sales agents'));
+  return res.json();
+}
+
+/** One active `units_of_measure` row, as `GET /sales-orders/uoms` serves it. */
+export interface SalesOrderUom {
+  id: string;
+  uom_code: string;
+  uom_name: string;
+}
+
+/**
+ * Active units of measure, for the detail page's line UoM select.
+ *
+ * Served off THIS router (`scm.dashboard.view`), same reasoning as `getSalesOrderAgents`
+ * above - the master data `/units-of-measure/select` route gates on
+ * `master_data.units_of_measure.view`, which a role that can edit SCM sales orders does
+ * not necessarily hold.
+ */
+export async function getSalesOrderUoms(): Promise<SalesOrderUom[]> {
+  const res = await apiFetch(`${BASE}/uoms`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load units of measure'));
+  return res.json();
 }
 
 export async function createDoFromSalesOrder(

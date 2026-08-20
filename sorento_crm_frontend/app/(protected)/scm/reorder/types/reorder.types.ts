@@ -203,8 +203,18 @@ export interface ReorderRecommendation {
   safety_days: number | null;
   /** Review-period days folded into the order-up-to target. */
   review_days: number | null;
-  /** Supplier minimum order quantity applied when rounding. */
+  /**
+   * The MoQ `order_qty` was actually rounded against - the buyer's own override when
+   * they have set one (20 Aug live test), else the frozen master figure from
+   * `product_suppliers`. Editable on buy/covered rows; null on every other type.
+   */
   moq: number | null;
+  /** The frozen master MoQ (`product_suppliers.moq` at run time), even when a buyer
+   *  override is in effect - so the cell can show "master 12" beside the edited value.
+   *  Null on rows where MoQ never applies. */
+  master_moq?: number | null;
+  /** True when `moq` is the buyer's own figure rather than the master value. */
+  moq_is_override?: boolean;
   /** Supplier pack / order multiple applied when rounding. */
   order_multiple: number | null;
   /**
@@ -293,6 +303,11 @@ export interface ReorderRecommendation {
    *  `incoming_spo` is stock on the water; `outstanding_po` is the ordered-not-received
    *  purchase book. Two different questions, kept apart. */
   on_hand?: number | null;
+  /** Stock sitting at a project-held bin this location's pool feeds - visible, but NOT
+   *  part of `on_hand` (captain, 20 Aug: "the on hand need to consider pool quantity
+   *  only ... project on hand quantity is not really an actual usable quantity"). 0 at
+   *  a pool root, the bin's own stock at a bin. Never silently dropped from the screen. */
+  project_on_hand?: number | null;
   incoming_spo?: number | null;
   outstanding_po?: number | null;
   outstanding_sales?: number | null;
@@ -369,6 +384,18 @@ export interface ReorderRecommendation {
    */
   unclassified_need?: number | null;
   /**
+   * front-planning follow-up (19-20 Aug): the RAW `committed_v` split - this location's
+   * OPEN demand by channel, before Project narrows to the confirmed-for-buy subset above.
+   * The grouped Product view's channel COLUMNS read these (summed across a product's
+   * locations), not `project_need`/`retail_need`/`unclassified_need`, because a buyer
+   * reading "Project" as a column wants everything on a project-class order, not only the
+   * firm leg the engine already bypassed netting for. The three sum to
+   * `outstanding_sales`, the same invariant `committed_v` guarantees per location.
+   */
+  project_committed?: number | null;
+  retail_committed?: number | null;
+  unclassified_committed?: number | null;
+  /**
    * True when this run is decided at the Product grain, or is legacy, so the
    * per-location row is a read and drill row rather than a decision surface
    * (AC-F02 / AC-F09). The per-location view is never retired by Product grain.
@@ -413,4 +440,11 @@ export interface CreateReorderRunRequest {
   budget_id?: string | null;
   /** M7 - opt-in: factor market-trend signals into the funding priority (rank), not qty. */
   include_market?: boolean;
+  /**
+   * "Plan until" (captain, 20 Aug). Omitted/undefined plans every open SO line regardless
+   * of when it is needed - the default, unchanged behaviour. When set (`YYYY-MM-DD`),
+   * demand needed AFTER it is excluded from this run's netting; demand carrying no date
+   * is always still counted.
+   */
+  plan_horizon_date?: string | null;
 }

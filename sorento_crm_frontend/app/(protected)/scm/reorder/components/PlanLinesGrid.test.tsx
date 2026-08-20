@@ -30,6 +30,21 @@ if (!window.matchMedia) {
   });
 }
 
+// The grouped-expand panel's live per-location figures (`GroupMembersPanel`) come off
+// `useLocationStock`, a real network fetch this suite has no server behind. Mocked so the
+// "skeleton while loading / values after / EM_DASH for an unmatched location / negative
+// Available in destructive tone" tests below control exactly what the panel sees, instead
+// of asserting against whatever a failed jsdom fetch happens to leave in react-query state.
+const locationStockState: {
+  isLoading: boolean;
+  data: { as_of: string; locations: Array<Record<string, unknown>> } | undefined;
+} = { isLoading: false, data: undefined };
+
+vi.mock('../hooks/useReorderRun', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../hooks/useReorderRun')>();
+  return { ...actual, useLocationStock: () => locationStockState };
+});
+
 // The filter popover uses the standard SearchableSelect. Mock it as a native <select> so
 // the options are in the DOM without driving a cmdk popover - the assertions here are
 // about which ROWS survive a filter, not about popover mechanics.
@@ -119,7 +134,11 @@ function renderGrid(
   return { onDecide, onClear };
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  locationStockState.isLoading = false;
+  locationStockState.data = undefined;
+});
 
 describe('PlanLinesGrid - one list', () => {
   it('shows every kind of line in the same table', () => {
@@ -150,7 +169,9 @@ describe('PlanLinesGrid - the netting is on the row', () => {
                        outstanding_po: 2, order_qty: 14 })]);
     expect(screen.getByText('SO')).toBeInTheDocument();
     expect(screen.getByText('SPO')).toBeInTheDocument();
-    expect(screen.getByText('PO')).toBeInTheDocument();
+    // Fix-cluster (2026-08-20): retitled "PO" -> "PO outstanding" so a 0 there stops
+    // reading as "the plan itself has no PO column" - see PlanLinesGrid.tsx.
+    expect(screen.getByText('PO outstanding')).toBeInTheDocument();
     const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
     expect(within(row).getByText('24')).toBeInTheDocument(); // SO (needed)
     expect(within(row).getByText('5')).toBeInTheDocument(); // on hand
@@ -281,7 +302,10 @@ describe('PlanLinesGrid - the explanations are still there', () => {
   // faith, so they are pinned here.
   it('offers the demand and checklist drills beside the product', () => {
     renderGrid([line()]);
-    expect(screen.getByRole('button', { name: /Demand behind this row/i })).toBeInTheDocument();
+    // Exact match: the ungrouped grid's Project/Retail/Unclass. cells (21 Aug follow-up)
+    // carry their OWN "<Channel> demand behind this row" triggers, which a substring
+    // match against "Demand behind this row" would also catch.
+    expect(screen.getByRole('button', { name: 'Demand behind this row' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /What the plan checked/i })).toBeInTheDocument();
   });
 
@@ -647,9 +671,10 @@ describe('the column story - result first, explanation after (2026-08-11 markup)
     expect(at('Suggested qty')).toBeGreaterThan(at('Order type'));
     expect(at('SO')).toBeGreaterThan(at('Suggested qty'));
     expect(at('SPO')).toBeGreaterThan(at('On hand'));
-    expect(at('PO')).toBeGreaterThan(at('SPO'));
+    // Fix-cluster (2026-08-20): retitled "PO" -> "PO outstanding" - see PlanLinesGrid.tsx.
+    expect(at('PO outstanding')).toBeGreaterThan(at('SPO'));
     // Chapter 2: ONE Decision cell carries the suggestion AND takes it (merged, 2026-08-12).
-    expect(at('Decision')).toBeGreaterThan(at('PO'));
+    expect(at('Decision')).toBeGreaterThan(at('PO outstanding'));
     // Chapter 3: price and supplier first, the total they produce after.
     expect(at('Suggested price')).toBeGreaterThan(at('Decision'));
     expect(at('Suggested supplier')).toBeGreaterThan(at('Suggested price'));
@@ -986,5 +1011,553 @@ describe('PlanLinesGrid - product photo on the row (AC-7)', () => {
     expect(onOpenPhoto).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: /product photo/i }));
     expect(onOpenPhoto).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('PlanLinesGrid - product-grain channel grouping (5.3 follow-up, 19-20 Aug)', () => {
+  // The captain's refined ask, superseding the first (product, channel) cut: 1 product
+  // across 3 warehouses (1 bare-site Retail, 2 suffixed-bin Project) collapses into ONE
+  // row per PRODUCT, with Project/Retail as dynamic COLUMNS on that single row - "instead
+  // of 1 column SO, 1 column project, 1 column retail, it should be 2 columns".
+  const retail = line({
+    id: 'a', warehouse_id: 'w-brw', warehouse_code: 'BRW', warehouse_name: 'Butterworth',
+    segment: 'dealer', rank: 1, order_qty: 3,
+    retail_committed: 6, project_committed: 0, unclassified_committed: 0, project_need: 0,
+  });
+  const projectIb = line({
+    id: 'b', warehouse_id: 'w-ib', warehouse_code: 'BRW-IB', warehouse_name: 'BRW - IB',
+    segment: 'project', rank: 2, order_qty: 4,
+    retail_committed: 0, project_committed: 5, unclassified_committed: 0, project_need: 3,
+  });
+  const projectIr = line({
+    id: 'c', warehouse_id: 'w-ir', warehouse_code: 'BRW-IR', warehouse_name: 'BRW - IR',
+    segment: 'project', rank: 3, order_qty: 5,
+    retail_committed: 0, project_committed: 2, unclassified_committed: 0, project_need: 1,
+  });
+
+  function renderGroupedGrid(
+    lines: PlanLine[],
+    channelTrendFor?: (productId: string | null, channel: 'project' | 'retail' | 'unclassified') =>
+      { verdict: 'rising' | 'holding' | 'falling' | 'quiet' | 'no_history'; recent_qty: number;
+        previous_qty: number; change_pct: number | null; window_months: number;
+        avg_day: number | null } | undefined,
+    // S16 (captain, 21 Aug, 3rd time requested): a grouped row is a decision surface too
+    // now - `decisionsReadOnly` defaults OFF here, unlike the fixture's old default, which
+    // locked every grouped row unconditionally. Passed explicitly only by the tests that
+    // still exercise a genuine legacy-run lock.
+    options: { decisions?: PlanDecisionMap; decisionsReadOnly?: boolean; readOnlyReason?: string } = {},
+  ) {
+    const onDecide = vi.fn();
+    const onClear = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <PlanLinesGrid
+          lines={lines}
+          decisions={options.decisions ?? {}}
+          onDecide={onDecide}
+          onClear={onClear}
+          groupByChannel
+          decisionsReadOnly={options.decisionsReadOnly ?? false}
+          readOnlyReason={options.readOnlyReason ?? null}
+          channelTrendFor={channelTrendFor}
+          staleAfterDays={180}
+        />
+      </QueryClientProvider>,
+    );
+    return { onDecide, onClear };
+  }
+
+  it('an ungrouped (Location-grain) plan renders the fixture exactly as before: 3 rows', () => {
+    renderGrid([retail, projectIb, projectIr]);
+    expect(screen.getAllByText('SKU-1')).toHaveLength(3);
+    expect(screen.getByText('Butterworth')).toBeInTheDocument();
+    expect(screen.getByText('BRW - IB')).toBeInTheDocument();
+    expect(screen.getByText('BRW - IR')).toBeInTheDocument();
+  });
+
+  it('an ungrouped plan still carries the Order-type badge and the fixed SO/channel columns', () => {
+    renderGrid([retail]);
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).toContain('Order type');
+    expect(heads.some((h) => h.includes('SO'))).toBe(true);
+  });
+
+  it('collapses all 3 rows of the same product into a SINGLE row once grouped', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    expect(screen.getAllByText('SKU-1')).toHaveLength(1);
+  });
+
+  it('grouped mode has no Location column - the expand carries the locations instead (captain, 19-20 Aug: "i don\'t need locations column")', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).not.toContain('Location');
+    expect(screen.queryByText('Butterworth, BRW - IB, BRW - IR')).not.toBeInTheDocument();
+  });
+
+  it('an ungrouped (Location-grain) plan keeps the Location column', () => {
+    renderGrid([retail]);
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).toContain('Location');
+  });
+
+  it('grouped mode drops the Order-type badge column and the SO/Project/Retail/Unclassified fixed columns', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).not.toContain('Order type');
+    expect(heads).not.toContain('SO');
+    expect(heads).not.toContain('Unclass.');
+  });
+
+  it('renders dynamic channel columns off what is actually present - Project and Retail here', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).toContain('Project');
+    expect(heads).toContain('Retail');
+    expect(heads).not.toContain('Unclassified');
+  });
+
+  it('each channel column shows that channel\'s open demand, summed across the product\'s locations', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).getByText('7')).toBeInTheDocument(); // project: 0 + 5 + 2
+    expect(within(row).getByText('6')).toBeInTheDocument(); // retail: 6 + 0 + 0
+  });
+
+  // 21 Aug follow-up: the "Orders rising" trend subline is gone from this cell (captain:
+  // "i don't think we need the orders rising thingy") - it never renders even when a
+  // caller still supplies `channelTrendFor` (legacy prop, no longer read by this cell).
+  it('the channel column no longer carries a trend subline, even when channelTrendFor is supplied', () => {
+    const channelTrendFor = vi.fn((productId: string | null, channel: string) =>
+      channel === 'project'
+        ? { verdict: 'rising' as const, recent_qty: 10, previous_qty: 5, change_pct: 100,
+            window_months: 12, avg_day: 2.5 }
+        : undefined,
+    );
+    renderGroupedGrid([retail, projectIb, projectIr], channelTrendFor);
+    expect(screen.queryByText(/Orders rising - consider more/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/avg 2.5\/day/)).not.toBeInTheDocument();
+  });
+
+  // 21 Aug follow-up: "where is the tooltip for me to open at project and retail... on
+  // the TOP row" - the per-channel drill the group panel already had, now on the top
+  // product-grain row's own channel cells too. Live-tested the same day: "you show me
+  // the history, not the demand" for THIS row specifically (the demand list stays the
+  // location member rows' own answer) - so the trigger's own label says "order history".
+  it('the top product-grain row carries its own Project and Retail order-history drill triggers', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    expect(
+      screen.getByRole('button', { name: 'Project order history' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Retail order history' }),
+    ).toBeInTheDocument();
+  });
+
+  it('sums order qty across the group\'s warehouses', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).getByText('12')).toBeInTheDocument(); // 3 + 4 + 5
+  });
+
+  it('expanding the group row reveals its 3 underlying per-warehouse rows', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    expect(screen.queryByText('BRW - IB')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('SKU-1'));
+    expect(screen.getByText('Butterworth')).toBeInTheDocument();
+    expect(screen.getByText('BRW - IB')).toBeInTheDocument();
+    expect(screen.getByText('BRW - IR')).toBeInTheDocument();
+  });
+
+  it('the expand hides a location whose every figure is zero (captain, 19-20 Aug: "if 0 quantity why show here")', () => {
+    const allZero = line({
+      id: 'z', warehouse_id: 'w-zero', warehouse_code: 'BRW-Z', warehouse_name: 'Zero Loc',
+      segment: 'dealer', rank: 5, order_qty: 0, on_hand: 0, incoming_spo: 0, outstanding_po: 0,
+      outstanding_sales: 0, project_need: 0, retail_need: 0, unclassified_need: 0,
+    });
+    renderGroupedGrid([retail, projectIb, projectIr, allZero]);
+    fireEvent.click(screen.getByText('SKU-1'));
+    expect(screen.getByText('Butterworth')).toBeInTheDocument();
+    expect(screen.getByText('BRW - IB')).toBeInTheDocument();
+    expect(screen.getByText('BRW - IR')).toBeInTheDocument();
+    expect(screen.queryByText('Zero Loc')).not.toBeInTheDocument();
+  });
+
+  it('never empties the expand entirely - every member is shown when ALL of them are zero', () => {
+    const allZero1 = line({
+      id: 'z1', product_id: 'p9', sku: 'SKU-ZERO', warehouse_id: 'w-z1', warehouse_name: 'Zero 1',
+      segment: 'dealer', rank: 5, order_qty: 0, on_hand: 0, incoming_spo: 0, outstanding_po: 0,
+      outstanding_sales: 0, project_need: 0, retail_need: 0, unclassified_need: 0,
+    });
+    const allZero2 = line({
+      id: 'z2', product_id: 'p9', sku: 'SKU-ZERO', warehouse_id: 'w-z2', warehouse_name: 'Zero 2',
+      segment: 'dealer', rank: 6, order_qty: 0, on_hand: 0, incoming_spo: 0, outstanding_po: 0,
+      outstanding_sales: 0, project_need: 0, retail_need: 0, unclassified_need: 0,
+    });
+    renderGroupedGrid([allZero1, allZero2]);
+    fireEvent.click(screen.getByText('SKU-ZERO'));
+    expect(screen.getByText('Zero 1')).toBeInTheDocument();
+    expect(screen.getByText('Zero 2')).toBeInTheDocument();
+  });
+
+  it('a grouped row falls back to the product master reorder level/qty when nobody has set the buyer\'s own (19-20 Aug follow-up, captain: SRTWCX8861-S)', () => {
+    const withMaster = line({
+      id: 'm', warehouse_id: 'w-master', segment: 'dealer', rank: 6,
+      master_reorder_level: 10, master_reorder_quantity: 50,
+    });
+    renderGroupedGrid([withMaster]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).getByText('10')).toBeInTheDocument();
+    expect(within(row).getByText('50')).toBeInTheDocument();
+  });
+
+  // S16 (captain, 21 Aug, 3rd time requested): "the decision is made ON the reorder plan
+  // row" - the "Decided on the Product sheet - open it" hyperlink (and the flat "Decided
+  // at Product grain" lock a group row used to carry unconditionally) is gone. Superseded
+  // test: 'a group row is always read-only' (pre-S16) asserted the opposite of this.
+  it('a group row is a decision surface by default - no "Decided on the Product sheet" link, no flat grain lock', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    expect(screen.queryByText(/Decided on the Product sheet/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Decided at Product grain')).not.toBeInTheDocument();
+    expect(screen.queryByTestId(/^decision-read-only-/)).not.toBeInTheDocument();
+    // The suggested mix sums the group's 3 members (3 + 4 + 5), same as the "sums order
+    // qty across the group's warehouses" test above - the button IS the decision surface.
+    expect(screen.getByRole('button', { name: /Buy 12/ })).toBeInTheDocument();
+  });
+
+  it('accepting a group row\'s suggestion hands the caller the GROUP line, not a per-member one - fan-out is `usePlanLines`\' own job', () => {
+    const { onDecide } = renderGroupedGrid([retail, projectIb, projectIr]);
+    fireEvent.click(screen.getByRole('button', { name: /Buy 12/ }));
+
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    const [calledLine, decision] = onDecide.mock.calls[0];
+    expect(calledLine.__group.members.map((m: PlanLine) => m.id)).toEqual(['a', 'b', 'c']);
+    expect(decision).toEqual({ buy: 12 });
+  });
+
+  it('clearing a decided group row hands the caller the GROUP line too', () => {
+    const decisions = {
+      a: { buy: 12 }, b: { buy: 12 }, c: { buy: 12 },
+    } as PlanDecisionMap;
+    const { onClear } = renderGroupedGrid([retail, projectIb, projectIr], undefined, { decisions });
+    fireEvent.click(screen.getByRole('button', { name: /Change/i }));
+
+    expect(onClear).toHaveBeenCalledTimes(1);
+    expect(onClear.mock.calls[0][0].__group.members.map((m: PlanLine) => m.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('shows the UNANIMOUS decision, past tense, once every member agrees', () => {
+    const decisions = {
+      a: { buy: 12 }, b: { buy: 12 }, c: { buy: 12 },
+    } as PlanDecisionMap;
+    renderGroupedGrid([retail, projectIb, projectIr], undefined, { decisions });
+    expect(screen.getByText('Bought 12')).toBeInTheDocument();
+  });
+
+  it('reads MIXED, not any one member\'s figure, when the group\'s members disagree', () => {
+    const decisions = {
+      a: { buy: 3 }, b: { buy: 4 },
+      // c is left undecided - some decided, some not is ALSO mixed, not undecided.
+    } as PlanDecisionMap;
+    renderGroupedGrid([retail, projectIb, projectIr], undefined, { decisions });
+    expect(screen.getByText(/Mixed across locations/)).toBeInTheDocument();
+    // Still the undecided controls underneath - mixed is a NOTICE, not a lock.
+    expect(screen.getByRole('button', { name: /Buy 12/ })).toBeInTheDocument();
+  });
+
+  it('reads undecided (not mixed) when nobody in the group has decided at all', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    expect(screen.queryByText(/Mixed across locations/)).not.toBeInTheDocument();
+  });
+
+  it('a LEGACY run still locks the group row - the one lock S16 keeps', () => {
+    renderGroupedGrid([retail, projectIb, projectIr], undefined, {
+      decisionsReadOnly: true,
+      readOnlyReason: 'Legacy run - read only. Create a new plan to decide.',
+    });
+    expect(screen.getByText('Legacy run - read only. Create a new plan to decide.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Buy 12/ })).not.toBeInTheDocument();
+  });
+
+  it('a warehouse with no persisted segment still folds into the SAME group row, adding an Unclassified column', () => {
+    const unmapped = line({
+      id: 'd', sku: 'SKU-1', warehouse_id: 'w-x', warehouse_code: 'WHX', warehouse_name: 'Unmapped',
+      segment: null, rank: 4, unclassified_committed: 1,
+    });
+    renderGroupedGrid([retail, unmapped]);
+    expect(screen.getAllByText('SKU-1')).toHaveLength(1);
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).toContain('Unclassified');
+  });
+
+  it('an ungrouped-mode plan keeps the fixed SO/Project/Retail/Unclassified need columns, not the dynamic channel ones', () => {
+    // Ungrouped mode has its own "Project"/"Retail" headers too (the fixed `project_need`
+    // / `retail_need` columns) - what distinguishes grouped mode is `Order type` being
+    // absent and `Unclass.` present, both pinned in the earlier assertions above.
+    renderGrid([retail]);
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).toContain('Order type');
+    expect(heads).toContain('Unclass.');
+  });
+
+  // Supplier / price / MOQ are PRODUCT facts (captain, 20 Aug ruling): carried onto the
+  // group row when every member agrees, dashed only on a genuine conflict.
+  it('carries the Suggested supplier through onto the group row when every member agrees', () => {
+    // None of the 3 fixtures override supplier - all Acme/S1, so the group is uniform. The
+    // supplier cell itself renders the name rather than a dash (MOQ is untested here - none
+    // of these 3 fixtures carry one, which is its own "no MOQ on file" case, not a conflict).
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Acme')).toBeInTheDocument();
+  });
+
+  it('dashes the Suggested supplier when the group\'s members genuinely disagree', () => {
+    // Both members share the same MOQ so only the SUPPLIER cell is in conflict here - an
+    // incidental MOQ mismatch would also dash the MOQ cell and muddy which cell is under test.
+    const sameSupplier = line({
+      id: 'same-supplier', warehouse_id: 'w-same-supplier', segment: 'dealer', rank: 9, moq: 50,
+    });
+    const otherSupplier = line({
+      id: 'conflict', warehouse_id: 'w-conflict', segment: 'dealer', rank: 10, moq: 50,
+      supplier: { supplier_code: 'S2', supplier_name: 'Other Co', unit_cost: 20,
+                  lead_time_days: 10, composite_score: 0, is_primary: false },
+      unit_cost: 20,
+    });
+    renderGroupedGrid([sameSupplier, otherSupplier]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).queryByText('Acme')).not.toBeInTheDocument();
+    expect(within(row).queryByText('Other Co')).not.toBeInTheDocument();
+    expect(within(row).getByText('50')).toBeInTheDocument(); // MOQ carried, uniform
+    expect(within(row).getByTitle('Varies by location - expand to see each one')).toBeInTheDocument();
+  });
+
+  it('carries a uniform MOQ through onto the group row', () => {
+    const moqA = line({
+      id: 'mqa', warehouse_id: 'w-mqa', segment: 'dealer', rank: 11, order_qty: 3, moq: 50,
+    });
+    const moqB = line({
+      id: 'mqb', warehouse_id: 'w-mqb', segment: 'project', rank: 12, order_qty: 4, moq: 50,
+    });
+    renderGroupedGrid([moqA, moqB]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).getByText('50')).toBeInTheDocument();
+  });
+
+  it('dashes the MOQ when the group\'s members carry different MOQs', () => {
+    const moqA = line({
+      id: 'mqc', warehouse_id: 'w-mqc', segment: 'dealer', rank: 13, order_qty: 3, moq: 50,
+    });
+    const moqB = line({
+      id: 'mqd', warehouse_id: 'w-mqd', segment: 'project', rank: 14, order_qty: 4, moq: 80,
+    });
+    renderGroupedGrid([moqA, moqB]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).queryByText('50')).not.toBeInTheDocument();
+    expect(within(row).queryByText('80')).not.toBeInTheDocument();
+    expect(within(row).getByTitle('Varies by location - expand to see each one')).toBeInTheDocument();
+  });
+
+  it('a single-member group carries its one member\'s supplier and MOQ straight through', () => {
+    const solo = line({
+      id: 'solo', product_id: 'p-solo', sku: 'SOLO-1', warehouse_id: 'w-solo',
+      segment: 'dealer', rank: 15, moq: 40,
+    });
+    renderGroupedGrid([solo]);
+    const row = screen.getByText('SOLO-1').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Acme')).toBeInTheDocument();
+    expect(within(row).getByText('40')).toBeInTheDocument();
+  });
+
+  it('searching a grouped grid with a supplier conflict on it does not crash, and still finds the row by product', () => {
+    const otherSupplier = line({
+      id: 'conflict2', warehouse_id: 'w-conflict2', segment: 'dealer', rank: 16,
+      supplier: { supplier_code: 'S2', supplier_name: 'Other Co', unit_cost: 20,
+                  lead_time_days: 10, composite_score: 0, is_primary: false },
+      unit_cost: 20,
+    });
+    renderGroupedGrid([retail, otherSupplier]);
+    const search = screen.getByPlaceholderText('Search product, location, or supplier');
+    fireEvent.change(search, { target: { value: 'SKU-1' } });
+    expect(screen.getByText('SKU-1')).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: 'no such product' } });
+    expect(screen.queryByText('SKU-1')).not.toBeInTheDocument();
+  });
+});
+
+describe('PlanLinesGrid - grouped-expand live location-stock cells (20 Aug live ask)', () => {
+  // Same shape as the 5.3 grouping fixtures above (1 product, 2 warehouses), scoped to its
+  // own describe so `locationStockState` can be driven per test without disturbing the
+  // grouping suite's own assumptions about the live fetch.
+  const locA = line({
+    id: 'live-a', warehouse_id: 'w-live-a', warehouse_code: 'BRW', warehouse_name: 'Butterworth',
+    segment: 'dealer', rank: 1, order_qty: 3,
+    retail_committed: 6, project_committed: 0, unclassified_committed: 0, project_need: 0,
+  });
+  const locB = line({
+    id: 'live-b', warehouse_id: 'w-live-b', warehouse_code: 'BRW-IB', warehouse_name: 'BRW - IB',
+    segment: 'project', rank: 2, order_qty: 4,
+    retail_committed: 0, project_committed: 5, unclassified_committed: 0, project_need: 3,
+  });
+
+  function renderLiveGroupedGrid(lines: PlanLine[]) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <PlanLinesGrid
+          lines={lines}
+          decisions={{}}
+          onDecide={vi.fn()}
+          onClear={vi.fn()}
+          groupByChannel
+          staleAfterDays={180}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  function availableCell(warehouseLabel: string): HTMLElement {
+    const row = screen.getByText(warehouseLabel).closest('tr') as HTMLElement;
+    // Location, Project, Retail, On hand, Reserved, Free, SPO, Available, Suggested qty -
+    // no Unclass. column here since neither fixture carries a nonzero unclassified figure.
+    const cells = within(row).getAllByRole('cell');
+    return cells[7];
+  }
+
+  it('shows a skeleton in every live cell while the location-stock fetch is in flight', () => {
+    locationStockState.isLoading = true;
+    locationStockState.data = undefined;
+    const { container } = renderLiveGroupedGrid([locA, locB]);
+
+    fireEvent.click(screen.getByText('SKU-1'));
+
+    expect(screen.getByText('Butterworth')).toBeInTheDocument();
+    // On hand, Reserved, Free, SPO, Available - 5 live cells per visible location.
+    expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBe(10);
+  });
+
+  it('renders the live figures once the fetch resolves, joined onto each member by warehouse id', () => {
+    locationStockState.isLoading = false;
+    locationStockState.data = {
+      as_of: '2026-08-20T09:00:00',
+      locations: [
+        {
+          warehouse_id: 'w-live-a', warehouse_code: 'BRW',
+          on_hand: 50, reserved: 5, held_by_decisions: 0, free: 45, so_qty: 20, spo_qty: 10,
+          available: 35,
+        },
+      ],
+    };
+    renderLiveGroupedGrid([locA, locB]);
+
+    fireEvent.click(screen.getByText('SKU-1'));
+
+    const matchedRow = screen.getByText('Butterworth').closest('tr') as HTMLElement;
+    expect(within(matchedRow).getByText('50')).toBeInTheDocument(); // on hand
+    expect(within(matchedRow).getByText('45')).toBeInTheDocument(); // free
+    expect(within(matchedRow).getByText('10')).toBeInTheDocument(); // spo
+    expect(within(matchedRow).getByText('35')).toBeInTheDocument(); // available
+    expect(screen.getByText(/Live stock as of/)).toBeInTheDocument();
+  });
+
+  it('a member the live response never named reads as an honest dash, not a fabricated zero', () => {
+    locationStockState.isLoading = false;
+    locationStockState.data = {
+      as_of: '2026-08-20T09:00:00',
+      locations: [
+        {
+          warehouse_id: 'w-live-a', warehouse_code: 'BRW',
+          on_hand: 50, reserved: 5, held_by_decisions: 0, free: 45, so_qty: 20, spo_qty: 10,
+          available: 35,
+        },
+      ],
+    };
+    renderLiveGroupedGrid([locA, locB]);
+
+    fireEvent.click(screen.getByText('SKU-1'));
+
+    const cell = availableCell('BRW - IB');
+    expect(within(cell).getByText('-')).toBeInTheDocument();
+    expect(within(cell).getByTitle('No live stock data for this location')).toBeInTheDocument();
+  });
+
+  it('a negative Available - oversold - renders in the destructive tone, never clamped to zero', () => {
+    locationStockState.isLoading = false;
+    locationStockState.data = {
+      as_of: '2026-08-20T09:00:00',
+      locations: [
+        {
+          warehouse_id: 'w-live-a', warehouse_code: 'BRW',
+          on_hand: 8, reserved: 0, held_by_decisions: 0, free: 8, so_qty: 20, spo_qty: 0,
+          available: -12,
+        },
+      ],
+    };
+    renderLiveGroupedGrid([locA, locB]);
+
+    fireEvent.click(screen.getByText('SKU-1'));
+
+    const cell = availableCell('Butterworth');
+    const span = cell.querySelector('span') as HTMLElement;
+    expect(span.textContent).toContain('12');
+    expect(span.className).toContain('text-destructive');
+  });
+
+  // N-5: `LocationStockLocation.warehouse_code` is `string | null` (backend Optional) - a
+  // member with no warehouse_id at all still has to join to its live row, by warehouse_code.
+  it('joins a member with no warehouse_id to its live location by warehouse_code (fallback join)', () => {
+    const locC = line({
+      id: 'live-c', warehouse_id: null, warehouse_code: 'BRW-IR', warehouse_name: 'BRW - IR',
+      segment: 'project', rank: 3, order_qty: 2,
+      retail_committed: 0, project_committed: 0, unclassified_committed: 0, project_need: 0,
+    });
+    locationStockState.isLoading = false;
+    locationStockState.data = {
+      as_of: '2026-08-20T09:00:00',
+      locations: [
+        {
+          // A different warehouse_id than the member's (which has none) - the id lookup must
+          // fail and fall through to the code lookup for this to join at all.
+          warehouse_id: 'w-unrelated', warehouse_code: 'BRW-IR',
+          on_hand: 77, reserved: 2, held_by_decisions: 0, free: 75, so_qty: 5, spo_qty: 1,
+          available: 66,
+        },
+      ],
+    };
+    renderLiveGroupedGrid([locC]);
+
+    fireEvent.click(screen.getByText('SKU-1'));
+
+    const cell = availableCell('BRW - IR');
+    expect(within(cell).getByText('66')).toBeInTheDocument();
+  });
+
+  // 20 Aug live diagnosis (defect A), superseding N-4: ONE popover per member row used to
+  // carry the WHOLE location's demand, mounted only on the Project cell - so a Retail-
+  // chipped SO read under the Project number. The fix (captain's own preferred one) is a
+  // separate trigger per channel cell, each scoped to only that channel.
+  it('mounts a separate Project and Retail trigger per member row, each scoped to its own channel', () => {
+    locationStockState.isLoading = false;
+    locationStockState.data = undefined;
+    renderLiveGroupedGrid([locA, locB]);
+
+    fireEvent.click(screen.getByText('SKU-1'));
+
+    expect(
+      screen.getByRole('button', { name: 'Project demand at Butterworth' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Retail demand at Butterworth' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Project demand at BRW - IB' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Retail demand at BRW - IB' }),
+    ).toBeInTheDocument();
+    // Neither fixture carries unclassified demand, so no third trigger - 2 members x 2
+    // channels, never a stray extra.
+    expect(
+      screen.getAllByRole('button', { name: /demand at /i }),
+    ).toHaveLength(4);
   });
 });

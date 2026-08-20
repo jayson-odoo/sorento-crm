@@ -119,6 +119,10 @@ describe('recToPlanRow (M8 adapter)', () => {
       order_up_to: 600,
       rounded_qty: 320,
       moq: 10,
+      // 20 Aug live test: the frozen master figure + override flag, carried through
+      // alongside the effective `moq` (the fixture rec carries neither).
+      master_moq: null,
+      moq_is_override: false,
       order_multiple: 5,
     });
     // data-only ids for the demand drill (never rendered)

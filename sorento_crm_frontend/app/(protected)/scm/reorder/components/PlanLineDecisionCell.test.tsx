@@ -7,12 +7,17 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { toast } from 'sonner';
 import { coverForLine, NO_COVER, type CoverProposal, type CoverSource } from '../lib/coverPlan';
 import { recToPlanLine, type PlanLine } from '../lib/planLine';
 import type { PlanDecision } from '../lib/planDecisions';
 import type { ReorderRecommendation } from '../types/reorder.types';
 import { PlanLineDecisionCell } from './PlanLineDecisionCell';
+
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
+}));
 
 Element.prototype.hasPointerCapture = Element.prototype.hasPointerCapture ?? (() => false);
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
@@ -47,14 +52,24 @@ const elsewhere: CoverSource[] = [
   { warehouse_id: 'wh-PJ-SR', warehouse_code: 'PJ-SR', segment: 'project', qty: 1 },
 ];
 
-function renderCell(over: { line?: PlanLine; decision?: PlanDecision; cover?: CoverProposal } = {}) {
-  const onDecide = vi.fn();
-  const onClear = vi.fn();
+function renderCell(over: {
+  line?: PlanLine;
+  decision?: PlanDecision;
+  cover?: CoverProposal;
+  mixed?: boolean;
+  onDecide?: (next: PlanDecision) => Promise<void> | void;
+  onClear?: () => Promise<void> | void;
+} = {}) {
+  // Always a real `Mock` (wrapping any override), never a plain function - every existing
+  // test reads `.mock.calls` off the returned handles.
+  const onDecide = over.onDecide ? vi.fn(over.onDecide) : vi.fn();
+  const onClear = over.onClear ? vi.fn(over.onClear) : vi.fn();
   const l = over.line ?? line();
   render(
     <PlanLineDecisionCell
       line={l}
       decision={over.decision}
+      mixed={over.mixed}
       cover={over.cover ?? NO_COVER}
       onDecide={onDecide}
       onClear={onClear}
@@ -245,5 +260,100 @@ describe('PlanLineDecisionCell - the hover breakdown', () => {
       ['Buy', '182'],
       ['Total', '188'],
     ]);
+  });
+});
+
+/**
+ * S16 (captain, 21 Aug, 3rd time requested): a GROUPED (product-grain) row's own read -
+ * the unanimous decision its members agree on, or `mixed` when they do not. The cell never
+ * computes this itself (that is `groupDecisionState`, `lib/planDecisions.ts`); `mixed` is
+ * simply a prop it renders a notice for.
+ */
+describe('PlanLineDecisionCell - mixed (a grouped row whose members disagree)', () => {
+  it('shows a mixed notice alongside the undecided controls, not in place of them', () => {
+    const l = line({ order_qty: 1778, recommended_qty: 1778, outstanding_sales: 1778 });
+    renderCell({ line: l, cover: coverForLine(l, []), mixed: true });
+
+    expect(screen.getByText(/Mixed across locations/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Accept for SKU-1/ })).toBeInTheDocument();
+  });
+
+  it('is silent when not mixed, even though the row is still undecided', () => {
+    const l = line({ order_qty: 1778, recommended_qty: 1778, outstanding_sales: 1778 });
+    renderCell({ line: l, cover: coverForLine(l, []), mixed: false });
+
+    expect(screen.queryByText(/Mixed across locations/)).not.toBeInTheDocument();
+  });
+
+  it('never shows the mixed notice once a DECIDED value is passed - a settled row is not mixed', () => {
+    // A caller that somehow passes both `decision` and `mixed: true` gets the settled
+    // (past-tense) row: `groupDecisionState` never actually produces this combination, but
+    // the cell must not read `mixed` as an instruction to override a real decision.
+    renderCell({ decision: { buy: 182 }, mixed: true });
+    expect(screen.getByText('Bought 182')).toBeInTheDocument();
+    expect(screen.queryByText(/Mixed across locations/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * S16: `onDecide`/`onClear` write straight to the backend now (`usePlanLines.decide`/
+ * `.clear`) and can reject. The cell owns the failure the same way `PlanMoqCell` owns its
+ * own save - catch, and toast - so a rejected write never sits silent.
+ */
+describe('PlanLineDecisionCell - a rejected write toasts, the same pattern PlanMoqCell uses', () => {
+  beforeEach(() => vi.mocked(toast.error).mockClear());
+
+  it('Accept: a rejected onDecide toasts the error message', async () => {
+    const onDecide = vi.fn().mockRejectedValue(new Error('Failed to record the decision.'));
+    const l = line({ order_qty: 1778, recommended_qty: 1778, outstanding_sales: 1778 });
+    renderCell({ line: l, cover: coverForLine(l, []), onDecide });
+
+    fireEvent.click(screen.getByRole('button', { name: /Accept for SKU-1/ }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Failed to record the decision.'),
+    );
+  });
+
+  it('Accept: a rejection with no message falls back to a generic sentence', async () => {
+    const onDecide = vi.fn().mockRejectedValue('not an Error');
+    const l = line({ order_qty: 1778, recommended_qty: 1778, outstanding_sales: 1778 });
+    renderCell({ line: l, cover: coverForLine(l, []), onDecide });
+
+    fireEvent.click(screen.getByRole('button', { name: /Accept for SKU-1/ }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Could not record the decision.'),
+    );
+  });
+
+  it('Skip: a rejected onDecide toasts too', async () => {
+    const onDecide = vi.fn().mockRejectedValue(new Error('Network error.'));
+    renderCell({ onDecide });
+
+    fireEvent.click(screen.getByRole('button', { name: /Skip SKU-1/i }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Network error.'));
+  });
+
+  it('Change (clear): a rejected onClear toasts its own message', async () => {
+    const onClear = vi.fn().mockRejectedValue(new Error('Failed to clear the decision.'));
+    renderCell({ decision: { buy: 182 }, onClear });
+
+    fireEvent.click(screen.getByRole('button', { name: /Change/i }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Failed to clear the decision.'),
+    );
+  });
+
+  it('a successful write never toasts', async () => {
+    const onDecide = vi.fn().mockResolvedValue(undefined);
+    renderCell({ onDecide });
+
+    fireEvent.click(screen.getByRole('button', { name: /Skip SKU-1/i }));
+
+    await waitFor(() => expect(onDecide).toHaveBeenCalled());
+    expect(toast.error).not.toHaveBeenCalled();
   });
 });

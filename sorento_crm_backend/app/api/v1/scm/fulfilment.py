@@ -38,10 +38,11 @@ from app.services.scm import (
     consolidated_packing_list,
     loading_plan_service,
     packing_list_service,
+    spo_conversion_service,
     supplier_inventory_service,
     supplier_notice_service,
 )
-from app.services.scm.upload_intake import read_upload
+from app.services.scm.upload_intake import read_upload, read_upload_retained
 
 router = APIRouter()
 
@@ -100,11 +101,11 @@ async def apply_supplier_inventory(
     db: Session = Depends(get_db),
 ):
     """Replace this supplier's stock snapshot."""
-    data = await read_upload(file)
+    upload = await read_upload_retained(file)
     if validate_only:
-        return supplier_inventory_service.validate(db, data, supplier_id=supplier_id)
+        return supplier_inventory_service.validate(db, upload.data, supplier_id=supplier_id)
     out = supplier_inventory_service.apply(
-        db, data, supplier_id=supplier_id, actor=current_user.get("id")
+        db, upload.data, supplier_id=supplier_id, actor=current_user.get("id")
     )
     if not out.get("readable"):
         missing = ", ".join(out.get("missing_columns") or [])
@@ -117,6 +118,17 @@ async def apply_supplier_inventory(
             ),
         )
     db.commit()
+    # Retain the supplier's OWN sheet, previewable like any resource attachment, so Ms Tee
+    # can cross-check without opening Excel. Best-effort and AFTER the commit above - a
+    # storage hiccup here must never turn a successful apply into a failed request.
+    supplier_inventory_service.store_stock_list_attachment(
+        db,
+        upload.source_bytes,
+        filename=upload.source_name,
+        content_type=upload.content_type,
+        supplier_id=supplier_id,
+        uploaded_by=current_user.get("id"),
+    )
     return out
 
 
@@ -161,6 +173,24 @@ def list_unfinished(
 ):
     """Stock the supplier holds unfinished, so it can be asked for (AC-E2)."""
     return {"rows": loading_plan_service.unfinished_at_supplier(db, supplier_id)}
+
+
+@router.get("/supplier-inventory/stock-list-file")
+def get_supplier_stock_list_file(
+    supplier_id: str = Query(..., description="Whose stored stock list to show"),
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The latest retained copy of the supplier's own sheet, so it can be opened in-system
+    (like a resource attachment) instead of in Excel. `attachment_id` is null when nothing
+    has been uploaded yet, or a past upload's storage write failed."""
+    found = supplier_inventory_service.latest_stock_list_attachment(db, supplier_id=supplier_id)
+    return {
+        "supplier_id": supplier_id,
+        "attachment_id": found["attachment_id"] if found else None,
+        "filename": found["filename"] if found else None,
+        "uploaded_at": found["uploaded_at"] if found else None,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -465,6 +495,30 @@ class AllocationApproval(BaseModel):
     decisions: list[AllocationDecision] = Field(..., min_length=1)
 
 
+class SpoLocationSplit(BaseModel):
+    warehouse_id: str
+    qty: float = Field(..., gt=0)
+
+
+class SpoLineConfirm(BaseModel):
+    shipment_line_id: str
+    qty: float = Field(0, ge=0)
+    include: bool = False
+    # The multi-location ask (fourth doctrine-correction ask): zero, one or several
+    # destinations for this ONE line's SPO qty, each writing its own `spo_allocations` row in
+    # the same confirm (see `spo_conversion_service.create`'s docstring). Empty means no
+    # allocation is written for this line, byte-identical to every call before this ask - the
+    # single `warehouse_id` field the second amendment introduced is now the one-split case of
+    # this list, not a separate field.
+    location_splits: list[SpoLocationSplit] = Field(default_factory=list)
+
+
+class SpoCreateRequest(BaseModel):
+    lines: list[SpoLineConfirm] = Field(
+        ..., min_length=1, description="Every line on the shipment, ticked or not"
+    )
+
+
 @router.post("/packing-lists/preview")
 async def preview_packing_list(
     file: UploadFile = File(..., description="The pre-load list or packing list"),
@@ -709,3 +763,83 @@ def approve_allocations(
     )
     db.commit()
     return out
+
+
+@router.get("/inbound-shipments/{shipment_id}/spo-suggestion")
+def spo_suggestion(
+    shipment_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The SPO planner table: per shipment line, what an open PO PULLS this SPO up to - never
+    a deduction (doctrine correction, `spo_conversion_service`'s module docstring, "fifth
+    amendment") - and why a line cannot convert (no supplier, or nothing open to pull from at
+    all). Also carries `po_takes` (the earliest-first per-PO breakdown behind `po_covered_qty`,
+    each now naming its own PO date and supplier) and `location_options` +
+    `suggested_warehouse_id` (candidate destination warehouses, ranked by Fulfilment Priority,
+    each carrying `demand_lines` - the open SO demand this SPO would go on to serve there).
+    `already_converted: true` when this shipment already has SPOs (409 on the write below); the
+    caller shows the existing SPOs instead of the confirm screen. `self_heal_note` is non-null
+    only when this call actually cleaned up a stale link (a CRM SPO removed some other way than
+    the DELETE below) - see `spo_conversion_service._heal_stale_links`.
+    """
+    out = spo_conversion_service.suggest(db, shipment_id)
+    db.commit()  # persists any self-heal cleanup (get_db closes without commit)
+    return out
+
+
+@router.post("/inbound-shipments/{shipment_id}/spo", status_code=status.HTTP_201_CREATED)
+def create_spo(
+    shipment_id: str,
+    body: SpoCreateRequest,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """One CRM SPO per supplier represented on this shipment, from the confirmed lines.
+
+    Refused (409) if this shipment already has one - re-running "Create SPO" must not
+    double what the office is asked to key into AutoCount.
+    """
+    out = spo_conversion_service.create(
+        db,
+        shipment_id,
+        [ln.model_dump() for ln in body.lines],
+        actor=_actor(current_user),
+        actor_user_id=current_user.get("id"),
+    )
+    db.commit()
+    return out
+
+
+@router.delete("/inbound-shipments/{shipment_id}/spo")
+def delete_spo(
+    shipment_id: str,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Unwind this shipment's SPO conversion - the Delete action on the planner's
+    already-converted state. The mirror of `create_spo` above: same permission, same
+    shipment scoping. Refused (409) if any header this shipment is linked to was not created
+    by Create SPO (`source_system != crm_spo`) - an AutoCount import is never touched here.
+    404 when this shipment has no SPO to delete (nothing ever converted, or a prior self-heal
+    already cleared it)."""
+    out = spo_conversion_service.unwind(db, shipment_id)
+    db.commit()
+    return out
+
+
+@router.get("/inbound-shipments/{shipment_id}/spo-worksheet/export")
+def export_spo_worksheet(
+    shipment_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The AutoCount handoff: exactly what to key, per supplier. 404 until "Create SPO" has
+    actually run on this shipment."""
+    payload = spo_conversion_service.worksheet_payload(db, shipment_id)
+    filename = spo_conversion_service.export_filename(payload)
+    return Response(
+        content=spo_conversion_service.to_xlsx(payload),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

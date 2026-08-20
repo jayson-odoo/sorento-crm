@@ -731,6 +731,14 @@ class SOAmendment(Base, CompanyScopedMixin):
 INQUIRY_RAISED = "raised"
 INQUIRY_ACTIONED = "actioned"
 INQUIRY_CANCELLED = "cancelled"
+#: A raised ORDER/RESERVE_AND_ORDER row tagged onto a specific outstanding supplier PO
+#: line (PLAN-demo-followups-19aug-ladder-v2.md section G, "identify which outstanding
+#: PO has quantity to fulfil this order inquiry, tag it"). `committed_v`'s confirmed leg
+#: counts `state = 'raised'` only, so placing a row is what removes it from the reorder
+#: engine's suggestion - the deliberate, evidence-carrying exception to "a PO is never
+#: supply" (`on_order_v` still reads `spo_allocations` only). Untagging returns the row
+#: to `raised` and clears `po_ref` / `po_line_id`.
+INQUIRY_PLACED = "placed"
 
 IV_ORDER = "ORDER"
 IV_RESERVE_AND_ORDER = "RESERVE_AND_ORDER"
@@ -839,7 +847,27 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
         nullable=True,
     )
     covered_by = Column(Text, nullable=True)
+    # The outstanding supplier PO this row was tagged to (section G). `po_ref` is the
+    # PO NUMBER, printed the way the worklist's other PO column already is; `po_line_id`
+    # is the actual link the netting and the candidate query read. SET NULL, not CASCADE:
+    # a purchase order line getting deleted must not take the instruction's history with
+    # it - the row still says what it was placed on until somebody untags it.
+    po_ref = Column(String(80), nullable=True)
+    po_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("purchase_order_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     note = Column(Text, nullable=True)
+    # A planning-change advance/delay whose fresh proposal pool covers the line keeps the
+    # pool take (the composition still holds Reserve) rather than relabelling it onto Buy,
+    # so a PLACED row this line already holds is REDIRECTED instead of cancelled: it stays
+    # tagged to its real PO, its `qty` is untouched, but it now replenishes the pool that
+    # was just drawn down for this line rather than serving this line's own need (the
+    # captain, 21 Aug 2026 - "it takes the outstanding PO to BRW"). `True` is what tells
+    # `refresh_for_decision`'s placed-quantity netting, and the worklist's "Taken from PO"
+    # aggregate, to stop counting it for THIS line - it is real placed quantity, just not
+    # this line's anymore.
+    redirected_to_pool = Column(Boolean, nullable=False, server_default="false", default=False)
     state = Column(String(16), nullable=False, server_default=INQUIRY_RAISED)
     # "Did purchasing act on this" (AC-I7) is only half answered by a state. A state
     # with nobody's name and no time on it cannot say when, or who to ask.
@@ -850,6 +878,7 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_project_order_inquiry_rows_inquiry", "order_inquiry_id"),
         Index("ix_project_order_inquiry_rows_state", "state"),
+        Index("ix_project_order_inquiry_rows_po_line", "po_line_id"),
         # Stage 1C's name, because 1C's `374_so_supply_decisions` is the migration that
         # creates this index; Stage 2 proposed `..._supply_decision` for the same column
         # and its duplicate DDL is dropped with the duplicate model above.
@@ -868,10 +897,17 @@ ALLOC_SOURCE_ORDER = "order"
 #: `other_project`, but there is no donor project to ask, so it carries no claim row.
 #: A model constant, not a database enum: `source_type` is a plain String(16).
 ALLOC_SOURCE_OTHER_LOCATION = "other_location"
+#: Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E rung 3): positive,
+#: uncommitted stock at a SIBLING location of this line's ownership group, at another
+#: site. Kind `reserve` like `own`/`brw` - it is free stock, nobody's to ask - but never
+#: this line's OWN location (rule 7: the own-location Reserve rung is gone) and never the
+#: shared site pool (that is `brw`), so it carries its own source so a report can tell
+#: "reserved at home" from "taken from a sibling location" apart.
+ALLOC_SOURCE_GROUP_TAKE = "group_take"
 
-#: UI mapping, stated once: `own`/`brw` are Reserve, `other_project`/`other_location` are
-#: Borrow, `order` is Buy.
-ALLOC_RESERVE_SOURCES = (ALLOC_SOURCE_OWN, ALLOC_SOURCE_BRW)
+#: UI mapping, stated once: `own`/`brw`/`group_take` are Reserve, `other_project`/
+#: `other_location` are Borrow, `order` is Buy.
+ALLOC_RESERVE_SOURCES = (ALLOC_SOURCE_OWN, ALLOC_SOURCE_BRW, ALLOC_SOURCE_GROUP_TAKE)
 ALLOC_BORROW_SOURCES = (ALLOC_SOURCE_OTHER_PROJECT, ALLOC_SOURCE_OTHER_LOCATION)
 
 CLAIM_REQUESTED = "requested"

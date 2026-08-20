@@ -18,10 +18,22 @@ import {
 } from '../../_shared/__mocks__/orderInquiryWorklist';
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
 
+// Every existing test here exercises an actor who CAN act on Order Inquiry - N1's own
+// view-only case gets its own describe block below, toggling this to empty.
+let granted = new Set(['projects.order_inquiry.action']);
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: (slug: string) => granted.has(slug),
+  useHasAnyPermission: (slugs: string[]) => slugs.some((slug) => granted.has(slug)),
+  usePermissions: () => ({ permissions: [...granted], permissionSet: granted, isLoading: false }),
+}));
+
+const routerReplace = vi.fn();
+let currentSearchParams = new URLSearchParams('');
+
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace: (...args: unknown[]) => routerReplace(...args) }),
   usePathname: () => '/project-sales/order-inquiries',
-  useSearchParams: () => new URLSearchParams(''),
+  useSearchParams: () => currentSearchParams,
 }));
 
 // Under jsdom nothing answers the preferences fetch, so the grid renders skeletons for
@@ -33,6 +45,9 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 const listOrderInquiryWorklist = vi.fn();
 const getOrderInquiryWorklistSummary = vi.fn();
 const downloadOrderInquiryWorklistXlsx = vi.fn();
+const autoPlaceOrderInquiryRows = vi.fn();
+const getUnplaceAllPreview = vi.fn();
+const unplaceAllOrderInquiryRows = vi.fn();
 
 vi.mock('../../_shared/services/orderInquiryService', () => ({
   listOrderInquiryWorklist: (...args: unknown[]) => listOrderInquiryWorklist(...args),
@@ -40,6 +55,9 @@ vi.mock('../../_shared/services/orderInquiryService', () => ({
     getOrderInquiryWorklistSummary(...args),
   downloadOrderInquiryWorklistXlsx: (...args: unknown[]) =>
     downloadOrderInquiryWorklistXlsx(...args),
+  autoPlaceOrderInquiryRows: (...args: unknown[]) => autoPlaceOrderInquiryRows(...args),
+  getUnplaceAllPreview: (...args: unknown[]) => getUnplaceAllPreview(...args),
+  unplaceAllOrderInquiryRows: (...args: unknown[]) => unplaceAllOrderInquiryRows(...args),
 }));
 
 const saveBlobAs = vi.fn();
@@ -56,14 +74,19 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     onChange,
     options,
     placeholder,
+    id,
   }: {
     value: string;
     onChange: (next: string) => void;
     options?: { value: string; label: string }[];
     placeholder?: string;
+    id?: string;
   }) => (
+    // `id` wins over `placeholder` (the matrix's Rows/By selects carry no placeholder at
+    // all - they always hold a value), the same precedence the planning board's own mock
+    // uses for the identical pair of controls.
     <select
-      aria-label={placeholder ?? 'select'}
+      aria-label={id ?? placeholder ?? 'select'}
       value={value}
       onChange={(event) => onChange(event.target.value)}
     >
@@ -102,11 +125,30 @@ function openFilters() {
   });
 }
 
+/**
+ * Two-or-more `secondaryActions` collapse into one "Actions" dropdown
+ * (`DataGridListToolbar`) rather than each getting its own button - opened the same way
+ * `openFilters` opens its own Radix menu.
+ */
+function openActionsMenu() {
+  fireEvent.pointerDown(screen.getByRole('button', { name: /actions/i }), {
+    button: 0,
+    ctrlKey: false,
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  granted = new Set(['projects.order_inquiry.action']);
+  currentSearchParams = new URLSearchParams('');
   listOrderInquiryWorklist.mockResolvedValue(envelope(MOCK_WORKLIST_ROWS));
   getOrderInquiryWorklistSummary.mockResolvedValue(MOCK_WORKLIST_SUMMARY);
   downloadOrderInquiryWorklistXlsx.mockResolvedValue(new Blob(['x']));
+  getUnplaceAllPreview.mockResolvedValue({
+    count: 0,
+    product_code: null,
+    product_name: null,
+  });
 });
 
 describe('OrderInquiriesClient', () => {
@@ -134,6 +176,7 @@ describe('OrderInquiriesClient', () => {
       'Qty',
       'Delivery date',
       'Project / customer',
+      'Agent',
       'Location',
       'Supplier',
       'PO no',
@@ -168,7 +211,10 @@ describe('OrderInquiriesClient', () => {
 
     const shortfall = (await screen.findByText('SO390001')).closest('tr') as HTMLElement;
     expect(within(shortfall).getByText('BORROW SHORTFALL')).toBeInTheDocument();
-    expect(within(shortfall).getByText('BRW-BB is short by 12')).toBeInTheDocument();
+    // The server's note is behind the info icon now, not inline under the pill (A3).
+    expect(within(shortfall).queryByText('BRW-BB is short by 12')).not.toBeInTheDocument();
+    fireEvent.focus(within(shortfall).getByRole('button', { name: 'Why this instruction' }));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('BRW-BB is short by 12');
     const order = screen.getByText('SO385126').closest('tr') as HTMLElement;
     expect(within(order).getByText('ORDER')).toBeInTheDocument();
     expect(within(order).queryByText('BORROW SHORTFALL')).not.toBeInTheDocument();
@@ -187,7 +233,6 @@ describe('OrderInquiriesClient', () => {
     expect(
       screen.getByRole('link', { name: /open fulfilment planning/i }),
     ).toHaveAttribute('href', '/project-sales/fulfilment-planning');
-    expect(screen.getByText('No delivery months yet')).toBeInTheDocument();
   });
 
   it('says the failure out loud rather than showing an empty table', async () => {
@@ -211,20 +256,23 @@ describe('OrderInquiriesClient', () => {
     );
   });
 
-  it('a month tab narrows the list and the strip, and the tabs stay', async () => {
+  it('a delivery-month filter narrows the list (the month button row is gone, D1)', async () => {
     renderClient();
     await screen.findByText('SO385126');
 
-    fireEvent.click(screen.getByRole('button', { name: /JAN 26/ }));
+    openFilters();
+    fireEvent.change(await screen.findByLabelText('Every month'), {
+      target: { value: '2026-01' },
+    });
 
     await waitFor(() =>
       expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
         expect.objectContaining({ delivery_month: '2026-01' }),
       ),
     );
-    // The month strip is the control that changes month, so it must survive being used.
-    expect(screen.getByRole('button', { name: /MAR 26/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /all months/i })).toBeInTheDocument();
+    // Replaced by the calendar, not moved: no month buttons remain on screen.
+    expect(screen.queryByRole('button', { name: /^JAN 26$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /all months/i })).not.toBeInTheDocument();
   });
 
   it('sends the search box to the service', async () => {
@@ -263,14 +311,20 @@ describe('OrderInquiriesClient', () => {
   it('exports the set the screen is showing, not the whole book', async () => {
     renderClient();
     await screen.findByText('SO385126');
-    fireEvent.click(screen.getByRole('button', { name: /JAN 26/ }));
+    openFilters();
+    fireEvent.change(await screen.findByLabelText('Every month'), {
+      target: { value: '2026-01' },
+    });
     await waitFor(() =>
       expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
         expect.objectContaining({ delivery_month: '2026-01' }),
       ),
     );
+    // The filter popover is modal, so everything behind it is out of the accessibility
+    // tree until it closes.
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
 
-    fireEvent.click(screen.getByRole('button', { name: /export excel/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /export excel/i }));
 
     await waitFor(() =>
       expect(downloadOrderInquiryWorklistXlsx).toHaveBeenCalledWith(
@@ -323,6 +377,34 @@ describe('OrderInquiriesClient', () => {
     expect(within(unlocated).queryByText('BRW-BB')).not.toBeInTheDocument();
   });
 
+  it('shows what was taken off a PO and what still flows to reorder planning', async () => {
+    renderClient();
+
+    // Row 1 is fully covered: qty (35) and Taken from PO (35) both print - two cells
+    // sharing the same figure - and Remaining is the single "0" left in its row.
+    const placed = (await screen.findByText('SO385126')).closest('tr') as HTMLElement;
+    expect(within(placed).getAllByText('35')).toHaveLength(2);
+    expect(within(placed).getByText('0')).toBeInTheDocument();
+
+    // Row 2 is untouched: nothing has been taken (the single "0" in its row) and the
+    // whole quantity (85) still flows to reorder planning - qty and Remaining agree.
+    const unplaced = screen.getByText('SO386461').closest('tr') as HTMLElement;
+    expect(within(unplaced).getAllByText('85')).toHaveLength(2);
+    expect(within(unplaced).getByText('0')).toBeInTheDocument();
+  });
+
+  it('turns a placed row\'s PO number into a button that opens its own purchase order', async () => {
+    renderClient();
+
+    const placed = (await screen.findByText('SO385126')).closest('tr') as HTMLElement;
+    expect(
+      within(placed).getByRole('button', { name: '202601-S0015' }),
+    ).toBeInTheDocument();
+
+    const unplaced = screen.getByText('SO386461').closest('tr') as HTMLElement;
+    expect(within(unplaced).queryByRole('button', { name: /S00/ })).not.toBeInTheDocument();
+  });
+
   it('says "not placed" rather than inventing a supplier', async () => {
     listOrderInquiryWorklist.mockResolvedValue(
       envelope([MOCK_WORKLIST_ROWS[1]]),
@@ -332,5 +414,238 @@ describe('OrderInquiriesClient', () => {
     const row = (await screen.findByText('SRTWC8605-SC-RL')).closest('tr');
     expect(row).not.toBeNull();
     expect(within(row as HTMLElement).getAllByText('Not placed')).toHaveLength(2);
+  });
+
+  describe('the schedule view (rework of D1: a matrix, not a day-grid calendar)', () => {
+    it('switching to Schedule persists ?view=schedule in the URL', async () => {
+      renderClient();
+      await screen.findByText('SO385126');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+
+      await waitFor(() =>
+        expect(routerReplace).toHaveBeenCalledWith(
+          '/project-sales/order-inquiries?view=schedule',
+          expect.objectContaining({ scroll: false }),
+        ),
+      );
+      expect(screen.getByRole('button', { name: 'Schedule' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      // The list table is gone in this view.
+      expect(screen.queryByText('SO385126')).not.toBeInTheDocument();
+    });
+
+    it('opens on the view the URL carries, and switching back to List drops ?view', async () => {
+      currentSearchParams = new URLSearchParams('view=schedule');
+      renderClient();
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Schedule' })).toHaveAttribute(
+          'aria-pressed',
+          'true',
+        ),
+      );
+      expect(screen.queryByText('SO385126')).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'List' }));
+
+      await waitFor(() =>
+        expect(routerReplace).toHaveBeenCalledWith('/project-sales/order-inquiries', {
+          scroll: false,
+        }),
+      );
+      expect(await screen.findByText('SO385126')).toBeInTheDocument();
+    });
+
+    it('renders rows by product and columns by delivery month, undated rows in "No date"', async () => {
+      currentSearchParams = new URLSearchParams('view=schedule&granularity=month');
+      renderClient();
+
+      expect(await screen.findByText('SRTWB5400')).toBeInTheDocument();
+      expect(screen.getByText('SRTWC8605-SC-RL')).toBeInTheDocument();
+      expect(screen.getByText('SRTWT107')).toBeInTheDocument();
+      expect(screen.getByText('BT012-CR')).toBeInTheDocument();
+      expect(screen.getByText('Jan 2026')).toBeInTheDocument();
+      expect(screen.getByText('Mar 2026')).toBeInTheDocument();
+      expect(screen.getByText('No date')).toBeInTheDocument();
+    });
+
+    it('switching Rows to Agent persists ?rows=agent and regroups by agent code', async () => {
+      currentSearchParams = new URLSearchParams('view=schedule');
+      renderClient();
+      await screen.findByText('SRTWB5400');
+
+      fireEvent.change(screen.getByLabelText('matrix-rows'), { target: { value: 'agent' } });
+
+      await waitFor(() =>
+        expect(routerReplace).toHaveBeenCalledWith(
+          '/project-sales/order-inquiries?view=schedule&rows=agent',
+          expect.objectContaining({ scroll: false }),
+        ),
+      );
+      expect(await screen.findByText('SEAN I')).toBeInTheDocument();
+      expect(screen.getByText('No agent')).toBeInTheDocument();
+    });
+
+    it('clicking a cell drills down to its own rows, in the list columns', async () => {
+      currentSearchParams = new URLSearchParams('view=schedule&granularity=month');
+      renderClient();
+      const cell = await screen.findByRole('button', { name: '85, 1 row' });
+
+      fireEvent.click(cell);
+
+      expect(await screen.findByText('SRTWC8605-SC-RL · Jan 2026')).toBeInTheDocument();
+      expect(screen.getByText('SO386461')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      expect(screen.queryByText('SRTWC8605-SC-RL · Jan 2026')).not.toBeInTheDocument();
+    });
+
+    it('says nothing is in this view when the filtered schedule is empty', async () => {
+      listOrderInquiryWorklist.mockResolvedValue(envelope([]));
+      currentSearchParams = new URLSearchParams('view=schedule');
+      renderClient();
+
+      expect(await screen.findByText('No inquiries in this view')).toBeInTheDocument();
+    });
+  });
+
+  describe('Auto-place (G2 rule 4)', () => {
+    it('confirms before running the cascade, naming what it does', async () => {
+      renderClient();
+      await screen.findByText('SO385126');
+
+      openActionsMenu();
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Auto-place' }));
+
+      expect(
+        screen.getByText(
+          'Automatically tag raised order rows to outstanding PO lines, earliest first?',
+        ),
+      ).toBeInTheDocument();
+      expect(autoPlaceOrderInquiryRows).not.toHaveBeenCalled();
+    });
+
+    it('runs the cascade on confirm and reports what it placed', async () => {
+      autoPlaceOrderInquiryRows.mockResolvedValue({
+        placed_rows: 4,
+        allocations: 5,
+        products_touched: 3,
+      });
+      renderClient();
+      await screen.findByText('SO385126');
+
+      openActionsMenu();
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Auto-place' }));
+      const dialog = await screen.findByRole('alertdialog');
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Auto-place' }));
+
+      await waitFor(() => expect(autoPlaceOrderInquiryRows).toHaveBeenCalledWith({}));
+    });
+
+    it('closes the confirm without running anything on Cancel', async () => {
+      renderClient();
+      await screen.findByText('SO385126');
+
+      openActionsMenu();
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Auto-place' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      expect(
+        screen.queryByText(
+          'Automatically tag raised order rows to outstanding PO lines, earliest first?',
+        ),
+      ).not.toBeInTheDocument();
+      expect(autoPlaceOrderInquiryRows).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Unplace all (S2/S3/N1, code review 20 Aug 2026)', () => {
+    it('names every placed row when no filter narrows the scope, and tells the truth about what is lost', async () => {
+      getUnplaceAllPreview.mockResolvedValue({ count: 5, product_code: null, product_name: null });
+      renderClient();
+      await screen.findByText('SO385126');
+
+      openActionsMenu();
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Unplace all' }));
+
+      const dialog = await screen.findByRole('alertdialog');
+      expect(dialog.textContent).toContain('5 placed rows across the whole company');
+      expect(dialog.textContent).toContain(
+        'Auto-place will re-deal them by the current priority policy. Placements made by hand are not restored.',
+      );
+      // Never the old "the current view" wording - it silently included State, which this
+      // scope never does.
+      expect(dialog.textContent).not.toContain('current view');
+    });
+
+    it('never lets State narrow the described scope - it always means placed rows', async () => {
+      getUnplaceAllPreview.mockResolvedValue({ count: 5, product_code: null, product_name: null });
+      renderClient();
+      await screen.findByText('SO385126');
+
+      openFilters();
+      fireEvent.change(screen.getByLabelText('Every state'), { target: { value: 'raised' } });
+      // The filter popover is modal, so everything behind it is out of the accessibility
+      // tree until it closes.
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+      openActionsMenu();
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Unplace all' }));
+
+      const dialog = await screen.findByRole('alertdialog');
+      // Still "every placed row" - State=raised did not silently zero the described scope,
+      // and the request itself never carries `state` (S2's own contract).
+      expect(dialog.textContent).toContain('across the whole company');
+      await waitFor(() =>
+        expect(getUnplaceAllPreview).toHaveBeenLastCalledWith(
+          expect.not.objectContaining({ state: expect.anything() }),
+        ),
+      );
+    });
+
+    it('names the active filters in play instead of a vague "current view"', async () => {
+      getUnplaceAllPreview.mockResolvedValue({ count: 2, product_code: null, product_name: null });
+      renderClient();
+      await screen.findByText('SO385126');
+
+      openFilters();
+      fireEvent.change(screen.getByLabelText('Every supplier'), { target: { value: 'sup-1' } });
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+      openActionsMenu();
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Unplace all' }));
+
+      const dialog = await screen.findByRole('alertdialog');
+      // The supplier's own NAME, never its id (no UUIDs in the UI).
+      expect(dialog.textContent).toContain('from DAFUYUAN');
+      expect(dialog.textContent).not.toContain('sup-1');
+      expect(dialog.textContent).not.toContain('across the whole company');
+    });
+
+    it('distinguishes "no permission" from "genuinely nothing to unplace" (N1)', async () => {
+      granted = new Set(); // a view-only principal - no `projects.order_inquiry.action`
+      renderClient();
+      await screen.findByText('SO385126');
+
+      openActionsMenu();
+      const item = await screen.findByRole('menuitem', { name: 'Unplace all' });
+      expect(item).toHaveAttribute('aria-disabled', 'true');
+      expect(item).toHaveAttribute('title', "You don't have permission to unplace rows");
+      // Held off entirely, not fired-and-403'd for someone who could never press it.
+      expect(getUnplaceAllPreview).not.toHaveBeenCalled();
+    });
+
+    it('still reads "No placed rows to unplace" for a principal who CAN act, on a genuine zero', async () => {
+      getUnplaceAllPreview.mockResolvedValue({ count: 0, product_code: null, product_name: null });
+      renderClient();
+      await screen.findByText('SO385126');
+
+      openActionsMenu();
+      const item = await screen.findByRole('menuitem', { name: 'Unplace all' });
+      await waitFor(() => expect(item).toHaveAttribute('title', 'No placed rows to unplace'));
+    });
   });
 });

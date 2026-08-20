@@ -64,7 +64,8 @@ class PriceAdvice(NamedTuple):
     and a backend that ships prose ends up owning the tone of a UI it cannot see.
     """
 
-    #: zero_cost | no_history | unknown_age | stale | moving | recent
+    #: zero_cost | no_history | other_supplier_price | history_without_price |
+    #: unknown_age | stale | moving | recent
     advice: str
     last: Optional[Purchase]
     previous: Optional[Purchase]
@@ -86,6 +87,19 @@ class PriceAdvice(NamedTuple):
     free_of_charge_lines: int = 0
     stale_after_days: int = STALE_AFTER_DAYS
     movement_threshold_pct: float = MOVEMENT_PCT
+    #: `other_supplier_price` only - the supplier `last` was actually bought from, which is
+    #: NOT the run's chosen supplier for this row. Named so the screen can say "bought from
+    #: X, not Y" rather than presenting somebody else's price as if it were a quote from Y.
+    other_supplier_code: Optional[str] = None
+    other_supplier_name: Optional[str] = None
+    #: `history_without_price` only - what the structured PO/SPO extract DOES carry for a
+    #: line with no price and no supplier code attached (`purchase_history_reader.py`: it
+    #: states the document, the date and the quantity, never a cost). Recoverable facts, so
+    #: a product bought 143 times does not read the same as one never bought at all.
+    history_last_date: Optional[date] = None
+    history_doc_number: Optional[str] = None
+    history_po_count: Optional[int] = None
+    history_total_qty: Optional[float] = None
 
 
 NO_HISTORY = PriceAdvice(
@@ -270,6 +284,104 @@ def _f(v) -> Optional[float]:
     return None if v is None else float(v)
 
 
+# The most recent PRICED purchase for a product from ANY supplier - used only as a
+# fallback (see `price_history_for_run`) when the run's own chosen supplier has no priced
+# purchase of its own. "Never bought this" is a different, more alarming claim than
+# "never bought it from THIS supplier, but we have paid someone else for it".
+_OTHER_SUPPLIER_PRICE_SQL = """
+WITH ranked AS (
+    SELECT pol.product_id, po.po_number, po.issue_date,
+           pol.unit_cost::numeric AS unit_cost,
+           COALESCE(pol.currency, po.currency) AS currency,
+           pol.qty_ordered::numeric AS qty,
+           s.supplier_code, s.supplier_name,
+           ROW_NUMBER() OVER (
+               PARTITION BY pol.product_id
+               ORDER BY po.issue_date DESC NULLS LAST, pol.created_at DESC
+           ) AS rn
+    FROM purchase_order_lines pol
+    JOIN purchase_orders po ON po.id = pol.purchase_order_id
+    LEFT JOIN suppliers s ON s.id = po.supplier_id
+    WHERE pol.product_id = ANY(CAST(:pids AS uuid[]))
+      AND pol.unit_cost > 0
+      AND po.status NOT IN :not_a_purchase
+)
+SELECT product_id::text AS product_id, po_number, issue_date, unit_cost, currency, qty,
+       supplier_code, supplier_name
+FROM ranked WHERE rn = 1
+"""
+
+# Every line the product's own history carries, priced or not - the totals a buyer can
+# still be told even where `_OTHER_SUPPLIER_PRICE_SQL` above found nothing (a purchase
+# recorded with no price at all - the structured SPO extract's whole shape).
+_PRODUCT_HISTORY_TOTALS_SQL = """
+SELECT pol.product_id::text AS product_id,
+       COUNT(DISTINCT po.po_number) AS po_count,
+       COALESCE(SUM(pol.qty_ordered), 0) AS total_qty
+FROM purchase_order_lines pol
+JOIN purchase_orders po ON po.id = pol.purchase_order_id
+WHERE pol.product_id = ANY(CAST(:pids AS uuid[]))
+  AND po.status NOT IN :not_a_purchase
+GROUP BY pol.product_id
+"""
+
+_PRODUCT_HISTORY_LAST_SQL = """
+WITH ranked AS (
+    SELECT pol.product_id, po.po_number, po.issue_date,
+           ROW_NUMBER() OVER (
+               PARTITION BY pol.product_id
+               ORDER BY po.issue_date DESC NULLS LAST, pol.created_at DESC
+           ) AS rn
+    FROM purchase_order_lines pol
+    JOIN purchase_orders po ON po.id = pol.purchase_order_id
+    WHERE pol.product_id = ANY(CAST(:pids AS uuid[]))
+      AND po.status NOT IN :not_a_purchase
+)
+SELECT product_id::text AS product_id, po_number, issue_date
+FROM ranked WHERE rn = 1
+"""
+
+
+def _other_supplier_price(db: Session, product_ids: list[str],
+                          not_a_purchase: tuple[str, ...]) -> dict[str, dict]:
+    if not product_ids:
+        return {}
+    rows = db.execute(text(_OTHER_SUPPLIER_PRICE_SQL),
+                      {"pids": product_ids, "not_a_purchase": not_a_purchase}).mappings().all()
+    return {
+        r["product_id"]: {
+            "purchase": Purchase(
+                po_number=r["po_number"], issue_date=r["issue_date"],
+                unit_cost=float(r["unit_cost"]), currency=r["currency"], qty=_f(r["qty"]),
+            ),
+            "supplier_code": r["supplier_code"],
+            "supplier_name": r["supplier_name"],
+        }
+        for r in rows
+    }
+
+
+def _product_history(db: Session, product_ids: list[str],
+                     not_a_purchase: tuple[str, ...]) -> dict[str, dict]:
+    if not product_ids:
+        return {}
+    params = {"pids": product_ids, "not_a_purchase": not_a_purchase}
+    totals = {r["product_id"]: r for r in
+             db.execute(text(_PRODUCT_HISTORY_TOTALS_SQL), params).mappings().all()}
+    last = {r["product_id"]: r for r in
+           db.execute(text(_PRODUCT_HISTORY_LAST_SQL), params).mappings().all()}
+    out: dict[str, dict] = {}
+    for pid, t in totals.items():
+        l = last.get(pid)
+        out[pid] = {
+            "po_count": int(t["po_count"]),
+            "total_qty": _f(t["total_qty"]),
+            "last_date": l["issue_date"] if l else None,
+            "doc_number": l["po_number"] if l else None,
+        }
+    return out
+
+
 def price_history_for_run(
     db: Session, run_id: str, *, as_of: Optional[date] = None
 ) -> dict[str, PriceAdvice]:
@@ -321,13 +433,52 @@ def price_history_for_run(
         ).mappings().all()
     }
 
+    # Fallback facts for a pair whose OWN chosen supplier has no priced purchase - so
+    # "never bought this" (a code the buyer trusts as a green light to go get a fresh
+    # quote) is not shown for a product this system genuinely has history for, only
+    # under a different supplier or with no price attached at all (the structured SPO
+    # extract carries neither a supplier code nor a price - `purchase_history_reader.py`).
+    product_ids = sorted({pair["product_id"] for pair in pairs})
+    other_supplier = _other_supplier_price(db, product_ids, _NOT_A_PURCHASE)
+    history = _product_history(db, product_ids, _NOT_A_PURCHASE)
+
     out: dict[str, PriceAdvice] = {}
     for pair in pairs:
         inner = f"{pair['product_id']}:{pair['supplier_id']}"
         seen = found.get(inner, {})
         cost, currency = standing.get(inner, (None, None))
-        out[f"{pair['product_id']}:{pair['supplier_code']}"] = assess_price(
+        advice = assess_price(
             seen.get(1), seen.get(2), cost, currency, as_of=as_of,
             stale_after_days=stale_after, movement_pct=movement,
         )._replace(free_of_charge_lines=free_lines.get(inner, 0))
+
+        # Only `no_history` is eligible for a fallback - `zero_cost` is a live costing
+        # problem that outranks it, and every other code already means a priced purchase
+        # under this exact supplier was found.
+        if advice.advice == "no_history":
+            other = other_supplier.get(pair["product_id"])
+            hist = history.get(pair["product_id"])
+            if other is not None:
+                other_purchase = other["purchase"]
+                other_age_days = (
+                    (as_of - other_purchase.issue_date).days
+                    if other_purchase.issue_date
+                    else None
+                )
+                advice = advice._replace(
+                    advice="other_supplier_price",
+                    last=other_purchase,
+                    age_days=other_age_days,
+                    other_supplier_code=other["supplier_code"],
+                    other_supplier_name=other["supplier_name"],
+                )
+            elif hist is not None:
+                advice = advice._replace(
+                    advice="history_without_price",
+                    history_last_date=hist["last_date"],
+                    history_doc_number=hist["doc_number"],
+                    history_po_count=hist["po_count"],
+                    history_total_qty=hist["total_qty"],
+                )
+        out[f"{pair['product_id']}:{pair['supplier_code']}"] = advice
     return out

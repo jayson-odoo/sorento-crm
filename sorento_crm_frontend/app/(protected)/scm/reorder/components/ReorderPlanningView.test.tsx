@@ -53,9 +53,14 @@ vi.mock('../hooks/usePlanLines', () => ({
   usePlanLines: () => ({
     lines: [], decisions: {}, decide: vi.fn(), clear: vi.fn(),
     totals: { decided: 0, undecided: 0, buying: 0, usingStock: 0, usingPo: 0, skipped: 0, units: 0, cost: 0, unpriced: 0 },
+    // S16: the "N of Total made" header reads THESE (the server's own count) now, not
+    // `totals` above - see `PlanLinesSection`'s own `onDecisionProgressChange`.
+    decidedCount: 0,
+    totalDecidableCount: 0,
     levelSuggestions: {},
     isLoading: false, isError: false, error: null, refetch: vi.fn(),
   }),
+  planRowDecisionsKey: (runId: string | null) => ['plan-lines', runId, 'row-decisions'],
 }));
 vi.mock('./PlanAssistant', () => ({ PlanAssistant: () => <div>plan-assistant</div> }));
 vi.mock('./RunHistoryPanel', () => ({ RunHistoryPanel: () => <div>run-history</div> }));
@@ -142,7 +147,9 @@ describe('ReorderPlanningView - opens to today (M8-D3)', () => {
     renderView();
     expect(screen.getByText(/Today's plan · /)).toBeInTheDocument();
     expect(screen.getByText('plan-lines-grid')).toBeInTheDocument();
-    expect(screen.getByText('plan-assistant')).toBeInTheDocument();
+    // PlanAssistant was removed from this screen (captain, 20 Aug: "remove these") -
+    // its absence is now the contract.
+    expect(screen.queryByText('plan-assistant')).not.toBeInTheDocument();
   });
 });
 
@@ -313,7 +320,11 @@ describe('ReorderPlanningView - demand the plan could not net', () => {
 
   // > "order inquiry is only for project side" - a project SO no inquiry names is set
   // > aside AND counted (user decision, 2026-08-10). This banner is the counting half.
-  it('says how much project demand is waiting on an Order Inquiry', () => {
+  //
+  // Wording note (live diagnosis, 20 Aug): "waiting on an Order Inquiry" used to imply the
+  // orders the plan DOES count have one - 598 of 605 do not. The predicate is order-level:
+  // a project-class order the Order Inquiry import never named.
+  it('says how much project demand the Order Inquiry import never named', () => {
     stubToday(todayRun());
     useSetAsideDemand.mockReturnValue({
       data: {
@@ -326,12 +337,13 @@ describe('ReorderPlanningView - demand the plan could not net', () => {
     });
     renderView();
 
-    expect(screen.getByText(/waiting on an Order Inquiry/i)).toBeInTheDocument();
+    expect(screen.getByText(/the Order Inquiry import never named/i)).toBeInTheDocument();
+    expect(screen.queryByText(/waiting on an Order Inquiry/i)).not.toBeInTheDocument();
     expect(screen.getByText('480')).toBeInTheDocument();
     expect(screen.getByText('SO26-0101')).toBeInTheDocument();
   });
 
-  it('says nothing when every project order is on an inquiry', () => {
+  it('says nothing when every project order is named by the inquiry', () => {
     stubToday(todayRun());
     useSetAsideDemand.mockReturnValue({
       data: { orders: 0, lines: 0, quantity: 0, sample: [] },
@@ -339,7 +351,7 @@ describe('ReorderPlanningView - demand the plan could not net', () => {
     });
     renderView();
 
-    expect(screen.queryByText(/waiting on an Order Inquiry/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/the Order Inquiry import never named/i)).not.toBeInTheDocument();
   });
 });
 

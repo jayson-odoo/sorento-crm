@@ -46,9 +46,10 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import func, or_
+from sqlalchemy import cast, func, or_, select, true
+from sqlalchemy.dialects.postgresql import ARRAY, TEXT as PG_TEXT
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -844,11 +845,15 @@ class ProjectScheduleService:
 
     # --------------------------------------------------------------- extraction
 
-    def read_document(self, content: bytes, mime: str) -> List[Tuple[int, dict]]:
+    def read_document(
+        self, content: bytes, mime: str, *, on_page: Optional[Callable[[Any], None]] = None
+    ) -> List[Tuple[int, dict]]:
         """The vision pass. Returns (page_no, answer) for every page that answered."""
         from app.services.document_extraction import extract_document
 
-        result = extract_document(self.db, content, mime, prompt_key="schedule_extractor")
+        result = extract_document(
+            self.db, content, mime, prompt_key="schedule_extractor", on_page=on_page
+        )
         self._last_extraction = result
         return [
             (page.page_no, page.data) for page in result.ok_pages if page.data is not None
@@ -867,13 +872,44 @@ class ProjectScheduleService:
         version = self.get_version(schedule_version_id)
         version.extraction_state = STATE_RUNNING
         version.extraction_error = None
+        # A retry starts on the SAME version row, and `_on_page` below appends to
+        # whatever `extracted_json['pages']` already holds. Left alone, a retry after a
+        # failed read appends the new pages onto the old ones, so the FE's "Page X of Y"
+        # progress counter pins to a Y that includes pages from the read that failed.
+        # Cleared here, once, before the first page can land.
+        version.extracted_json = {**(version.extracted_json or {}), "pages": []}
         # Only the reader knows when it actually picked the document up. See S20.
         recovery.mark_started(self.db, version)
         self.db.commit()
 
+        def _on_page(page) -> None:
+            """Progress, visible mid-read. Only a page that actually answered counts,
+            matching the shape ``persist_pages`` writes at the end (``read_document``
+            itself drops failed pages the same way) - so ``pages_extracted`` climbs
+            while the version still says RUNNING, with no new column and no new FE
+            contract. Pages can land out of order under the page pool below; that is
+            fine for a counter and is corrected the moment ``persist_pages`` overwrites
+            this with the full, ordered set.
+            """
+            if page.data is None:
+                return
+            extracted = dict(version.extracted_json or {})
+            blobs = list(extracted.get("pages") or [])
+            blobs.append({"page_no": page.page_no, "data": page.data})
+            extracted["pages"] = blobs
+            version.extracted_json = extracted
+            try:
+                self.db.commit()
+            except Exception:  # noqa: BLE001 - progress reporting is best effort
+                logger.warning(
+                    "could not record extraction progress for schedule version %s page %s",
+                    version.id, page.page_no, exc_info=True,
+                )
+                self.db.rollback()
+
         try:
             content, mime = self._document_bytes(version)
-            pages = self.read_document(content, mime)
+            pages = self.read_document(content, mime, on_page=_on_page)
             result = getattr(self, "_last_extraction", None)
             if result is not None:
                 version.extraction_model = result.model
@@ -1148,12 +1184,34 @@ class ProjectScheduleService:
         schedule: DeliverySchedule,
         columns: List[_Column],
     ) -> None:
+        """In order: what this customer taught us, the code printed inside their own,
+        then a strong and unambiguous fuzzy match. Anything less is left to a person.
+
+        The first two tiers are exact lookups, one per column. The fuzzy tier is not:
+        it used to run one ``ORDER BY similarity(...) DESC LIMIT 2`` per column left
+        over, and a schedule with two dozen unplaced products ran that many separate
+        queries. Every column still standing after the exact tiers is batched into
+        ONE trigram query instead.
+        """
         customer_id = self.customer_id_for(schedule)
         remembered = self._remembered_codes(customer_id)
+        pending: List[_Column] = []
         for column in columns:
-            product_id, source = self._resolve_one(version, column, remembered)
+            product_id, source = self._resolve_by_map_or_code(version, column, remembered)
+            if source is not None:
+                column.product_id = product_id
+                column.resolution_source = source
+            else:
+                pending.append(column)
+
+        trigram_hits = self._product_by_similarity_batch(
+            version, [(c.header_code or c.customer_code_raw) for c in pending]
+        )
+        for column in pending:
+            probe = column.header_code or column.customer_code_raw
+            product_id = trigram_hits.get(probe)
             column.product_id = product_id
-            column.resolution_source = source
+            column.resolution_source = _RESOLUTION_TRIGRAM if product_id else None
 
     def _remembered_codes(self, customer_id: Optional[str]) -> Dict[str, str]:
         if not customer_id:
@@ -1165,14 +1223,15 @@ class ProjectScheduleService:
         )
         return {(row.customer_code or "").upper(): row.product_id for row in rows}
 
-    def _resolve_one(
+    def _resolve_by_map_or_code(
         self,
         version: DeliveryScheduleVersion,
         column: _Column,
         remembered: Dict[str, str],
     ) -> Tuple[Optional[str], Optional[str]]:
-        """In order: what this customer taught us, the code printed inside their own,
-        then a strong and unambiguous fuzzy match. Anything less is left to a person."""
+        """The two exact tiers: what this customer taught us, then the code printed
+        inside their own. ``(None, None)`` means neither placed the column - the
+        caller's cue to try it in the batched fuzzy match instead."""
         raw = (column.customer_code_raw or "").upper()
         if raw and raw in remembered:
             return remembered[raw], _RESOLUTION_MAP
@@ -1182,10 +1241,6 @@ class ProjectScheduleService:
             if product is not None:
                 return product.id, _RESOLUTION_CODE
 
-        probe = column.header_code or column.customer_code_raw
-        product_id = self._product_by_similarity(version, probe)
-        if product_id:
-            return product_id, _RESOLUTION_TRIGRAM
         return None, None
 
     def _product_by_code(
@@ -1198,22 +1253,53 @@ class ProjectScheduleService:
             query = query.filter(Product.company_id == version.company_id)
         return query.first()
 
-    def _product_by_similarity(
-        self, version: DeliveryScheduleVersion, probe: Optional[str]
-    ) -> Optional[str]:
-        if not probe or len(probe) < 4:
-            return None
-        similarity = getattr(func, _TRGM_SCHEMA).similarity(Product.product_code, probe)
-        query = self.db.query(Product.id, similarity.label("sim"))
-        if version.company_id:
-            query = query.filter(Product.company_id == version.company_id)
-        rows = query.order_by(similarity.desc()).limit(2).all()
-        if not rows or float(rows[0].sim or 0) < TRIGRAM_FLOOR:
-            return None
-        if len(rows) > 1 and float(rows[0].sim) - float(rows[1].sim or 0) < TRIGRAM_MARGIN:
-            # Two products this close apart is a question, not an answer.
-            return None
-        return rows[0].id
+    def _product_by_similarity_batch(
+        self, version: DeliveryScheduleVersion, probes: Sequence[Optional[str]]
+    ) -> Dict[str, Optional[str]]:
+        """``probe -> product_id`` for every distinct probe worth asking about, in one
+        round trip.
+
+        One ``CROSS JOIN LATERAL`` per distinct probe, each ranking the catalogue by
+        ``similarity(product_code, probe)`` and keeping its own top two - mechanically
+        the same per-probe query ``_product_by_similarity`` used to run one at a time,
+        just sent together. ``TRIGRAM_FLOOR``/``TRIGRAM_MARGIN`` are then applied in
+        Python exactly as before, probe by probe.
+        """
+        candidates = sorted({p for p in probes if p and len(p) >= 4})
+        if not candidates:
+            return {}
+
+        # A table-valued `unnest`, one row per distinct probe, joined LATERAL to a
+        # per-probe top-2 - the LATERAL side can reference `probe_col.c.probe` only
+        # because it is written as a derived table with an explicit column list
+        # (`render_derived()`); without it Postgres has no name for unnest's column.
+        probe_col = func.unnest(cast(candidates, ARRAY(PG_TEXT))).table_valued("probe").render_derived()
+        sim_expr = getattr(func, _TRGM_SCHEMA).similarity(Product.product_code, probe_col.c.probe)
+        ranked = (
+            select(Product.id.label("product_id"), sim_expr.label("sim"))
+            .where(Product.company_id == version.company_id if version.company_id else true())
+            .order_by(sim_expr.desc())
+            .limit(2)
+            .lateral("ranked")
+        )
+        query = select(probe_col.c.probe, ranked.c.product_id, ranked.c.sim).select_from(
+            probe_col.join(ranked, true())
+        )
+
+        by_probe: Dict[str, list[tuple[Optional[str], float]]] = {}
+        for probe, product_id, sim in self.db.execute(query).all():
+            by_probe.setdefault(probe, []).append((product_id, float(sim or 0)))
+
+        hits: Dict[str, Optional[str]] = {}
+        for probe, rows in by_probe.items():
+            rows.sort(key=lambda row: row[1], reverse=True)
+            if not rows or rows[0][1] < TRIGRAM_FLOOR:
+                continue
+            if len(rows) > 1 and rows[0][1] - rows[1][1] < TRIGRAM_MARGIN:
+                # Two products this close apart is a question, not an answer.
+                continue
+            hits[probe] = rows[0][0]
+        return hits
 
     def _merge_duplicate_columns(self, columns: List[_Column]) -> List[_Column]:
         """Two columns of the same product become one.

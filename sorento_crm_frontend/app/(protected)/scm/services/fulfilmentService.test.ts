@@ -14,7 +14,7 @@ vi.mock(
   }),
 );
 
-import { downloadPackingListExport } from './fulfilmentService';
+import { deleteSpo, downloadPackingListExport } from './fulfilmentService';
 
 function fileResponse(disposition: string | null, status = 200) {
   const headers = new Headers();
@@ -26,6 +26,17 @@ function fileResponse(disposition: string | null, status = 200) {
     blob: async () => new Blob(['xlsx']),
     json: async () => ({ message: 'nope' }),
     text: async () => 'nope',
+  } as unknown as Response;
+}
+
+function jsonResponse(body: unknown, status = 200) {
+  const headers = new Headers({ 'content-type': 'application/json' });
+  return {
+    ok: status < 400,
+    status,
+    headers,
+    json: async () => body,
+    text: async () => JSON.stringify(body),
   } as unknown as Response;
 }
 
@@ -82,5 +93,41 @@ describe('downloadPackingListExport', () => {
       downloadPackingListExport('ship-1', 'MSKU1234567'),
     ).rejects.toThrow('nope');
     expect(saveBlobAs).not.toHaveBeenCalled();
+  });
+});
+
+describe('deleteSpo', () => {
+  it('DELETEs the shipment SPO route and returns what was deleted', async () => {
+    apiFetch.mockResolvedValue(
+      jsonResponse({
+        shipment_id: 'ship-1',
+        shipment_number: 'SH-1',
+        deleted_po_numbers: ['CRM-SPO-0001'],
+        deleted_spo_count: 1,
+        deleted_allocation_count: 2,
+      }),
+    );
+
+    const out = await deleteSpo('ship-1');
+
+    expect(apiFetch).toHaveBeenCalledWith(
+      '/api/v1/scm/inbound-shipments/ship-1/spo',
+      expect.objectContaining({ method: 'DELETE' }),
+    );
+    expect(out.deleted_spo_count).toBe(1);
+    expect(out.deleted_allocation_count).toBe(2);
+  });
+
+  it('throws the extracted API error on a refused (409) delete', async () => {
+    apiFetch.mockResolvedValue(
+      jsonResponse(
+        { message: 'CRM-SPO-9999 was not created by Create SPO and cannot be deleted from this screen.' },
+        409,
+      ),
+    );
+
+    await expect(deleteSpo('ship-1')).rejects.toThrow(
+      'CRM-SPO-9999 was not created by Create SPO and cannot be deleted from this screen.',
+    );
   });
 });

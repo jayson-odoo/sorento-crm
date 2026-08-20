@@ -10,6 +10,7 @@
  * price advice, nothing here claims to see the market.
  */
 import { fmtInt } from '../../lib/format';
+import type { PlanChannel } from './planLineGrouping';
 
 export type TrajectoryVerdict = 'rising' | 'holding' | 'falling' | 'quiet' | 'no_history';
 
@@ -42,6 +43,25 @@ export interface TrajectoryEntry {
   agents_available: boolean;
 }
 
+/**
+ * The same verdict as `TrajectoryEntry`, split by demand-class CHANNEL (`sales_orders.
+ * demand_class` - the field `committed_v` splits on) rather than by warehouse segment.
+ *
+ * Additive to `TrajectoryEntry`/`series` - this feeds the grouped Buy view's per-channel
+ * trend subline ("what is the trend in project, what is the trend in retail"), one figure
+ * under each channel column rather than one trend for the product's total demand.
+ */
+export interface ChannelTrendEntry {
+  verdict: TrajectoryVerdict;
+  recent_qty: number;
+  previous_qty: number;
+  change_pct: number | null;
+  window_months: number;
+  /** Units/day over the recent window - the channel-scoped mirror of the row's own
+   *  "avg N/day" subline. Null when the window is degenerate. */
+  avg_day: number | null;
+}
+
 export interface TrajectoryPayload {
   windows: { retail_months: number; project_months: number };
   /** How far back the monthly series reaches, so the empty state can say it rather than
@@ -49,6 +69,9 @@ export interface TrajectoryPayload {
   series_months: number;
   movement_threshold_pct: number;
   series: Record<string, TrajectoryEntry>;
+  /** Keyed by `product_id`, then channel. Absent (or a missing channel key) reads the same
+   *  as `series` missing a key - no opinion, render nothing - never a flat/zero trend. */
+  channel_trends?: Record<string, Partial<Record<PlanChannel, ChannelTrendEntry>>>;
 }
 
 /**

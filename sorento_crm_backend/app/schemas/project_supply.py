@@ -41,6 +41,30 @@ class SupplyComponent(BaseModel):
     donor_project_id: Optional[str] = None
     #: What CS typed: the Borrow reason, or the reason a discontinued product is bought.
     cs_reason: Optional[str] = None
+    #: Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E): which rung of the
+    #: source ladder produced this component - finer than `kind`, which only carries the
+    #: balance-invariant bucket. `None` on a component frozen before ladder v2 landed.
+    rung: Optional[str] = None
+    #: The donor sales order for a `group_borrow` component (section E.4): its number,
+    #: line and agent, so the sheet can name who it came from. `None` on every other kind.
+    donor_so_number: Optional[str] = None
+    donor_line_no: Optional[int] = None
+    donor_agent_code: Optional[str] = None
+    #: The donor shares this line's own sales agent - "she can authorise CS to move stock
+    #: between her own orders" (section 8).
+    same_agent: bool = False
+    #: The order-back this component raised: an Order Inquiry Buy for the donor's own
+    #: line, equal to what was taken. `None` outside `group_borrow`.
+    order_back_qty: Optional[str] = None
+    #: Addressing only, never rendered: the donor's own core sales-order line id, so
+    #: re-confirming this proposal AS PROPOSED can re-identify the same donor line
+    #: without a second lookup (`ConfirmBorrowComponent.donor_core_line_id`).
+    donor_core_line_id: Optional[str] = None
+    #: The DONOR's own required date (section E.4: "urgency = the donor's required
+    #: date"), round-tripped into `ConfirmBorrowComponent.donor_required_date` so the
+    #: order-back Order Inquiry row's urgency is the donor's, not this line's own.
+    #: `None` outside `group_borrow`.
+    donor_required_date: Optional[date] = None
 
 
 class SupplySpoRef(BaseModel):
@@ -87,6 +111,33 @@ class BorrowCandidate(BaseModel):
     #: First in the ranking - the donor this borrow hurts least. Exactly one row carries it.
     recommended: bool = False
     donor_impact: BorrowDonorImpact
+    #: Ladder v2 (section E): `group_borrow` or `cross_group_borrow` when this row is one
+    #: of the new group-aware donors, `None` for a plain `other_location`/`other_project`
+    #: donor the old ladder already offered.
+    rung: Optional[str] = None
+    #: The donor sales-order line this row names, for `group_borrow` (section E.4): its
+    #: number, line, and the agent who owns it.
+    donor_so_number: Optional[str] = None
+    donor_line_no: Optional[int] = None
+    donor_agent_code: Optional[str] = None
+    #: Addressing only, never rendered: `donor_core_line_id` re-identifies the donor's own
+    #: sales-order line so the confirmation can re-read its live open quantity at commit
+    #: (AC-C03), the same way `warehouse_id` re-identifies a location.
+    donor_core_line_id: Optional[str] = None
+    #: The donor is ranked BELOW this line by the active priority policy, so this rung
+    #: proposes it automatically (section E.4). `False` on a same-agent donor ranked above
+    #: this line: offered, never auto-composed.
+    lower_ranked: bool = False
+    #: The donor shares this line's own sales agent (section 8) - offered at any rank.
+    same_agent: bool = False
+    #: This donor is outside the small-quantity cap (`cross_group_borrow_max_qty` /
+    #: `_pct`), so it is shown but not selectable without a manual override.
+    over_cap: bool = False
+    cap_reason: Optional[str] = None
+    #: The donor's own required date (section E.4: "urgency = the donor's required
+    #: date"), for a `group_borrow` row - the confirm payload round-trips this into
+    #: `ConfirmBorrowComponent.donor_required_date`. `None` on every other rung.
+    donor_required_date: Optional[date] = None
 
 
 class SupplyFrozenLine(BaseModel):
@@ -202,6 +253,21 @@ class ConfirmBorrowComponent(BaseModel):
     #: number and item code like every other refusal, rather than a field-level 422 the
     #: sheet cannot attach to a row (AC-B09, AC-C02).
     reason: str = ""
+    #: Ladder v2 group borrow (section E.4): the donor's own sales-order line, addressing
+    #: only. Present, this component is checked against that line's LIVE committed
+    #: quantity (re-read at commit, AC-C03) rather than against free stock - it is
+    #: borrowing what is SOLD there, not what is spare. Absent, this is an ordinary
+    #: `other_location` free-stock borrow, unchanged.
+    donor_core_line_id: Optional[str] = None
+    #: Round-tripped from the proposal/donor row so the order-back note can be built
+    #: without a second lookup (`_borrow_shortfalls`). Display only; never validated.
+    donor_so_number: Optional[str] = None
+    donor_line_no: Optional[int] = None
+    donor_agent_code: Optional[str] = None
+    same_agent: bool = False
+    #: The donor's own required date, for the order-back Order Inquiry row's urgency
+    #: (section E.4: "urgency = the donor's required date").
+    donor_required_date: Optional[date] = None
 
 
 class ConfirmLine(BaseModel):
@@ -240,6 +306,78 @@ class ConfirmResult(BaseModel):
     #: `lines_undecided > 0` is a normal, deliberate outcome, not a warning.
     lines_decided: int = 0
     lines_undecided: int = 0
+
+
+# ------------------------------------------------------------------- the Plans page (D1)
+
+
+class PlanRow(BaseModel):
+    """One row of `GET /project-sales/plans`: one supply decision revision, cross-order.
+
+    Addressing is by `project_sales_order_id` (the SO sheet) and `sales_order_id` (the SCM
+    sales order), never rendered - the same "codes, not ids" rule the rest of this file
+    follows, with `so_number` and the agent CODE as what actually prints.
+    """
+
+    project_sales_order_id: str
+    sales_order_id: Optional[str] = None
+    project_id: Optional[str] = None
+    so_number: Optional[str] = None
+    customer_name: Optional[str] = None
+    agent_code: Optional[str] = None
+    agent_label: Optional[str] = None
+    revision_no: int
+    state: SupplyDecisionState
+    decided_by_name: Optional[str] = None
+    decided_at: Optional[datetime] = None
+    #: How many lines this revision covers. Never the sales order's whole line count - a
+    #: revision may cover a chosen subset (13.4) and this is that subset's size.
+    line_count: int = 0
+    #: "Reserve 213 · Buy 145", summed across every line the revision covers. `None` on a
+    #: revision that covers nothing (should not happen, but a summary is never invented).
+    components_summary: Optional[str] = None
+    #: Why the active revision no longer matches the order. Present only when `state` is
+    #: `challenged`.
+    challenged_reason: Optional[str] = None
+
+
+# --------------------------------------------------------- confirm all approved (D3)
+
+
+class ConfirmManyOrderBody(BaseModel):
+    """One order's half of `POST .../fulfilment-planning/confirm-all`. Same shape as
+    `ConfirmSupplyBody.lines`, named so a batch of them addresses each order by id."""
+
+    pso_id: str
+    lines: List[ConfirmLine] = Field(default_factory=list)
+
+
+class ConfirmManyBody(BaseModel):
+    orders: List[ConfirmManyOrderBody] = Field(default_factory=list)
+
+
+class ConfirmManyOrderResult(BaseModel):
+    """One order's outcome. `ok` decides which of the two halves is populated - never both,
+    and never neither: a result the caller cannot read as success-or-failure is worse than
+    a slower reply."""
+
+    pso_id: str
+    ok: bool
+    decision_revision: Optional[int] = None
+    inquiry_rows_created: Optional[int] = None
+    lines_decided: Optional[int] = None
+    lines_undecided: Optional[int] = None
+    error: Optional[str] = None
+    #: The lines the server refused, named the way `SupplyFailingLine` always is (AC-C02),
+    #: when the refusal named any.
+    failing_lines: Optional[List[SupplyFailingLine]] = None
+
+
+class ConfirmManyResult(BaseModel):
+    """`POST .../fulfilment-planning/confirm-all`. One result per order named in the body,
+    in the SAME order - a caller matching by index never has to search."""
+
+    results: List[ConfirmManyOrderResult] = []
 
 
 class ClassificationEvidenceLocation(BaseModel):

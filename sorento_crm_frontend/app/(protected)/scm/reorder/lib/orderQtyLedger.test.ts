@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   clampForecastQty,
+  daysTerm,
   forecastAddOn,
   forecastQtyCap,
   lineBreachStatus,
@@ -31,6 +32,26 @@ const trend = (over: Partial<TrajectoryEntry> = {}): TrajectoryEntry => ({
   agents: [],
   agents_available: false,
   ...over,
+});
+
+describe('daysTerm - "Nd label", never a bare em-dash glued to the unit (21 Aug fix)', () => {
+  it('formats a real day count', () => {
+    expect(daysTerm(30, 'review')).toBe('30d review');
+    expect(daysTerm(7, 'lead')).toBe('7d lead');
+  });
+
+  it('rounds a fractional day count', () => {
+    expect(daysTerm(29.6, 'review')).toBe('30d review');
+  });
+
+  it('returns null (not "-d review") when the day count is absent, so the caller can name it', () => {
+    expect(daysTerm(null, 'review')).toBeNull();
+    expect(daysTerm(undefined, 'lead')).toBeNull();
+  });
+
+  it('0 is a real day count, not absence', () => {
+    expect(daysTerm(0, 'review')).toBe('0d review');
+  });
 });
 
 describe('roundOrderQty - byte-for-byte parity with reorder_engine.round_order_qty (Fix 6, 2026-08-12)', () => {

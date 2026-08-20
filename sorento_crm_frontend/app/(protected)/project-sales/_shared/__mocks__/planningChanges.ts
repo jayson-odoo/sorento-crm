@@ -676,6 +676,7 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
     lines_replanned: 1,
     lines_confirmed: 0,
     purchasing_notified: true,
+    returned_to_review: [],
   },
   orders: [
     {

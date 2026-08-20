@@ -101,6 +101,11 @@ export interface FulfilmentPlanningRow {
   /** The project name when one is registered, else the core order's own project string. */
   project_label?: string | null;
   customer_name?: string | null;
+  /** Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`). Null on an authored
+   * record, which carries no agent of its own, and on a core order nobody could resolve one
+   * for. */
+  agent_code?: string | null;
+  agent_label?: string | null;
   po_number?: string | null;
   area_group?: string | null;
   /** The existing sales-order status (published, amended, adopted, ...), not a review state. */
@@ -263,6 +268,23 @@ export interface SupplyComponent {
   donor_project_id?: string | null;
   /** What CS typed: the Borrow reason, or the reason a discontinued product is bought. */
   cs_reason?: string | null;
+  /**
+   * Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E): which rung of the
+   * source ladder produced this component - `incoming` | `pool` | `group_take` |
+   * `group_borrow` | `cross_group_borrow` | `buy`. `null`/absent on a component frozen
+   * before ladder v2 landed.
+   */
+  rung?: string | null;
+  /** The donor sales order for a `group_borrow` component (section E.4). */
+  donor_so_number?: string | null;
+  donor_line_no?: number | null;
+  donor_agent_code?: string | null;
+  /** The donor shares this line's own sales agent (section 8). */
+  same_agent?: boolean;
+  /** The order-back this component raised: equal to what was taken. */
+  order_back_qty?: string | null;
+  /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
+  donor_core_line_id?: string | null;
 }
 
 /** One incoming SPO leg at the line's location. Timely covers, advisory does not. */
@@ -316,6 +338,26 @@ export interface BorrowCandidate {
   /** First in the ranking. Exactly one candidate carries it. */
   recommended?: boolean;
   donor_impact: BorrowDonorImpact;
+  /**
+   * Ladder v2 (section E): `group_borrow` or `cross_group_borrow` for a new group-aware
+   * donor row, `null`/absent for a plain `other_location`/`other_project` donor the old
+   * ladder already offered.
+   */
+  rung?: string | null;
+  /** The donor sales-order line this row names, for `group_borrow` (section E.4). */
+  donor_so_number?: string | null;
+  donor_line_no?: number | null;
+  donor_agent_code?: string | null;
+  /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
+  donor_core_line_id?: string | null;
+  /** Ranked below this line, so the ladder proposes it automatically. `false` on a
+   * same-agent donor ranked above this line: offered, never auto-composed. */
+  lower_ranked?: boolean;
+  /** The donor shares this line's own sales agent (section 8) - offered at any rank. */
+  same_agent?: boolean;
+  /** Outside the small-quantity cap - shown, but not selectable without an override. */
+  over_cap?: boolean;
+  cap_reason?: string | null;
 }
 
 /** The components as they were frozen at confirmation, read back on a confirmed order. */
@@ -438,6 +480,20 @@ export interface ConfirmBorrowComponent {
   qty: string;
   /** Mandatory: no Borrow is written without one (AC-B09). */
   reason: string;
+  /**
+   * Ladder v2 group borrow (section E.4): the donor's own sales-order line, from
+   * `BorrowCandidate.donor_core_line_id`. Present, this component is checked against
+   * that line's LIVE committed quantity at confirm, not against free stock. Absent, this
+   * is an ordinary `other_location` free-stock borrow, unchanged.
+   */
+  donor_core_line_id?: string | null;
+  /** Round-tripped from the donor row so the order-back note needs no second lookup. */
+  donor_so_number?: string | null;
+  donor_line_no?: number | null;
+  donor_agent_code?: string | null;
+  same_agent?: boolean;
+  /** The donor's own required date - the order-back's urgency (section E.4). */
+  donor_required_date?: string | null;
 }
 
 export interface ConfirmLine {
@@ -543,8 +599,27 @@ export interface BoardDateBucket {
  */
 export type BoardSourceKind = 'reserve' | 'timely_spo' | 'buy' | 'borrow' | 'unplannable';
 
-/** The rungs of the source ladder, in the order the engine walks them. */
-export type BoardTrailKind = 'reserve_own' | 'reserve_pool' | 'incoming' | 'borrow' | 'buy';
+/**
+ * The rungs of the source ladder, in the order the engine walks them - ladder v2
+ * (`PLAN-demo-followups-19aug-ladder-v2.md` section E, amended by review finding S4): the
+ * read-only own location (`reserve_own`), then incoming, the pool, group take, group
+ * borrow, cross-group borrow, then buy. The own-location rung is gone AS A SOURCE (rule
+ * 7 - a line's own stock is never reserved), but it stays as the first rung, read-only:
+ * it is the one place the queue ahead of THIS line at ITS OWN pile is named, because
+ * `QueueLink`'s dialog opens exactly this rung's own location and nowhere else's.
+ * `reserve_pool` / plain `borrow` are pre-v2 spellings, kept only so a stale cached trail
+ * does not fail to render.
+ */
+export type BoardTrailKind =
+  | 'reserve_own'
+  | 'incoming'
+  | 'pool'
+  | 'group_take'
+  | 'group_borrow'
+  | 'cross_group_borrow'
+  | 'buy'
+  | 'reserve_pool'
+  | 'borrow';
 
 /**
  * What happened at one rung.
@@ -708,6 +783,17 @@ export interface BoardDecisionBorrow {
   qty: string;
   /** The PERSON's reason. The confirmation refuses a Borrow that carries none. */
   reason: string;
+  /** Ladder v2 (section E.4): the donor sales-order line this Borrow named. */
+  rung?: string | null;
+  donor_so_number?: string | null;
+  donor_line_no?: number | null;
+  donor_agent_code?: string | null;
+  same_agent?: boolean;
+  /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
+  donor_core_line_id?: string | null;
+  donor_required_date?: string | null;
+  /** The order-back this component raised: equal to what was taken. */
+  order_back_qty?: string | null;
 }
 
 /**
@@ -763,6 +849,11 @@ export interface BoardContribution {
    * prevent, so the fallback is a stated compromise rather than the design.
    */
   customer_id?: string | null;
+  /** Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`). Null when the sales order
+   * carries no agent. */
+  agent_code?: string | null;
+  /** Who the code belongs to, shown as the code's `title`, never in place of the code. */
+  agent_label?: string | null;
   project_label?: string | null;
   /**
    * The project's normalised key, for grouping only, never rendered.
@@ -957,6 +1048,16 @@ export interface BoardSource {
   /** SPO number when the source is incoming stock. */
   spo_number?: string | null;
   arrival_date?: string | null;
+  /** Ladder v2 (section E): which rung produced this source. */
+  rung?: string | null;
+  donor_so_number?: string | null;
+  donor_line_no?: number | null;
+  donor_agent_code?: string | null;
+  same_agent?: boolean;
+  /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
+  donor_core_line_id?: string | null;
+  /** The donor's own required date - the order-back's urgency (section E.4). */
+  donor_required_date?: string | null;
 }
 
 /** A donor the engine found for a line's Borrow. Named, never an id. */
@@ -985,6 +1086,23 @@ export interface BoardBorrowCandidate {
   recommended?: boolean;
   /** What taking it costs whoever holds it (AC-B09). Shown while the borrow is chosen. */
   donor_impact?: BorrowDonorImpact;
+  /**
+   * Ladder v2 (section E): `group_borrow` or `cross_group_borrow` for a new group-aware
+   * donor row, absent for a plain `other_location`/`other_project` donor.
+   */
+  rung?: string | null;
+  donor_so_number?: string | null;
+  donor_line_no?: number | null;
+  donor_agent_code?: string | null;
+  /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
+  donor_core_line_id?: string | null;
+  /** Ranked below this line, so the ladder proposes it automatically. */
+  lower_ranked?: boolean;
+  /** The donor shares this line's own sales agent (section 8) - offered at any rank. */
+  same_agent?: boolean;
+  /** Outside the small-quantity cap - shown, but not selectable without an override. */
+  over_cap?: boolean;
+  cap_reason?: string | null;
 }
 
 /** One incoming purchase leg at a location, with the document that carries it. */
@@ -1178,6 +1296,14 @@ export interface PlanningBoard {
   productRows: BoardProductRow[];
   cells: BoardCell[];
   /**
+   * Every contributing line of the SELECTION, in the same shape a cell's own `contributions`
+   * carry, but NEVER windowed: `cells` only exists for a bucket that made it onto screen, and
+   * at day granularity that is a 30-day window, not the whole selection. Approve all, the
+   * "N approved / M undecided" strip, the List view and Confirm all approved all read THIS
+   * list - flattening `cells[].contributions` silently drops every line outside the window.
+   */
+  contributions: BoardContribution[];
+  /**
    * One standing per selected order, built from ALL its rows rather than the displayed ones.
    * `decided_count` is always 0 here (deviation 4) and is overlaid from the client draft.
    */
@@ -1205,6 +1331,13 @@ export interface BoardBorrowComponent {
   qty: string;
   /** Mandatory: no Borrow is written without one (AC-B09). */
   reason: string;
+  /** Ladder v2 group borrow (section E.4), round-tripped from the donor candidate row. */
+  donor_core_line_id?: string | null;
+  donor_so_number?: string | null;
+  donor_line_no?: number | null;
+  donor_agent_code?: string | null;
+  same_agent?: boolean;
+  donor_required_date?: string | null;
 }
 
 export interface BoardDecision {
@@ -1262,6 +1395,9 @@ export interface StockDetailSalesOrder {
   so_number: string;
   customer_name?: string | null;
   customer_id?: string | null;
+  /** Who sold it. Null on a purchase-order row (`StockDetailIncoming`), which is not a sales
+   * document and carries no agent by construction. */
+  agent_code?: string | null;
   project_label?: string | null;
   demand_class?: string | null;
   doc_date?: string | null;
@@ -1413,4 +1549,94 @@ export interface ClassificationEvidence {
   window_days: number;
   hot_cut_pct: number;
   classes: ClassificationEvidenceClass[];
+}
+
+// ---------------------------------------------------------------------------
+// The Plans page (PLAN-demo-followups-19aug-ladder-v2 D1): "is the plan stored, how do I
+// review it". `GET /project-sales/plans` over `so_supply_decisions`, cross-order.
+// ---------------------------------------------------------------------------
+
+export type PlanState = 'active' | 'superseded' | 'challenged';
+
+/** One row: one supply decision revision. Addressed by `project_sales_order_id` and
+ * `sales_order_id`, never rendered - `so_number` is what prints. */
+export interface PlanRow {
+  project_sales_order_id: string;
+  sales_order_id?: string | null;
+  project_id?: string | null;
+  so_number?: string | null;
+  customer_name?: string | null;
+  agent_code?: string | null;
+  agent_label?: string | null;
+  revision_no: number;
+  state: PlanState;
+  decided_by_name?: string | null;
+  decided_at?: string | null;
+  /** How many lines THIS revision covers - never the order's whole line count (13.4). */
+  line_count: number;
+  /** "Reserve 213 · Buy 145", summed across every line the revision covers. */
+  components_summary?: string | null;
+  /** Why the active revision no longer matches the order. Present only when `state` is
+   * `challenged`. */
+  challenged_reason?: string | null;
+}
+
+export const PLAN_SORT_FIELDS = [
+  'so_number',
+  'customer_name',
+  'agent_code',
+  'revision_no',
+  'state',
+  'decided_at',
+] as const;
+
+export type PlanSortField = (typeof PLAN_SORT_FIELDS)[number];
+
+export interface PlanListParams {
+  page?: number;
+  limit?: number;
+  query?: string;
+  /** Defaults to `active` server-side - what is stored NOW. */
+  state?: PlanState;
+  agent_code?: string;
+  sort?: PlanSortField;
+  dir?: 'asc' | 'desc';
+}
+
+export interface PlanListEnvelope {
+  data: PlanRow[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+// ---------------------------------------------------------------------------
+// Confirm all approved (D3): the board's "Confirm all approved" writes several orders at
+// once, each in its own transaction server-side, and reports one result per order.
+// ---------------------------------------------------------------------------
+
+export interface ConfirmManyOrderBody {
+  pso_id: string;
+  lines: ConfirmLine[];
+}
+
+export interface ConfirmManyBody {
+  orders: ConfirmManyOrderBody[];
+}
+
+/** One order's outcome. `ok` decides which half is populated. */
+export interface ConfirmManyOrderResult {
+  pso_id: string;
+  ok: boolean;
+  decision_revision?: number | null;
+  inquiry_rows_created?: number | null;
+  lines_decided?: number | null;
+  lines_undecided?: number | null;
+  error?: string | null;
+  failing_lines?: SupplyFailingLine[] | null;
+}
+
+/** `POST /project-sales/fulfilment-planning/confirm-all`. */
+export interface ConfirmManyResult {
+  results: ConfirmManyOrderResult[];
 }

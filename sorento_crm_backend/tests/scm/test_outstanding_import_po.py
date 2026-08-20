@@ -26,7 +26,7 @@ from datetime import date
 import pytest
 from sqlalchemy import text
 
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.services.scm import outstanding_import_service as svc
 from app.services.scm.outstanding_reader import PO, SO
 from tests._pg_fixture import pg_session
@@ -46,6 +46,23 @@ from tests.scm._outstanding_workbooks import (
 
 # A short header set for the one-off files, mapped by the `outstanding_po` aliases.
 _MINIMAL = ("PO NO", "CREDITOR CODE", "ITEM CODE", "QTY ORDERED", "ETA", "STOCK LOCATION")
+
+# The captain's real "PO & SPO outstanding.xlsx" shape: a CREDITOR NAME column and no
+# CREDITOR CODE column at all.
+_NAME_ONLY = ("PO NO", "CREDITOR NAME", "ITEM CODE", "QTY ORDERED", "ETA", "STOCK LOCATION")
+# No creditor evidence whatsoever - neither a code nor a name column.
+_NO_CREDITOR = ("PO NO", "ITEM CODE", "QTY ORDERED", "ETA", "STOCK LOCATION")
+
+
+def _name_only_workbook(rows):
+    return po_workbook(rows, headers=_NAME_ONLY)
+
+
+def _slug(name: str) -> str:
+    """The same rule `outstanding_import_service._supplier_slug` applies to a fresh name:
+    upper-cased alphanumerics only, nothing else. Recomputed here rather than imported, so
+    the test pins the OBSERVABLE behaviour rather than calling the function under test."""
+    return "".join(ch for ch in name.upper() if ch.isalnum())
 
 
 def _u() -> str:
@@ -242,14 +259,21 @@ def test_unit_cost_and_currency_persist_when_the_file_supplies_them(db, seeded):
 
 
 # --------------------------------------------------------------------------- #
-# 3. supplier resolution: reported, never invented
+# 3. supplier resolution: reported, and back-created (never for an item)
 # --------------------------------------------------------------------------- #
 
-def test_an_unknown_creditor_code_is_reported_with_its_row_and_never_invented(db, seeded):
-    """A typo in a creditor code must not become a supplier that then gets scored and chased.
+def test_an_unknown_creditor_code_is_reported_and_back_created_as_a_minimal_supplier(
+    db, seeded
+):
+    """A creditor code AutoCount has not reconciled against the supplier master yet is not a
+    typo - 2,177 of 5,243 PO-book documents in the captain's own file arrived exactly this
+    way. `apply()` creates a minimal supplier for it (code + name, `is_active=True`) and
+    links the document, but the code is still reported so the operator sees which ones this
+    run invented rather than discovering it later.
 
-    Same rule as the item code, for the same reason, so it is asserted the same way: the row
-    number is in the report, and `suppliers` has gained nothing.
+    Contrast `test_outstanding_import.py`'s item-code rule, which this file does NOT change:
+    an unknown item code is still never invented, because a typo there becomes a SKU that
+    gets planned and bought - a creditor code carries no such risk.
     """
     unknown = f"{MARKER}-CRX-{uuid.uuid4().hex[:8]}".upper()
     file = po_workbook(
@@ -267,21 +291,69 @@ def test_an_unknown_creditor_code_is_reported_with_its_row_and_never_invented(db
     assert [(i.row_number, i.field, i.value) for i in res.resolution_issues] == [
         (3, "creditor_code", unknown)
     ]
-    svc.apply(db, file, PO)
     assert db.execute(text("SELECT count(*) FROM suppliers WHERE supplier_code = :c"),
-                      {"c": unknown}).scalar() == 0
+                      {"c": unknown}).scalar() == 0, "preview must not write"
+
+    out = svc.apply(db, file, PO)
+
+    assert db.execute(text("SELECT count(*) FROM suppliers WHERE supplier_code = :c"),
+                      {"c": unknown}).scalar() == 1
+    # `_MINIMAL` carries no SUPPLIER name column, so the created row's name falls back to
+    # the code itself - the file supplied nothing else to call it.
+    assert _supplier_of(db, seeded.alt_po) == (unknown, unknown)
+    assert out["suppliers_created"] == 1
+    assert out["suppliers_created_codes"] == [unknown]
 
 
-def test_a_line_whose_creditor_is_unknown_still_counts_as_incoming_supply(db, seeded):
+def test_the_same_unknown_code_twice_in_one_file_creates_one_supplier(db, seeded):
+    """One upload, one creation per distinct code - not one per row or one per document."""
+    unknown = f"{MARKER}-CRX-{uuid.uuid4().hex[:8]}".upper()
+    file = po_workbook(
+        [
+            [seeded.main_po, unknown, seeded.item_rl, 10, date(2026, 7, 1),
+             seeded.loc_project],
+            [seeded.alt_po, unknown, seeded.item_wt, 5, date(2026, 7, 1),
+             seeded.loc_project],
+        ],
+        headers=_MINIMAL,
+    )
+
+    out = svc.apply(db, file, PO)
+
+    assert db.execute(text("SELECT count(*) FROM suppliers WHERE supplier_code = :c"),
+                      {"c": unknown}).scalar() == 1
+    assert out["suppliers_created"] == 1
+    assert _supplier_of(db, seeded.main_po)[0] == unknown
+    assert _supplier_of(db, seeded.alt_po)[0] == unknown
+
+
+def test_an_existing_supplier_is_matched_case_insensitively_not_duplicated(db, seeded):
+    """A creditor code the master already holds, spelled in a different case, must attach to
+    the existing row - not spawn a second one under the file's own casing."""
+    file = po_workbook(
+        [[seeded.main_po, seeded.creditor_main.lower(), seeded.item_rl, 10,
+          date(2026, 7, 1), seeded.loc_project]],
+        headers=_MINIMAL,
+    )
+
+    out = svc.apply(db, file, PO)
+
+    assert out["suppliers_created"] == 0
+    assert db.execute(text("SELECT count(*) FROM suppliers WHERE upper(supplier_code) = :c"),
+                      {"c": seeded.creditor_main.upper()}).scalar() == 1
+    assert _supplier_of(db, seeded.main_po) == (seeded.creditor_main, SUPPLIER_MAIN_LABEL)
+
+
+def test_a_line_whose_creditor_was_unknown_still_counts_as_incoming_supply(db, seeded):
     """The judgement call, stated explicitly so it can be argued with rather than inferred.
 
     An unresolvable ITEM or STOCK LOCATION skips the line, because a quantity with no product
     cannot be planned and a quantity in the wrong warehouse makes every coverage number for
     that location wrong. An unresolvable CREDITOR is different: the quantity and the arrival
-    date are still true, and `purchase_orders.supplier_id` is nullable. Dropping the line
-    would make on-order UNDERSTATE supply, and understated supply is what causes a second,
-    unnecessary purchase. So the line lands, the supplier is left unset, and the issue is
-    reported for someone to fix.
+    date are still true, so the line lands and a minimal supplier is created for the code
+    instead of leaving `purchase_orders.supplier_id` unset - dropping the line, or leaving it
+    permanently unlinked, would make on-order UNDERSTATE supply, which is what causes a
+    second, unnecessary purchase.
     """
     unknown = f"{MARKER}-CRX-{uuid.uuid4().hex[:8]}".upper()
     file = po_workbook(
@@ -292,7 +364,7 @@ def test_a_line_whose_creditor_is_unknown_still_counts_as_incoming_supply(db, se
     out = svc.apply(db, file, PO)
 
     assert out["applied"]["added"] == 1
-    assert _supplier_of(db, seeded.alt_po) == (None, None)
+    assert _supplier_of(db, seeded.alt_po) == (unknown, unknown)
     assert _ordered(db, seeded.item_wt) == 5.0
 
 
@@ -514,3 +586,125 @@ def test_the_sales_order_path_still_writes_sales_orders(db, codes):
         "SELECT count(*) FROM purchase_orders WHERE po_number IN (:a, :b)"
     ), {"a": codes.project_so, "b": codes.dealer_so}).scalar() == 0, \
         "a sales order number was written into purchase_orders"
+
+
+# --------------------------------------------------------------------------- #
+# 8. supplier resolution by NAME, when the file states no creditor CODE at all
+#
+# The captain's real "PO & SPO outstanding.xlsx" carries no CREDITOR CODE column - only
+# CREDITOR NAME, spelled with AutoCount's own trailing currency note ("XIAMEN TAIYANG
+# TECHNOLOGY CO.,LTD (RMB)", "AFANNI FAUCET WARE （RMB)" - note the mismatched full-width
+# open paren). The by-code path above never fires on these files at all: `party_code` is
+# blank on every row, so this is a second, independent path through `_resolve`/`apply`.
+# --------------------------------------------------------------------------- #
+
+def test_a_name_only_creditor_matches_an_existing_supplier_case_insensitively(db, seeded):
+    """The master holds the clean legal name, never the currency-suffixed one - so the
+    suffix has to come off before the match, or every supplier the file names looks
+    unknown and gets duplicated."""
+    clean_name = f"{MARKER} XIAMEN TAIYANG TECHNOLOGY {uuid.uuid4().hex[:6]}".upper()
+    code = f"{MARKER}-SC-{uuid.uuid4().hex[:8]}".upper()
+    db.add(Supplier(id=_u(), supplier_code=code, supplier_name=clean_name, is_active=True))
+    db.flush()
+
+    file = _name_only_workbook([
+        [seeded.main_po, f"{clean_name} (RMB)", seeded.item_rl, 10, date(2026, 7, 1),
+         seeded.loc_project],
+    ])
+
+    out = svc.apply(db, file, PO)
+
+    assert out["suppliers_created"] == 0
+    assert _supplier_of(db, seeded.main_po) == (code, clean_name)
+
+
+def test_full_width_parens_and_lower_case_are_both_handled(db, seeded):
+    """Mismatched paren styles (full-width open, ASCII close) and a differently-cased file
+    value must resolve to the same supplier as the clean master name."""
+    clean_name = f"{MARKER} AFANNI FAUCET WARE {uuid.uuid4().hex[:6]}".upper()
+    code = f"{MARKER}-SC-{uuid.uuid4().hex[:8]}".upper()
+    db.add(Supplier(id=_u(), supplier_code=code, supplier_name=clean_name, is_active=True))
+    db.flush()
+
+    file = _name_only_workbook([
+        [seeded.alt_po, f"{clean_name.title()} （RMB)", seeded.item_wt, 5, date(2026, 7, 1),
+         seeded.loc_dealer],
+    ])
+
+    out = svc.apply(db, file, PO)
+
+    assert out["suppliers_created"] == 0
+    assert _supplier_of(db, seeded.alt_po) == (code, clean_name)
+
+
+def test_an_unknown_creditor_name_is_back_created_with_a_slug_code(db, seeded):
+    """No master row named this creditor at all - a minimal supplier is back-created with
+    the CLEANED name (the currency suffix is AutoCount's own notation, never part of the
+    legal name, so it appears nowhere in what gets stored) and a deterministic code
+    derived from it, since the file gave no code to use."""
+    unknown = f"{MARKER} Y CO {uuid.uuid4().hex[:6]}".upper()
+    file = _name_only_workbook([
+        [seeded.alt_po, f"{unknown} （RMB)", seeded.item_wt, 5, date(2026, 7, 1),
+         seeded.loc_dealer],
+    ])
+
+    out = svc.apply(db, file, PO)
+
+    assert out["suppliers_created"] == 1
+    assert out["suppliers_created_codes"] == [unknown]
+    assert _supplier_of(db, seeded.alt_po) == (_slug(unknown), unknown)
+
+
+def test_the_same_creditor_name_twice_in_one_file_creates_one_supplier(db, seeded):
+    """One upload, one creation per distinct CLEANED name - the same rule the code path
+    already follows, stated for the name fallback. Different currency notes on the two
+    rows must not read as two different creditors."""
+    unknown = f"{MARKER} DUPNAME {uuid.uuid4().hex[:6]}".upper()
+    file = _name_only_workbook([
+        [seeded.main_po, f"{unknown} (RMB)", seeded.item_rl, 10, date(2026, 7, 1),
+         seeded.loc_project],
+        [seeded.alt_po, f"{unknown} (USD)", seeded.item_wt, 5, date(2026, 7, 1),
+         seeded.loc_dealer],
+    ])
+
+    out = svc.apply(db, file, PO)
+
+    assert out["suppliers_created"] == 1
+    assert _supplier_of(db, seeded.main_po)[1] == unknown
+    assert _supplier_of(db, seeded.alt_po)[1] == unknown
+
+
+def test_no_code_and_no_name_leaves_the_document_unlinked_and_creates_nothing(db, seeded):
+    """A file with no creditor evidence at all must not invent one - the document lands
+    with the quantity and date intact and simply no supplier attached, same as an
+    unresolvable code would leave it."""
+    file = po_workbook(
+        [[seeded.main_po, seeded.item_rl, 10, date(2026, 7, 1), seeded.loc_project]],
+        headers=_NO_CREDITOR,
+    )
+
+    out = svc.apply(db, file, PO)
+
+    assert out["applied"]["added"] == 1
+    assert out["suppliers_created"] == 0
+    assert _supplier_of(db, seeded.main_po) == (None, None)
+
+
+def test_reuploading_a_name_only_file_is_idempotent(db, seeded):
+    """A second upload of the same name-only file must create nothing new and keep the
+    same link - the point of the by-code path's own idempotency test, restated for the
+    fallback."""
+    unknown = f"{MARKER} REUP CO {uuid.uuid4().hex[:6]}".upper()
+    file = _name_only_workbook([
+        [seeded.main_po, f"{unknown} (RMB)", seeded.item_rl, 10, date(2026, 7, 1),
+         seeded.loc_project],
+    ])
+
+    first = svc.apply(db, file, PO)
+    second = svc.apply(db, file, PO)
+
+    assert first["suppliers_created"] == 1
+    assert second["suppliers_created"] == 0
+    assert _supplier_of(db, seeded.main_po) == (_slug(unknown), unknown)
+    assert db.execute(text("SELECT count(*) FROM suppliers WHERE supplier_name = :n"),
+                      {"n": unknown}).scalar() == 1

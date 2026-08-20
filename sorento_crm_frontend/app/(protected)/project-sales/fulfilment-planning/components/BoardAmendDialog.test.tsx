@@ -127,12 +127,13 @@ describe('BoardAmendDialog: what it is and what it holds', () => {
 });
 
 describe('BoardAmendDialog: the Reserve', () => {
-  it('offers the line’s own location even when the proposal reserved nothing there', () => {
-    // The whole quantity is bought. This is the amendment a planner most wants to make, and
-    // the old form had no row for it at all.
+  it('offers no Reserve row at all when the proposal reserved nothing (ladder v2: own location is never a source)', () => {
+    // Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E rule 7): the whole
+    // quantity is bought, and the line's own location is never a Reserve row any more -
+    // unlike the old ladder, which always offered it at zero.
     renderDialog(contributionOf({}));
 
-    expect(screen.getByLabelText('Reserve at BRW-BB')).toHaveValue(0);
+    expect(screen.queryByLabelText('Reserve at BRW-BB')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Buy')).toHaveValue(100);
   });
 

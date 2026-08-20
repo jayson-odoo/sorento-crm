@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { AlertTriangle, Check, Pencil, X } from 'lucide-react';
+import { AlertTriangle, Check, Info, Pencil, X } from 'lucide-react';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,6 +15,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
@@ -175,6 +176,27 @@ export function BoardCellBreakdownDialog({
         meta: { headerTitle: 'Customer' },
       },
       {
+        // Who sold it, so the planner knows who to phone (the captain: agent "useful
+        // information" beside every line).
+        id: 'agent_code',
+        accessorFn: (row) => row.agent_code ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
+        cell: ({ row }) =>
+          row.original.agent_code ? (
+            <span
+              className="block truncate text-sm"
+              title={row.original.agent_label ?? row.original.agent_code}
+            >
+              {row.original.agent_code}
+            </span>
+          ) : (
+            <span className="text-sm text-muted-foreground">Not stated</span>
+          ),
+        size: 110,
+        minSize: 90,
+        meta: { headerTitle: 'Agent' },
+      },
+      {
         id: 'project_label',
         accessorFn: (row) => row.project_label ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
@@ -278,37 +300,55 @@ export function BoardCellBreakdownDialog({
         header: ({ column }) => <DataGridColumnHeader title="Sourced from" column={column} />,
         cell: ({ row }) => {
           const strip = row.original.sources
-            .map((source) => `${sourceLabel(source.kind)} ${source.qty}${sourceAt(source)}`)
+            .map(
+              (source) =>
+                `${sourceLabel(source.kind, source.rung)} ${source.qty}${sourceAt(source)}`,
+            )
             .join(' · ');
-          // The engine's own sentences, reachable on the cell rather than wrapped into the
-          // row: `spo_number` and `arrival_date` are always null because the SPO and its date
-          // are INSIDE the sentence (deviation 2), so the sentence is the only place the fact
-          // exists and it may never be dropped.
+          // The engine's own sentences. `spo_number` and `arrival_date` are always null
+          // because the SPO and its date are INSIDE the sentence (deviation 2), so the
+          // sentence is the only place the fact exists and it may never be dropped - it moves
+          // BEHIND the info icon rather than out of the row.
           const why = row.original.sources.map((source) => source.reason).join(' ');
           const share = shareNote(row.original);
           return (
-            <div className="min-w-0" title={why}>
+            <div className="min-w-0">
               <div className="flex items-start gap-1">
                 <span className="min-w-0 flex-1 truncate text-sm tabular-nums">{strip}</span>
-                {/* The whole ladder behind that strip, structured, under an icon (the
+                {/* The two prose sentences behind the numbers above - why this rung fired,
+                    and what was left for this line at its own pile - under one visible icon
+                    rather than a silent `title` nobody hovers or two lines of wrapped text
+                    (the captain: "don't explain too much", "put it under the tooltip"). The
+                    numbers stay in the row; only the prose moves. */}
+                {(why || share) && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        mode="icon"
+                        variant="ghost"
+                        size="sm"
+                        aria-label="Why this composition"
+                        data-testid={`source-info-${row.original.key}`}
+                        className="size-5 shrink-0 text-muted-foreground"
+                      >
+                        <Info className="size-3.5" aria-hidden />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      data-testid={`source-note-${row.original.key}`}
+                      className="max-w-xs space-y-1 break-words"
+                    >
+                      {why && <p>{why}</p>}
+                      {share && <p>{share}</p>}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                {/* The whole ladder behind that strip, structured, under its own icon (the
                     captain: "need more justification ... STRUCTURED instead of plain text
                     explaining, you can put it under the tooltip"). */}
                 <BoardTrailPopover contribution={row.original} />
               </div>
-              {share && (
-                // WRAPS rather than truncates, unlike the strip above it. Measured in the
-                // browser at the column's saved width: "1 line ahead wanting 60 · 955 lef..."
-                // cut off at the figure the sentence exists to state, and a saved column width
-                // means widening the default would not reach anybody who already has one. Two
-                // short lines inside a fixed-width cell overlap nothing.
-                <span
-                  data-testid={`share-note-${row.original.key}`}
-                  className="mt-0.5 block whitespace-normal break-words text-xs leading-snug tabular-nums text-muted-foreground"
-                  title={share}
-                >
-                  {share}
-                </span>
-              )}
               {row.original.contested && (
                 <span className="mt-0.5 inline-flex items-center gap-1 rounded bg-amber-100 px-1 text-[10px] font-medium text-amber-800">
                   <AlertTriangle className="size-3" aria-hidden />
@@ -701,12 +741,25 @@ export function confirmedSummary(decision: NonNullable<BoardContribution['decisi
   })}`;
 }
 
-/** Exported for the same reason `confirmedSummary` is - see its comment. */
-export function sourceLabel(kind: BoardContribution['sources'][number]['kind']): string {
+/**
+ * Exported for the same reason `confirmedSummary` is - see its comment.
+ *
+ * Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E): a rung, when the source
+ * carries one, reads by its own name (Pool / Group take / Group borrow / Cross-group
+ * borrow) rather than the bare `kind` the balance invariant uses - group borrow and
+ * cross-group borrow are now AUTO-PROPOSED, not only a person's decision on a covered row.
+ */
+export function sourceLabel(
+  kind: BoardContribution['sources'][number]['kind'],
+  rung?: string | null,
+): string {
+  if (rung === 'pool') return 'Pool';
+  if (rung === 'group_take') return 'Group take';
+  if (rung === 'group_borrow') return 'Group borrow';
+  if (rung === 'cross_group_borrow') return 'Cross-group borrow';
   if (kind === 'reserve') return 'Reserve';
   if (kind === 'timely_spo') return 'Incoming';
   if (kind === 'buy') return 'Buy';
-  // Only ever on a covered row: the engine proposes no Borrow, and a person did.
   if (kind === 'borrow') return 'Borrow';
   return 'Cannot be sourced';
 }
@@ -715,10 +768,19 @@ export function sourceLabel(kind: BoardContribution['sources'][number]['kind']):
  * Where the quantity comes from, in the preposition each kind takes.
  *
  * A Reserve is held AT a location; a Borrow comes FROM somebody else's. "Borrow 10 at MWH-IB"
- * reads as stock this line has there, which is the opposite of what a borrow is.
+ * reads as stock this line has there, which is the opposite of what a borrow is. A group
+ * borrow names its donor SO line instead, when one was stated - "from SO371334 line 2" is
+ * the identity that matters, the location is secondary.
  */
 /** Exported for the same reason `confirmedSummary` is - see its comment. */
 export function sourceAt(source: BoardContribution['sources'][number]): string {
+  if (source.kind === 'borrow' && source.rung === 'group_borrow' && source.donor_so_number) {
+    const line =
+      source.donor_line_no !== null && source.donor_line_no !== undefined
+        ? ` line ${source.donor_line_no}`
+        : '';
+    return ` from ${source.donor_so_number}${line}`;
+  }
   if (!source.location) return '';
   return source.kind === 'borrow' ? ` from ${source.location}` : ` at ${source.location}`;
 }
@@ -750,6 +812,13 @@ function sumOf(
  * A BORROW term appears only when there is one, and there only ever is on a covered row: the
  * engine proposes no Borrow, but a confirmed line states the composition a person made, and a
  * balance that dropped it would not add up to what is owed.
+ *
+ * When the terms do NOT sum to what is owed, the gap is stated as "uncovered" rather than
+ * printing an equation that fails its own arithmetic (captain, 20 Aug: an SO line edited
+ * 12 -> 14 against a frozen revision-2 decision read "14 owed = 0 reserve + 0 incoming +
+ * 12 buy", which is "sus" - the decision's coverage is a snapshot, the owed is live, and
+ * the 2 the decision does not cover is the fact the reader needs; confirming a new
+ * revision trues it up).
  */
 function cellBalanceLine(cell: BoardCell): string {
   const of = (kind: string) =>
@@ -762,11 +831,14 @@ function cellBalanceLine(cell: BoardCell): string {
     0,
   );
   const borrowed = of('borrow');
+  const covered = of('reserve') + of('timely_spo') + borrowed + of('buy');
+  const uncovered = owed - covered;
   return [
     `${fromMinor(owed)} owed = ${fromMinor(of('reserve'))} reserve`,
     `${fromMinor(of('timely_spo'))} incoming`,
     ...(borrowed > 0 ? [`${fromMinor(borrowed)} borrow`] : []),
     `${fromMinor(of('buy'))} buy`,
+    ...(uncovered > 0 ? [`${fromMinor(uncovered)} uncovered - confirm a new revision`] : []),
   ].join(' + ');
 }
 

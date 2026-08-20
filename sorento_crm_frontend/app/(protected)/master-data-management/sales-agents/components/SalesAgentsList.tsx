@@ -101,6 +101,20 @@ export default function SalesAgentsList() {
         meta: { headerTitle: 'Demand class', skeleton: <Skeleton className="h-6 w-20" /> },
       },
       {
+        accessorKey: 'location_group',
+        header: ({ column }) => <DataGridColumnHeader title="Location group" column={column} />,
+        cell: ({ row }) =>
+          row.original.location_group ? (
+            <Badge variant="secondary" appearance="light" size="md">
+              {row.original.location_group}
+            </Badge>
+          ) : (
+            <span className="text-muted-foreground">Not set</span>
+          ),
+        size: 150,
+        meta: { headerTitle: 'Location group', skeleton: <Skeleton className="h-6 w-16" /> },
+      },
+      {
         accessorKey: 'source',
         header: ({ column }) => <DataGridColumnHeader title="Source" column={column} />,
         cell: ({ row }) => (

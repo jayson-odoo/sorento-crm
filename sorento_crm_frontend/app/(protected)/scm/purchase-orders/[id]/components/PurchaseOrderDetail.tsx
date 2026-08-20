@@ -49,6 +49,7 @@ const statusBadge = (s: string): BadgeDef =>
 const SOURCE_LABELS: Record<NonNullable<PurchaseOrder['source']>, string> = {
   recommendation: 'Reorder recommendation',
   import: 'Imported history',
+  crm: 'Created in CRM',
   manual: 'Manual',
 };
 
@@ -115,6 +116,22 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         cell: ({ row }) => row.original.uom,
         size: 90,
         meta: { headerTitle: 'UoM' },
+      },
+      {
+        // Location is a LINE fact (captain, 20 Aug) - the header Warehouse field is
+        // gone, so the line states its own destination.
+        accessorKey: 'warehouse_code',
+        header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
+        cell: ({ row }) =>
+          row.original.warehouse_code ? (
+            <span className="truncate" title={row.original.warehouse_code}>
+              {row.original.warehouse_code}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 110,
+        meta: { headerTitle: 'Location' },
       },
     ],
     [],
@@ -209,7 +226,8 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         </CardHeader>
         <div className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-3 lg:grid-cols-4">
           <Field label="Supplier">{po.supplier_name}</Field>
-          <Field label="Warehouse">{po.warehouse_name ?? '-'}</Field>
+          {/* No header Warehouse field (captain, 20 Aug): a PO's location is a
+              line-level fact - each line's own warehouse renders in the grid below. */}
           <Field label="Order date">{fmtDate(po.order_date)}</Field>
           <Field label="Expected date">{fmtDate(po.expected_date)}</Field>
           <Field label="Total qty">{fmtInt(po.total_qty)}</Field>

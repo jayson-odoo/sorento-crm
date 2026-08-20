@@ -32,13 +32,13 @@ from tests.scm.test_m3_run import (
 pytestmark = requires_pg
 
 
-def _so_line(db, pid: str, wid: str | None, qty: float) -> None:
+def _so_line(db, pid: str, wid: str | None, qty: float, *, demand_class: str | None = None) -> None:
     soid = str(uuid.uuid4())
     db.execute(text(
         "INSERT INTO sales_orders (id, so_number, status, source_system, source_ref, "
-        "created_at, updated_at) "
-        "VALUES (:id, :num, 'open', 'scm_order_inquiry', 'order_inquiry', now(), now())"
-    ), {"id": soid, "num": f"ZZTSO-{soid[:8]}"})
+        "demand_class, created_at, updated_at) "
+        "VALUES (:id, :num, 'open', 'scm_order_inquiry', 'order_inquiry', :dc, now(), now())"
+    ), {"id": soid, "num": f"ZZTSO-{soid[:8]}", "dc": demand_class})
     db.execute(text(
         "INSERT INTO sales_order_lines (id, sales_order_id, product_id, warehouse_id, "
         "qty_ordered, qty_required, qty_delivered, line_status, purchasing_status, "
@@ -60,7 +60,12 @@ def test_unlocated_demand_reaches_the_plan(scm_app):
     pid = _mk_product(db, f"ZZTP-UNLOC-{uuid.uuid4().hex[:6]}")
     _mk_stock(db, pid, wid, 10)
     _mk_demand(db, pid, wid, 0.0)
-    _so_line(db, pid, None, 400)          # no location at all
+    # Classified: front-planning (AC-E06) never sizes a buy off UNCLASSIFIED need - that
+    # rule applies to unlocated demand exactly as it does to a located line of the same
+    # class (`test_unlocated_demand_classified_by_channel_sizes_like_a_located_line`
+    # pins the classification itself). This test is about the location the demand lands
+    # on, so it states a channel a buy CAN be sized against.
+    _so_line(db, pid, None, 400, demand_class="retail")   # no location at all
     _link(db, pid, _mk_supplier(db, "ZZT Unloc Supplier"), moq=None, mult=None)
     db.flush()
 
@@ -156,3 +161,65 @@ def test_a_located_line_is_not_counted_twice(scm_app):
     row = _recs(db, created["run_id"], pid)[0]
     assert (row["inputs"] or {}).get("unlocated_demand") is None
     assert float(row["rounded_qty"] or 0) <= 60, "60 committed, never 120"
+
+
+def test_unlocated_demand_splits_into_the_channel_columns_and_the_invariant_holds(scm_app):
+    """`_apply_unlocated_demand` raised `committed` without raising its channel split, so
+    the invariant every located row keeps (`project_committed + retail_committed +
+    unclassified_committed == committed`) broke on a row this landing built, and the row
+    was invisible to the FE expand panel's member filter, which keys on those three
+    figures. Fixed by splitting the unlocated total the same way a located line is split.
+    """
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-SPLIT")
+    pid = _mk_product(db, f"ZZTP-SPLIT-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _so_line(db, pid, None, 12, demand_class="project")
+    _so_line(db, pid, None, 20, demand_class="retail")
+    _so_line(db, pid, None, 8, demand_class=None)  # unclassified
+    _link(db, pid, _mk_supplier(db, "ZZT Split Supplier"), moq=None, mult=None)
+    db.flush()
+
+    created = svc.create_run(db, ["ZZTW-SPLIT"], enqueue=False)
+    svc.run_reorder(created["run_id"], db=db)
+
+    row = _recs(db, created["run_id"], pid)[0]
+    inputs = row["inputs"] or {}
+    assert float(inputs["unlocated_demand"]) == 40.0
+    assert float(inputs["project_committed"]) == 12.0
+    assert float(inputs["retail_committed"]) == 20.0
+    assert float(inputs["unclassified_committed"]) == 8.0
+    assert (
+        float(inputs["project_committed"]) + float(inputs["retail_committed"])
+        + float(inputs["unclassified_committed"])
+    ) == float(inputs["committed"]) == 40.0
+
+
+def test_unclassified_unlocated_demand_is_visible_but_never_sizes_a_buy(scm_app):
+    """AC-E06 for the unlocated path: unclassified need is carried and visible, and never
+    sized - the same rule a LOCATED line with no `demand_class` already gets from
+    `committed_v` (`retail_net` adds `unclassified_need` straight back, so it never trips
+    the trigger). Before the channel split this landing built a row whose `committed`/
+    `net_position` were lowered by the whole 500 regardless of class, so an unclassified-
+    only unlocated line silently sized a buy a located line of the same class never
+    would."""
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-UNCLASS")
+    pid = _mk_product(db, f"ZZTP-UNCLASS-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 10)
+    _mk_demand(db, pid, wid, 0.0)
+    _so_line(db, pid, None, 500, demand_class=None)
+    _link(db, pid, _mk_supplier(db, "ZZT Unclass Supplier"), moq=None, mult=None)
+    db.flush()
+
+    created = svc.create_run(db, ["ZZTW-UNCLASS"], enqueue=False)
+    svc.run_reorder(created["run_id"], db=db)
+
+    rows = _recs(db, created["run_id"], pid)
+    assert not [r for r in rows if r["rec_type"] == "buy"], (
+        "unclassified need is never sized, unlocated or not"
+    )
+    row = rows[0]
+    assert float(row["inputs"]["unclassified_committed"]) == 500.0
+    assert float(row["inputs"]["unlocated_demand"]) == 500.0

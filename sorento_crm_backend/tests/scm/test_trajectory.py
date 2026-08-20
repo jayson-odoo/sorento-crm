@@ -333,3 +333,120 @@ def db_world():
             "debtor_order": debtor_order,
             "anon_order": anon_order,
         }
+
+
+# --------------------------------------------------------------------------- #
+# channel_trends - the per-demand_class trend behind the grouped Buy view's
+# channel columns (front planning follow-up, 19-20 Aug)
+# --------------------------------------------------------------------------- #
+
+def test_channel_trends_split_by_demand_class_and_match_the_seeded_series(channel_db_world):
+    """Two demand classes on the SAME product, different monthly quantities, must land in
+    two DIFFERENT `channel_trends[product_id]` entries - keyed by `sales_orders.demand_class`
+    (`committed_v`'s own split), never by warehouse segment - and each entry's `recent_qty`
+    must be exactly the seeded quantity for that class, not a blend of the two.
+    """
+    from app.services.scm.trajectory_service import trajectory_for_run
+
+    w = channel_db_world
+    out = trajectory_for_run(w["db"], w["run_id"], as_of=AS_OF)
+
+    trends = out["channel_trends"][w["product_id"]]
+    assert set(trends.keys()) >= {"project", "retail"}
+    # 40 project-class units and 15 retail-class units, both dated inside July 2026 -
+    # inside BOTH windows (project 12 months, retail 3 months) - so the only thing that can
+    # tell them apart is the demand_class each order actually carries.
+    assert trends["project"]["recent_qty"] == 40
+    assert trends["retail"]["recent_qty"] == 15
+    assert trends["project"]["recent_qty"] != trends["retail"]["recent_qty"]
+
+
+def test_channel_trends_windows_come_from_the_project_retail_policy_split(channel_db_world):
+    """Project reads the 12-month window, Retail the 3-month one - the same windows
+    `out["windows"]` reports for the segment-keyed series, applied per channel."""
+    from app.services.scm.trajectory_service import trajectory_for_run
+
+    w = channel_db_world
+    out = trajectory_for_run(w["db"], w["run_id"], as_of=AS_OF)
+
+    trends = out["channel_trends"][w["product_id"]]
+    assert trends["project"]["window_months"] == out["windows"]["project_months"]
+    assert trends["retail"]["window_months"] == out["windows"]["retail_months"]
+
+
+def test_channel_trends_avg_day_is_the_recent_qty_rate_over_its_own_window(channel_db_world):
+    """The per-channel "avg N/day" subline - the same rate-over-a-window arithmetic the row's
+    own SO column already uses, narrowed to one channel's own orders."""
+    from app.services.scm.trajectory_service import trajectory_for_run
+
+    w = channel_db_world
+    out = trajectory_for_run(w["db"], w["run_id"], as_of=AS_OF)
+
+    trends = out["channel_trends"][w["product_id"]]
+    project_months = trends["project"]["window_months"]
+    retail_months = trends["retail"]["window_months"]
+    assert trends["project"]["avg_day"] == round(40 / (project_months * 30), 2)
+    assert trends["retail"]["avg_day"] == round(15 / (retail_months * 30), 2)
+
+
+@pytest.fixture()
+def channel_db_world():
+    """One product with a project-class order (qty 40) and a retail-class order (qty 15),
+    both dated inside the same recent month, so only `demand_class` - never the amount of
+    history or the warehouse - can explain a difference between the two channel entries.
+    """
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+    from tests._pg_fixture import pg_session, unique_code
+
+    def _u() -> str:
+        return str(uuid.uuid4())
+
+    with pg_session() as db:
+        cat = ProductCategory(id=_u(), category_code=unique_code(MARKER),
+                              category_name=f"{MARKER} channel cat")
+        uom = UnitOfMeasure(id=_u(), uom_code=unique_code("U")[:20], uom_name=f"{MARKER} u")
+        db.add_all([cat, uom])
+        db.flush()
+        product = Product(id=_u(), product_code=unique_code("P"), product_name=f"{MARKER} chan p",
+                          category_id=cat.id, base_uom_id=uom.id, list_price=0,
+                          is_active=True, is_discontinued=False)
+        db.add(product)
+        db.flush()
+
+        wid = _u()
+        db.execute(text(
+            "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
+            "counts_as_available, segment) VALUES (:id, :c, :c, true, true, 'project')"),
+            {"id": wid, "c": unique_code("W")[:20]})
+
+        def order(day: date, qty: float, demand_class: str):
+            oid = _u()
+            number = f"{MARKER}-{oid[:8]}"
+            db.execute(text(
+                "INSERT INTO sales_orders (id, so_number, status, order_date, demand_class) "
+                "VALUES (:id, :n, 'closed', :d, :dc)"),
+                {"id": oid, "n": number, "d": day, "dc": demand_class})
+            db.execute(text(
+                "INSERT INTO sales_order_lines (id, sales_order_id, product_id, warehouse_id, "
+                "qty_ordered, qty_delivered, line_status) "
+                "VALUES (:id, :so, :p, :w, :q, :q, 'closed')"),
+                {"id": _u(), "so": oid, "p": product.id, "w": wid, "q": qty})
+            return number
+
+        # Both inside July 2026 - inside the project window (12mo back from Aug) AND the
+        # retail window (3mo back from Aug) alike, so the split is by class, not by date.
+        order(date(2026, 7, 5), 40, "project")
+        order(date(2026, 7, 12), 15, "retail")
+
+        run_id = _u()
+        db.execute(text(
+            "INSERT INTO scm.reorder_run (id, status, include_market, created_at) "
+            "VALUES (:id, 'completed', false, now())"), {"id": run_id})
+        db.execute(text(
+            "INSERT INTO scm.reorder_recommendation "
+            "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty, status) "
+            "VALUES (:id, :r, :p, :w, 'buy', 10, 'proposed')"),
+            {"id": _u(), "r": run_id, "p": product.id, "w": wid})
+        db.flush()
+
+        yield {"db": db, "run_id": run_id, "product_id": str(product.id)}

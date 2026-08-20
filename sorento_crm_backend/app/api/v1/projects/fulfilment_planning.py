@@ -37,8 +37,11 @@ from app.schemas.project_so_reconciliation import (
 )
 from app.schemas.project_supply import (
     ClassificationEvidence,
+    ConfirmManyBody,
+    ConfirmManyResult,
     ConfirmResult,
     ConfirmSupplyBody,
+    PlanRow,
     SupplyProposal,
 )
 from app.services import project_service as projects
@@ -163,6 +166,50 @@ def list_fulfilment_planning(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+@router.get("/plans", response_model=ListResponse[PlanRow])
+def list_plans(
+    query: Optional[str] = Query(
+        None,
+        description="Matches the sales-order number, the customer name, or the agent code.",
+    ),
+    state: Optional[Literal["active", "superseded", "challenged"]] = Query(
+        None, description="Defaults to active - what is stored NOW."
+    ),
+    agent_code: Optional[str] = Query(None, description="One agent's code, exact match."),
+    sort: Optional[
+        Literal["so_number", "customer_name", "agent_code", "revision_no", "state", "decided_at"]
+    ] = Query(None, description="Defaults to decided_at, most recent first."),
+    direction: Optional[Literal["asc", "desc"]] = Query("desc", alias="dir"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The Plans page (PLAN-demo-followups-19aug-ladder-v2 D1): "is the plan stored, how do
+    I review it" - every supply decision, one row per revision, cross-order.
+
+    A pure read over `so_supply_decisions`. `state` defaults to `active`: the question is
+    about what is committed NOW, not the whole history a line's decision has ever carried,
+    though `superseded` and `challenged` stay a click away.
+
+    Plain ``def``, so FastAPI runs it in a threadpool: it is synchronous SQLAlchemy over a
+    page of decisions.
+    """
+    try:
+        result = ProjectSupplyService(db).list_decisions(
+            query=query,
+            state=state,
+            agent_code=agent_code,
+            sort=sort,
+            dir=direction or "desc",
+            page=page,
+            limit=limit,
+        )
+        return {"data": result["data"], "pagination": result["pagination"]}
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 @router.post("/fulfilment-planning/adopt", response_model=AdoptSalesOrderResult)
 def adopt_sales_order(
     payload: AdoptSalesOrderBody,
@@ -243,6 +290,38 @@ def get_planning_board(
             preview_policy=preview_policy,
         )
     except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/fulfilment-planning/confirm-all", response_model=ConfirmManyResult)
+def confirm_all(
+    payload: ConfirmManyBody,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """"Confirm all approved" (D3): every order's Confirm, each its OWN transaction.
+
+    The board's Approve all composes a verdict per line across up to fifty orders; this posts
+    the SAME per-order write `POST .../sales-orders/{pso_id}/confirm` already does, once per
+    order named in `orders`, rather than one call per order from the panel. One order's own
+    refusal (a stale line, a line somebody else confirmed a moment earlier) never takes the
+    orders around it down: each entry commits or rolls back on its own, and every order named
+    in the body gets a result - there is no silent partial success. `orders: []` answers with
+    an empty result rather than a refusal; a board with nothing approved yet is not an error.
+    """
+    try:
+        if not payload.orders:
+            return {"results": []}
+        results = ProjectSupplyService(db).confirm_many(
+            payload.orders,
+            actor_user_id=current_user["id"],
+            assert_can_act=lambda session, order: _assert_can_act_on(
+                session, order, current_user
+            ),
+        )
+        return {"results": results}
+    except Exception as exc:
+        db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 

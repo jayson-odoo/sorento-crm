@@ -1,14 +1,17 @@
 /**
  * S7b - the loading plan screen.
  *
- * What is asserted is the part a user would be misled by if it broke: a deferred line is
- * visible WITH its reason (the screen exists to answer "why is my line not on it"), an empty
- * stock list names the upload rather than showing an empty table, and changing the container
- * count re-runs the same plan instead of creating a second one.
+ * The CBM-fit half of this page (container size, packed-stock tiles, the loading plan table)
+ * was cut on the captain's 20 Aug live-test ruling ("don't need stage 2") - see
+ * LoadingPlanView.tsx's own docstring. What is left to assert here is the supplier picker
+ * itself: nothing is shown before a supplier is chosen, choosing one renders the request
+ * section, and the "View uploaded list" control only appears once a stock-list file exists.
+ * Everything the request section itself does (the deferred-line reasoning, the ranked table,
+ * sending to the supplier) is covered in ContainerRequestSection.test.tsx.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 if (!window.matchMedia) {
@@ -33,97 +36,42 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
+// The supplier picker is server-searched now (S8-followup, same fix as the proforma upload
+// dialog): `SearchableSelect` calls `fetchOptions('', 0)` on open, so the real component is
+// kept (not stubbed) and only `getFulfilmentSuppliers` is overridden here - `importOriginal`
+// keeps every other export real, since `StockListUploadDialog` / `ContainerRequestSection`
+// import other functions off this same module and neither is exercised by this suite.
+const getFulfilmentSuppliers = vi.fn(
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async (_query?: string) => [{ value: 'sup-1', label: 'Foshan Ceramics' }],
+);
+vi.mock('../../services/fulfilmentService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/fulfilmentService')>();
+  return {
+    ...actual,
+    getFulfilmentSuppliers: (query?: string) => getFulfilmentSuppliers(query),
+  };
+});
+
 const state = {
-  suppliers: [{ value: 'sup-1', label: 'Foshan Ceramics' }],
-  sizes: [{ code: '40HQ', label: '40ft high cube', cbm: 68, is_default: true }],
-  stock: { supplier_id: 'sup-1', as_of: '2026-07-31', rows: [] as unknown[] },
-  unfinished: [] as unknown[],
-  plans: [] as unknown[],
+  stockListFile: undefined as { attachment_id: string; filename: string } | undefined,
 };
 
-const build = vi.fn();
-const rerun = vi.fn();
-
 vi.mock('../../hooks/useFulfilment', () => ({
-  useFulfilmentSuppliers: () => ({ data: state.suppliers, isLoading: false }),
-  useContainerSizes: () => ({ data: state.sizes, isLoading: false }),
-  useSupplierStock: () => ({ data: state.stock, isLoading: false }),
-  useUnfinishedStock: () => ({ data: state.unfinished, isLoading: false }),
-  useLoadingPlans: () => ({ data: state.plans, isLoading: false }),
-  useBuildLoadingPlan: () => ({ mutate: build, isPending: false, data: buildResult }),
-  useRerunLoadingPlan: () => ({ mutate: rerun, isPending: false, data: rerunResult }),
+  useSupplierStockListFile: () => ({ data: state.stockListFile, isLoading: false }),
   useStockListApplied: () => vi.fn(),
-  useDeleteLoadingPlan: () => ({ mutate: vi.fn(), isPending: false }),
-  // S8's panel renders inside this view. Its own behaviour is covered in
-  // SupplierNoticePanel.test.tsx; here it only has to not explode.
-  usePlanNotices: () => ({ data: [], isLoading: false }),
-  useApproveLoadingPlan: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
-let buildResult: unknown = undefined;
-let rerunResult: unknown = undefined;
+// The request section renders inside this view too. Its own behaviour is covered in
+// ContainerRequestSection.test.tsx; here it only has to prove it mounted for the chosen
+// supplier, so this stub keeps the suite from also depending on that component's own hooks.
+vi.mock('./ContainerRequestSection', () => ({
+  ContainerRequestSection: ({ supplierName }: { supplierName: string }) => (
+    <div data-testid="container-request-section">Request section for {supplierName}</div>
+  ),
+}));
 
 import { LoadingPlanView } from './LoadingPlanView';
-
-function plan(over: Record<string, unknown> = {}) {
-  return {
-    id: 'plan-1',
-    supplier_id: 'sup-1',
-    supplier_name: 'Foshan Ceramics',
-    container_type: '40HQ',
-    container_count: 1,
-    container_cbm: 68,
-    capacity_cbm: 68,
-    planned_cbm: 34,
-    fill_rate: 0.5,
-    line_count: 2,
-    deferred_count: 1,
-    unmeasured_count: 0,
-    inventory_as_of: '2026-07-31',
-    computed_at: '2026-08-05T00:00:00',
-    created_by: null,
-    lines: [
-      {
-        id: 'l1',
-        po_line_id: 'pol-1',
-        po_number: 'PO-0001',
-        item_code: 'SRTWC8613',
-        qty_outstanding: 100,
-        qty_packed_available: 100,
-        qty_planned: 100,
-        cbm_per_unit: 0.34,
-        cbm_planned: 34,
-        volume_basis: 'supplier',
-        rank: 1,
-        rank_score: 1,
-        factors: [
-          { key: 'po_document_sequence', weight: 1, value: 1, present: true },
-          { key: 'need_by_date', weight: 0, value: null, present: false },
-        ],
-        status: 'allocated',
-        deferral_reason: null,
-      },
-      {
-        id: 'l2',
-        po_line_id: 'pol-2',
-        po_number: 'PO-0002',
-        item_code: 'SRTWB1001',
-        qty_outstanding: 200,
-        qty_packed_available: 0,
-        qty_planned: 0,
-        cbm_per_unit: 0.5,
-        cbm_planned: 0,
-        volume_basis: 'supplier',
-        rank: 2,
-        rank_score: 0,
-        factors: [],
-        status: 'deferred',
-        deferral_reason: 'no_packed_stock',
-      },
-    ],
-    ...over,
-  };
-}
 
 function renderView() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -143,127 +91,58 @@ async function chooseSupplier() {
 }
 
 beforeEach(() => {
-  build.mockReset();
-  rerun.mockReset();
-  buildResult = undefined;
-  rerunResult = undefined;
-  state.stock = { supplier_id: 'sup-1', as_of: '2026-07-31', rows: [] };
-  state.unfinished = [];
-  state.plans = [];
+  getFulfilmentSuppliers.mockClear();
+  state.stockListFile = undefined;
 });
 
 describe('LoadingPlanView - before a supplier is chosen', () => {
-  it('says what to do rather than showing an empty plan', async () => {
+  it('says what to do rather than showing an empty request', async () => {
     renderView();
 
     expect(await screen.findByText('Choose a supplier to plan a container.')).toBeInTheDocument();
+    expect(screen.queryByTestId('container-request-section')).not.toBeInTheDocument();
+  });
+
+  it('has no view-uploaded-list control since no supplier is chosen yet', () => {
+    renderView();
+
+    expect(screen.queryByRole('button', { name: /view uploaded list/i })).not.toBeInTheDocument();
   });
 });
 
-describe('LoadingPlanView - a supplier with no stock list', () => {
-  it('names the upload that fills the screen', async () => {
+describe('LoadingPlanView - a supplier is chosen', () => {
+  it('renders the request section for the chosen supplier', async () => {
     renderView();
     await chooseSupplier();
 
-    expect(await screen.findByText(/No stock list for Foshan Ceramics yet/)).toBeInTheDocument();
-  });
-});
-
-describe('LoadingPlanView - the plan', () => {
-  beforeEach(() => {
-    state.stock = {
-      supplier_id: 'sup-1',
-      as_of: '2026-07-31',
-      rows: [
-        {
-          item_code: 'SRTWC8613',
-          product_id: 'p1',
-          product_name: 'Toilet',
-          qty_packed: 100,
-          qty_unfinished: 40,
-          cbm_per_unit: 0.34,
-          matched: true,
-        },
-      ],
-    };
+    expect(await screen.findByTestId('container-request-section')).toBeInTheDocument();
+    expect(screen.getByText('Request section for Foshan Ceramics')).toBeInTheDocument();
   });
 
-  it('shows what the supplier holds and when they said so', async () => {
+  it('hides the view-uploaded-list control until a stock list has been uploaded', async () => {
     renderView();
     await chooseSupplier();
 
-    expect(await screen.findByText(/As they told us on/)).toBeInTheDocument();
-    expect(screen.getByText('Items packed')).toBeInTheDocument();
+    await screen.findByTestId('container-request-section');
+    expect(screen.queryByRole('button', { name: /view uploaded list/i })).not.toBeInTheDocument();
   });
 
-  it('shows a deferred line with the reason it was cut', async () => {
-    // The whole point of the screen: "why is my line not on the container".
-    buildResult = plan();
+  it('offers to view the uploaded list once a stock-list file exists', async () => {
+    state.stockListFile = { attachment_id: 'att-1', filename: 'foshan-stock.xlsx' };
     renderView();
     await chooseSupplier();
 
-    expect(await screen.findByText('SRTWB1001')).toBeInTheDocument();
-    expect(screen.getByText('Not packed yet')).toBeInTheDocument();
-    expect(screen.getByText('Not loaded')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: /view uploaded list/i }),
+    ).toBeInTheDocument();
   });
 
-  it('states the fill against the capacity, not just the planned volume', async () => {
-    buildResult = plan();
+  it('enables the upload-stock-list toolbar button once a supplier is chosen', async () => {
     renderView();
+    expect(screen.getByTestId('open-stock-upload')).toBeDisabled();
+
     await chooseSupplier();
 
-    expect(await screen.findByText('68 cbm')).toBeInTheDocument();
-    expect(screen.getByText('50% full')).toBeInTheDocument();
-  });
-
-  it('keeps a volume to three decimals, which is how a cbm is quoted', async () => {
-    // Container and item volumes are 3 dp in this trade (a pan is 0.123 cbm, not 0.12).
-    // Rounding to 2 loses a real difference between two products.
-    buildResult = plan({ capacity_cbm: 68.125, planned_cbm: 34.5 });
-    renderView();
-    await chooseSupplier();
-
-    expect(await screen.findByText('68.125 cbm')).toBeInTheDocument();
-  });
-
-  it('changing the container count re-runs the same plan rather than making another', async () => {
-    // AC-E6. `rerun` carries the plan id; `build` would create a second plan for one decision.
-    buildResult = plan();
-    renderView();
-    await chooseSupplier();
-    await screen.findByText('SRTWC8613');
-
-    fireEvent.change(screen.getByLabelText('How many'), { target: { value: '2' } });
-
-    await waitFor(() => expect(rerun).toHaveBeenCalledWith({ id: 'plan-1', container_count: 2 }));
-    expect(build).not.toHaveBeenCalled();
-  });
-
-  it('builds a plan for the chosen supplier and container', async () => {
-    renderView();
-    await chooseSupplier();
-
-    fireEvent.click(await screen.findByRole('button', { name: /Plan containers/ }));
-
-    await waitFor(() =>
-      expect(build).toHaveBeenCalledWith({
-        supplier_id: 'sup-1',
-        container_count: 1,
-        container_type: '40HQ',
-      }),
-    );
-  });
-
-  it('lists unfinished stock separately from the plan', async () => {
-    // AC-E2: it is a production request, not freight, and mixing them is how somebody loads
-    // a container with things that do not exist.
-    state.unfinished = [
-      { item_code: 'SRTWC8613', product_name: 'Toilet', qty_unfinished: 140, qty_packed: 2, as_of: '2026-07-31' },
-    ];
-    renderView();
-    await chooseSupplier();
-
-    expect(await screen.findByText('Waiting on production')).toBeInTheDocument();
-    expect(screen.getByText('140')).toBeInTheDocument();
+    expect(screen.getByTestId('open-stock-upload')).toBeEnabled();
   });
 });

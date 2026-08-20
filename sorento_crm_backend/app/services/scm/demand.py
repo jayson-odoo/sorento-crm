@@ -315,3 +315,98 @@ SELECT product_id,
 FROM legs
 GROUP BY product_id, warehouse_id;
 """
+
+
+def horizon_committed_select_sql() -> str:
+    """`COMMITTED_V_SQL`'s body, as a bare SELECT (no `CREATE VIEW`) with a `:horizon`
+    bind narrowing both legs to demand due at or before it.
+
+    Planning horizon (captain, 20 Aug): "SOs needed in 2030" a buyer never asked about
+    should not distort a plan they only want through December. `scm.committed_v` itself
+    is untouched and every OTHER reader (the demand-drill popover, the dashboard, the
+    coverage timeline) keeps reading it unfiltered - this is used ONLY by
+    `reorder_run_service._planning_rows` to override a single run's own committed figure
+    when that run was asked for a horizon.
+
+    A NULL `:horizon` reproduces `scm.committed_v` exactly: every date comparison short-
+    circuits true, so an unhorizoned run (the daily scheduled one, and any manual run
+    that leaves the field empty) nets byte-for-byte as before. Demand carrying NO date at
+    all is always counted, whatever the bind - unscheduled demand is still demand, not a
+    reason to guess it is late.
+
+    Kept beside `COMMITTED_V_SQL` rather than derived from it: the view body is frozen
+    for the migration/downgrade pair (`test_committed_v_migration_chain.py`) and must
+    stay copy-pasteable, so this is a second copy of the same `legs` shape with one
+    predicate added to each leg - the same relationship `COMMITTED_V_SQL` already has to
+    the individual predicates in this module (`PLAN_DEMAND_ORDER_SQL` etc).
+    """
+    return """
+WITH decided AS (
+    SELECT DISTINCT (snap->>'core_line_id')::uuid AS core_line_id
+    FROM projects.so_supply_decisions d
+    CROSS JOIN LATERAL jsonb_array_elements(d.line_snapshots) AS snap
+    WHERE d.state = 'active'
+      AND snap->>'core_line_id' IS NOT NULL
+),
+legs AS (
+    SELECT sol.product_id,
+           sol.warehouse_id,
+           CASE WHEN so.demand_class = 'project'
+                THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
+                              - COALESCE(sol.qty_delivered, 0), 0)
+                ELSE 0 END AS project_qty,
+           0 AS project_confirmed_qty,
+           CASE WHEN so.demand_class IS NOT NULL AND so.demand_class <> 'project'
+                THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
+                              - COALESCE(sol.qty_delivered, 0), 0)
+                ELSE 0 END AS retail_qty,
+           CASE WHEN so.demand_class IS NULL
+                THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
+                              - COALESCE(sol.qty_delivered, 0), 0)
+                ELSE 0 END AS unclassified_qty
+    FROM sales_order_lines sol
+    JOIN sales_orders so ON so.id = sol.sales_order_id
+    WHERE so.status = 'open'
+      AND sol.line_status = 'open'
+      AND sol.purchasing_status <> 'covered'
+      AND GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
+                   - COALESCE(sol.qty_delivered, 0), 0) > 0
+      AND (so.demand_class IS DISTINCT FROM 'project'
+           OR (so.demand_origin = 'scm_order_inquiry'
+               AND NOT EXISTS (SELECT 1 FROM decided dd
+                               WHERE dd.core_line_id = sol.id)))
+      -- Planning horizon, sheet leg: a stated required_date past the cutoff is excluded;
+      -- no date at all is always in.
+      AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
+           OR sol.required_date <= CAST(:horizon AS date))
+    UNION ALL
+    SELECT sol.product_id,
+           sol.warehouse_id,
+           oir.qty AS project_qty,
+           oir.qty AS project_confirmed_qty,
+           0 AS retail_qty,
+           0 AS unclassified_qty
+    FROM projects.order_inquiry_rows oir
+    JOIN projects.so_supply_decisions d
+      ON d.id = oir.supply_decision_id
+     AND d.state = 'active'
+    JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
+    JOIN sales_order_lines sol ON sol.id = psl.core_sales_order_line_id
+    WHERE oir.verb = 'ORDER'
+      AND oir.state = 'raised'
+      AND oir.qty > 0
+      -- Planning horizon, confirmed leg: same rule, off the inquiry row's own delivery
+      -- date rather than the core line's required_date.
+      AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
+           OR oir.delivery_date <= CAST(:horizon AS date))
+)
+SELECT product_id,
+       warehouse_id,
+       SUM(project_qty + retail_qty + unclassified_qty) AS committed,
+       SUM(project_qty) AS project_committed,
+       SUM(retail_qty) AS retail_committed,
+       SUM(unclassified_qty) AS unclassified_committed,
+       SUM(project_confirmed_qty) AS project_confirmed_committed
+FROM legs
+GROUP BY product_id, warehouse_id
+"""

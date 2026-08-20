@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
+from app.config import settings as app_settings
 from app.models.project_so import (
     ANNOTATION_ACCEPTED,
     ANNOTATION_PROPOSED,
@@ -34,9 +35,10 @@ from app.models.project_so import (
 )
 from app.models.projects import ProjectPurchaseOrderLine
 from app.models.user import User
-from app.services import project_seed_service
-from app.services.document_extraction import PageResult
+from app.services import document_extraction, project_seed_service
+from app.services.document_extraction import PageResult, RenderedPage
 from app.services.error_handler import AppException
+from app.services.llm_provider import ChatResult
 from app.services.project_po_extraction_service import (
     STATE_DONE,
     STATE_QUEUED,
@@ -1161,6 +1163,128 @@ def test_the_version_reports_how_much_of_the_document_was_read(seeded):
     assert body["failed_pages"] == [2]
 
 
+def test_run_extraction_commits_progress_once_per_page(seeded, monkeypatch):
+    """B3 (19 Aug follow-up): a long read must not look frozen. ``run_extraction``
+    wires ``on_page`` into ``extract_document`` so ``extracted_json`` (and so
+    ``pages_extracted``) grows page by page, each write its own commit - proved here
+    by counting commits rather than racing real threads: without a per-page commit
+    there are exactly two (the RUNNING stamp, the final write); with it there is one
+    more per page.
+    """
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-PROGRESS"))
+
+    monkeypatch.setattr(
+        ProjectPOExtractionService, "_document_bytes",
+        lambda self, version: (b"ZZT", "application/pdf"),
+    )
+    monkeypatch.setattr(
+        document_extraction, "_render_pages_rich",
+        lambda *a, **k: [RenderedPage(image_b64="i", image_mime="image/jpeg") for _ in range(4)],
+    )
+
+    class _StubProvider:
+        name = "stub"
+
+        def chat(self, messages, **kwargs):
+            return ChatResult(
+                content='{"lines": []}', prompt_tokens=1, completion_tokens=1, total_tokens=2
+            )
+
+    monkeypatch.setattr(document_extraction, "get_provider", lambda *a, **k: _StubProvider())
+    monkeypatch.setattr(app_settings, "document_ai_provider", "gemini", raising=False)
+    monkeypatch.setattr(app_settings, "gemini_api_key", "ZZT-key", raising=False)
+    monkeypatch.setattr(app_settings, "document_ai_page_concurrency", 4, raising=False)
+
+    commit_count = {"n": 0}
+    original_commit = db.commit
+
+    def counting_commit(*args, **kwargs):
+        commit_count["n"] += 1
+        return original_commit(*args, **kwargs)
+
+    db.commit = counting_commit
+
+    summary = service.run_extraction(str(version.id))
+
+    assert summary["status"] == STATE_DONE
+    # RUNNING stamp + 4 page commits + the final persist_pages commit.
+    assert commit_count["n"] >= 6
+    assert service.serialize_version(version)["pages_extracted"] == 4
+
+
+def test_a_retry_after_a_failed_read_does_not_pin_progress_to_the_old_page_count(seeded, monkeypatch):
+    """A retry runs `run_extraction` again on the SAME version row, and the failed
+    attempt already left stale entries in ``extracted_json['pages']``. Left uncleared,
+    ``_on_page`` appends onto them, so the FE's "Page X of Y" counter pins to a Y that
+    counts pages from the read that failed - this is checked WHILE the retry is still
+    RUNNING (persist_pages overwrites ``pages`` wholesale at the end regardless, so a
+    post-completion assertion alone would not catch the bug this fixes).
+    `run_extraction` must reset ``extracted_json['pages']`` before the first page of
+    the retry can land, so progress climbs 0, 1, 2 - never starting from 3 stale
+    entries and never exceeding the 2 real pages of this retry.
+    """
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-RETRY-PROGRESS"))
+
+    # A previous, failed attempt already wrote three stale page blobs.
+    version.extracted_json = {
+        "pages": [
+            {"page_no": 1, "data": {"lines": []}, "error": None},
+            {"page_no": 2, "data": {"lines": []}, "error": None},
+            {"page_no": 3, "data": None, "error": "boom"},
+        ]
+    }
+    db.flush()
+
+    monkeypatch.setattr(
+        ProjectPOExtractionService, "_document_bytes",
+        lambda self, version: (b"ZZT", "application/pdf"),
+    )
+    monkeypatch.setattr(
+        document_extraction, "_render_pages_rich",
+        lambda *a, **k: [RenderedPage(image_b64="i", image_mime="image/jpeg") for _ in range(2)],
+    )
+
+    class _StubProvider:
+        name = "stub"
+
+        def chat(self, messages, **kwargs):
+            return ChatResult(
+                content='{"lines": []}', prompt_tokens=1, completion_tokens=1, total_tokens=2
+            )
+
+    monkeypatch.setattr(document_extraction, "get_provider", lambda *a, **k: _StubProvider())
+    monkeypatch.setattr(app_settings, "document_ai_provider", "gemini", raising=False)
+    monkeypatch.setattr(app_settings, "gemini_api_key", "ZZT-key", raising=False)
+    monkeypatch.setattr(app_settings, "document_ai_page_concurrency", 2, raising=False)
+
+    progress_after_each_commit: list[int] = []
+    original_commit = db.commit
+
+    def snapshotting_commit(*args, **kwargs):
+        result = original_commit(*args, **kwargs)
+        progress_after_each_commit.append(
+            len((version.extracted_json or {}).get("pages") or [])
+        )
+        return result
+
+    db.commit = snapshotting_commit
+
+    summary = service.run_extraction(str(version.id))
+
+    assert summary["status"] == STATE_DONE
+    # The very first commit is the RUNNING stamp, made right after the reset: it must
+    # show 0, not the 3 stale entries the failed attempt left behind.
+    assert progress_after_each_commit[0] == 0
+    # Progress never exceeds this retry's real page count - never 3 (stale alone) and
+    # never 5 (3 stale + 2 new).
+    assert max(progress_after_each_commit) == 2
+    assert len((version.extracted_json or {}).get("pages") or []) == 2
+
+
 def test_the_version_carries_the_approval_stamps(seeded):
     db, project, owner = seeded
     service = ProjectPOExtractionService(db)
@@ -1526,3 +1650,74 @@ def test_an_exact_code_still_wins_before_anything_is_relaxed(seeded):
 
     assert product_id == ids["SRTWC8613-RL"]
     assert source == "code"
+
+
+# ---------------------------------------------- the catalogue is read once per document
+
+
+def _counting_execute(db):
+    """Patch ``db.execute`` to count every statement sent, returning the running list.
+
+    Legacy ``Query.all()`` routes through ``session.execute`` in SQLAlchemy 2.0, so
+    this catches ``db.query(...)`` calls too - the shape ``_catalogue_index`` uses.
+    """
+    calls: list[str] = []
+    original = db.execute
+
+    def counting(statement, *args, **kwargs):
+        calls.append(str(statement))
+        return original(statement, *args, **kwargs)
+
+    db.execute = counting
+    return calls
+
+
+def test_the_catalogue_is_indexed_once_and_reused_across_lines(seeded):
+    """B4 (19 Aug follow-up): resolving several unmatched lines on one document must
+    not re-SELECT the whole catalogue per line.
+
+    Three lines here all miss the exact tiers and fall to the loose matcher. Before
+    memoising, each one ran its own ``SELECT id, product_code FROM products`` and
+    rebuilt both lookup dicts from scratch; now the SELECT happens once."""
+    db, _project, _owner = seeded
+    _catalogue(db, "SRTFH15-CR", "B2155-NL-BLUE", "SRTWC8613-RL")
+    service = ProjectPOExtractionService(db)
+
+    calls = _counting_execute(db)
+
+    for stock_code, description in (
+        ("IFH15CR", "ADJUSTABLE WATER FLOW RATE SORENTO SRTFH15CR FLEXIBLE HOSE 1.5M"),
+        ("CB2155-BLUE", "SORENTO B2155-BLUE-NL ANGLE VALVE"),
+        ("SRTWC86", "SORENTO SRTW8613-RL ONE PIECE WC"),
+    ):
+        product_id, source = service._resolve_product(stock_code, description)
+        assert product_id is not None, f"{stock_code} did not resolve"
+        assert source is not None
+
+    # The catalogue-index projection is exactly (id, product_code) - narrower than the
+    # exact-match tiers' `SELECT *`, so this substring names only the SELECT under test.
+    marker = "products.product_code AS products_product_code \nFROM products"
+    catalogue_selects = [c for c in calls if marker in c]
+    assert len(catalogue_selects) == 1, catalogue_selects
+
+
+def test_the_catalogue_index_is_memoised_per_company(seeded):
+    """The cache is identity-checked, not content-checked: a second call for the SAME
+    company must return the EXACT SAME dicts, proving no fresh SELECT ran, while a
+    different company still gets its own (correctness the memo must not break)."""
+    from app.models.company import Company
+
+    db, _project, _owner = seeded
+    other_company = str(uuid.uuid4())
+    db.add(Company(id=other_company, name=f"{MARKER} Other", code=str(uuid.uuid4())[:8]))
+    db.flush()
+    _catalogue(db, "SRTWC8613-RL")
+    service = ProjectPOExtractionService(db)
+
+    first = service._catalogue_index(None)
+    second = service._catalogue_index(None)
+    assert first[0] is second[0]
+    assert first[1] is second[1]
+
+    other = service._catalogue_index(other_company)
+    assert other[0] is not first[0]

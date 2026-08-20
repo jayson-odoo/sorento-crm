@@ -11,6 +11,7 @@ would otherwise silently become a SKU that gets planned and purchased.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import date
@@ -19,6 +20,7 @@ from typing import Callable, Optional
 
 import sqlalchemy as sa
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.order import Customer, SalesOrder, SalesOrderLine
@@ -62,6 +64,56 @@ logger = logging.getLogger(__name__)
 # A quantity difference below this is noise between two exports, not a decision. Same figure
 # the diff uses, for the same reason.
 _QTY_EPSILON = 0.0005
+
+# How many back-created supplier codes the job report names outright before it switches to
+# "... and N more". `suppliers_created` (the count) is never capped - only the list an
+# operator would actually read is, the same trade `_samples` makes for diff evidence.
+_CREATED_SUPPLIERS_LISTED = 20
+
+# A trailing "(RMB)" / "（RMB)" style currency note AutoCount appends to a creditor NAME,
+# never part of the legal name. Anchored to the END of the string so a genuine parenthesised
+# token earlier in the name ("XYZ TRADING (M) SDN BHD") is never touched, and written to
+# accept EITHER paren style on EITHER side ("（RMB)" - the captain's real file mismatches
+# them) because NFKC header folding does not touch cell VALUES, only header text.
+_CURRENCY_SUFFIX_RE = re.compile(r"[\(（]\s*[A-Za-z]{2,4}\s*[\)）]\s*$")
+
+# `suppliers.supplier_code` is String(50) (see the model); a slug longer than this is
+# truncated to leave room for the `-2`/`-3` disambiguator below.
+_SUPPLIER_SLUG_MAX = 50
+
+
+def _clean_supplier_name(raw: Optional[str]) -> str:
+    """The legal supplier name, with AutoCount's trailing currency note stripped.
+
+    The supplier master holds `XIAMEN TAIYANG TECHNOLOGY CO.,LTD`, never `... (RMB)` - the
+    suffix is the export's own currency notation, not part of the name - so matching or
+    back-creating on the raw cell would either miss an existing supplier or create a
+    duplicate per currency the client happens to buy that item in.
+    """
+    if not raw:
+        return ""
+    return _CURRENCY_SUFFIX_RE.sub("", str(raw).strip()).strip()
+
+
+def _supplier_slug(db: Session, bind: _Binding, name: str) -> str:
+    """A deterministic `supplier_code` for a creditor the file names but gives no code for.
+
+    Upper-cased alphanumerics only - punctuation and spaces dropped rather than kept, so
+    `XIAMEN TAIYANG TECHNOLOGY CO.,LTD` becomes `XIAMENTAIYANGTECHNOLOGYCOLTD` - truncated to
+    fit the column. A code already held in this company (another supplier whose name
+    happens to slug the same way; by construction this is never the SAME name, since a
+    matching existing name would have resolved before creation was ever considered) gets a
+    numeric `-2`, `-3`, ... suffix rather than colliding on the unique constraint.
+    """
+    base = re.sub(r"[^A-Z0-9]", "", name.upper()) or "SUPPLIER"
+    code_col = getattr(bind.party, bind.party_code_col)
+    candidate = base[:_SUPPLIER_SLUG_MAX]
+    suffix = 1
+    while db.query(bind.party.id).filter(func.upper(code_col) == candidate).first() is not None:
+        suffix += 1
+        tail = f"-{suffix}"
+        candidate = base[: max(_SUPPLIER_SLUG_MAX - len(tail), 0)] + tail
+    return candidate
 
 
 @dataclass(frozen=True)
@@ -107,6 +159,19 @@ class _Binding:
     # (the PO side), an unresolvable code leaves the document unlinked with no trace, which
     # is a resolution issue the operator has to see.
     party_code_header_col: Optional[str] = None
+    # Whether an unresolved counterparty code gets a MINIMAL master row created for it
+    # rather than only reported. Purchase-order creditor codes only (AC below): 2,177 of
+    # 5,243 PO-book documents in the captain's own file carried a creditor code the
+    # supplier master had never seen, so every one of them landed with no supplier at
+    # all. The sales side keeps the code on the header instead (`party_code_header_col`)
+    # and stays exactly as it was - a debtor code with no customer row still names a
+    # market segment fallback there, which a back-created customer with no segment
+    # would only make WORSE.
+    party_back_create: bool = False
+    # The counterparty model's own "name" column, read only when `party_back_create` is
+    # set - the file's label column (`SUPPLIER` on the PO export) becomes this row's
+    # name, so the created supplier is not just a bare code on the expediting list.
+    party_name_col: Optional[str] = None
     # The header column fulfilment priority is weighed on, and the header column the
     # project-versus-dealer split is stated in. Both None for purchase orders, which carry
     # no demand at all. `demand_split_col` is the source of truth (plan amendment of
@@ -164,6 +229,7 @@ _BINDINGS: dict[str, _Binding] = {
         date="expected_date", fulfilled="qty_received",
         party_fk="supplier_id", party_code="creditor_code",
         party=Supplier, party_code_col="supplier_code",
+        party_back_create=True, party_name_col="supplier_name",
         # NOT "draft". `scm.on_order_v` counts only placed orders, deliberately excluding
         # drafts (M4-D5), and an outstanding-PO extract is a book of orders already placed
         # with suppliers. Writing them as drafts would import the supply and then hide it.
@@ -274,6 +340,27 @@ class _Resolved:
     party_by_doc: dict
     # The counterparty CODE behind each of those, so a report can name it instead of an id.
     party_code_by_doc: dict = field(default_factory=dict)
+    # Every counterparty code (normalised) this file names that no master row matched,
+    # mapped to the file's own label for it - read only where `_Binding.party_back_create`
+    # is set. `apply()` creates one row per key here; `preview()` never does, matching
+    # every other creation this module performs. A code the file never labels (the
+    # column is missing, or blank on every row) falls back to the code itself.
+    party_label_by_code: dict = field(default_factory=dict)
+    # The SAME codes, first-seen exactly as the file printed them (case, punctuation) -
+    # what the created row's code column is stamped with. Matching stays on the
+    # normalised key; display stays on what the operator's own file said.
+    party_raw_code_by_code: dict = field(default_factory=dict)
+    # PO-book fallback, read only where `_Binding.party_back_create` is set: which
+    # document belongs to which CLEANED counterparty name, for a file that names the
+    # creditor but carries no code column at all (`party_code` blank on every row). A
+    # separate map from the code ones above rather than a shared key space, because a
+    # slug is generated, not read off the file, and the two must never collide with a
+    # genuine code creating (or matching) the wrong row.
+    party_name_key_by_doc: dict = field(default_factory=dict)
+    # Normalised name key -> the CLEANED name itself (display form, currency suffix
+    # already stripped). `apply()` creates one supplier per key here, exactly as the code
+    # map does for `party_raw_code_by_code`.
+    party_cleaned_name_by_key: dict = field(default_factory=dict)
     # Header-level values the file states per document (`_Binding.header_cols`), first
     # non-empty wins: the extract repeats them on every row of the document.
     header_by_doc: dict = field(default_factory=dict)
@@ -314,6 +401,41 @@ def _resolve_parties(db: Session, read: ReadResult, bind: _Binding) -> dict[str,
     }
 
 
+def _resolve_parties_by_name(db: Session, read: ReadResult, bind: _Binding) -> dict[str, str]:
+    """Cleaned counterparty NAME -> id, within the active company.
+
+    PO-book fallback only (`bind.party_back_create`): read only for rows that state no
+    `party_code` at all, since a row that DOES carry a code is resolved by
+    `_resolve_parties` and this map is never consulted for it. Matched case-insensitively
+    on the cleaned name - the master holds `XIAMEN TAIYANG TECHNOLOGY CO.,LTD`, the file
+    says `XIAMEN TAIYANG TECHNOLOGY CO.,LTD (RMB)` - so the raw cell would never match.
+
+    `supplier_name` carries no uniqueness constraint (unlike `supplier_code`), so more
+    than one supplier can legitimately share a name - ordered by id so the dict
+    comprehension's last-write-wins lands on the same row every time, rather than
+    whatever order Postgres happened to return.
+    """
+    if bind.party is None or not bind.party_back_create or bind.party_name_col is None:
+        return {}
+    names = {
+        _norm(cleaned)
+        for x in read.extras.values()
+        if not x.get("party_code") and (cleaned := _clean_supplier_name(x.get("party_name")))
+    }
+    if not names:
+        return {}
+    name_col = getattr(bind.party, bind.party_name_col)
+    return {
+        _norm(name): str(pid)
+        for pid, name in (
+            db.query(bind.party.id, name_col)
+            .filter(func.upper(name_col).in_(list(names)))
+            .order_by(bind.party.id.desc())
+            .all()
+        )
+    }
+
+
 def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
     """Map codes in the file onto real rows, reporting whatever cannot be resolved.
 
@@ -348,8 +470,13 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
             warehouses[_norm(code)] = str(wid)
 
     parties = _resolve_parties(db, read, bind)
+    names_by_key = _resolve_parties_by_name(db, read, bind)
     party_by_doc: dict[str, str] = {}
     party_code_by_doc: dict[str, str] = {}
+    party_label_by_code: dict[str, str] = {}
+    party_raw_code_by_code: dict[str, str] = {}
+    party_name_key_by_doc: dict[str, str] = {}
+    party_cleaned_name_by_key: dict[str, str] = {}
     header_by_doc: dict[str, dict] = {}
     agent_by_doc: dict[str, str] = {}
 
@@ -417,15 +544,58 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
                 party_code_by_doc.setdefault(l.doc_number, code)
             continue
         if not code:
+            # PO-book fallback: the file names a creditor but states no CODE at all - the
+            # shape of the captain's real "PO & SPO outstanding.xlsx" export. Only where
+            # `party_back_create` is set, matching the code-side rule that only the purchase
+            # book back-creates a counterparty.
+            if bind.party_back_create:
+                cleaned = _clean_supplier_name(extra.get("party_name"))
+                if cleaned:
+                    name_key = _norm(cleaned)
+                    seen_name_key = party_name_key_by_doc.get(l.doc_number)
+                    if seen_name_key is not None and seen_name_key != name_key:
+                        # One document has one creditor, exactly the rule the code path
+                        # enforces below - the first row still wins, said out loud.
+                        issues.append(ResolutionIssue(
+                            row, "party_name", cleaned,
+                            f"{l.doc_number} names two different creditors, "
+                            f"{party_cleaned_name_by_key.get(seen_name_key, seen_name_key)} "
+                            f"and {cleaned}; the first is being used"))
+                    else:
+                        party_name_key_by_doc.setdefault(l.doc_number, name_key)
+                        party_cleaned_name_by_key.setdefault(name_key, cleaned)
+                        pid_by_name = names_by_key.get(name_key)
+                        if pid_by_name is not None:
+                            party_by_doc.setdefault(l.doc_number, pid_by_name)
+                        else:
+                            issues.append(ResolutionIssue(
+                                row, "party_name", cleaned,
+                                f"no {bind.party.__name__.lower()} named {cleaned!r}; a new "
+                                f"{bind.party.__name__.lower()} is being created for it"))
             continue
         pid_party = parties.get(code)
         if pid_party is None:
             # An unresolvable code is only a PROBLEM when it would otherwise be lost. The
             # sales book keeps it on the header, so the order stays attributable and there
             # is nothing for the operator to fix in this file - reporting 2,546 of them
-            # would bury the rows that really did fail. The purchase book has nowhere to
-            # put it, so there it is reported and the document is left unlinked.
-            if bind.party_code_header_col:
+            # would bury the rows that really did fail.
+            if bind.party_back_create:
+                # The purchase book has nowhere to put an unlinked code, and 2,177 of
+                # 5,243 documents in the captain's own file arrived exactly this way -
+                # not a typo, a supplier AutoCount already deals with that the master
+                # simply hasn't caught up on. `apply()` creates a minimal supplier row
+                # for it (mirrors `order_service`'s customer back-create) and links the
+                # document; still reported here, so it is visible rather than a surprise
+                # after the fact.
+                party_code_by_doc.setdefault(l.doc_number, code)
+                party_raw_code_by_code.setdefault(code, extra.get("party_code") or code)
+                if code not in party_label_by_code and l.label:
+                    party_label_by_code[code] = l.label
+                issues.append(ResolutionIssue(
+                    row, bind.party_code, code,
+                    f"no {bind.party.__name__.lower()} with this code; a new "
+                    f"{bind.party.__name__.lower()} is being created for it"))
+            elif bind.party_code_header_col:
                 party_code_by_doc.setdefault(l.doc_number, code)
             else:
                 issues.append(ResolutionIssue(
@@ -448,8 +618,12 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
 
     return _Resolved(lines=kept, issues=issues, product_by_code=products,
                      warehouse_by_code=warehouses, party_by_doc=party_by_doc,
-                     party_code_by_doc=party_code_by_doc, header_by_doc=header_by_doc,
-                     agent_by_doc=agent_by_doc)
+                     party_code_by_doc=party_code_by_doc,
+                     party_label_by_code=party_label_by_code,
+                     party_raw_code_by_code=party_raw_code_by_code,
+                     party_name_key_by_doc=party_name_key_by_doc,
+                     party_cleaned_name_by_key=party_cleaned_name_by_key,
+                     header_by_doc=header_by_doc, agent_by_doc=agent_by_doc)
 
 
 def _existing_lines(db: Session, docs: set[str], bind: _Binding, *,
@@ -737,7 +911,13 @@ def _honesty_issues(diff: Diff, fulfilled_by_line: dict[str, float],
     for number in diff.scope_documents:
         _status, current_party = header_state.get(number, (None, None))
         party_id = resolved.party_by_doc.get(number)
-        code = resolved.party_code_by_doc.get(number)
+        # A code-less document resolved through the NAME fallback has nothing in
+        # `party_code_by_doc` to name here - fall back to the cleaned name the file
+        # actually said, so the message still names what changed instead of reading
+        # "changed to ".
+        code = (resolved.party_code_by_doc.get(number)
+                or resolved.party_cleaned_name_by_key.get(
+                    resolved.party_name_key_by_doc.get(number, "")))
         if party_id and current_party and current_party != str(party_id):
             # The file is the system of record for who we bought from: chasing the wrong
             # supplier is the failure mode. Overwritten, and said out loud.
@@ -1138,6 +1318,116 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
             if agent is not None:
                 agent_ids[code] = agent.id
 
+    # The supplier master, back-created where a PO-book creditor code names nobody it
+    # holds - the mirror of the agent creation just above, and the same pattern
+    # `order_service._upsert_customer_from_debtor` uses for a sales debtor: find by code
+    # first, create a minimal row, flush so the id is usable before the header links it,
+    # commit stays with this transaction. One creation per distinct code (the dict key),
+    # never inside `preview`.
+    #
+    # NOT a backfill: only documents THIS upload names get linked. A NULL `supplier_id`
+    # left by an earlier upload of the same document stays NULL until that document is
+    # re-uploaded - the next upload of the PO book links it then, same as any other
+    # figure this importer restates.
+    #
+    # `supplier_code` is unique per COMPANY (migration 305), not globally, so a code
+    # another company already holds is created here too - as its own row, under this
+    # company, exactly as if nobody anywhere held it (`test_outstanding_import_company_
+    # isolation.py`). The insert still runs inside a savepoint: a concurrent upload
+    # creating the same code for this SAME company, or a schema still on the model's
+    # bare column-level unique (a `create_all` scratch schema, unlike this suite's
+    # migrated one), must not poison the whole transaction - the code is left exactly as
+    # unresolved as it always was rather than crashing the upload.
+    created_supplier_codes: list[str] = []
+    if bind.party_back_create and resolved.party_raw_code_by_code:
+        party_ids_by_code: dict[str, str] = {}
+        code_col = getattr(bind.party, bind.party_code_col)
+        # Driven by the RAW-code map, not the label map: the file's label column is
+        # optional (`_MINIMAL` PO uploads carry no SUPPLIER name at all), and a code with
+        # no label is still a code to create - it just falls back to naming itself.
+        for code in sorted(resolved.party_raw_code_by_code):
+            existing = db.query(bind.party).filter(func.upper(code_col) == code).one_or_none()
+            if existing is not None:
+                party_ids_by_code[code] = str(existing.id)
+                continue
+            raw_code = resolved.party_raw_code_by_code.get(code, code)
+            name = resolved.party_label_by_code.get(code) or raw_code
+            try:
+                with db.begin_nested():
+                    created = bind.party(**{
+                        bind.party_code_col: raw_code,
+                        bind.party_name_col: name,
+                        "is_active": True,
+                    })
+                    db.add(created)
+                    db.flush()
+            except IntegrityError:
+                logger.warning(
+                    "outstanding import: could not back-create %s %r for the "
+                    "purchase-order book (the code already exists)",
+                    bind.party.__name__.lower(), raw_code)
+                continue
+            party_ids_by_code[code] = str(created.id)
+            created_supplier_codes.append(raw_code)
+        for number, code in resolved.party_code_by_doc.items():
+            pid = party_ids_by_code.get(code)
+            if pid and number not in resolved.party_by_doc:
+                resolved.party_by_doc[number] = pid
+
+    # The PO-book NAME fallback: a document whose only creditor evidence is a NAME
+    # (`party_name_key_by_doc`, built when the file states no code at all - the captain's
+    # real "PO & SPO outstanding.xlsx" export). `_resolve` already linked whatever an
+    # existing supplier matched by name; what is left here is one back-creation per
+    # distinct cleaned name, same savepoint guard and same reporting as the code path
+    # above. Re-queried by name rather than trusting `_resolve`'s snapshot, for the same
+    # reason the code loop re-queries by code: a name this run's own code-based creation
+    # (or an earlier name in THIS loop) just created must be found, not re-created.
+    if bind.party_back_create and resolved.party_cleaned_name_by_key:
+        party_ids_by_name_key: dict[str, str] = {}
+        name_col = getattr(bind.party, bind.party_name_col)
+        for name_key in sorted(resolved.party_cleaned_name_by_key):
+            cleaned = resolved.party_cleaned_name_by_key[name_key]
+            # `.first()`, not `.one_or_none()`: unlike `supplier_code`, `supplier_name`
+            # carries no uniqueness constraint - the real master already holds more than
+            # one supplier under the identical name in places - so more than one match
+            # is a fact of the data, not a defect this import should crash on. Ordered
+            # so the choice is at least DETERMINISTIC across a re-upload rather than
+            # whatever order Postgres happened to return rows in.
+            existing = (
+                db.query(bind.party)
+                .filter(func.upper(name_col) == name_key)
+                .order_by(bind.party.id)
+                .first()
+            )
+            if existing is not None:
+                party_ids_by_name_key[name_key] = str(existing.id)
+                continue
+            slug = _supplier_slug(db, bind, cleaned)
+            try:
+                with db.begin_nested():
+                    created = bind.party(**{
+                        bind.party_code_col: slug,
+                        bind.party_name_col: cleaned,
+                        "is_active": True,
+                    })
+                    db.add(created)
+                    db.flush()
+            except IntegrityError:
+                logger.warning(
+                    "outstanding import: could not back-create %s %r for the "
+                    "purchase-order book (the generated code already exists)",
+                    bind.party.__name__.lower(), slug)
+                continue
+            party_ids_by_name_key[name_key] = str(created.id)
+            # The cleaned NAME, not the generated slug: it is what the operator's file
+            # actually said and is what they will recognise, where the slug is an
+            # internal code they never typed.
+            created_supplier_codes.append(cleaned)
+        for number, name_key in resolved.party_name_key_by_doc.items():
+            pid = party_ids_by_name_key.get(name_key)
+            if pid and number not in resolved.party_by_doc:
+                resolved.party_by_doc[number] = pid
+
     # Header per document in scope, created if absent. `write_status` differs per type: an
     # outstanding-PO extract is a book of orders already PLACED, and `scm.on_order_v`
     # deliberately ignores drafts, so writing them as drafts would import supply and hide it.
@@ -1437,4 +1727,10 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         # after the fact, and re-reading the master here would report every one of them as
         # merely unclassified, losing which ones this upload invented.
         "unmapped_agents": [asdict(a) for a in plan.agent_notices],
+        # AC: an operator must never discover an invented supplier by surprise. The count
+        # is the whole truth; the list is capped the same way `_samples` caps diff
+        # evidence, because a report naming every one of a few thousand codes is not one
+        # a person can read either.
+        "suppliers_created": len(created_supplier_codes),
+        "suppliers_created_codes": created_supplier_codes[:_CREATED_SUPPLIERS_LISTED],
     }

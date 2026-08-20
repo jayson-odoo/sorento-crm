@@ -9,16 +9,27 @@ import { describe, expect, it } from 'vitest';
 import {
   formatOutstandingQty,
   isNotStarted,
+  planBoardHref,
   planningRowKey,
   planningRowProjectLabel,
   planningRowReference,
   planningRowSalesOrderHref,
   sortByEarliestRequired,
 } from './fulfilmentPlanningRows';
-import type { FulfilmentPlanningRow } from '../types/fulfilmentPlanning.types';
+import type { FulfilmentPlanningRow, PlanRow } from '../types/fulfilmentPlanning.types';
 
 function row(overrides: Partial<FulfilmentPlanningRow> = {}): FulfilmentPlanningRow {
   return { line_count: 1, review_state: 'not_started', ...overrides };
+}
+
+function planRow(overrides: Partial<PlanRow> = {}): PlanRow {
+  return {
+    project_sales_order_id: 'pso-1',
+    revision_no: 1,
+    state: 'active',
+    line_count: 1,
+    ...overrides,
+  };
 }
 
 describe('planningRowKey', () => {
@@ -203,5 +214,17 @@ describe('sortByEarliestRequired (AC-FP04)', () => {
     ];
     sortByEarliestRequired(input);
     expect(input.map((entry) => entry.so_number)).toEqual(['SO396071', 'SO391698']);
+  });
+});
+
+describe('planBoardHref', () => {
+  it('links to the board filtered to the row\'s sales order', () => {
+    expect(planBoardHref(planRow({ so_number: 'SO397450' }))).toBe(
+      '/project-sales/fulfilment-planning?orders=SO397450',
+    );
+  });
+
+  it('answers null when the row has no sales order to filter the board to', () => {
+    expect(planBoardHref(planRow({ so_number: null }))).toBeNull();
   });
 });

@@ -120,6 +120,16 @@ export function NetDrill({ row }: { row: M8PlanRow }) {
           <span className="text-muted-foreground">+ on order</span>
           <span className="tabular-nums">{fmtInt(nb.on_order)}</span>
         </div>
+        {/* PO (21 Aug fix): the sizing engine nets the open PO book into this same `net`,
+            so a breakdown that stopped at on hand / on order / committed would no longer
+            sum to the figure in the header - shown whenever it is nonzero, same rule as
+            every other leg here. */}
+        {nb.po_ordered ? (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">+ PO (open)</span>
+            <span className="tabular-nums">{fmtInt(nb.po_ordered)}</span>
+          </div>
+        ) : null}
         <div className="flex justify-between">
           <span className="text-muted-foreground">- committed</span>
           <span className="tabular-nums">{fmtInt(nb.committed)}</span>

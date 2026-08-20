@@ -1,0 +1,93 @@
+"""Container requests: the demand-first stage in front of the Loading Plan's CBM fit.
+
+`PLAN-scm-loading-plan-demand-first.md` section 4. `build` is a pure read: what the
+supplier's current stock list identifies as theirs, ranked against the outstanding
+sales-order book by the ACTIVE Fulfilment Priority policy. The send endpoint turns Ms Tee's
+reviewed lines into a notice through the same S8 machinery `approve_loading_plan` uses
+(`fulfilment.py`) - a document, an email when an address is on file, an outbox row either way
+- just without a Loading Plan behind it, because CBM is not decided until the supplier packs.
+"""
+from __future__ import annotations
+
+from datetime import date
+from typing import Optional
+
+from fastapi import APIRouter, Depends, status
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.dependencies import require_permission
+from app.services.scm import container_request_service
+
+router = APIRouter()
+
+# The same two permissions the Loading Plan screen already reads and writes under (copied from
+# `fulfilment.py`) - a container request is an earlier stage of that screen, not a new
+# capability.
+_READ = require_permission("scm.dashboard.view")
+_WRITE = require_permission("scm.reorder.run")
+
+
+def _actor(user: Optional[dict]) -> Optional[str]:
+    """The caller's human name, never their id - same rule as every other SCM provenance."""
+    user = user or {}
+    return user.get("name") or user.get("email") or None
+
+
+class ContainerRequestBuildBody(BaseModel):
+    supplier_id: str
+    # "Plan until" (captain, 20 Aug): mirrors the reorder run's own `plan_horizon_date`
+    # (`app.schemas.scm_reorder`), but this build has no stored run row to carry a column on -
+    # it recomputes on every call - so the horizon travels as a request field instead. `None`
+    # (omitted, the default) means no cutoff, today's behaviour.
+    plan_horizon_date: Optional[date] = None
+
+
+class ContainerRequestLine(BaseModel):
+    product_id: str
+    qty: float = Field(..., gt=0)
+
+
+class ContainerRequestBody(BaseModel):
+    supplier_id: str
+    lines: list[ContainerRequestLine] = Field(
+        ..., min_length=1, description="Ms Tee's reviewed lines, edited quantities included."
+    )
+
+
+@router.post("/container-requests/build")
+def build_container_request(
+    body: ContainerRequestBuildBody,
+    include_lines: bool = False,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """What to ask this supplier for, ranked by the active priority policy. Persists nothing.
+
+    `include_lines` adds the open SO lines behind every demand row (see the service
+    docstring) - off by default since most callers only need the aggregate rows.
+    `body.plan_horizon_date` narrows open SO need to what is required on or before it
+    (undated demand always counted) - see `container_request_service.build`.
+    """
+    return container_request_service.build(
+        db,
+        supplier_id=body.supplier_id,
+        include_lines=include_lines,
+        plan_horizon_date=body.plan_horizon_date,
+    )
+
+
+@router.post("/container-requests", status_code=status.HTTP_201_CREATED)
+def send_container_request(
+    body: ContainerRequestBody,
+    _user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Send the reviewed request: one notice per channel, the same act as approving a plan."""
+    return container_request_service.send(
+        db,
+        supplier_id=body.supplier_id,
+        lines=[ln.model_dump() for ln in body.lines],
+        actor=_actor(_user),
+    )

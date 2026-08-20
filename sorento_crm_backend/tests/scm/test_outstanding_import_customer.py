@@ -128,6 +128,25 @@ def test_an_unresolvable_debtor_code_is_kept_and_is_not_a_problem(seeded, db):
     assert header["debtor_code"] == debtor
 
 
+def test_an_unresolvable_debtor_code_never_back_creates_a_customer(seeded, db):
+    """Unlike the PO side's creditor code (`outstanding_import_service.py`, AC: back-create
+    the supplier), an unresolvable debtor code creates nothing here. A back-created customer
+    with no market segment would only make the demand-class fallback WORSE than the kept
+    code already does, so this half of the import is deliberately unchanged.
+    """
+    codes = seeded
+    debtor = _debtor_code()
+    before = db.execute(text("SELECT count(*) FROM customers")).scalar()
+
+    out = svc.apply(db, _upload(codes, debtor), SO)
+
+    after = db.execute(text("SELECT count(*) FROM customers")).scalar()
+    assert after == before, "an unresolvable debtor code back-created a customer"
+    assert out.get("suppliers_created", 0) == 0
+    assert db.execute(text("SELECT count(*) FROM customers WHERE customer_code = :c"),
+                      {"c": debtor}).scalar() == 0
+
+
 def test_a_second_upload_relinks_an_order_whose_customer_now_exists(seeded, db):
     """No backfill script exists (the code was never stored), so the re-upload IS the fix."""
     codes = seeded

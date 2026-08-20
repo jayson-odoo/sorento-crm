@@ -188,11 +188,13 @@ export interface PlanningChangeOrder {
   project_id?: string | null;
 }
 
-/** The kind of upload/event that raised a batch. One kind exists today; kept as a union. */
-export type PlanningChangeSourceKind = 'so_book_upload';
+/** The kind of upload/event that raised a batch. Must grow with the backend's
+ *  PlanningChangeSourceKind literal - a value missing there 500s the listing. */
+export type PlanningChangeSourceKind = 'so_book_upload' | 'so_manual_edit';
 
 export const PLANNING_CHANGE_SOURCE_KIND_LABEL: Record<PlanningChangeSourceKind, string> = {
   so_book_upload: 'SO book upload',
+  so_manual_edit: 'Manual SO edit',
 };
 
 /** What raised the batch - the trigger, said as data rather than left to be inferred. */
@@ -223,6 +225,21 @@ export interface PlanningChangeResult {
   /** Rows decided `confirm`/`amend` that Apply actually wrote. */
   lines_confirmed: number;
   purchasing_notified: boolean;
+  /**
+   * B1 (code review, 20 Aug 2026): a revised order's PREVIOUS revision covered lines this
+   * batch never named, and the new one (or, for a material change, no revision at all)
+   * dropped them back to undecided as a side effect - never carried from a challenged or
+   * superseded revision. Empty on a clean apply.
+   */
+  returned_to_review: PlanningChangeReturnedToReview[];
+}
+
+/** One order's silently-dropped bystander lines (B1). See `PlanningChangeResult.returned_to_review`. */
+export interface PlanningChangeReturnedToReview {
+  so_number: string;
+  line_count: number;
+  line_nos: number[];
+  reason: string;
 }
 
 /** `GET /project-sales/planning-changes/{batch_id}`. */
@@ -284,4 +301,6 @@ export interface ApplyPlanningChangesResult {
   applied_orders: string[];
   failed_orders: { so_number: string; reason: string }[];
   already_applied: boolean;
+  /** See `PlanningChangeResult.returned_to_review` - the same data, direct off the apply call. */
+  returned_to_review: PlanningChangeReturnedToReview[];
 }

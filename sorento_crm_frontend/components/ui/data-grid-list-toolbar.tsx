@@ -497,6 +497,10 @@ export function DataGridListToolbar<TData extends object>({
                       className={action.destructive ? 'text-destructive' : undefined}
                       asChild={Boolean(action.href && !action.disabled)}
                       data-guide-target={action.href && !action.disabled ? undefined : action.dataGuideTarget}
+                      // The collapsed-into-"Actions" path has no room for the single-button
+                      // path's `Tooltip` wrapper, so a disabled item's reason travels as a
+                      // native `title` instead - still a tooltip, just the browser's own.
+                      title={action.disabled ? action.disabledReason : undefined}
                     >
                       {action.href && !action.disabled ? (
                         <Link href={action.href} data-guide-target={action.dataGuideTarget}>

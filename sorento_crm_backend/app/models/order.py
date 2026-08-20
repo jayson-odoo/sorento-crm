@@ -440,6 +440,12 @@ class SalesOrderLine(Base, CompanyScopedMixin):
     # carries several, so the header's requested_delivery_date cannot drive netting.
     # Without this the Coverage Timeline has no time axis at all (ADR-0011).
     required_date = Column(Date, nullable=True)
+    # A per-line override of the unit of measure, same family as `unit_price` above: the
+    # column has always been on the table and was never mapped, so a stated UoM (e.g. a
+    # line sold in "BOX" against a product whose base UOM is "PCS") silently fell back to
+    # `_uom_for(product)` on every read. NULL means "nobody overrode it" - the serializer
+    # still falls back to the product's base UOM in that case, not blank.
+    uom = Column(String(100), nullable=True)
     # What purchasing should plan for, when that is not simply what is still owed to the
     # customer. NULL means nobody has said otherwise, so the netting falls back to
     # `qty_ordered - qty_delivered`. Set by the Order Inquiry feed, which is CS stating the

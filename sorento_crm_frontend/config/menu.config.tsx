@@ -393,6 +393,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'scm.reorder.run',
       },
       {
+        title: 'Proforma Invoices',
+        path: '/scm/proforma-invoices',
+        permission: 'scm.dashboard.view',
+      },
+      {
         title: 'Policies',
         path: '/scm/policies',
         permission: 'scm.policy.manage',
@@ -759,6 +764,14 @@ export const MENU_SIDEBAR: MenuConfig = [
         // inside its own project is one nobody goes looking for.
         title: 'Fulfilment Planning',
         path: '/project-sales/fulfilment-planning',
+        permission: 'projects.projects.view',
+      },
+      {
+        // "Is the plan stored, how do I review it" (captain, 19 Aug 2026 demo): the board
+        // writes the decision, this is where it is reviewed afterwards - cross-project for
+        // the same reason Fulfilment Planning beside it is.
+        title: 'Plans',
+        path: '/project-sales/plans',
         permission: 'projects.projects.view',
       },
       {
@@ -1765,6 +1778,14 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         // inside its own project is one nobody goes looking for.
         title: 'Fulfilment Planning',
         path: '/project-sales/fulfilment-planning',
+        permission: 'projects.projects.view',
+      },
+      {
+        // "Is the plan stored, how do I review it" (captain, 19 Aug 2026 demo): the board
+        // writes the decision, this is where it is reviewed afterwards - cross-project for
+        // the same reason Fulfilment Planning beside it is.
+        title: 'Plans',
+        path: '/project-sales/plans',
         permission: 'projects.projects.view',
       },
       {

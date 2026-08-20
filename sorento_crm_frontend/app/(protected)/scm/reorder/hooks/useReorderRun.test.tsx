@@ -9,7 +9,7 @@ vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 const toastError = vi.fn();
 vi.mock('sonner', () => ({ toast: { error: (...a: unknown[]) => toastError(...a) } }));
 
-import { useCustomerOrders, useReorderRun, useTodayRun } from './useReorderRun';
+import { useCustomerOrders, useLocationStock, useReorderRun, useTodayRun } from './useReorderRun';
 
 function jsonRes(body: unknown, ok = true, status = 200) {
   return {
@@ -251,5 +251,56 @@ describe('useCustomerOrders - the orders behind one Who-bought-it row', () => {
     renderHook(() => useCustomerOrders('run-1', 'prod-1', 'project', null, true), { wrapper });
 
     await waitFor(() => expect(apiFetch).not.toHaveBeenCalled());
+  });
+});
+
+describe('useLocationStock - live per-location stock for the grouped Buy view\'s expand panel', () => {
+  it('does not fetch while the caller marks it disabled, even with a product id on hand', async () => {
+    apiFetch.mockResolvedValue(jsonRes({ product_id: 'p1', as_of: '2026-08-20', locations: [] }));
+    renderHook(() => useLocationStock('p1', false), { wrapper });
+
+    await waitFor(() => expect(apiFetch).not.toHaveBeenCalled());
+  });
+
+  it('does not fetch with no product id, even when enabled', async () => {
+    apiFetch.mockResolvedValue(jsonRes({ product_id: null, as_of: '2026-08-20', locations: [] }));
+    renderHook(() => useLocationStock(null, true), { wrapper });
+
+    await waitFor(() => expect(apiFetch).not.toHaveBeenCalled());
+  });
+
+  it('fetches the location-stock endpoint for this product once enabled with an id', async () => {
+    apiFetch.mockResolvedValue(
+      jsonRes({
+        product_id: 'p1',
+        as_of: '2026-08-20T09:00:00',
+        locations: [{ warehouse_id: 'w1', warehouse_code: 'BRW', on_hand: 10, reserved: 0,
+                      held_by_decisions: 0, free: 10, so_qty: 0, spo_qty: 0, available: 10 }],
+      }),
+    );
+    const { result } = renderHook(() => useLocationStock('p1', true), { wrapper });
+
+    await waitFor(() => expect(result.current.data?.locations).toHaveLength(1));
+    const url = String(apiFetch.mock.calls[0][0]);
+    expect(url).toContain('/api/v1/scm/reorder-runs/location-stock');
+    expect(url).toContain('product_id=p1');
+  });
+
+  it('keys the query on the product id - a different product is a fresh fetch, not a stale cache hit', async () => {
+    apiFetch.mockImplementation((url: string) =>
+      Promise.resolve(jsonRes({ product_id: url.includes('p2') ? 'p2' : 'p1', as_of: '2026-08-20', locations: [] })),
+    );
+    const { result, rerender } = renderHook(
+      ({ productId }: { productId: string }) => useLocationStock(productId, true),
+      { wrapper, initialProps: { productId: 'p1' } },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+
+    rerender({ productId: 'p2' });
+
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(2));
+    const secondUrl = String(apiFetch.mock.calls[1][0]);
+    expect(secondUrl).toContain('product_id=p2');
   });
 });

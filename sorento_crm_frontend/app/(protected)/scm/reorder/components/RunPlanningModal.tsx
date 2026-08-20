@@ -17,7 +17,9 @@ import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useProductOptions, useWarehouseOptions } from '../../hooks/useScmOptions';
 
-/** Manual-plan inputs (M8-D5, revised): warehouse(s) + budget ONLY. No market-insight
+/** Manual-plan inputs (M8-D5, revised; captain 20 Aug dropped the cash budget field -
+ *  budget stays a backend/post-run capability only, tightened afterwards on the plan
+ *  via `CashBudgetPanel`/`applyBudget`, never set at launch). No market-insight
  *  toggle - market never enters a run; it reaches the plan only through the chat
  *  (Slice E). The legacy `buy_scope` is removed. Warehouse is now MULTI-select (pick
  *  several, or Select all) so a manual run can cover any subset like the daily run. */
@@ -30,7 +32,24 @@ export interface ManualPlanInputs {
    * `buy_scope` category filter.
    */
   product_codes: string[];
-  budget: number;
+  /**
+   * "Plan until" (captain, 20 Aug). **Empty means no horizon** - every open SO line is
+   * planned regardless of when it is needed, today's behaviour. `YYYY-MM-DD` when set;
+   * demand needed after it is excluded from this run's netting, and demand carrying no
+   * date is always still counted.
+   */
+  plan_horizon_date: string;
+}
+
+/** Today, as the `YYYY-MM-DD` a `<input type="date">` needs - local calendar date, not
+ *  `toISOString()`'s UTC one, which reads as yesterday or tomorrow depending on the
+ *  browser's own offset. */
+function todayDateInputValue(): string {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 /**
@@ -51,7 +70,7 @@ export function RunPlanningModal({
 }) {
   const [warehouses, setWarehouses] = useState<string[]>([]);
   const [products, setProducts] = useState<string[]>([]);
-  const [budget, setBudget] = useState('72000');
+  const [horizon, setHorizon] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const {
@@ -73,14 +92,23 @@ export function RunPlanningModal({
     if (!open) return;
     setWarehouses([]);
     setProducts([]);
-    setBudget('72000');
+    setHorizon('');
     setError(null);
   }, [open]);
+
+  const today = todayDateInputValue();
 
   const submit = () => {
     setError(null);
     if (warehouses.length === 0) {
       setError('Select at least one warehouse to plan for.');
+      return;
+    }
+    // A past cutoff nets every open line against demand that "must" have been needed
+    // before today, which is every line - the run then silently returns zero demand
+    // rather than saying why (nit, code review 20 Aug 2026).
+    if (horizon && horizon < today) {
+      setError('Plan until cannot be in the past - it would leave the run with no demand.');
       return;
     }
     onSubmit({
@@ -89,7 +117,9 @@ export function RunPlanningModal({
       // one is the exception, and forcing a pick would make every run harder than
       // the daily one it stands in for.
       product_codes: products,
-      budget: Number(budget) || 0,
+      // Empty = no horizon (today's behaviour): every open SO line is planned
+      // regardless of when it is needed.
+      plan_horizon_date: horizon,
     });
   };
 
@@ -160,21 +190,20 @@ export function RunPlanningModal({
           </div>
 
           <div>
-            <Label htmlFor="manual-budget" className="mb-1 block">
-              Cash budget (RM)
+            <Label htmlFor="manual-horizon" className="mb-1 block">
+              Plan until
             </Label>
             <Input
-              id="manual-budget"
-              type="number"
-              inputMode="numeric"
-              min={0}
-              step={500}
-              value={budget}
-              onChange={(e) => setBudget(e.target.value)}
-              className="tabular-nums"
+              id="manual-horizon"
+              type="date"
+              min={today}
+              value={horizon}
+              onChange={(e) => setHorizon(e.target.value)}
             />
             <p className="mt-1 text-2xs text-muted-foreground">
-              You can tighten this on the plan afterwards to defer lower-ranked buys.
+              Empty = no cutoff, every open order counts. Demand needed after this date is
+              left out; demand with no date is always counted (unscheduled demand is still
+              demand).
             </p>
           </div>
         </DialogBody>

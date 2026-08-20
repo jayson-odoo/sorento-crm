@@ -156,8 +156,9 @@ class AttributionCase:
 HOT_SELLING_WORKED_CASE = ProposalCase(
     ac="AC-B08",
     title=(
-        "dealer hot-selling product: own-location Reserve is eligible in full, the "
-        "shared pool contributes nothing at all (amended 19 August 2026, PLAN 3.3a)"
+        "dealer hot-selling product: the shared pool contributes nothing at all, and with "
+        "no own-location Reserve any more (ladder v2, section E rule 7) the whole line is "
+        "a Buy"
     ),
     inputs={
         "open_qty": Decimal("70"),
@@ -165,10 +166,9 @@ HOT_SELLING_WORKED_CASE = ProposalCase(
         "required_date": REQUIRED_DATE,
         "fulfilment_location": DEALER_LOCATION,
         "is_dealer_hot_selling": True,
-        # Free unclaimed stock by location.
-        "free_stock": {DEALER_LOCATION: Decimal("50"), POOL_LOCATION: Decimal("120")},
-        "pool_location": POOL_LOCATION,
-        "pool_available": Decimal("120"),
+        "pools": [
+            {"location": POOL_LOCATION, "free": Decimal("120"), "available": Decimal("120")}
+        ],
         # No SPO arrives by the required date, so timely coverage is zero and is not
         # proposed at all.
         "timely_spo_qty": Decimal("0"),
@@ -176,15 +176,9 @@ HOT_SELLING_WORKED_CASE = ProposalCase(
     },
     components=(
         Component(
-            kind=RESERVE,
-            qty=Decimal("50"),
-            reason="free stock at DLR-KL covers the need by the required date",
-            source_location=DEALER_LOCATION,
-        ),
-        Component(
             kind=BUY,
-            qty=Decimal("20"),
-            reason="remaining uncovered need",
+            qty=Decimal("70"),
+            reason="Only 0 of 70 can be covered from stock - buy the whole line",
         ),
     ),
 )
@@ -194,19 +188,19 @@ PROJECT_HOT_SELLING_WORKED_CASE = ProposalCase(
     ac="AC-B08",
     title=(
         "project hot-selling product: the shared pool is drawn only while its own signed "
-        "availability stays positive (PLAN 3.3a)"
+        "availability stays positive (PLAN 3.3a), and covers the whole line here"
     ),
     inputs={
-        "open_qty": Decimal("70"),
+        "open_qty": Decimal("40"),
         "line_no": 12,
         "required_date": REQUIRED_DATE,
         "fulfilment_location": OWN_LOCATION,
         "is_project_hot_selling": True,
-        "free_stock": {OWN_LOCATION: Decimal("0"), POOL_LOCATION: Decimal("120")},
-        "pool_location": POOL_LOCATION,
-        # The pool's own signed availability (on hand - SO qty + SPO qty) is thinner than
-        # its free balance, and the draw stops there.
-        "pool_available": Decimal("40"),
+        "pools": [
+            # The pool's own signed availability (on hand - SO qty + SPO qty) is thinner
+            # than its free balance, and the draw stops there - which is the whole line.
+            {"location": POOL_LOCATION, "free": Decimal("120"), "available": Decimal("40")}
+        ],
         "timely_spo_qty": Decimal("0"),
         "is_discontinued": False,
     },
@@ -214,16 +208,8 @@ PROJECT_HOT_SELLING_WORKED_CASE = ProposalCase(
         Component(
             kind=RESERVE,
             qty=Decimal("40"),
-            reason=(
-                "free stock in the shared BRW pool covers the need by the required date, "
-                "drawn while its availability stays positive (40 available)"
-            ),
+            reason="Pool BRW has 40 available",
             source_location=POOL_LOCATION,
-        ),
-        Component(
-            kind=BUY,
-            qty=Decimal("30"),
-            reason="remaining uncovered need",
         ),
     ),
 )
@@ -234,31 +220,35 @@ PROJECT_HOT_SELLING_WORKED_CASE = ProposalCase(
 
 BALANCE_INVARIANT_CASE = ProposalCase(
     ac="AC-B12",
-    title="every component carries its reason and the four of them add up to open quantity",
+    title="every component carries its reason and the terms add up to the open quantity",
     inputs={
         "open_qty": Decimal("70"),
         "line_no": 10,
         "required_date": REQUIRED_DATE,
         "fulfilment_location": OWN_LOCATION,
         "is_dealer_hot_selling": False,
-        # Nothing free at the fulfilment location; ten units in the shared pool.
-        "free_stock": {OWN_LOCATION: Decimal("0"), POOL_LOCATION: Decimal("10")},
-        "pool_location": POOL_LOCATION,
-        "timely_spo_qty": Decimal("0"),
+        # Ten arrives on time, and the pool covers the rest - together the WHOLE line, so
+        # the whole-line rule (section E rule 6) keeps both components rather than
+        # collapsing them into a single Buy.
+        "timely_spo_qty": Decimal("10"),
+        "pools": [
+            {"location": POOL_LOCATION, "free": Decimal("60"), "available": Decimal("60")}
+        ],
         "is_discontinued": False,
     },
     components=(
         # The two sentences AC-B14 quotes verbatim.
         Component(
-            kind=RESERVE,
+            kind=TIMELY_SPO,
             qty=Decimal("10"),
-            reason="free stock at BRW covers the need by the required date",
-            source_location=POOL_LOCATION,
+            reason="incoming supply arrives by the required date",
+            source_location=OWN_LOCATION,
         ),
         Component(
-            kind=BUY,
+            kind=RESERVE,
             qty=Decimal("60"),
-            reason="remaining uncovered need",
+            reason="Pool BRW has 60 available",
+            source_location=POOL_LOCATION,
         ),
     ),
 )
@@ -266,8 +256,8 @@ BALANCE_INVARIANT_CASE = ProposalCase(
 #: The exact strings AC-B14 prints. Pinned separately so a reworded reason fails the test
 #: that owns the criterion rather than four unrelated ones.
 BALANCE_INVARIANT_STATED = (
-    "Reserve 10: free stock at BRW covers the need by the required date",
-    "Buy 60: remaining uncovered need",
+    "Timely SPO 10: incoming supply arrives by the required date",
+    "Reserve 60: Pool BRW has 60 available",
 )
 
 

@@ -62,11 +62,16 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 const usePurchaseOrders = vi.fn();
 const confirmMut = { mutateAsync: vi.fn(), isPending: false };
 const createGrMut = { mutateAsync: vi.fn(), isPending: false };
+const bulkDeleteMut = { mutateAsync: vi.fn(), isPending: false };
 vi.mock('../../hooks/usePurchaseOrders', () => ({
   usePurchaseOrders: (...a: unknown[]) => usePurchaseOrders(...a),
 }));
 vi.mock('../../hooks/usePurchaseOrderActions', () => ({
-  usePurchaseOrderActions: () => ({ confirm: confirmMut, createGr: createGrMut }),
+  usePurchaseOrderActions: () => ({
+    confirm: confirmMut,
+    createGr: createGrMut,
+    bulkDelete: bulkDeleteMut,
+  }),
 }));
 
 // The upload dialog is exercised by its own suite; here we only care that this screen
@@ -209,6 +214,49 @@ describe('PurchaseOrdersList - select-all + bulk Confirm gating (AC-M4.6)', () =
     expect(screen.getByText(/Confirm purchase orders\?/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^Confirm POs$/ }));
     expect(confirmMut.mutateAsync).toHaveBeenCalledWith(['po-draft-1']);
+  });
+});
+
+describe('PurchaseOrdersList - bulk delete (captain, 20 Aug)', () => {
+  it('offers Delete for an all-active selection (no drafts) with the count in the label', () => {
+    mockList([
+      po({ id: 'po-active-1', po_number: 'PO-2026/07-0001', status: 'active', is_on_order: true }),
+      po({ id: 'po-active-2', po_number: 'PO-2026/07-0002', status: 'active', is_on_order: true }),
+    ]);
+    render(<PurchaseOrdersList />);
+    fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+    expect(screen.getByRole('button', { name: /Delete 2/i })).toBeInTheDocument();
+  });
+
+  it('opens a destructive confirm dialog naming the selected count, then deletes on confirm', async () => {
+    bulkDeleteMut.mutateAsync.mockResolvedValue({ deleted: 2, unplaced_rows: 0 });
+    mockList([
+      po({ id: 'po-1', po_number: 'PO-2026/07-0001', status: 'active', is_on_order: true }),
+      po({ id: 'po-2', po_number: 'PO-2026/07-0002', status: 'active', is_on_order: true }),
+    ]);
+    render(<PurchaseOrdersList />);
+    fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+    fireEvent.click(screen.getByRole('button', { name: /Delete 2/i }));
+
+    expect(screen.getByText('Confirm delete')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Delete 2 purchase orders\? This action cannot be undone\./i),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Delete$/ }));
+    await waitFor(() => {
+      expect(bulkDeleteMut.mutateAsync).toHaveBeenCalledWith(['po-1', 'po-2']);
+    });
+  });
+
+  it('singular copy for a one-row selection', () => {
+    mockList([po({ id: 'po-only', status: 'active', is_on_order: true })]);
+    render(<PurchaseOrdersList />);
+    fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+    fireEvent.click(screen.getByRole('button', { name: /Delete 1/i }));
+    expect(
+      screen.getByText(/Delete 1 purchase order\? This action cannot be undone\./i),
+    ).toBeInTheDocument();
   });
 });
 
@@ -357,5 +405,75 @@ describe('PurchaseOrdersList - find a SKU and what we last paid for it', () => {
     render(<PurchaseOrdersList />);
 
     expect(screen.queryByRole('status', { name: 'Last purchase price' })).toBeNull();
+  });
+});
+
+// ── the Outstanding / All / Closed toggle (the captain, 20 Aug) ────────────
+// "how do i know the open PO / outstanding PO" - a glance-able control, defaulting to
+// Outstanding, mapping straight onto the list's `outstanding` query param.
+
+describe('PurchaseOrdersList - Outstanding / All / Closed toggle', () => {
+  it('defaults to Outstanding and sends outstanding: true on the first call', () => {
+    mockList([po()]);
+    render(<PurchaseOrdersList />);
+
+    const toggle = screen.getByRole('radio', { name: 'Outstanding' });
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+    const last = usePurchaseOrders.mock.calls[usePurchaseOrders.mock.calls.length - 1][0];
+    expect(last).toMatchObject({ outstanding: true });
+  });
+
+  it('switching to All sends outstanding: null and closed rows appear', () => {
+    mockList([
+      po({ id: 'po-active', po_number: 'PO-ACTIVE-1', status: 'active', is_on_order: true }),
+      po({ id: 'po-closed', po_number: 'PO-CLOSED-1', status: 'cancelled', is_on_order: false }),
+    ]);
+    render(<PurchaseOrdersList />);
+
+    fireEvent.click(screen.getByRole('radio', { name: 'All' }));
+
+    const last = usePurchaseOrders.mock.calls[usePurchaseOrders.mock.calls.length - 1][0];
+    expect(last).toMatchObject({ outstanding: null });
+    // The mocked list already returns both rows once the toggle asks for "all" - the
+    // screen renders whatever the hook hands it, closed row included.
+    expect(screen.getByText('PO-ACTIVE-1')).toBeInTheDocument();
+    expect(screen.getByText('PO-CLOSED-1')).toBeInTheDocument();
+  });
+
+  it('switching to Closed sends outstanding: false', () => {
+    mockList([po({ id: 'po-cancelled', status: 'cancelled' })]);
+    render(<PurchaseOrdersList />);
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Closed' }));
+
+    const last = usePurchaseOrders.mock.calls[usePurchaseOrders.mock.calls.length - 1][0];
+    expect(last).toMatchObject({ outstanding: false });
+  });
+});
+
+// ── null-supplier rows ──────────────────────────────────────────────────────
+// An imported historical PO can carry no supplier at all; blank must never read as the
+// warehouse standing in for it (the captain's "why is BRW under supplier?"). There is
+// deliberately NO header-level Location column (captain, same day: "PO's location is at
+// line level ... at header level we don't need location") - the warehouse renders only
+// on the detail page's per-line grid.
+
+describe('PurchaseOrdersList - null-supplier rows', () => {
+  it('shows an em dash naming why when a row carries no supplier, and no header Location', () => {
+    mockList([
+      po({
+        id: 'po-no-supplier',
+        po_number: 'PO-IMPORTED-1',
+        supplier_name: null as unknown as string,
+        warehouse_name: 'Brickfields DC',
+      }),
+    ]);
+    render(<PurchaseOrdersList />);
+
+    const dash = screen.getByTitle('No supplier on this imported PO');
+    expect(dash).toHaveTextContent('-');
+    // The header-level warehouse must not render anywhere on the list row.
+    expect(screen.queryByText('Brickfields DC')).not.toBeInTheDocument();
   });
 });

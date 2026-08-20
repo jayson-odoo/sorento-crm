@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Boxes, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -14,9 +15,16 @@ import { ConsolidatedPackingListPanel } from './ConsolidatedPackingListPanel';
 import { AllocationPanel } from './AllocationPanel';
 
 /**
- * Ms Tee's steps four and five: read the packing list, then decide what each container draws
- * down. Two panels rather than two pages, because the second is only ever reached from the
- * first and a page transition between them would lose which container she was looking at.
+ * Ms Tee's steps four and five: read the packing list, then what each container draws down.
+ * Panels rather than pages, because each is only ever reached from the container list and a
+ * page transition between them would lose which container she was looking at.
+ *
+ * "Create SPO" used to have its own panel here (`CreateSpoPanel.tsx`) - moved by the captain's
+ * second amendment (`PLAN-scm-proforma-to-spo.md`, 21 Aug 00:40) to a planner tab on
+ * `/procurement-management/packing-lists/{id}` (`SpoPlannerTable`), the packing-list book over
+ * this same `inbound_shipments` table, so there is one surface for it rather than two. The
+ * component file stays - its own test still exercises it directly - but it is deliberately
+ * UNREFERENCED here.
  */
 
 export function IncomingContainersView() {
@@ -35,6 +43,26 @@ export function IncomingContainersView() {
     refetchOnWindowFocus: false,
   });
   const imported = shipments.data ?? [];
+
+  // Landing here from a "Convert to draft shipment" / "Create SPO" hand-off carries the
+  // human-readable shipment NUMBER (never an id) as `?shipment=`, so the caller lands on
+  // it pre-selected rather than having to find it in the list again. Consumed once, the
+  // first time it matches a row - a later manual click must be free to change the
+  // selection without the param fighting it on the next render. Depends on `shipments.data`
+  // itself, not the `imported` fallback array - the latter is a fresh `[]` reference every
+  // render while data is still loading, which would otherwise re-run this effect forever.
+  const searchParams = useSearchParams();
+  const deepLinkedShipment = searchParams.get('shipment');
+  const consumedDeepLink = useRef(false);
+  useEffect(() => {
+    if (!deepLinkedShipment || consumedDeepLink.current) return;
+    const match = shipments.data?.find((s) => s.shipment_number === deepLinkedShipment);
+    if (match) {
+      setSelected(match.shipment_id);
+      consumedDeepLink.current = true;
+    }
+  }, [deepLinkedShipment, shipments.data]);
+
   // Whose lines the upload will become. The file itself never says, so the supplier chosen
   // here is the only answer, and an upload without one is refused by the server.
   const supplierName =

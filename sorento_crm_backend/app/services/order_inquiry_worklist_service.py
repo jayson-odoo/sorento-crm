@@ -45,21 +45,30 @@ from app.models.product import Product
 from app.models.project_so import (
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
+    INQUIRY_PLACED,
     INQUIRY_RAISED,
+    IV_ORDER,
     OrderInquiry,
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
 )
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
+from app.models.sales_agent import SalesAgent
 from app.services.error_handler import AppException
-from app.services.project_order_inquiry_service import project_customer_label
+from app.services.project_order_inquiry_service import (
+    ProjectOrderInquiryService,
+    project_customer_label,
+)
 
 logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
 
-#: The states a row can be in, in the order the screen lists them.
+#: The states pre-seeded at zero on the summary strip. `placed` (section G) is
+#: deliberately NOT one of them: `summary()` adds it to the dict dynamically the moment a
+#: placed row actually exists (same as any state would), so a company with none yet keeps
+#: reporting the exact four keys this screen has always reported.
 INQUIRY_STATES = (INQUIRY_RAISED, INQUIRY_ACTIONED, INQUIRY_CANCELLED)
 
 #: Every column the list renders is sortable, and this is the CLOSED SET. An unknown
@@ -83,6 +92,7 @@ SORTABLE_FIELDS = frozenset(
         "state",
         "raised_at",
         "location",
+        "agent",
     }
 )
 
@@ -136,11 +146,14 @@ EXPORT_HEADINGS = (
 # outright ("invalid reference to FROM-clause entry").
 _CUSTOMER_ID = func.coalesce(ProjectParty.customer_id, SalesOrder.customer_id)
 
-# The one link the schema holds from an inquiry row to a PLACED purchase order: the row
-# names an SPO, the allocation for that SPO names the PO line, the line names the order.
-# Correlated EXPLICITLY - an auto-correlated `exists`/scalar subquery loses its FROM
-# clauses the moment this query is reshaped (the `shipment_supplier_predicate` lesson).
-_PLACED_PO_ID = (
+# The two links the schema holds from an inquiry row to a PLACED purchase order, tried in
+# order: "Place on PO" (section G) names the PO line DIRECTLY on the row, which is the
+# more certain of the two and is tried first; failing that, the row names an SPO, the
+# allocation for that SPO names the PO line, the line names the order (unchanged for
+# every row this feature has not touched). Correlated EXPLICITLY - an auto-correlated
+# `exists`/scalar subquery loses its FROM clauses the moment this query is reshaped (the
+# `shipment_supplier_predicate` lesson).
+_SPO_PLACED_PO_ID = (
     select(PurchaseOrderLine.purchase_order_id)
     .select_from(SPOAllocation)
     .join(PurchaseOrderLine, PurchaseOrderLine.id == SPOAllocation.po_line_id)
@@ -149,6 +162,14 @@ _PLACED_PO_ID = (
     .correlate(OrderInquiryRow)
     .scalar_subquery()
 )
+_TAGGED_PLACED_PO_ID = (
+    select(PurchaseOrderLine.purchase_order_id)
+    .where(PurchaseOrderLine.id == OrderInquiryRow.po_line_id)
+    .limit(1)
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+_PLACED_PO_ID = func.coalesce(_TAGGED_PLACED_PO_ID, _SPO_PLACED_PO_ID)
 
 # `SO DATE` is the date on the DOCUMENT. For an adopted order that is the core sales
 # order's own order date; an authored one that has never been to AutoCount falls back to
@@ -196,10 +217,12 @@ _SORT_EXPRESSIONS = {
     "state": OrderInquiryRow.state,
     "raised_at": _RAISED_AT,
     "location": _LOCATION,
+    "agent": SalesAgent.sales_agent,
 }
 
 _COLUMNS = (
     OrderInquiryRow.id.label("id"),
+    OrderInquiryRow.so_line_id.label("so_line_id"),
     OrderInquiryRow.item_code.label("item_code"),
     OrderInquiryRow.qty.label("qty"),
     OrderInquiryRow.delivery_date.label("delivery_date"),
@@ -209,6 +232,7 @@ _COLUMNS = (
     _RAISED_AT.label("raised_at"),
     _SO_DATE.label("so_date"),
     _SO_NUMBER.label("so_number"),
+    Product.id.label("product_id"),
     Product.product_name.label("product_name"),
     _CUSTOMER_NAME.label("customer_name"),
     Project.id.label("project_id"),
@@ -218,8 +242,11 @@ _COLUMNS = (
     SalesOrder.id.label("core_sales_order_id"),
     Supplier.id.label("supplier_id"),
     Supplier.supplier_name.label("supplier"),
+    PurchaseOrder.id.label("po_id"),
     PurchaseOrder.po_number.label("po_number"),
     _LOCATION.label("location"),
+    SalesAgent.sales_agent.label("agent_code"),
+    SalesAgent.person_label.label("agent_label"),
 )
 
 
@@ -319,6 +346,11 @@ class OrderInquiryWorklistService:
             )
             .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
             .outerjoin(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
+            # Who sold it. The same core sales order the SO DATE / S/O NO columns already
+            # read off - `core_sales_order_line_id` is only ever set to a line of THIS
+            # order (`project_so_reconciliation_service`), so this is the one join, not a
+            # per-row lookup.
+            .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
             .outerjoin(Project, Project.id == ProjectSalesOrder.project_id)
             .outerjoin(
                 ProjectPurchaseOrder,
@@ -412,13 +444,99 @@ class OrderInquiryWorklistService:
             .limit(limit)
             .all()
         )
+        product_by_row, open_products = self._open_po_line_context(rows)
+        flow = self._quantity_flow_by_so_line(rows)
         return {
-            "data": [self._serialize(row) for row in rows],
+            "data": [
+                self._serialize(row, product_by_row, open_products, flow) for row in rows
+            ],
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
 
-    def _serialize(self, row) -> Dict[str, Any]:
+    def _open_po_line_context(self, rows) -> Tuple[Dict[str, Optional[str]], set]:
+        """`has_open_po_line` for a whole PAGE, bulk-answered once. Row id -> product id
+        (the line's own reconciled product first, the item code second - the same
+        precedence `ProjectOrderInquiryService._resolve_product_id` uses per row), and the
+        SET of those products that still have an outstanding PO line."""
+        by_code = {row.item_code for row in rows if not row.product_id and row.item_code}
+        code_products = (
+            dict(
+                self.db.query(Product.product_code, Product.id)
+                .filter(Product.product_code.in_(list(by_code)))
+                .all()
+            )
+            if by_code
+            else {}
+        )
+        product_by_row: Dict[str, Optional[str]] = {
+            row.id: row.product_id or code_products.get(row.item_code) for row in rows
+        }
+        open_products = ProjectOrderInquiryService(self.db).open_po_line_product_ids(
+            set(product_by_row.values())
+        )
+        return product_by_row, open_products
+
+    def _quantity_flow_by_so_line(self, rows) -> Dict[str, Dict[str, Decimal]]:
+        """"Taken from PO" and "Remaining" for a whole PAGE, bulk-answered once (the
+        captain, 20 Aug: "show the quantity, quantity taken from PO, and the remaining
+        quantity, cause this is what flows to reorder planning").
+
+        The G2 cascade SPLITS a line's rows: a placed row's own `qty` is its allocation,
+        and the raised remainder row keeps whatever is still uncovered. So per `so_line_id`
+        this sums TWO separate things, both restricted to `verb = 'ORDER'` - the verb
+        `committed_v`'s confirmed leg counts, and the only one "taken off a PO" or "still
+        flowing to reorder" means anything for:
+
+        * `taken` - every PLACED sibling's `qty`, the quantity actually taken off a PO;
+        * `remaining` - every RAISED sibling's `qty`, which is exactly `committed_v`'s own
+          predicate (`state = 'raised'`) - what still counts as demand. On a raised row
+          this includes the row itself, because a row that has not been placed IS the
+          uncovered remainder.
+
+        A PLACED row a planning change REDIRECTED to replenish the shared pool
+        (`planning_change_service._apply_placed_redirect`, the captain's ruling 21 Aug
+        2026) is excluded from `taken`: it is still real placed quantity, just not this
+        line's anymore, and counting it here would read as this line's need being covered
+        by a PO that is actually bound for the pool.
+
+        One `GROUP BY (so_line_id, state)` query, not one query per row.
+        """
+        so_line_ids = {row.so_line_id for row in rows if row.so_line_id}
+        if not so_line_ids:
+            return {}
+        agg = (
+            self.db.query(
+                OrderInquiryRow.so_line_id,
+                OrderInquiryRow.state,
+                func.coalesce(func.sum(OrderInquiryRow.qty), 0),
+            )
+            .filter(
+                OrderInquiryRow.so_line_id.in_(so_line_ids),
+                OrderInquiryRow.verb == IV_ORDER,
+                OrderInquiryRow.state.in_((INQUIRY_PLACED, INQUIRY_RAISED)),
+                OrderInquiryRow.redirected_to_pool.is_(False),
+            )
+            .group_by(OrderInquiryRow.so_line_id, OrderInquiryRow.state)
+            .all()
+        )
+        flow: Dict[str, Dict[str, Decimal]] = {}
+        for so_line_id, state, qty in agg:
+            entry = flow.setdefault(so_line_id, {"taken": _ZERO, "remaining": _ZERO})
+            if state == INQUIRY_PLACED:
+                entry["taken"] = _dec(qty)
+            elif state == INQUIRY_RAISED:
+                entry["remaining"] = _dec(qty)
+        return flow
+
+    def _serialize(
+        self,
+        row,
+        product_by_row: Optional[Dict[str, Optional[str]]] = None,
+        open_products: Optional[set] = None,
+        flow: Optional[Dict[str, Dict[str, Decimal]]] = None,
+    ) -> Dict[str, Any]:
+        line_flow = (flow or {}).get(row.so_line_id, {})
         return {
             "id": row.id,
             "so_date": row.so_date,
@@ -433,7 +551,15 @@ class OrderInquiryWorklistService:
             "supplier": row.supplier,
             "supplier_id": row.supplier_id,
             "po_number": row.po_number,
+            "po_id": row.po_id,
             "location": row.location,
+            "taken_from_po": _qty_str(line_flow.get("taken", _ZERO)),
+            "remaining_open": _qty_str(line_flow.get("remaining", _ZERO)),
+            "has_open_po_line": bool(
+                product_by_row and open_products and product_by_row.get(row.id) in open_products
+            ),
+            "agent_code": row.agent_code,
+            "agent_label": row.agent_label,
             "state": row.state,
             "raised_at": row.raised_at,
             "verb": row.verb,
@@ -444,6 +570,68 @@ class OrderInquiryWorklistService:
             # An adopted record is a mirror of a core sales order and has no project
             # registration; that pair is the whole distinction and the screen links on it.
             "is_adopted": bool(row.core_sales_order_id) and row.project_id is None,
+        }
+
+    # -------------------------------------------------------------- po detail
+
+    def get_po_detail(self, po_id: str) -> Dict[str, Any]:
+        """The "PO no" cell's popup: this purchase order's own header and every one of
+        its lines (the captain, 20 Aug).
+
+        Purchasing on this worklist holds `projects.projects.view`, not
+        `scm.dashboard.view` - the same permission gotcha "Place on PO" already worked
+        around - so this reads `purchase_orders` / `purchase_order_lines` off the
+        PROJECTS router by plain ORM query rather than calling the SCM purchase-orders
+        route. Both tables are `CompanyScopedMixin`, so the session-level company scope
+        listener (`app.services.company_scope`) already restricts every query here to the
+        caller's own company - a foreign company's PO id resolves to nothing, same as an
+        unknown one.
+        """
+        po = self.db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).first()
+        if po is None:
+            raise AppException(
+                status_code=404,
+                message="That purchase order no longer exists.",
+                code="order_inquiry_po_not_found",
+            )
+        supplier = (
+            self.db.query(Supplier).filter(Supplier.id == po.supplier_id).first()
+            if po.supplier_id
+            else None
+        )
+        lines = (
+            self.db.query(
+                Product.product_code,
+                Product.product_name,
+                PurchaseOrderLine.qty_ordered,
+                PurchaseOrderLine.qty_received,
+                Warehouse.warehouse_code,
+            )
+            .select_from(PurchaseOrderLine)
+            .outerjoin(Product, Product.id == PurchaseOrderLine.product_id)
+            .outerjoin(Warehouse, Warehouse.id == PurchaseOrderLine.warehouse_id)
+            .filter(PurchaseOrderLine.purchase_order_id == po.id)
+            .order_by(Product.product_code.asc().nulls_last())
+            .all()
+        )
+        return {
+            "id": po.id,
+            "po_number": po.po_number,
+            "supplier_code": supplier.supplier_code if supplier else None,
+            "supplier_name": supplier.supplier_name if supplier else None,
+            "expected_date": po.expected_date,
+            "status": po.status,
+            "lines": [
+                {
+                    "sku": sku,
+                    "product_name": product_name,
+                    "qty_ordered": _qty_str(_dec(qty_ordered)),
+                    "qty_received": _qty_str(_dec(qty_received)),
+                    "remaining": _qty_str(_dec(qty_ordered) - _dec(qty_received)),
+                    "location": warehouse_code,
+                }
+                for sku, product_name, qty_ordered, qty_received, warehouse_code in lines
+            ],
         }
 
     # ---------------------------------------------------------------- summary
@@ -536,6 +724,59 @@ class OrderInquiryWorklistService:
             {"id": project_id, "label": title, "rows": int(count)}
             for project_id, title, count in rows
         ]
+
+    # ------------------------------------------------------------- unplace all
+
+    def unplace_all_preview(self, **filters) -> Dict[str, Any]:
+        """The confirm dialog's own numbers (the captain, 21 Aug: "why i cannot unplace
+        all" - the answer was the count and the scope were wrong, not that the action
+        should be blocked), resolved server-side against the SAME filters `list_rows`
+        reads - `state` is never one of them, because this is always about placed rows,
+        whatever else is filtered.
+
+        `product_code`/`product_name` are best-effort labelling only, not a second scope:
+        when every matching row resolves to the SAME product, the dialog can say which
+        one; when they do not (or none resolves any), it says nothing rather than picking
+        one arbitrarily. `LIMIT 2` is enough to tell "one" from "more than one" without
+        pulling the whole matching set.
+        """
+        visible = self._base(**filters, state=INQUIRY_PLACED)
+        count = int(
+            visible.with_entities(func.count(OrderInquiryRow.id)).order_by(None).scalar()
+            or 0
+        )
+        product_code: Optional[str] = None
+        product_name: Optional[str] = None
+        if count:
+            distinct_products = (
+                visible.with_entities(Product.product_code, Product.product_name)
+                .distinct()
+                .limit(2)
+                .all()
+            )
+            if len(distinct_products) == 1 and distinct_products[0][0]:
+                product_code, product_name = distinct_products[0]
+        return {
+            "count": count,
+            "product_code": product_code,
+            "product_name": product_name,
+        }
+
+    def unplace_all(self, *, actor_user_id: str, **filters) -> int:
+        """"Unplace all" for the CURRENT worklist scope - the SAME filters `list_rows`
+        reads, forced to placed. Resolved as a fresh id list against the full matching
+        set, never against whatever page happened to be loaded: the worklist paginates
+        server-side (`list_rows`'s own `offset`/`limit`), so a client-derived scope would
+        silently miss every row behind page 1. No filters at all means every placed row
+        in the company - "unplace all" with nothing narrowing it is exactly that.
+
+        The actual write is `ProjectOrderInquiryService.unplace_rows` - this method's own
+        job stops at resolving WHICH rows are in scope; the two can never disagree about
+        what a placed row is because both read off the same `state = placed` predicate.
+        """
+        visible = self._base(**filters, state=INQUIRY_PLACED)
+        row_ids = [row_id for (row_id,) in visible.all()]
+        return ProjectOrderInquiryService(self.db).unplace_rows(row_ids)
 
     # ----------------------------------------------------------------- export
 

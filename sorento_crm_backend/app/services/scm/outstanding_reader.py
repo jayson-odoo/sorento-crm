@@ -386,6 +386,12 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
         result.extras[str(row_number)] = {
             "party_code": _clean(rec.get("debtor_code" if doc_type == SO
                                          else "creditor_code")),
+            # The counterparty's NAME, same field the label above already reads
+            # (`label_field`), kept separately so a party-code-less file (the captain's
+            # real "PO & SPO outstanding.xlsx" - Creditor Name only, no Creditor Code at
+            # all) still carries something the write path can resolve or back-create a
+            # supplier from. Absent when the file has no such column.
+            "party_name": _clean(rec.get(label_field)) or None,
             "unit_cost": _to_float(rec.get("unit_cost")),
             "unit_price": _to_float(rec.get("unit_price")),
             "currency": _clean(rec.get("currency")) or None,

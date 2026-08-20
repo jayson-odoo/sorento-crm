@@ -38,20 +38,40 @@ export function PlanPurchaseTrendPopover({
   const hasComparison =
     price?.last != null && price?.previous != null && price.movement_pct !== null;
 
+  // Zero outstanding reads as "never bought" unless something says otherwise. The price
+  // advice payload is already on the row (eagerly fetched, unlike this popup's own lazy
+  // `trend`), so a last-purchase date is free here: `history_without_price` carries it in
+  // its own field (the SPO extract has no supplier/price attached), every other code that
+  // found a purchase carries it on `last`.
+  const lastPurchaseDate =
+    price?.advice === 'history_without_price' ? (price.history_last_date ?? null) : (price?.last?.issue_date ?? null);
+
   return (
     <Popover onOpenChange={(open) => (open ? onOpen?.() : undefined)}>
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="block truncate text-left text-sm tabular-nums underline decoration-dotted underline-offset-2"
+          className="block min-w-0 truncate text-left"
           title="Ordered, not yet received - open PO quantity"
           aria-label="Purchase trend"
         >
-          {qty === null || qty === undefined ? (
-            <span className="text-muted-foreground">{EM_DASH}</span>
-          ) : (
-            fmtInt(qty)
-          )}
+          <span className="block truncate text-sm tabular-nums underline decoration-dotted underline-offset-2">
+            {qty === null || qty === undefined ? (
+              <span className="text-muted-foreground">{EM_DASH}</span>
+            ) : (
+              fmtInt(qty)
+            )}
+          </span>
+          {/* 0 is not the same claim as "never bought" - a subtext, not a badge, since the
+              cell's own number already carries the verdict. */}
+          {qty === 0 && lastPurchaseDate ? (
+            <span
+              className="block truncate text-2xs text-muted-foreground"
+              title="Last purchase on record for this product"
+            >
+              last bought {fmtDate(lastPurchaseDate)}
+            </span>
+          ) : null}
         </button>
       </PopoverTrigger>
       <PopoverPortal>

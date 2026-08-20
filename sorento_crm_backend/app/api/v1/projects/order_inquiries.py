@@ -21,12 +21,20 @@ from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.project_order_inquiry import (
+    AutoPlaceRequest,
+    AutoPlaceResult,
     MarkInquiryRowsRequest,
     OrderInquiryDetail,
+    OrderInquiryPoCandidate,
+    OrderInquiryPoDetail,
     OrderInquiryRowOut,
     OrderInquirySummary,
     OrderInquiryWorklistRow,
     OrderInquiryWorklistSummary,
+    PlaceOnPoRequest,
+    UnplaceAllPreview,
+    UnplaceAllRequest,
+    UnplaceAllResult,
 )
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
@@ -57,6 +65,7 @@ WorklistSort = Literal[
     "state",
     "raised_at",
     "location",
+    "agent",
 ]
 
 WORKLIST_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -101,7 +110,7 @@ def list_order_inquiry_worklist(
     ),
     # A closed set for the same reason `sort` is: a filter nothing can equal reads on
     # screen as "no work to do" when the truth is "that is not a state".
-    state: Optional[Literal["raised", "actioned", "cancelled"]] = Query(None),
+    state: Optional[Literal["raised", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     sort: Optional[WorklistSort] = Query(
@@ -146,7 +155,7 @@ def order_inquiry_worklist_summary(
     query: Optional[str] = Query(None),
     delivery_month: Optional[str] = Query(None),
     raised_date: Optional[str] = Query(None),
-    state: Optional[Literal["raised", "actioned", "cancelled"]] = Query(None),
+    state: Optional[Literal["raised", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
@@ -157,7 +166,7 @@ def order_inquiry_worklist_summary(
         return OrderInquiryWorklistService(db).summary(
             **_worklist_filters(
                 query, delivery_month, raised_date, state, project_id, supplier_id
-            )
+            ),
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -168,7 +177,7 @@ def export_order_inquiry_worklist(
     query: Optional[str] = Query(None),
     delivery_month: Optional[str] = Query(None),
     raised_date: Optional[str] = Query(None),
-    state: Optional[Literal["raised", "actioned", "cancelled"]] = Query(None),
+    state: Optional[Literal["raised", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
@@ -191,6 +200,27 @@ def export_order_inquiry_worklist(
             media_type=WORKLIST_XLSX,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/order-inquiries/po/{po_id}", response_model=OrderInquiryPoDetail)
+def get_order_inquiry_po_detail(
+    po_id: str,
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The "PO no" cell's popup: that purchase order's header and every one of its lines.
+
+    Gated the same as the worklist's own read (`projects.projects.view`), never
+    `scm.dashboard.view` - purchasing works this worklist off project permissions, the
+    same gotcha "Place on PO" already worked around, so this reads
+    `purchase_orders`/`purchase_order_lines` off the PROJECTS router rather than calling
+    the SCM purchase-orders route.
+    """
+    try:
+        validate_uuid_path(po_id, resource="Purchase order")
+        return OrderInquiryWorklistService(db).get_po_detail(po_id)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -325,6 +355,169 @@ async def mark_order_inquiry_rows(
         )
         db.commit()
         return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/order-inquiry-rows/{row_id}/po-candidates",
+    response_model=List[OrderInquiryPoCandidate],
+)
+async def order_inquiry_po_candidates(
+    row_id: str,
+    _user: dict = Depends(require_permission_with_api_key(ACTION)),
+    db: Session = Depends(get_db),
+):
+    """Open PO lines this row could be tagged to (section G), soonest first."""
+    try:
+        validate_uuid_path(row_id, resource="Order inquiry row")
+        return ProjectOrderInquiryService(db).po_candidates_for_row(row_id)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/order-inquiry-rows/{row_id}/place-on-po", response_model=OrderInquiryRowOut
+)
+async def place_order_inquiry_row_on_po(
+    row_id: str,
+    payload: PlaceOnPoRequest,
+    current_user: dict = Depends(require_permission(ACTION)),
+    db: Session = Depends(get_db),
+):
+    """Tag a raised row to an outstanding PO line - "the quantity to be ordered is
+    deducted" (the captain, section G). The original single-line shape (`po_line_id`)
+    is unchanged; `allocations` is the G2 cascade override, one or more
+    `{po_line_id, qty}` lines in one call - the row may split (see
+    `ProjectOrderInquiryService.place_on_po_allocations`), so the response is the FIRST
+    row the call touched (the reused row on full coverage, the first new split row on a
+    partial one); every row it wrote is visible on the next listing refresh."""
+    try:
+        validate_uuid_path(row_id, resource="Order inquiry row")
+        service = ProjectOrderInquiryService(db)
+        if payload.allocations:
+            for allocation in payload.allocations:
+                validate_uuid_path(allocation.po_line_id, resource="Purchase order line")
+            written = service.place_on_po_allocations(
+                row_id,
+                [
+                    {"po_line_id": allocation.po_line_id, "qty": allocation.qty}
+                    for allocation in payload.allocations
+                ],
+                actor_user_id=current_user["id"],
+            )
+            body = written[0]
+        else:
+            validate_uuid_path(payload.po_line_id, resource="Purchase order line")
+            body = service.place_on_po(
+                row_id, payload.po_line_id, actor_user_id=current_user["id"]
+            )
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/order-inquiries/auto-place", response_model=AutoPlaceResult)
+async def auto_place_order_inquiries(
+    payload: AutoPlaceRequest,
+    current_user: dict = Depends(require_permission(ACTION)),
+    db: Session = Depends(get_db),
+):
+    """Run the cascade now (G2 rule 4, the worklist's "Auto-place"): every raised
+    ORDER/RESERVE & ORDER row of the named products - or of every product carrying one,
+    when `product_ids` is omitted - tagged to its own open PO lines, earliest expected
+    date first. Idempotent: a second call with the same products places nothing more."""
+    try:
+        for product_id in payload.product_ids or []:
+            validate_uuid_path(product_id, resource="Product")
+        body = ProjectOrderInquiryService(db).auto_place_for_products(
+            payload.product_ids, actor_user_id=current_user["id"], trigger="worklist"
+        )
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/order-inquiry-rows/{row_id}/unplace", response_model=OrderInquiryRowOut
+)
+async def unplace_order_inquiry_row(
+    row_id: str,
+    current_user: dict = Depends(require_permission(ACTION)),
+    db: Session = Depends(get_db),
+):
+    """Untag: the row goes back to raised and the reorder engine sees it again."""
+    try:
+        validate_uuid_path(row_id, resource="Order inquiry row")
+        body = ProjectOrderInquiryService(db).unplace(
+            row_id, actor_user_id=current_user["id"]
+        )
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/order-inquiries/unplace-all-preview", response_model=UnplaceAllPreview
+)
+def order_inquiry_unplace_all_preview(
+    query: Optional[str] = Query(None),
+    delivery_month: Optional[str] = Query(None),
+    raised_date: Optional[str] = Query(None),
+    project_id: Optional[str] = Query(None),
+    supplier_id: Optional[str] = Query(None),
+    _user: dict = Depends(require_permission_with_api_key(ACTION)),
+    db: Session = Depends(get_db),
+):
+    """The confirm dialog's own numbers before "Unplace all" runs anything (the captain,
+    21 Aug): the count of placed rows in the CURRENT worklist scope - the SAME filters
+    `GET /order-inquiries` reads, `state` always forced to placed - and the product code
+    when every one of them resolves to the same product. Gated on the write permission
+    (`ACTION`), not the read one: this is a preview of a write a person is about to make,
+    not a browse."""
+    try:
+        filters = _worklist_filters(
+            query, delivery_month, raised_date, None, project_id, supplier_id
+        )
+        filters.pop("state", None)
+        return OrderInquiryWorklistService(db).unplace_all_preview(**filters)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/order-inquiries/unplace-all", response_model=UnplaceAllResult)
+async def unplace_order_inquiry_rows_in_scope(
+    payload: UnplaceAllRequest,
+    current_user: dict = Depends(require_permission(ACTION)),
+    db: Session = Depends(get_db),
+):
+    """"Unplace all" for the CURRENT worklist scope (the captain, 20-21 Aug): every
+    PLACED row matching the SAME filters `GET /order-inquiries` reads - one product when
+    the filters happen to narrow to it, every placed row in the company when they name
+    nothing - reverts to raised in one call, so Auto-place can re-deal them
+    earliest-first."""
+    try:
+        if payload.project_id:
+            validate_uuid_path(payload.project_id, resource="Project")
+        if payload.supplier_id:
+            validate_uuid_path(payload.supplier_id, resource="Supplier")
+        unplaced = OrderInquiryWorklistService(db).unplace_all(
+            actor_user_id=current_user["id"],
+            query=payload.query,
+            delivery_month=payload.delivery_month,
+            raised_date=payload.raised_date,
+            project_id=payload.project_id,
+            supplier_id=payload.supplier_id,
+        )
+        db.commit()
+        return {"unplaced": unplaced}
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

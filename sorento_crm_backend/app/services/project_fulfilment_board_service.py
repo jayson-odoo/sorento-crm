@@ -57,6 +57,7 @@ from app.models.project_so import (
     ProjectSalesOrderLine,
     SOSupplyDecision,
 )
+from app.models.sales_agent import SalesAgent
 from app.services.error_handler import AppException
 from app.services.project_supply_service import (
     ProjectSupplyService,
@@ -71,6 +72,7 @@ from app.services.scm.front_planning_engine import (
     BUY,
     RESERVE,
     TIMELY_SPO,
+    pool_reserve_capacity,
     qty_text,
 )
 
@@ -177,6 +179,11 @@ _COVERED_BEFORE = "Fully covered before this rung."
 #: What each ranking factor MEANS when it is the reason another line stands in front of you.
 #: The planner's words, matching the frontend's `factorLabel` map subject for subject: the
 #: policy's own keys (`need_by_date`) are exactly what the rank chips were told to stop showing.
+#:
+#: Kept even though `_trail` no longer calls it (`_reserve_own_why` names a COUNT, not a
+#: factor, per the captain's own words on the own-location rung): `tests/
+#: test_supply_ahead_detail.py::test_the_ahead_phrase_has_words_for_the_date_tie` still
+#: unit-tests it directly, and that file is outside this fix's ownership.
 _AHEAD_PHRASES = {
     "need_by_date": "an earlier delivery date",
     "document_age": "an older order date",
@@ -203,6 +210,18 @@ def _ahead_phrase(by_factor: Optional[Dict[str, int]]) -> str:
     if not phrases:
         return "a higher rank"
     return " or ".join(phrases)
+
+
+def _parse_iso_date(value: Optional[str]) -> Optional[date]:
+    """A frozen component's `donor_required_date` (ISO text, `_snapshot`'s own format),
+    read back as a real date. `None` for anything that is not one, rather than raising -
+    a snapshot written before the field existed simply has none."""
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
 
 
 def _date_words(when: Optional[date]) -> str:
@@ -246,6 +265,7 @@ class _Row:
 
     __slots__ = (
         "line_id", "sales_order_id", "so_number", "customer_id", "customer_name",
+        "agent_code", "agent_label",
         "project_label", "order_date", "line_no", "item_code", "product_id", "qty",
         "required_date", "warehouse_id", "location", "priority", "demand_class",
         "payment_terms_days", "bucket_key", "is_past", "rank_score", "rank_factors",
@@ -499,6 +519,13 @@ class FulfilmentBoardService:
             "dateBuckets": buckets,
             "productRows": [{"item_code": item, "description": None} for item in products],
             "cells": cells,
+            # EVERY contributing line, never windowed: a cell only exists for a bucket that
+            # made it into `buckets`, and at day granularity that is the 30-day window
+            # (`DAY_WINDOW_COLUMNS`), not the whole selection. `_allocate` already ran over
+            # every bucket (`served`, above), so a line outside the window carries a real
+            # proposal here even though no cell on screen shows it - Approve all, the strip and
+            # the List view read this list, never `cells`, for exactly that reason.
+            "contributions": [self._contribution(row) for row in rows],
             "orders": self._standings(rows),
             # SELECTION-scoped totals, counted over every contributing line before any window
             # is applied - never over the cells on screen.
@@ -566,9 +593,13 @@ class FulfilmentBoardService:
                 SalesOrderLine.required_date,
                 owed.label("owed"),
                 case((~is_plan_demand_line(), True), else_=False).label("covered"),
+                # Who sold it. A purchase row (the SPO list below) has no agent - it is not a
+                # sales document - so the column is S/O-only by construction, never a guess.
+                SalesAgent.sales_agent.label("agent_code"),
             )
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+            .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
             .filter(
                 SalesOrderLine.product_id == product_id,
                 SalesOrderLine.warehouse_id == warehouse_id,
@@ -614,6 +645,7 @@ class FulfilmentBoardService:
                 "so_number": row.so_number,
                 "customer_name": row.customer_name,
                 "customer_id": str(row.customer_id) if row.customer_id else None,
+                "agent_code": row.agent_code,
                 "project_label": _project_label_from_note(row.internal_note),
                 "demand_class": row.demand_class,
                 #: AutoCount prints the document's own date and the date it is wanted.
@@ -877,10 +909,14 @@ class FulfilmentBoardService:
         if not so_numbers:
             return []
         records = (
-            self.db.query(SalesOrderLine, SalesOrder, Product, Warehouse)
+            self.db.query(SalesOrderLine, SalesOrder, Product, Warehouse, SalesAgent)
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .join(Product, Product.id == SalesOrderLine.product_id)
             .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
+            # Who sold it. One join, on the same read that already pulls the whole board's
+            # demand - the captain asked for the agent "everywhere", and a per-row lookup
+            # would be one query per line rather than one for the board.
+            .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
             .filter(
                 SalesOrder.so_number.in_(list(so_numbers)),
                 SalesOrder.status == "open",
@@ -895,7 +931,7 @@ class FulfilmentBoardService:
         # The ids are already inside the caller's company scope (they came off scoped rows),
         # which is what makes the unscoped raw read of the terms column safe.
         customers = self._customers(
-            {str(order.customer_id) for _l, order, _p, _w in records if order.customer_id}
+            {str(order.customer_id) for _l, order, _p, _w, _a in records if order.customer_id}
         )
         terms = priority.payment_terms_by_customer(self.db, list(customers.keys()))
         # How the confirm endpoint names these lines, when their order has been adopted.
@@ -906,7 +942,7 @@ class FulfilmentBoardService:
         frozen = self._frozen_decisions()
 
         rows: List[_Row] = []
-        for line, order, product, warehouse in records:
+        for line, order, product, warehouse, agent in records:
             customer_id = str(order.customer_id) if order.customer_id else None
             row = _Row(
                 line_id=str(line.id),
@@ -914,6 +950,8 @@ class FulfilmentBoardService:
                 so_number=order.so_number,
                 customer_id=customer_id,
                 customer_name=customers.get(customer_id or ""),
+                agent_code=agent.sales_agent if agent else None,
+                agent_label=agent.person_label if agent else None,
                 project_label=_project_label(order),
                 order_date=order.order_date,
                 line_no=line_numbers[str(line.id)],
@@ -1023,6 +1061,19 @@ class FulfilmentBoardService:
                     # confirmation refuses a Borrow carrying none, so re-posting this
                     # composition needs whichever of the two was actually given.
                     "reason": (c.get("cs_reason") or c.get("reason") or ""),
+                    # Ladder v2 group borrow (section E.4): the donor fields, so amending
+                    # a covered group-borrow line still names its donor line and re-posts
+                    # the SAME donor - dropping them here made `boardAmend.frozenDraft`
+                    # read a null `donor_core_line_id` and re-post the borrow as a plain
+                    # free-stock donor, which the own-location check (rule 7) then refused.
+                    "rung": c.get("rung"),
+                    "donor_so_number": c.get("donor_so_number"),
+                    "donor_line_no": c.get("donor_line_no"),
+                    "donor_agent_code": c.get("donor_agent_code"),
+                    "same_agent": bool(c.get("same_agent", False)),
+                    "donor_core_line_id": c.get("donor_core_line_id"),
+                    "donor_required_date": _parse_iso_date(c.get("donor_required_date")),
+                    "order_back_qty": c.get("order_back_qty"),
                 }
                 for c in components
                 if c.get("kind") == BORROW
@@ -1114,7 +1165,7 @@ class FulfilmentBoardService:
         is what the sheet shows, and Re-sync can renumber a later line.
         """
         by_order: Dict[str, List[tuple]] = defaultdict(list)
-        for line, order, product, _warehouse in records:
+        for line, order, product, _warehouse, _agent in records:
             by_order[str(order.id)].append(
                 (
                     line.required_date is None,
@@ -1350,6 +1401,14 @@ class FulfilmentBoardService:
             # would state what was left instead.
             pool_open = pool_left.get(pool_key, _ZERO) if pool_key else None
             components = self.supply.compose_line(fact, pool_free_left=pool_open)
+            # Ladder v2's group take / group borrow / cross-group borrow rungs name a
+            # location `warehouse_ids` (own + pool only, above) does not cover.
+            for component in components:
+                code = component.source_location
+                if code and code not in row.warehouse_ids:
+                    warehouse_id = self.supply.warehouse_id_for_code(code)
+                    if warehouse_id:
+                        row.warehouse_ids[code] = warehouse_id
             if pool_key and fact.pool_code:
                 drawn = sum(
                     (
@@ -1363,8 +1422,14 @@ class FulfilmentBoardService:
 
             reserved = sum((c.qty for c in components if c.kind == RESERVE), _ZERO)
             incoming = sum((c.qty for c in components if c.kind == TIMELY_SPO), _ZERO)
+            # Ladder v2 (section E rules 4/5): group borrow and cross-group borrow are now
+            # PROPOSED, not only offered, so a line's Buy figure has to net them out too -
+            # `borrowed` was always in the balance invariant, it just used to be zero here.
+            borrowed = sum((c.qty for c in components if c.kind == BORROW), _ZERO)
             bought = sum((c.qty for c in components if c.kind == BUY), _ZERO)
-            row.proposed = {RESERVE: reserved, TIMELY_SPO: incoming, BUY: bought}
+            row.proposed = {
+                RESERVE: reserved, TIMELY_SPO: incoming, BORROW: borrowed, BUY: bought,
+            }
             # Contested means this line is buying while its location DOES hold free stock -
             # somebody got there first, whether that somebody is on this board or is one of the
             # earlier-dated orders in the book that the share above already accounts for. A
@@ -1451,8 +1516,11 @@ class FulfilmentBoardService:
         decision = row.decision or {}
         reserve = sum((_dec(c["qty"]) for c in decision.get("reserve") or []), _ZERO)
         incoming = _dec(decision.get("timely_spo_qty"))
+        borrow = sum((_dec(c["qty"]) for c in decision.get("borrow") or []), _ZERO)
         bought = _dec(decision.get("buy_qty"))
-        row.proposed = {RESERVE: reserve, TIMELY_SPO: incoming, BUY: bought}
+        row.proposed = {
+            RESERVE: reserve, TIMELY_SPO: incoming, BORROW: borrow, BUY: bought,
+        }
         row.sources = [
             *(
                 {
@@ -1635,82 +1703,40 @@ class FulfilmentBoardService:
                 }
             )
 
-        # 1. The line's own location. ALWAYS Reserve-eligible, hot-selling or not (captain,
-        #    19 August 2026: "reserve can always reserve regardless of dealer hot selling or
-        #    not"). What the demand ranked ahead of it there had left is the only thing that
-        #    still limits it.
-        own_opening = self._free.get((row.product_id, row.warehouse_id), _ZERO)
-        own_offered = fact.available_to_this_line
-        own_taken = took(RESERVE, own_code)
+        # Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E): the read-only own
+        # location, then incoming, then the pool(s), then group take, then group borrow,
+        # then cross-group borrow, then Buy. The own-location Reserve rung is GONE as a
+        # SOURCE (rule 7) - stock at L is never drawn - but it is kept as a rung rather
+        # than folded into the strip, because it is the one place the queue standing in
+        # front of THIS line, at ITS OWN pile, is named.
+
+        # 0. Read-only: this line's own location. Never taken (rule 7 - stock at L is
+        #    committed to whichever sales order is queued for it, not to this one), but
+        #    it is the ONE rung `QueueLink`'s dialog can open, because that dialog opens
+        #    exactly `fulfilment_warehouse_id` - which is L, never the pool or a donor.
+        #    "the own-location strip stays read-only but its queue explanation stays."
+        own_ahead_qty = fact.so_qty_ahead
+        own_ahead_lines = fact.lines_ahead
+        own_left = fact.available_to_this_line
         add(
             "reserve_own",
             location=own_code,
             warehouse_id=row.warehouse_ids.get(own_code),
-            opening=own_opening,
-            ahead_qty=fact.so_qty_ahead,
-            ahead_lines=fact.lines_ahead,
+            opening=own_left + own_ahead_qty,
+            ahead_qty=own_ahead_qty,
+            ahead_lines=own_ahead_lines,
             ahead=fact.ahead_lines_named,
             ahead_more=fact.ahead_more,
             ahead_by_factor=fact.ahead_by_factor,
-            offered=own_offered,
-            taken=own_taken,
-            why=lambda outcome: self._own_why(
-                fact, outcome, own_code, own_opening, own_offered, own_taken
+            offered=own_left,
+            taken=_ZERO,
+            eligible=False,
+            why=lambda _outcome: self._reserve_own_why(
+                own_code, own_left, own_ahead_qty, own_ahead_lines
             ),
         )
 
-        # 2. The shared pool - what hot-selling gates now, by demand class (PLAN 3.3a). Own
-        #    location's Reserve above already covers this location fully when the pool IS this
-        #    location, so that case is never walked twice.
-        if not pool_code:
-            add(
-                "reserve_pool",
-                eligible=False,
-                note="no shared pool",
-                why=lambda _outcome: "No shared pool for this product.",
-            )
-        elif pool_code == own_code:
-            add(
-                "reserve_pool",
-                location=pool_code,
-                warehouse_id=row.warehouse_ids.get(pool_code),
-                eligible=False,
-                note="pool is this location",
-                why=lambda _outcome: "The pool is this location, already checked above.",
-            )
-        else:
-            balance = max(_dec(pool_open), _ZERO)
-            pile = self._pool_pile(row, fact, balance)
-            available = _dec(pile.get("available"))
-            if fact.is_dealer_hot_selling:
-                pool_offered = _ZERO
-            elif fact.is_project_hot_selling:
-                pool_offered = max(min(balance, available), _ZERO)
-            else:
-                pool_offered = balance
-            pool_taken = took(RESERVE, pool_code)
-            add(
-                "reserve_pool",
-                location=pool_code,
-                warehouse_id=row.warehouse_ids.get(pool_code),
-                opening=balance,
-                offered=pool_offered,
-                taken=pool_taken,
-                eligible=not fact.is_dealer_hot_selling,
-                note=(
-                    "dealer hot-selling: pool not offered"
-                    if fact.is_dealer_hot_selling
-                    else "project hot-selling: capped by pool availability"
-                    if fact.is_project_hot_selling
-                    else None
-                ),
-                why=lambda outcome: self._pool_why(
-                    fact, outcome, pile, balance, pool_offered, pool_taken
-                ),
-                pool=pile,
-            )
-
-        # 3. Supply already on its way that lands on or before the required date.
+        # 1. Supply already on its way that lands on or before the required date.
         incoming_taken = took(TIMELY_SPO, own_code)
         add(
             "incoming",
@@ -1723,21 +1749,183 @@ class FulfilmentBoardService:
             why=lambda outcome: self._incoming_why(fact, outcome, incoming_taken),
         )
 
-        # 4. Borrow: offered, never proposed. It needs a donor and a reason from a person
-        #    (AC-B09), so the trail shows what was found and that nothing was taken.
-        donors = sum(
-            (_dec(candidate["free_qty"]) for candidate in row.borrow_candidates), _ZERO
+        # 2. The shared pool(s) - own site pool first, then every other (section E rule
+        #    2), what hot-selling gates by demand class (PLAN 3.3a). Built from the SAME
+        #    chain `compose_line` composed from, `pool_chain_for`, unconditionally: a
+        #    location with no pool of its OWN still has every other active site pool to
+        #    draw from - rule 2 says "own site pool first, THEN the others"; a location
+        #    with none of its own simply starts the chain at the others (section 8).
+        pool_chain = self.supply.pool_chain_for(fact, pool_free_left=pool_open)
+        if not pool_chain:
+            add(
+                "pool",
+                eligible=False,
+                note="no shared pool",
+                why=lambda _outcome: "No shared pool for this product.",
+            )
+        else:
+            # Same cap `pool_reserve_capacity` applies to every pool draw
+            # (`max(min(free, available), 0)`), read here rather than forked, so an
+            # oversold pool - signed Available negative while its own raw free stock
+            # still reads positive - cannot show an "offered" the ladder itself would
+            # never take. Run over the WHOLE chain, this line's own pool and every other
+            # one alike, so a second or third pool's contribution is capped exactly as
+            # the primary one is - not merely added in at its raw, uncapped balance.
+            capacity = pool_reserve_capacity(
+                is_dealer_hot_selling=fact.is_dealer_hot_selling,
+                is_project_hot_selling=fact.is_project_hot_selling,
+                pools=pool_chain,
+            )
+            capacity_by_location = {
+                location: amount for location, amount, _reason in capacity
+            }
+            pool_offered_total = sum(capacity_by_location.values(), _ZERO)
+            pool_taken = sum(
+                (
+                    component.qty
+                    for component in components
+                    if component.kind == RESERVE and component.rung == "pool"
+                ),
+                _ZERO,
+            )
+            if pool_code:
+                balance = max(_dec(pool_open), _ZERO)
+                pile = self._pool_pile(row, fact, balance)
+                pool_offered = capacity_by_location.get(pool_code, _ZERO)
+                other_pools = [
+                    p for p in pool_chain if p.get("location") != pool_code
+                ]
+                note = (
+                    "dealer hot-selling: pool not offered"
+                    if fact.is_dealer_hot_selling
+                    else "project hot-selling: capped by pool availability"
+                    if fact.is_project_hot_selling
+                    else None
+                )
+                other_note = ", ".join(
+                    f"{p['location']} {qty_text(capacity_by_location.get(p['location'], _ZERO))}"
+                    for p in other_pools
+                    if capacity_by_location.get(p['location'], _ZERO) > _ZERO
+                )
+                if other_note:
+                    note = f"{note}; also checked {other_note}" if note else (
+                        f"also checked {other_note}"
+                    )
+                add(
+                    "pool",
+                    location=pool_code,
+                    warehouse_id=row.warehouse_ids.get(pool_code),
+                    opening=balance,
+                    offered=pool_offered_total,
+                    taken=pool_taken,
+                    eligible=not fact.is_dealer_hot_selling,
+                    note=note,
+                    why=lambda outcome: self._pool_why(
+                        fact, outcome, pile, balance, pool_offered, took(RESERVE, pool_code)
+                    ),
+                    pool=pile,
+                )
+            else:
+                # This line's own location carries no pool of its own - never eligible to
+                # be "L's own pool" - but the OTHER active site pools are still real
+                # rungs (section 8: cross-site pooling does not require a home pool).
+                offered_at = ", ".join(
+                    f"{p['location']} {qty_text(capacity_by_location.get(p['location'], _ZERO))}"
+                    for p in pool_chain
+                    if capacity_by_location.get(p['location'], _ZERO) > _ZERO
+                )
+                add(
+                    "pool",
+                    offered=pool_offered_total,
+                    taken=pool_taken,
+                    eligible=not fact.is_dealer_hot_selling,
+                    note=(
+                        "dealer hot-selling: pool not offered"
+                        if fact.is_dealer_hot_selling
+                        else f"no pool of its own; also checked {offered_at}"
+                        if offered_at
+                        else "no pool of its own, and no other active site pool has "
+                        "anything to offer"
+                    ),
+                    why=lambda outcome: self._pool_why_no_own(
+                        outcome, capacity_by_location
+                    ),
+                )
+
+        # 3. Group take: positive Available at a sibling location, never this line's own
+        #    (section E rule 3).
+        group_take_candidates = self.supply.group_take_candidates_for(fact)
+        group_take_offered = sum(
+            (_dec(c.get("qty")) for c in group_take_candidates), _ZERO
+        )
+        group_take_taken = sum(
+            (c.qty for c in components if c.rung == "group_take"), _ZERO
         )
         add(
-            "borrow",
-            opening=donors if row.borrow_candidates else _ZERO,
-            offered=donors,
-            note=self._donor_note(row),
-            why=lambda outcome: self._borrow_why(outcome),
-            offer_only=True,
+            "group_take",
+            offered=group_take_offered,
+            taken=group_take_taken,
+            note=self._group_take_note(group_take_candidates, fact),
+            why=lambda outcome: self._group_take_why(
+                outcome, group_take_candidates, fact
+            ),
         )
 
-        # 5. Whatever is still uncovered.
+        # 4. Group borrow: other sales orders' committed quantity at this line's
+        #    ownership-group locations, donors ranked below this line auto-composed
+        #    (section E rule 4). Every take here carries an order-back.
+        group_borrow_candidates = self.supply.group_borrow_auto_candidates_for(fact)
+        group_borrow_offered = sum(
+            (_dec(c.get("qty")) for c in group_borrow_candidates), _ZERO
+        )
+        group_borrow_taken = sum(
+            (c.qty for c in components if c.rung == "group_borrow"), _ZERO
+        )
+        add(
+            "group_borrow",
+            offered=group_borrow_offered,
+            taken=group_borrow_taken,
+            note=self._group_borrow_note(row, fact),
+            why=lambda outcome: self._group_borrow_why(
+                outcome, group_borrow_candidates, row, fact
+            ),
+        )
+
+        # 5. Cross-group borrow: free stock outside this group, offered only within the
+        #    small-quantity cap (section E rule 5), measured against the SAME residual
+        #    `compose_line` capped the candidate list against - never the trail's own
+        #    `remaining`. Once the whole-line rule fires, `components` carries no partial
+        #    rungs 1-4 at all (6, "the partial components are dropped, not mixed in"), so
+        #    `remaining` here still reads the full, untouched Q and would cap the donor
+        #    list against a quantity the engine never asked it to cover. Called rather
+        #    than mirrored - a second copy of this arithmetic is exactly the "second
+        #    allocator" this whole trail exists to never be.
+        cross_group_candidates = self.supply.cross_group_borrow_candidates_for(
+            fact,
+            residual=self.supply._ladder_residual_before_cross_group(
+                fact,
+                pools=pool_chain,
+                group_take=group_take_candidates,
+                group_borrow=group_borrow_candidates,
+            ),
+        )
+        cross_group_offered = sum(
+            (_dec(c.get("qty")) for c in cross_group_candidates), _ZERO
+        )
+        cross_group_taken = sum(
+            (c.qty for c in components if c.rung == "cross_group_borrow"), _ZERO
+        )
+        add(
+            "cross_group_borrow",
+            offered=cross_group_offered,
+            taken=cross_group_taken,
+            note=self._cross_group_note(row, fact),
+            why=lambda outcome: self._cross_group_why(outcome, cross_group_candidates),
+        )
+
+        # 6. Whatever is still uncovered - the whole-line rule (section E rule 6): a line
+        #    that could not be covered in full anywhere above is bought WHOLE, and the
+        #    partial components proposed above are what the ladder tried, not what it kept.
         residual = row.proposed.get(BUY, _ZERO)
         add(
             "buy",
@@ -1820,43 +2008,57 @@ class FulfilmentBoardService:
 
     # ------------------------------------------------------------------ why, per rung
 
-    def _own_why(
-        self,
-        fact: Any,
-        outcome: str,
-        location: Optional[str],
-        opening: Decimal,
-        offered: Decimal,
-        taken: Decimal,
+    @staticmethod
+    def _reserve_own_why(
+        location: Optional[str], left: Decimal, ahead_qty: Decimal, ahead_lines: int
     ) -> str:
-        """Why the line's own location ended where it did, in one sentence.
-
-        The captain's own rung read `478 | 18730 across 142 lines | 0 | 0 | 21 | Nothing left`,
-        and his question was "what does this mean? why do the orders stand ahead of me? why?".
-        So the sentence names the queue, what it wants, and WHY those lines rank first - in the
-        planner's words, never in the policy's factor keys.
-
-        No hot-selling clause here (19 August 2026): own-location Reserve is always eligible,
-        so this rung reads exactly as it does for an ordinary item - hot-selling is the POOL
-        rung's business now (`_pool_why`).
+        """Why the own-location rung is read-only, in the captain's own words (section E
+        rule 7: "own location has no reservation ... what happens there is borrow from
+        another sales order"), with the queue that emptied it named beside it - the
+        trail's ONE rung with a queue, because `QueueLink` opens exactly this location's.
         """
-        where = f" at {location}" if location else ""
+        where = location or "this location"
+        if ahead_lines > 0:
+            base = (
+                f"{qty_text(left)} left at {where} after {qty_text(ahead_qty)} owed to "
+                f"{ahead_lines} line{'s' if ahead_lines != 1 else ''} ranked ahead of "
+                "this line."
+            )
+        else:
+            base = f"{qty_text(left)} at {where}, nothing ranked ahead of this line there."
+        return (
+            f"{base} Never reserved: stock at {where} is committed to whichever sales "
+            "order is queued for it - borrow from another sales order instead."
+        )
+
+    @staticmethod
+    def _pool_why_no_own(
+        outcome: str, capacity_by_location: Dict[str, Decimal]
+    ) -> str:
+        """Why rung 2 ended where it did for a line whose own location carries no pool of
+        its own (section E rule 2, section 8): the OTHER active site pools are still real
+        sources, and the sentence names which of them offered anything.
+        """
         if outcome == "none_needed":
             return _COVERED_BEFORE
-        if outcome == "took":
-            if fact.lines_ahead:
-                return (
-                    f"{qty_text(offered)} left after the {fact.lines_ahead} lines "
-                    f"ahead; this line takes {qty_text(taken)}."
-                )
-            return f"First in the queue here; this line takes {qty_text(taken)}."
-        if fact.lines_ahead:
+        offering = [
+            location for location, amount in capacity_by_location.items() if amount > _ZERO
+        ]
+        if not offering:
             return (
-                f"{qty_text(opening)} on hand, but {fact.lines_ahead} lines with "
-                f"{_ahead_phrase(fact.ahead_by_factor)} rank ahead and want "
-                f"{qty_text(fact.so_qty_ahead)} - none is left for this line."
+                "This location has no pool of its own, and no other active site pool "
+                "has anything to offer."
             )
-        return f"No free stock{where}."
+        named = ", ".join(offering)
+        if outcome == "took":
+            return (
+                f"This location has no pool of its own; {named} offered stock and this "
+                "line took some of it."
+            )
+        return (
+            f"This location has no pool of its own; {named} offered stock, but none of "
+            "it reached this line."
+        )
 
     def _pool_why(
         self,
@@ -1923,6 +2125,18 @@ class FulfilmentBoardService:
         # signed position (on hand - SO + SPO) is beside it in the sub-table.
         on_hand_available = on_hand - _dec(pile.get("reserved"))
         claimed = _dec(pile.get("claimed_ahead_qty"))
+        if available <= _ZERO and balance > _ZERO:
+            # The queue-netted `balance` (this line's own book, "Had") reads positive -
+            # nothing of THIS line's own queue claims the pile - while the pile's own
+            # SIGNED position is not: other orders across the WHOLE book already outsell
+            # what the pool holds. `pool_reserve_capacity` caps the draw at that position,
+            # so the offered figure must say why: the pool is oversold, not merely empty
+            # (the `balance == 0` case below is a different, already-explained story - the
+            # own queue claimed it all).
+            return (
+                f"{prefix}: {code} is oversold ({qty_text(available)} available), so "
+                "nothing is offered."
+            )
         left = (
             f"{prefix}, so {code} is offered: {qty_text(balance)} left after its own queue "
             "ahead of this line"
@@ -1943,6 +2157,94 @@ class FulfilmentBoardService:
                 "this line."
             )
         return f"{prefix}, so {code} is offered, but there is no stock at {code}."
+
+    @staticmethod
+    def _group_take_note(candidates: List[Dict[str, Any]], fact: Any) -> Optional[str]:
+        if not candidates:
+            return None
+        shown = " · ".join(
+            f"{c['location']} {qty_text(_dec(c.get('qty')))}" for c in candidates[:3]
+        )
+        more = len(candidates) - 3
+        return f"{shown} (+{more} more)" if more > 0 else shown
+
+    def _group_take_why(
+        self, outcome: str, candidates: List[Dict[str, Any]], fact: Any
+    ) -> str:
+        """Why rung 3 (group take) ended where it did (section E rule 3)."""
+        if outcome == "none_needed":
+            return _COVERED_BEFORE
+        if not fact.group_code:
+            return "This location carries no ownership group, so there are no siblings to take from."
+        if not candidates:
+            return f"No {fact.group_code} sibling location has positive available stock."
+        if outcome == "took":
+            taken_at = ", ".join(c["location"] for c in candidates)
+            return f"Positive available stock at {taken_at} was taken."
+        return "Not reached - the line was already covered by an earlier rung."
+
+    @staticmethod
+    def _group_borrow_note(row: "_Row", fact: Any) -> Optional[str]:
+        donors = [c for c in row.borrow_candidates if c.get("rung") == "group_borrow"]
+        if not donors:
+            return None
+        shown = " · ".join(
+            f"{c['donor_so_number']} line {c['donor_line_no']} {qty_text(_dec(c.get('qty', c.get('free_qty', 0))))}"
+            for c in donors[:3]
+        )
+        more = len(donors) - 3
+        return f"{shown} (+{more} more)" if more > 0 else shown
+
+    def _group_borrow_why(
+        self, outcome: str, candidates: List[Dict[str, Any]], row: "_Row", fact: Any
+    ) -> str:
+        """Why rung 4 (group borrow) ended where it did (section E rule 4, section 8)."""
+        if outcome == "none_needed":
+            return _COVERED_BEFORE
+        if not candidates:
+            same_agent = [
+                c for c in row.borrow_candidates
+                if c.get("rung") == "group_borrow" and c.get("same_agent")
+            ]
+            if same_agent:
+                names = ", ".join(
+                    f"{c['donor_so_number']} line {c['donor_line_no']}" for c in same_agent[:3]
+                )
+                return (
+                    f"No lower-ranked donor in the group, but the same agent also holds "
+                    f"{names} - offered on Amend, never auto-borrowed."
+                )
+            return "No other sales order in this ownership group is ranked below this line."
+        if outcome == "took":
+            donor_text = ", ".join(
+                f"{c['donor_so_number']} line {c['donor_line_no']}" for c in candidates
+            )
+            return f"Borrowed from {donor_text}, ranked below this line; order-back raised."
+        return "Not reached - the line was already covered by an earlier rung."
+
+    @staticmethod
+    def _cross_group_note(row: "_Row", fact: Any) -> Optional[str]:
+        donors = [c for c in row.borrow_candidates if c.get("rung") == "cross_group_borrow"]
+        if not donors:
+            return None
+        shown = " · ".join(
+            f"{c['warehouse_code']} {qty_text(_dec(c.get('free_qty', 0)))}"
+            f"{' (over cap)' if c.get('over_cap') else ''}"
+            for c in donors[:3]
+        )
+        more = len(donors) - 3
+        return f"{shown} (+{more} more)" if more > 0 else shown
+
+    def _cross_group_why(self, outcome: str, candidates: List[Dict[str, Any]]) -> str:
+        """Why rung 5 (cross-group borrow) ended where it did (section E rule 5)."""
+        if outcome == "none_needed":
+            return _COVERED_BEFORE
+        if not candidates:
+            return "No location outside this ownership group has free stock within the cross-group borrow limit."
+        if outcome == "took":
+            where = ", ".join(c["location"] for c in candidates)
+            return f"Free stock at {where}, within the cross-group borrow limit, was taken."
+        return "Not reached - the line was already covered by an earlier rung."
 
     @staticmethod
     def _buy_why(fact: Any, outcome: str) -> str:
@@ -1971,32 +2273,6 @@ class FulfilmentBoardService:
         if fact.required_date:
             return f"No supplier PO arrives by {_date_words(fact.required_date)}."
         return "No supplier PO is on its way to this location."
-
-    @staticmethod
-    def _borrow_why(outcome: str) -> str:
-        """The answer to "why is the donor offered but I did not take" (the captain, verbatim)."""
-        if outcome == "none_needed":
-            return _COVERED_BEFORE
-        if outcome == "offered":
-            return (
-                "Borrowing is never automatic: a person names the donor and the reason. "
-                "Use Amend to borrow."
-            )
-        return "No other location holds this product free."
-
-    @staticmethod
-    def _donor_note(row: _Row) -> Optional[str]:
-        """Which donors, and how much each holds. Named beats counted: "6 donors" is not a place
-        anybody can go and ask."""
-        candidates = row.borrow_candidates
-        if not candidates:
-            return None
-        shown = " · ".join(
-            f"{candidate['warehouse_code']} {qty_text(_dec(candidate['free_qty']))}"
-            for candidate in candidates[:3]
-        )
-        more = len(candidates) - 3
-        return f"{shown} (+{more} more)" if more > 0 else shown
 
     @staticmethod
     def _incoming_note(fact: Any) -> Optional[str]:
@@ -2087,6 +2363,13 @@ class FulfilmentBoardService:
             # it to fill two more fields would be a second source of the same fact.
             "spo_number": None,
             "arrival_date": None,
+            "rung": getattr(component, "rung", None),
+            "donor_so_number": getattr(component, "donor_so_number", None),
+            "donor_line_no": getattr(component, "donor_line_no", None),
+            "donor_agent_code": getattr(component, "donor_agent_code", None),
+            "same_agent": bool(getattr(component, "same_agent", False)),
+            "donor_core_line_id": getattr(component, "donor_core_line_id", None),
+            "donor_required_date": getattr(component, "donor_required_date", None),
         }
 
     # ------------------------------------------------------------ the answer
@@ -2249,6 +2532,10 @@ class FulfilmentBoardService:
             #: Addressing only, and the key a pivot BY CUSTOMER groups on: two different
             #: customers can carry the same name, and grouping by the label would merge them.
             "customer_id": row.customer_id,
+            #: Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`). The code is what
+            #: the column shows; the label names who the code belongs to, in the code's title.
+            "agent_code": row.agent_code,
+            "agent_label": row.agent_label,
             "project_label": row.project_label,
             #: The key a pivot BY PROJECT groups on (see `_project_key`).
             "project_key": row.project_key,

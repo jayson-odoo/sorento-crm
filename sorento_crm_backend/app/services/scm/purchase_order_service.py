@@ -33,6 +33,7 @@ from app.models.product import Product
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 from app.services.scm.history_sources import PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE
+from app.services.scm.spo_conversion_service import SOURCE_SYSTEM as CRM_SPO_SOURCE
 
 # Mirror of ``scm.on_order_v``'s status filter (M4-D5/D6): a PO counts as incoming
 # supply only in these statuses AND while it still has an unreceived OPEN line.
@@ -55,6 +56,8 @@ _IMPORT_SOURCES = (PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE)
 def _source_label(source_system: Optional[str]) -> str:
     if source_system == _REC_SOURCE:
         return "recommendation"
+    if source_system == CRM_SPO_SOURCE:
+        return "crm"
     if source_system in _IMPORT_SOURCES:
         return "import"
     return "manual"
@@ -115,6 +118,9 @@ class PurchaseOrderService:
                 "qty_received": float(ln.qty_received or 0),
                 "line_status": ln.line_status,
                 "uom": ln.product.base_uom.uom_code if (ln.product and ln.product.base_uom) else "",
+                # Location is a LINE fact (captain, 20 Aug) - the header field is gone
+                # from the detail page, so each line states its own destination.
+                "warehouse_code": ln.warehouse.warehouse_code if ln.warehouse else None,
             })
         return {
             "id": po.id,
@@ -164,10 +170,26 @@ class PurchaseOrderService:
 
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,
              query: Optional[str], status: Optional[str], supplier: Optional[str],
-             *, product_code: Optional[str] = None) -> dict:
+             *, product_code: Optional[str] = None,
+             outstanding: Optional[bool] = None) -> dict:
         q = self._base_query()
         if status:
             q = q.filter(PurchaseOrder.status == status)
+        if outstanding is not None:
+            # The buyer's "at a glance" question (the captain, 20 Aug). The EXACT
+            # predicate `_is_on_order` answers per row, so this filter and that row's own
+            # badge can never disagree - mirrors `scm.po_ordered_v` (mig 337).
+            still_open = (
+                self.db.query(PurchaseOrderLine.id)
+                .filter(
+                    PurchaseOrderLine.purchase_order_id == PurchaseOrder.id,
+                    PurchaseOrderLine.line_status == _OPEN_LINE_STATUS,
+                    PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
+                )
+                .exists()
+            )
+            is_outstanding = PurchaseOrder.status.in_(_ON_ORDER_STATUSES) & still_open
+            q = q.filter(is_outstanding if outstanding else ~is_outstanding)
         if product_code:
             # EXISTS, not a join: an order that carries the item on two lines is one order,
             # and a join would list it twice and count it twice.
@@ -197,8 +219,17 @@ class PurchaseOrderService:
             "expected_date": PurchaseOrder.expected_date,
             "created_at": PurchaseOrder.created_at,
         }
-        col = sort_cols.get(sort or "", PurchaseOrder.created_at)
-        q = q.order_by(col.desc() if direction != "asc" else col.asc())
+        # Default surfaces the currently RELEVANT orders (the captain, 20 Aug), not the
+        # most recently IMPORTED ones: `created_at` is the upload timestamp, and a bulk
+        # outstanding-book upload stamps hundreds of historical orders with the same
+        # minute, burying today's real activity under them. The order's own document
+        # date - `issue_date`, falling back to `expected_date` for the rare order missing
+        # one - is what "current" means to the buyer reading this list.
+        col = sort_cols.get(sort) if sort else None
+        if col is None:
+            col = func.coalesce(PurchaseOrder.issue_date, PurchaseOrder.expected_date)
+        ordering = col.desc().nulls_last() if direction != "asc" else col.asc().nulls_last()
+        q = q.order_by(ordering)
         total = q.count()
         rows = q.offset((page - 1) * limit).limit(limit).all()
         gr_refs = self._gr_refs_for([po.id for po in rows])
@@ -347,3 +378,80 @@ class PurchaseOrderService:
         po.status = "received"
         self.db.commit()
         return {"gr_reference": gr_number}
+
+    def bulk_delete(self, ids: list[str], actor: Optional[str] = None) -> dict:
+        """Hard delete purchase orders (captain, 20 Aug: "give me an option to bulk
+        delete purchase orders ... maybe need to recreate").
+
+        ``purchase_order_lines`` cascades with its header (``ondelete="CASCADE"``), and
+        every OTHER dependent on a line either cascades too (loading-plan lines) or is
+        ``SET NULL`` (picking lines, plan exceptions, the SO<->PO audit claim). Only one
+        of those needs more than the FK: ``projects.order_inquiry_rows.po_line_id`` is
+        ``SET NULL`` as well, but a row still carrying ``state = 'placed'`` after that
+        would silently point at nothing while staying OUT of the reorder engine - the
+        exact supply it was placed against just vanished. So every row placed on one of
+        these POs' lines is explicitly UNPLACED first, the same way "Untag" does it
+        (``project_order_inquiry_service.unplace`` - `state` back to `raised`, `po_ref`
+        / `po_line_id` cleared, the SO<->PO audit claim removed), except the note it
+        appends: "Unplaced" reads like a person did it, and this was the purchase order
+        disappearing out from under the row, not a person changing their mind. The
+        prior note is preserved and re-stamped with what actually happened.
+
+        Ids not found (already deleted, or another company's) are skipped rather than
+        failing the batch - a stale row in the caller's selection must not block the
+        rest of a genuinely-selected batch.
+        """
+        if not ids:
+            raise AppException(
+                status_code=422, message="Select at least one purchase order to delete."
+            )
+
+        pos = self._base_query().filter(PurchaseOrder.id.in_(ids)).all()
+        if not pos:
+            return {"deleted": 0, "unplaced_rows": 0}
+
+        po_ids = [po.id for po in pos]
+        line_ids = [
+            str(r[0])
+            for r in (
+                self.db.query(PurchaseOrderLine.id)
+                .filter(PurchaseOrderLine.purchase_order_id.in_(po_ids))
+                .all()
+            )
+        ]
+
+        unplaced_rows = 0
+        if line_ids:
+            # Local import: this is the one write path in this service that reaches
+            # into project-sales territory, and keeping it here instead of a
+            # module-level import keeps that visible to whoever reads this method.
+            from app.models.project_so import INQUIRY_PLACED, OrderInquiryRow
+            from app.services.project_order_inquiry_service import (
+                ProjectOrderInquiryService,
+            )
+
+            placed_rows = (
+                self.db.query(OrderInquiryRow)
+                .filter(
+                    OrderInquiryRow.po_line_id.in_(line_ids),
+                    OrderInquiryRow.state == INQUIRY_PLACED,
+                )
+                .all()
+            )
+            if placed_rows:
+                inquiry_service = ProjectOrderInquiryService(self.db)
+                stamp = "PO deleted - back on the board"
+                for row in placed_rows:
+                    prior_note = row.note
+                    # Does everything Untag does - clears po_ref/po_line_id, resets
+                    # state to `raised`, drops the audit claim, refreshes the parent
+                    # inquiry's state - and its own "Unplaced from ..." note, which is
+                    # overwritten below with the note this deletion actually earns.
+                    inquiry_service.unplace(str(row.id), actor_user_id=actor)
+                    row.note = f"{prior_note}; {stamp}" if prior_note else stamp
+                    unplaced_rows += 1
+
+        for po in pos:
+            self.db.delete(po)
+        self.db.commit()
+        return {"deleted": len(pos), "unplaced_rows": unplaced_rows}

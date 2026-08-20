@@ -19,14 +19,32 @@ inventing master data nobody knows to look at.
 """
 from __future__ import annotations
 
+import logging
 from typing import Iterable, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
+from app.models.order import SalesOrder
 from app.models.sales_agent import SalesAgent
 from app.services.error_handler import AppException
-from app.services.scm.demand_class import DEMAND_CLASSES, is_valid
+from app.services.scm.demand_class import (
+    DEFAULT_DEMAND_CLASS,
+    DEMAND_CLASSES,
+    PROJECT,
+    PROJECT_SEGMENTS,
+    is_valid,
+)
+
+# Same substring match `demand_class.class_of` uses, rebuilt as SQL from `PROJECT_SEGMENTS`
+# itself (mirrors `analytics_service._PROJECT_SEGMENT_MATCH_SQL`) so the Python vocabulary
+# and the SQL cannot drift apart.
+_PROJECT_SEGMENT_MATCH_SQL = " OR ".join(
+    f"lower(trim(coalesce(c.market_segment_code, ''))) LIKE '%{seg}%'"
+    for seg in sorted(PROJECT_SEGMENTS)
+)
+
+logger = logging.getLogger(__name__)
 
 #: `source` values. An import-created row is waiting for a human decision; a manual one has
 #: had (or does not need) it.
@@ -120,6 +138,72 @@ def assert_demand_class(value: Optional[str]) -> Optional[str]:
     )
 
 
+def _backfill_null_class_orders(db: Session, agent: SalesAgent, demand_class: str) -> int:
+    """Give the agent's still-unclassified orders the class the ladder actually says.
+
+    `outstanding_import_service._classify_demand` reads the agent's class LAST, after order
+    type, the file's own type and the customer's market segment - so a row here (its
+    `demand_class` still NULL for THIS agent) has already had order type checked and found
+    silent, but its customer's segment has NOT been re-checked since. Filling every such row
+    from the agent, unconditionally, was the bug: a row whose segment answers must take the
+    SEGMENT's class, never the agent's - the agent is only a fallback for a customer with no
+    segment (or no customer at all). This mirrors the ladder for the two rungs that remain
+    live at backfill time instead of re-running the agent rung a second time as if it were
+    first.
+
+    Two bulk UPDATEs, both scoped to `demand_class IS NULL` and `sales_agent_id = agent.id`
+    so only THIS agent's still-unclassified orders move and a row another rung already
+    answered keeps that answer:
+
+      1. Customer's `market_segment_code` states something -> segment's class (project via
+         the same substring match as `demand_class.class_of`, else retail).
+      2. No customer, or a customer with no stated segment -> the agent's class, same as
+         before.
+
+    Runs in the caller's transaction (flushed, not committed), so a demand class the policy
+    refuses leaves both the agent and its orders unchanged.
+    """
+    from_segment = db.execute(
+        text(
+            f"""
+            UPDATE sales_orders AS so
+               SET demand_class = CASE WHEN ({_PROJECT_SEGMENT_MATCH_SQL})
+                                        THEN :project_class ELSE :retail_class END
+              FROM customers AS c
+             WHERE c.id = so.customer_id
+               AND so.sales_agent_id = :agent_id
+               AND so.demand_class IS NULL
+               AND coalesce(trim(c.market_segment_code), '') <> ''
+            """
+        ),
+        {"agent_id": agent.id, "project_class": PROJECT, "retail_class": DEFAULT_DEMAND_CLASS},
+    ).rowcount or 0
+    from_agent = db.execute(
+        text(
+            """
+            UPDATE sales_orders AS so
+               SET demand_class = :demand_class
+             WHERE so.sales_agent_id = :agent_id
+               AND so.demand_class IS NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM customers AS c
+                    WHERE c.id = so.customer_id
+                      AND coalesce(trim(c.market_segment_code), '') <> ''
+               )
+            """
+        ),
+        {"agent_id": agent.id, "demand_class": demand_class},
+    ).rowcount or 0
+    updated = from_segment + from_agent
+    if updated:
+        logger.info(
+            "sales_agent_service: backfilled demand_class onto %d NULL-class order(s) for "
+            "agent %s (%d from customer segment, %d from the agent's own class=%s)",
+            updated, agent.sales_agent, from_segment, from_agent, demand_class,
+        )
+    return updated
+
+
 def set_demand_class(db: Session, code: str, demand_class: Optional[str]) -> SalesAgent:
     """Classify an existing agent. Never creates one.
 
@@ -135,7 +219,20 @@ def set_demand_class(db: Session, code: str, demand_class: Optional[str]) -> Sal
         )
     agent.demand_class = demand_class
     db.flush()
+    if demand_class:
+        _backfill_null_class_orders(db, agent, demand_class)
     return agent
+
+
+def normalize_location_group(value: Optional[str]) -> Optional[str]:
+    """The stored form of a location group: trimmed and upper-cased, blank -> None.
+
+    Same normalisation as `normalize_code`, and for the same reason: a warehouse code's
+    suffix (`group_of_warehouse_code`) is upper-cased by construction, so a group typed
+    lower-case in the edit modal must still compare equal to it.
+    """
+    cleaned = (value or "").strip().upper()
+    return cleaned or None
 
 
 def annotate(
@@ -146,8 +243,10 @@ def annotate(
     write_person_label: bool = False,
     demand_class: Optional[str] = None,
     write_demand_class: bool = False,
+    location_group: Optional[str] = None,
+    write_location_group: bool = False,
 ) -> SalesAgent:
-    """Apply the master screen's two annotations to an already-resolved agent.
+    """Apply the master screen's annotations to an already-resolved agent.
 
     The `write_*` flags distinguish "field omitted" from "field set to nothing", so a
     save that touches only the class cannot wipe a label the captain typed last week.
@@ -161,12 +260,56 @@ def annotate(
 
     Flushes but does not commit: the caller (the annotation route) writes the two mirror
     columns in the same transaction, so a rejected class leaves the note unwritten too.
+
+    Setting the class also backfills it onto this agent's own NULL-class orders (see
+    `_backfill_null_class_orders`). Clearing it (`demand_class=None`) does not - the orders
+    already classified stay classified, this is a one-way "fill the gap", never an undo.
     """
     if write_demand_class:
         assert_demand_class(demand_class)
         agent.demand_class = demand_class
+        db.flush()
+        if demand_class:
+            _backfill_null_class_orders(db, agent, demand_class)
     if write_person_label:
         cleaned = (person_label or "").strip()
         agent.person_label = cleaned or None
+    if write_location_group:
+        agent.location_group = normalize_location_group(location_group)
     db.flush()
     return agent
+
+
+def agents_for_group(db: Session, group: Optional[str]) -> list[SalesAgent]:
+    """Every agent holding the given ownership group, normalised the same way it is stored.
+
+    Used to find "whose orders live at this ownership group" - the donor-list surfacing the
+    PLAN describes (section 8: "the donor list must surface the SAME AGENT's other SOs").
+    A blank/None group answers empty rather than every ungrouped agent, because "show me the
+    group" and "show me who has no group" are different questions and this is only the first.
+    """
+    key = normalize_location_group(group)
+    if not key:
+        return []
+    return (
+        db.query(SalesAgent)
+        .filter(func.upper(func.btrim(SalesAgent.location_group)) == key)
+        .all()
+    )
+
+
+def group_of_warehouse_code(code: Optional[str]) -> Optional[str]:
+    """The ownership-group suffix a warehouse code carries, e.g. `BRW-BB` -> `BB`.
+
+    The suffix AFTER THE FIRST HYPHEN, upper-cased. A plain site code (`BRW`, `MWH`) has no
+    hyphen and carries no group - it is a pool, not anyone's ownership group - so this
+    returns None for it rather than inventing one from the whole code.
+    """
+    if not code:
+        return None
+    text_code = str(code).strip()
+    if "-" not in text_code:
+        return None
+    _, _, suffix = text_code.partition("-")
+    suffix = suffix.strip().upper()
+    return suffix or None

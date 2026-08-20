@@ -12,6 +12,7 @@
 import type {
   OrderInquiryWorklistRow,
   OrderInquiryWorklistSummary,
+  UnplaceAllPreview,
 } from '../types/orderInquiry.types';
 
 export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
@@ -27,11 +28,16 @@ export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
     supplier: 'DAFUYUAN',
     supplier_id: 'sup-1',
     po_number: '202601-S0015',
+    po_id: 'po-1',
     location: 'BRW-BB',
+    agent_code: 'SEAN I',
+    agent_label: 'Sean',
     state: 'actioned',
     raised_at: '2026-01-02T09:15:00',
     verb: 'ORDER',
     note: null,
+    taken_from_po: '35',
+    remaining_open: '0',
     project_id: null,
     project_sales_order_id: 'pso-1',
     core_sales_order_id: 'so-385126',
@@ -50,10 +56,14 @@ export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
     supplier_id: null,
     po_number: null,
     location: null,
+    agent_code: null,
+    agent_label: null,
     state: 'raised',
     raised_at: '2026-01-08T11:02:00',
     verb: 'ORDER',
     note: null,
+    taken_from_po: '0',
+    remaining_open: '85',
     project_id: null,
     project_sales_order_id: 'pso-2',
     core_sales_order_id: 'so-386461',
@@ -71,6 +81,8 @@ export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
     supplier: 'CHAOSHENG',
     supplier_id: 'sup-2',
     po_number: '202601-S0044',
+    agent_code: 'LCL',
+    agent_label: 'Lee',
     state: 'raised',
     raised_at: '2026-01-02T09:15:00',
     verb: 'ORDER',
@@ -119,4 +131,30 @@ export const MOCK_WORKLIST_SUMMARY: OrderInquiryWorklistSummary = {
     { id: 'proj-4', label: 'SDB @ Gombak', rows: 1 },
     { id: 'proj-9', label: 'Eko Titiwangsa', rows: 1 },
   ],
+};
+
+/**
+ * `GET .../order-inquiries/unplace-all-preview` (the captain, 20-21 Aug): the confirm
+ * dialog's own count, resolved server-side against the CURRENT worklist scope - one
+ * product when the filters happen to narrow to it (name attached), every placed row when
+ * they do not (name absent).
+ */
+export const MOCK_UNPLACE_ALL_PREVIEW_SCOPED: UnplaceAllPreview = {
+  count: 3,
+  product_code: 'SRTWC8605-SC-RL',
+  product_name: 'Close coupled WC 8605',
+};
+
+/** No single product across the matching set - the dialog names only the count. */
+export const MOCK_UNPLACE_ALL_PREVIEW_UNSCOPED: UnplaceAllPreview = {
+  count: 7,
+  product_code: null,
+  product_name: null,
+};
+
+/** Nothing to unplace - the toolbar action stays disabled. */
+export const MOCK_UNPLACE_ALL_PREVIEW_EMPTY: UnplaceAllPreview = {
+  count: 0,
+  product_code: null,
+  product_name: null,
 };

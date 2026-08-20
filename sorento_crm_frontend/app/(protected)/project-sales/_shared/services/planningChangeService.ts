@@ -17,7 +17,11 @@
  *        `composition` is REQUIRED when `decision === 'amend'` (422 otherwise); `confirm`
  *        derives its own composition from the row's `proposal` server-side.
  *   POST /api/v1/project-sales/planning-changes/{batch_id}/apply             (AC-R05)
- *        -> ApplyPlanningChangesResult { applied_orders, failed_orders, already_applied }
+ *        -> ApplyPlanningChangesResult { applied_orders, failed_orders, already_applied,
+ *           returned_to_review } - the last is B1 (code review, 20 Aug 2026): lines a revised
+ *           order's PREVIOUS revision covered that this batch never named, dropped back to
+ *           undecided as a side effect of a challenged/superseded revision rather than
+ *           anything the batch decided. `[]` on a clean apply.
  *
  * The upload confirmation response carries a batch pointer under
  * `result.upload.planning_change_batch` on the import job it queued (read on the import job

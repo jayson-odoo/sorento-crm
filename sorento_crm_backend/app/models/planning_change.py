@@ -33,6 +33,12 @@ def _uuid_str() -> str:
 # is a new constant, not a migration.
 PLANNING_CHANGE_SOURCE_SO_BOOK_UPLOAD = "so_book_upload"
 
+# A sales order edited BY HAND on the detail screen, not re-uploaded as a book - the same
+# reaction (`planning_change_service.build_batch`) a re-uploaded book gets, just a
+# different trigger. `SalesOrderService._propagate_planning_change` is the only caller;
+# plain string, no migration, same reason as the constant above.
+PLANNING_CHANGE_SOURCE_SO_MANUAL_EDIT = "so_manual_edit"
+
 # `PlanningChangeRow.decision` - the one choice AC-R04 offers per row. `None` (unset) is
 # the default: a row with no active decision (AC-R03) never gets anything else.
 PLANNING_CHANGE_DECISION_ACCEPT = "accept"

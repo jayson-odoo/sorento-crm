@@ -11,7 +11,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Ban, CheckCheck, Download, RotateCcw, Search, X } from 'lucide-react';
+import { Ban, CheckCheck, Download, Info, RotateCcw, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
@@ -38,6 +39,7 @@ import { saveBlobAs } from '../../../_shared/services/fileDownload';
 import { downloadOrderInquiryXlsx } from '../../../_shared/services/orderInquiryService';
 import type { OrderInquiryRow } from '../../../_shared/types/orderInquiry.types';
 import { InfoHint } from '../../components/InfoHint';
+import { OrderInquiryRowActions } from '../../../_shared/components/OrderInquiryRowActions';
 import {
   BUYING_VERBS,
   OrderInquiryStatePill,
@@ -51,6 +53,7 @@ const STATE_OPTIONS = [
   { value: 'raised', label: 'Raised' },
   { value: 'actioned', label: 'Actioned' },
   { value: 'cancelled', label: 'Cancelled' },
+  { value: 'placed', label: 'Placed' },
 ];
 
 /**
@@ -246,16 +249,32 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
         header: ({ column }) => <DataGridColumnHeader title="Instruction" column={column} />,
         size: 210,
         meta: { headerTitle: 'Instruction', skeleton: <Skeleton className="h-4 w-24" /> },
+        // The server's own sentence ("Borrowed N for SOxxx line n; CODE goes short by q") is
+        // the reasoning behind the verb, not the instruction itself, so it moves behind the
+        // info icon rather than sitting inline under the pill.
+        // Qty already has its own column; repeating it here duplicated the number rather
+        // than adding to it.
         cell: ({ row }) => (
-          <div className="min-w-0 space-y-1">
+          <div className="flex min-w-0 items-center gap-1.5">
             <OrderInquiryVerbPill verb={row.original.verb} />
             {row.original.note && (
-              <span
-                className="block truncate text-xs text-muted-foreground"
-                title={row.original.note}
-              >
-                {row.original.note}
-              </span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    mode="icon"
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Why this instruction"
+                    className="size-5 shrink-0 text-muted-foreground"
+                  >
+                    <Info className="size-3.5" aria-hidden />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs break-words">
+                  {row.original.note}
+                </TooltipContent>
+              </Tooltip>
             )}
           </div>
         ),
@@ -307,6 +326,24 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
             </span>
           );
         },
+      },
+      {
+        id: 'actions',
+        header: 'Actions',
+        size: 150,
+        enableSorting: false,
+        meta: { headerTitle: 'Actions', skeleton: <Skeleton className="h-4 w-20" /> },
+        cell: ({ row }) => (
+          <OrderInquiryRowActions
+            rowId={row.original.id}
+            verb={row.original.verb}
+            state={row.original.state}
+            itemCode={row.original.item_code}
+            qty={row.original.qty}
+            poLabel={row.original.po_ref}
+            hasOpenPoLine={row.original.has_open_po_line}
+          />
+        ),
       },
     ],
     [],

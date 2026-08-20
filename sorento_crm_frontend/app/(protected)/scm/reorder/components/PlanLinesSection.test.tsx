@@ -74,6 +74,9 @@ function stubPlanLines(over: Record<string, unknown> = {}) {
     decide: vi.fn(),
     clear: vi.fn(),
     totals: { decided: 0, undecided: 0, buying: 0, usingStock: 0, usingPo: 0, skipped: 0, units: 0, cost: 0, unpriced: 0 },
+    // S16: the server's own "N of Total made" - independent of `lines`/`decisions` above.
+    decidedCount: 0,
+    totalDecidableCount: 0,
     coverFor: vi.fn(),
     priceFor: vi.fn(),
     cheaperFor: vi.fn(),
@@ -234,6 +237,39 @@ describe('PlanLinesSection - reports totals upward for the decision-progress til
     );
   });
 
+  it('counts the per-warehouse rows even under a Product-grain run (S16, 21 Aug): a decision ' +
+    'lives on the underlying member recommendation id, never a synthetic group key', () => {
+    // 3 per-warehouse rows for 2 products - PlanLinesGrid itself renders this as 2 rows
+    // when `groupByChannel` is on, but S16 fans a group decision out to its real member
+    // ids (`usePlanLines.decide`, mirroring `updateMoq`), so this tile's own count stays
+    // the real, decidable row count - never the grouped presentation count. Superseded
+    // test (19-20 Aug): the old "Decided at Product grain" lock made a group row
+    // genuinely undecidable, which is exactly what S16 removed.
+    const p1a = line({ id: 'a', sku: 'SKU-1', product_id: 'p1', warehouse_id: 'w1' });
+    const p1b = line({ id: 'b', sku: 'SKU-1', product_id: 'p1', warehouse_id: 'w2' });
+    const p2a = line({ id: 'c', sku: 'SKU-2', product_id: 'p2', warehouse_id: 'w3' });
+    const decisions = { a: { buy: 5 } }; // one member of the SKU-1 group has been decided
+    stubPlanLines({ lines: [p1a, p1b, p2a], decisions });
+    const onTotalsChange = vi.fn();
+    render(<PlanLinesSection runId="run-1" groupByChannel onTotalsChange={onTotalsChange} />);
+
+    expect(onTotalsChange).toHaveBeenCalledWith(
+      expect.objectContaining({ decided: 1, undecided: 2 }),
+    );
+  });
+
+  it('keeps the PER-WAREHOUSE count when the run is not Product-grain (groupByChannel unset)', () => {
+    const p1a = line({ id: 'a', sku: 'SKU-1', product_id: 'p1', warehouse_id: 'w1' });
+    const p1b = line({ id: 'b', sku: 'SKU-1', product_id: 'p1', warehouse_id: 'w2' });
+    stubPlanLines({ lines: [p1a, p1b], decisions: {} });
+    const onTotalsChange = vi.fn();
+    render(<PlanLinesSection runId="run-1" onTotalsChange={onTotalsChange} />);
+
+    expect(onTotalsChange).toHaveBeenCalledWith(
+      expect.objectContaining({ decided: 0, undecided: 2 }),
+    );
+  });
+
   it('DOES count the hidden row once the "covered by stock" status filter reveals it', () => {
     const visibleBuy = line({ id: 'a', sku: 'BUY-1', type: 'buy' });
     const revealedCovered = line({
@@ -254,6 +290,21 @@ describe('PlanLinesSection - reports totals upward for the decision-progress til
     expect(onTotalsChange).toHaveBeenCalledWith(
       expect.objectContaining({ decided: 0, undecided: 2 }),
     );
+  });
+});
+
+describe('PlanLinesSection - S16 decision-progress header count is the SERVER\'s own', () => {
+  it('reports usePlanLines\' decidedCount/totalDecidableCount straight through, not a client re-derivation', () => {
+    stubPlanLines({ decidedCount: 4, totalDecidableCount: 9 });
+    const onDecisionProgressChange = vi.fn();
+    render(<PlanLinesSection runId="run-1" onDecisionProgressChange={onDecisionProgressChange} />);
+
+    expect(onDecisionProgressChange).toHaveBeenCalledWith({ decided: 4, total: 9 });
+  });
+
+  it('never calls onDecisionProgressChange when the caller does not pass it', () => {
+    stubPlanLines();
+    expect(() => render(<PlanLinesSection runId="run-1" />)).not.toThrow();
   });
 });
 

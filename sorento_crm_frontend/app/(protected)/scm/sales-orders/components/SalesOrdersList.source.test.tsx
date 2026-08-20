@@ -61,6 +61,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 const useSalesOrders = vi.fn();
 vi.mock('../../hooks/useSalesOrders', () => ({
   useSalesOrders: (...a: unknown[]) => useSalesOrders(...a),
+  useSalesOrderAgents: () => ({ data: [], isLoading: false }),
   useCreateSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -228,6 +229,49 @@ describe('SalesOrdersList - the empty book', () => {
       await screen.findByText('No sales order matches this search and filter.'),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Upload the Order Inquiry sheet/)).toBeNull();
+  });
+});
+
+describe('SalesOrdersList - the Type column reads the planning class', () => {
+  // `order_type_label` (the ERP document type) is blank on nearly every row in this book -
+  // the classification agents' `demand_class` is what actually answers "what type is this".
+
+  it('shows a Project chip for a project-classified order', async () => {
+    stub([order({ demand_class: 'project', order_type_label: '' })]);
+    renderList();
+
+    expect(await screen.findByText('Project')).toBeInTheDocument();
+  });
+
+  it('shows a Retail chip for a retail-classified order', async () => {
+    stub([order({ demand_class: 'retail', order_type_label: '' })]);
+    renderList();
+
+    expect(await screen.findByText('Retail')).toBeInTheDocument();
+  });
+
+  it('shows a muted "Unclassified" chip rather than an empty cell', async () => {
+    stub([order({ demand_class: null, order_type_label: '' })]);
+    renderList();
+
+    expect(await screen.findByText('Unclassified')).toBeInTheDocument();
+  });
+
+  it('shows the stated document type as a subline when it differs from the class', async () => {
+    stub([order({ demand_class: 'project', order_type_label: 'Contract Sale' })]);
+    renderList();
+
+    expect(await screen.findByText('Project')).toBeInTheDocument();
+    expect(await screen.findByText('Contract Sale')).toBeInTheDocument();
+  });
+
+  it('does not repeat the document type when it already says the same thing as the class', async () => {
+    stub([order({ demand_class: 'project', order_type_label: 'Project' })]);
+    renderList();
+
+    await waitFor(() => expect(screen.getByText('SO900001')).toBeInTheDocument());
+    // Exactly one "Project" - the chip - not a second copy as the subline.
+    expect(screen.getAllByText('Project')).toHaveLength(1);
   });
 });
 

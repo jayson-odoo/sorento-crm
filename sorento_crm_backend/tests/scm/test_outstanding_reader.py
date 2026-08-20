@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.import_alias_service import AliasResolver
+from app.services.import_alias_service import AliasResolver, normalize_header
 from app.services.scm.outstanding_diff import (
     ADDED,
     CLOSED,
@@ -29,7 +29,7 @@ from app.services.scm.outstanding_diff import (
     UNCHANGED,
     diff_lines,
 )
-from app.services.scm.outstanding_reader import SO, read_workbook
+from app.services.scm.outstanding_reader import PO, SO, read_workbook
 from tests._pg_fixture import pg_session
 
 _FIX = Path(__file__).parent / "fixtures"
@@ -269,3 +269,81 @@ def test_a_week_later_the_diff_tells_the_whole_story(resolver):
     # Aria Verde is unchanged, and both its lines say so.
     assert counts[UNCHANGED] == 2
     assert diff.scope_documents == ("SO397450", "SO397512")
+
+
+# --------------------------------------------------------------------------- #
+# the PO book's newest headers (migration 399)
+# --------------------------------------------------------------------------- #
+
+#: The `outstanding_po` aliases the reader needs for this header row, mirroring migrations
+#: 311, 338 and 399 rather than the live table - so this fails if one of those seeds ever
+#: changes under it, instead of quietly passing against a mapping only the test believes in.
+_PO_ALIASES = [
+    ("po_number", "DOC NO"),        # 338
+    ("po_date", "DOC DATE"),        # 338
+    ("supplier_name", "CREDITOR NAME"),  # 338
+    ("qty_received", "TRANSFERED QTY"),  # 338
+    ("qty_remaining", "REMAINING QTY"),  # 338
+    ("qty_ordered", "QTY"),         # 399 - the captain's "PO & SPO outstanding.xlsx"
+    ("expected_date", "DELIVERY DATE"),  # 399
+    ("unit_cost", "UNIT PRICE"),    # 399
+]
+
+
+@pytest.fixture()
+def resolver_po() -> AliasResolver:
+    """Built from `_PO_ALIASES` directly rather than the database, so this suite proves the
+    reader against a known alias set regardless of whether migration 399 has run on the
+    database the rest of the file's `resolver` fixture happens to hit."""
+    mapping: dict[str, str] = {}
+    for field, alias in _PO_ALIASES:
+        mapping.setdefault(normalize_header(alias), field)
+        mapping.setdefault(normalize_header(field), field)
+    # `item_code` is read under its own name on every doc type and carries no alias here.
+    mapping.setdefault(normalize_header("item_code"), "item_code")
+    mapping.setdefault(normalize_header("ITEM CODE"), "item_code")
+    return AliasResolver(PO, mapping)
+
+
+def test_the_po_book_reads_qty_delivery_date_and_unit_price(resolver_po):
+    """The captain's real export ("PO & SPO outstanding.xlsx", 3,632 lines) carries `Qty`,
+    `Delivery Date` and `Unit Price` alongside the columns already mapped by migrations 311
+    and 338. Before migration 399 the header had no alias for `qty_ordered` or
+    `expected_date` - both `_REQUIRED_COLUMNS` for `outstanding_po` - so the whole file was
+    rejected before a single row was read.
+    """
+    import openpyxl
+    from io import BytesIO
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["Item Code", "Qty", "Transfered Qty", "Remaining Qty", "Delivery Date",
+               "Doc No", "Doc Date", "Creditor Name", "Unit Price"])
+    # Row 1: the file states BOTH what moved (Transfered Qty) and what is left (Remaining
+    # Qty), so the netting rule uses the stated remainder rather than the raw ordered qty.
+    ws.append(["ZZTOS-PO-1", 150, 15, 135, date(2026, 7, 1),
+               "PO1001", date(2026, 4, 6), "SIN HENG TRADING", 9.5])
+    # Row 2: neither netting column is stated, so `Qty` is read as-is.
+    ws.append(["ZZTOS-PO-2", 60, None, None, date(2026, 9, 30),
+               "PO1001", date(2026, 4, 6), "SIN HENG TRADING", None])
+    buf = BytesIO()
+    wb.save(buf)
+
+    res = read_workbook(buf.getvalue(), PO, resolver_po)
+
+    assert res.ok, res.missing_columns
+    assert res.missing_columns == []
+    assert len(res.lines) == 2
+
+    first, second = res.lines
+    assert first.item_code == "ZZTOS-PO-1"
+    assert first.qty == 135, "the stated remaining quantity did not win over the raw Qty"
+    assert first.required_date == date(2026, 7, 1)
+    assert res.extras[first.row_ref]["unit_cost"] == 9.5, \
+        "the new UNIT PRICE alias did not fill the unit_cost extra"
+
+    assert second.item_code == "ZZTOS-PO-2"
+    assert second.qty == 60, "with no netting column stated, Qty is read as-is"
+    assert second.required_date == date(2026, 9, 30)
+    assert res.extras[second.row_ref]["unit_cost"] is None, \
+        "an absent Unit Price cell must stay absent, not read as zero"

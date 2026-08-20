@@ -1,4 +1,5 @@
-"""Order promising: what covers a Project SO line, and why (PLAN 3.2, 3.3, 3.5).
+"""Order promising: what covers a Project SO line, and why (PLAN 3.2, 3.3, 3.5, and the
+19 August 2026 follow-up section E, "ladder v2").
 
 PURE arithmetic, the same discipline as ``coverage_timeline`` and ``reorder_engine``'s top
 half: no database, no LLM, no optimizer, no configuration knob. Every number here is
@@ -8,15 +9,33 @@ number CS has to go and verify somewhere else (AC-B14).
 
 Two functions, and they answer two different questions.
 
-``propose_line`` answers "how should THIS line be met" - Reserve from eligible free stock,
-then timely SPO cover, then Buy for whatever is left. Eligibility is section 3.3's
-hot-selling rule: a dealer hot-selling product may not touch dealer-facing stock at all and
-may draw from the shared pool only above the pool's own reorder level.
+``propose_line`` answers "how should THIS line be met" - ladder v2's own order, per the
+captain's 19 August answers (``PLAN-demo-followups-19aug-ladder-v2.md`` section E):
+
+0. beyond purchasing's reorder-coverage date -> ``Buy`` the whole line, nothing else tried;
+1. timely incoming (an SPO arriving by the required date) counts toward cover;
+2. the shared pool, own site first then the other site pools, each capped at
+   ``max(min(pool free, pool's own signed availability), 0)``, the dealer/project
+   hot-selling gate of 3.3a retained;
+3. group take: sibling locations of this line's OWNERSHIP GROUP at other sites, whatever
+   is POSITIVE and uncommitted there;
+4. group borrow: other sales orders' committed quantity at the group's locations, the
+   line's own location first, offered by the caller ONLY for donors ranked below this line
+   (a same-agent donor ranked above it is a candidate, never auto-composed here);
+5. cross-group borrow: free stock outside the ownership group, offered by the caller only
+   within the small-quantity cap;
+6. the whole-line rule: if 1-5 together reach the whole of Q, that composition is proposed,
+   in rung order; otherwise NONE of it is proposed and the whole line is a Buy - never a
+   partial mix of "reserve 213, buy 145".
+
+The line's OWN fulfilment location is never a Reserve source any more (rule 7): stock
+sitting there is already committed to whichever sales order is queued for it, and the
+only way another line reaches it is rung 4's group borrow, with its order-back.
 
 ``attribute_sources`` answers "who gets the one pile" - several lines competing for one
 location's opening stock and its dated incoming, resolved in section 3.5's fixed order so
 the same facts always produce the same answer and the database's row order never
-participates.
+participates. Unchanged by ladder v2.
 
 Quantities are ``Decimal`` throughout. These figures are compared for exact equality at
 confirmation, and a binary float does not survive that.
@@ -46,7 +65,23 @@ COMPONENT_LABELS = {
     BUY: "Buy",
 }
 
+#: Ladder v2's own rung vocabulary (section E), finer-grained than `kind`: several rungs
+#: share a `kind` (the pool and group-take rungs are both `reserve`; group borrow and
+#: cross-group borrow are both `borrow`) and the UI names the rung, not the kind, in the
+#: trail and the donor list.
+RUNG_INCOMING = "incoming"
+RUNG_POOL = "pool"
+RUNG_GROUP_TAKE = "group_take"
+RUNG_GROUP_BORROW = "group_borrow"
+RUNG_CROSS_GROUP_BORROW = "cross_group_borrow"
+RUNG_BUY = "buy"
+
 BUY_REASON = "remaining uncovered need"
+
+_MONTHS = (
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+)
 
 
 def qty_text(value: Decimal) -> str:
@@ -56,6 +91,11 @@ def qty_text(value: Decimal) -> str:
     defect rather than as forty units.
     """
     return format(_dec(value).normalize(), "f")
+
+
+def _date_text(value: date) -> str:
+    """"31 Oct 2026" - the captain's own wording, day first, no leading zero."""
+    return f"{value.day} {_MONTHS[value.month - 1]} {value.year}"
 
 
 def _dec(value: Any) -> Decimal:
@@ -75,10 +115,36 @@ class Component:
     #: The rule's own sentence. Deterministic for the same snapshot, never LLM-written,
     #: and frozen with the line snapshot at confirmation.
     reason: str
-    #: Where the quantity comes from: the fulfilment location for own-location Reserve and
-    #: timely SPO cover, the pool warehouse for pool Reserve, the donor location for
-    #: Borrow. Buy has none - it is not held anywhere yet.
+    #: Where the quantity comes from: the pool warehouse for a pool Reserve, the sibling
+    #: location for group take, the donor's location for group/cross-group Borrow. Buy has
+    #: none - it is not held anywhere yet.
     source_location: Optional[str] = None
+    #: Which rung of the ladder produced this component (section E). Finer than `kind`,
+    #: which only carries the balance-invariant bucket (`reserve`/`borrow`/...).
+    rung: Optional[str] = None
+    #: The donor sales order, for a `group_borrow` component only (AC section E.4): its
+    #: number, line, and the agent who owns it, so the sheet can show "Borrow 145 from
+    #: SO371334 line 2 · agent JEREMY" and the planner can phone her.
+    donor_so_number: Optional[str] = None
+    donor_line_no: Optional[int] = None
+    donor_agent_code: Optional[str] = None
+    #: The donor SO shares this line's own agent - "she can authorise CS to move stock
+    #: between her own orders" (section 8). Always `False` outside `group_borrow`.
+    same_agent: bool = False
+    #: The order-back this component raises: an Order Inquiry Buy for the donor's own
+    #: line, at the donor's own required date, equal to what was taken (section E.4 -
+    #: "every borrow carries an order-back"). `None` outside `group_borrow`.
+    order_back_qty: Optional[Decimal] = None
+    #: Addressing only, never rendered: the donor's own CORE sales-order line id, so a
+    #: caller re-confirming this proposal AS PROPOSED can re-identify the same donor line
+    #: (`_check_group_borrow` re-reads its live committed quantity, AC-C03) without a
+    #: second lookup. `None` outside `group_borrow`.
+    donor_core_line_id: Optional[str] = None
+    #: The DONOR's own required date (section E.4: "urgency = the donor's required
+    #: date") - the order-back Order Inquiry row's urgency, not this line's own.
+    #: `None` outside `group_borrow`, and on a donor whose own required date is unset
+    #: (the order-back then falls back to the borrowing line's own date).
+    donor_required_date: Optional[date] = None
 
     @property
     def stated(self) -> str:
@@ -90,86 +156,93 @@ def _own_reason(location: str) -> str:
     return f"free stock at {location} covers the need by the required date"
 
 
-def _pool_reason_project_hot(pool_location: str, available: Decimal) -> str:
-    return (
-        f"free stock in the shared {pool_location} pool covers the need by the required "
-        f"date, drawn while its availability stays positive ({qty_text(available)} "
-        "available)"
-    )
-
-
 def _spo_reason(spo_number: str, arrival_date: Optional[date]) -> str:
     when = arrival_date.isoformat() if arrival_date else "an unstated date"
     return f"SPO {spo_number} arrives on {when}, by the required date"
 
 
 # --------------------------------------------------------------------------- #
-# Reserve eligibility (PLAN 3.3)
+# Ladder v2 rung helpers (PLAN-demo-followups-19aug-ladder-v2.md section E)
 # --------------------------------------------------------------------------- #
 
 
-def reserve_capacity(
+def _coverage_date_reason(coverage_until: date) -> str:
+    return f"Beyond purchasing's coverage ({_date_text(coverage_until)}) - buy now"
+
+
+def pool_reserve_capacity(
     *,
     is_dealer_hot_selling: bool,
-    is_project_hot_selling: bool = False,
-    fulfilment_location: Optional[str],
-    pool_location: Optional[str],
-    free_stock: Mapping[str, Any],
-    pool_available: Any = None,
+    is_project_hot_selling: bool,
+    pools: Sequence[Mapping[str, Any]],
 ) -> List[Tuple[str, Decimal, str]]:
-    """How much Reserve each location may contribute, in draw order, with its reason.
+    """Rung 2: the shared pool, own site first then the other site pools.
 
-    Shared by the proposal and by the confirmation recheck, so the sheet cannot offer a
-    Reserve the commit would refuse.
-
-    Amended 19 August 2026 (the captain): **the line's own fulfilment location is ALWAYS
-    Reserve-eligible**, hot-selling or not - "reserve can always reserve regardless of
-    dealer hot selling or not ... cause own location like BRW-BB is memang for project
-    only". What hot-selling gates is the SHARED POOL, by demand class:
-
-    * **Dealer hot-selling**: the pool contributes nothing at all - it is kept for retail.
-    * **Project hot-selling** (and not dealer hot-selling): the pool contributes only while
-      its own SIGNED availability (``on hand - SO qty + SPO qty``, `pool_available`) stays
-      positive - ``max(min(pool free, pool_available), 0)``.
-    * **Neither**: the pool contributes its whole free balance, uncapped.
-
-    Dealer wins when a product is hot-selling on both demand classes at once.
-
-    When the pool location IS the fulfilment location (a warehouse that is its own pool),
-    only the own contribution is added - a second entry for the same location would double
-    it.
+    `pools` is already in draw order - the caller's own site pool first, then the other
+    site pools - each stating `location`, `free` and `available` (the pool's own SIGNED
+    position, `on hand - SO qty + SPO qty`). Every pool is capped the same way now,
+    `max(min(free, available), 0)`, whether the product is project hot-selling or neither -
+    a change from 3.3a's "neither: uncapped", made because ladder v2 can draw a SECOND and
+    THIRD pool that were never this line's own, and an uncapped draw on one of those would
+    ignore what its own book already owes. Dealer hot-selling still excludes the pool rung
+    entirely, exactly as 3.3a states.
     """
-    out: List[Tuple[str, Decimal, str]] = []
-
-    if fulfilment_location:
-        own_free = max(_dec(free_stock.get(fulfilment_location)), ZERO)
-        if own_free > ZERO:
-            out.append((fulfilment_location, own_free, _own_reason(fulfilment_location)))
-
-    if not pool_location or pool_location == fulfilment_location:
-        return out
-
-    pool_free = max(_dec(free_stock.get(pool_location)), ZERO)
-
     if is_dealer_hot_selling:
-        return out
-
-    if is_project_hot_selling:
-        available = _dec(pool_available)
-        offered = max(min(pool_free, available), ZERO)
-        if offered > ZERO:
-            out.append(
-                (pool_location, offered, _pool_reason_project_hot(pool_location, available))
+        return []
+    out: List[Tuple[str, Decimal, str]] = []
+    for pool in pools:
+        location = pool.get("location")
+        if not location:
+            continue
+        free = max(_dec(pool.get("free")), ZERO)
+        available = _dec(pool.get("available"))
+        capacity = max(min(free, available), ZERO)
+        if capacity <= ZERO:
+            continue
+        out.append(
+            (
+                str(location),
+                capacity,
+                f"Pool {location} has {qty_text(capacity)} available",
             )
-        return out
-
-    if pool_free > ZERO:
-        out.append((pool_location, pool_free, _own_reason(pool_location)))
+        )
     return out
 
 
+def _group_take_reason(location: str, qty: Decimal, group_code: Optional[str]) -> str:
+    where = f" in the {group_code} group" if group_code else ""
+    return f"{location} has {qty_text(qty)} available{where}"
+
+
+def _group_borrow_reason(candidate: Mapping[str, Any], qty: Decimal) -> str:
+    location = candidate.get("location") or ""
+    so_number = candidate.get("donor_so_number") or "an unnamed sales order"
+    line_no = candidate.get("donor_line_no")
+    line_text = f" line {line_no}" if line_no is not None else ""
+    agent = candidate.get("donor_agent_code")
+    agent_text = f" (agent {agent})" if agent else ""
+    return (
+        f"{so_number}{line_text}{agent_text} holds {qty_text(qty)} at {location}; it is "
+        "ranked below this line; order-back raised"
+    )
+
+
+def _cross_group_borrow_reason(location: str, qty: Decimal) -> str:
+    return (
+        f"{location} has {qty_text(qty)} free outside this group, within the cross-group "
+        "borrow limit"
+    )
+
+
+def _whole_line_buy_reason(covered: Decimal, open_qty: Decimal) -> str:
+    return (
+        f"Only {qty_text(covered)} of {qty_text(open_qty)} can be covered from stock - buy "
+        "the whole line"
+    )
+
+
 # --------------------------------------------------------------------------- #
-# One line's composition (PLAN 3.2)
+# One line's composition (PLAN 3.2, amended by section E)
 # --------------------------------------------------------------------------- #
 
 
@@ -179,43 +252,88 @@ def propose_line(
     line_no: Optional[int] = None,
     required_date: Optional[date] = None,
     fulfilment_location: Optional[str] = None,
+    group_code: Optional[str] = None,
     is_dealer_hot_selling: bool = False,
     is_project_hot_selling: bool = False,
-    free_stock: Optional[Mapping[str, Any]] = None,
-    pool_location: Optional[str] = None,
-    pool_available: Any = None,
+    pools: Optional[Sequence[Mapping[str, Any]]] = None,
     timely_spo_qty: Any = ZERO,
     timely_spo_refs: Optional[Sequence[Mapping[str, Any]]] = None,
     is_discontinued: bool = False,
-    borrow_qty: Any = ZERO,
+    reorder_coverage_until: Optional[date] = None,
+    group_take_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
+    group_borrow_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
+    cross_group_borrow_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
 ) -> Tuple[Component, ...]:
-    """The proposed composition for one line, in PLAN 3.2's own order.
+    """The proposed composition for one line, ladder v2's own order (section E).
 
-    1. start at the line's current open quantity;
-    2. Reserve from eligible free stock (section 3.3, via `reserve_capacity`);
-    3. timely SPO cover, for supply arriving on or before the required date;
-    4. Borrow is never PROPOSED - its quantity comes from CS, and it is passed back in as
-       ``borrow_qty`` when the residual is recomputed at confirmation. The Borrow
-       components themselves carry the reason CS typed, so the caller composes them;
-    5. Buy is the remaining positive residual.
+    0. beyond `reorder_coverage_until` -> the WHOLE line is a Buy, nothing else is tried,
+       and the rest of this function never runs. An UNDATED line (`required_date=None`)
+       never hits this rung at all - the comparison requires both dates, so it falls
+       straight through to rung 1;
+    1. timely incoming, for supply arriving on or before the required date;
+    2. the shared pool(s), `pool_reserve_capacity`, own site first;
+    3. group take: `group_take_candidates`, already capped by the caller
+       (`max(min(free, available), 0)` at each sibling location);
+    4. group borrow: `group_borrow_candidates` - the caller passes ONLY the donors this
+       rung may draw on automatically (ranked below this line); a same-agent donor ranked
+       above it is never in this list, only in the offered candidate list a person picks
+       from;
+    5. cross-group borrow: `cross_group_borrow_candidates` - the caller passes ONLY the
+       donors within the small-quantity cap;
+    6. the whole-line rule: if 1-5 reach the whole of `open_qty`, that composition is
+       returned, in rung order; otherwise every partial component is DROPPED and the whole
+       line is proposed as a single Buy - never "reserve 213, buy 145".
+
+    Each candidate rung's inputs are already computed live and already ordered by the
+    caller (`L first, then the siblings` for group borrow; `own site pool first` for the
+    pool rung); this function only walks them in the order given and never re-sorts or
+    re-derives a capacity.
 
     A component contributing nothing is not proposed at all: emitting a zero would force a
     reason for a quantity that does not exist.
-
-    ``line_no``, ``required_date`` and ``is_discontinued`` do not change a quantity.
-    They travel with the call because the snapshot freezes them and because the
-    discontinued warning is stated beside the Buy the caller renders.
     """
-    remaining = max(_dec(open_qty), ZERO)
+    open_amount = max(_dec(open_qty), ZERO)
+    if open_amount <= ZERO:
+        return ()
+
+    if (
+        reorder_coverage_until is not None
+        and required_date is not None
+        and required_date > reorder_coverage_until
+    ):
+        return (
+            Component(
+                kind=BUY,
+                qty=open_amount,
+                reason=_coverage_date_reason(reorder_coverage_until),
+                rung=RUNG_BUY,
+            ),
+        )
+
+    remaining = open_amount
     components: List[Component] = []
 
-    for location, capacity, reason in reserve_capacity(
+    # 1. timely incoming.
+    timely = max(_dec(timely_spo_qty), ZERO)
+    if remaining > ZERO and timely > ZERO:
+        take = min(remaining, timely)
+        for component in _timely_components(take, timely_spo_refs, fulfilment_location):
+            components.append(
+                Component(
+                    kind=component.kind,
+                    qty=component.qty,
+                    reason=component.reason,
+                    source_location=component.source_location,
+                    rung=RUNG_INCOMING,
+                )
+            )
+        remaining -= take
+
+    # 2. the shared pool(s), own site first.
+    for location, capacity, reason in pool_reserve_capacity(
         is_dealer_hot_selling=is_dealer_hot_selling,
         is_project_hot_selling=is_project_hot_selling,
-        fulfilment_location=fulfilment_location,
-        pool_location=pool_location,
-        free_stock=free_stock or {},
-        pool_available=pool_available,
+        pools=pools or [],
     ):
         if remaining <= ZERO:
             break
@@ -223,23 +341,94 @@ def propose_line(
         if take <= ZERO:
             continue
         components.append(
-            Component(kind=RESERVE, qty=take, reason=reason, source_location=location)
+            Component(
+                kind=RESERVE, qty=take, reason=reason, source_location=location,
+                rung=RUNG_POOL,
+            )
         )
         remaining -= take
 
-    timely = max(_dec(timely_spo_qty), ZERO)
-    if remaining > ZERO and timely > ZERO:
-        components.extend(
-            _timely_components(
-                min(remaining, timely), timely_spo_refs, fulfilment_location
+    # 3. group take: positive Available at a sibling location, never this line's own.
+    for candidate in group_take_candidates or []:
+        if remaining <= ZERO:
+            break
+        location = candidate.get("location")
+        capacity = max(_dec(candidate.get("qty")), ZERO)
+        if not location or capacity <= ZERO:
+            continue
+        take = min(remaining, capacity)
+        components.append(
+            Component(
+                kind=RESERVE,
+                qty=take,
+                reason=_group_take_reason(str(location), take, group_code),
+                source_location=str(location),
+                rung=RUNG_GROUP_TAKE,
             )
         )
-        remaining -= min(remaining, timely)
+        remaining -= take
 
-    remaining -= max(_dec(borrow_qty), ZERO)
+    # 4. group borrow: other sales orders' committed quantity, donors ranked below this
+    #    line only - the caller has already excluded a higher-ranked (non-same-agent)
+    #    donor from this list.
+    for candidate in group_borrow_candidates or []:
+        if remaining <= ZERO:
+            break
+        location = candidate.get("location")
+        capacity = max(_dec(candidate.get("qty")), ZERO)
+        if not location or capacity <= ZERO:
+            continue
+        take = min(remaining, capacity)
+        components.append(
+            Component(
+                kind=BORROW,
+                qty=take,
+                reason=_group_borrow_reason(candidate, take),
+                source_location=str(location),
+                rung=RUNG_GROUP_BORROW,
+                donor_so_number=candidate.get("donor_so_number"),
+                donor_line_no=candidate.get("donor_line_no"),
+                donor_agent_code=candidate.get("donor_agent_code"),
+                same_agent=bool(candidate.get("same_agent")),
+                order_back_qty=take,
+                donor_core_line_id=candidate.get("donor_core_line_id"),
+                donor_required_date=_as_date(candidate.get("donor_required_date")),
+            )
+        )
+        remaining -= take
 
+    # 5. cross-group borrow: free stock outside this group, already cap-filtered.
+    for candidate in cross_group_borrow_candidates or []:
+        if remaining <= ZERO:
+            break
+        location = candidate.get("location")
+        capacity = max(_dec(candidate.get("qty")), ZERO)
+        if not location or capacity <= ZERO:
+            continue
+        take = min(remaining, capacity)
+        components.append(
+            Component(
+                kind=BORROW,
+                qty=take,
+                reason=_cross_group_borrow_reason(str(location), take),
+                source_location=str(location),
+                rung=RUNG_CROSS_GROUP_BORROW,
+            )
+        )
+        remaining -= take
+
+    # 6. the whole-line rule: cover Q entirely in rung order, or Buy the whole of it.
     if remaining > ZERO:
-        components.append(Component(kind=BUY, qty=remaining, reason=BUY_REASON))
+        covered = open_amount - remaining
+        return (
+            Component(
+                kind=BUY,
+                qty=open_amount,
+                reason=_whole_line_buy_reason(covered, open_amount),
+                rung=RUNG_BUY,
+            ),
+        )
+
     return tuple(components)
 
 

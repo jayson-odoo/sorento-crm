@@ -19,6 +19,7 @@ import { moqGap, moqGapNote, type ProductEconomics } from '../lib/productHealth'
 import {
   clampForecastQty,
   composeMixture,
+  daysTerm,
   forecastAddOn,
   forecastQtyCap,
   levelLine,
@@ -235,6 +236,8 @@ function AutoDerivation({ line }: { line: PlanLine }) {
   const pooled = alloc.length > 1;
   const demandRate = line.forecast_daily_demand;
   const leadDays = line.supplier.lead_time_days;
+  const reviewTerm = daysTerm(rec.review_days, 'review');
+  const leadTerm = daysTerm(leadDays, 'lead');
   return (
     <>
       <div className="space-y-1 px-3 py-2">
@@ -279,11 +282,14 @@ function AutoDerivation({ line }: { line: PlanLine }) {
         </div>
         <p className="text-2xs text-muted-foreground">S = reorder point + demand rate x review period</p>
         <div className="mt-1 flex items-baseline justify-between gap-2 text-xs">
-          <span className="tabular-nums text-muted-foreground">
-            {q.reorder_point === null ? EM_DASH : fmtInt(q.reorder_point)} +{' '}
-            {demandRate == null ? EM_DASH : fmtDecimal(demandRate)}/day x{' '}
-            {fmtInt(rec.review_days ?? null)}d review
-          </span>
+          {reviewTerm ? (
+            <span className="tabular-nums text-muted-foreground">
+              {q.reorder_point === null ? EM_DASH : fmtInt(q.reorder_point)} +{' '}
+              {demandRate == null ? EM_DASH : fmtDecimal(demandRate)}/day x {reviewTerm}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">no review period set</span>
+          )}
           <span className="tabular-nums font-semibold">
             {q.order_up_to === null ? EM_DASH : fmtInt(q.order_up_to)}
           </span>
@@ -313,11 +319,14 @@ function AutoDerivation({ line }: { line: PlanLine }) {
         </div>
         <p className="text-2xs text-muted-foreground">ROP = safety stock + demand rate x lead time</p>
         <div className="mt-1 flex items-baseline justify-between gap-2 text-xs">
-          <span className="tabular-nums text-muted-foreground">
-            {q.safety_stock === null ? EM_DASH : fmtDecimal(q.safety_stock)} +{' '}
-            {demandRate == null ? EM_DASH : fmtDecimal(demandRate)}/day x{' '}
-            {fmtInt(leadDays)}d lead
-          </span>
+          {leadTerm ? (
+            <span className="tabular-nums text-muted-foreground">
+              {q.safety_stock === null ? EM_DASH : fmtDecimal(q.safety_stock)} +{' '}
+              {demandRate == null ? EM_DASH : fmtDecimal(demandRate)}/day x {leadTerm}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">no lead time on file</span>
+          )}
           <span className="tabular-nums font-semibold">
             {q.reorder_point === null ? EM_DASH : fmtInt(q.reorder_point)}
           </span>
@@ -544,18 +553,18 @@ export function OrderQtyLedger({
             </div>
             <KVRow label="On hand" value={fmtInt(rec.on_hand ?? 0)} />
             <KVRow label="+ SPO (arriving)" value={fmtInt(rec.incoming_spo ?? 0)} />
+            {/* PO is counted here now (21 Aug fix) - the sizing engine nets the open PO
+                book into the same `net` this row was decided against, so a leg reading
+                "not counted" would be stating something that stopped being true. */}
+            {(rec.outstanding_po ?? 0) > 0 ? (
+              <KVRow label="+ PO (open)" value={fmtInt(rec.outstanding_po)} />
+            ) : null}
             <KVRow label="- SO (outstanding)" value={fmtInt(rec.outstanding_sales ?? 0)} />
             <div className="mt-1 flex justify-between border-t pt-1 text-xs font-medium">
               <span>Net</span>
               <span className="tabular-nums">{fmtSigned(line.net)}</span>
             </div>
           </div>
-
-          {(rec.outstanding_po ?? 0) > 0 ? (
-            <div className="border-t px-3 py-2">
-              <KVRow label="PO (open)" value={fmtInt(rec.outstanding_po)} note="not counted" muted />
-            </div>
-          ) : null}
 
           {showLineStatus ? (
             <>

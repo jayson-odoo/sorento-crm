@@ -282,6 +282,29 @@ for an ordinary item ("N on hand, but ..." / "N left after the k lines ahead; th
 quantity on retail demand at `<codes>`): ...") moved to the pool rung, which is the one it now
 governs.
 
+### 3.3b Amendment, 19-20 August 2026 - the ladder is now v2
+
+**The ladder in 3.3/3.3a above is superseded.** The rank/reserve/borrow ladder is now the one
+`documentation/plans/scm/PLAN-demo-followups-19aug-ladder-v2.md` section E describes (the
+captain's answers, 19 August, evening), implemented on `fm/scm-stack-followups-19aug-3`. 3.3/3.3a
+stay as read for the hot-selling predicate and the pool-contribution table, which are unchanged;
+the RUNGS themselves are not what 3.3/3.3a describe any more. Five rule changes, in order:
+
+1. A **coverage date** rung is now first: a line due after `reorder_coverage_until` is `Buy Q now`
+   and nothing else - beyond purchasing's regular reorder, so it is bought immediately.
+2. **Own-location Reserve is gone.** 3.3a's "own-location Reserve is always eligible" no longer
+   holds - `BRW-BB` stock is committed to customers and is never a Reserve source; pool Reserve
+   (own site pool first, then the others) and group-take from sibling `*-<group>` locations with
+   positive Available are what is left of Reserve.
+3. **Group borrow is new**: another sales order's own committed quantity at the ownership group's
+   locations, donor ranked below this line composes automatically, the same agent's own orders are
+   offered at any rank, and every take raises its own order-back (Order Inquiry Buy for the donor
+   line).
+4. **Cross-group borrow is capped** by a small-quantity threshold (qty or percent of that
+   location's free stock), configurable, rather than offered freely.
+5. **Whole-line, not partial**: a line's composition covers the WHOLE of Q or the line is one Buy;
+   "reserve half, buy half" is no longer a valid proposal.
+
 ### 3.4 Borrow and discontinued Buy
 
 Borrow requires exactly one approval: explicit confirmation by the CS actor confirming the

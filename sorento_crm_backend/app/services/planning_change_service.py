@@ -37,6 +37,18 @@ fixed properly rather than rediscovered by reading a bug report:
 * **`DATE_AND_QTY_CHANGED`** (both moved in one upload) is classified by DATE first: this
   build's own tie-break, because the section-0 table has no combined row and the two single
   changes disagree on suggestion.
+
+**A line's already-`placed` Buy is invisible to the board's own ladder** (the captain, 20
+Aug, diagnosing two live double-counts): `_proposal_for` asks `FulfilmentBoardService` to
+walk the ladder for the line's FULL open quantity, and the board reads nothing off
+`order_inquiry_rows` - it has no way to know part of that quantity is already covered by a
+real purchase order tagged through section G's "Place on PO". `_apply_placed_offset`
+relabels that much of the proposal's own Reserve/incoming rungs onto its Buy figure before
+the row is stored, so the composition still balances the line's full open quantity but the
+portion already bought reads as Buy - which `ProjectOrderInquiryService.refresh_for_decision`
+then nets against the placed row itself, raising nothing further for it. See
+`_inquiry_rows_and_buy_actioned` (reads `INQUIRY_PLACED` as actioned, same as `INQUIRY_ACTIONED`)
+and `scripts/repair_20aug_placed_double_counts.py` for the two live rows this corrects.
 """
 from __future__ import annotations
 
@@ -64,11 +76,13 @@ from app.models.project_so import (
     ALLOC_SOURCE_OTHER_LOCATION,
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
+    INQUIRY_PLACED,
     IV_ORDER,
     IV_RESERVE_AND_ORDER,
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
+    SOSupplyDecision,
 )
 from app.models.projects import Project
 from app.models.scm import ItemClassification
@@ -556,8 +570,23 @@ def _held_from_frozen(frozen_entry: dict, revision_no: int) -> dict:
 def _inquiry_rows_and_buy_actioned(
     db: Session, project_line_id: Optional[str]
 ) -> Tuple[List[dict], dict]:
+    """`buy_actioned` reads `INQUIRY_PLACED` as actioned too, not `INQUIRY_ACTIONED` alone.
+
+    The live "Place on PO" path (section G) is what actually moves a Buy row off
+    `raised` today - `mark_rows` (the only writer of `INQUIRY_ACTIONED`) is not called
+    for an ORDER row on the real workflow anymore. A predicate that recognised only
+    `actioned` read every placed row's Buy as still-open, which is what let a `qty_up`
+    reconfirm run the FULL ladder for a line that already had real placed supply (Case B,
+    the captain, 20 Aug: SRTWC287A-RL, placed 5, no active decision, `buy_actioned=false`
+    let the board propose Reserve 10 - 15 against a 10 line).
+
+    `"qty"` is the SUM of every currently placed-or-actioned Buy on the line (there can be
+    more than one, e.g. a cascade split across several PO lines) - `_apply_placed_offset`
+    below is what actually spends it, netting the board's own fresh proposal down to the
+    uncovered remainder.
+    """
     if not project_line_id:
-        return [], {"value": False, "po_number": None}
+        return [], {"value": False, "po_number": None, "qty": qty_text(_ZERO)}
     rows = (
         db.query(OrderInquiryRow)
         .filter(
@@ -576,17 +605,24 @@ def _inquiry_rows_and_buy_actioned(
         }
         for r in rows
     ]
-    actioned_buy = next(
-        (
-            r
-            for r in rows
-            if r.state == INQUIRY_ACTIONED and r.verb in (IV_ORDER, IV_RESERVE_AND_ORDER)
-        ),
-        None,
-    )
+    committed = [
+        r
+        for r in rows
+        if r.state in (INQUIRY_ACTIONED, INQUIRY_PLACED)
+        and r.verb in (IV_ORDER, IV_RESERVE_AND_ORDER)
+        # A row a PRIOR planning change already redirected to replenish the pool no
+        # longer serves this line - it must not be read back as still-placed cover for
+        # it, or a second pass would offset against the same PO twice.
+        and not r.redirected_to_pool
+    ]
+    actioned_buy = committed[0] if committed else None
+    placed_qty = sum((_dec(r.qty) for r in committed), _ZERO)
     return out, {
         "value": actioned_buy is not None,
-        "po_number": actioned_buy.spo_ref if actioned_buy else None,
+        # `po_ref` is the section-G placement tag (the modern field); `spo_ref` is kept as
+        # a fallback for whatever an older `actioned` row may have carried it in.
+        "po_number": (actioned_buy.po_ref or actioned_buy.spo_ref) if actioned_buy else None,
+        "qty": qty_text(placed_qty),
     }
 
 
@@ -630,6 +666,149 @@ def _proposal_for(
             ):
                 return contribution
     return None
+
+
+def _placed_offset_note(qty: Decimal, po_number: Optional[str]) -> str:
+    po_text = f" on {po_number}" if po_number else ""
+    return f"{qty_text(qty)} already placed{po_text}, kept as the buy"
+
+
+def _trim_sources_for_offset(
+    sources: List[dict], kind: str, take: Decimal
+) -> Tuple[List[dict], List[Tuple[Optional[str], Decimal]]]:
+    """Removes `take` from `sources`' own entries of `kind`, LARGEST-first - the same
+    convention `_confirm_payload_reduce` already trims Reserve/Borrow components by - so
+    the sources list keeps agreeing with whatever `_apply_placed_offset` just moved off
+    the matching aggregate. Returns the trimmed list and, in the order trimmed, each
+    cut's `(location, qty)` for `_annotate_trail_for_offset` to match against the trail.
+    """
+    if take <= _ZERO:
+        return sources, []
+    order = sorted(
+        (i for i, s in enumerate(sources) if s.get("kind") == kind),
+        key=lambda i: -_dec(sources[i].get("qty")),
+    )
+    remaining = take
+    cuts: List[Tuple[Optional[str], Decimal]] = []
+    out = list(sources)
+    drop: set = set()
+    for i in order:
+        if remaining <= _ZERO:
+            break
+        qty = _dec(sources[i].get("qty"))
+        cut = min(qty, remaining)
+        if cut <= _ZERO:
+            continue
+        cuts.append((sources[i].get("location"), cut))
+        left = qty - cut
+        if left > _ZERO:
+            out[i] = dict(sources[i], qty=qty_text(left))
+        else:
+            drop.add(i)
+        remaining -= cut
+    if drop:
+        out = [s for idx, s in enumerate(out) if idx not in drop]
+    return out, cuts
+
+
+def _annotate_trail_for_offset(
+    trail: List[dict], cuts: List[Tuple[Optional[str], Decimal]], trail_kinds: frozenset,
+    po_number: Optional[str],
+) -> List[dict]:
+    """Narrates what `_trim_sources_for_offset` just did, on the trail step that matches
+    each cut's location - so a step reading "pool took 432 at BRW" does not stand next to
+    a Buy that quietly grew by the same 432 with nothing on screen explaining why. The
+    trail's own `taken`/`remaining_after` are left alone: they are a historical, honest
+    record of what the ladder actually walked; only a `note` is appended, saying what
+    happened to that quantity AFTER the ladder ran."""
+    if not cuts or not trail:
+        return trail
+    out = [dict(step) for step in trail]
+    pending = list(cuts)
+    for step in out:
+        if not pending or step.get("kind") not in trail_kinds:
+            continue
+        match_idx = next(
+            (idx for idx, c in enumerate(pending) if c[0] == step.get("location")), None
+        )
+        if match_idx is None:
+            continue
+        _location, qty = pending.pop(match_idx)
+        note = _placed_offset_note(qty, po_number)
+        existing = step.get("note")
+        step["note"] = f"{existing}; {note}" if existing else note
+    return out
+
+
+def _apply_placed_offset(
+    proposal: dict, placed_qty: Decimal, po_number: Optional[str] = None
+) -> dict:
+    """Reconciles a fresh proposal against quantity this line's already PLACED on a real
+    purchase order, which the board's own ladder cannot see (`_proposal_for`'s docstring).
+
+    **The captain's ruling, 21 Aug 2026** (reversing this function's first cut, on
+    SO397450 / SRT382-6-DIY: an advance whose proposal took 432 from the pool at BRW while
+    432 was already placed on a PO to the line's own bin): "instead of taking the 432 from
+    this PO to BRW-BB, it needs to be placed to the BRW: now that the advancement has
+    taken the stock from BRW, there needs to be some replenishment to BRW, hence this
+    order inquiry should change to location BRW, and it takes the outstanding PO to BRW."
+
+    So when the fresh proposal itself draws on the shared pool, **the pool take STANDS** -
+    the composition keeps that Reserve, and the placed PO(s) behind the overlapping
+    quantity are REDIRECTED (by `_apply_placed_redirect`, at Apply, once a line's
+    composition is actually posted) to replenish the pool instead of being relabelled onto
+    Buy as if they no longer existed. `redirect_qty` below is that overlap - never more
+    than `reserve`, which is already the ladder's own capacity-capped, affordable figure,
+    so a redirect never claims more pool cover than the line was actually offered.
+
+    **The OLD relabelling still applies to whatever `placed_qty` the pool cannot cover,
+    and it can now only ever draw on `incoming`, never on `reserve`.** `redirect_qty =
+    min(placed_qty, reserve)` means `reserve - redirect_qty` is ALWAYS zero at the exact
+    moment there is anything left to relabel (`remaining = placed_qty - redirect_qty >
+    0`): either `placed_qty` fit entirely inside `reserve` (`redirect_qty == placed_qty`,
+    `remaining == 0`, nothing to relabel) or it did not (`redirect_qty == reserve`, so
+    `reserve` is fully spent on the redirect already). A pure-Buy proposal with no pool
+    source at all (`reserve == 0`) falls straight into this: `redirect_qty` is 0 and the
+    whole `placed_qty` is `remaining`, trimmed off `incoming`/timely SPO and added onto
+    Buy exactly as before the ruling, with `sources`/`trail` trimmed in step
+    (`_trim_sources_for_offset` / `_annotate_trail_for_offset`) so a stored proposal's own
+    trail narrative never again claims a rung took stock the aggregate no longer credits
+    it with (the original defect this function shipped with, on the same live row).
+    """
+    if placed_qty <= _ZERO:
+        return proposal
+    out = dict(proposal)
+    reserve = _dec(out.get("qty_proposed_reserve"))
+    incoming = _dec(out.get("qty_proposed_incoming"))
+    buy = _dec(out.get("qty_proposed_buy"))
+    sources = list(out.get("sources") or [])
+    trail = list(out.get("trail") or [])
+
+    # The overlap the pool can actually stand in for. Capped at `reserve` (never invents
+    # cover the ladder did not offer) and at `placed_qty` (never redirects more than was
+    # really placed). `reserve` itself is untouched either way - the redirect acts on the
+    # real PO rows at Apply (`_apply_placed_redirect`), never on this figure.
+    redirect_qty = min(placed_qty, reserve)
+    remaining = placed_qty - redirect_qty
+
+    if remaining > _ZERO:
+        take = min(remaining, incoming)
+        incoming -= take
+        buy += take
+        if take > _ZERO:
+            sources, cuts = _trim_sources_for_offset(sources, "timely_spo", take)
+            trail = _annotate_trail_for_offset(trail, cuts, frozenset({"incoming"}), po_number)
+
+    out["qty_proposed_reserve"] = qty_text(reserve)
+    out["qty_proposed_incoming"] = qty_text(incoming)
+    out["qty_proposed_buy"] = qty_text(buy)
+    out["sources"] = sources
+    out["trail"] = trail
+    # Read back at Apply (`_apply_placed_redirect`) to know how much already-placed PO
+    # quantity the pool take covers, and so needs redirecting rather than leaving on the
+    # line. "0" (never absent) so a reader never has to guess whether the key was skipped.
+    out["placed_redirect_qty"] = qty_text(redirect_qty)
+    return out
 
 
 def _build_row(
@@ -695,6 +874,10 @@ def _build_row(
         proposal = _json_safe(
             _proposal_for(db, board_cache, so_number, entry["core_line_id"], project_line_id)
         )
+        if proposal:
+            proposal = _apply_placed_offset(
+                proposal, _dec(buy_actioned.get("qty")), buy_actioned.get("po_number")
+            )
 
     board_link = _board_link(so_number, c.item_code, new_date or old_date)
 
@@ -964,6 +1147,24 @@ def composition_from_proposal(proposal: Optional[dict]) -> dict:
     sources = proposal.get("sources") or []
     incoming = _proposal_qty(proposal.get("qty_proposed_incoming"), sources, "timely_spo")
     reserve_qty = _proposal_qty(proposal.get("qty_proposed_reserve"), sources, "reserve")
+    # The cheap guard (the captain, 20 Aug, diagnosing SO397450 / SRT382-6-DIY): the
+    # aggregate is authoritative - `_proposal_qty` above already prefers it over the
+    # sources' own total whenever it is present - but a mismatch must never pass in
+    # silence. Left unlogged, a future producer bug that stops keeping `sources`/`trail`
+    # in step with the aggregate (the defect `_apply_placed_offset` shipped with) would
+    # once again change what Apply writes without anything on screen or in the logs
+    # disagreeing with it first.
+    sources_reserve_total = sum(
+        (_dec(s.get("qty")) for s in sources if s.get("kind") == "reserve"), _ZERO
+    )
+    if sources_reserve_total != reserve_qty:
+        logger.warning(
+            "planning change composition: sources reserve total %s disagrees with the "
+            "proposed reserve %s on row %s - trusting the aggregate.",
+            qty_text(sources_reserve_total),
+            qty_text(reserve_qty),
+            proposal.get("key") or project_line_id,
+        )
     owed = _dec(
         proposal.get("qty_outstanding")
         if proposal.get("qty_outstanding") is not None
@@ -1300,6 +1501,70 @@ def _pool_code_for_core_line(
     return code
 
 
+def _apply_placed_redirect(
+    db: Session,
+    row: PlanningChangeRow,
+    batch: PlanningChangeBatch,
+    so_number: str,
+    pool_cache: Dict[str, Optional[str]],
+) -> int:
+    """The captain's ruling, 21 Aug 2026: a line confirmed AS PROPOSED whose fresh
+    proposal drew on the shared pool for quantity this line already had PLACED on a real
+    purchase order does not relabel that PO onto Buy - the pool take stands, and the
+    placed row is REDIRECTED to replenish the pool instead ("it takes the outstanding PO
+    to BRW"). Runs only for `decision == "confirm"` (never `amend`): that is the one case
+    where `row.composition_json` IS `composition_from_proposal(row.proposal_json)`
+    verbatim, so the fresh proposal's own `placed_redirect_qty` is still the true basis
+    for the composed Reserve - an amendment may have removed or resized that Reserve by
+    hand, and this function has no way to tell that apart from one the planner meant.
+
+    Redirects WHOLE rows only, largest-first (`_confirm_payload_reduce`'s own
+    convention), up to the budget `_apply_placed_offset` computed. A row bigger than what
+    is left of the budget is left alone rather than split - the genuine leftover, if the
+    budget cannot be exactly matched by whole rows, still nets to a `CANCEL_BALANCE`
+    exception at `refresh_for_decision`, which is the honest answer for placed quantity
+    the redirect could not actually reach.
+    """
+    proposal = row.proposal_json or {}
+    redirect_qty = _dec(proposal.get("placed_redirect_qty"))
+    if redirect_qty <= _ZERO or not row.project_line_id:
+        return 0
+    pool_code = _pool_code_for_core_line(db, row.core_line_id, pool_cache)
+    if not pool_code:
+        return 0
+    candidates = (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id == row.project_line_id,
+            OrderInquiryRow.state.in_((INQUIRY_ACTIONED, INQUIRY_PLACED)),
+            OrderInquiryRow.verb.in_((IV_ORDER, IV_RESERVE_AND_ORDER)),
+            OrderInquiryRow.redirected_to_pool.is_(False),
+        )
+        .order_by(OrderInquiryRow.qty.desc(), OrderInquiryRow.created_at.asc())
+        .all()
+    )
+    remaining = redirect_qty
+    count = 0
+    for candidate in candidates:
+        if remaining <= _ZERO:
+            break
+        qty = _dec(candidate.qty)
+        if qty > remaining:
+            continue
+        previous_location = candidate.stock_location or "no location"
+        note = (
+            f"Redirected to replenish {pool_code} (was {previous_location}) - planning "
+            f"change batch {str(batch.id)[:8]}, {so_number} line {row.line_no or '?'}: "
+            "the pool now covers this need."
+        )
+        candidate.redirected_to_pool = True
+        candidate.stock_location = pool_code
+        candidate.note = f"{candidate.note}\n{note}" if candidate.note else note
+        remaining -= qty
+        count += 1
+    return count
+
+
 def _release_note(so_number: str, line_no: Optional[int], from_date, to_date, pool_code) -> str:
     moved = (
         f"delivery moved {from_date} -> {to_date}"
@@ -1313,9 +1578,11 @@ def _release_note(so_number: str, line_no: Optional[int], from_date, to_date, po
 def _release_inquiry_rows(
     db: Session, project_line_id: Optional[str], note: str, pool_code: Optional[str]
 ) -> int:
-    """Every non-cancelled OI row the released line already raised: a non-`actioned` one
-    moves to the pool location (it is no longer bought for this line); an `actioned` one
-    (already bought) keeps its location and gets the note only."""
+    """Every non-cancelled OI row the released line already raised: a non-`actioned`,
+    non-`placed` one moves to the pool location (it is no longer bought for this line);
+    an `actioned` or `placed` one (already bought) keeps its location and gets the note
+    only - a placed row is tagged to a real PO line for a specific warehouse, and
+    relocating it would disagree with the purchase order it is actually tagged to."""
     if not project_line_id:
         return 0
     rows = (
@@ -1329,7 +1596,7 @@ def _release_inquiry_rows(
     count = 0
     for row in rows:
         row.note = f"{row.note}\n{note}" if row.note else note
-        if row.state != INQUIRY_ACTIONED and pool_code:
+        if row.state not in (INQUIRY_ACTIONED, INQUIRY_PLACED) and pool_code:
             row.stock_location = pool_code
         count += 1
     return count
@@ -1443,6 +1710,10 @@ def _oi_demand_rows(
 
 
 def _retire_inquiry_rows(db: Session, project_line_id: Optional[str], reason: str) -> int:
+    """`closed` (AC-R06): an `actioned` OR `placed` row is left alone bar a note - both are
+    real supply already bought, and cancelling a placed row would silently un-book it
+    while the purchase order it is tagged to (`po_ref`/`po_line_id`) still stands. Only a
+    still-raised row - nothing purchasing has acted on yet - is actually cancelled."""
     if not project_line_id:
         return 0
     rows = (
@@ -1456,7 +1727,7 @@ def _retire_inquiry_rows(db: Session, project_line_id: Optional[str], reason: st
     count = 0
     for row in rows:
         note = f"{row.note}\n{reason}" if row.note else reason
-        if row.state == INQUIRY_ACTIONED:
+        if row.state in (INQUIRY_ACTIONED, INQUIRY_PLACED):
             row.note = note
         else:
             row.state = INQUIRY_CANCELLED
@@ -1498,6 +1769,62 @@ def _notify_purchasing(
         return False
 
 
+def _bystander_returned_to_review(
+    db: Session,
+    supply,
+    order: ProjectSalesOrder,
+    so_number: str,
+    previous_decision,
+    previous_frozen: Dict[str, dict],
+    previous_reason: Optional[str],
+    handled_line_ids: set,
+    revised: bool,
+) -> List[dict]:
+    """The applied-order surface's answer to B1 (code review, 20 Aug 2026): applying a batch
+    that (deliberately, module docstring) drops uncarried lines back to undecided used to say
+    nothing about it - `applied_orders`/`failed_orders` alone can't tell a clean apply from
+    one that just silently returned nine bystander lines to review. This does NOT change
+    what gets carried (still nothing, from a challenged revision, or a materially-superseded
+    one) - it only NAMES what already happened, derived from the decision rows themselves
+    rather than guessed: a line the PREVIOUS revision (whatever its state - `previous_decision`
+    is the order's LATEST decision as it stood before this apply, ACTIVE or CHALLENGED alike)
+    covered that the new one (or, for a material-change supersede, no revision at all) does
+    not, and that THIS batch never decided about at all - `handled_line_ids` already covers
+    kept/confirmed/replanned/released/retired/reduced lines, which are visible on the batch's
+    own rows and are not "silent". `previous_reason` is read by the caller AFTER the apply
+    runs, by id, so it reflects the genuine drift/supersede reason `confirm()`/
+    `supersede_for_material_change()` write onto this row - not a caption read too early."""
+    if not revised or previous_decision is None or not previous_frozen:
+        return []
+    pso_id = str(order.id)
+    new_active = supply.active_decision(pso_id)
+    new_covered_ids = set((supply.frozen_lines_of(new_active) if new_active else {}).keys())
+    bystander_ids = set(previous_frozen.keys()) - new_covered_ids - handled_line_ids
+    if not bystander_ids:
+        return []
+    line_nos = sorted(
+        r[0]
+        for r in db.query(ProjectSalesOrderLine.line_no)
+        .filter(ProjectSalesOrderLine.id.in_(list(bystander_ids)))
+        .all()
+        if r[0] is not None
+    )
+    reason = previous_reason or (
+        "The confirmed revision no longer matched the sales order."
+    )
+    return [
+        {
+            "so_number": so_number,
+            # Derived from `line_nos`, not `bystander_ids`: a bystander line with no
+            # `line_no` is dropped from the list, and the count must match what is shown,
+            # never a larger number the reader cannot account for.
+            "line_count": len(line_nos),
+            "line_nos": line_nos,
+            "reason": reason,
+        }
+    ]
+
+
 def _apply_one_order(
     db: Session,
     supply,
@@ -1519,6 +1846,19 @@ def _apply_one_order(
         else (latest_decision.revision_no if latest_decision else 0)
     )
     frozen = supply.frozen_lines_of(active_decision)
+    # Fix-cluster (20 Aug 2026, S4): `latest_decision`, not `active_decision`, is what the
+    # bystander report needs. The headline case IS a CHALLENGED revision - a drift challenge
+    # leaves it the latest row but no longer ACTIVE, so `active_decision` reads None and the
+    # report silently has nothing to compare against, in exactly the case it exists to catch.
+    # `previous_frozen_for_report` is read here, before `confirm()`/`supersede_for_material_
+    # change()` run below - both call `challenge_if_drifted`/`_write_decision`, which mutate
+    # THIS SAME ORM-tracked row in place, and a drift challenge can drop it out of
+    # `active_decision` entirely. The REASON, by contrast, is read back by id AFTER the apply
+    # (below) rather than off this pre-run reference: the genuine drift reason is only known
+    # once `challenge_if_drifted` runs inside `confirm()`, so reading it now would just get
+    # None and hide it behind the generic fallback every time.
+    previous_frozen_for_report = supply.frozen_lines_of(latest_decision)
+    previous_decision_id_for_report = str(latest_decision.id) if latest_decision else None
 
     accepted = [
         r
@@ -1533,6 +1873,7 @@ def _apply_one_order(
         "lines_confirmed": 0,
         "inquiry_counts": {},
         "notified": False,
+        "returned_to_review": [],
     }
     if not accepted:
         return empty_result
@@ -1557,6 +1898,7 @@ def _apply_one_order(
     retired = 0
     confirmed = 0
     handled_line_ids: set = set()
+    pool_cache: Dict[str, Optional[str]] = {}
     # Every covered line this batch means to DROP, not carry (the un-decide seam,
     # `ProjectSupplyService.confirm`'s docstring) - a `release`/`replan`/`retire` row is
     # deliberately excluded from `confirm_lines` below so it returns to the board
@@ -1568,7 +1910,16 @@ def _apply_one_order(
     for line_id, frozen_entry in frozen.items():
         row = by_line_id.get(line_id)
         if row is None:
-            confirm_lines.append(_confirm_payload(line_id, frozen_entry))
+            # This line has no row in THIS batch - nobody on the board decided anything
+            # about it. Leave it OUT of the payload entirely rather than re-naming it
+            # from its frozen snapshot: `confirm()`'s own carry-forward rule (13.4, "the
+            # union is the server's") already copies an unnamed covered line into the
+            # new revision verbatim - same snapshot, same holds, no re-validation against
+            # live facts. Naming every covered line here used to force the WHOLE order
+            # through `_facts_for`'s live check on every apply, so a batch that decided
+            # ONE line failed on unrelated bystander lines it was never asked to move
+            # (live: SO391698 rev 2, "9 lines cannot be confirmed" from a 1-line batch,
+            # 20 August 2026).
             continue
         handled_line_ids.add(line_id)
         # A `confirm`/`amend` decision composes the line NOW, whatever `suggested` says -
@@ -1577,6 +1928,8 @@ def _apply_one_order(
         if row.decision in ("confirm", "amend") and row.composition_json:
             confirm_lines.append(row.composition_json)
             confirmed += 1
+            if row.decision == "confirm":
+                _apply_placed_redirect(db, row, batch, so_number, pool_cache)
             continue
         if row.suggested in ("replan", "release"):
             # AC-R06 (release): the WHOLE line returns to the board, not just the reserve
@@ -1608,6 +1961,8 @@ def _apply_one_order(
         if row.decision in ("confirm", "amend") and row.composition_json:
             confirm_lines.append(row.composition_json)
             confirmed += 1
+            if row.decision == "confirm":
+                _apply_placed_redirect(db, row, batch, so_number, pool_cache)
 
     revised = False
     revision_no = current_revision
@@ -1624,6 +1979,22 @@ def _apply_one_order(
             "Every covered line moved to Replan or Retire in a planning change batch.",
         )
         revised = True
+
+    # Read the previous revision's OWN reason back by id, now that `confirm()`/
+    # `supersede_for_material_change()` have run: the genuine drift reason
+    # (`challenge_if_drifted`) or supersede reason is only written during that call, so
+    # reading it any earlier would just see None and hide it behind the generic fallback.
+    previous_reason_for_report = (
+        db.query(SOSupplyDecision.superseded_reason)
+        .filter(SOSupplyDecision.id == previous_decision_id_for_report)
+        .scalar()
+        if previous_decision_id_for_report
+        else None
+    )
+    returned_to_review = _bystander_returned_to_review(
+        db, supply, order, so_number, latest_decision, previous_frozen_for_report,
+        previous_reason_for_report, handled_line_ids, revised,
+    )
 
     demand_rows, inquiry_counts = _oi_demand_rows(db, live, so_number)
     if demand_rows:
@@ -1653,6 +2024,7 @@ def _apply_one_order(
         "lines_confirmed": confirmed,
         "inquiry_counts": inquiry_counts,
         "notified": notified,
+        "returned_to_review": returned_to_review,
     }
 
 
@@ -1682,7 +2054,12 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
                 if r.applied_state == PLANNING_CHANGE_STATE_APPLIED
             }
         )
-        return {"applied_orders": applied_orders, "failed_orders": [], "already_applied": True}
+        return {
+            "applied_orders": applied_orders,
+            "failed_orders": [],
+            "already_applied": True,
+            "returned_to_review": (batch.result_json or {}).get("returned_to_review", []),
+        }
 
     by_order: Dict[str, List[PlanningChangeRow]] = defaultdict(list)
     for r in rows:
@@ -1697,6 +2074,7 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
     lines_replanned = 0
     lines_confirmed = 0
     purchasing_notified = False
+    returned_to_review: List[dict] = []
 
     for pso_id, order_rows in by_order.items():
         order = orders_map.get(pso_id)
@@ -1739,6 +2117,7 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
         for verb, count in outcome["inquiry_counts"].items():
             inquiry_counts[verb] = inquiry_counts.get(verb, 0) + count
         purchasing_notified = purchasing_notified or outcome["notified"]
+        returned_to_review.extend(outcome["returned_to_review"])
 
     # A batch is DONE only once it has written something. Stamping `applied_at` when
     # `orders_revised` is empty - nothing was actually written, whether because every
@@ -1764,6 +2143,7 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
             "lines_replanned": lines_replanned,
             "lines_confirmed": lines_confirmed,
             "purchasing_notified": purchasing_notified,
+            "returned_to_review": returned_to_review,
         }
     db.flush()
 
@@ -1771,4 +2151,5 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
         "applied_orders": applied_orders,
         "failed_orders": failed_orders,
         "already_applied": False,
+        "returned_to_review": returned_to_review,
     }

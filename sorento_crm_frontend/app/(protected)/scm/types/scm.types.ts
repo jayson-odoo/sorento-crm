@@ -290,6 +290,13 @@ export interface SalesOrder {
   status: SalesOrderStatus;
   order_date: string;
   requested_delivery_date: string | null;
+  /** Who sold it - the `sales_agents` master. The id rides along only so an edit select
+   *  can pre-select the current agent; a person reads `sales_agent_code` / `_label`,
+   *  never the id. Absent (all three null) when the order names no agent. */
+  sales_agent_id?: string | null;
+  sales_agent_code?: string | null;
+  /** `sales_agents.person_label` - the human the code belongs to, when set. */
+  sales_agent_label?: string | null;
   total_qty: number;
   /** Undelivered qty = committed demand contributed to the dashboard. */
   committed_qty: number;
@@ -304,6 +311,9 @@ export interface SalesOrder {
   internal_note?: string | null;
   /** Every distinct location its lines ship from. Plural: one order can land in two. */
   stock_locations?: string[];
+  /** The planning class this order was classified into, or `null` when nobody has ever
+   *  said. Distinct from `order_type_label` - see `lib/demandClass.ts`. */
+  demand_class?: 'project' | 'retail' | null;
   /** The purchase orders its lines wait on. Present on the LIST, absent on a single read. */
   linked_purchase_orders?: LinkedPurchaseOrder[];
   awaiting_purchase_orders?: number;
@@ -325,12 +335,35 @@ export interface SalesOrderFormData {
   priority: SalesOrderPriority;
   requested_delivery_date?: string | null;
   /**
-   * Omitted entirely on an update where the person never touched a line - a header-only
-   * edit (order type, customer, dates) must not resend lines, because the BE's update
-   * path fully replaces whatever `lines` it is given, dropping any warehouse assignment
-   * a line held. Always present (non-empty) on create.
+   * `undefined` leaves the stored agent alone (the field was never sent); `null` or `''`
+   * explicitly CLEARS it; an id sets it. Always sent on the detail page's save, so the
+   * "leave alone" case in practice only applies to a payload that never sets this key -
+   * see `toWritePayload`.
    */
-  lines?: { sku: string; qty_ordered: number; uom: string }[];
+  sales_agent_id?: string | null;
+  /**
+   * Omitted entirely on an update where the person never touched a line - a header-only
+   * edit (order type, customer, dates) must not resend lines: the BE upserts by `id` (or
+   * SKU when no `id` is given), and a KEY left off a sent line (`warehouse_code` /
+   * `required_date` / `uom`) leaves that line's stored value alone rather than clearing
+   * it. Always present (non-empty) on create.
+   */
+  lines?: {
+    /** The existing line's id, carried on an edit so the BE matches by id rather than
+     *  falling back to SKU. Absent on create, where the line does not exist yet. */
+    id?: string;
+    sku: string;
+    qty_ordered: number;
+    /** Omitted leaves the line's stored UoM alone; `null`/`''` clears it (falls back to
+     *  the product's base UoM); a value sets an override. */
+    uom?: string | null;
+    /** Warehouse CODE, never the UUID. Omitted leaves the line's warehouse alone; `null`/
+     *  `''` clears it; a code sets it. */
+    warehouse_code?: string | null;
+    /** ISO `yyyy-mm-dd`. Same omitted/clear/set semantics as `warehouse_code`. Shown on
+     *  the detail page as "Delivery date". */
+    required_date?: string | null;
+  }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +398,8 @@ export interface PurchaseOrderLine {
   qty_ordered: number;
   qty_received: number;
   uom: string;
+  /** The line's own destination - location is a line fact, never a header one. */
+  warehouse_code?: string | null;
 }
 
 export interface PurchaseOrder {
@@ -393,8 +428,9 @@ export interface PurchaseOrder {
   is_on_order?: boolean;
   /** How the PO originated - `recommendation` = drafted from an accepted reorder
    *  recommendation (Slice B); `import` = arrived through the purchase-history upload;
+   *  `crm` = created by "Create SPO" off an inbound shipment (PLAN-scm-proforma-to-spo.md);
    *  `manual` = created directly. */
-  source?: 'recommendation' | 'import' | 'manual';
+  source?: 'recommendation' | 'import' | 'crm' | 'manual';
   /** Goods-receipt reference once a GR has been created from this PO (M4-D6). */
   gr_reference?: string | null;
 }

@@ -32,9 +32,11 @@ export function PlanLinesSection({
   decidedFilter: decidedFilterProp,
   onDecidedFilterChange,
   onTotalsChange,
+  onDecisionProgressChange,
   secondaryActions,
   decisionsReadOnly = false,
   readOnlyReason = null,
+  groupByChannel = false,
 }: {
   runId: string | null;
   statusFilter?: PlanLineStatus | null;
@@ -44,14 +46,27 @@ export function PlanLinesSection({
   decidedFilter?: 'all' | 'undecided' | 'decided';
   onDecidedFilterChange?: (next: 'all' | 'undecided' | 'decided') => void;
   /** Reported every time the decided/undecided split changes, so a caller (the decision-
-   *  progress tile) can show it without re-deriving decisions of its own. */
+   *  progress tile) can show it without re-deriving decisions of its own. Cash figures
+   *  only, since S16: the decided/undecided COUNT is `onDecisionProgressChange` below. */
   onTotalsChange?: (totals: PlanTotals) => void;
+  /** S16: the header's own "N of Total made", counted server-side (`usePlanLines`'
+   *  `decidedCount`/`totalDecidableCount`, off `GET .../plan-row-decisions`) rather than
+   *  derived from whatever is currently on screen - a filtered/grouped view must not
+   *  change what the header reports. */
+  onDecisionProgressChange?: (progress: { decided: number; total: number }) => void;
   /** Forwarded to `PlanLinesGrid`'s own toolbar (quiet links to Order summary / Plan
    *  exceptions / PO worklist, next to Filters / Columns / Export). */
   secondaryActions?: ToolbarAction[];
-  /** The run is decided at the Product grain, or is legacy: read and drill only. */
+  /** The run predates the front-planning contract: read and drill only (S16 - grain no
+   *  longer locks the plan row, only a legacy run does; see `lib/planGrain.ts`'s
+   *  `legacyLockReason`). */
   decisionsReadOnly?: boolean;
   readOnlyReason?: string | null;
+  /** Forwarded to `PlanLinesGrid` (5.3): group the grid into one row per (product,
+   *  channel) instead of one row per (product, warehouse). The caller derives this from
+   *  the run's own stamped `decision_grain` (`lib/planGrain.ts`'s `shouldGroupByChannel`),
+   *  never decided here. */
+  groupByChannel?: boolean;
 }) {
   const [ownStatusFilter, setOwnStatusFilter] = useState<PlanLineStatus | null>(null);
   const statusFilter = statusFilterProp !== undefined ? statusFilterProp : ownStatusFilter;
@@ -86,9 +101,12 @@ export function PlanLinesSection({
   }, [planLines.lines, statusFilter]);
 
   // Reported over `visibleLines`, NOT `planLines.lines`: the grid renders `visibleLines`
-  // (manual-mode hides not-breached covered rows by default, above), so a tile counting
-  // every line - including ones the buyer cannot see under the current filter - could read
-  // "30 of 40, 10 left" with zero of those ten rows anywhere on screen.
+  // (manual-mode hides not-breached covered rows by default, above), so cash figures
+  // counting every line - including ones the buyer cannot see under the current filter -
+  // could report cost for rows nowhere on screen. Always the per-warehouse (ungrouped)
+  // list, even under `groupByChannel`: S16 records a decision on the underlying member
+  // recommendation ids, never a synthetic `group:<product_id>` key, so counting the
+  // grouped rows here would look the decisions up under a key the map never carries.
   //
   // Keyed on the PRIMITIVE fields, not the totals object itself: a fresh `useMemo` result
   // whenever `visibleLines` or `decisions` change identity, and a hand-rolled test double
@@ -103,6 +121,14 @@ export function PlanLinesSection({
   useEffect(() => {
     onTotalsChange?.({ decided, undecided, buying, usingStock, usingPo, skipped, units, cost, unpriced });
   }, [decided, undecided, buying, usingStock, usingPo, skipped, units, cost, unpriced, onTotalsChange]);
+
+  // S16: the header's "N of Total made" is the SERVER's own count (`GET
+  // .../plan-row-decisions`), not derived from whatever is filtered/grouped on screen -
+  // see `onDecisionProgressChange`'s own doc above.
+  const { decidedCount, totalDecidableCount } = planLines;
+  useEffect(() => {
+    onDecisionProgressChange?.({ decided: decidedCount, total: totalDecidableCount });
+  }, [decidedCount, totalDecidableCount, onDecisionProgressChange]);
 
   if (planLines.isLoading) {
     return <Skeleton className="h-72 w-full rounded-xl" />;
@@ -135,6 +161,7 @@ export function PlanLinesSection({
         secondaryActions={secondaryActions}
         decisionsReadOnly={decisionsReadOnly}
         readOnlyReason={readOnlyReason}
+        groupByChannel={groupByChannel}
         lines={visibleLines}
         decisions={planLines.decisions}
         onDecide={(line, next) => planLines.decide(line, next)}
@@ -144,8 +171,10 @@ export function PlanLinesSection({
         cheaperFor={planLines.cheaperFor}
         levelFor={planLines.levelFor}
         onAmendLevel={planLines.amendLevel}
+        onAmendMoq={planLines.updateMoq}
         poFor={planLines.poFor}
         trendFor={planLines.trendFor}
+        channelTrendFor={planLines.channelTrendFor}
         trendSeriesMonths={planLines.trendSeriesMonths}
         purchaseTrendFor={planLines.purchaseTrendFor}
         purchaseTrendWindowMonths={planLines.purchaseTrendWindowMonths}

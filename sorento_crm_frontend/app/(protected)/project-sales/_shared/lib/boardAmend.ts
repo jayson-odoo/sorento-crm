@@ -24,6 +24,7 @@ import type {
 import {
   fromMinor,
   toMinor,
+  type DraftBorrow,
   type DraftLine,
   type DraftReserve,
 } from './supplyComposition';
@@ -35,10 +36,11 @@ import {
  * for the same reason `confirmLinesFor` reads them: the board proposes what the sheet proposes,
  * pool and all, so re-deriving a composition here would be a second, worse allocator.
  *
- * THE LINE'S OWN LOCATION IS ALWAYS A ROW, even when the proposal reserved nothing there. That
- * is the row a planner most often wants - "there is stock at my own warehouse, reserve it
- * instead of buying" - and it is precisely the one a form built from the proposal alone would
- * not have.
+ * Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E rule 7): the line's own
+ * location is NEVER a Reserve source any more, so it is no longer forced into the editor
+ * as a row - every Reserve row here is a pool or a group-take sibling the proposal itself
+ * named. Group borrow and cross-group borrow (rules 4/5) are now AUTO-PROPOSED too, and
+ * arrive as `kind: 'borrow'` sources the same way a Reserve does.
  *
  * ON A COVERED LINE THE FROZEN DECISION WINS, because there is no proposal to seed from: the
  * board proposes nothing for a line an active decision already covers. Amending it opens on
@@ -50,9 +52,6 @@ export function amendDraftFrom(contribution: BoardContribution): DraftLine {
   if (frozen) return frozenDraft(contribution, frozen);
   const reserveSources = contribution.sources.filter(
     (source) => source.kind === 'reserve',
-  );
-  const proposedReserve = numberOr(contribution.qty_proposed_reserve, () =>
-    sumSources(contribution, 'reserve'),
   );
 
   const rows: DraftReserve[] = [];
@@ -70,31 +69,35 @@ export function amendDraftFrom(contribution: BoardContribution): DraftLine {
       reason: source.reason,
     });
   }
-  // Nothing addressable came back but the server still proposed a Reserve: put it on the
-  // line's own location, which is the only warehouse this side can name for it.
-  if (rows.length === 0 && proposedReserve > 0 && contribution.fulfilment_warehouse_id) {
-    rows.push({
-      key: `reserve-${contribution.fulfilment_location ?? contribution.fulfilment_warehouse_id}`,
-      location: contribution.fulfilment_location ?? null,
-      warehouse_id: contribution.fulfilment_warehouse_id,
-      qty: fromMinor(proposedReserve),
-      reason: '',
-    });
-  }
-  const ownId = contribution.fulfilment_warehouse_id;
-  const ownCode = contribution.fulfilment_location;
-  const hasOwn = rows.some(
-    (row) => row.warehouse_id === ownId || (Boolean(ownCode) && row.location === ownCode),
+  // Nothing addressable came back but the server still proposed a Reserve. Ladder v2
+  // (section E rule 7) no longer offers the line's own location - the only Reserve
+  // sources left are the pool and a group-take sibling, both of which the loop above
+  // already carried over by warehouse_id - so there is nowhere left to invent a row at.
+
+  // Ladder v2's group borrow / cross-group borrow rungs (section E rules 4/5) are now
+  // AUTO-PROPOSED, unlike the old ladder's Borrow: a source of kind `borrow` on the
+  // proposal is something the engine already composed and named a donor for, and
+  // dropping it here (as the old "the board proposes no Borrow" comment did) silently
+  // lost it the instant Amend was opened.
+  const borrowSources = contribution.sources.filter(
+    (source) => source.kind === 'borrow' && source.warehouse_id,
   );
-  if (!hasOwn && ownId) {
-    rows.unshift({
-      key: `reserve-${ownCode ?? ownId}`,
-      location: ownCode ?? null,
-      warehouse_id: ownId,
-      qty: '0',
-      reason: '',
-    });
-  }
+  const borrowRows: DraftBorrow[] = borrowSources.map((source, index) => ({
+    key: `borrow-${source.location ?? source.warehouse_id}-${index}`,
+    source: 'other_location',
+    warehouse_code: source.location ?? '',
+    warehouse_id: source.warehouse_id as string,
+    donor_project_ref: null,
+    donor_project_id: null,
+    qty: source.qty,
+    reason: source.reason,
+    donor_impact: { free_before: '0', free_after_full_borrow: '0', committed_qty: '0' },
+    donor_core_line_id: source.donor_core_line_id ?? null,
+    donor_so_number: source.donor_so_number ?? null,
+    donor_line_no: source.donor_line_no ?? null,
+    donor_agent_code: source.donor_agent_code ?? null,
+    same_agent: source.same_agent ?? false,
+  }));
 
   return {
     project_line_id: contribution.project_line_id ?? '',
@@ -109,9 +112,10 @@ export function amendDraftFrom(contribution: BoardContribution): DraftLine {
       ),
     ),
     reserve: rows,
-    // The board proposes no Borrow, on either surface: it needs a donor and a reason from a
-    // person (AC-B09). The editor is where that person supplies both.
-    borrow: [],
+    // The engine's own auto-proposed borrows (group / cross-group), carried into the
+    // editor exactly as it composed them; a person still supplies any FURTHER borrow
+    // with its own reason (AC-B09).
+    borrow: borrowRows,
     buy_qty: fromMinor(
       numberOr(contribution.qty_proposed_buy, () => sumSources(contribution, 'buy')),
     ),
@@ -184,6 +188,14 @@ function frozenDraft(
           free_after_full_borrow: '0',
           committed_qty: '0',
         },
+      // Ladder v2 group borrow (section E.4): the frozen row already names its donor
+      // line, carried through so re-approving it still checks the live commitment.
+      donor_core_line_id: row.donor_core_line_id ?? null,
+      donor_so_number: row.donor_so_number ?? null,
+      donor_line_no: row.donor_line_no ?? null,
+      donor_agent_code: row.donor_agent_code ?? null,
+      same_agent: row.same_agent ?? false,
+      donor_required_date: row.donor_required_date ?? null,
     })),
     buy_qty: frozen.buy_qty,
     buy_reason: frozen.buy_reason ?? '',
@@ -225,6 +237,18 @@ export function borrowCandidatesOf(contribution: BoardContribution): BorrowCandi
         free_after_full_borrow: '0',
         committed_qty: '0',
       },
+      // Ladder v2 (section E): the group-aware donor facts - which rung this row is,
+      // the donor SO line it names, whether it is ranked below this line or shares this
+      // line's agent, and whether it sits outside the cross-group cap.
+      rung: candidate.rung ?? null,
+      donor_so_number: candidate.donor_so_number ?? null,
+      donor_line_no: candidate.donor_line_no ?? null,
+      donor_agent_code: candidate.donor_agent_code ?? null,
+      donor_core_line_id: candidate.donor_core_line_id ?? null,
+      lower_ranked: Boolean(candidate.lower_ranked),
+      same_agent: Boolean(candidate.same_agent),
+      over_cap: Boolean(candidate.over_cap),
+      cap_reason: candidate.cap_reason ?? null,
     }));
 }
 
@@ -253,6 +277,12 @@ export function decisionFromAmendDraft(draft: DraftLine, reason: string): BoardD
       donor_project_id: row.donor_project_id ?? null,
       qty: fromMinor(toMinor(row.qty)),
       reason: row.reason.trim(),
+      donor_core_line_id: row.donor_core_line_id ?? null,
+      donor_so_number: row.donor_so_number ?? null,
+      donor_line_no: row.donor_line_no ?? null,
+      donor_agent_code: row.donor_agent_code ?? null,
+      same_agent: row.same_agent ?? false,
+      donor_required_date: row.donor_required_date ?? null,
     }));
   return {
     verdict: 'amended',

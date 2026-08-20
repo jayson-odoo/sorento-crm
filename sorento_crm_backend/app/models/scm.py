@@ -274,6 +274,12 @@ class ReorderRun(Base, CompanyScopedMixin):
     budget_id = Column(UUID(as_uuid=False), ForeignKey("scm.purchasing_budget.id", ondelete="SET NULL"), nullable=True)
     budget_amount = Column(Numeric(15, 2), nullable=True)  # M4 — chosen budget the "Apply budget" action persists
     include_market = Column(Boolean, nullable=False, default=False)  # M7 — opt-in market-trend priority factor
+    # "Plan until" (captain, 20 Aug): demand needed AFTER this date is excluded from the
+    # run's netting; NULL (the default) plans every open SO line regardless of need date,
+    # unchanged from before this column existed. Stamped once at creation, like
+    # decision_grain - a per-RUN choice, not a live policy, so it cannot move under a run
+    # already planned.
+    plan_horizon_date = Column(Date, nullable=True)
     policy_snapshot_ref = Column(String, nullable=True)
     started_at = Column(DateTime(timezone=False), nullable=True)
     finished_at = Column(DateTime(timezone=False), nullable=True)
@@ -317,6 +323,13 @@ class ReorderRecommendation(Base, CompanyScopedMixin):
     days_of_cover = Column(Numeric, nullable=True)
     recommended_qty = Column(Numeric, nullable=True)
     rounded_qty = Column(Numeric, nullable=True)
+    #: The buyer's own MoQ, replacing the frozen master figure for THIS row only. NULL =
+    #: use the master value frozen in `inputs.moq` at run time. Setting it RECALCULATES
+    #: AND PERSISTS `rounded_qty` / `cash_impact` (see `reorder_run_service.set_moq_override`)
+    #: so every consumer of those columns - draft PO lines, the budget allocator, sort -
+    #: is correct with no override-awareness of its own. `inputs` (AC-M3.11's freeze) never
+    #: moves - a fresh run with no override still reproduces byte-for-byte.
+    moq_override = Column(Numeric, nullable=True)
     #: What the SUPPLIER charges, in `currency`. This is the figure a PO will carry.
     unit_cost = Column(Numeric(12, 2), nullable=True)
     #: What the buy costs in the BASE currency, always. The budget is one pot of ringgit, so
@@ -395,6 +408,72 @@ class RecommendationOverride(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("ix_scm_recommendation_override_recommendation_id", "recommendation_id"),
+        {"schema": "scm"},
+    )
+
+
+class PlanRowDecision(Base, CompanyScopedMixin):
+    """The buyer's CURRENT decision on one recommendation row - buy / use stock / use an
+    existing PO / skip, or a mixture of the first three.
+
+    > captain, 21 Aug (third time this fix requested): "I want the decision made here...
+    > there is only buy / use stock / use SPO / mixture, right" - the results grid used to
+    > send the buyer to the product sheet to decide ("Decided on the Product sheet - open
+    > it"); this is that decision, recorded on the row.
+
+    ONE row per recommendation, kept CURRENT rather than append-only like
+    ``RecommendationOverride`` — "record a decision" replaces whatever was there,
+    "clear a decision" deletes the row outright, so `undecided` is the absence of a row
+    here exactly as it is the absence of an entry in the FE's own in-memory
+    `PlanDecisionMap` (`reorder/lib/planDecisions.ts`) before this landed.
+
+    Recorded on ANY decidable rec_type (buy / covered / needs_level / disposition) -
+    the captain's question was the same shape for every row on the grid, not just buy
+    recs, so this is guarded only by ``plan_grain.assert_not_legacy`` (a closed run
+    stays read-only) and NEVER by ``decision_grain``: a product-grain run's grouped
+    product fans this write out one member recommendation id at a time, the same way
+    ``reorder_run_service.set_moq_override`` already fans a MoQ edit out to every
+    member — the write itself does not need to know which grain it landed on.
+    ``confirm_decisions`` stays LOCATION-grain gated (unchanged): a product-grain run
+    never drafts an internal ``purchase_orders`` row at all — it hands Joey a worklist
+    to key in AutoCount instead — so this table's buy portion only ever reaches a
+    draft PO on a location-grain run.
+
+    ``use_stock`` records the buyer's INTENTION only - no stock is reserved or held by
+    writing this row. An actual hold would collide with the project-sales ladder's own
+    reservations against the same stock (`PLAN-scm-reorder-decision-to-autocount.md`,
+    open question, answered: intention-only, never a reservation).
+    """
+    __tablename__ = "plan_row_decision"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    recommendation_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("scm.reorder_recommendation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind = Column(String(20), nullable=False)  # buy | use_stock | use_po | skip | mixture
+    buy_qty = Column(Numeric, nullable=True)
+    #: [{location: warehouse CODE, location_name, qty}] — the bins the buyer named for
+    #: the stock portion. Never a UUID on the wire (mirrors override_supplier_code).
+    stock_takes = Column(JSONB, nullable=True)
+    po_qty = Column(Numeric, nullable=True)
+    #: PO numbers the "use PO" portion points at — display-only, no FK (the existing PO
+    #: book is read by number elsewhere; this is the buyer's own note of which one(s)).
+    po_refs = Column(JSONB, nullable=True)
+    reason_text = Column(Text, nullable=True)
+    decided_by = Column(String, nullable=True)
+    decided_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    recommendation = relationship("ReorderRecommendation")
+
+    __table_args__ = (
+        Index(
+            "uq_scm_plan_row_decision_recommendation_id", "recommendation_id", unique=True
+        ),
         {"schema": "scm"},
     )
 
@@ -609,6 +688,26 @@ class PriorityPolicy(Base):
     # is a row plus a weight.
     demand_class_weights = Column(JSONB, nullable=False, default=dict)
     notes = Column(Text, nullable=True)
+    # Ladder v2 (E) settings, added by migration ed706a98ddc6. Read-only from this slice's
+    # side (`priority.py` exposes them; the ladder itself is a later workstream) - kept on
+    # THIS row rather than a sibling table for the same reason `factors` is: one policy,
+    # activated as a whole, so a planner tuning "how far out is Buy all" cannot leave the
+    # weights and the horizon pointing at two different revisions.
+    #
+    # A CALENDAR DATE, not a rolling day count (19 Aug follow-up, migration
+    # 394_reorder_coverage_until, replacing `buy_all_horizon_days`): the captain's own
+    # framing was "purchasing reorders until October" - a fixed date, not "N days from
+    # today". A line required AFTER this date is proposed as `Buy now`, untouched - no
+    # reservation, no borrow attempted. NULL means no coverage limit is set.
+    reorder_coverage_until = Column(Date, nullable=True)
+    # A cross-OWNERSHIP-GROUP borrow (e.g. a BB line borrowing from an HP location) is only
+    # proposed under a small-quantity cap - either absolute qty or a percentage of the line,
+    # whichever the ladder decides to apply. Both are stored; which one gates is the ladder's
+    # call, not this row's.
+    cross_group_borrow_max_qty = Column(Integer, nullable=False, default=50,
+                                        server_default=text("50"))
+    cross_group_borrow_max_pct = Column(Numeric(6, 2), nullable=False, default=10,
+                                        server_default=text("10"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -1319,5 +1418,110 @@ class ProformaInvoiceLine(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_scm_proforma_invoice_line_invoice", "invoice_id"),
         Index("ix_scm_proforma_invoice_line_po_ref", "po_ref"),
+        {"schema": "scm"},
+    )
+
+
+class ProformaInvoiceShipmentLink(Base, CompanyScopedMixin):
+    """Where a proforma invoice line's goods actually went: the draft inbound shipment line
+    created from it (the packing-list amendment, 20 Aug evening -
+    `PLAN-scm-proforma-to-spo.md`).
+
+    One row per PI line that the convert action touched. A link table rather than a column on
+    `ProformaInvoiceLine`, because the later reconciliation against the REAL packing list can
+    split one PI line's quantity across more than one shipment line - the same reason the next
+    slice's PI-line -> SPO-line trail is also planned as a link table, not a column.
+
+    `inbound_shipment_line_id` is nullable for the row that records a SKIP rather than a link:
+    a PI line with no catalogue product match still needs its story told on the PI detail page
+    ("where did this line go"), and `unmatched_reason` is that story. `inbound_shipment_id`
+    is carried on every row (matched or skipped) so "which shipment did this PI convert into"
+    answers without a null-line join.
+
+    Existence of ANY row for a PI is what makes a second convert of the same PI idempotent -
+    the service refuses it, naming the shipment this row already points at, rather than
+    creating a second draft silently.
+    """
+    __tablename__ = "proforma_invoice_shipment_link"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    proforma_invoice_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.proforma_invoice.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    proforma_invoice_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.proforma_invoice_line.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    inbound_shipment_id = Column(
+        UUID(as_uuid=False), ForeignKey("inbound_shipments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    inbound_shipment_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("inbound_shipment_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    #: Why this line has no `inbound_shipment_line_id` - e.g. "no catalogue product match".
+    #: Null on a real link.
+    unmatched_reason = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_scm_pi_shipment_link_invoice", "proforma_invoice_id"),
+        Index("ix_scm_pi_shipment_link_shipment", "inbound_shipment_id"),
+        # One conversion outcome per PI line, ever - this is what makes a second convert
+        # attempt on an already-converted PI detectable rather than a silent duplicate.
+        Index("uq_scm_pi_shipment_link_line", "proforma_invoice_line_id", unique=True),
+        {"schema": "scm"},
+    )
+
+
+class ShipmentLineSpoLink(Base, CompanyScopedMixin):
+    """Where a shipment line's demand actually went: the CRM SPO line "Create SPO" made for
+    it, or why it made none (`PLAN-scm-proforma-to-spo.md`'s "Separate button after
+    packing-list apply" decision, 20 Aug evening).
+
+    Completes the trail the Amendment describes as two links composed - PI line -> shipment
+    line (`ProformaInvoiceShipmentLink`, migration 405) and shipment line -> SPO line (this
+    table). A shipment line reached from a real packing-list upload with no PI behind it at
+    all still gets a row here; the PI half of the trail is simply absent for it.
+
+    One row per shipment line "Create SPO" touched - matched (points at the new SPO
+    line) or skipped, with `unmatched_reason` naming why (already covered by an open PO,
+    covered by stock, no supplier on the line, or simply left unticked). Existence of ANY
+    row for a shipment is what makes a second "Create SPO" on it refused rather than
+    silently doubling what the office is asked to key into AutoCount - the same idempotency
+    shape `ProformaInvoiceShipmentLink` uses for the PI convert.
+    """
+    __tablename__ = "shipment_line_spo_link"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    inbound_shipment_id = Column(
+        UUID(as_uuid=False), ForeignKey("inbound_shipments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    inbound_shipment_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("inbound_shipment_lines.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    purchase_order_id = Column(
+        UUID(as_uuid=False), ForeignKey("purchase_orders.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    purchase_order_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("purchase_order_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    #: Why this line has no `purchase_order_line_id` - e.g. "Already covered by PO-...", "No
+    #: supplier recorded on this line", "Not selected". Null on a real link.
+    unmatched_reason = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_scm_shipment_spo_link_shipment", "inbound_shipment_id"),
+        Index("ix_scm_shipment_spo_link_po", "purchase_order_id"),
+        # One conversion outcome per shipment line, ever - what makes a second "Create SPO"
+        # attempt on an already-converted shipment detectable rather than a silent duplicate.
+        Index("uq_scm_shipment_spo_link_line", "inbound_shipment_line_id", unique=True),
         {"schema": "scm"},
     )

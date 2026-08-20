@@ -482,12 +482,17 @@ function applyFrozen(contribution: BoardContribution): void {
 }
 
 /**
- * The ladder as the server states it: EVERY rung, in order, including the ones that gave
- * nothing (PLAN 13.7, the captain's "what's the process you have gone through").
+ * The ladder as the server states it, ladder v2's own order (section E of
+ * `PLAN-demo-followups-19aug-ladder-v2.md`, S4 of the 19 August review): the read-only own
+ * location, then Incoming, Pool, Group take, Group borrow, Cross-group borrow, Buy. The
+ * own-location Reserve rung is GONE AS A SOURCE (rule 7) but stays as a read-only first
+ * rung, because it is the one place the queue ahead of THIS line at ITS OWN pile is named -
+ * `BoardTrailPopover`'s `QueueLink` opens exactly `fulfilment_warehouse_id`, which is this
+ * rung's own location and nowhere else's.
  *
- * This fixture only ever models own-location free stock, so its pool, incoming and borrow rungs
- * are always empty - which is exactly the case worth having in the tests, because "checked and
- * had nothing" is the reading the screen must not silently drop.
+ * This fixture only ever models one pool and one cross-group donor, so `group_take` and
+ * `group_borrow` are always empty - which is exactly the case worth having in the tests,
+ * because "checked and had nothing" is the reading the screen must not silently drop.
  */
 function trailFor(input: {
   location: string;
@@ -537,6 +542,8 @@ function trailFor(input: {
     const key = leadingFactorOf(other, input.mine);
     byFactor[key] = (byFactor[key] ?? 0) + 1;
   }
+  // 0. Read-only: this line's own location. Never taken (rule 7), but the ONE rung that
+  // names the queue ahead of it, exactly as the real backend's `reserve_own` rung does.
   add('reserve_own', {
     location: input.location,
     warehouse_id: `wh-${input.location}`,
@@ -547,24 +554,12 @@ function trailFor(input: {
     ahead_more: Math.max(input.aheadLines.length - named.length, 0),
     ahead_by_factor: byFactor,
     offered: input.offered,
-    taken: input.reserved,
-    // No hot-selling clause here (19 August 2026, PLAN 3.3a): own-location Reserve is
-    // always eligible, so this rung reads exactly as it does for an ordinary item.
-    why:
-      input.reserved > 0
-        ? input.ahead.lines > 0
-          ? `${fromMinor(input.offered)} left after the ${input.ahead.lines} lines ahead; this line takes ${fromMinor(input.reserved)}.`
-          : `First in the queue here; this line takes ${fromMinor(input.reserved)}.`
-        : input.ahead.lines > 0
-          ? `${fromMinor(input.opening)} on hand, but ${input.ahead.lines} lines with ${aheadPhraseOf(byFactor)} rank ahead and want ${fromMinor(input.ahead.qty)} - none is left for this line.`
-          : `No free stock at ${input.location}.`,
-  });
-  add('reserve_pool', {
-    offered: 0,
     taken: 0,
     outcome: 'not_eligible',
-    note: 'no shared pool',
-    why: 'No shared pool for this product.',
+    why:
+      input.ahead.lines > 0
+        ? `${fromMinor(input.offered)} left at ${input.location} after ${fromMinor(input.ahead.qty)} owed to ${input.ahead.lines} line${input.ahead.lines === 1 ? '' : 's'} ranked ahead of this line. Never reserved: stock at ${input.location} is committed to whichever sales order is queued for it - borrow from another sales order instead.`
+        : `${fromMinor(input.offered)} at ${input.location}, nothing ranked ahead of this line there. Never reserved: stock at ${input.location} is committed to whichever sales order is queued for it - borrow from another sales order instead.`,
   });
   add('incoming', {
     location: input.location,
@@ -574,7 +569,31 @@ function trailFor(input: {
     taken: 0,
     why: 'No supplier PO arrives by 3 Sep 2026.',
   });
-  add('borrow', {
+  add('pool', {
+    location: input.location,
+    warehouse_id: `wh-${input.location}`,
+    opening: fromMinor(input.opening),
+    offered: input.offered,
+    taken: input.reserved,
+    why:
+      input.reserved > 0
+        ? `${input.location} offers ${fromMinor(input.offered)}; this line takes ${fromMinor(input.reserved)}.`
+        : input.offered > 0
+          ? `${input.location} offers ${fromMinor(input.offered)}, but nothing is left for this line.`
+          : `No shared pool for this product.`,
+  });
+  add('group_take', {
+    offered: 0,
+    taken: 0,
+    note: 'no ownership group',
+    why: 'This location carries no ownership group, so there are no siblings to take from.',
+  });
+  add('group_borrow', {
+    offered: 0,
+    taken: 0,
+    why: 'No other sales order in this ownership group is ranked below this line.',
+  });
+  add('cross_group_borrow', {
     opening: '0',
     offered: 0,
     taken: 0,
@@ -630,27 +649,6 @@ function leadingFactorOf(other: BoardContribution, mine: BoardContribution): str
     }
   }
   return best ?? tie;
-}
-
-/** The two commonest reasons the queue is ahead, in the words the server uses. */
-function aheadPhraseOf(byFactor: Record<string, number>): string {
-  const phrases: Record<string, string> = {
-    need_by_date: 'an earlier delivery date',
-    document_age: 'an older order date',
-    customer_credit: 'shorter payment terms',
-    demand_class: 'a higher-ranked demand type',
-    po_document_sequence: 'an earlier purchase order sequence',
-    line_order: 'an earlier line number in the same order',
-    tie_break: 'the same rank and a lower sales order number',
-  };
-  const ranked = Object.entries(byFactor).sort(
-    (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
-  );
-  if (ranked.length === 0) return 'a higher rank';
-  return ranked
-    .slice(0, 2)
-    .map(([key]) => phrases[key] ?? key.replace(/_/g, ' '))
-    .join(' or ');
 }
 
 /**
@@ -802,6 +800,12 @@ export function buildBoard(
     dateBuckets,
     productRows,
     cells,
+    // Unwindowed, exactly like `cells` deliberately is NOT: `everyContribution` already carries
+    // every bucket in the selection, allocated above BEFORE the window narrowed which cells are
+    // emitted (see the comment on `allBuckets`) - the same thing the real board's top-level
+    // `contributions` states for the reason a day window must not change what Approve all or
+    // the List view act on.
+    contributions: everyContribution,
     orders: ordersFor(everyContribution),
   };
 }

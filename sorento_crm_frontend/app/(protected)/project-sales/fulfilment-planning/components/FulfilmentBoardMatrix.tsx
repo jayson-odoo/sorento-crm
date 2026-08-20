@@ -10,7 +10,15 @@ import type {
 } from '../../_shared/types/fulfilmentPlanning.types';
 
 const PRODUCT_COL = 'w-[190px] min-w-[190px] max-w-[190px]';
-const DATE_COL = 'w-[150px] min-w-[150px] max-w-[150px]';
+/**
+ * A FLOOR, not a fixed width. With `table` at `w-full` and `table-layout` left at its browser
+ * default (AUTO, never `table-fixed`), a date column below this width never happens - it can
+ * only grow, splitting whatever space the product column did not take. Two selected weeks fill
+ * the bordered container instead of sitting in a third of it with the rest blank; twenty weeks
+ * push the table past the container's width and the container's own `overflow-auto` takes over,
+ * exactly as it did before.
+ */
+const DATE_COL = 'min-w-[150px]';
 
 /**
  * Two paint layers, and every pinned cell names the one it is on. A cell pinned on BOTH axes
@@ -59,8 +67,13 @@ const PAST_CELL_BG = 'bg-[color-mix(in_oklab,var(--destructive)_6%,var(--backgro
  *   - the whole table scrolls INSIDE this container, so the page body never scrolls sideways;
  *   - the product column is sticky and the header row is sticky, both opaque, so a reader
  *     eight buckets in still knows which product they are on;
- *   - fixed widths on a `w-max` table, never `table-fixed`, which overlaps its columns the
- *     moment content exceeds the declared width.
+ *   - the table is `w-full` so a selection of two weeks fills the bordered container rather
+ *     than sitting in a third of it with the rest blank (measured live), the product column
+ *     keeps a fixed width because it is not part of what should stretch, and the date columns
+ *     carry only a `min-w` floor so they grow evenly into whatever is left. `table-layout` is
+ *     never `table-fixed`, which overlaps its columns the moment content exceeds the declared
+ *     width - a wide selection still overflows past the floor and the container's own
+ *     `overflow-auto` takes it from there, unchanged from before.
  *
  * A BLANK CELL IS NOT A ZERO. It means no selected order owes that product by that date, so it
  * renders blank and stays blank.
@@ -104,7 +117,7 @@ export function FulfilmentBoardMatrix({
       data-testid="fulfilment-board-matrix"
       className="relative max-h-[70vh] w-full overflow-auto overscroll-x-contain rounded-lg border border-border"
     >
-      <table className="w-max border-separate border-spacing-0 text-xs">
+      <table className="w-full border-separate border-spacing-0 text-xs">
         <thead>
           <tr>
             <th

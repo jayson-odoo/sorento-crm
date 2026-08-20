@@ -42,14 +42,17 @@ describe('getRecommendationNet (M8-A1)', () => {
       ok({
         on_hand: 100,
         on_order: 40,
+        po_ordered: 20,
         committed: 60,
-        net: 80,
+        net: 100,
         committed_sos: [{ so_number: 'SO-2026-0007', qty: 60, customer_name: 'Bina Jaya', order_date: '2026-07-10' }],
       }),
     );
     const nb = await getRecommendationNet('rec-1');
     expect(calledUrl().pathname).toBe('/api/v1/scm/recommendations/rec-1/explain-net');
-    expect(nb.net).toBe(80);
+    // 21 Aug fix: po_ordered is a new leg, netted into `net` on the backend.
+    expect(nb.po_ordered).toBe(20);
+    expect(nb.net).toBe(100);
     expect(nb.committed_sos[0].so_number).toBe('SO-2026-0007');
   });
 

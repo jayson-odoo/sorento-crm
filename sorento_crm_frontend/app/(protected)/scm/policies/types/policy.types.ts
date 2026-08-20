@@ -17,7 +17,13 @@
 /** Precedence order: sku > abc_xyz_cell > product_class > global. */
 export type ScopeType = 'sku' | 'product_class' | 'abc_xyz_cell' | 'global';
 
-export type PolicyType = 'reorder_point' | 'periodic_review' | 'min_max';
+/**
+ * `reorder_level` is the manual-planning basis - the GLOBAL row carries it whenever S1's
+ * planning-mode switch is set to "manual" (backend migration 356). It is set through the
+ * planning-mode switch, not created here, but the grid must still be able to LIST and EDIT
+ * a row that carries it without falling over on an unrecognised enum value.
+ */
+export type PolicyType = 'reorder_point' | 'periodic_review' | 'min_max' | 'reorder_level';
 
 export type SafetyStockMethod = 'fixed_days' | 'statistical' | 'manual';
 
@@ -128,6 +134,36 @@ export interface CoverScopeSetting {
 }
 
 export type CoverScopeWrite = CoverScopeSetting;
+
+/**
+ * The single active `scm.priority_policy` row - the ranking that decides both what goes in
+ * a container and which purchase-order line arriving stock is assigned to (AC-H5). A PUT
+ * writes a NEW revision and activates it; it never edits an old row in place, so `id` /
+ * `name` on the response describe whichever revision is active NOW, not a record the FE can
+ * address by id.
+ *
+ * `factors` / `demand_class_weights` are open records (JSONB on the backend) rather than
+ * fixed fields, so a policy can carry a factor this UI does not yet render without losing it
+ * on save - `PUT` sends back whatever `GET` returned, edited in place.
+ */
+export interface FulfilmentPriorityPolicy {
+  name: string;
+  /** Ranking-factor weights, keyed by factor (see `lib/labels.ts::FULFILMENT_FACTOR_ORDER`). */
+  factors: Record<string, number>;
+  /** Demand-class weights, keyed by `project` / `retail`. */
+  demand_class_weights: Record<string, number>;
+  /** A line required AFTER this calendar date is proposed as `Buy now`, untouched -
+   *  the captain's "purchasing reorders until October". `null` = no coverage limit set. */
+  reorder_coverage_until: string | null;
+  /** A cross-ownership-group borrow is only offered under this quantity... */
+  cross_group_borrow_max_qty: number;
+  /** ...or this percentage of the line, whichever the ladder applies. */
+  cross_group_borrow_max_pct: number;
+  /** False only on a database that has never activated a fulfilment-priority policy. */
+  exists: boolean;
+}
+
+export type FulfilmentPriorityWrite = Omit<FulfilmentPriorityPolicy, 'name' | 'exists'>;
 
 /** Why a scope link did (or did not) win, for the preview teaching surface. */
 export type ResolutionReason =

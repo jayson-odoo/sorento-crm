@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { OrderInquiryWorklistRow } from '../types/orderInquiry.types';
 import {
   deliveryMonthLabel,
+  flowExclusionLabel,
   formatInquiryQty,
   orderInquiryRowHref,
 } from './orderInquiryWorklist';
@@ -69,5 +70,29 @@ describe('formatInquiryQty', () => {
     expect(formatInquiryQty(null)).toBe('');
     expect(formatInquiryQty('')).toBe('');
     expect(formatInquiryQty('n/a')).toBe('n/a');
+  });
+});
+
+describe('flowExclusionLabel', () => {
+  it('lets an ORDER row show its own Taken/Remaining figures', () => {
+    expect(flowExclusionLabel('ORDER')).toBeNull();
+  });
+
+  it('names an ADVANCE/DELAY row for what it actually is - a date change, not a buy', () => {
+    expect(flowExclusionLabel('ADVANCE')).toBe('Date change');
+    expect(flowExclusionLabel('DELAY')).toBe('Date change');
+  });
+
+  it('gives every other non-ORDER verb its own honest word rather than a number', () => {
+    expect(flowExclusionLabel('CANCEL_BALANCE')).toBe('Balance cancelled');
+    expect(flowExclusionLabel('CHANGE_SO')).toBe('SO changed');
+    expect(flowExclusionLabel('PRE_ORDERED_DO_NOT_ORDER')).toBe('Pre-ordered');
+    expect(flowExclusionLabel('ALREADY_INBOUND')).toBe('Already inbound');
+    expect(flowExclusionLabel('RELEASE')).toBe('Released');
+  });
+
+  it('falls back to a generic honest label for an unmapped non-ORDER verb', () => {
+    expect(flowExclusionLabel('BORROW_SHORTFALL')).toBe('Not an ORDER row');
+    expect(flowExclusionLabel('RESERVE_AND_ORDER')).toBe('Not an ORDER row');
   });
 });

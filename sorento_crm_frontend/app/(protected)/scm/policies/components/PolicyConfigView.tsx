@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ContainerSizesPanel } from './ContainerSizesPanel';
 import { CurrencyRatesPanel } from './CurrencyRatesPanel';
 import { ClassificationThresholdsPanel } from './ClassificationThresholdsPanel';
+import { FulfilmentPriorityPanel } from './FulfilmentPriorityPanel';
 import { PlanningModePanel } from './PlanningModePanel';
 import { ReorderPolicyGrid } from './ReorderPolicyGrid';
 import { ResolutionPreviewCard } from './ResolutionPreviewCard';
@@ -20,6 +21,7 @@ export function PolicyConfigView() {
       <TabsList variant="line" className="mb-5 w-full justify-start overflow-x-auto">
         <TabsTrigger value="planning-mode">Planning mode</TabsTrigger>
         <TabsTrigger value="reorder">Reorder policies</TabsTrigger>
+        <TabsTrigger value="fulfilment">Fulfilment</TabsTrigger>
         <TabsTrigger value="classification">Classification thresholds</TabsTrigger>
         <TabsTrigger value="supplier">Supplier scoring</TabsTrigger>
         <TabsTrigger value="containers">Container sizes</TabsTrigger>
@@ -33,6 +35,10 @@ export function PolicyConfigView() {
 
       <TabsContent value="reorder" className="mt-0 focus-visible:outline-none">
         <ReorderPolicyGrid />
+      </TabsContent>
+
+      <TabsContent value="fulfilment" className="mt-0 max-w-3xl focus-visible:outline-none">
+        <FulfilmentPriorityPanel />
       </TabsContent>
 
       <TabsContent value="classification" className="mt-0 max-w-3xl focus-visible:outline-none">

@@ -29,6 +29,7 @@ import {
   PLANNING_CHANGE_SOURCE_KIND_LABEL,
   type PlanningChangeBatch,
   type PlanningChangeOrder,
+  type PlanningChangeReturnedToReview,
   type PlanningChangeRow,
 } from '../../_shared/types/planningChange.types';
 import { BoardTrailPopover } from '../../fulfilment-planning/components/BoardTrailPopover';
@@ -71,6 +72,14 @@ export function PlanningChangeBatchClient({ batchId }: { batchId: string }) {
     resultStripRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
     setResultHighlighted(true);
     toast.success(resultSummary(batch.data));
+    // B1 (code review, 20 Aug 2026): a clean apply doesn't tell the whole story when it also
+    // drifted a revision and dropped bystander lines it never named - the same lines
+    // `BatchResultStrip` names inline, said again here so it is not missed on a page the
+    // planner doesn't stay on.
+    const returned = batch.data.result?.returned_to_review ?? [];
+    if (returned.length > 0) {
+      toast.warning(returnedToReviewSummary(returned));
+    }
     const timer = setTimeout(() => setResultHighlighted(false), 2500);
     return () => clearTimeout(timer);
   }, [batch.data]);
@@ -266,6 +275,20 @@ function resultSummary(batch?: PlanningChangeBatch): string {
 }
 
 /**
+ * The warning toast for B1's silent case: `SO391698: 9 other lines returned to review (Line
+ * 1 is now open for 14, and the confirmed revision was balanced against 12.)`. One segment
+ * per order, so two revised-and-drifted orders in the same apply both get named.
+ */
+function returnedToReviewSummary(entries: PlanningChangeReturnedToReview[]): string {
+  return entries
+    .map(
+      (entry) =>
+        `${entry.so_number}: ${plural(entry.line_count, 'other line')} returned to review (${entry.reason})`,
+    )
+    .join(' · ');
+}
+
+/**
  * What triggered the batch (AC-R02's "nothing is inferred") - the upload, when, and by whom,
  * plus how many lines it moved and how many are still undecided. The file name links to the
  * import job it ran as, so "what got uploaded to cause this" is one click, not a question.
@@ -341,35 +364,57 @@ function BatchResultStrip({ batch }: { batch: PlanningChangeBatch }) {
   if (result.purchasing_notified) parts.push('purchasing notified');
 
   const boardOrders = result.orders_revised.map((order) => order.so_number).join(',');
+  const totalReturned = result.returned_to_review.reduce(
+    (total, entry) => total + entry.line_count,
+    0,
+  );
 
   return (
-    <p className="mt-1 text-sm text-muted-foreground" data-testid="planning-change-result-strip">
-      {parts.map((part, index) => (
-        <React.Fragment key={index}>
-          {index > 0 && ' · '}
-          {part}
-        </React.Fragment>
-      ))}
-      {boardOrders && (
-        <>
-          {' · '}
-          <Link
-            href={`/project-sales/fulfilment-planning?orders=${boardOrders}`}
-            className="text-primary hover:underline"
-          >
-            Open on the board
-          </Link>
-        </>
+    <>
+      <p className="mt-1 text-sm text-muted-foreground" data-testid="planning-change-result-strip">
+        {parts.map((part, index) => (
+          <React.Fragment key={index}>
+            {index > 0 && ' · '}
+            {part}
+          </React.Fragment>
+        ))}
+        {boardOrders && (
+          <>
+            {' · '}
+            <Link
+              href={`/project-sales/fulfilment-planning?orders=${boardOrders}`}
+              className="text-primary hover:underline"
+            >
+              Open on the board
+            </Link>
+          </>
+        )}
+        {inquiryTotal > 0 && (
+          <>
+            {' · '}
+            <Link href="/project-sales/order-inquiries" className="text-primary hover:underline">
+              Order Inquiries
+            </Link>
+          </>
+        )}
+      </p>
+      {totalReturned > 0 && (
+        <p
+          className="mt-1 text-sm text-amber-700 dark:text-amber-400"
+          data-testid="planning-change-returned-to-review"
+        >
+          {`${plural(totalReturned, 'line')} returned to review - `}
+          {result.returned_to_review.map((entry, index) => (
+            <React.Fragment key={entry.so_number}>
+              {index > 0 && ', '}
+              <span title={entry.reason}>
+                {`${entry.so_number} (${plural(entry.line_count, 'line')})`}
+              </span>
+            </React.Fragment>
+          ))}
+        </p>
       )}
-      {inquiryTotal > 0 && (
-        <>
-          {' · '}
-          <Link href="/project-sales/order-inquiries" className="text-primary hover:underline">
-            Order Inquiries
-          </Link>
-        </>
-      )}
-    </p>
+    </>
   );
 }
 

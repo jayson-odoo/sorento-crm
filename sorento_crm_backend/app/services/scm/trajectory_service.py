@@ -30,6 +30,7 @@ from app.services.scm.customer_label import (
     CUSTOMER_LABEL_SQL,
     customer_key_filter,
 )
+from app.services.scm.demand import PROJECT_CLASS
 from app.services.scm.trajectory import (
     DEFAULT_PROJECT_MONTHS,
     DEFAULT_RETAIL_MONTHS,
@@ -59,6 +60,76 @@ def _windows(db: Session) -> dict[str, int]:
     }
 
 
+def demand_context_for_product(
+    db: Session, product_id: str, *, as_of: Optional[date] = None,
+) -> dict[str, Any]:
+    """The trailing-window ordered qty for ONE product, split project vs retail.
+
+    Captain (20 Aug), on the demand drills: "for project here, you need to show the past
+    year project order for this item; for retail, the last 3 months, for user to judge
+    whether to top up the quantity ordered." This reuses the SAME windows this module
+    already computes the plan's own trajectory verdicts with (`_windows`, defaulting to 12
+    project / 3 retail months, configurable on `scm.reorder_policy`) and the same channel
+    split (`sales_orders.demand_class`), so the number a drill shows can never disagree with
+    the verdict the grouped Buy view already renders for the same product.
+
+    What counts as "ordered" here is the flow of orders PLACED (`qty_ordered`), whatever
+    their status today - the same reading `trajectory_for_run` uses, and deliberately not
+    the still-open committed figure the popover already shows above this line.
+    """
+    as_of = as_of or date.today()
+    windows = _windows(db)
+    # S9 (code review, 20 Aug 2026): `until` is the first of THIS month, so the window is
+    # full calendar months only and never includes today's partial one - on the 20th,
+    # "last 3 months" reads May/June/July, not a fifth of August. Deliberately kept this
+    # way rather than extending `until` to today: this module's own docstring promise is
+    # that this figure "can never disagree with the verdict the grouped Buy view already
+    # renders for the same product" (`trajectory_for_run`, same `until`), and that verdict
+    # excludes the partial month for a reason of its own (a window ending mid-month reads
+    # as demand always falling - see the comment on `trajectory_for_run`). Extending only
+    # THIS function's window would break that agreement instead of fixing the label. The
+    # honest fix is labelling it "full months" - done in `DemandContextHeader.tsx`.
+    until = _month_shift(as_of, 0)
+    since_project = _month_shift(until, -windows["project_months"])
+    since_retail = _month_shift(until, -windows["retail_months"])
+    since = min(since_project, since_retail)
+
+    co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="dcp")
+    co_clause = f"AND {co}" if co else ""
+    row = db.execute(text(f"""
+        SELECT
+            COALESCE(SUM(sol.qty_ordered) FILTER (
+                WHERE so.demand_class = :project_class
+                  AND so.order_date >= :since_project AND so.order_date < :until
+            ), 0) AS project_qty,
+            COALESCE(SUM(sol.qty_ordered) FILTER (
+                WHERE so.demand_class IS DISTINCT FROM :project_class
+                  AND so.order_date >= :since_retail AND so.order_date < :until
+            ), 0) AS retail_qty
+        FROM sales_order_lines sol
+        JOIN sales_orders so ON so.id = sol.sales_order_id
+        WHERE sol.product_id = CAST(:product_id AS uuid)
+          AND so.order_date >= :since AND so.order_date < :until
+          {co_clause}
+    """), {
+        "product_id": product_id,
+        "project_class": PROJECT_CLASS,
+        "since": since,
+        "since_project": since_project,
+        "since_retail": since_retail,
+        "until": until,
+        **co_params,
+    }).mappings().first()
+
+    return {
+        "project_qty": float(row["project_qty"] or 0) if row else 0.0,
+        "retail_qty": float(row["retail_qty"] or 0) if row else 0.0,
+        "project_months": windows["project_months"],
+        "retail_months": windows["retail_months"],
+        "as_of": as_of.isoformat(),
+    }
+
+
 _SERIES_SQL = """
 WITH pairs AS (
     SELECT DISTINCT r.product_id, COALESCE(w.segment, 'project') AS segment
@@ -78,6 +149,31 @@ JOIN pairs pr ON pr.product_id = sol.product_id
 WHERE so.order_date >= :since AND so.order_date < :until
   {co}
 GROUP BY sol.product_id, COALESCE(w.segment, 'project'),
+         date_trunc('month', so.order_date)
+"""
+
+#: front-planning follow-up (19-20 Aug): the SAME order-flow series as `_SERIES_SQL`, keyed
+#: by CHANNEL (`sales_orders.demand_class`, the field committed_v splits on - 5.2) instead
+#: of by warehouse segment. Additive to `series` above, which stays keyed by
+#: `product_id:segment` for every existing reader (`trendFor`, the forecast add-on, product
+#: health) - this only feeds the grouped Buy view's per-channel trend subline, and channel
+#: is a property of the ORDER, never of where it happened to ship from.
+_CHANNEL_SERIES_SQL = """
+WITH prods AS (
+    SELECT DISTINCT r.product_id
+    FROM scm.reorder_recommendation r
+    WHERE r.run_id = CAST(:run_id AS uuid)
+)
+SELECT sol.product_id::text AS product_id,
+       COALESCE(so.demand_class, 'unclassified') AS channel,
+       to_char(date_trunc('month', so.order_date), 'YYYY-MM') AS month,
+       SUM(sol.qty_ordered) AS qty
+FROM sales_order_lines sol
+JOIN sales_orders so ON so.id = sol.sales_order_id
+JOIN prods p ON p.product_id = sol.product_id
+WHERE so.order_date >= :since AND so.order_date < :until
+  {co}
+GROUP BY sol.product_id, COALESCE(so.demand_class, 'unclassified'),
          date_trunc('month', so.order_date)
 """
 
@@ -227,6 +323,42 @@ def trajectory_for_run(
             "agents": [],
             "agents_available": False,
         }
+
+    # front-planning follow-up (19-20 Aug): the same verdict, per product, split by CHANNEL
+    # (`sales_orders.demand_class`) rather than warehouse segment - additive, so it can sit
+    # beside `series` without disturbing any existing reader of it. Feeds the grouped Buy
+    # view's per-channel trend subline ("what is the trend in project, what is the trend in
+    # retail"), one column per channel next to its committed figure.
+    channel_monthly: dict[tuple[str, str], dict[str, float]] = {}
+    for r in db.execute(
+        text(_CHANNEL_SERIES_SQL.format(co=co_clause)), params
+    ).mappings().all():
+        channel_monthly.setdefault((r["product_id"], r["channel"]), {})[r["month"]] = \
+            float(r["qty"] or 0)
+
+    channel_trends: dict[str, dict[str, Any]] = {}
+    for (product_id, channel), series in channel_monthly.items():
+        months = (
+            windows["project_months"] if channel == "project"
+            else windows["retail_months"]
+        )
+        recent_start = _month_shift(until, -months)
+        prev_start = _month_shift(until, -2 * months)
+        recent = window_sum(series, recent_start, months)
+        previous = window_sum(series, prev_start, months)
+        t = assess_trajectory(recent=recent, previous=previous, year_ago=None)
+        channel_trends.setdefault(product_id, {})[channel] = {
+            "verdict": t.verdict,
+            "recent_qty": t.recent_qty,
+            "previous_qty": t.previous_qty,
+            "change_pct": t.change_pct,
+            "window_months": months,
+            # Units/day over the recent window, the same rate-over-a-window arithmetic the
+            # row's own "avg N/day" subline already uses - so a channel's trend reads with
+            # the same evidence the total figure does, just narrowed to its own orders.
+            "avg_day": round(recent / (months * 30), 2) if months > 0 else None,
+        }
+    out["channel_trends"] = channel_trends
     return out
 
 

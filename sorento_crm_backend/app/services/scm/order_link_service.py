@@ -132,6 +132,89 @@ def _purchase_side(db: Session, po_numbers: set[str]):
     return by_key, by_number
 
 
+def claim_placed_on_po(
+    db: Session,
+    *,
+    company_id: Optional[str],
+    so_number: str,
+    po_number: str,
+    item_code: Optional[str],
+    so_line_id: Optional[str],
+    po_line_id: str,
+) -> OrderLinkClaim:
+    """Record "Place on PO"'s own pairing as a claim, for the audit trail
+    (PLAN-demo-followups-19aug-ladder-v2.md section G).
+
+    Reuses the SAME identity `resolve()` matches on - (company, so_number, po_number,
+    item_code coalesced), which is also the database's own unique index
+    (`uq_scm_order_link_claim_identity`). A pairing another feed already knows (the PO
+    history import already noted "SO:xxx" on this same PO, say) is resolved onto the
+    existing row rather than doubled: inserting a duplicate would fail the unique index
+    anyway, and the existing claim is the more honest record either way.
+    """
+    now = _now()
+    query = db.query(OrderLinkClaim).filter(
+        OrderLinkClaim.so_number == so_number,
+        OrderLinkClaim.po_number == po_number,
+        OrderLinkClaim.item_code.is_(None)
+        if item_code is None
+        else OrderLinkClaim.item_code == item_code,
+    )
+    if company_id is not None:
+        query = query.filter(OrderLinkClaim.company_id == company_id)
+    existing = query.first()
+    if existing is not None:
+        if existing.so_line_id is None:
+            existing.so_line_id = so_line_id
+        existing.po_line_id = po_line_id
+        existing.resolved_at = now
+        return existing
+
+    claim = OrderLinkClaim(
+        company_id=company_id,
+        so_number=so_number,
+        po_number=po_number,
+        item_code=item_code,
+        source="order_inquiry",
+        claimed_at=now,
+        so_line_id=so_line_id,
+        po_line_id=po_line_id,
+        resolved_at=now,
+    )
+    db.add(claim)
+    db.flush()
+    return claim
+
+
+def delete_own_claim(
+    db: Session,
+    *,
+    company_id: Optional[str],
+    so_number: str,
+    po_number: str,
+    item_code: Optional[str],
+) -> None:
+    """Remove the audit claim "Place on PO" wrote, on Untag.
+
+    Scoped to `source = 'order_inquiry'` on purpose: a claim at this same identity that
+    another feed (PO history, an upload) is the source of was not this row's to make, and
+    untagging must not take somebody else's evidence down with it.
+    """
+    query = db.query(OrderLinkClaim).filter(
+        OrderLinkClaim.so_number == so_number,
+        OrderLinkClaim.po_number == po_number,
+        OrderLinkClaim.item_code.is_(None)
+        if item_code is None
+        else OrderLinkClaim.item_code == item_code,
+        OrderLinkClaim.source == "order_inquiry",
+    )
+    if company_id is not None:
+        query = query.filter(OrderLinkClaim.company_id == company_id)
+    claim = query.first()
+    if claim is not None:
+        db.delete(claim)
+
+
 def open_claims(db: Session) -> dict:
     """What is still waiting, and for which side.
 

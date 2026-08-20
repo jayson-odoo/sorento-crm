@@ -55,9 +55,9 @@ def world(db):
 
 
 def _order(db, world, *, when: date, customer, ordered=100, delivered=0,
-           purchasing_status="not_reviewed") -> SalesOrder:
+           purchasing_status="not_reviewed", demand_class="project") -> SalesOrder:
     so = SalesOrder(id=_u(), so_number=unique_code(MARKER), status="open",
-                    order_date=when, customer_id=customer.id, demand_class="project")
+                    order_date=when, customer_id=customer.id, demand_class=demand_class)
     db.add(so)
     db.flush()
     db.add(SalesOrderLine(
@@ -191,6 +191,68 @@ def test_the_filters_combine(db, world):
     )
 
     assert got == {want.so_number}
+
+
+# --------------------------------------------------------------------------- #
+# demand class (Type filter)
+# --------------------------------------------------------------------------- #
+
+def test_demand_class_project_keeps_only_project_orders(db, world):
+    project = _order(db, world, when=date(2026, 3, 1), customer=world["acme"],
+                     demand_class="project")
+    retail = _order(db, world, when=date(2026, 3, 1), customer=world["acme"],
+                    demand_class="retail")
+
+    got = _numbers(db, demand_class="project")
+
+    assert project.so_number in got
+    assert retail.so_number not in got
+
+
+def test_demand_class_retail_keeps_only_retail_orders(db, world):
+    project = _order(db, world, when=date(2026, 3, 1), customer=world["acme"],
+                     demand_class="project")
+    retail = _order(db, world, when=date(2026, 3, 1), customer=world["acme"],
+                    demand_class="retail")
+
+    got = _numbers(db, demand_class="retail")
+
+    assert retail.so_number in got
+    assert project.so_number not in got
+
+
+def test_demand_class_unclassified_reads_null_not_a_stored_value(db, world):
+    """`unclassified` is not a third row in `DEMAND_CLASSES` - it means the column is NULL,
+    which is what "nobody has classified this order" actually looks like in the data."""
+    classified = _order(db, world, when=date(2026, 3, 1), customer=world["acme"],
+                        demand_class="project")
+    unclassified = _order(db, world, when=date(2026, 3, 1), customer=world["acme"],
+                          demand_class=None)
+
+    got = _numbers(db, demand_class="unclassified")
+
+    assert unclassified.so_number in got
+    assert classified.so_number not in got
+
+
+def test_no_demand_class_filter_narrows_nothing(db, world):
+    project = _order(db, world, when=date(2026, 3, 1), customer=world["acme"],
+                     demand_class="project")
+    unclassified = _order(db, world, when=date(2026, 3, 1), customer=world["acme"],
+                          demand_class=None)
+
+    got = _numbers(db, demand_class=None)
+
+    assert {project.so_number, unclassified.so_number} <= got
+
+
+def test_an_unrecognised_demand_class_matches_nothing(db, world):
+    """Same rule as `source`/`status`: a value this filter does not understand must not be
+    silently ignored, or the list shows the whole book under a heading claiming it is
+    narrowed."""
+    _order(db, world, when=date(2026, 3, 1), customer=world["acme"], demand_class="project")
+
+    assert _numbers(db, demand_class="not-a-real-class") == set()
 
 
 # --------------------------------------------------------------------------- #

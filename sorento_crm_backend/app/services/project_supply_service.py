@@ -49,21 +49,24 @@ whichever line the database happened to return first.
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import func, or_
+from sqlalchemy import func, nullslast, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Stock, Warehouse
-from app.models.order import SalesOrder, SalesOrderLine
+from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import InboundShipment, SPOAllocation, Supplier
 from app.models.product import Product
+from app.models.sales_agent import SalesAgent
 from app.models.project_so import (
     ALLOC_SOURCE_BRW,
+    ALLOC_SOURCE_GROUP_TAKE,
     ALLOC_SOURCE_ORDER,
     ALLOC_SOURCE_OTHER_LOCATION,
     ALLOC_SOURCE_OTHER_PROJECT,
@@ -84,17 +87,22 @@ from app.models.scm import ItemClassification, ReorderLevel
 from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.scm import priority
+from app.services.scm import sales_agent_service
 from app.services.scm.demand import demand_qty, is_open_demand
 from app.services.scm.front_planning_engine import (
     BORROW,
     BUY,
     RESERVE,
+    RUNG_CROSS_GROUP_BORROW,
+    RUNG_GROUP_BORROW,
+    RUNG_GROUP_TAKE,
+    RUNG_POOL,
     TIMELY_SPO,
     Component,
     attribute_sources,
+    pool_reserve_capacity,
     propose_line,
     qty_text,
-    reserve_capacity,
 )
 
 logger = logging.getLogger(__name__)
@@ -111,6 +119,18 @@ _ZERO = Decimal("0")
 #: the reconciliation service already treat as live - so the tuple is imported rather than
 #: restated, or the two would drift the next time a status is added.
 CONFIRMABLE_STATUSES = LIVE_SO_STATUSES
+
+#: The columns the Plans page (D1) may sort by, and therefore the only ones the route's own
+#: `Literal` offers - imported into the route rather than restated, the same discipline
+#: `FulfilmentPlanningRow.sort` follows, with a test asserting the two agree.
+PLAN_SORT_FIELDS: Tuple[str, ...] = (
+    "so_number",
+    "customer_name",
+    "agent_code",
+    "revision_no",
+    "state",
+    "decided_at",
+)
 
 #: The product a hold is keyed by: the CORE line's when the mirror line is reconciled to
 #: one, else the mirror's own. Free stock is read against the core product (`_facts_for`
@@ -140,6 +160,18 @@ def _dec(value: Any, default: Decimal = _ZERO) -> Decimal:
         return Decimal(str(value))
     except (InvalidOperation, ValueError):
         return default
+
+
+def _parse_date(value: Any) -> Optional[date]:
+    """A frozen snapshot's date fields are ISO strings (JSON has no date type); a carried
+    line reads them back off `SOSupplyDecision.line_snapshots` and needs the `date` this
+    class's other readers already expect."""
+    if value is None or isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
 
 
 #: How many of the queue in front of a line are NAMED beside it. The captain's question is "why
@@ -260,6 +292,22 @@ class SupplyLinesRefused(AppException):
         self.detail["failing_lines"] = list(failing_lines)
 
 
+def _error_detail(exc: Exception) -> Tuple[str, Optional[List[Dict[str, Any]]]]:
+    """What went wrong, and which lines it named, off any exception `confirm` can raise.
+
+    `confirm_many` cannot let one order's raised `AppException` bubble - it has to KEEP the
+    message (and `failing_lines`, when the refusal named any) beside the `pso_id` it belongs
+    to and move on to the next order. `AppException.detail` is a plain dict, not an attribute,
+    which is why this is a function and not a property on the exception itself.
+    """
+    if isinstance(exc, AppException):
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        message = detail.get("message") or str(exc)
+        failing_lines = detail.get("failing_lines")
+        return message, failing_lines
+    return str(exc), None
+
+
 @dataclass
 class _SpoRow:
     spo_number: str
@@ -345,6 +393,11 @@ class _LineFacts:
     #: reconciled AutoCount line). Set, the line is read out with no components and no
     #: donors; it is never carried and cannot be named to a confirmation.
     unplannable_reason: Optional[str] = None
+    #: Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E, section 8). The
+    #: OWNERSHIP GROUP this line's own location belongs to - the suffix after the hyphen
+    #: (`BRW-BB` -> `BB`) - or `None` for a location that carries no group (a bare pool
+    #: code, or an inactive/unrecognised warehouse).
+    group_code: Optional[str] = None
 
     @property
     def own_code(self) -> Optional[str]:
@@ -403,16 +456,61 @@ class _BorrowLedger:
         self._held[key] = max(self._held.get(key, _ZERO) - qty, _ZERO)
 
 
+class _CapacityLedger:
+    """What a Reserve rung's location still has left, across every line of ONE
+    confirmation (S7).
+
+    `_check_line` used to build a fresh capacity dict per line from live figures, and only
+    carried the line's OWN site pool forward (the old `pool_left`). Every OTHER pool in the
+    chain and every group-take sibling was re-read live on each line with no memory of
+    what earlier lines of the SAME confirmation had already drawn - so two lines of one
+    order could each be offered the whole of a secondary pool, or the whole of a sibling's
+    free stock, and both accepted.
+
+    Seeded lazily, one location at a time, from whatever LIVE capacity `_check_line` first
+    computes for it; every later line of the confirmation reads and draws down the SAME
+    running balance instead of the live figure again.
+    """
+
+    def __init__(self) -> None:
+        self._left: Dict[Tuple[str, str], Decimal] = {}
+
+    def capacity(self, product_id: Optional[str], warehouse_id: str, live_qty: Decimal) -> Decimal:
+        key = (product_id or "", warehouse_id)
+        if key not in self._left:
+            self._left[key] = live_qty
+        return self._left[key]
+
+    def take(self, product_id: Optional[str], warehouse_id: str, qty: Decimal) -> None:
+        key = (product_id or "", warehouse_id)
+        self._left[key] = max(self._left.get(key, _ZERO) - qty, _ZERO)
+
+
 @dataclass
 class _FrozenComponent:
     """One component read back off a frozen snapshot, in the shape the payload's own
     components have (`.warehouse_id`, `.qty`, and for a borrow `.source`), so the shortfall
-    arithmetic can walk a carried line and a named line with one loop."""
+    arithmetic can walk a carried line and a named line with one loop.
+
+    Ladder v2 group borrow (section E.4) also needs the donor fields carried through: a
+    carried `group_borrow` component still holds another sales order's own committed
+    quantity, and `_borrow_shortfalls` names that donor and raises its order-back off
+    `donor_core_line_id` / `donor_so_number` / `donor_line_no` regardless of whether the
+    line was just named or is riding along carried forward. Without these, a reconfirm
+    that carries a group-borrow line silently drops that line's order-back.
+    """
 
     warehouse_id: Optional[str]
     qty: Decimal
     source: Optional[str] = None
     donor_project_id: Optional[str] = None
+    donor_core_line_id: Optional[str] = None
+    donor_so_number: Optional[str] = None
+    donor_line_no: Optional[int] = None
+    donor_agent_code: Optional[str] = None
+    same_agent: bool = False
+    order_back_qty: Optional[str] = None
+    donor_required_date: Optional[date] = None
 
 
 @dataclass
@@ -435,6 +533,13 @@ class _CarriedLine:
                 qty=_dec(component.get("qty")),
                 source=component.get("source"),
                 donor_project_id=component.get("donor_project_id"),
+                donor_core_line_id=component.get("donor_core_line_id"),
+                donor_so_number=component.get("donor_so_number"),
+                donor_line_no=component.get("donor_line_no"),
+                donor_agent_code=component.get("donor_agent_code"),
+                same_agent=bool(component.get("same_agent")),
+                order_back_qty=component.get("order_back_qty"),
+                donor_required_date=_parse_date(component.get("donor_required_date")),
             )
             for component in (self.snapshot.get("components") or [])
             if component.get("kind") == kind
@@ -475,6 +580,42 @@ class ProjectSupplyService:
         # The free / holds caches indexed by product, rebuilt when either cache is
         # replaced (`_by_product`), so a per-line lookup walks that product's rows only.
         self._indexed: Optional[Tuple[Any, Any, Dict[str, Any], Dict[str, Any]]] = None
+        # Ladder v2 (section E) per-request caches. `None` means "not read yet"; a
+        # populated-but-empty dict is a real, cacheable answer, so each uses its own
+        # sentinel rather than a falsy check.
+        self._fulfilment_settings_cache: Optional[Dict[str, Any]] = None
+        self._site_pools_cache: Optional[Dict[str, Warehouse]] = None
+        self._group_siblings_cache: Dict[str, Optional[Dict[str, Warehouse]]] = {}
+        self._group_donor_cache: Dict[str, List[Dict[str, Any]]] = {}
+        self._warehouse_code_memo: Dict[str, Optional[Warehouse]] = {}
+        # Ladder v2 group borrow (section E rule 4): how much of ONE donor sales-order
+        # line is still available to lend, within this confirmation only - so two lines
+        # of the same confirm cannot both take the whole of it (seeded net of what OTHER
+        # confirmed decisions already hold from it, S1 - see `_group_borrow_held_qty`).
+        self._donor_line_ledger: Dict[str, Decimal] = {}
+        # S3: the group pile is the SAME ranked list for every line sharing a
+        # (product, group) - see `_group_pile_members`. `priority.active_policy` and
+        # `priority.payment_terms_by_customer` are read at most once each per request too
+        # (`_active_policy`, `_payment_terms_for`), and `_decided_elsewhere`'s own
+        # whole-table read is memoized behind `_decided_elsewhere_cached` for the same
+        # reason: a board of N lines of one product/group must not pay N round trips for
+        # facts that do not vary by line.
+        self._group_pile_members_cache: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        self._payment_terms_cache: Dict[str, Optional[int]] = {}
+        self._active_policy_loaded = False
+        self._active_policy_value: Optional[Any] = None
+        self._decided_elsewhere_cache: Optional[Set[str]] = None
+        # PROJECT line ids of the lines this request is reading/replacing right now
+        # (`_facts_for`'s own `replaced`, `demand_facts`'s own `exclude_line_ids`) - fed to
+        # `_decided_elsewhere` so a line being decided in THIS request is never read as
+        # "covered elsewhere" (S2, parity with `_pile_book`), and to `_group_borrow_held_qty`
+        # so a donor line's OWN prior hold on one of these lines is un-netted the same way
+        # `_free_stock` already un-nets it (S1).
+        self._replaced_line_ids: Set[str] = set()
+        # CORE sales-order line ids of every line the current confirmation/board selection
+        # is itself deciding - never offered as a group-borrow donor (S2): a line whose own
+        # state is moving in this same request is not a stable, pre-existing donor.
+        self._current_selection_core_ids: Set[str] = set()
 
     # ------------------------------------------------------------------ lookups
 
@@ -584,8 +725,10 @@ class ProjectSupplyService:
     def compose_line(
         self, fact: _LineFacts, *, pool_free_left: Optional[Decimal] = None
     ) -> Tuple[Component, ...]:
-        """The source ladder for ONE line: own location, then the shared pool, then timely
-        incoming, then Buy - with PLAN 3.3's hot-selling rules deciding what Reserve may touch.
+        """The source ladder for ONE line, ladder v2's own order
+        (`PLAN-demo-followups-19aug-ladder-v2.md` section E): coverage date, timely
+        incoming, the shared pool(s), group take, group borrow, cross-group borrow, then
+        the whole-line rule.
 
         Public because it has two callers and must never have two implementations. The sheet
         composes one order's lines; the multi-order board composes every contributing line of a
@@ -594,30 +737,32 @@ class ProjectSupplyService:
         acting on the sheet disagreed about the same line - which is the whole reason this is a
         method rather than a loop body.
 
-        Borrow is not proposed here, on either surface: it needs a donor and a reason from a
-        person (AC-B09). `borrow_candidates_for` is what offers it.
-
-        `pool_free_left` is the caller's running pool balance, because the pool is shared: the
-        sheet draws it down across one order's lines, the board across the whole selection.
-        Defaults to the whole pool free, which is what a single line on its own may draw.
+        `pool_free_left` is the caller's running balance for this line's OWN site pool,
+        because that one pool is shared: the sheet draws it down across one order's lines,
+        the board across the whole selection. The OTHER site pools (rung 2's second half)
+        are read fresh per line - they are the overflow, not the contested pile, and
+        tracking a running balance across every secondary pool for every line on a board
+        of hundreds is cost nothing here asks for. Defaults to the whole pool free, which
+        is what a single line on its own may draw.
         """
-        free_stock: Dict[str, Decimal] = {}
-        if fact.own_code:
-            free_stock[fact.own_code] = fact.own_free
-        if fact.pool_code:
-            free_stock[fact.pool_code] = (
-                fact.pool_free if pool_free_left is None else pool_free_left
-            )
+        pools = self._pool_chain(fact, own_pool_free_left=pool_free_left)
+        group_take = self._group_take_candidates(fact)
+        group_borrow = self._group_borrow_auto_candidates(fact)
+        cross_group = self._cross_group_borrow_candidates(
+            fact,
+            residual=self._ladder_residual_before_cross_group(
+                fact, pools=pools, group_take=group_take, group_borrow=group_borrow
+            ),
+        )
         return propose_line(
             open_qty=fact.open_qty,
             line_no=fact.line.line_no if fact.line is not None else None,
             required_date=fact.required_date,
             fulfilment_location=fact.own_code,
+            group_code=fact.group_code,
             is_dealer_hot_selling=fact.is_dealer_hot_selling,
             is_project_hot_selling=fact.is_project_hot_selling,
-            free_stock=free_stock,
-            pool_location=fact.pool_code,
-            pool_available=fact.pool_available,
+            pools=pools,
             timely_spo_qty=fact.timely_qty,
             timely_spo_refs=[
                 {
@@ -629,7 +774,449 @@ class ProjectSupplyService:
                 for ref in fact.timely_refs
             ],
             is_discontinued=fact.is_discontinued,
+            reorder_coverage_until=self._reorder_coverage_until(),
+            group_take_candidates=group_take,
+            group_borrow_candidates=group_borrow,
+            cross_group_borrow_candidates=cross_group,
         )
+
+    # ---------------------------------------- ladder v2 rung candidates, for the trail
+
+    def pool_chain_for(
+        self, fact: _LineFacts, *, pool_free_left: Optional[Decimal] = None
+    ) -> List[Dict[str, Any]]:
+        """`compose_line`'s pool candidate list (section E rule 2), public so the board's
+        trail can show every pool the ladder actually consulted, not only this line's own."""
+        return self._pool_chain(fact, own_pool_free_left=pool_free_left)
+
+    def group_take_candidates_for(self, fact: _LineFacts) -> List[Dict[str, Any]]:
+        """`compose_line`'s group-take candidate list (section E rule 3), public for the
+        board's trail."""
+        return self._group_take_candidates(fact)
+
+    def group_borrow_auto_candidates_for(self, fact: _LineFacts) -> List[Dict[str, Any]]:
+        """`compose_line`'s AUTO group-borrow candidate list (section E rule 4, lower-ranked
+        donors only), public for the board's trail."""
+        return self._group_borrow_auto_candidates(fact)
+
+    def cross_group_borrow_candidates_for(
+        self, fact: _LineFacts, *, residual: Decimal
+    ) -> List[Dict[str, Any]]:
+        """`compose_line`'s cross-group-borrow candidate list (section E rule 5, already
+        cap-filtered against `residual`), public for the board's trail."""
+        return self._cross_group_borrow_candidates(fact, residual=residual)
+
+    def warehouse_id_for_code(self, code: Optional[str]) -> Optional[str]:
+        """A warehouse CODE resolved to its id (addressing only), for a caller that only
+        has the ladder's own component `source_location` in hand - the board's row needs
+        this for a group take / group borrow / cross-group borrow source, which its own
+        `warehouse_ids` map (built from `fact.own_code` / `fact.pool_code` alone) does not
+        cover."""
+        if not code:
+            return None
+        warehouse = self._warehouse_by_code(code)
+        return str(warehouse.id) if warehouse else None
+
+    # -------------------------------------------------- ladder v2 group context (section E)
+
+    def _fulfilment_settings(self) -> Dict[str, Any]:
+        """`{reorder_coverage_until, cross_group_borrow_max_qty, cross_group_borrow_max_pct}`
+        for the active policy, read once per request. `.get()` with a None-safe fallback
+        throughout: this reads the SAME row `app.services.scm.priority.fulfilment_settings`
+        serves to the admin screen, which may still be mid-migration on another branch."""
+        if self._fulfilment_settings_cache is None:
+            try:
+                policy = self._active_policy()
+                self._fulfilment_settings_cache = dict(
+                    priority.fulfilment_settings(policy) or {}
+                )
+            except Exception:  # pragma: no cover - defensive, see docstring
+                self._fulfilment_settings_cache = {}
+        return self._fulfilment_settings_cache
+
+    def _reorder_coverage_until(self) -> Optional[date]:
+        return self._fulfilment_settings().get("reorder_coverage_until")
+
+    def _cross_group_cap(self) -> Tuple[Optional[Decimal], Optional[Decimal]]:
+        settings = self._fulfilment_settings()
+        qty = settings.get("cross_group_borrow_max_qty")
+        pct = settings.get("cross_group_borrow_max_pct")
+        return (
+            _dec(qty) if qty is not None else None,
+            _dec(pct) if pct is not None else None,
+        )
+
+    def _site_pool_warehouses(self) -> Dict[str, Warehouse]:
+        """Every active warehouse that is SOME location's `pool_warehouse_id` - the pools
+        ladder v2's rung 2 can draw, read once per request.
+
+        The authoritative test is the FK, not the code's shape: on the live book every
+        pool also happens to be a plain site code with no hyphen (`BRW`, `MWH`, ...), but
+        that is a naming convention the data does not enforce, and a warehouse's OWN code
+        says nothing about whether it is anybody's pool.
+        """
+        if self._site_pools_cache is None:
+            pool_ids = {
+                str(row[0])
+                for row in self.db.query(Warehouse.pool_warehouse_id)
+                .filter(Warehouse.pool_warehouse_id.isnot(None))
+                .distinct()
+                .all()
+            }
+            self._site_pools_cache = {
+                warehouse_id: warehouse
+                for warehouse_id, warehouse in (
+                    self._warehouses(pool_ids) if pool_ids else {}
+                ).items()
+                if warehouse.is_active
+            }
+        return self._site_pools_cache
+
+    def _pool_chain(
+        self, fact: _LineFacts, *, own_pool_free_left: Optional[Decimal]
+    ) -> List[Dict[str, Any]]:
+        """The ordered pool list for `propose_line`'s rung 2: this line's own site pool
+        first, then every OTHER active site pool (section E rule 2)."""
+        chain: List[Dict[str, Any]] = []
+        if fact.pool_code and fact.pool:
+            chain.append(
+                {
+                    "location": fact.pool_code,
+                    "free": (
+                        fact.pool_free if own_pool_free_left is None else own_pool_free_left
+                    ),
+                    "available": fact.pool_available,
+                }
+            )
+        if not fact.product_id:
+            return chain
+        seen = {str(fact.pool.id)} if fact.pool else set()
+        for pool_id, pool in sorted(
+            self._site_pool_warehouses().items(), key=lambda item: item[1].warehouse_code
+        ):
+            if pool_id in seen:
+                continue
+            free = self._free_at(fact.product_id, pool_id)
+            triple = self._pile_facts().get(
+                (fact.product_id, pool_id), {"on_hand": _ZERO, "so_qty": _ZERO, "spo_qty": _ZERO}
+            )
+            available = triple["on_hand"] - triple["so_qty"] + triple["spo_qty"]
+            chain.append({"location": pool.warehouse_code, "free": free, "available": available})
+        return chain
+
+    def _group_sibling_warehouses(self, fact: _LineFacts) -> Dict[str, Warehouse]:
+        """Every active warehouse sharing this line's ownership group, at ANOTHER site -
+        never this line's own location (section E rule 3: "the own location L is never a
+        source"). Cached per group code, since a board asks this for many lines at once."""
+        if not fact.group_code or not fact.own_code:
+            return {}
+        cache = self._group_siblings_cache.setdefault(fact.group_code, None)
+        if cache is None:
+            rows = self.db.query(Warehouse).filter(Warehouse.is_active.is_(True)).all()
+            cache = {
+                row.warehouse_code: row
+                for row in rows
+                if row.warehouse_code
+                and sales_agent_service.group_of_warehouse_code(row.warehouse_code)
+                == fact.group_code
+            }
+            self._group_siblings_cache[fact.group_code] = cache
+        return {code: row for code, row in cache.items() if code != fact.own_code}
+
+    def _group_take_candidates(self, fact: _LineFacts) -> List[Dict[str, Any]]:
+        """Rung 3: positive Available at a sibling location (section E rule 3),
+        `capacity = max(min(free, available), 0)` - the same formula the pool rung uses."""
+        if not fact.product_id:
+            return []
+        siblings = self._group_sibling_warehouses(fact)
+        out: List[Dict[str, Any]] = []
+        for code, warehouse in sorted(siblings.items()):
+            free = self._free_at(fact.product_id, str(warehouse.id))
+            triple = self._pile_facts().get(
+                (fact.product_id, str(warehouse.id)),
+                {"on_hand": _ZERO, "so_qty": _ZERO, "spo_qty": _ZERO},
+            )
+            available = triple["on_hand"] - triple["so_qty"] + triple["spo_qty"]
+            capacity = max(min(free, available), _ZERO)
+            if capacity > _ZERO:
+                out.append({"location": code, "qty": capacity})
+        return out
+
+    def _group_pile_members(self, fact: _LineFacts) -> List[Dict[str, Any]]:
+        """Every OPEN demand line for one PRODUCT across a whole ownership GROUP (every
+        `*-<group>` location), ranked TOGETHER by the active priority policy.
+
+        Cached per `(product_id, group_code)`, not per line (S3): the query and the ranked
+        order it produces are identical for every line that shares a product and a group -
+        `locations` is the group's WHOLE membership regardless of which sibling is asking
+        (own code included), so a board of N lines of one product/group used to pay N
+        round trips for the exact same rows. `priority.active_policy` and
+        `priority.payment_terms_by_customer` are read through the request-scoped helpers
+        below for the same reason: unlike this list, THOSE could legitimately differ
+        between calls, so they memoize by their own key rather than piggy-backing on this
+        cache.
+        """
+        if not fact.group_code or not fact.own_code:
+            return []
+        cache_key = (fact.product_id or "", fact.group_code)
+        if cache_key in self._group_pile_members_cache:
+            return self._group_pile_members_cache[cache_key]
+        locations = dict(self._group_sibling_warehouses(fact))
+        if fact.own_code and fact.warehouse:
+            locations[fact.own_code] = fact.warehouse
+        if not fact.product_id or not locations:
+            self._group_pile_members_cache[cache_key] = []
+            return []
+        warehouse_ids = [str(w.id) for w in locations.values()]
+        rows = (
+            self.db.query(
+                SalesOrderLine, SalesOrder, SalesAgent.sales_agent,
+                # `line_no` is the PROJECT mirror's own, the same way `_pile_book` reads
+                # it: a core line nobody has adopted has none, and the ladder's own
+                # display already treats a missing line number as absent (never "0").
+                ProjectSalesOrderLine.line_no,
+            )
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
+            .outerjoin(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.core_sales_order_line_id == SalesOrderLine.id,
+            )
+            .filter(
+                SalesOrderLine.product_id == fact.product_id,
+                SalesOrderLine.warehouse_id.in_(warehouse_ids),
+                SalesOrder.status == "open",
+                is_open_demand(),
+            )
+            .all()
+        )
+        if not rows:
+            self._group_pile_members_cache[cache_key] = []
+            return []
+        customer_ids = {str(order.customer_id) for _l, order, _a, _n in rows if order.customer_id}
+        terms = self._payment_terms_for(customer_ids)
+        warehouses_by_id = {str(w.id): code for code, w in locations.items()}
+        members: List[Dict[str, Any]] = []
+        for line, order, agent_code, line_no in rows:
+            open_qty = max(_dec(line.qty_ordered) - _dec(line.qty_delivered), _ZERO)
+            if open_qty <= _ZERO:
+                continue
+            members.append(
+                {
+                    "line_id": str(line.id),
+                    "sales_order_id": str(line.sales_order_id),
+                    "so_number": order.so_number or "",
+                    "line_no": line_no,
+                    "open_qty": open_qty,
+                    "required_date": line.required_date or order.requested_delivery_date,
+                    "order_date": order.order_date,
+                    "demand_class": order.demand_class,
+                    "payment_terms_days": terms.get(str(order.customer_id or "")),
+                    "warehouse_code": warehouses_by_id.get(str(line.warehouse_id)),
+                    "donor_agent_code": agent_code,
+                    "donor_agent_id": str(order.sales_agent_id) if order.sales_agent_id else None,
+                }
+            )
+        if not members:
+            self._group_pile_members_cache[cache_key] = []
+            return []
+        weights, class_weights = priority.policy_weights(self._active_policy())
+        self._rank_pile(members, weights=weights, class_weights=class_weights)
+        self._group_pile_members_cache[cache_key] = members
+        return members
+
+    def _group_pile(
+        self, fact: _LineFacts
+    ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """This line's group pile (`_group_pile_members`) and this line's own entry within
+        it, or `None` when this line is not itself open demand at its pile (an
+        amended/carried line has none to compare against, so no donor can be judged
+        against it either)."""
+        if not fact.product_id or not fact.core:
+            return [], None
+        members = self._group_pile_members(fact)
+        if not members:
+            return [], None
+        mine = next((m for m in members if m["line_id"] == str(fact.core.id)), None)
+        return members, mine
+
+    def _group_borrow_donors(
+        self, fact: _LineFacts
+    ) -> List[Dict[str, Any]]:
+        """Every OTHER open line's committed quantity at this line's ownership group,
+        L first then the siblings (section E rule 4), each stating whether it is ranked
+        below this line (auto-eligible) and whether it shares this line's agent (offered
+        at any rank). Cached per line, since the sheet asks for both the auto list and the
+        offer list off the same read.
+
+        **Never a sibling line of this line's OWN sales order** (S2): borrowing from
+        another line of the same order and raising an order-back against it is a
+        borrow "against itself", not against another customer's commitment.
+        **Never a line already covered by another active decision** (S2, parity with
+        `_pile_book`'s own `_decided_elsewhere` exclusion): its committed quantity is
+        already promised to whichever composition covers it, so it is not a stable donor
+        for a different one - the same rule that keeps it out of the competing-demand
+        pile keeps it out of the donor list. **Never a line that is ITSELF part of the
+        current confirmation/board selection** (S2): its own state is moving in this same
+        request, so it is not a pre-existing, stable donor either.
+        """
+        cache_key = str(fact.core.id) if fact.core else None
+        if cache_key is not None and cache_key in self._group_donor_cache:
+            return self._group_donor_cache[cache_key]
+        members, mine = self._group_pile(fact)
+        if mine is None:
+            if cache_key is not None:
+                self._group_donor_cache[cache_key] = []
+            return []
+        my_agent_id = mine.get("donor_agent_id")
+        my_sales_order_id = mine.get("sales_order_id")
+        my_index = members.index(mine)
+        decided = self._decided_elsewhere_cached()
+        donors: List[Dict[str, Any]] = []
+        for index, member in enumerate(members):
+            if member is mine:
+                continue
+            if member.get("sales_order_id") == my_sales_order_id:
+                continue
+            if member["line_id"] in decided:
+                continue
+            if member["line_id"] in self._current_selection_core_ids:
+                continue
+            location = member.get("warehouse_code")
+            if not location:
+                continue
+            donor_agent_id = member.get("donor_agent_id")
+            same_agent = bool(my_agent_id) and donor_agent_id == my_agent_id
+            donors.append(
+                {
+                    "location": location,
+                    # L first, then the siblings: the location's own draw order.
+                    "location_rank": 0 if location == fact.own_code else 1,
+                    "qty": member["open_qty"],
+                    "donor_so_number": member.get("so_number") or None,
+                    "donor_line_no": member.get("line_no"),
+                    "donor_agent_code": member.get("donor_agent_code"),
+                    "donor_core_line_id": member.get("line_id"),
+                    "required_date": member.get("required_date"),
+                    "same_agent": same_agent,
+                    # Below this line in the SAME ranked pile - "ranked below this line".
+                    "lower_ranked": index > my_index,
+                    # Position in the ranked pile - the safest donor at one location is
+                    # the LOWEST-ranked one (furthest down the queue), not the biggest.
+                    "rank_index": index,
+                }
+            )
+        donors.sort(key=lambda d: (d["location_rank"], d["location"], -d["rank_index"]))
+        if cache_key is not None:
+            self._group_donor_cache[cache_key] = donors
+        return donors
+
+    def _group_borrow_auto_candidates(self, fact: _LineFacts) -> List[Dict[str, Any]]:
+        """Rung 4's AUTOMATIC list: donors ranked below this line only (section E rule 4).
+        A same-agent donor ranked ABOVE this line is never here - only in the offered list
+        `_group_borrow_all_donors` gives the sheet - because "offered, not auto-proposed"
+        is the whole point of naming her separately."""
+        return [
+            {
+                "location": donor["location"],
+                "qty": donor["qty"],
+                "donor_so_number": donor["donor_so_number"],
+                "donor_line_no": donor["donor_line_no"],
+                "donor_agent_code": donor["donor_agent_code"],
+                "same_agent": donor["same_agent"],
+                "donor_core_line_id": donor["donor_core_line_id"],
+                # B4: "urgency = the donor's required date" - carried into the engine's
+                # own `Component.donor_required_date` so the proposal, and whatever the
+                # confirm payload round-trips from it, name the DONOR's date, not this
+                # line's own.
+                "donor_required_date": donor["required_date"],
+            }
+            for donor in self._group_borrow_donors(fact)
+            if donor["lower_ranked"]
+        ]
+
+    def _ladder_residual_before_cross_group(
+        self,
+        fact: _LineFacts,
+        *,
+        pools: Sequence[Dict[str, Any]],
+        group_take: Sequence[Dict[str, Any]],
+        group_borrow: Sequence[Dict[str, Any]],
+    ) -> Decimal:
+        """What rung 5 (cross-group borrow) would still need to cover, walking rungs 1-4
+        the same greedy way `propose_line` does. The cap in section E rule 5 is stated
+        against THIS residual ("Q"), which the engine only knows once it reaches that
+        rung - computed here so the candidate list can be capped before it is handed in,
+        without duplicating the ladder's own arithmetic beyond a running subtraction."""
+        remaining = max(_dec(fact.open_qty), _ZERO)
+        if remaining <= _ZERO:
+            return _ZERO
+        if (
+            self._reorder_coverage_until() is not None
+            and fact.required_date is not None
+            and fact.required_date > self._reorder_coverage_until()
+        ):
+            return remaining
+        remaining -= min(remaining, max(_dec(fact.timely_qty), _ZERO))
+        for _location, capacity, _reason in pool_reserve_capacity(
+            is_dealer_hot_selling=fact.is_dealer_hot_selling,
+            is_project_hot_selling=fact.is_project_hot_selling,
+            pools=pools,
+        ):
+            if remaining <= _ZERO:
+                break
+            remaining -= min(remaining, capacity)
+        for candidate in group_take:
+            if remaining <= _ZERO:
+                break
+            remaining -= min(remaining, max(_dec(candidate.get("qty")), _ZERO))
+        for candidate in group_borrow:
+            if remaining <= _ZERO:
+                break
+            remaining -= min(remaining, max(_dec(candidate.get("qty")), _ZERO))
+        return max(remaining, _ZERO)
+
+    def _cross_group_borrow_candidates(
+        self, fact: _LineFacts, *, residual: Decimal
+    ) -> List[Dict[str, Any]]:
+        """Rung 5: free stock OUTSIDE this line's ownership group, offered only within the
+        small-quantity cap (section E rule 5). `residual` is what the ladder would still
+        need by the time it reaches this rung - the "Q" the cap is measured against.
+
+        A location with NO ownership group (`fact.group_code` is `None`) has no "outside
+        the group" either - cross-group borrow is a group concept, and auto-proposing an
+        ordinary free-stock donor under its name for an ungrouped line would silently
+        widen what "cross-group" means past what section 8 asked for.
+        """
+        if not fact.product_id or not fact.group_code or residual <= _ZERO:
+            return []
+        max_qty, max_pct = self._cross_group_cap()
+        inside = self._reserve_location_ids(fact) | {
+            str(w.id) for w in self._group_sibling_warehouses(fact).values()
+        }
+        free_index, _holds_index = self._by_product()
+        free_here = free_index.get(fact.product_id, {})
+        candidates: List[Dict[str, Any]] = []
+        for warehouse_id, free in free_here.items():
+            if free <= _ZERO or warehouse_id in inside:
+                continue
+            warehouse = self._warehouse_row(warehouse_id)
+            if warehouse is None or not warehouse.warehouse_code:
+                continue
+            code = warehouse.warehouse_code
+            if sales_agent_service.group_of_warehouse_code(code) == fact.group_code:
+                continue
+            within_qty = max_qty is not None and residual <= max_qty
+            within_pct = (
+                max_pct is not None
+                and free > _ZERO
+                and residual <= (free * max_pct / Decimal("100"))
+            )
+            if not (within_qty or within_pct):
+                continue
+            candidates.append({"location": code, "qty": free})
+        candidates.sort(key=lambda c: (-_dec(c["qty"]), c["location"]))
+        return candidates
 
     def borrow_candidates_for(
         self, fact: _LineFacts, *, need: Optional[Decimal] = None
@@ -701,6 +1288,14 @@ class ProjectSupplyService:
         }
         warehouses.update(self._warehouses(pool_ids - set(warehouses)))
 
+        # S1/S2 (see `_facts_for`'s own copy of this): the lines this read is un-netting,
+        # and the CORE lines of the whole selection this call is asking about at once - the
+        # board's own "current selection" for `_group_borrow_donors`.
+        self._replaced_line_ids = {str(line_id) for line_id in (exclude_line_ids or [])}
+        self._current_selection_core_ids = {
+            str(row["line_id"]) for row in rows if row.get("line_id")
+        }
+        self._decided_elsewhere_cache = None
         self._free_cache = self._free_stock(product_ids, exclude_line_ids=exclude_line_ids)
         self._holds_cache = self._holds_by_project(
             product_ids, exclude_line_ids=exclude_line_ids
@@ -835,6 +1430,9 @@ class ProjectSupplyService:
                 is_discontinued=(product_id or "") in discontinued,
                 timely_refs=timely_refs,
                 advisory_refs=[ref for ref in spo.get(key, []) if ref not in timely_refs],
+                group_code=sales_agent_service.group_of_warehouse_code(
+                    warehouse.warehouse_code if warehouse else None
+                ),
             )
         return facts
 
@@ -904,19 +1502,54 @@ class ProjectSupplyService:
     def _serialize_component(
         self, component: Component, fact: _LineFacts
     ) -> Dict[str, Any]:
-        warehouse_id = None
-        if component.source_location:
-            if fact.own_code == component.source_location and fact.warehouse:
-                warehouse_id = str(fact.warehouse.id)
-            elif fact.pool_code == component.source_location and fact.pool:
-                warehouse_id = str(fact.pool.id)
+        warehouse_id = self._resolve_source_warehouse_id(component.source_location, fact)
         return {
             "kind": component.kind,
             "qty": qty_text(component.qty),
             "reason": component.reason,
             "source_location": component.source_location,
             "source_warehouse_id": warehouse_id,
+            "rung": component.rung,
+            "donor_so_number": component.donor_so_number,
+            "donor_line_no": component.donor_line_no,
+            "donor_agent_code": component.donor_agent_code,
+            "same_agent": component.same_agent,
+            "order_back_qty": (
+                qty_text(component.order_back_qty)
+                if component.order_back_qty is not None
+                else None
+            ),
+            "donor_core_line_id": component.donor_core_line_id,
+            "donor_required_date": component.donor_required_date,
         }
+
+    def _resolve_source_warehouse_id(
+        self, source_location: Optional[str], fact: _LineFacts
+    ) -> Optional[str]:
+        """A component's warehouse CODE, resolved to an id (addressing only).
+
+        Own location and pool first, at no query cost - the common case. Ladder v2's
+        group take / group borrow / cross-group borrow rungs name a SIBLING or an outside
+        location the fact does not carry a reference for, so those fall back to a
+        memoized by-code lookup (`_warehouse_by_code`).
+        """
+        if not source_location:
+            return None
+        if fact.own_code == source_location and fact.warehouse:
+            return str(fact.warehouse.id)
+        if fact.pool_code == source_location and fact.pool:
+            return str(fact.pool.id)
+        warehouse = self._warehouse_by_code(source_location)
+        return str(warehouse.id) if warehouse else None
+
+    def _warehouse_by_code(self, code: str) -> Optional[Warehouse]:
+        if code not in self._warehouse_code_memo:
+            self._warehouse_code_memo[code] = (
+                self.db.query(Warehouse)
+                .filter(Warehouse.warehouse_code == code, Warehouse.is_active.is_(True))
+                .first()
+            )
+        return self._warehouse_code_memo[code]
 
     def _serialize_spo(self, ref: _SpoRow) -> Dict[str, Any]:
         return {
@@ -1217,8 +1850,9 @@ class ProjectSupplyService:
         checked: List[Tuple[ProjectSalesOrderLine, Any, _LineFacts]] = []
         # What is still available as the payload is walked, so two lines of the SAME
         # confirmation cannot each be sold the whole pile. The per-line facts say what was
-        # free when the sheet was read; these say what is left after the lines before it.
-        pool_left: Dict[str, Decimal] = {}
+        # free when the sheet was read; these say what is left after the lines before it
+        # (S7: every pool AND every group-take sibling, not only this line's own pool).
+        capacity_left = _CapacityLedger()
         borrow_left: _BorrowLedger = _BorrowLedger()
 
         for entry in payload_lines:
@@ -1245,7 +1879,7 @@ class ProjectSupplyService:
             fact = facts[str(line.id)]
             checked.append((line, entry, fact))
             self._check_line(
-                entry, fact, pool_left, borrow_left, stale, invalid, carried_holds
+                entry, fact, capacity_left, borrow_left, stale, invalid, carried_holds
             )
 
         # A line the payload does not name is NOT a failure any more (13.4). It is
@@ -1381,7 +2015,7 @@ class ProjectSupplyService:
         self,
         entry: Any,
         fact: _LineFacts,
-        pool_left: Dict[str, Decimal],
+        capacity_left: "_CapacityLedger",
         borrow_left: "_BorrowLedger",
         stale: List[Dict[str, Any]],
         invalid: List[Dict[str, Any]],
@@ -1422,20 +2056,45 @@ class ProjectSupplyService:
                 f"{qty_text(timely)}.",
             )
 
-        capacity = {
-            location: qty
-            for location, qty, _reason in reserve_capacity(
-                is_dealer_hot_selling=fact.is_dealer_hot_selling,
-                is_project_hot_selling=fact.is_project_hot_selling,
-                fulfilment_location=fact.own_code,
-                pool_location=fact.pool_code,
-                free_stock=self._free_for(fact, pool_left),
-                pool_available=fact.pool_available,
+        # Ladder v2 (section E rule 7): the own location is NEVER a Reserve source any
+        # more, only the pool chain (own site pool then every other) and this line's
+        # group-take siblings - the same candidates `compose_line` walked to propose this
+        # composition, so the recheck cannot refuse what the proposal itself offered.
+        #
+        # S7: every location here is drawn through `capacity_left`, the running ledger
+        # shared across every line of this confirmation - not read live per line - so a
+        # second line asking the same pool or the same group-take sibling sees what the
+        # first line of this confirmation already took, not the live figure again.
+        pools = self._pool_chain(fact, own_pool_free_left=None)
+        capacity: Dict[str, Decimal] = {}
+        location_ids: Dict[str, str] = {}
+        for location, live_qty, _reason in pool_reserve_capacity(
+            is_dealer_hot_selling=fact.is_dealer_hot_selling,
+            is_project_hot_selling=fact.is_project_hot_selling,
+            pools=pools,
+        ):
+            source = self._warehouse_by_code(location)
+            if source is None:
+                continue
+            location_ids[location] = str(source.id)
+            capacity[location] = capacity_left.capacity(
+                fact.product_id, str(source.id), live_qty
             )
-        }
-        allowed = " or ".join([code for code in (fact.own_code, fact.pool_code) if code])
+        for candidate in self._group_take_candidates(fact):
+            location = candidate["location"]
+            source = self._warehouse_by_code(location)
+            if source is None:
+                continue
+            location_ids[location] = str(source.id)
+            seeded = capacity_left.capacity(
+                fact.product_id, str(source.id), _dec(candidate["qty"])
+            )
+            capacity[location] = capacity.get(location, _ZERO) + seeded
+        reserve_locations = self._reserve_ladder_locations(fact)
+        by_id = {str(w.id): code for code, w in reserve_locations.items()}
+        allowed = ", ".join(sorted(reserve_locations))
         for item in entry.reserve or []:
-            warehouse = self._warehouse_of(fact, str(item.warehouse_id))
+            warehouse = by_id.get(str(item.warehouse_id))
             qty = _dec(item.qty)
             if warehouse is None:
                 # A location that is neither this line's own nor its pool. Name what was
@@ -1444,13 +2103,27 @@ class ProjectSupplyService:
                 # the whole line was the problem.
                 posted = self._warehouse_row(str(item.warehouse_id))
                 posted_code = posted.warehouse_code if posted else "another location"
-                refuse(
-                    invalid,
-                    f"Reserve was asked for from {posted_code}, and this line can only "
-                    f"reserve from {allowed or 'no location, because it states none'}. "
-                    "Buy the quantity instead, or borrow it from that location on the "
-                    "order's own sheet, which records who it came from and why.",
-                )
+                if not reserve_locations:
+                    # No pool is configured for this line at all, so the ask can only be
+                    # its own location (rule 7 - the own location is never a Reserve
+                    # source). Say that plainly instead of naming "no location" as the
+                    # allowed set, which read like the line was broken rather than simply
+                    # unpooled.
+                    refuse(
+                        invalid,
+                        f"Reserve was asked for from {posted_code}, this line's own "
+                        "location. A line never reserves its own location; with no pool "
+                        f"configured for {posted_code}, buy the quantity or borrow it on "
+                        "the order's own sheet.",
+                    )
+                else:
+                    refuse(
+                        invalid,
+                        f"Reserve was asked for from {posted_code}, and this line "
+                        f"reserves only from its pool(s) {allowed}. Buy the quantity "
+                        "instead, or borrow it from that location on the order's own "
+                        "sheet, which records who it came from and why.",
+                    )
                 continue
             # What this order's own active revision already holds here, resubmitted:
             # not a new ask, so it is exempt from the recheck entirely - `capacity` is
@@ -1470,10 +2143,10 @@ class ProjectSupplyService:
                 continue
             if warehouse not in capacity:
                 # The location IS this line's own or its pool; it simply has nothing left for
-                # this line. `reserve_capacity` omits a location contributing zero, so this
-                # used to fall through to the message above and report a location error for a
-                # quantity problem - which is what the planner saw as "Reserve may only come
-                # from this line's own location" printed about their own location.
+                # this line. `pool_reserve_capacity` omits a location contributing zero, so
+                # this used to fall through to the message above and report a location error
+                # for a quantity problem - which is what the planner saw as "Reserve may only
+                # come from this line's own location" printed about their own location.
                 refuse(
                     stale,
                     f"{warehouse} has nothing free for this line now, so none of the "
@@ -1494,10 +2167,9 @@ class ProjectSupplyService:
                 )
                 continue
             capacity[warehouse] -= qty
-            if fact.pool_code and warehouse == fact.pool_code and fact.pool:
-                pool_left[fact.pool_key] = max(
-                    pool_left.get(fact.pool_key, fact.pool_free) - qty, _ZERO
-                )
+            warehouse_id = location_ids.get(warehouse)
+            if warehouse_id:
+                capacity_left.take(fact.product_id, warehouse_id, qty)
 
         for item in entry.borrow or []:
             self._check_borrow(item, fact, borrow_left, refuse, stale, invalid, carried_holds)
@@ -1517,16 +2189,6 @@ class ProjectSupplyService:
                 f"{qty_text(fact.open_qty)}.",
             )
 
-    def _free_for(
-        self, fact: _LineFacts, pool_left: Dict[str, Decimal]
-    ) -> Dict[str, Decimal]:
-        free: Dict[str, Decimal] = {}
-        if fact.own_code:
-            free[fact.own_code] = fact.own_free
-        if fact.pool_code and fact.pool:
-            free[fact.pool_code] = pool_left.get(fact.pool_key, fact.pool_free)
-        return free
-
     def _warehouse_of(self, fact: _LineFacts, warehouse_id: str) -> Optional[str]:
         if fact.warehouse and str(fact.warehouse.id) == warehouse_id:
             return fact.own_code
@@ -1535,20 +2197,32 @@ class ProjectSupplyService:
         return None
 
     def _reserve_location_ids(self, fact: _LineFacts) -> set:
-        """The warehouses Reserve MAY draw this line from (PLAN 3.3), by id.
+        """The warehouses Reserve MAY draw this line from, by id.
 
-        Structural, not "wherever there happens to be stock": the fulfilment location and
-        the shared pool, always - hot-selling no longer removes either from Reserve's reach
-        (captain, 19 August 2026: own-location Reserve is always eligible, hot-selling or
-        not). What hot-selling gates is how much the POOL contributes, not whether the own
-        location is inside Reserve at all, so it is never offered as a Borrow source either.
+        Structural, not "wherever there happens to be stock": the fulfilment location
+        (read-only under ladder v2, section E rule 7) and EVERY active site pool - rung 2
+        now reaches every pool, not only this line's own site (section E rule 2). None of
+        these is ever offered as a plain free-stock Borrow donor: the pool rung already
+        reaches them automatically, and offering them again as `other_location` would
+        double the same stock up as two different decisions.
         """
         ids = set()
         if fact.warehouse:
             ids.add(str(fact.warehouse.id))
         if fact.pool:
             ids.add(str(fact.pool.id))
+        ids.update(self._site_pool_warehouses().keys())
         return ids
+
+    def _reserve_ladder_locations(self, fact: _LineFacts) -> Dict[str, Warehouse]:
+        """Every location Reserve may draw THIS line from under ladder v2, by CODE: every
+        active site pool, and this line's group-take siblings (section E rules 2 and 3).
+        Never the own location (rule 7)."""
+        out: Dict[str, Warehouse] = {
+            pool.warehouse_code: pool for pool in self._site_pool_warehouses().values()
+        }
+        out.update(self._group_sibling_warehouses(fact))
+        return out
 
     def _check_borrow(
         self,
@@ -1572,7 +2246,28 @@ class ProjectSupplyService:
         if warehouse is None:
             refuse(invalid, "That location no longer exists.")
             return
+
+        donor_core_line_id = getattr(item, "donor_core_line_id", None)
+        if item.source == ALLOC_SOURCE_OTHER_LOCATION and donor_core_line_id:
+            self._check_group_borrow(
+                item, fact, warehouse, donor_core_line_id, refuse, stale, invalid,
+                carried_holds,
+            )
+            return
+
         if item.source == ALLOC_SOURCE_OTHER_LOCATION:
+            if fact.warehouse and str(item.warehouse_id) == str(fact.warehouse.id):
+                # Ladder v2 (section E rule 7): this line's own location is never a Borrow
+                # source (its demand IS this line) and never a Reserve source any more
+                # either - the only way to reach stock physically sitting here is a group
+                # borrow FROM ANOTHER SO's line, which names that line by id.
+                refuse(
+                    invalid,
+                    f"{warehouse.warehouse_code} is this line's own location. Free stock "
+                    "there cannot be borrowed - name the sales-order line it should come "
+                    "from, on the order's own sheet.",
+                )
+                return
             if str(item.warehouse_id) in self._reserve_location_ids(fact):
                 refuse(
                     invalid,
@@ -1655,6 +2350,118 @@ class ProjectSupplyService:
         from_hold = min(qty, held)
         borrow_left.take_held(fact.product_id, str(warehouse.id), str(donor.id), from_hold)
         borrow_left.take_free(fact.product_id, str(warehouse.id), qty - from_hold)
+
+    def _check_group_borrow(
+        self,
+        item: Any,
+        fact: _LineFacts,
+        warehouse: Warehouse,
+        donor_core_line_id: str,
+        refuse,
+        stale: List[Dict[str, Any]],
+        invalid: List[Dict[str, Any]],
+        carried_holds: Dict[str, Dict[str, Any]],
+    ) -> None:
+        """Ladder v2's group borrow (section E rule 4), re-read live (AC-C03).
+
+        A group borrow takes another sales order's own COMMITTED quantity, not free
+        stock - so it is checked against that donor line's live open quantity, never
+        against `_free_at`/`_BorrowLedger`. A per-donor-line ledger (`_donor_line_ledger`)
+        stops two lines of the SAME confirmation both borrowing the whole of one donor
+        line; seeded net of what OTHER confirmed decisions already hold from it (S1,
+        `_group_borrow_held_qty`), so a SECOND confirmation cannot do the same.
+        """
+        qty = _dec(item.qty)
+        donor_line = (
+            self.db.query(SalesOrderLine, SalesOrder)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .filter(SalesOrderLine.id == donor_core_line_id)
+            .first()
+        )
+        if donor_line is None:
+            refuse(invalid, "The donor sales-order line no longer exists.")
+            return
+        line, order = donor_line
+        if fact.core is not None and str(line.id) == str(fact.core.id):
+            refuse(invalid, "A line cannot borrow from itself.")
+            return
+        # The CORE `SalesOrderLine` carries no line number of its own (that is the
+        # PROJECT mirror's `line_no`); named off the confirm payload's own
+        # `donor_line_no`, round-tripped from the proposal that offered this donor,
+        # the same way `_borrow_shortfalls` names it in the order-back note.
+        donor_line_no = getattr(item, "donor_line_no", None)
+        line_text = f" line {donor_line_no}" if donor_line_no is not None else ""
+        # S8: the donor line named has to still BE what the borrow claims it is - the
+        # same product, still open demand, and inside this line's own ownership group -
+        # not merely a row that exists.
+        if fact.product_id and str(line.product_id or "") != str(fact.product_id):
+            refuse(
+                invalid,
+                f"{order.so_number or 'That sales order'}{line_text} no longer holds "
+                "this product.",
+            )
+            return
+        if str(line.warehouse_id or "") != str(warehouse.id):
+            refuse(
+                invalid,
+                f"{order.so_number or 'That sales order'}{line_text} is no longer at "
+                f"{warehouse.warehouse_code}.",
+            )
+            return
+        donor_group = sales_agent_service.group_of_warehouse_code(warehouse.warehouse_code)
+        if not fact.group_code or donor_group != fact.group_code:
+            refuse(
+                invalid,
+                f"{warehouse.warehouse_code} is outside this line's ownership group, so "
+                "it cannot be borrowed as a group borrow.",
+            )
+            return
+        still_open = (
+            self.db.query(SalesOrderLine.id)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .filter(
+                SalesOrderLine.id == donor_core_line_id,
+                SalesOrder.status == "open",
+                is_open_demand(),
+            )
+            .first()
+        )
+        if still_open is None:
+            refuse(
+                stale,
+                f"{order.so_number or 'That sales order'}{line_text} is no longer open "
+                "demand, so it cannot be borrowed from.",
+            )
+            return
+        carried = self._carried_component_qty(
+            carried_holds, str(fact.line.id), BORROW, str(warehouse.id)
+        )
+        ask = qty - carried if qty > carried else _ZERO
+        if ask <= _ZERO:
+            return
+        if donor_core_line_id not in self._donor_line_ledger:
+            # S1: net off what any OTHER active decision already holds from this SAME
+            # donor line - this confirmation's OWN lines being replaced excluded, since
+            # their prior hold is what THIS confirmation is about to replace.
+            held_elsewhere = self._group_borrow_held_qty(
+                donor_core_line_id, exclude_line_ids=self._replaced_line_ids
+            )
+            self._donor_line_ledger[donor_core_line_id] = max(
+                _dec(line.qty_ordered) - _dec(line.qty_delivered) - held_elsewhere, _ZERO
+            )
+        available = self._donor_line_ledger[donor_core_line_id]
+        if qty > available:
+            room = available - carried
+            refuse(
+                stale,
+                f"{order.so_number or 'that sales order'}{line_text} now holds "
+                f"{qty_text(room if room > _ZERO else _ZERO)} at {warehouse.warehouse_code}, "
+                # The number actually tested, above (`qty`) - not `ask`, which is only
+                # the increment over what this order already carried.
+                f"and {qty_text(qty)} was asked for.",
+            )
+            return
+        self._donor_line_ledger[donor_core_line_id] = available - qty
 
     # ------------------------------------------------------------------- writing
 
@@ -1762,6 +2569,7 @@ class ProjectSupplyService:
                 list(checked) + [(entry.line, entry, entry.fact) for entry in carried],
             ),
         )
+        self._auto_place_after_confirm(buy_lines, actor_user_id=actor_user_id)
         decided = len(checked) + len(carried)
         return {
             "revision_no": decision.revision_no,
@@ -1774,6 +2582,42 @@ class ProjectSupplyService:
             "lines_decided": decided,
             "lines_undecided": max(len(self.lines_of(str(order.id))) - decided, 0),
         }
+
+    def _auto_place_after_confirm(
+        self, buy_lines: Sequence[Dict[str, Any]], *, actor_user_id: str
+    ) -> None:
+        """G2 rule 4: a decision confirm is one of the three moments the cascade runs -
+        the rows `refresh_for_decision` just raised may already have an outstanding PO
+        line waiting for them, and the captain's ask was that placement never waits on a
+        person clicking it.
+
+        Best-effort on purpose, in a SAVEPOINT, mirroring
+        `ProjectOrderInquiryService._hand_to_purchasing`: the confirm itself already
+        succeeded (the decision and the inquiry rows are written) by the time this runs,
+        so a failure here must not turn that success into a 500 the retry cannot repair -
+        it would only repeat the placement, since re-running finds nothing left to place
+        for a row already tagged.
+        """
+        product_ids = {
+            entry["line"].product_id for entry in buy_lines if entry["line"].product_id
+        }
+        if not product_ids:
+            return
+        try:
+            with self.db.begin_nested():
+                from app.services.project_order_inquiry_service import (
+                    ProjectOrderInquiryService,
+                )
+
+                ProjectOrderInquiryService(self.db).auto_place_for_products(
+                    list(product_ids),
+                    actor_user_id=actor_user_id,
+                    trigger="decision_confirm",
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "supply confirmed, but the order-inquiry auto-place pass failed (%s)", exc
+            )
 
     def _borrow_shortfalls(
         self,
@@ -1835,6 +2679,46 @@ class ProjectSupplyService:
                 },
             )
 
+        # Ladder v2 group borrow (section E rule 4): "every borrow carries an order-back",
+        # unconditionally - unlike the location-pile shortfall below, which only fires
+        # when the donor's WHOLE pile goes negative. A group borrow takes another sales
+        # order's own committed quantity, so the donor line is short by exactly what was
+        # taken from it, full stop; built here, before the pile loop, so it never depends
+        # on the pile's own availability triple.
+        order_backs: List[Dict[str, Any]] = []
+        reference = order.autocount_doc_no or order.provisional_ref or ""
+        for line, entry, fact in checked:
+            for item in entry.borrow or []:
+                qty = _dec(item.qty)
+                donor_core_line_id = getattr(item, "donor_core_line_id", None)
+                if qty <= _ZERO or not donor_core_line_id:
+                    continue
+                donor_so_number = getattr(item, "donor_so_number", None) or "an unnamed sales order"
+                donor_line_no = getattr(item, "donor_line_no", None)
+                donor_agent_code = getattr(item, "donor_agent_code", None)
+                warehouse = self._warehouse_row(str(item.warehouse_id))
+                code = warehouse.warehouse_code if warehouse else ""
+                line_text = f" line {donor_line_no}" if donor_line_no is not None else ""
+                agent_text = f" (agent {donor_agent_code})" if donor_agent_code else ""
+                order_backs.append(
+                    {
+                        "line": line,
+                        "item_code": fact.item_code,
+                        "qty": qty,
+                        "required_date": (
+                            getattr(item, "donor_required_date", None)
+                            or fact.required_date
+                            or line.delivery_date
+                        ),
+                        "stock_location": code,
+                        "note": (
+                            f"Order-back: {donor_so_number}{line_text} lent "
+                            f"{qty_text(qty)} to {reference} line {line.line_no}"
+                            f"{agent_text}"
+                        ),
+                    }
+                )
+
         for line, entry, fact in checked:
             if not fact.product_id:
                 continue
@@ -1845,6 +2729,15 @@ class ProjectSupplyService:
                 if qty <= _ZERO or not item.warehouse_id:
                     continue
                 if str(item.warehouse_id) == own_id:
+                    continue
+                if getattr(item, "donor_core_line_id", None):
+                    # A group borrow (B3): already raised, unconditionally, as its own
+                    # order-back in `order_backs` above. `donor_availability` nets every
+                    # open SO's `so_qty` at this location - INCLUDING the donor's own
+                    # committed quantity - so feeding the same item into this pile too
+                    # double-counts it: the pile goes negative from the donor's own
+                    # demand alone, and a second `IV_BORROW_SHORTFALL` row is raised for
+                    # a hole that is really the same borrow already accounted for.
                     continue
                 pile = pile_for(line, fact, str(item.warehouse_id))
                 pile["borrowed"] += qty
@@ -1859,7 +2752,7 @@ class ProjectSupplyService:
                 pile["reserved"] += qty
                 pile["lines"].append(line.line_no)
         if not piles:
-            return []
+            return order_backs
 
         availability = self.donor_availability(piles.keys())
         # The WHOLE order's holds are left out here, named and carried alike, because
@@ -1868,8 +2761,7 @@ class ProjectSupplyService:
             piles.keys(),
             exclude_line_ids=[str(line.id) for line, _entry, _fact in checked],
         )
-        out: List[Dict[str, Any]] = []
-        reference = order.autocount_doc_no or order.provisional_ref or ""
+        out: List[Dict[str, Any]] = list(order_backs)
         for key, pile in piles.items():
             taken = pile["borrowed"] + pile["reserved"]
             after = (
@@ -1911,11 +2803,17 @@ class ProjectSupplyService:
     ) -> Dict[str, Any]:
         """Freeze the line as it was decided, in the words it was decided in (AC-G01)."""
         components: List[Dict[str, Any]] = []
+        reserve_by_id = {
+            str(w.id): code for code, w in self._reserve_ladder_locations(fact).items()
+        }
+        siblings = self._group_sibling_warehouses(fact)
         for item in entry.reserve or []:
             qty = _dec(item.qty)
             if qty <= _ZERO:
                 continue
-            location = self._warehouse_of(fact, str(item.warehouse_id))
+            location = self._warehouse_of(fact, str(item.warehouse_id)) or reserve_by_id.get(
+                str(item.warehouse_id)
+            )
             components.append(
                 {
                     "kind": RESERVE,
@@ -1923,6 +2821,13 @@ class ProjectSupplyService:
                     "source_location": location,
                     "source_warehouse_id": str(item.warehouse_id),
                     "reason": self._reserve_reason(fact, location),
+                    "rung": (
+                        RUNG_GROUP_TAKE
+                        if location in siblings
+                        else RUNG_POOL
+                        if location and location != fact.own_code
+                        else None
+                    ),
                 }
             )
         if _dec(entry.timely_spo_qty) > _ZERO:
@@ -1947,6 +2852,7 @@ class ProjectSupplyService:
                 if item.donor_project_id
                 else None
             )
+            is_group_borrow = bool(getattr(item, "donor_core_line_id", None))
             components.append(
                 {
                     "kind": "borrow",
@@ -1958,6 +2864,18 @@ class ProjectSupplyService:
                     "donor_project_id": str(donor.id) if donor else None,
                     "reason": self._borrow_reason(item, warehouse, donor),
                     "cs_reason": (item.reason or "").strip(),
+                    "rung": RUNG_GROUP_BORROW if is_group_borrow else None,
+                    "donor_so_number": getattr(item, "donor_so_number", None),
+                    "donor_line_no": getattr(item, "donor_line_no", None),
+                    "donor_agent_code": getattr(item, "donor_agent_code", None),
+                    "same_agent": bool(getattr(item, "same_agent", False)),
+                    "order_back_qty": qty_text(qty) if is_group_borrow else None,
+                    "donor_core_line_id": getattr(item, "donor_core_line_id", None),
+                    "donor_required_date": (
+                        getattr(item, "donor_required_date", None).isoformat()
+                        if getattr(item, "donor_required_date", None)
+                        else None
+                    ),
                 }
             )
         if _dec(entry.buy_qty) > _ZERO:
@@ -2024,16 +2942,22 @@ class ProjectSupplyService:
         }
 
     def _reserve_reason(self, fact: _LineFacts, location: Optional[str]) -> str:
-        for candidate, _qty, reason in reserve_capacity(
+        """The rule's own sentence for a confirmed Reserve component, at whichever
+        location it named - ladder v2's pool chain first (own site pool then every
+        other), then a group-take sibling (section E rule 3)."""
+        for candidate, _qty, reason in pool_reserve_capacity(
             is_dealer_hot_selling=fact.is_dealer_hot_selling,
             is_project_hot_selling=fact.is_project_hot_selling,
-            fulfilment_location=fact.own_code,
-            pool_location=fact.pool_code,
-            free_stock=self._free_for(fact, {}),
-            pool_available=fact.pool_available,
+            pools=self._pool_chain(fact, own_pool_free_left=None),
         ):
             if candidate == location:
                 return reason
+        for candidate in self._group_take_candidates(fact):
+            if candidate["location"] == location:
+                return (
+                    f"{location} has {qty_text(_dec(candidate['qty']))} available"
+                    f"{f' in the {fact.group_code} group' if fact.group_code else ''}"
+                )
         return f"free stock at {location} covers the need by the required date"
 
     def _timely_reason(self, fact: _LineFacts) -> str:
@@ -2067,16 +2991,27 @@ class ProjectSupplyService:
         "what did we tell the customer in March".
         """
         now = datetime.utcnow()
+        reserve_locations = self._reserve_ladder_locations(fact)
+        by_id = {str(w.id): code for code, w in reserve_locations.items()}
+        siblings = self._group_sibling_warehouses(fact)
         for item in entry.reserve or []:
             qty = _dec(item.qty)
             if qty <= _ZERO:
                 continue
-            location = self._warehouse_of(fact, str(item.warehouse_id))
-            source = (
-                ALLOC_SOURCE_BRW
-                if fact.pool_code and location == fact.pool_code
-                else ALLOC_SOURCE_OWN
+            location = self._warehouse_of(fact, str(item.warehouse_id)) or by_id.get(
+                str(item.warehouse_id)
             )
+            if location and location in siblings:
+                source = ALLOC_SOURCE_GROUP_TAKE
+            elif fact.pool_code and location == fact.pool_code:
+                source = ALLOC_SOURCE_BRW
+            elif location and location != fact.own_code:
+                # Any other active site pool, ladder v2's second pool rung (section E
+                # rule 2): the same Reserve kind as this line's own pool, just a
+                # different one.
+                source = ALLOC_SOURCE_BRW
+            else:
+                source = ALLOC_SOURCE_OWN
             self.db.add(
                 SOLineAllocation(
                     company_id=line.company_id,
@@ -2220,26 +3155,75 @@ class ProjectSupplyService:
             "free_before": qty_text(free + held),
             "free_after_full_borrow": qty_text(max(free + held - qty, _ZERO)),
             "committed_qty": qty_text(held),
+            # S1: the only place a group borrow's donor CORE line is recorded on the
+            # written allocation row (there is no dedicated column for it). Read back by
+            # `_group_borrow_held_qty` so a SECOND confirmation - of this order or another
+            # one - sees what an earlier one already took from the same donor line.
+            "donor_core_line_id": getattr(item, "donor_core_line_id", None),
         }
+
+    def _group_borrow_held_qty(
+        self, donor_core_line_id: str, *, exclude_line_ids: Optional[Set[str]] = None
+    ) -> Decimal:
+        """What is currently held FROM one donor sales-order line by an ACTIVE group
+        borrow, written by any confirmation (S1).
+
+        Seeds `_donor_line_ledger`: without this, `_check_group_borrow` only guarded
+        against two lines of the SAME confirmation both taking the whole of a donor's open
+        quantity - a SECOND, separate confirmation (this order's next revision, or a
+        different project SO entirely) read the donor's live open quantity fresh and could
+        borrow the same units again. Read off `donor_impact_snapshot`, the one place a
+        group-borrow allocation records its donor (`_donor_impact`); a row written before
+        this key existed is simply not found, the same as any other additive JSON field -
+        it goes on not being netted rather than raising.
+
+        `exclude_line_ids` (PROJECT line ids) leaves out this confirmation's OWN lines
+        being replaced: their previous hold on this donor is about to be superseded by
+        whatever this same confirmation asks for now, and un-netting it here mirrors the
+        same carve-out `_free_stock`/`_hold_query` already give a line being replaced.
+        """
+        query = (
+            self.db.query(func.coalesce(func.sum(SOLineAllocation.qty), 0))
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.id == SOLineAllocation.so_line_id,
+            )
+            .outerjoin(
+                SOSupplyDecision, SOSupplyDecision.id == SOLineAllocation.decision_id
+            )
+            .filter(
+                SOLineAllocation.source_type == ALLOC_SOURCE_OTHER_LOCATION,
+                SOLineAllocation.donor_impact_snapshot["donor_core_line_id"].astext
+                == donor_core_line_id,
+                SOLineAllocation.confirmed_at.isnot(None),
+                or_(
+                    SOLineAllocation.decision_id.is_(None),
+                    SOSupplyDecision.state == DECISION_ACTIVE,
+                ),
+            )
+        )
+        if exclude_line_ids:
+            query = query.filter(
+                SOLineAllocation.so_line_id.notin_(list(exclude_line_ids))
+            )
+        return _dec(query.scalar())
 
     def _restamp_stock_location(
         self, line: ProjectSalesOrderLine, entry: Any, fact: _LineFacts
     ) -> None:
-        """AC-H5, from this revision's components: what the inquiry row quotes."""
-        codes: List[str] = []
-        for item in list(entry.reserve or []) + list(entry.borrow or []):
-            if _dec(item.qty) <= _ZERO:
-                continue
-            warehouse = self._warehouse_row(str(item.warehouse_id))
-            code = warehouse.warehouse_code if warehouse else None
-            if code and code not in codes:
-                codes.append(code)
-        # A pure-Buy line names no source warehouse, but it is exactly the line that
-        # becomes an inquiry row, and purchasing reads the location off that row: fall
-        # back to the fulfilment location rather than handing over a blank.
-        if not codes and fact.own_code:
-            codes.append(fact.own_code)
-        line.stock_location = " + ".join(codes) if codes else None
+        """AC-H5: the inquiry row names ONE location, always - the line's OWN fulfilment
+        warehouse.
+
+        The ORDER row is the buy purchasing places; its destination is the fulfilment
+        location, not a description of every reserve/borrow component that ALSO covered
+        this line's demand. A joined string of every component's warehouse (previously
+        `" + "`-joined here) is not a real location, so it could never match a
+        borrow-shortfall row netted by `(item_code, stock_location)`, and it read as one
+        row naming two places. The composition itself is still on the confirmed
+        decision's snapshots (`_snapshot`) for anyone who needs it; this field is
+        purely where the Buy goes.
+        """
+        line.stock_location = fact.own_code or None
 
     # ------------------------------------------------------------------- facts
 
@@ -2335,6 +3319,17 @@ class ProjectSupplyService:
             for line in lines
             if replacing is None or str(line.id) in replacing
         ]
+        # S1/S2: the lines this call is reading/replacing right now, for
+        # `_decided_elsewhere_cached` and `_group_borrow_held_qty`; and the CORE lines
+        # among them, so `_group_borrow_donors` never offers a line that is itself part
+        # of the current confirmation as a donor to another line of it.
+        self._replaced_line_ids = set(replaced)
+        self._current_selection_core_ids = {
+            str(line.core_sales_order_line_id)
+            for line in lines
+            if line.core_sales_order_line_id and str(line.id) in self._replaced_line_ids
+        }
+        self._decided_elsewhere_cache = None
         self._free_cache = self._free_stock(product_ids, exclude_line_ids=replaced)
         self._holds_cache = self._holds_by_project(product_ids, exclude_line_ids=replaced)
         self._pile_cache = None
@@ -2491,6 +3486,9 @@ class ProjectSupplyService:
                     None
                     if core is not None
                     else "No reconciled AutoCount line. Reconcile the sales order first."
+                ),
+                group_code=sales_agent_service.group_of_warehouse_code(
+                    warehouse.warehouse_code if warehouse else None
                 ),
             )
         return facts
@@ -3024,6 +4022,44 @@ class ProjectSupplyService:
                     out.add(str(core_line_id))
         return out
 
+    def _decided_elsewhere_cached(self) -> Set[str]:
+        """`_decided_elsewhere(self._replaced_line_ids)`, read once per request (S3).
+
+        `_decided_elsewhere`'s own query has no product/warehouse filter - it reads every
+        ACTIVE decision in the system - and `self._replaced_line_ids` is fixed for the
+        whole of one `proposal_for`/`confirm`/`demand_facts` call, so calling it once per
+        group-borrow line the way `_group_borrow_donors` used to is the exact N-queries-
+        for-one-answer shape S3 is about.
+        """
+        if self._decided_elsewhere_cache is None:
+            self._decided_elsewhere_cache = self._decided_elsewhere(self._replaced_line_ids)
+        return self._decided_elsewhere_cache
+
+    def _active_policy(self) -> Optional[Any]:
+        """The active `scm.priority_policy` row, read at most once per request (S3).
+
+        `priority.active_policy` has no caching of its own, and several ladder v2 readers
+        each asked it independently - `_group_pile`, `_pile_book`, `pool_claims` - so a
+        board of many lines paid one extra round trip per line for a row that cannot
+        change mid-request.
+        """
+        if not self._active_policy_loaded:
+            self._active_policy_value = priority.active_policy(self.db)
+            self._active_policy_loaded = True
+        return self._active_policy_value
+
+    def _payment_terms_for(self, customer_ids: Iterable[str]) -> Dict[str, Optional[int]]:
+        """`priority.payment_terms_by_customer`, memoized per customer for the request
+        (S3): only customers not already answered are queried, so asking the same handful
+        of customers across many lines of one board pays for each customer once."""
+        ids = {str(cid) for cid in customer_ids if cid}
+        missing = ids - set(self._payment_terms_cache.keys())
+        if missing:
+            self._payment_terms_cache.update(
+                priority.payment_terms_by_customer(self.db, list(missing))
+            )
+        return {cid: self._payment_terms_cache.get(cid) for cid in ids}
+
     def _pile_book(
         self,
         product_ids: Iterable[str],
@@ -3088,7 +4124,7 @@ class ProjectSupplyService:
         terms = priority.payment_terms_by_customer(
             self.db, [str(row.customer_id) for row in rows if row.customer_id]
         )
-        weights, class_weights = priority.policy_weights(priority.active_policy(self.db))
+        weights, class_weights = priority.policy_weights(self._active_policy())
 
         grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
         for row in rows:
@@ -3218,7 +4254,7 @@ class ProjectSupplyService:
         book = self._pile_book(product_ids, pool_ids, exclude_line_ids=exclude_line_ids)
         if not members:
             return {}
-        weights, class_weights = priority.policy_weights(priority.active_policy(self.db))
+        weights, class_weights = priority.policy_weights(self._active_policy())
         out: Dict[str, Dict[str, Any]] = {}
         by_pile: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
         for member in members:
@@ -3382,6 +4418,9 @@ class ProjectSupplyService:
         # line's own dealer location: Reserve may not touch it, and CS borrowing it with a
         # reason is the sanctioned way to use it (PLAN 3.3).
         inside = self._reserve_location_ids(fact)
+        group_siblings = self._group_sibling_warehouses(fact)
+        inside_group = inside | {str(w.id) for w in group_siblings.values()}
+        max_qty, max_pct = self._cross_group_cap()
         out: List[Dict[str, Any]] = []
 
         free_index, holds_index = self._by_product()
@@ -3402,6 +4441,33 @@ class ProjectSupplyService:
                 continue
             free = free_here[warehouse_id]
             committed = committed_at.get(warehouse_id, _ZERO)
+            # Ladder v2 (section E rule 5): a free-stock donor OUTSIDE this line's
+            # ownership group is the SAME donor rung 5 draws automatically, within the
+            # small-quantity cap - stated here, on the one row, rather than offered a
+            # second time as a separate "cross-group" candidate.
+            is_cross_group = bool(fact.group_code) and warehouse_id not in inside_group
+            over_cap = False
+            cap_reason = None
+            if is_cross_group:
+                within_qty = max_qty is not None and need <= max_qty
+                within_pct = (
+                    max_pct is not None
+                    and free > _ZERO
+                    and need <= (free * max_pct / Decimal("100"))
+                )
+                over_cap = need > _ZERO and not (within_qty or within_pct)
+                if over_cap:
+                    cap_bits = []
+                    if max_qty is not None:
+                        cap_bits.append(f"{qty_text(max_qty)} units")
+                    if max_pct is not None:
+                        cap_bits.append(
+                            f"{qty_text(max_pct)}% of {warehouse.warehouse_code}'s free stock"
+                        )
+                    cap_reason = (
+                        f"{qty_text(need)} exceeds the cross-group borrow limit "
+                        f"({' or '.join(cap_bits) or 'no limit set'})"
+                    )
             out.append(
                 {
                     "source": ALLOC_SOURCE_OTHER_LOCATION,
@@ -3414,6 +4480,9 @@ class ProjectSupplyService:
                         "free_after_full_borrow": qty_text(_ZERO),
                         "committed_qty": qty_text(committed),
                     },
+                    "rung": RUNG_CROSS_GROUP_BORROW if is_cross_group else None,
+                    "over_cap": over_cap,
+                    "cap_reason": cap_reason,
                 }
             )
 
@@ -3450,7 +4519,49 @@ class ProjectSupplyService:
                         },
                     }
                 )
+
+        out.extend(self._group_borrow_offer_rows(fact, need))
         return self._ranked(out)
+
+    def _group_borrow_offer_rows(
+        self, fact: _LineFacts, need: Decimal
+    ) -> List[Dict[str, Any]]:
+        """Rung 4's WHOLE offer list (section E.4, section 8): every donor in this line's
+        ownership group, lower-ranked ones the ladder already auto-composed AND a
+        same-agent donor ranked above this line - "the donor list must surface the SAME
+        AGENT's other SOs (even higher ranked), because the agent can authorise CS to move
+        stock between her own orders." `recommended` is decided by `_ranked` alongside
+        every other donor; this only states the facts that are true regardless of rank.
+        """
+        out: List[Dict[str, Any]] = []
+        for donor in self._group_borrow_donors(fact):
+            warehouse = self._warehouse_by_code(donor["location"])
+            if warehouse is None:
+                continue
+            free = self._free_at(fact.product_id, str(warehouse.id))
+            out.append(
+                {
+                    "source": ALLOC_SOURCE_OTHER_LOCATION,
+                    "rung": RUNG_GROUP_BORROW,
+                    "warehouse_code": donor["location"],
+                    "warehouse_id": str(warehouse.id),
+                    "free_qty": qty_text(donor["qty"]),
+                    **self._donor_pile(fact.product_id, str(warehouse.id), donor["qty"], need),
+                    "donor_impact": {
+                        "free_before": qty_text(free + donor["qty"]),
+                        "free_after_full_borrow": qty_text(free),
+                        "committed_qty": qty_text(donor["qty"]),
+                    },
+                    "donor_so_number": donor["donor_so_number"],
+                    "donor_line_no": donor["donor_line_no"],
+                    "donor_agent_code": donor["donor_agent_code"],
+                    "donor_core_line_id": donor["donor_core_line_id"],
+                    "lower_ranked": donor["lower_ranked"],
+                    "same_agent": donor["same_agent"],
+                    "donor_required_date": donor["required_date"],
+                }
+            )
+        return out
 
     def _donor_pile(
         self,
@@ -3495,6 +4606,10 @@ class ProjectSupplyService:
         Damage is measured against THIS line's residual (`available_after_need`), not against
         the donor's whole free stock. Availability then free break the ties, so of two donors
         that could both meet the line comfortably the one with more room to spare wins.
+
+        An `over_cap` row (ladder v2, section E rule 5) is still SHOWN in its earned rank
+        position, but never carries `recommended`: it cannot be taken automatically, so
+        recommending it would point CS at a donor the confirm path will refuse.
         """
         candidates.sort(
             key=lambda candidate: (
@@ -3504,8 +4619,12 @@ class ProjectSupplyService:
                 candidate["warehouse_code"],
             )
         )
-        for index, candidate in enumerate(candidates):
-            candidate["recommended"] = index == 0
+        recommended_set = False
+        for candidate in candidates:
+            eligible = not candidate.get("over_cap")
+            candidate["recommended"] = eligible and not recommended_set
+            if eligible:
+                recommended_set = True
         return candidates
 
     def _pile_facts(self) -> Dict[Tuple[str, str], Dict[str, Decimal]]:
@@ -3615,3 +4734,227 @@ class ProjectSupplyService:
             pile = facts.get(key, {"on_hand": _ZERO, "so_qty": _ZERO, "spo_qty": _ZERO})
             out[key] = pile["on_hand"] - pile["so_qty"] + pile["spo_qty"]
         return out
+
+    # --------------------------------------------------------------- the Plans page (D1)
+
+    def list_decisions(
+        self,
+        *,
+        query: Optional[str] = None,
+        state: Optional[str] = None,
+        agent_code: Optional[str] = None,
+        sort: Optional[str] = None,
+        dir: str = "desc",
+        page: int = 1,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        """"Is the plan stored, how do I review it" (PLAN-demo-followups-19aug-ladder-v2 D1):
+        every supply decision, one row per revision, cross-order.
+
+        `state` defaults to `active` - what is COMMITTED NOW - because that is what the
+        question is asking; `superseded` and `challenged` stay a click away for whoever wants
+        the history. `query` matches the sales-order number, the customer name and the agent
+        code, the three the row itself prints; a decision is a composition across an order's
+        lines, not a per-line record, so there is no product to search here the way the
+        worklist searches one.
+
+        A pure read: nothing here writes, and unlike `proposal_for` it never challenges a
+        drifted revision - the row is reporting what was decided, not re-judging it live.
+        """
+        columns = (
+            SOSupplyDecision,
+            ProjectSalesOrder.project_id,
+            SalesOrder.id.label("sales_order_id"),
+            SalesOrder.so_number,
+            Customer.customer_name,
+            SalesAgent.sales_agent.label("agent_code"),
+            SalesAgent.person_label.label("agent_label"),
+            User.name.label("decided_by_name"),
+        )
+        base = (
+            self.db.query(*columns)
+            .join(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == SOSupplyDecision.project_sales_order_id,
+            )
+            .outerjoin(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
+            .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+            .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
+            .outerjoin(User, User.id == SOSupplyDecision.confirmed_by)
+            .filter(SOSupplyDecision.state == (state or DECISION_ACTIVE))
+        )
+        if agent_code:
+            base = base.filter(SalesAgent.sales_agent.ilike(agent_code.strip()))
+        if query and query.strip():
+            needle = f"%{query.strip()}%"
+            base = base.filter(
+                SalesOrder.so_number.ilike(needle)
+                | Customer.customer_name.ilike(needle)
+                | SalesAgent.sales_agent.ilike(needle)
+            )
+
+        total = base.count()
+        sort_column = self._plan_sort_column(sort)
+        ordering = sort_column.desc() if (dir or "desc") == "desc" else sort_column.asc()
+        # A stable tie-break, always: two decisions confirmed the same second (a batch
+        # confirm-all) would otherwise reorder between pages as ties are broken arbitrarily.
+        base = base.order_by(nullslast(ordering), SOSupplyDecision.revision_no.desc())
+
+        offset = max(page - 1, 0) * max(limit, 1)
+        rows = base.offset(offset).limit(limit).all()
+        data = [
+            self._serialize_plan_row(
+                decision,
+                project_id=project_id,
+                sales_order_id=sales_order_id,
+                so_number=so_number,
+                customer_name=customer_name,
+                agent_code=row_agent_code,
+                agent_label=agent_label,
+                decided_by_name=decided_by_name,
+            )
+            for (
+                decision,
+                project_id,
+                sales_order_id,
+                so_number,
+                customer_name,
+                row_agent_code,
+                agent_label,
+                decided_by_name,
+            ) in rows
+        ]
+        return {"data": data, "pagination": {"total": total, "page": page, "limit": limit}}
+
+    def _plan_sort_column(self, sort: Optional[str]) -> Any:
+        columns = {
+            "so_number": SalesOrder.so_number,
+            "customer_name": Customer.customer_name,
+            "agent_code": SalesAgent.sales_agent,
+            "revision_no": SOSupplyDecision.revision_no,
+            "state": SOSupplyDecision.state,
+            "decided_at": SOSupplyDecision.confirmed_at,
+        }
+        return columns.get(sort or "decided_at", SOSupplyDecision.confirmed_at)
+
+    def _serialize_plan_row(
+        self,
+        decision: SOSupplyDecision,
+        *,
+        project_id: Optional[str],
+        sales_order_id: Optional[str],
+        so_number: Optional[str],
+        customer_name: Optional[str],
+        agent_code: Optional[str],
+        agent_label: Optional[str],
+        decided_by_name: Optional[str],
+    ) -> Dict[str, Any]:
+        return {
+            "project_sales_order_id": str(decision.project_sales_order_id),
+            "sales_order_id": str(sales_order_id) if sales_order_id else None,
+            "project_id": str(project_id) if project_id else None,
+            "so_number": so_number,
+            "customer_name": customer_name,
+            "agent_code": agent_code,
+            "agent_label": agent_label,
+            "revision_no": decision.revision_no,
+            "state": decision.state,
+            "decided_by_name": decided_by_name,
+            "decided_at": decision.confirmed_at,
+            "line_count": len(decision.line_snapshots or []),
+            "components_summary": self._plan_components_summary(decision),
+            "challenged_reason": (
+                decision.superseded_reason if decision.state == DECISION_CHALLENGED else None
+            ),
+        }
+
+    def _plan_components_summary(self, decision: SOSupplyDecision) -> Optional[str]:
+        """"Reserve 213 · Buy 145": what a decision's revision actually holds, summed across
+        every line it covers. The same four kinds `_snapshot` freezes, in the order the ladder
+        proposes them, so the summary reads in the order a planner reasons in."""
+        totals: Dict[str, Decimal] = {}
+        for snapshot in decision.line_snapshots or []:
+            for component in snapshot.get("components") or []:
+                kind = component.get("kind")
+                if not kind:
+                    continue
+                totals[kind] = totals.get(kind, _ZERO) + _dec(component.get("qty"))
+        order = (RESERVE, TIMELY_SPO, BORROW, BUY)
+        labels = {RESERVE: "Reserve", TIMELY_SPO: "Incoming", BORROW: "Borrow", BUY: "Buy"}
+        parts = [
+            f"{labels[kind]} {qty_text(totals[kind])}"
+            for kind in order
+            if totals.get(kind, _ZERO) > _ZERO
+        ]
+        return " · ".join(parts) if parts else None
+
+    # --------------------------------------------------- confirm all approved (D3)
+
+    def confirm_many(
+        self,
+        entries: Sequence[Any],
+        *,
+        actor_user_id: str,
+        assert_can_act: Callable[[Session, ProjectSalesOrder], None],
+    ) -> List[Dict[str, Any]]:
+        """"Confirm all approved" (D3): every order's Confirm, each in its OWN transaction.
+
+        The board's Approve all composes a verdict per LINE across up to fifty orders; this is
+        the same per-order write `confirm` already does, called once per order rather than once
+        per press from the panel. One order failing its own re-check - a stale line, a line
+        somebody else confirmed a moment earlier - must never take the orders around it down
+        too, or "Confirm all" would silently discard decisions the planner had gotten right.
+        So each entry is tried, committed or rolled back, on its own; the caller gets a result
+        named by `pso_id` either way, and a later entry runs whether or not an earlier one
+        failed (no silent partial success - every order is accounted for in the reply).
+
+        `entries` duck-types `ConfirmSupplyBody` per order (`.pso_id`, `.lines`), which is why
+        `confirm` itself needed no change: it never learns this call has siblings.
+        """
+        results: List[Dict[str, Any]] = []
+        for entry in entries:
+            pso_id = str(entry.pso_id)
+            # A malformed id would otherwise reach `get_order`'s query, and Postgres would
+            # raise its own message for it - which then surfaces verbatim as this entry's
+            # `error`, a database internal leaking to the planner instead of the plain "this
+            # id is not a sales order" it actually is. Caught before the query, same as the
+            # single-order route's own `validate_uuid_path` guard.
+            try:
+                uuid.UUID(pso_id)
+            except (ValueError, AttributeError, TypeError):
+                results.append(
+                    {
+                        "pso_id": pso_id,
+                        "ok": False,
+                        "error": "Not a valid sales order id.",
+                        "failing_lines": None,
+                    }
+                )
+                continue
+            try:
+                order = self.get_order(pso_id)
+                assert_can_act(self.db, order)
+                body = self.confirm(order, entry, actor_user_id=actor_user_id)
+                self.db.commit()
+                results.append(
+                    {
+                        "pso_id": pso_id,
+                        "ok": True,
+                        "decision_revision": body["revision_no"],
+                        "inquiry_rows_created": body["inquiry_rows_created"],
+                        "lines_decided": body["lines_decided"],
+                        "lines_undecided": body["lines_undecided"],
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001 - every order must get an answer
+                self.db.rollback()
+                message, failing_lines = _error_detail(exc)
+                results.append(
+                    {
+                        "pso_id": pso_id,
+                        "ok": False,
+                        "error": message,
+                        "failing_lines": failing_lines,
+                    }
+                )
+        return results

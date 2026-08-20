@@ -42,32 +42,30 @@ import { formatMyrExact, formatQty } from '../../_shared/lib/money';
 export const PO_INTAKE_ANNOTATIONS_LISTING_KEY = 'projects.projects.view::po-annotations';
 
 /**
- * One row per pencil note (AC-D4, D11).
+ * Notes the pencil left that do not name a line: a signature, a replacement PO for the whole
+ * document, or a remark otherwise not tied to one row.
  *
- * A strike-through on the paper does not cancel a line. Accepting the row does, and the row
- * says which lines it will change before the person commits to it. A rejected note is
- * recorded as rejected with its reason, never deleted.
+ * Anything a note names a line for lives on that line now, inline in the lines grid, so a
+ * person clears it there and moves on to the next without leaving the row. This card is only
+ * what is left over once a note names no line at all.
  *
- * A document can carry a dozen notes, so this is the shared DataGrid, same as every other
- * list in the product: thirteen bespoke cards were thirteen things to read down a page.
+ * A document can carry several of these, so this stays the shared DataGrid, same as every
+ * other list in the product: a handful of bespoke cards were a handful of things to read
+ * down a page.
  */
 export function POIntakeAnnotationsGrid({
   annotations,
-  lines,
   readOnly,
   savingAnnotationIds,
   onShowPage,
-  onFocusLineNo,
   onAccept,
   onEdit,
   onReject,
 }: {
   annotations: POAnnotation[];
-  lines: POVersionLine[];
   readOnly: boolean;
   savingAnnotationIds: string[];
   onShowPage: (page: number) => void;
-  onFocusLineNo: (lineNo: number) => void;
   onAccept: (annotationId: string, note?: string | null) => Promise<void>;
   onEdit: (annotationId: string, body: POAnnotationEditBody) => Promise<void>;
   onReject: (annotationId: string, note: string) => Promise<void>;
@@ -225,39 +223,14 @@ export function POIntakeAnnotationsGrid({
         meta: { headerTitle: 'Page', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       {
-        id: 'refers_to_lines',
-        header: ({ column }) => <DataGridColumnHeader title="Lines" column={column} />,
-        cell: ({ row }) =>
-          row.original.refers_to_lines.length > 0 ? (
-            <div className="flex flex-wrap gap-1">
-              {row.original.refers_to_lines.map((lineNo) => (
-                <Button
-                  key={lineNo}
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-6 px-2 text-[11px]"
-                  onClick={() => onFocusLineNo(lineNo)}
-                >
-                  {`Line ${lineNo}`}
-                </Button>
-              ))}
-            </div>
-          ) : (
-            <Muted>No lines named</Muted>
-          ),
-        size: 150,
-        minSize: 110,
-        enableSorting: false,
-        meta: { headerTitle: 'Lines', skeleton: <Skeleton className="h-4 w-16" /> },
-      },
-      {
         id: 'effect',
         header: ({ column }) => (
           <DataGridColumnHeader title="What accepting does" column={column} />
         ),
         cell: ({ row }) => {
-          const effect = describeAnnotationEffect(row.original, lines);
+          // Every note reaching this card named no line (that is what routes it here), so
+          // there is never a line to look up.
+          const effect = describeAnnotationEffect(row.original, []);
           const stillLive =
             row.original.interpretation === 'cancel_line' &&
             row.original.state === 'proposed';
@@ -378,7 +351,7 @@ export function POIntakeAnnotationsGrid({
         meta: { headerTitle: 'Actions', skeleton: <Skeleton className="h-4 w-20" /> },
       },
     ],
-    [lines, onFocusLineNo, onShowPage, readOnly, savingAnnotationIds],
+    [onShowPage, readOnly, savingAnnotationIds],
   );
 
   const table = useReactTable({
@@ -392,10 +365,10 @@ export function POIntakeAnnotationsGrid({
   if (annotations.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-border px-6 py-8 text-center">
-        <h3 className="text-sm font-semibold">No handwriting was found on this scan</h3>
+        <h3 className="text-sm font-semibold">No document-level notes</h3>
         <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-          If there is pencil on the paper, page through the scan on the left and check it
-          before you confirm.
+          A signature, a replacement PO for the whole document, or a remark naming no line
+          would show here. A note naming a line shows on that line instead.
         </p>
       </div>
     );
@@ -433,7 +406,7 @@ export function POIntakeAnnotationsGrid({
           <AlertDialogHeader>
             <AlertDialogTitle>Accept this note?</AlertDialogTitle>
             <AlertDialogDescription>
-              {accepting ? describeAnnotationEffect(accepting, lines) : ''}
+              {accepting ? describeAnnotationEffect(accepting) : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -519,7 +492,10 @@ function Muted({ children }: { children: React.ReactNode }) {
 /** What accepting this note will do, in the line numbers and money on this document. */
 export function describeAnnotationEffect(
   annotation: POAnnotation,
-  lines: POVersionLine[],
+  // Defaults to none: this file only ever shows notes that name no line (that is what
+  // routes a note here rather than onto a row in the lines grid), so its own call sites
+  // never have a `lines` array to pass. `POIntakeLinesGrid` still passes the real one.
+  lines: POVersionLine[] = [],
 ): string {
   const json = (annotation.interpretation_json ?? {}) as Record<string, unknown>;
   const lineNos = Array.isArray(json.line_nos)

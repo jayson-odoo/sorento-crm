@@ -83,9 +83,31 @@ class BoardSource(BaseModel):
     reason: str
     spo_number: Optional[str] = None
     arrival_date: Optional[date] = None
+    #: Ladder v2 (section E): which rung produced this source - `pool`, `group_take`,
+    #: `group_borrow` or `cross_group_borrow`. `None` on a plain `timely_spo`/`buy` row.
+    rung: Optional[str] = None
+    donor_so_number: Optional[str] = None
+    donor_line_no: Optional[int] = None
+    donor_agent_code: Optional[str] = None
+    same_agent: bool = False
+    #: Addressing only, never rendered: re-identifies the donor's own core line so
+    #: approving this source AS PROPOSED still checks against its live commitment.
+    donor_core_line_id: Optional[str] = None
+    #: The donor's own required date - the order-back's urgency (section E.4), carried
+    #: so approving this source AS PROPOSED still posts it (`ConfirmBorrowComponent`
+    #: takes it back), rather than making the order-back's urgency a second lookup.
+    donor_required_date: Optional[date] = None
 
 
-BoardTrailKind = Literal["reserve_own", "reserve_pool", "incoming", "borrow", "buy"]
+#: Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E): "incoming" now comes
+#: BEFORE the pool, the own-location rung is gone (section E rule 7), and the group rungs
+#: are new. `reserve_own` / `reserve_pool` are the pre-v2 spellings, kept in the Literal so
+#: an old snapshot's frozen trail (there is none - the trail is never frozen - but a stale
+#: client cache might still hold one) does not 422 a read.
+BoardTrailKind = Literal[
+    "incoming", "pool", "group_take", "group_borrow", "cross_group_borrow", "buy",
+    "reserve_own", "reserve_pool", "borrow",
+]
 BoardTrailOutcome = Literal[
     "took", "nothing_left", "not_eligible", "offered", "none_needed"
 ]
@@ -271,6 +293,21 @@ class BoardDecisionBorrow(BaseModel):
     #: The PERSON's reason, not the rule's sentence: the confirmation refuses a Borrow that
     #: carries none, so re-posting this composition needs the one that was given.
     reason: str = ""
+    #: Ladder v2 (section E.4): the donor sales-order line this Borrow named, when it was a
+    #: `group_borrow`. `None` on an ordinary location/project Borrow.
+    rung: Optional[str] = None
+    donor_so_number: Optional[str] = None
+    donor_line_no: Optional[int] = None
+    donor_agent_code: Optional[str] = None
+    same_agent: bool = False
+    #: Addressing only, never rendered: re-identifies the donor's own line so amending a
+    #: covered group-borrow line still names the SAME donor rather than posting it back as
+    #: an ordinary free-stock borrow (which the own-location check, rule 7, then refuses).
+    donor_core_line_id: Optional[str] = None
+    #: The donor's own required date - the order-back's urgency (section E.4).
+    donor_required_date: Optional[date] = None
+    #: The order-back this component raised: equal to what was taken.
+    order_back_qty: Optional[str] = None
 
 
 class BoardLineDecision(BaseModel):
@@ -322,6 +359,12 @@ class BoardContribution(BaseModel):
     #: Addressing only, and what a pivot BY CUSTOMER groups on: two different customers can
     #: carry the same name, and grouping by the label would merge them.
     customer_id: Optional[str] = None
+    #: Who sold it (`sales_orders.sales_agent_id` -> `sales_agents.sales_agent`). The code the
+    #: sales-order book carries; null on a line the upload could not resolve to one.
+    agent_code: Optional[str] = None
+    #: Who the code belongs to (`sales_agents.person_label`), when the master states one.
+    #: Shown as the code's `title`, never in place of the code.
+    agent_label: Optional[str] = None
     project_label: Optional[str] = None
     #: What a pivot BY PROJECT groups on: the project string, normalised. An order adopted from
     #: the AutoCount book has no project registration by design, so the string is the only
@@ -449,6 +492,17 @@ class BorrowCandidate(BaseModel):
     recommended: bool = False
     #: Absent only on a payload built before this field existed; the engine always states it.
     donor_impact: Optional[BorrowDonorImpact] = None
+    #: Ladder v2 (section E): `group_borrow` or `cross_group_borrow` for a new group-aware
+    #: donor row, `None` for a plain `other_location`/`other_project` donor.
+    rung: Optional[str] = None
+    donor_so_number: Optional[str] = None
+    donor_line_no: Optional[int] = None
+    donor_agent_code: Optional[str] = None
+    donor_core_line_id: Optional[str] = None
+    lower_ranked: bool = False
+    same_agent: bool = False
+    over_cap: bool = False
+    cap_reason: Optional[str] = None
 
 
 class StockDetailSalesOrder(BaseModel):
@@ -458,6 +512,9 @@ class StockDetailSalesOrder(BaseModel):
     so_number: str
     customer_name: Optional[str] = None
     customer_id: Optional[str] = None
+    #: Who sold it. Null for a purchase-order row (`StockDetailIncoming`), which is not a
+    #: sales document and carries no agent by construction.
+    agent_code: Optional[str] = None
     project_label: Optional[str] = None
     demand_class: Optional[str] = None
     #: The document's own date, and the date the quantity is wanted.
@@ -710,6 +767,14 @@ class PlanningBoard(BaseModel):
     product_rows: List[BoardProductRow] = Field(default=[], alias="productRows")
     cells: List[BoardCell] = []
     orders: List[BoardOrderStanding] = []
+    #: Every contributing line of the SELECTION, in the same `BoardContribution` shape a cell
+    #: carries, but never windowed: at day granularity `cells` only covers the 30 days on
+    #: screen (`DAY_WINDOW_COLUMNS`), and a line outside that window is still fully proposed
+    #: (allocation runs over the whole selection - see `build`'s docstring) even though no cell
+    #: shows it. Approve all, the "N approved - M undecided" strip, the List view and the
+    #: confirm-all call all need EVERY decidable line, not only the ones currently rendered in
+    #: the grid, so they read this list rather than flattening `cells`.
+    contributions: List[BoardContribution] = []
 
     # ---- selection-scoped totals -------------------------------------------------
     #

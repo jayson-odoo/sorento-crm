@@ -25,6 +25,10 @@ addition on both sides rather than a contradiction:
    ``("autocount", "manual")`` while S1's column carries ``manual`` or ``import`` (a
    row an upload created on meeting an unknown code), and an undeclared value fails
    response validation - a 500 on a list the operator did nothing wrong to reach.
+
+``location_group`` (PLAN-demo-followups-19aug-ladder-v2.md workstream C3) is a fourth
+sales-agent-only annotation, added the same way: on ``MirrorAnnotationUpdate`` so the PATCH
+can write it, and on ``SalesAgentResponse`` so it is not silently dropped from the wire.
 """
 from __future__ import annotations
 
@@ -55,6 +59,11 @@ class MirrorAnnotationUpdate(BaseModel):
     #: typing it as a Literal would answer a bad word with a 422 field error instead of
     #: the service's message naming the words the fulfilment policy can weigh.
     demand_class: Optional[str] = None
+    #: Which warehouse-suffix ownership group this agent's stock lives in (`BB`, `HP`, ...).
+    #: Free text, upper/trim-normalised by the service - never validated against a closed
+    #: vocabulary the way `demand_class` is, because a new group is a warehouse suffix
+    #: someone starts using, not a word the fulfilment policy has to already know.
+    location_group: Optional[str] = Field(None, max_length=16)
 
 
 class _MirrorBase(BaseModel):
@@ -73,3 +82,4 @@ class SalesAgentResponse(_MirrorBase):
     description: Optional[str] = None
     person_label: Optional[str] = None
     demand_class: Optional[str] = None
+    location_group: Optional[str] = None
