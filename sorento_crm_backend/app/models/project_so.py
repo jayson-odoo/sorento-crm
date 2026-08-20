@@ -858,6 +858,16 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
         nullable=True,
     )
     note = Column(Text, nullable=True)
+    # A planning-change advance/delay whose fresh proposal pool covers the line keeps the
+    # pool take (the composition still holds Reserve) rather than relabelling it onto Buy,
+    # so a PLACED row this line already holds is REDIRECTED instead of cancelled: it stays
+    # tagged to its real PO, its `qty` is untouched, but it now replenishes the pool that
+    # was just drawn down for this line rather than serving this line's own need (the
+    # captain, 21 Aug 2026 - "it takes the outstanding PO to BRW"). `True` is what tells
+    # `refresh_for_decision`'s placed-quantity netting, and the worklist's "Taken from PO"
+    # aggregate, to stop counting it for THIS line - it is real placed quantity, just not
+    # this line's anymore.
+    redirected_to_pool = Column(Boolean, nullable=False, server_default="false", default=False)
     state = Column(String(16), nullable=False, server_default=INQUIRY_RAISED)
     # "Did purchasing act on this" (AC-I7) is only half answered by a state. A state
     # with nobody's name and no time on it cannot say when, or who to ask.

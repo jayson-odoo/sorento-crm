@@ -14,7 +14,11 @@ import {
   OrderInquiryStatePill,
   OrderInquiryVerbPill,
 } from '../../_shared/components/OrderInquiryVerbPill';
-import { formatInquiryQty, orderInquiryRowHref } from '../../_shared/lib/orderInquiryWorklist';
+import {
+  flowExclusionLabel,
+  formatInquiryQty,
+  orderInquiryRowHref,
+} from '../../_shared/lib/orderInquiryWorklist';
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
 import { OrderInquiryPoDetailPopover } from './OrderInquiryPoDetailPopover';
 
@@ -220,12 +224,28 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
         enableSorting: false,
         meta: { headerTitle: 'Taken from PO', skeleton: <Skeleton className="h-4 w-14" /> },
         // What has actually been taken off a purchase order for this row's own SO line -
-        // the sum of every PLACED sibling row, never this row's own qty alone.
-        cell: ({ row }) => (
-          <span className="tabular-nums">
-            {formatInquiryQty(row.original.taken_from_po ?? '0')}
-          </span>
-        ),
+        // the sum of every PLACED `ORDER`-verb sibling row, never this row's own qty
+        // alone. A row whose OWN verb is not `ORDER` (an ADVANCE/DELAY/CANCEL BALANCE/...)
+        // is not what this figure is about, and printing it anyway reads as "this
+        // instruction is fully handled" next to one that is not placeable at all - so it
+        // names what actually happened to ITS OWN row instead.
+        cell: ({ row }) => {
+          const excluded = flowExclusionLabel(row.original.verb);
+          if (excluded) {
+            return (
+              <Muted>
+                <span title="Only ORDER-verb rows on this SO line count toward Taken from PO">
+                  {excluded}
+                </span>
+              </Muted>
+            );
+          }
+          return (
+            <span className="tabular-nums">
+              {formatInquiryQty(row.original.taken_from_po ?? '0')}
+            </span>
+          );
+        },
       },
       {
         accessorKey: 'remaining_open',
@@ -233,14 +253,26 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
         size: 120,
         enableSorting: false,
         meta: { headerTitle: 'Remaining', skeleton: <Skeleton className="h-4 w-14" /> },
-        cell: ({ row }) => (
-          <span
-            className="tabular-nums"
-            title="What still flows to reorder planning"
-          >
-            {formatInquiryQty(row.original.remaining_open ?? '0')}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const excluded = flowExclusionLabel(row.original.verb);
+          if (excluded) {
+            return (
+              <Muted>
+                <span title="Only ORDER-verb rows on this SO line still flow to reorder planning">
+                  {excluded}
+                </span>
+              </Muted>
+            );
+          }
+          return (
+            <span
+              className="tabular-nums"
+              title="What still flows to reorder planning, counting ORDER-verb rows on this SO line only"
+            >
+              {formatInquiryQty(row.original.remaining_open ?? '0')}
+            </span>
+          );
+        },
       },
       {
         accessorKey: 'verb',

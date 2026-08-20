@@ -328,7 +328,17 @@ class ProjectOrderInquiryService:
                 if row.state == INQUIRY_RAISED:
                     row.state = INQUIRY_CANCELLED
                     row.note = f"Superseded by revision {decision.revision_no}"
-                elif row.state in (INQUIRY_ACTIONED, INQUIRY_PLACED) and row.verb == IV_ORDER:
+                elif (
+                    row.state in (INQUIRY_ACTIONED, INQUIRY_PLACED)
+                    and row.verb == IV_ORDER
+                    # A planning change already REDIRECTED this row to replenish the
+                    # pool it drew on (`planning_change_service._apply_placed_redirect`,
+                    # the captain's ruling 21 Aug 2026) - it is still real placed
+                    # quantity, just not this line's anymore, so it must not net off
+                    # this line's need a second time or the new Buy would be silently
+                    # short.
+                    and not row.redirected_to_pool
+                ):
                     placed += _dec(row.qty)
 
             outstanding = need - placed

@@ -111,6 +111,14 @@ class OrderInquiryWorklistRow(BaseModel):
     # `committed_v`'s confirmed leg (`verb='ORDER' AND state='raised'`) - what still counts as
     # demand to the reorder engine. On a raised row that includes itself. `0` for a row with
     # no `so_line_id` (an amendment exception row traces to none).
+    #
+    # Both figures are scoped to `verb='ORDER'` SIBLINGS, always - including for a row whose
+    # OWN verb is not `ORDER` (the captain, 21 Aug: an ADVANCE row read "Taken from PO 432 /
+    # Remaining 0", technically correct about its ORDER siblings, but read as "handled" next
+    # to an unactioned date change of its own). The frontend mutes these two cells with an
+    # honest per-verb label instead of a figure whenever `verb != 'ORDER'`
+    # (`orderInquiryWorklist.ts`'s `flowExclusionLabel`) - this schema still always ships the
+    # real ORDER-sibling numbers, so nothing here needs to change to keep that true.
     taken_from_po: str = "0"
     remaining_open: str = "0"
     # Same as `OrderInquiryRowOut.has_open_po_line` - whether this row's own product

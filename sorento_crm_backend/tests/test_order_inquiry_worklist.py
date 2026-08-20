@@ -997,6 +997,52 @@ def test_taken_from_po_and_remaining_open_reflect_the_g2_cascade_split(api):
     assert by_id[raised.id]["remaining_open"] == "14"
 
 
+def test_a_redirected_placed_row_no_longer_counts_toward_taken_from_po(api):
+    """The captain's ruling, 21 Aug 2026: a placed row a planning change REDIRECTED to
+    replenish the shared pool is real placed quantity, just not this line's anymore - it
+    must not count toward `taken_from_po` (or it would read as this line's need being
+    covered by a PO that is actually bound for the pool). The redirected row's OWN cells
+    still show what it now is: its `location` reads the pool, and its `note` says so."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    line = _line_on_authored_order(db, company_id, seeded, qty="20", day=3)
+    redirected = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=line.id,
+        item_code=f"{MARKER}-REDIRECT",
+        qty="12",
+        state=INQUIRY_PLACED,
+        delivery_date=date(2026, 4, 3),
+        redirected_to_pool=True,
+        stock_location="ZZT-BRW",
+        note="Redirected to replenish ZZT-BRW (was ZZT-OWN) - planning change batch abcd1234.",
+    )
+    raised = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=line.id,
+        item_code=f"{MARKER}-REDIRECT",
+        qty="8",
+        state=INQUIRY_RAISED,
+        delivery_date=date(2026, 4, 3),
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"delivery_month": "2026-04"}).json()
+    by_id = {row["id"]: row for row in body["data"]}
+
+    # Neither row counts the redirected 12 as taken - it does not serve this line anymore.
+    assert by_id[redirected.id]["taken_from_po"] == "0"
+    assert by_id[raised.id]["taken_from_po"] == "0"
+    assert by_id[raised.id]["remaining_open"] == "8"
+    # The redirected row's own cells name what actually happened to it.
+    assert by_id[redirected.id]["location"] == "ZZT-BRW"
+    assert "Redirected" in (by_id[redirected.id]["note"] or "")
+
+
 def test_an_unplaced_lines_row_reports_zero_taken_and_its_full_qty_as_remaining(api):
     client, db, company_id, seeded = api
     inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)

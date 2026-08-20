@@ -494,6 +494,12 @@ class OrderInquiryWorklistService:
           this includes the row itself, because a row that has not been placed IS the
           uncovered remainder.
 
+        A PLACED row a planning change REDIRECTED to replenish the shared pool
+        (`planning_change_service._apply_placed_redirect`, the captain's ruling 21 Aug
+        2026) is excluded from `taken`: it is still real placed quantity, just not this
+        line's anymore, and counting it here would read as this line's need being covered
+        by a PO that is actually bound for the pool.
+
         One `GROUP BY (so_line_id, state)` query, not one query per row.
         """
         so_line_ids = {row.so_line_id for row in rows if row.so_line_id}
@@ -509,6 +515,7 @@ class OrderInquiryWorklistService:
                 OrderInquiryRow.so_line_id.in_(so_line_ids),
                 OrderInquiryRow.verb == IV_ORDER,
                 OrderInquiryRow.state.in_((INQUIRY_PLACED, INQUIRY_RAISED)),
+                OrderInquiryRow.redirected_to_pool.is_(False),
             )
             .group_by(OrderInquiryRow.so_line_id, OrderInquiryRow.state)
             .all()
