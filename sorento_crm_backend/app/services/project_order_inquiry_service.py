@@ -1985,6 +1985,58 @@ class ProjectOrderInquiryService:
                 message="This row is not placed on a purchase order.",
                 code="order_inquiry_not_placed",
             )
+        self._unplace_row(row)
+        self.db.flush()
+        self._refresh_inquiry_states({row.order_inquiry_id})
+        return self.serialize_rows([row])[0]
+
+    def unplace_rows(self, row_ids: Sequence[str]) -> int:
+        """Bulk untag by explicit row id - the WRITE half of "Unplace all" (the captain,
+        20/21 Aug). Which ids are in scope is entirely the caller's job
+        (`OrderInquiryWorklistService.unplace_all` resolves them off the worklist's own
+        filters, the same `_base()` the list and the summary already read, so the count a
+        person confirmed and the rows this actually touches can never disagree); this
+        method only ever writes, via the same `_unplace_row` a single Untag uses.
+
+        **Split-row decision: leave each split row raised at its own quantity, do not
+        merge siblings back into one row.** A cascade placement (`place_on_po_allocations`)
+        may have split one raised row into several PLACED rows across different PO lines
+        (migration 400 - one `po_line_id` per row), and by the time this runs there is no
+        reliable join key that says two rows were ever "the same row": they share
+        `so_line_id` / `item_code` / `delivery_date` at split time, but so does any other
+        still-open row of the same line, and a person may since have acted on one sibling
+        (marked it cancelled, changed its note) while another stayed placed. Merging would
+        either invent a merge rule this module does not otherwise have, or silently
+        overwrite something a person already touched. Leaving every row raised at its own
+        quantity is the simplest thing that is still correct: the sum of open quantity on
+        the line is unchanged, and the next Auto-place cascades every one of them exactly
+        as it would any other raised row - which is the whole point of the round trip.
+
+        Idempotent: an empty `row_ids`, or a set none of which is still placed (a second
+        click after the first already ran), returns 0. Re-filtered to `state = placed`
+        here as well as by the caller - this method never touches a row on the caller's
+        say-so alone.
+        """
+        wanted = [row_id for row_id in (row_ids or []) if row_id]
+        if not wanted:
+            return 0
+        rows = (
+            self.db.query(OrderInquiryRow)
+            .filter(
+                OrderInquiryRow.id.in_(wanted), OrderInquiryRow.state == INQUIRY_PLACED
+            )
+            .all()
+        )
+        for row in rows:
+            self._unplace_row(row)
+        if rows:
+            self.db.flush()
+            self._refresh_inquiry_states({row.order_inquiry_id for row in rows})
+        return len(rows)
+
+    def _unplace_row(self, row: OrderInquiryRow) -> None:
+        """The write half of an untag, shared by the single-row action and the
+        per-product bulk pass: stamp the note, drop the tag, release the audit claim."""
         po_ref = row.po_ref
         so_number, item_code, _core_line_id = self._claim_identity(row)
         stamp = f"Unplaced from {po_ref}" if po_ref else "Unplaced"
@@ -2003,10 +2055,6 @@ class ProjectOrderInquiryService:
                 po_number=po_ref,
                 item_code=item_code,
             )
-
-        self.db.flush()
-        self._refresh_inquiry_states({row.order_inquiry_id})
-        return self.serialize_rows([row])[0]
 
     def _row_or_404(self, row_id: str) -> OrderInquiryRow:
         row = self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).first()

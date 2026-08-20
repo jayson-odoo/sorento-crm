@@ -369,6 +369,38 @@ export interface AutoPlaceResult {
   products_touched: number;
 }
 
+/**
+ * `POST .../order-inquiries/unplace-all` (the captain, 20-21 Aug): "unplace all" for
+ * the CURRENT worklist scope. The SAME filter shape `OrderInquiryWorklistParams` sends
+ * to `GET /order-inquiries`, minus `state` - this always means placed rows, whatever
+ * else is filtered - and never `product_ids`: the worklist paginates server-side, so a
+ * client-derived product list would miss rows behind page 1. Every field omitted means
+ * every placed row in the company.
+ */
+export interface UnplaceAllRequest {
+  query?: string;
+  delivery_month?: string;
+  raised_date?: string;
+  project_id?: string;
+  supplier_id?: string;
+}
+
+export interface UnplaceAllResult {
+  unplaced: number;
+}
+
+/**
+ * `GET .../order-inquiries/unplace-all-preview` - the confirm dialog's own numbers,
+ * resolved server-side against the SAME filters `unplace-all` itself reads, never off
+ * whatever page happens to be loaded. `product_code`/`product_name` are set only when
+ * EVERY matching row resolves to the same product.
+ */
+export interface UnplaceAllPreview {
+  count: number;
+  product_code?: string | null;
+  product_name?: string | null;
+}
+
 /* ----------------------------------------------------------- the PO popup
  *
  * `GET {BASE}/order-inquiries/po/{po_id}` - the "PO no" cell's popover (the captain,

@@ -9,11 +9,13 @@ import {
   getOrderInquirySummary,
   getOrderInquiryWorklistSummary,
   getSalesOrderInquiry,
+  getUnplaceAllPreview,
   listOrderInquiryRows,
   listOrderInquiryWorklist,
   markOrderInquiryRows,
   placeOrderInquiryRowOnPo,
   placeOrderInquiryRowOnPoAllocations,
+  unplaceAllOrderInquiryRows,
   unplaceOrderInquiryRow,
 } from '../services/orderInquiryService';
 import type {
@@ -21,6 +23,7 @@ import type {
   OrderInquiryListParams,
   OrderInquiryPoAllocation,
   OrderInquiryWorklistParams,
+  UnplaceAllRequest,
 } from '../types/orderInquiry.types';
 
 export const ORDER_INQUIRY_ROWS_KEY = 'project-order-inquiry-rows';
@@ -30,6 +33,7 @@ export const ORDER_INQUIRY_WORKLIST_KEY = 'order-inquiry-worklist';
 export const ORDER_INQUIRY_WORKLIST_SUMMARY_KEY = 'order-inquiry-worklist-summary';
 export const ORDER_INQUIRY_PO_CANDIDATES_KEY = 'order-inquiry-po-candidates';
 export const ORDER_INQUIRY_PO_DETAIL_KEY = 'order-inquiry-po-detail';
+export const ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY = 'order-inquiry-unplace-all-preview';
 
 export const orderInquiryRowsKey = (
   projectId: string,
@@ -93,6 +97,25 @@ export function useOrderInquiryWorklistSummary(
     enabled: options.enabled,
     // Above all here: the month strip is inside this answer, so without it pressing a
     // month makes the control you just used vanish until the next answer lands.
+    placeholderData: (previous) => previous,
+  });
+}
+
+/**
+ * "Unplace all"'s own count for the toolbar button and its confirm dialog - the CURRENT
+ * worklist scope (the SAME filters the list itself reads), resolved server-side so it is
+ * right regardless of how many pages the matching set actually spans. Kept live the same
+ * way the month strip is: it has to go to zero the instant the last placed row in scope
+ * is dealt with, or the button stays clickable on an empty scope.
+ */
+export function useUnplaceAllPreview(
+  filters: UnplaceAllRequest = {},
+  options: { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY, filters],
+    queryFn: () => getUnplaceAllPreview(filters),
+    enabled: options.enabled,
     placeholderData: (previous) => previous,
   });
 }
@@ -181,6 +204,8 @@ export function useOrderInquiryPlacementMutations() {
     // Another raised row on the same product may now cover less (or more) of the PO
     // line this one just tagged or freed.
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
+    // A single place/unplace moves the placed count "Unplace all" reads too.
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY] });
   }
 
   const place = useMutation({
@@ -237,9 +262,36 @@ export function useAutoPlaceOrderInquiryRows() {
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_KEY] });
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY] });
       toast.success(
         `${result.placed_rows} row${result.placed_rows === 1 ? '' : 's'} placed across ` +
           `${result.allocations} allocation${result.allocations === 1 ? '' : 's'}`,
+      );
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+/**
+ * "Unplace all" for the CURRENT worklist scope (the captain, 20-21 Aug): every PLACED
+ * row matching the filters passed in reverts to raised, ready for a clean Auto-place
+ * re-deal. Invalidates the same query families a single unplace does.
+ */
+export function useUnplaceAllOrderInquiryRows() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (params: UnplaceAllRequest = {}) => unplaceAllOrderInquiryRows(params),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_ROWS_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_SUMMARY_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY] });
+      toast.success(
+        `${result.unplaced} row${result.unplaced === 1 ? '' : 's'} unplaced`,
       );
     },
     onError: (error: Error) => toast.error(error.message),

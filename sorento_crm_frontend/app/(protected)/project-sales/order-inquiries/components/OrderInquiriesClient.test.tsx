@@ -37,6 +37,8 @@ const listOrderInquiryWorklist = vi.fn();
 const getOrderInquiryWorklistSummary = vi.fn();
 const downloadOrderInquiryWorklistXlsx = vi.fn();
 const autoPlaceOrderInquiryRows = vi.fn();
+const getUnplaceAllPreview = vi.fn();
+const unplaceAllOrderInquiryRows = vi.fn();
 
 vi.mock('../../_shared/services/orderInquiryService', () => ({
   listOrderInquiryWorklist: (...args: unknown[]) => listOrderInquiryWorklist(...args),
@@ -45,6 +47,8 @@ vi.mock('../../_shared/services/orderInquiryService', () => ({
   downloadOrderInquiryWorklistXlsx: (...args: unknown[]) =>
     downloadOrderInquiryWorklistXlsx(...args),
   autoPlaceOrderInquiryRows: (...args: unknown[]) => autoPlaceOrderInquiryRows(...args),
+  getUnplaceAllPreview: (...args: unknown[]) => getUnplaceAllPreview(...args),
+  unplaceAllOrderInquiryRows: (...args: unknown[]) => unplaceAllOrderInquiryRows(...args),
 }));
 
 const saveBlobAs = vi.fn();
@@ -112,12 +116,29 @@ function openFilters() {
   });
 }
 
+/**
+ * Two-or-more `secondaryActions` collapse into one "Actions" dropdown
+ * (`DataGridListToolbar`) rather than each getting its own button - opened the same way
+ * `openFilters` opens its own Radix menu.
+ */
+function openActionsMenu() {
+  fireEvent.pointerDown(screen.getByRole('button', { name: /actions/i }), {
+    button: 0,
+    ctrlKey: false,
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   currentSearchParams = new URLSearchParams('');
   listOrderInquiryWorklist.mockResolvedValue(envelope(MOCK_WORKLIST_ROWS));
   getOrderInquiryWorklistSummary.mockResolvedValue(MOCK_WORKLIST_SUMMARY);
   downloadOrderInquiryWorklistXlsx.mockResolvedValue(new Blob(['x']));
+  getUnplaceAllPreview.mockResolvedValue({
+    count: 0,
+    product_code: null,
+    product_name: null,
+  });
 });
 
 describe('OrderInquiriesClient', () => {
@@ -486,7 +507,8 @@ describe('OrderInquiriesClient', () => {
       renderClient();
       await screen.findByText('SO385126');
 
-      fireEvent.click(screen.getByRole('button', { name: 'Auto-place' }));
+      openActionsMenu();
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Auto-place' }));
 
       expect(
         screen.getByText(
@@ -505,7 +527,8 @@ describe('OrderInquiriesClient', () => {
       renderClient();
       await screen.findByText('SO385126');
 
-      fireEvent.click(screen.getByRole('button', { name: 'Auto-place' }));
+      openActionsMenu();
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Auto-place' }));
       const dialog = await screen.findByRole('alertdialog');
       fireEvent.click(within(dialog).getByRole('button', { name: 'Auto-place' }));
 
@@ -516,7 +539,8 @@ describe('OrderInquiriesClient', () => {
       renderClient();
       await screen.findByText('SO385126');
 
-      fireEvent.click(screen.getByRole('button', { name: 'Auto-place' }));
+      openActionsMenu();
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Auto-place' }));
       fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
       expect(

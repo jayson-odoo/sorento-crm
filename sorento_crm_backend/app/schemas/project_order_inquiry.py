@@ -261,6 +261,39 @@ class AutoPlaceResult(BaseModel):
     products_touched: int = 0
 
 
+class UnplaceAllRequest(BaseModel):
+    """"Unplace all" for the CURRENT worklist scope (the captain, 20-21 Aug: it operates
+    on whatever the list is filtered to - one product when the filters happen to narrow
+    to one, every placed row when they do not). The SAME filter shape `GET
+    /order-inquiries` takes, minus `state` - this is always about placed rows, whatever
+    else is filtered - and no `product_ids`: the worklist paginates server-side, so a
+    client-derived product list would silently miss rows behind page 1. Every field
+    omitted means every placed row in the company.
+    """
+
+    query: Optional[str] = None
+    delivery_month: Optional[str] = None
+    raised_date: Optional[str] = None
+    project_id: Optional[str] = None
+    supplier_id: Optional[str] = None
+
+
+class UnplaceAllResult(BaseModel):
+    unplaced: int = 0
+
+
+class UnplaceAllPreview(BaseModel):
+    """The confirm dialog's own numbers, resolved server-side against the SAME filters
+    `unplace-all` itself reads - never derived from whatever page of the worklist happens
+    to be loaded in the browser. `product_code`/`product_name` are set only when EVERY
+    matching row resolves to the same product; otherwise both stay null and the dialog
+    speaks only of the count."""
+
+    count: int = 0
+    product_code: Optional[str] = None
+    product_name: Optional[str] = None
+
+
 class OrderInquiryPoDetailLine(BaseModel):
     """One line of the purchase order behind a placed worklist row - the "PO no" cell's
     popup (the captain, 20 Aug). Read straight off `purchase_order_lines`, never netted

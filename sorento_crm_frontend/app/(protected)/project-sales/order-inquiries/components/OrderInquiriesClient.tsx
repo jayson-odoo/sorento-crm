@@ -17,6 +17,7 @@ import {
   List,
   PackageSearch,
   Search,
+  Undo2,
   Wand2,
   X,
 } from 'lucide-react';
@@ -41,9 +42,11 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { AutoPlaceOrderInquiryDialog } from '../../_shared/components/AutoPlaceOrderInquiryDialog';
+import { UnplaceAllOrderInquiryDialog } from '../../_shared/components/UnplaceAllOrderInquiryDialog';
 import {
   useOrderInquiryWorklist,
   useOrderInquiryWorklistSummary,
+  useUnplaceAllPreview,
 } from '../../_shared/hooks/useOrderInquiry';
 import { buildOrderInquiryMatrix } from '../../_shared/lib/orderInquiryMatrix';
 import { deliveryMonthLabel, formatInquiryQty } from '../../_shared/lib/orderInquiryWorklist';
@@ -153,6 +156,7 @@ export function OrderInquiriesClient() {
   const [raisedDate, setRaisedDate] = React.useState('');
   const [exporting, setExporting] = React.useState(false);
   const [autoPlacing, setAutoPlacing] = React.useState(false);
+  const [unplacingAll, setUnplacingAll] = React.useState(false);
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize: 25,
@@ -211,6 +215,20 @@ export function OrderInquiriesClient() {
     [debounced, month, raisedDate, stateFilter, supplierFilter, projectFilter],
   );
 
+  // "Unplace all"'s own scope (the captain, 20-21 Aug): the SAME filters as `filters`,
+  // minus `state` - the action is always about placed rows, whatever else is filtered,
+  // so a State=raised selection must not zero its own scope out.
+  const unplaceAllFilters = React.useMemo(
+    () => ({
+      query: debounced || undefined,
+      delivery_month: month || undefined,
+      raised_date: raisedDate || undefined,
+      supplier_id: supplierFilter || undefined,
+      project_id: projectFilter || undefined,
+    }),
+    [debounced, month, raisedDate, supplierFilter, projectFilter],
+  );
+
   const params = React.useMemo(
     () => ({
       ...filters,
@@ -248,6 +266,16 @@ export function OrderInquiriesClient() {
   const filtered = Boolean(
     debounced || month || stateFilter || supplierFilter || projectFilter || raisedDate,
   );
+
+  // "Unplace all" (the captain, 20-21 Aug) operates on the CURRENT worklist scope - one
+  // product when the filters happen to narrow to it, every placed row when they name
+  // nothing. The count comes from the server, resolved against the full matching set
+  // (never just the loaded page - the worklist paginates server-side), so it is right
+  // whether the scope is a single product or the whole company.
+  const unplacePreview = useUnplaceAllPreview(unplaceAllFilters, {
+    enabled: view === 'list',
+  });
+  const unplaceCount = unplacePreview.data?.count ?? 0;
 
   const columns = useOrderInquiryWorklistColumns();
 
@@ -590,6 +618,15 @@ export function OrderInquiriesClient() {
                     icon: Wand2,
                     onClick: () => setAutoPlacing(true),
                   },
+                  {
+                    key: 'unplace-all',
+                    label: 'Unplace all',
+                    icon: Undo2,
+                    onClick: () => setUnplacingAll(true),
+                    disabled: unplaceCount === 0,
+                    disabledReason:
+                      unplaceCount === 0 ? 'No placed rows to unplace' : undefined,
+                  },
                 ]}
                 primaryAction={
                   <Button type="button" onClick={() => void handleExport()} disabled={exporting}>
@@ -629,6 +666,13 @@ export function OrderInquiriesClient() {
       )}
 
       <AutoPlaceOrderInquiryDialog open={autoPlacing} onOpenChange={setAutoPlacing} />
+      <UnplaceAllOrderInquiryDialog
+        open={unplacingAll}
+        onOpenChange={setUnplacingAll}
+        filters={unplaceAllFilters}
+        count={unplaceCount}
+        productCode={unplacePreview.data?.product_code}
+      />
     </div>
   );
 }

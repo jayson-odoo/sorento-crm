@@ -15,6 +15,9 @@ import type {
   OrderInquiryWorklistParams,
   OrderInquiryWorklistRow,
   OrderInquiryWorklistSummary,
+  UnplaceAllPreview,
+  UnplaceAllRequest,
+  UnplaceAllResult,
 } from '../types/orderInquiry.types';
 
 const BASE = '/api/v1/project-sales';
@@ -138,6 +141,23 @@ export async function markOrderInquiryRows(
  *        carrying one, when `product_ids` is omitted). Idempotent - a second call with
  *        the same products places nothing further.
  *
+ *   GET  {BASE}/order-inquiries/unplace-all-preview  { query?, delivery_month?,
+ *        raised_date?, project_id?, supplier_id? }
+ *        -> UnplaceAllPreview { count, product_code?, product_name? }. The confirm
+ *        dialog's own numbers, resolved server-side against the SAME filters `unplace-all`
+ *        itself reads - never off whatever page of the worklist happens to be loaded.
+ *        `product_code`/`product_name` are set only when every matching row resolves to
+ *        the same product.
+ *
+ *   POST {BASE}/order-inquiries/unplace-all  { query?, delivery_month?, raised_date?,
+ *        project_id?, supplier_id? }
+ *        -> UnplaceAllResult { unplaced }. Every PLACED row matching the CURRENT worklist
+ *        scope - the SAME filter shape `GET /order-inquiries` takes, `state` always
+ *        forced to placed - reverts to raised. No filter at all means every placed row in
+ *        the company. A row a cascade split into several stays split; each sibling goes
+ *        raised at its own quantity. Never `product_ids`: the worklist paginates
+ *        server-side, so a client-derived product list would miss rows behind page 1.
+ *
  * Permission is the same as `mark`: `projects.order_inquiry.action`.
  */
 
@@ -211,6 +231,54 @@ export async function autoPlaceOrderInquiryRows(
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to run the auto-place pass'));
+  return response.json();
+}
+
+/** The same five fields, however they are used - a query string for the preview GET, a
+ * JSON body for the commit POST. No page/sort/limit: neither endpoint paginates. */
+function unplaceAllSearchParams(filters: UnplaceAllRequest): URLSearchParams {
+  const params = new URLSearchParams();
+  if (filters.query) params.set('query', filters.query);
+  if (filters.delivery_month) params.set('delivery_month', filters.delivery_month);
+  if (filters.raised_date) params.set('raised_date', filters.raised_date);
+  if (filters.project_id) params.set('project_id', filters.project_id);
+  if (filters.supplier_id) params.set('supplier_id', filters.supplier_id);
+  return params;
+}
+
+/**
+ * The confirm dialog's own count, for the CURRENT worklist scope - resolved server-side
+ * against the same filters `unplaceAllOrderInquiryRows` itself takes, so the number a
+ * person confirms and the rows the commit actually touches can never disagree.
+ */
+export async function getUnplaceAllPreview(
+  filters: UnplaceAllRequest = {},
+): Promise<UnplaceAllPreview> {
+  const qs = unplaceAllSearchParams(filters).toString();
+  const response = await apiFetch(
+    `${BASE}/order-inquiries/unplace-all-preview${qs ? `?${qs}` : ''}`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the unplace count'));
+  return response.json();
+}
+
+/**
+ * "Unplace all" for the CURRENT worklist scope (the captain, 20-21 Aug): every PLACED row
+ * matching the SAME filters the worklist list reads (state forced to placed) reverts to
+ * raised in one call, so Auto-place can re-deal them earliest-first. No filter at all
+ * means every placed row in the company.
+ */
+export async function unplaceAllOrderInquiryRows(
+  params: UnplaceAllRequest = {},
+): Promise<UnplaceAllResult> {
+  const response = await apiFetch(`${BASE}/order-inquiries/unplace-all`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to unplace those rows'));
   return response.json();
 }
 

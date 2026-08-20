@@ -718,6 +718,59 @@ class OrderInquiryWorklistService:
             for project_id, title, count in rows
         ]
 
+    # ------------------------------------------------------------- unplace all
+
+    def unplace_all_preview(self, **filters) -> Dict[str, Any]:
+        """The confirm dialog's own numbers (the captain, 21 Aug: "why i cannot unplace
+        all" - the answer was the count and the scope were wrong, not that the action
+        should be blocked), resolved server-side against the SAME filters `list_rows`
+        reads - `state` is never one of them, because this is always about placed rows,
+        whatever else is filtered.
+
+        `product_code`/`product_name` are best-effort labelling only, not a second scope:
+        when every matching row resolves to the SAME product, the dialog can say which
+        one; when they do not (or none resolves any), it says nothing rather than picking
+        one arbitrarily. `LIMIT 2` is enough to tell "one" from "more than one" without
+        pulling the whole matching set.
+        """
+        visible = self._base(**filters, state=INQUIRY_PLACED)
+        count = int(
+            visible.with_entities(func.count(OrderInquiryRow.id)).order_by(None).scalar()
+            or 0
+        )
+        product_code: Optional[str] = None
+        product_name: Optional[str] = None
+        if count:
+            distinct_products = (
+                visible.with_entities(Product.product_code, Product.product_name)
+                .distinct()
+                .limit(2)
+                .all()
+            )
+            if len(distinct_products) == 1 and distinct_products[0][0]:
+                product_code, product_name = distinct_products[0]
+        return {
+            "count": count,
+            "product_code": product_code,
+            "product_name": product_name,
+        }
+
+    def unplace_all(self, *, actor_user_id: str, **filters) -> int:
+        """"Unplace all" for the CURRENT worklist scope - the SAME filters `list_rows`
+        reads, forced to placed. Resolved as a fresh id list against the full matching
+        set, never against whatever page happened to be loaded: the worklist paginates
+        server-side (`list_rows`'s own `offset`/`limit`), so a client-derived scope would
+        silently miss every row behind page 1. No filters at all means every placed row
+        in the company - "unplace all" with nothing narrowing it is exactly that.
+
+        The actual write is `ProjectOrderInquiryService.unplace_rows` - this method's own
+        job stops at resolving WHICH rows are in scope; the two can never disagree about
+        what a placed row is because both read off the same `state = placed` predicate.
+        """
+        visible = self._base(**filters, state=INQUIRY_PLACED)
+        row_ids = [row_id for (row_id,) in visible.all()]
+        return ProjectOrderInquiryService(self.db).unplace_rows(row_ids)
+
     # ----------------------------------------------------------------- export
 
     def export_xlsx(self, **filters) -> Tuple[str, bytes]:

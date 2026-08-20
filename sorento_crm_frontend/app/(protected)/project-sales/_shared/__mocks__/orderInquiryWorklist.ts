@@ -12,6 +12,7 @@
 import type {
   OrderInquiryWorklistRow,
   OrderInquiryWorklistSummary,
+  UnplaceAllPreview,
 } from '../types/orderInquiry.types';
 
 export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
@@ -130,4 +131,30 @@ export const MOCK_WORKLIST_SUMMARY: OrderInquiryWorklistSummary = {
     { id: 'proj-4', label: 'SDB @ Gombak', rows: 1 },
     { id: 'proj-9', label: 'Eko Titiwangsa', rows: 1 },
   ],
+};
+
+/**
+ * `GET .../order-inquiries/unplace-all-preview` (the captain, 20-21 Aug): the confirm
+ * dialog's own count, resolved server-side against the CURRENT worklist scope - one
+ * product when the filters happen to narrow to it (name attached), every placed row when
+ * they do not (name absent).
+ */
+export const MOCK_UNPLACE_ALL_PREVIEW_SCOPED: UnplaceAllPreview = {
+  count: 3,
+  product_code: 'SRTWC8605-SC-RL',
+  product_name: 'Close coupled WC 8605',
+};
+
+/** No single product across the matching set - the dialog names only the count. */
+export const MOCK_UNPLACE_ALL_PREVIEW_UNSCOPED: UnplaceAllPreview = {
+  count: 7,
+  product_code: null,
+  product_name: null,
+};
+
+/** Nothing to unplace - the toolbar action stays disabled. */
+export const MOCK_UNPLACE_ALL_PREVIEW_EMPTY: UnplaceAllPreview = {
+  count: 0,
+  product_code: null,
+  product_name: null,
 };

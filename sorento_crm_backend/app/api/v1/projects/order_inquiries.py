@@ -32,6 +32,9 @@ from app.schemas.project_order_inquiry import (
     OrderInquiryWorklistRow,
     OrderInquiryWorklistSummary,
     PlaceOnPoRequest,
+    UnplaceAllPreview,
+    UnplaceAllRequest,
+    UnplaceAllResult,
 )
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
@@ -456,6 +459,65 @@ async def unplace_order_inquiry_row(
         )
         db.commit()
         return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/order-inquiries/unplace-all-preview", response_model=UnplaceAllPreview
+)
+def order_inquiry_unplace_all_preview(
+    query: Optional[str] = Query(None),
+    delivery_month: Optional[str] = Query(None),
+    raised_date: Optional[str] = Query(None),
+    project_id: Optional[str] = Query(None),
+    supplier_id: Optional[str] = Query(None),
+    _user: dict = Depends(require_permission_with_api_key(ACTION)),
+    db: Session = Depends(get_db),
+):
+    """The confirm dialog's own numbers before "Unplace all" runs anything (the captain,
+    21 Aug): the count of placed rows in the CURRENT worklist scope - the SAME filters
+    `GET /order-inquiries` reads, `state` always forced to placed - and the product code
+    when every one of them resolves to the same product. Gated on the write permission
+    (`ACTION`), not the read one: this is a preview of a write a person is about to make,
+    not a browse."""
+    try:
+        filters = _worklist_filters(
+            query, delivery_month, raised_date, None, project_id, supplier_id
+        )
+        filters.pop("state", None)
+        return OrderInquiryWorklistService(db).unplace_all_preview(**filters)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/order-inquiries/unplace-all", response_model=UnplaceAllResult)
+async def unplace_order_inquiry_rows_in_scope(
+    payload: UnplaceAllRequest,
+    current_user: dict = Depends(require_permission(ACTION)),
+    db: Session = Depends(get_db),
+):
+    """"Unplace all" for the CURRENT worklist scope (the captain, 20-21 Aug): every
+    PLACED row matching the SAME filters `GET /order-inquiries` reads - one product when
+    the filters happen to narrow to it, every placed row in the company when they name
+    nothing - reverts to raised in one call, so Auto-place can re-deal them
+    earliest-first."""
+    try:
+        if payload.project_id:
+            validate_uuid_path(payload.project_id, resource="Project")
+        if payload.supplier_id:
+            validate_uuid_path(payload.supplier_id, resource="Supplier")
+        unplaced = OrderInquiryWorklistService(db).unplace_all(
+            actor_user_id=current_user["id"],
+            query=payload.query,
+            delivery_month=payload.delivery_month,
+            raised_date=payload.raised_date,
+            project_id=payload.project_id,
+            supplier_id=payload.supplier_id,
+        )
+        db.commit()
+        return {"unplaced": unplaced}
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
