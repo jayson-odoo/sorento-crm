@@ -19,14 +19,18 @@ inventing master data nobody knows to look at.
 """
 from __future__ import annotations
 
+import logging
 from typing import Iterable, Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.models.order import SalesOrder
 from app.models.sales_agent import SalesAgent
 from app.services.error_handler import AppException
 from app.services.scm.demand_class import DEMAND_CLASSES, is_valid
+
+logger = logging.getLogger(__name__)
 
 #: `source` values. An import-created row is waiting for a human decision; a manual one has
 #: had (or does not need) it.
@@ -120,6 +124,33 @@ def assert_demand_class(value: Optional[str]) -> Optional[str]:
     )
 
 
+def _backfill_null_class_orders(db: Session, agent: SalesAgent, demand_class: str) -> int:
+    """Give the agent's still-unclassified orders the class just decided for them.
+
+    `outstanding_import_service._classify_demand` reads the agent's class LAST, after order
+    type, the file's own type and the customer's market segment - so it only ever fires for a
+    row every earlier rung was silent on. An order imported before this agent was classified
+    resolved through that same ladder to NULL and was written that way; nothing re-imports it,
+    so without this the SO stays unclassified forever even after the captain answers the
+    question. Scoped to `IS NULL`: a row another rung already answered keeps that answer, and
+    only THIS agent's orders move - a second agent's rows are untouched.
+
+    Runs in the caller's transaction (flushed, not committed), so a demand class the policy
+    refuses leaves both the agent and its orders unchanged.
+    """
+    updated = (
+        db.query(SalesOrder)
+        .filter(SalesOrder.sales_agent_id == agent.id, SalesOrder.demand_class.is_(None))
+        .update({SalesOrder.demand_class: demand_class}, synchronize_session=False)
+    )
+    if updated:
+        logger.info(
+            "sales_agent_service: backfilled demand_class=%s onto %d NULL-class order(s) "
+            "for agent %s", demand_class, updated, agent.sales_agent,
+        )
+    return updated
+
+
 def set_demand_class(db: Session, code: str, demand_class: Optional[str]) -> SalesAgent:
     """Classify an existing agent. Never creates one.
 
@@ -135,6 +166,8 @@ def set_demand_class(db: Session, code: str, demand_class: Optional[str]) -> Sal
         )
     agent.demand_class = demand_class
     db.flush()
+    if demand_class:
+        _backfill_null_class_orders(db, agent, demand_class)
     return agent
 
 
@@ -174,10 +207,17 @@ def annotate(
 
     Flushes but does not commit: the caller (the annotation route) writes the two mirror
     columns in the same transaction, so a rejected class leaves the note unwritten too.
+
+    Setting the class also backfills it onto this agent's own NULL-class orders (see
+    `_backfill_null_class_orders`). Clearing it (`demand_class=None`) does not - the orders
+    already classified stay classified, this is a one-way "fill the gap", never an undo.
     """
     if write_demand_class:
         assert_demand_class(demand_class)
         agent.demand_class = demand_class
+        db.flush()
+        if demand_class:
+            _backfill_null_class_orders(db, agent, demand_class)
     if write_person_label:
         cleaned = (person_label or "").strip()
         agent.person_label = cleaned or None
