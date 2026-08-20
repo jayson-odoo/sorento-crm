@@ -114,3 +114,42 @@ def test_crm_sort_map_accepts_last_activity_at(db):
     )
     ids_in_order = [str(r.id) for r in result["data"]]
     assert ids_in_order == [str(row_older_created_but_revised.id), str(row_never_revised.id)]
+
+
+def test_office_list_last_activity_at_default_desc_and_asc(db):
+    """The OFFICE stock-inquiry list defaults to ``last_activity_at desc`` - a
+    row revised most recently reads as the freshest activity even if it was
+    created before the others. A is created oldest but revised "now", so it
+    jumps ahead of C (created newest, never revised) and B (created middle,
+    never revised) on the descending default; the ascending direction must
+    also be honoured (reverse order).
+    """
+    now = datetime(2026, 6, 1, 12, 0, 0)
+    row_a = _si(db, inquiry_number="SI26-ACT-A", created_at=now - timedelta(days=10))
+    row_b = _si(db, inquiry_number="SI26-ACT-B", created_at=now - timedelta(days=5))
+    row_c = _si(db, inquiry_number="SI26-ACT-C", created_at=now - timedelta(days=1))
+
+    # A was created earliest of the three but was revised just now, so its
+    # activity timestamp becomes the most recent of all three rows.
+    row_a.last_revised_at = now
+    row_a.revision_no = 1
+    db.add(row_a)
+    db.commit()
+
+    desc_result = StockInquiryService(db).list_inquiries(
+        sort_field="last_activity_at",
+        sort_dir="desc",
+        contact_id=CONTACT_ID,
+        space_id=SPACE_ID,
+    )
+    desc_ids = [str(r.id) for r in desc_result["data"]]
+    assert desc_ids == [str(row_a.id), str(row_c.id), str(row_b.id)]
+
+    asc_result = StockInquiryService(db).list_inquiries(
+        sort_field="last_activity_at",
+        sort_dir="asc",
+        contact_id=CONTACT_ID,
+        space_id=SPACE_ID,
+    )
+    asc_ids = [str(r.id) for r in asc_result["data"]]
+    assert asc_ids == [str(row_b.id), str(row_c.id), str(row_a.id)]
