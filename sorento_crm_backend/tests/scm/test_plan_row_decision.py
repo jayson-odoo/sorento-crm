@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from app.models.inventory import Stock
 from app.services.error_handler import AppException
 from app.services.scm import decision_service as dsvc
 from app.services.scm import reorder_run_service as run_svc
@@ -27,7 +28,6 @@ from tests.scm.test_m4_cash import (
     _link,
     _mk_demand,
     _mk_product,
-    _mk_stock,
     _mk_supplier,
     _mk_warehouse,
 )
@@ -38,6 +38,21 @@ pytestmark = requires_pg
 # ===========================================================================
 # fixtures
 # ===========================================================================
+
+def _mk_stock(db, pid, wid, qty):
+    """Seeds `stock` through the ORM, not `test_m4_cash`'s raw INSERT.
+
+    `Stock.synced_to_excel` (and its siblings `quantity_reserved` /
+    `quantity_damaged`) only carry a Python-side `default=`, no `server_default`:
+    a migrated CI database still has a DB-level default from an older migration
+    generation, but a schema built straight from the models via `create_all` does
+    not, so the borrowed raw-SQL helper 500s there with a NotNullViolation on
+    `synced_to_excel`. Routing through the model lets SQLAlchemy apply every
+    Python-side default itself, which works against both schema origins.
+    """
+    db.add(Stock(id=str(uuid.uuid4()), product_id=pid, warehouse_id=wid, quantity_on_hand=qty))
+    db.flush()
+
 
 def _run_buys(db, wid_code) -> str:
     set_plan_grain(db, "location")
