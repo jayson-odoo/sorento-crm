@@ -39,6 +39,7 @@ import { saveBlobAs } from '../../../_shared/services/fileDownload';
 import { downloadOrderInquiryXlsx } from '../../../_shared/services/orderInquiryService';
 import type { OrderInquiryRow } from '../../../_shared/types/orderInquiry.types';
 import { InfoHint } from '../../components/InfoHint';
+import { OrderInquiryRowActions } from '../../../_shared/components/OrderInquiryRowActions';
 import {
   BUYING_VERBS,
   OrderInquiryStatePill,
@@ -52,6 +53,7 @@ const STATE_OPTIONS = [
   { value: 'raised', label: 'Raised' },
   { value: 'actioned', label: 'Actioned' },
   { value: 'cancelled', label: 'Cancelled' },
+  { value: 'placed', label: 'Placed' },
 ];
 
 /**
@@ -324,6 +326,23 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
             </span>
           );
         },
+      },
+      {
+        id: 'actions',
+        header: 'Actions',
+        size: 150,
+        enableSorting: false,
+        meta: { headerTitle: 'Actions', skeleton: <Skeleton className="h-4 w-20" /> },
+        cell: ({ row }) => (
+          <OrderInquiryRowActions
+            rowId={row.original.id}
+            verb={row.original.verb}
+            state={row.original.state}
+            itemCode={row.original.item_code}
+            qty={row.original.qty}
+            poLabel={row.original.po_ref}
+          />
+        ),
       },
     ],
     [],

@@ -23,10 +23,12 @@ from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.project_order_inquiry import (
     MarkInquiryRowsRequest,
     OrderInquiryDetail,
+    OrderInquiryPoCandidate,
     OrderInquiryRowOut,
     OrderInquirySummary,
     OrderInquiryWorklistRow,
     OrderInquiryWorklistSummary,
+    PlaceOnPoRequest,
 )
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
@@ -102,7 +104,7 @@ def list_order_inquiry_worklist(
     ),
     # A closed set for the same reason `sort` is: a filter nothing can equal reads on
     # screen as "no work to do" when the truth is "that is not a state".
-    state: Optional[Literal["raised", "actioned", "cancelled"]] = Query(None),
+    state: Optional[Literal["raised", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     sort: Optional[WorklistSort] = Query(
@@ -147,7 +149,7 @@ def order_inquiry_worklist_summary(
     query: Optional[str] = Query(None),
     delivery_month: Optional[str] = Query(None),
     raised_date: Optional[str] = Query(None),
-    state: Optional[Literal["raised", "actioned", "cancelled"]] = Query(None),
+    state: Optional[Literal["raised", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
@@ -169,7 +171,7 @@ def export_order_inquiry_worklist(
     query: Optional[str] = Query(None),
     delivery_month: Optional[str] = Query(None),
     raised_date: Optional[str] = Query(None),
-    state: Optional[Literal["raised", "actioned", "cancelled"]] = Query(None),
+    state: Optional[Literal["raised", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
@@ -323,6 +325,68 @@ async def mark_order_inquiry_rows(
             validate_uuid_path(row_id, resource="Order inquiry row")
         body = ProjectOrderInquiryService(db).mark_rows(
             payload.row_ids, state=payload.state, actor_user_id=current_user["id"]
+        )
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/order-inquiry-rows/{row_id}/po-candidates",
+    response_model=List[OrderInquiryPoCandidate],
+)
+async def order_inquiry_po_candidates(
+    row_id: str,
+    _user: dict = Depends(require_permission_with_api_key(ACTION)),
+    db: Session = Depends(get_db),
+):
+    """Open PO lines this row could be tagged to (section G), soonest first."""
+    try:
+        validate_uuid_path(row_id, resource="Order inquiry row")
+        return ProjectOrderInquiryService(db).po_candidates_for_row(row_id)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/order-inquiry-rows/{row_id}/place-on-po", response_model=OrderInquiryRowOut
+)
+async def place_order_inquiry_row_on_po(
+    row_id: str,
+    payload: PlaceOnPoRequest,
+    current_user: dict = Depends(require_permission(ACTION)),
+    db: Session = Depends(get_db),
+):
+    """Tag a raised row to one outstanding PO line - "the quantity to be ordered is
+    deducted" (the captain, section G)."""
+    try:
+        validate_uuid_path(row_id, resource="Order inquiry row")
+        validate_uuid_path(payload.po_line_id, resource="Purchase order line")
+        body = ProjectOrderInquiryService(db).place_on_po(
+            row_id, payload.po_line_id, actor_user_id=current_user["id"]
+        )
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/order-inquiry-rows/{row_id}/unplace", response_model=OrderInquiryRowOut
+)
+async def unplace_order_inquiry_row(
+    row_id: str,
+    current_user: dict = Depends(require_permission(ACTION)),
+    db: Session = Depends(get_db),
+):
+    """Untag: the row goes back to raised and the reorder engine sees it again."""
+    try:
+        validate_uuid_path(row_id, resource="Order inquiry row")
+        body = ProjectOrderInquiryService(db).unplace(
+            row_id, actor_user_id=current_user["id"]
         )
         db.commit()
         return body

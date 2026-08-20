@@ -50,6 +50,14 @@ export const VERB_PALETTE_KEY: Record<string, string> = {
  */
 export const BUYING_VERBS = ['ORDER', 'RESERVE_AND_ORDER', 'BORROW_SHORTFALL'];
 
+/**
+ * Which raised rows "Place on PO" (section G) can tag - the same set the backend's
+ * `_assert_placeable` checks. Narrower than `BUYING_VERBS`: a `BORROW_SHORTFALL` row
+ * belongs to the DONOR location, not to a purchase order this line names, so it stays
+ * off this list even though it still costs money.
+ */
+export const PLACEABLE_VERBS = ['ORDER', 'RESERVE_AND_ORDER'];
+
 export function OrderInquiryVerbPill({ verb }: { verb: string }) {
   const label = VERB_LABEL[verb] ?? verb;
   return (
@@ -66,12 +74,17 @@ const STATE_LABEL: Record<string, string> = {
   raised: 'Raised',
   actioned: 'Actioned',
   cancelled: 'Cancelled',
+  // Tagged to an outstanding PO (section G) - its own colour, distinct from `actioned`,
+  // because the two answer different questions: `actioned` is "purchasing dealt with
+  // this somehow", `placed` names the exact PO the quantity was deducted against.
+  placed: 'Placed',
 };
 
 const STATE_PALETTE: Record<string, string> = {
   raised: 'pending',
   actioned: 'processed_by_cs',
   cancelled: 'voided',
+  placed: 'approved',
 };
 
 export function OrderInquiryStatePill({ state }: { state: string }) {

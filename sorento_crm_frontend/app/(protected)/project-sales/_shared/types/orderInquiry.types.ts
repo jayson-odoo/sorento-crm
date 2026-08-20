@@ -32,7 +32,7 @@ export type OrderInquiryVerb =
    */
   | 'RELEASE';
 
-export type OrderInquiryState = 'raised' | 'actioned' | 'cancelled';
+export type OrderInquiryState = 'raised' | 'actioned' | 'cancelled' | 'placed';
 
 export interface OrderInquiryRow {
   id: string;
@@ -67,6 +67,12 @@ export interface OrderInquiryRow {
   covered_by?: string | null;
   /** The date a DELAY moved from, the sales order a CHANGE SO points at. */
   note?: string | null;
+  /**
+   * The outstanding supplier PO this row was tagged to ("Place on PO", section G).
+   * Blank until it is placed - never a guess at what would cover it.
+   */
+  po_ref?: string | null;
+  po_line_id?: string | null;
 
   state: OrderInquiryState | string;
   actioned_at?: string | null;
@@ -264,4 +270,31 @@ export interface OrderInquiryMatrixCell {
   qty: string;
   /** The contributing rows themselves - what a click on the cell drills down to. */
   rows: OrderInquiryWorklistRow[];
+}
+
+/* --------------------------------------------------------- Place on PO (section G)
+ *
+ * "identify which outstanding PO has quantity to fulfil this order inquiry, tag it, and
+ * the quantity to be ordered is deducted" (the captain, 20 Aug). One raised ORDER row is
+ * tagged to one open supplier PO line; the row leaves `state = 'raised'` and the reorder
+ * engine stops suggesting it. Untag ("Unplace") returns it.
+ */
+
+/** One open supplier PO line the row could be tagged to, soonest `expected_date` first. */
+export interface OrderInquiryPoCandidate {
+  po_line_id: string;
+  po_number: string;
+  /** Blank when the purchase order carries no supplier - never a guess. */
+  supplier_name?: string | null;
+  expected_date?: string | null;
+  qty_ordered: string;
+  qty_received: string;
+  /** What OTHER placed rows already claim off this same line. */
+  already_tagged: string;
+  /** The line's balance, net of `already_tagged` - what is ACTUALLY left for this row. */
+  remaining: string;
+  /** `remaining >= ` the row's own quantity. */
+  covers: boolean;
+  /** The earliest candidate that covers the row. At most one candidate carries this. */
+  recommended: boolean;
 }

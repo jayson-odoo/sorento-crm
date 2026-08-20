@@ -731,6 +731,14 @@ class SOAmendment(Base, CompanyScopedMixin):
 INQUIRY_RAISED = "raised"
 INQUIRY_ACTIONED = "actioned"
 INQUIRY_CANCELLED = "cancelled"
+#: A raised ORDER/RESERVE_AND_ORDER row tagged onto a specific outstanding supplier PO
+#: line (PLAN-demo-followups-19aug-ladder-v2.md section G, "identify which outstanding
+#: PO has quantity to fulfil this order inquiry, tag it"). `committed_v`'s confirmed leg
+#: counts `state = 'raised'` only, so placing a row is what removes it from the reorder
+#: engine's suggestion - the deliberate, evidence-carrying exception to "a PO is never
+#: supply" (`on_order_v` still reads `spo_allocations` only). Untagging returns the row
+#: to `raised` and clears `po_ref` / `po_line_id`.
+INQUIRY_PLACED = "placed"
 
 IV_ORDER = "ORDER"
 IV_RESERVE_AND_ORDER = "RESERVE_AND_ORDER"
@@ -839,6 +847,16 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
         nullable=True,
     )
     covered_by = Column(Text, nullable=True)
+    # The outstanding supplier PO this row was tagged to (section G). `po_ref` is the
+    # PO NUMBER, printed the way the worklist's other PO column already is; `po_line_id`
+    # is the actual link the netting and the candidate query read. SET NULL, not CASCADE:
+    # a purchase order line getting deleted must not take the instruction's history with
+    # it - the row still says what it was placed on until somebody untags it.
+    po_ref = Column(String(80), nullable=True)
+    po_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("purchase_order_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     note = Column(Text, nullable=True)
     state = Column(String(16), nullable=False, server_default=INQUIRY_RAISED)
     # "Did purchasing act on this" (AC-I7) is only half answered by a state. A state
@@ -850,6 +868,7 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_project_order_inquiry_rows_inquiry", "order_inquiry_id"),
         Index("ix_project_order_inquiry_rows_state", "state"),
+        Index("ix_project_order_inquiry_rows_po_line", "po_line_id"),
         # Stage 1C's name, because 1C's `374_so_supply_decisions` is the migration that
         # creates this index; Stage 2 proposed `..._supply_decision` for the same column
         # and its duplicate DDL is dropped with the duplicate model above.

@@ -41,6 +41,10 @@ class OrderInquiryRowOut(BaseModel):
     spo_ref: Optional[str] = None
     covered_by: Optional[str] = None
     note: Optional[str] = None
+    # The outstanding supplier PO this row was tagged to (section G). Blank until
+    # "Place on PO" is used; never a guess at what would cover it.
+    po_ref: Optional[str] = None
+    po_line_id: Optional[str] = None
 
     state: str
     actioned_at: Optional[datetime] = None
@@ -151,3 +155,28 @@ class OrderInquiryWorklistSummary(BaseModel):
 class MarkInquiryRowsRequest(BaseModel):
     row_ids: List[str] = Field(..., min_length=1)
     state: str = Field(..., description="raised, actioned or cancelled")
+
+
+class OrderInquiryPoCandidate(BaseModel):
+    """One open supplier PO line this row could be tagged to (section G).
+
+    Ordered soonest `expected_date` first; `recommended` marks the earliest one whose
+    `remaining` balance covers the row's whole quantity. `already_tagged` is what OTHER
+    placed rows already claim off this same line, so `remaining` is never a promise this
+    line cannot keep.
+    """
+
+    po_line_id: str
+    po_number: str
+    supplier_name: Optional[str] = None
+    expected_date: Optional[date] = None
+    qty_ordered: str
+    qty_received: str
+    already_tagged: str
+    remaining: str
+    covers: bool
+    recommended: bool = False
+
+
+class PlaceOnPoRequest(BaseModel):
+    po_line_id: str = Field(..., description="One of the row's own PO candidates.")

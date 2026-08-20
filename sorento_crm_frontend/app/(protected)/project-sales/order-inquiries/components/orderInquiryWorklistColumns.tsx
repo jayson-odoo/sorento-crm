@@ -9,6 +9,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { OrderInquiryRowActions } from '../../_shared/components/OrderInquiryRowActions';
 import {
   OrderInquiryStatePill,
   OrderInquiryVerbPill,
@@ -261,6 +262,23 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
           ) : (
             <Muted>Unknown</Muted>
           ),
+      },
+      {
+        id: 'actions',
+        header: 'Actions',
+        size: 150,
+        enableSorting: false,
+        meta: { headerTitle: 'Actions', skeleton: <Skeleton className="h-4 w-20" /> },
+        cell: ({ row }) => (
+          <OrderInquiryRowActions
+            rowId={row.original.id}
+            verb={row.original.verb}
+            state={row.original.state}
+            itemCode={row.original.item_code}
+            qty={row.original.qty}
+            poLabel={row.original.po_number}
+          />
+        ),
       },
     ],
     [],

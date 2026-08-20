@@ -3,12 +3,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
+  getOrderInquiryPoCandidates,
   getOrderInquirySummary,
   getOrderInquiryWorklistSummary,
   getSalesOrderInquiry,
   listOrderInquiryRows,
   listOrderInquiryWorklist,
   markOrderInquiryRows,
+  placeOrderInquiryRowOnPo,
+  unplaceOrderInquiryRow,
 } from '../services/orderInquiryService';
 import type {
   OrderInquiryListParams,
@@ -20,6 +23,7 @@ export const ORDER_INQUIRY_SUMMARY_KEY = 'project-order-inquiry-summary';
 export const ORDER_INQUIRY_KEY = 'project-order-inquiry';
 export const ORDER_INQUIRY_WORKLIST_KEY = 'order-inquiry-worklist';
 export const ORDER_INQUIRY_WORKLIST_SUMMARY_KEY = 'order-inquiry-worklist-summary';
+export const ORDER_INQUIRY_PO_CANDIDATES_KEY = 'order-inquiry-po-candidates';
 
 export const orderInquiryRowsKey = (
   projectId: string,
@@ -126,4 +130,58 @@ export function useOrderInquiryMutations(projectId: string) {
   });
 
   return { mark };
+}
+
+/** Candidates for one row's "Place on PO" dialog (section G), fetched only while it is
+ * open - `enabled` lets the caller hold the request off until the dialog mounts. */
+export function useOrderInquiryPoCandidates(
+  rowId: string | undefined,
+  options: { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY, rowId],
+    queryFn: () => getOrderInquiryPoCandidates(rowId as string),
+    enabled: Boolean(rowId) && options.enabled !== false,
+  });
+}
+
+/**
+ * Place on PO / Unplace (section G). Not scoped to a project id: the per-project screen
+ * and purchasing's cross-project worklist carry the same row action, so both invalidate
+ * every query family a placement touches rather than just their own screen's.
+ */
+export function useOrderInquiryPlacementMutations() {
+  const queryClient = useQueryClient();
+
+  function invalidateAfterPlacement() {
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_ROWS_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_SUMMARY_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
+    // Another raised row on the same product may now cover less (or more) of the PO
+    // line this one just tagged or freed.
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
+  }
+
+  const place = useMutation({
+    mutationFn: ({ rowId, poLineId }: { rowId: string; poLineId: string }) =>
+      placeOrderInquiryRowOnPo(rowId, poLineId),
+    onSuccess: () => {
+      invalidateAfterPlacement();
+      toast.success('Placed on the purchase order');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const unplace = useMutation({
+    mutationFn: (rowId: string) => unplaceOrderInquiryRow(rowId),
+    onSuccess: () => {
+      invalidateAfterPlacement();
+      toast.success('Unplaced');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { place, unplace };
 }

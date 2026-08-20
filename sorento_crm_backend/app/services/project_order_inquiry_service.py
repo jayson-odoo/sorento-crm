@@ -50,12 +50,19 @@ from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
-from app.models.procurement import InboundShipment, SPOAllocation
+from app.models.procurement import (
+    InboundShipment,
+    PurchaseOrder,
+    PurchaseOrderLine,
+    SPOAllocation,
+    Supplier,
+)
 from app.models.product import Product
 from app.models.project_so import (
     AMENDMENT_PUBLISHED,
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
+    INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ADVANCE,
     IV_ALREADY_INBOUND,
@@ -84,6 +91,7 @@ from app.models.projects import (
     ProjectTask,
 )
 from app.services.error_handler import AppException
+from app.services.scm import order_link_service
 from app.services.project_order_inquiry_engine import (
     CHANGE_DATE_EARLIER,
     CHANGE_DATE_LATER,
@@ -101,11 +109,21 @@ logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
 
+#: The states pre-seeded at zero on the header strip. `placed` (section G) is
+#: deliberately NOT one of them - `summary()` adds it to the dict dynamically the moment a
+#: placed row actually exists, so a project with none yet keeps reporting the exact four
+#: keys this screen has always reported.
 INQUIRY_STATES = (INQUIRY_RAISED, INQUIRY_ACTIONED, INQUIRY_CANCELLED)
 
 # The verbs whose rows claim part of a covering pool, and so have to be counted before
 # the next publish nets against the same pool again.
 _COVERING_VERBS = (IV_PRE_ORDERED, IV_ALREADY_INBOUND)
+
+# Section G: only a row that still costs money and is still undecided can be tagged onto
+# an outstanding PO. `RESERVE_AND_ORDER` is buying work exactly like `ORDER` (BUYING_VERBS
+# on the frontend groups them the same way); the rest are either informational or already
+# closed off.
+_PLACEABLE_VERBS = (IV_ORDER, IV_RESERVE_AND_ORDER)
 
 # How the client spells each verb in the order inquiry they send today. `ALREADY_INBOUND`
 # is deliberately absent: their file writes the SPO reference itself in that column
@@ -1062,9 +1080,15 @@ class ProjectOrderInquiryService:
             .all()
         )
         counts = {state: 0 for state in INQUIRY_STATES}
+        total = 0
         for state, count in rows:
             counts[state] = int(count)
-        counts["total"] = sum(counts[state] for state in INQUIRY_STATES)
+            # Summed off the actual rows, not off the pre-seeded keys: a `placed` row
+            # (section G) grows this dict dynamically rather than being one of the
+            # states pre-seeded above, and a total that only added the three seeded
+            # keys would silently drop it.
+            total += int(count)
+        counts["total"] = total
         return counts
 
     def serialize_rows(self, rows: Sequence[OrderInquiryRow]) -> List[Dict[str, Any]]:
@@ -1099,6 +1123,8 @@ class ProjectOrderInquiryService:
                     "verb": row.verb,
                     "remark": self._remark(row),
                     "spo_ref": row.spo_ref,
+                    "po_ref": row.po_ref,
+                    "po_line_id": row.po_line_id,
                     "covered_by": row.covered_by,
                     "note": row.note,
                     "state": row.state,
@@ -1298,6 +1324,14 @@ class ProjectOrderInquiryService:
             )
         now = datetime.utcnow()
         for row in rows:
+            # A row this bulk action moves OFF `placed` (section G) drops its PO tag too:
+            # "blank means not placed yet" is what the worklist's PO no / Supplier columns
+            # promise, and a cancelled or reopened row that still carried one would read
+            # as placed when it no longer is. The claim itself is left alone here - it is
+            # evidence of what the row WAS tagged to, and only Untag owns removing it.
+            if row.state == INQUIRY_PLACED and state != INQUIRY_PLACED:
+                row.po_ref = None
+                row.po_line_id = None
             row.state = state
             # Back to raised is an undo, and an undo has to clear the claim it made or
             # the row would still read as something somebody dealt with.
@@ -1329,6 +1363,282 @@ class ProjectOrderInquiryService:
             else:
                 inquiry.state = INQUIRY_ACTIONED
         self.db.flush()
+
+    # --------------------------------------------------- tag an outstanding PO (section G)
+    #
+    # "identify which outstanding PO has quantity to fulfil this order inquiry, tag it,
+    # and the quantity to be ordered is deducted" (the captain, 20 Aug). A deliberate,
+    # evidence-carrying exception on the DEMAND side only: tagging never makes the PO
+    # supply (`on_order_v` still reads `spo_allocations` only). The lever is the existing
+    # one - `committed_v`'s confirmed leg counts `state = 'raised'` rows only - so moving
+    # a row to `placed` is what removes it from the reorder engine's suggestion, with no
+    # view change and no silent hole where "mark actioned" used to cover it with nothing
+    # to show for it.
+
+    def po_candidates_for_row(self, row_id: str) -> List[Dict[str, Any]]:
+        """Open PO lines of this row's own product, soonest `expected_date` first.
+
+        `remaining` already nets what OTHER placed rows have tagged onto the same line -
+        the reason two rows can never be pointed at the same PO quantity - so `covers`
+        and `recommended` are both answered against what is ACTUALLY left, not the line's
+        raw balance.
+        """
+        row = self._row_or_404(row_id)
+        self._assert_placeable(row)
+        product_id = self._resolve_product_id(row)
+        if not product_id:
+            raise AppException(
+                status_code=409,
+                message="This row names no product to match a purchase order line against.",
+                code="order_inquiry_no_product",
+            )
+        need = _dec(row.qty)
+        tagged = self._tagged_by_po_line()
+        lines = (
+            self.db.query(PurchaseOrderLine, PurchaseOrder, Supplier)
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
+            .filter(
+                PurchaseOrderLine.product_id == product_id,
+                PurchaseOrderLine.line_status == "open",
+            )
+            .order_by(
+                PurchaseOrderLine.expected_date.asc().nulls_last(),
+                PurchaseOrderLine.id.asc(),
+            )
+            .all()
+        )
+        candidates: List[Dict[str, Any]] = []
+        for line, po, supplier in lines:
+            balance = _dec(line.qty_ordered) - _dec(line.qty_received)
+            already = tagged.get(line.id, _ZERO)
+            remaining = balance - already
+            if remaining <= _ZERO:
+                continue
+            candidates.append(
+                {
+                    "po_line_id": line.id,
+                    "po_number": po.po_number,
+                    "supplier_name": supplier.supplier_name if supplier else None,
+                    "expected_date": line.expected_date,
+                    "qty_ordered": _qty_str(_dec(line.qty_ordered)),
+                    "qty_received": _qty_str(_dec(line.qty_received)),
+                    "already_tagged": _qty_str(already),
+                    "remaining": _qty_str(remaining),
+                    "covers": remaining >= need,
+                    "recommended": False,
+                }
+            )
+        recommended = next((c for c in candidates if c["covers"]), None)
+        if recommended is not None:
+            recommended["recommended"] = True
+        return candidates
+
+    def place_on_po(
+        self, row_id: str, po_line_id: str, *, actor_user_id: str
+    ) -> Dict[str, Any]:
+        """Tag this row to one open PO line. The captain's "quantity to be ordered is
+        deducted" - the deduction IS the row leaving `state = 'raised'`."""
+        row = self._row_or_404(row_id)
+        self._assert_placeable(row)
+
+        line = (
+            self.db.query(PurchaseOrderLine)
+            .filter(PurchaseOrderLine.id == po_line_id)
+            .first()
+        )
+        if line is None:
+            raise AppException(
+                status_code=404,
+                message="That purchase order line no longer exists.",
+                code="po_line_not_found",
+            )
+        if line.line_status != "open":
+            raise AppException(
+                status_code=409,
+                message="That purchase order line is no longer open.",
+                code="order_inquiry_po_line_closed",
+            )
+        product_id = self._resolve_product_id(row)
+        if not product_id or str(line.product_id) != str(product_id):
+            raise AppException(
+                status_code=409,
+                message="That purchase order line is not for this row's product.",
+                code="order_inquiry_product_mismatch",
+            )
+
+        po = (
+            self.db.query(PurchaseOrder)
+            .filter(PurchaseOrder.id == line.purchase_order_id)
+            .first()
+        )
+        balance = _dec(line.qty_ordered) - _dec(line.qty_received)
+        already = self._tagged_by_po_line().get(line.id, _ZERO)
+        remaining = balance - already
+        need = _dec(row.qty)
+        if remaining < need:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{po.po_number if po else 'That line'} has {_qty_str(remaining)} "
+                    f"left, {_qty_str(need - remaining)} short of the {_qty_str(need)} "
+                    "this row needs."
+                ),
+                code="order_inquiry_po_line_short",
+            )
+
+        supplier = (
+            self.db.query(Supplier).filter(Supplier.id == po.supplier_id).first()
+            if po and po.supplier_id
+            else None
+        )
+        po_number = po.po_number if po else "an unnamed purchase order"
+        supplier_name = supplier.supplier_name if supplier else "unknown supplier"
+        expected = line.expected_date.isoformat() if line.expected_date else "no date"
+        stamp = f"Placed on {po_number} ({supplier_name}), expected {expected}"
+        row.note = f"{row.note}; {stamp}" if row.note else stamp
+        row.po_ref = po_number if po else None
+        row.po_line_id = line.id
+        row.state = INQUIRY_PLACED
+        row.actioned_by = actor_user_id
+        row.actioned_at = datetime.utcnow()
+
+        if po:
+            so_number, item_code, core_line_id = self._claim_identity(row)
+            order_link_service.claim_placed_on_po(
+                self.db,
+                company_id=row.company_id,
+                so_number=so_number,
+                po_number=po.po_number,
+                item_code=item_code,
+                so_line_id=core_line_id,
+                po_line_id=line.id,
+            )
+
+        self.db.flush()
+        self._refresh_inquiry_states({row.order_inquiry_id})
+        return self.serialize_rows([row])[0]
+
+    def unplace(self, row_id: str, *, actor_user_id: str) -> Dict[str, Any]:
+        """Untag: the row goes back to `raised` and the reorder engine sees it again."""
+        row = self._row_or_404(row_id)
+        if row.state != INQUIRY_PLACED:
+            raise AppException(
+                status_code=409,
+                message="This row is not placed on a purchase order.",
+                code="order_inquiry_not_placed",
+            )
+        po_ref = row.po_ref
+        so_number, item_code, _core_line_id = self._claim_identity(row)
+        stamp = f"Unplaced from {po_ref}" if po_ref else "Unplaced"
+        row.note = f"{row.note}; {stamp}" if row.note else stamp
+        row.po_ref = None
+        row.po_line_id = None
+        row.state = INQUIRY_RAISED
+        row.actioned_by = None
+        row.actioned_at = None
+
+        if po_ref:
+            order_link_service.delete_own_claim(
+                self.db,
+                company_id=row.company_id,
+                so_number=so_number,
+                po_number=po_ref,
+                item_code=item_code,
+            )
+
+        self.db.flush()
+        self._refresh_inquiry_states({row.order_inquiry_id})
+        return self.serialize_rows([row])[0]
+
+    def _row_or_404(self, row_id: str) -> OrderInquiryRow:
+        row = self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).first()
+        if row is None:
+            raise AppException(
+                status_code=404,
+                message="That order inquiry row no longer exists.",
+                code="order_inquiry_row_not_found",
+            )
+        return row
+
+    def _assert_placeable(self, row: OrderInquiryRow) -> None:
+        if row.verb not in _PLACEABLE_VERBS:
+            raise AppException(
+                status_code=409,
+                message="Only an ORDER or RESERVE & ORDER row can be placed on a purchase order.",
+                code="order_inquiry_not_placeable_verb",
+            )
+        if row.state != INQUIRY_RAISED:
+            raise AppException(
+                status_code=409,
+                message="Only a raised row can be placed on a purchase order.",
+                code="order_inquiry_not_raised",
+            )
+
+    def _resolve_product_id(self, row: OrderInquiryRow) -> Optional[str]:
+        """The product this row is FOR: the reconciled line's product first, the item
+        code second. Never invented when neither resolves."""
+        if row.so_line_id:
+            line = (
+                self.db.query(ProjectSalesOrderLine.product_id)
+                .filter(ProjectSalesOrderLine.id == row.so_line_id)
+                .first()
+            )
+            if line and line[0]:
+                return line[0]
+        if row.item_code:
+            product = (
+                self.db.query(Product.id)
+                .filter(Product.product_code == row.item_code)
+                .first()
+            )
+            if product:
+                return product[0]
+        return None
+
+    def _tagged_by_po_line(self) -> Dict[str, Decimal]:
+        """What every currently PLACED row already claims, per PO line - the netting
+        that stops two rows tagging the same purchase-order quantity."""
+        rows = (
+            self.db.query(OrderInquiryRow.po_line_id, func.sum(OrderInquiryRow.qty))
+            .filter(
+                OrderInquiryRow.state == INQUIRY_PLACED,
+                OrderInquiryRow.po_line_id.isnot(None),
+            )
+            .group_by(OrderInquiryRow.po_line_id)
+            .all()
+        )
+        return {po_line_id: _dec(qty) for po_line_id, qty in rows}
+
+    def _claim_identity(
+        self, row: OrderInquiryRow
+    ) -> Tuple[str, Optional[str], Optional[str]]:
+        """The (so_number, item_code, core so_line_id) the audit claim is written and
+        matched on - the same identity `order_link_service.resolve()` already reads."""
+        inquiry = (
+            self.db.query(OrderInquiry).filter(OrderInquiry.id == row.order_inquiry_id).first()
+        )
+        order = (
+            self.db.query(ProjectSalesOrder)
+            .filter(ProjectSalesOrder.id == inquiry.project_sales_order_id)
+            .first()
+            if inquiry is not None
+            else None
+        )
+        so_number = (
+            (order.autocount_doc_no or order.provisional_ref)
+            if order is not None
+            else str(row.order_inquiry_id)
+        )
+        core_line_id = None
+        if row.so_line_id:
+            line = (
+                self.db.query(ProjectSalesOrderLine.core_sales_order_line_id)
+                .filter(ProjectSalesOrderLine.id == row.so_line_id)
+                .first()
+            )
+            core_line_id = line[0] if line else None
+        return so_number, row.item_code, core_line_id
 
     # ---------------------------------------------------------------- export
 

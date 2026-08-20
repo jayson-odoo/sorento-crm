@@ -4,6 +4,7 @@ import type {
   OrderInquiryDetail,
   OrderInquiryListEnvelope,
   OrderInquiryListParams,
+  OrderInquiryPoCandidate,
   OrderInquiryRow,
   OrderInquirySummary,
   OrderInquiryWorklistEnvelope,
@@ -96,6 +97,59 @@ export async function markOrderInquiryRows(
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to update those rows'));
+  return response.json();
+}
+
+/* --------------------------------------------------------- Place on PO (section G)
+ *
+ * API CONTRACT (backend section G).
+ *
+ *   GET  {BASE}/order-inquiry-rows/{rowId}/po-candidates
+ *        -> OrderInquiryPoCandidate[], soonest expected_date first. 409 when the row is
+ *        not a raised ORDER/RESERVE & ORDER row.
+ *
+ *   POST {BASE}/order-inquiry-rows/{rowId}/place-on-po  { po_line_id }
+ *        -> OrderInquiryRowOut, state 'placed'. 409 naming the shortfall when the line's
+ *        remaining balance cannot cover the row.
+ *
+ *   POST {BASE}/order-inquiry-rows/{rowId}/unplace
+ *        -> OrderInquiryRowOut, state back to 'raised'. 409 when the row is not placed.
+ *
+ * Permission is the same as `mark`: `projects.order_inquiry.action`.
+ */
+
+export async function getOrderInquiryPoCandidates(
+  rowId: string,
+): Promise<OrderInquiryPoCandidate[]> {
+  const response = await apiFetch(`${BASE}/order-inquiry-rows/${rowId}/po-candidates`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load purchase order lines'));
+  return response.json();
+}
+
+/** Tag a raised row onto one outstanding PO line - the captain's "quantity to be ordered
+ * is deducted". */
+export async function placeOrderInquiryRowOnPo(
+  rowId: string,
+  poLineId: string,
+): Promise<OrderInquiryRow> {
+  const response = await apiFetch(`${BASE}/order-inquiry-rows/${rowId}/place-on-po`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ po_line_id: poLineId }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to place this row on a purchase order'));
+  return response.json();
+}
+
+/** Untag: the row goes back to raised. */
+export async function unplaceOrderInquiryRow(rowId: string): Promise<OrderInquiryRow> {
+  const response = await apiFetch(`${BASE}/order-inquiry-rows/${rowId}/unplace`, {
+    method: 'POST',
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to unplace this row'));
   return response.json();
 }
 

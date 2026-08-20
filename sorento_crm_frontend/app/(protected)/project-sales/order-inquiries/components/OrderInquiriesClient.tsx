@@ -52,6 +52,7 @@ const STATE_OPTIONS = [
   { value: 'raised', label: 'Raised' },
   { value: 'actioned', label: 'Actioned' },
   { value: 'cancelled', label: 'Cancelled' },
+  { value: 'placed', label: 'Placed' },
 ];
 
 type OrderInquiryView = 'list' | 'schedule';

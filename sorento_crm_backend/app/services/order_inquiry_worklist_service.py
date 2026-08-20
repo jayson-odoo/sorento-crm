@@ -60,7 +60,10 @@ logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
 
-#: The states a row can be in, in the order the screen lists them.
+#: The states pre-seeded at zero on the summary strip. `placed` (section G) is
+#: deliberately NOT one of them: `summary()` adds it to the dict dynamically the moment a
+#: placed row actually exists (same as any state would), so a company with none yet keeps
+#: reporting the exact four keys this screen has always reported.
 INQUIRY_STATES = (INQUIRY_RAISED, INQUIRY_ACTIONED, INQUIRY_CANCELLED)
 
 #: Every column the list renders is sortable, and this is the CLOSED SET. An unknown
@@ -138,11 +141,14 @@ EXPORT_HEADINGS = (
 # outright ("invalid reference to FROM-clause entry").
 _CUSTOMER_ID = func.coalesce(ProjectParty.customer_id, SalesOrder.customer_id)
 
-# The one link the schema holds from an inquiry row to a PLACED purchase order: the row
-# names an SPO, the allocation for that SPO names the PO line, the line names the order.
-# Correlated EXPLICITLY - an auto-correlated `exists`/scalar subquery loses its FROM
-# clauses the moment this query is reshaped (the `shipment_supplier_predicate` lesson).
-_PLACED_PO_ID = (
+# The two links the schema holds from an inquiry row to a PLACED purchase order, tried in
+# order: "Place on PO" (section G) names the PO line DIRECTLY on the row, which is the
+# more certain of the two and is tried first; failing that, the row names an SPO, the
+# allocation for that SPO names the PO line, the line names the order (unchanged for
+# every row this feature has not touched). Correlated EXPLICITLY - an auto-correlated
+# `exists`/scalar subquery loses its FROM clauses the moment this query is reshaped (the
+# `shipment_supplier_predicate` lesson).
+_SPO_PLACED_PO_ID = (
     select(PurchaseOrderLine.purchase_order_id)
     .select_from(SPOAllocation)
     .join(PurchaseOrderLine, PurchaseOrderLine.id == SPOAllocation.po_line_id)
@@ -151,6 +157,14 @@ _PLACED_PO_ID = (
     .correlate(OrderInquiryRow)
     .scalar_subquery()
 )
+_TAGGED_PLACED_PO_ID = (
+    select(PurchaseOrderLine.purchase_order_id)
+    .where(PurchaseOrderLine.id == OrderInquiryRow.po_line_id)
+    .limit(1)
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+_PLACED_PO_ID = func.coalesce(_TAGGED_PLACED_PO_ID, _SPO_PLACED_PO_ID)
 
 # `SO DATE` is the date on the DOCUMENT. For an adopted order that is the core sales
 # order's own order date; an authored one that has never been to AutoCount falls back to
