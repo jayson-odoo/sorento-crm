@@ -1568,7 +1568,16 @@ def _apply_one_order(
     for line_id, frozen_entry in frozen.items():
         row = by_line_id.get(line_id)
         if row is None:
-            confirm_lines.append(_confirm_payload(line_id, frozen_entry))
+            # This line has no row in THIS batch - nobody on the board decided anything
+            # about it. Leave it OUT of the payload entirely rather than re-naming it
+            # from its frozen snapshot: `confirm()`'s own carry-forward rule (13.4, "the
+            # union is the server's") already copies an unnamed covered line into the
+            # new revision verbatim - same snapshot, same holds, no re-validation against
+            # live facts. Naming every covered line here used to force the WHOLE order
+            # through `_facts_for`'s live check on every apply, so a batch that decided
+            # ONE line failed on unrelated bystander lines it was never asked to move
+            # (live: SO391698 rev 2, "9 lines cannot be confirmed" from a 1-line batch,
+            # 20 August 2026).
             continue
         handled_line_ids.add(line_id)
         # A `confirm`/`amend` decision composes the line NOW, whatever `suggested` says -

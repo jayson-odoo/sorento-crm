@@ -1574,3 +1574,209 @@ def test_build_batch_proposal_for_a_covered_replan_row_is_the_boards_full_contri
     # Now free at its own location, so the fresh ladder proposes a Reserve rather than
     # repeating the stale frozen Buy - the tell that the ladder was actually walked.
     assert Decimal(proposal["qty_proposed_reserve"]) == Decimal("432")
+
+
+def test_apply_confirms_only_the_batchs_own_line_leaving_an_unconfirmable_sibling_carried(api):
+    """Live reproduction, SO391698 rev 2, 20 August 2026: a batch with ONE row (line 39, a
+    `qty_up` 12 -> 14) failed Apply with "9 lines cannot be confirmed. Nothing was written."
+    - `_apply_one_order` renamed EVERY line the active revision covered from its frozen
+    snapshot (`_confirm_payload`) into the confirm body, even the 39 this batch never
+    touched, so the whole order was re-validated against live facts on an apply that decided
+    one line. `confirm()` already carries an UNNAMED covered line forward verbatim (PLAN
+    13.4, "the union is the server's") - the fix is to stop naming a bystander line at all
+    and let that carry-forward do its job, so a sibling that would refuse if re-validated is
+    never asked.
+
+    This test reproduces the same `_apply_one_order` code path with an `advanced` row rather
+    than `qty_up` - `challenge_if_drifted` (PLAN 5.3, unrelated to this bug) always
+    supersedes the WHOLE order's active decision the moment a covered line's own live open
+    quantity has already moved off what was frozen, which a `qty_up` row's own composition
+    needs live to total correctly; that would drop every OTHER line to undecided regardless
+    of this fix, confounding the assertion below. An `advanced` row exercises the identical
+    bystander-renaming bug (any `suggested='replan'` + `decision='confirm'` row takes the
+    same branch in `_apply_one_order`) without that unrelated confound, since neither its own
+    nor the sibling's frozen facts move in the DB."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=8)
+    core_so = _core_so(db, world.company_id)
+    core_line_target = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="12",
+                                   required_date=date(2026, 9, 4))
+    core_line_sibling = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="8",
+                                    required_date=date(2026, 9, 4))
+    order = _project_so(db, world.project, so_id=core_so.id, status=SO_STATUS_PUBLISHED,
+                         autocount_doc_no=core_so.so_number)
+    line_target = _project_line(db, order, line_no=1, product=world.product,
+                                 core_line=core_line_target)
+    line_sibling = _project_line(db, order, line_no=2, product=world.product,
+                                  core_line=core_line_sibling)
+    db.commit()
+
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line_target.id, buy_qty="12", buy_reason="Nothing free elsewhere."),
+        _line_payload(line_sibling.id,
+                      reserve=[{"warehouse_id": world.pool_wh.id, "qty": "8"}]),
+    ]})
+
+    # Between this confirm and the planning-change batch, the sibling's pool is retired -
+    # if it were re-named and re-validated, `_check_line` would refuse it (the location is
+    # no longer in `_reserve_ladder_locations`). It is never touched by this batch, so it
+    # must never be asked.
+    world.pool_wh.is_active = False
+    db.commit()
+
+    changed_target = _diff_change(
+        DATE_MOVED, core_line_target, doc_number=core_so.so_number, item_code="ZZT-TARGET",
+        location=world.own_wh.warehouse_code, old_date=date(2026, 9, 4),
+        new_date=date(2026, 9, 4) - timedelta(days=14), old_qty="12", new_qty="12",
+    )
+    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed_target])
+    batch = planning_change_service.build_batch(
+        db, diff, applied_line_ids={id(changed_target): str(core_line_target.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    out = planning_change_service.get_batch(db, str(batch.id))
+    assert len(out["orders"][0]["rows"]) == 1  # the sibling never appears in this batch
+    row = out["orders"][0]["rows"][0]
+    assert row["kind"] == "advanced"
+    assert row["suggested"] == "replan"
+
+    planning_change_service.set_row_decision(db, str(batch.id), row["id"], "confirm")
+    db.commit()
+
+    result = planning_change_service.apply(db, str(batch.id), world.actor)
+    db.commit()
+    assert result["failed_orders"] == [], result["failed_orders"]
+    assert result["applied_orders"] == [core_so.so_number]
+
+    from app.models.planning_change import PlanningChangeRow as PlanningChangeRowModel
+    from app.models.project_so import SOSupplyDecision
+
+    row_model = db.query(PlanningChangeRowModel).filter(
+        PlanningChangeRowModel.id == row["id"]
+    ).one()
+    assert row_model.applied_state == "applied"
+
+    decision = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id,
+                SOSupplyDecision.state == "active")
+        .one()
+    )
+    assert decision.revision_no == 2  # a new revision was written
+    snapshots = {s["project_line_id"]: s for s in decision.line_snapshots}
+    assert str(line_target.id) in snapshots
+    assert str(line_sibling.id) in snapshots  # carried forward, not dropped
+
+    # The sibling's hold is untouched: same warehouse, same qty, even though that
+    # warehouse is no longer a valid Reserve source - proof it was carried, not re-posed.
+    sibling_components = snapshots[str(line_sibling.id)]["components"]
+    sibling_reserve = [c for c in sibling_components if c["kind"] == "reserve"]
+    assert len(sibling_reserve) == 1
+    assert sibling_reserve[0]["source_warehouse_id"] == str(world.pool_wh.id)
+    assert sibling_reserve[0]["qty"] == "8"
+
+    # The target line's own composition was actually re-decided (its pool is retired too,
+    # so the fresh ladder still lands on Buy 12) and its OI row reflects that decision.
+    target_components = snapshots[str(line_target.id)]["components"]
+    target_buy = sum(Decimal(c["qty"]) for c in target_components if c["kind"] == "buy")
+    assert target_buy == Decimal("12")
+
+    order_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line_target.id, OrderInquiryRow.verb == IV_ORDER,
+                OrderInquiryRow.state != INQUIRY_CANCELLED)
+        .one()
+    )
+    assert order_row.qty == Decimal("12")
+
+
+def test_apply_of_a_genuinely_unconfirmable_target_line_still_fails_with_its_reason(api):
+    """The fix above stops a BYSTANDER line from being re-validated - it must not also stop
+    the line the batch actually decided from being checked. A target line whose own
+    composition no longer clears live facts (its Reserve pool was claimed by a rival between
+    the decision and Apply) still refuses, and nothing is written for that order."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=5)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+                            required_date=date(2026, 9, 4))
+    order = _project_so(db, world.project, so_id=core_so.id, status=SO_STATUS_PUBLISHED,
+                         autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line.id, buy_qty="10", buy_reason="Nothing free elsewhere."),
+    ]})
+
+    core_line.qty_ordered = Decimal("15")
+    db.flush()
+    changed = _diff_change(
+        QTY_CHANGED, core_line, doc_number=core_so.so_number, item_code="ZZT-TARGET",
+        location=world.own_wh.warehouse_code, old_date=date(2026, 9, 4),
+        new_date=date(2026, 9, 4), old_qty="10", new_qty="15",
+    )
+    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed])
+    batch = planning_change_service.build_batch(
+        db, diff, applied_line_ids={id(changed): str(core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    out = planning_change_service.get_batch(db, str(batch.id))
+    row = out["orders"][0]["rows"][0]
+    assert row["suggested"] == "replan"
+
+    # A hand-amended composition: the extra 5 comes off the pool, 10 stays Buy - legal
+    # shape at PUT time (totals to the 15 the line is open for).
+    planning_change_service.set_row_decision(
+        db, str(batch.id), row["id"], "amend",
+        composition={
+            "project_line_id": str(line.id),
+            "timely_spo_qty": "0",
+            "reserve": [{"warehouse_id": world.pool_wh.id, "qty": "5"}],
+            "borrow": [],
+            "buy_qty": "10",
+            "buy_reason": "Nothing free elsewhere.",
+            "amend_reason": "The extra 5 comes off the pool.",
+        },
+    )
+    db.commit()
+
+    # A rival claims the pool dry before Apply runs.
+    pool_stock = (
+        db.query(Stock)
+        .filter(Stock.product_id == world.product.id, Stock.warehouse_id == world.pool_wh.id)
+        .one()
+    )
+    pool_stock.quantity_reserved = pool_stock.quantity_on_hand
+    db.commit()
+
+    result = planning_change_service.apply(db, str(batch.id), world.actor)
+    db.commit()
+    assert result["applied_orders"] == []
+    assert len(result["failed_orders"]) == 1
+    assert result["failed_orders"][0]["so_number"] == core_so.so_number
+    assert "cannot be confirmed" in result["failed_orders"][0]["reason"]
+
+    from app.models.planning_change import PlanningChangeRow as PlanningChangeRowModel
+    from app.models.project_so import SOSupplyDecision
+
+    row_model = db.query(PlanningChangeRowModel).filter(
+        PlanningChangeRowModel.id == row["id"]
+    ).one()
+    assert row_model.applied_state == "failed"
+    assert "cannot be confirmed" in row_model.applied_reason
+
+    # Nothing was written: the order's active decision is still the original revision.
+    decision = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id,
+                SOSupplyDecision.state == "active")
+        .one()
+    )
+    assert decision.revision_no == 1
