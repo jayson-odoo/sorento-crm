@@ -27,21 +27,29 @@ Two moves, two functions:
   no open need names nothing worth asking about or holding, so it is left out exactly as it
   always was.
 
-  `suggested_qty` is NETTED (captain decision): the gross open SO need less what we already
-  hold or have coming - `on_hand`, `incoming_spo` (SPO on the water,
-  `scm.net_position_v.on_order`) and `outstanding_po` (placed but not yet allocated to a
-  shipment, `scm.po_ordered_v`) - floored at zero. The gross figure stays on the row as
-  `open_so_need` so the arithmetic is visible on screen (need - stock - incoming =
-  suggestion); the project/retail/unclassified split is also gross, because it explains the
-  NEED, not the netted ask. `include_lines=True` additionally returns the open SO lines
-  behind every demand row, flat, so a caller can bucket them by date (a schedule matrix) or
-  show "which order does this cover" beside the aggregate - see the invariant on `build`.
+  `suggested_qty` is NETTED (captain decision) against `on_hand` and `incoming_spo` only -
+  `open_so_need - on_hand - incoming_spo`, floored at zero. `outstanding_po` (placed with a
+  supplier but not yet allocated to a shipment, `scm.po_ordered_v`) is deliberately NOT
+  subtracted (captain, 20 Aug follow-up, CWCY604 worked example): "don't need to deduct
+  outstanding PO, need to deduct outstanding SPO" - an outstanding PO is not supply this
+  container can count on, because it is often the very demand this request is asking the
+  supplier to pack in the first place, whereas an SPO allocation is real incoming stock
+  already on the water. `outstanding_po` still travels on every row (real context, and the
+  PO column on screen stays) - only the subtraction is gone. This is a container-request-only
+  rule; the reorder run's own netting is a separate question and untouched here. The gross
+  figure stays on the row as `open_so_need` so the arithmetic is visible on screen
+  (need - stock - incoming = suggestion); the project/retail/unclassified split is also
+  gross, because it explains the NEED, not the netted ask. `include_lines=True` additionally
+  returns the open SO lines behind every demand row, flat, so a caller can bucket them by
+  date (a schedule matrix) or show "which order does this cover" beside the aggregate - see
+  the invariant on `build`.
 * `send` - hands the reviewed lines to `supplier_notice_service.request_and_notify`, which is
   the S8 notice machinery (document, email, outbox row) with the wording this stage needs and
   no Loading Plan behind it.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Optional
 
 from sqlalchemy import case, func, text
@@ -133,7 +141,9 @@ def _stock_list(db: Session, supplier_id: str) -> tuple[Optional[Any], dict[str,
     return as_of, stock
 
 
-def _open_need(db: Session, product_ids: set[str]) -> dict[str, Any]:
+def _open_need(
+    db: Session, product_ids: set[str], *, horizon: Optional[date] = None
+) -> dict[str, Any]:
     """Outstanding SO need per product, split by demand class.
 
     The same "still owed" rule the sales-order book's own `outstanding` filter reads
@@ -149,11 +159,18 @@ def _open_need(db: Session, product_ids: set[str]) -> dict[str, Any]:
     project (`demand_class IS NOT NULL AND demand_class <> 'project'`), and
     "unclassified" is nothing stated at all. Any class besides "project"/"retail" that a
     future feed introduces lands in retail rather than silently vanishing from every bucket.
+
+    ``horizon`` is "Plan until" (captain, 20 Aug), the same cutoff the reorder run carries as
+    `plan_horizon_date` - mirrored here off `sol.required_date` exactly the way
+    `demand.horizon_committed_select_sql` narrows its own sheet leg: a stated required date
+    past the cutoff drops out, a line with no required date at all always stays in. `None`
+    (the default) applies no filter at all, so an un-horizoned call reads byte-identical to
+    before this parameter existed.
     """
     if not product_ids:
         return {}
     qty = demand_qty()
-    rows = (
+    query = (
         db.query(
             SalesOrderLine.product_id.label("product_id"),
             func.sum(qty).label("total_qty"),
@@ -185,9 +202,12 @@ def _open_need(db: Session, product_ids: set[str]) -> dict[str, Any]:
             is_plan_demand_order(),
             is_plan_demand_line(),
         )
-        .group_by(SalesOrderLine.product_id)
-        .all()
     )
+    if horizon is not None:
+        query = query.filter(
+            SalesOrderLine.required_date.is_(None) | (SalesOrderLine.required_date <= horizon)
+        )
+    rows = query.group_by(SalesOrderLine.product_id).all()
     return {str(r.product_id): r for r in rows}
 
 
@@ -202,7 +222,13 @@ def _product_catalogue(db: Session, product_ids: list[str]) -> dict[str, dict]:
     return {str(r.id): {"item_code": r.product_code, "product_name": r.product_name} for r in rows}
 
 
-def _open_lines(db: Session, product_ids: list[str], catalogue: dict[str, dict]) -> list[dict]:
+def _open_lines(
+    db: Session,
+    product_ids: list[str],
+    catalogue: dict[str, dict],
+    *,
+    horizon: Optional[date] = None,
+) -> list[dict]:
     """The open SO lines behind the demand rows, at line grain - CHANGE 2.
 
     Same predicates `_open_need` aggregates - `is_open_demand()` (open line, not covered,
@@ -211,11 +237,17 @@ def _open_lines(db: Session, product_ids: list[str], catalogue: dict[str, dict])
     needs `customer_label.py`'s shared COALESCE fragment, which is written as SQL. Keeping
     the predicates textually identical to `_open_need` is what keeps `sum(qty)` per product
     here equal to that product's `open_so_need` (the invariant `build`'s docstring states) -
-    a second, drifting definition of "open" would break it silently.
+    a second, drifting definition of "open" would break it silently, and that now includes
+    the horizon predicate below.
 
     Raw SQL bypasses the ORM's automatic company-scope loader criteria, so the predicate is
     reproduced by hand via `company_sql_predicate` (same pattern as
     `demand_breakdown_service.demand_for_recommendation`).
+
+    ``horizon`` mirrors `demand.horizon_committed_select_sql`'s own bind-and-CAST shape
+    rather than `_open_need`'s Python-level branch, because this query is already raw SQL:
+    a NULL bind reproduces the unfiltered query exactly, so `horizon=None` is always sent
+    through rather than short-circuited in Python.
     """
     if not product_ids:
         return []
@@ -242,10 +274,17 @@ def _open_lines(db: Session, product_ids: list[str], catalogue: dict[str, dict])
           AND {qty} > 0
           AND {PLAN_DEMAND_ORDER_SQL}
           AND {PLAN_DEMAND_LINE_SQL}
+          -- Planning horizon (captain, 20 Aug): same shape as
+          -- `demand.horizon_committed_select_sql`'s sheet leg - a stated required_date past
+          -- the cutoff is excluded, no date at all is always in, a NULL horizon is a no-op.
+          AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
+               OR sol.required_date <= CAST(:horizon AS date))
           {("AND " + co) if co else ""}
         ORDER BY sol.required_date NULLS LAST, so.so_number
     """
-    rows = db.execute(text(sql), {"pids": product_ids, **co_params}).mappings().all()
+    rows = db.execute(
+        text(sql), {"pids": product_ids, "horizon": horizon, **co_params}
+    ).mappings().all()
     return [
         {
             "product_id": r["product_id"],
@@ -385,7 +424,13 @@ def _sources(db: Session, *, stock_list_as_of: Optional[str]) -> dict:
     }
 
 
-def build(db: Session, *, supplier_id: str, include_lines: bool = False) -> dict:
+def build(
+    db: Session,
+    *,
+    supplier_id: str,
+    include_lines: bool = False,
+    plan_horizon_date: Optional[date] = None,
+) -> dict:
     """What to ask this supplier for, ranked. Pure read - persists nothing.
 
     Row scope is the FULL stock list, not just the products carrying open SO need - see the
@@ -393,13 +438,26 @@ def build(db: Session, *, supplier_id: str, include_lines: bool = False) -> dict
     behind the demand rows (CHANGE 2), one extra query, off by default because most callers
     (e.g. the send flow) only need the aggregate.
 
+    ``plan_horizon_date`` is "Plan until" (captain, 20 Aug): "SOs needed in 2030 a buyer never
+    asked about should not distort a plan they only want through December" - the same request
+    the reorder run answers with its own `plan_horizon_date` column
+    (`demand.horizon_committed_select_sql`). This build has no stored run row to carry a
+    column on (it recomputes on every call), so the horizon travels as a plain request
+    parameter instead, threaded to `_open_need`/`_open_lines` so `open_so_need`,
+    `suggested_qty`, the class split, the ranked table AND the schedule matrix (which reads
+    `lines`) all narrow together. `None` (the default) applies no filter, byte-identical to
+    before this parameter existed; a stated date excludes demand due strictly after it, and a
+    line carrying no required date at all is always counted, matching the reorder rule
+    exactly rather than inventing a second one.
+
     INVARIANT this endpoint guarantees when `include_lines` is set: for every demand row,
     `sum(l["qty"] for l in lines if l["product_id"] == row["product_id"]) == row["open_so_need"]`
-    - the GROSS need, not the netted `suggested_qty` (CHANGE 4 nets stock/incoming/outstanding
-    off the ask, which the line-level SO book knows nothing about). Both numbers come off the
+    - the GROSS need, not the netted `suggested_qty` (CHANGE 4 nets stock/incoming off the ask,
+    which the line-level SO book knows nothing about). Both numbers come off the
     identical predicate (`_open_need` aggregates it, `_open_lines` emits it at line grain), so
     a caller building a schedule matrix off `lines` can trust its per-product total to foot to
-    `open_so_need` without re-summing anything itself.
+    `open_so_need` without re-summing anything itself. The horizon does not disturb this: both
+    sides apply it identically.
     """
     _supplier(db, supplier_id)
     as_of, stock = _stock_list(db, supplier_id)
@@ -412,12 +470,13 @@ def build(db: Session, *, supplier_id: str, include_lines: bool = False) -> dict
             "stock_list_as_of": None,
             "rows": [],
             "sources": _sources(db, stock_list_as_of=None),
+            "plan_horizon_date": plan_horizon_date.isoformat() if plan_horizon_date else None,
         }
         if include_lines:
             result["lines"] = []
         return result
 
-    need = _open_need(db, set(stock.keys()))
+    need = _open_need(db, set(stock.keys()), horizon=plan_horizon_date)
     demand_ids = [pid for pid in stock if pid in need]
     # Held but not owed: on the stock list, carrying real quantity, but no open SO need.
     # Zero-quantity, zero-need rows are left out - they name nothing worth asking about or
@@ -461,9 +520,9 @@ def build(db: Session, *, supplier_id: str, include_lines: bool = False) -> dict
             s = stock[pid]
             ctx = stock_context.get(pid, empty_context)
             open_so_need = _f(n.total_qty) or 0.0
-            suggested_qty = max(
-                open_so_need - ctx["on_hand"] - ctx["incoming_spo"] - ctx["outstanding_po"], 0.0
-            )
+            # outstanding_po is deliberately NOT subtracted here - see the module docstring
+            # (captain, 20 Aug follow-up). It still travels on the row below, unchanged.
+            suggested_qty = max(open_so_need - ctx["on_hand"] - ctx["incoming_spo"], 0.0)
             prepared.append(
                 {
                     "product_id": pid,
@@ -537,9 +596,10 @@ def build(db: Session, *, supplier_id: str, include_lines: bool = False) -> dict
         "stock_list_as_of": stock_list_as_of,
         "rows": prepared + no_demand_rows,
         "sources": _sources(db, stock_list_as_of=stock_list_as_of),
+        "plan_horizon_date": plan_horizon_date.isoformat() if plan_horizon_date else None,
     }
     if include_lines:
-        result["lines"] = _open_lines(db, demand_ids, catalogue)
+        result["lines"] = _open_lines(db, demand_ids, catalogue, horizon=plan_horizon_date)
     return result
 
 

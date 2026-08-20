@@ -9,6 +9,7 @@ reviewed lines into a notice through the same S8 machinery `approve_loading_plan
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, status
@@ -36,6 +37,11 @@ def _actor(user: Optional[dict]) -> Optional[str]:
 
 class ContainerRequestBuildBody(BaseModel):
     supplier_id: str
+    # "Plan until" (captain, 20 Aug): mirrors the reorder run's own `plan_horizon_date`
+    # (`app.schemas.scm_reorder`), but this build has no stored run row to carry a column on -
+    # it recomputes on every call - so the horizon travels as a request field instead. `None`
+    # (omitted, the default) means no cutoff, today's behaviour.
+    plan_horizon_date: Optional[date] = None
 
 
 class ContainerRequestLine(BaseModel):
@@ -61,9 +67,14 @@ def build_container_request(
 
     `include_lines` adds the open SO lines behind every demand row (see the service
     docstring) - off by default since most callers only need the aggregate rows.
+    `body.plan_horizon_date` narrows open SO need to what is required on or before it
+    (undated demand always counted) - see `container_request_service.build`.
     """
     return container_request_service.build(
-        db, supplier_id=body.supplier_id, include_lines=include_lines
+        db,
+        supplier_id=body.supplier_id,
+        include_lines=include_lines,
+        plan_horizon_date=body.plan_horizon_date,
     )
 
 

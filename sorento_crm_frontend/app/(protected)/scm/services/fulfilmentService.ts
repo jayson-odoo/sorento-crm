@@ -408,17 +408,29 @@ export async function getNoticeDocumentUrl(
  * `build` is a pure read: ONE table over every product on the supplier's current stock list.
  * Rows with open sales-order need (`has_demand: true`) are ranked against the ACTIVE
  * Fulfilment Priority policy and carry a NETTED `suggested_qty`
- * (`max(open_so_need - on_hand - incoming_spo - outstanding_po, 0)`) - the gross
- * `open_so_need` and the three stock figures stay on the row so the arithmetic is visible.
+ * (`max(open_so_need - on_hand - incoming_spo, 0)`) - `outstanding_po` is NOT subtracted
+ * (captain, 20 Aug follow-up: a PO placed but not yet allocated is not supply this container
+ * can count on, often the very demand this request is asking the supplier to pack; an SPO
+ * allocation is real incoming stock on the water). `outstanding_po` still travels on the row
+ * as context and the PO column stays - only the subtraction is gone. The gross `open_so_need`
+ * and the three stock figures all stay on the row so the arithmetic is visible.
  * Rows on the stock list with no open need (`has_demand: false`) sort after them, suggested 0,
  * unranked - nothing the stock list holds vanishes in the merge. `include_lines=true` (always
  * requested by this FE - the matrix and the SO drill both need it) adds the flat open-SO lines
  * behind every demand row. `send` turns Ms Tee's reviewed lines into a notice through the same
  * S8 machinery `approveLoadingPlan` uses.
  *
+ * `planHorizonDate` ("Plan until", captain 20 Aug) is an optional request field, not a stored
+ * column - `build` recomputes on every call, so there is no run row to carry it on. When set,
+ * every demand-derived figure (`open_so_need`, `suggested_qty`, the class split, `rank`, and
+ * `lines`) counts only demand required on or before it; undated demand is always counted,
+ * mirroring the reorder run's own `plan_horizon_date` rule exactly. Omitted/undefined means no
+ * cutoff, today's behaviour. The backend echoes back what it actually applied as
+ * `plan_horizon_date` on the response.
+ *
  * ── BACKEND CONTRACT (app/api/v1/scm/container_requests.py) ────────────────
  *  POST /api/v1/scm/container-requests/build?include_lines=true -> 200 ContainerRequestBuild.
- *       Auth: `scm.dashboard.view`.
+ *       Body: { supplier_id, plan_horizon_date?: "YYYY-MM-DD" }. Auth: `scm.dashboard.view`.
  *  POST /api/v1/scm/container-requests       -> 201 { notices, document_filename }. Auth: `scm.reorder.run`.
  */
 export interface ContainerRequestRow {
@@ -427,10 +439,14 @@ export interface ContainerRequestRow {
   product_name: string | null;
   /** Gross outstanding SO need, all classes - what the Need column shows. */
   open_so_need: number;
-  /** NETTED against on_hand / incoming_spo / outstanding_po, floored at 0 - the editable ask. */
+  /** NETTED against on_hand / incoming_spo only, floored at 0 - the editable ask.
+   *  `outstanding_po` is shown below but deliberately not part of this subtraction (captain,
+   *  20 Aug follow-up - see the module docstring). */
   suggested_qty: number;
   on_hand: number;
   incoming_spo: number;
+  /** Placed with a supplier but not yet allocated to a shipment - real context, never
+   *  deducted from `suggested_qty`. */
   outstanding_po: number;
   /** Gross split - explains the NEED, not the netted `suggested_qty`. */
   project_qty: number;
@@ -482,13 +498,23 @@ export interface ContainerRequestBuild {
   sources: ContainerRequestSources;
   /** Present when the build was called with `include_lines=true` (always, from this FE). */
   lines?: ContainerRequestSoLine[];
+  /** "Plan until" (captain, 20 Aug) - the cutoff actually applied, echoed back so the FE
+   *  never has to trust its own state alone for what the numbers on screen mean. Null when
+   *  none was asked for. */
+  plan_horizon_date: string | null;
 }
 
-export async function buildContainerRequest(supplierId: string): Promise<ContainerRequestBuild> {
+export async function buildContainerRequest(
+  supplierId: string,
+  planHorizonDate?: string | null,
+): Promise<ContainerRequestBuild> {
   const res = await apiFetch('/api/v1/scm/container-requests/build?include_lines=true', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ supplier_id: supplierId }),
+    body: JSON.stringify({
+      supplier_id: supplierId,
+      ...(planHorizonDate ? { plan_horizon_date: planHorizonDate } : {}),
+    }),
   });
   return readJson<ContainerRequestBuild>(res, 'Failed to work out what to ask this supplier for');
 }

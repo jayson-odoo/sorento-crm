@@ -175,11 +175,17 @@ export function useApproveLoadingPlan() {
  * query the supplier picker drives directly - the same auto-fetch-on-select shape as
  * `useSupplierStock` / `useLoadingPlans` - rather than a mutation Ms Tee has to fire herself;
  * "Refresh suggestion" is this query's own `refetch`.
+ *
+ * `planHorizonDate` ("Plan until", captain 20 Aug) is keyed into the query so picking a
+ * different cutoff is a fresh fetch, not a stale one served out of cache under the same key.
  */
-export function useContainerRequestBuild(supplierId: string | null) {
+export function useContainerRequestBuild(
+  supplierId: string | null,
+  planHorizonDate?: string | null,
+) {
   return useQuery({
-    queryKey: [...KEY, 'container-request', supplierId],
-    queryFn: () => buildContainerRequest(supplierId as string),
+    queryKey: [...KEY, 'container-request', supplierId, planHorizonDate ?? null],
+    queryFn: () => buildContainerRequest(supplierId as string, planHorizonDate),
     enabled: !!supplierId,
     refetchOnWindowFocus: false,
   });

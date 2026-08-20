@@ -118,6 +118,11 @@ export function LoadingPlanView() {
   // proforma upload dialog: a supplier past the `/select` endpoint's 100-row cap is otherwise
   // unreachable by typing its name here).
   const [supplierOption, setSupplierOption] = useState<SearchableSelectOption | null>(null);
+  // "Plan until" (captain, 20 Aug): an empty string means no cutoff, today's behaviour -
+  // Stage 1 counts every open SO need regardless of date. Threaded straight to
+  // `ContainerRequestSection`, which is the only stage this narrows (Stage 2's container fit
+  // reads the PO/packed book, not the SO need this date bounds).
+  const [planHorizonDate, setPlanHorizonDate] = useState('');
   const [containerType, setContainerType] = useState('');
   const [containerCount, setContainerCount] = useState(1);
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -317,6 +322,18 @@ export function LoadingPlanView() {
               className="mt-1 w-full sm:w-80"
             />
           </div>
+          <div>
+            <Label htmlFor="loading-plan-horizon" className="text-xs">
+              Plan until
+            </Label>
+            <Input
+              id="loading-plan-horizon"
+              type="date"
+              className="mt-1 w-40"
+              value={planHorizonDate}
+              onChange={(e) => setPlanHorizonDate(e.target.value)}
+            />
+          </div>
           <Button
             variant="outline"
             onClick={() => setUploadOpen(true)}
@@ -346,33 +363,18 @@ export function LoadingPlanView() {
           <h2 className="text-sm font-semibold text-muted-foreground">
             Stage 1 · Request (what we need)
           </h2>
+          {/* "Waiting on production" used to be a separate list here (captain follow-up,
+              20 Aug: "why is it not combined with the top table"). It is now folded into the
+              ranked table's own "They hold" column (sortable by unfinished qty) inside
+              `ContainerRequestSection`, which also carries the one case that column cannot
+              show - a stock-list item code with no product match at all - in its own small
+              block rather than dropping it. */}
           <ContainerRequestSection
             supplierId={supplierId}
             supplierName={supplierName}
+            planHorizonDate={planHorizonDate || null}
             onUploadStockList={() => setUploadOpen(true)}
           />
-
-          {unfinished.data?.length ? (
-            <Card className="p-4">
-              <h3 className="text-sm font-semibold">Waiting on production</h3>
-              <p className="text-2xs text-muted-foreground">
-                Held unfinished, so it cannot be loaded until the supplier finishes it.
-              </p>
-              <ul className="mt-2 divide-y divide-border">
-                {unfinished.data.map((row) => (
-                  <li key={row.item_code} className="flex items-center justify-between py-1.5">
-                    <span className="truncate text-xs" title={row.item_code}>
-                      {row.item_code}
-                      {row.product_name ? (
-                        <span className="ms-2 text-muted-foreground">{row.product_name}</span>
-                      ) : null}
-                    </span>
-                    <span className="tabular-nums text-xs">{fmtInt(row.qty_unfinished)}</span>
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          ) : null}
 
           <h2 className="pt-2 text-sm font-semibold text-muted-foreground">
             Stage 2 · Container plan (CBM fit)

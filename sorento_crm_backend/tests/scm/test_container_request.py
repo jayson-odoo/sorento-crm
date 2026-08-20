@@ -338,10 +338,14 @@ def test_build_no_demand_rows_with_stock_but_zero_quantity_are_left_out_entirely
     assert codes == {w.product("A").product_code}
 
 
-def test_build_suggested_qty_nets_stock_incoming_and_outstanding_off_the_gross_need(scm_app):
-    # CHANGE 4 (captain decision): suggested_qty = max(open_so_need - on_hand -
-    # incoming_spo - outstanding_po, 0). The gross figure stays on the row as
-    # open_so_need so the arithmetic is visible.
+def test_build_suggested_qty_nets_stock_and_incoming_spo_but_not_outstanding_po(scm_app):
+    # CHANGE 4 (captain decision), amended 20 Aug follow-up (CWCY604 worked example):
+    # suggested_qty = max(open_so_need - on_hand - incoming_spo, 0). outstanding_po is
+    # deliberately NOT subtracted - a PO placed but not yet allocated is not supply this
+    # container can count on (often the very demand this request is asking the supplier to
+    # pack), whereas an SPO allocation is real incoming stock on the water. outstanding_po
+    # still travels on the row as context. The gross figure stays on the row as open_so_need
+    # so the arithmetic is visible.
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
@@ -358,9 +362,9 @@ def test_build_suggested_qty_nets_stock_incoming_and_outstanding_off_the_gross_n
     row = _row(r.json()["rows"], "A", w)
     assert row["open_so_need"] == 120
     assert row["on_hand"] == 20
-    assert row["outstanding_po"] == 30
+    assert row["outstanding_po"] == 30  # shown, not deducted
     assert row["incoming_spo"] == 15
-    assert row["suggested_qty"] == 55  # 120 - 20 - 30 - 15
+    assert row["suggested_qty"] == 85  # 120 - 20 - 15 (outstanding_po not subtracted)
     assert row["qty_packed"] == 10
 
 

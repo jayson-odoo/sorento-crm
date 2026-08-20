@@ -5,8 +5,10 @@ import {
   CellContext,
   ColumnDef,
   PaginationState,
+  SortingState,
   getCoreRowModel,
   getPaginationRowModel,
+  getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
 import {
@@ -50,6 +52,7 @@ import {
   useContainerRequestBuild,
   useSendContainerRequest,
   useSupplierNotices,
+  useUnfinishedStock,
 } from '../../hooks/useFulfilment';
 import {
   getNoticeDocumentUrl,
@@ -74,6 +77,21 @@ import {
  * second table. The product set and the quantities are both derived - off the supplier's
  * stock list and the outstanding sales-order book - so the only three decisions left to her
  * are the supplier (picked above this section), any quantity she disagrees with, and Send.
+ *
+ * `planHorizonDate` ("Plan until", captain 20 Aug follow-up): an optional cutoff picked next
+ * to the supplier, above this section. When set, every demand-derived figure the build
+ * returns already excludes what is due after it (backend-side - `container_request_service`
+ * mirrors the reorder run's own horizon rule exactly); this component only has to show what
+ * was actually applied, which it reads off the build's own echo (`build.data.plan_horizon_date`)
+ * rather than the prop, so a stale prop during a refetch can never disagree with the numbers
+ * on screen.
+ *
+ * Also folds in "waiting on production" (captain follow-up, same day): that used to be a
+ * second list below this table. A supplier-held unfinished quantity is already on every
+ * matched row here as the "They hold" cell (sortable, see the `holding` column), so the
+ * second list is gone. The one case that column cannot cover - a stock-list item code that
+ * never matched a product at all - is called out in its own small block below the table
+ * rather than silently dropped (see `unmatchedUnfinished`).
  */
 
 const NOTICE_STATUS_LABEL: Record<SupplierNotice['status'], string> = {
@@ -130,18 +148,26 @@ function SourceStamp({ label, iso }: { label: string; iso: string | null }) {
 export function ContainerRequestSection({
   supplierId,
   supplierName,
+  planHorizonDate = null,
   onUploadStockList,
 }: {
   supplierId: string;
   supplierName: string;
+  /** "Plan until" (captain, 20 Aug) - picked next to the supplier, above this section. Null
+   *  means no cutoff, today's behaviour. */
+  planHorizonDate?: string | null;
   onUploadStockList: () => void;
 }) {
-  const build = useContainerRequestBuild(supplierId);
+  const build = useContainerRequestBuild(supplierId, planHorizonDate);
   const send = useSendContainerRequest();
   const notices = useSupplierNotices(supplierId);
+  // Same supplier-keyed query `useUnfinishedStock` already drives Stage 2's "Unfinished"
+  // tile hint - react-query dedupes on the shared key, so this is not a second network call.
+  const unfinished = useUnfinishedStock(supplierId);
 
   const [overrides, setOverrides] = useState<Record<string, number>>({});
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
+  const [sorting, setSorting] = useState<SortingState>([]);
   const [confirming, setConfirming] = useState(false);
   const [view, setView] = useState<'table' | 'schedule'>('table');
   const [matrixAxis, setMatrixAxis] = useState<ContainerRequestMatrixAxis>('product');
@@ -151,6 +177,15 @@ export function ContainerRequestSection({
 
   const rows = useMemo(() => build.data?.rows ?? [], [build.data]);
   const soLines = useMemo(() => build.data?.lines ?? [], [build.data]);
+
+  // What the table cannot show at all: a stock-list item code the supplier holds unfinished
+  // that never matched a product (`container_request_service._stock_list` only carries
+  // matched rows, `unfinished_at_supplier` does not filter on a match). Kept visible here
+  // rather than dropped - see the module docstring.
+  const unmatchedUnfinished = useMemo(() => {
+    const matchedCodes = new Set(rows.map((r) => r.item_code).filter((c): c is string => !!c));
+    return (unfinished.data ?? []).filter((r) => !matchedCodes.has(r.item_code));
+  }, [unfinished.data, rows]);
 
   const linesByProduct = useMemo(() => {
     const map = new Map<string, ContainerRequestSoLine[]>();
@@ -213,7 +248,7 @@ export function ContainerRequestSection({
         min={0}
         className="h-8 w-24 tabular-nums"
         value={qty}
-        title="need - on hand - SPO - PO, floored at 0"
+        title="need - on hand - SPO, floored at 0 (outstanding PO shown but not deducted)"
         onChange={(e) => {
           const next = Math.max(0, Number(e.target.value) || 0);
           setOverrides((prev) => ({ ...prev, [original.product_id]: next }));
@@ -415,6 +450,10 @@ export function ContainerRequestSection({
       },
       {
         id: 'holding',
+        // Sortable on purpose (captain follow-up): this cell replaced the standalone
+        // "Waiting on production" list, which was ordered by unfinished quantity descending.
+        // `accessorFn` gives the sort its number; the cell itself still shows both figures.
+        accessorFn: (row) => row.qty_unfinished,
         header: ({ column }) => <DataGridColumnHeader title="They hold" column={column} />,
         cell: ({ row }) => (
           <div className="flex flex-col text-2xs">
@@ -425,7 +464,8 @@ export function ContainerRequestSection({
           </div>
         ),
         size: 110,
-        enableSorting: false,
+        enableSorting: true,
+        sortDescFirst: true,
         meta: { headerTitle: 'They hold' },
       },
     ],
@@ -436,13 +476,14 @@ export function ContainerRequestSection({
     columns,
     data: rows,
     getRowId: (row) => row.product_id,
-    state: { pagination },
+    state: { pagination, sorting },
     onPaginationChange: setPagination,
+    onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
+    getSortedRowModel: getSortedRowModel(),
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
-    enableSorting: false,
   });
 
   const requestNotices = (notices.data ?? []).filter(
@@ -537,6 +578,34 @@ export function ContainerRequestSection({
     </Card>
   );
 
+  // What the ranked table structurally cannot show: a stock-list item code held unfinished
+  // that never matched a product, so it has no `product_id` to be a row (see the module
+  // docstring). Rendered whenever there is at least one, on both branches that reach past the
+  // build (a supplier can have zero open demand and still hold unmatched unfinished stock).
+  const unmatchedCard =
+    unmatchedUnfinished.length > 0 ? (
+      <Card className="p-4">
+        <h3 className="text-sm font-semibold">Unfinished stock without a product match</h3>
+        <p className="text-2xs text-muted-foreground">
+          {supplierName}&apos;s stock list names these item codes as unfinished, but none
+          matches a product yet, so they cannot appear as a row above.
+        </p>
+        <ul className="mt-2 divide-y divide-border">
+          {unmatchedUnfinished.map((r) => (
+            <li key={r.item_code} className="flex items-center justify-between py-1.5">
+              <span className="truncate text-xs" title={r.item_code}>
+                {r.item_code}
+                {r.product_name ? (
+                  <span className="ms-2 text-muted-foreground">{r.product_name}</span>
+                ) : null}
+              </span>
+              <span className="tabular-nums text-xs">{fmtInt(r.qty_unfinished)} unfinished</span>
+            </li>
+          ))}
+        </ul>
+      </Card>
+    ) : null;
+
   if (build.isLoading) {
     return (
       <div className="space-y-4">
@@ -600,6 +669,7 @@ export function ContainerRequestSection({
             quantity.
           </p>
         </Card>
+        {unmatchedCard}
         {noticesCard}
       </div>
     );
@@ -628,6 +698,15 @@ export function ContainerRequestSection({
                 <SourceStamp label="SPO" iso={sources.spo_as_of} /> -{' '}
                 <SourceStamp label="Stock list" iso={sources.stock_list_as_of} />
               </p>
+              {/* What was actually applied, read off the build's own echo rather than the
+                  prop - never lets the numbers on screen disagree with what this line says
+                  they mean. */}
+              {build.data.plan_horizon_date ? (
+                <p className="text-2xs text-muted-foreground">
+                  Counting SO need due on or before{' '}
+                  {formatDateInMalaysia(build.data.plan_horizon_date)}.
+                </p>
+              ) : null}
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <Button
@@ -748,6 +827,8 @@ export function ContainerRequestSection({
           )}
         </Card>
       </DataGrid>
+
+      {unmatchedCard}
 
       {/* SF-4 (reviewer): always rendered, with an explicit empty state - "nothing sent yet" is
           a state she needs to see, not infer from an absent section. Shared with the early

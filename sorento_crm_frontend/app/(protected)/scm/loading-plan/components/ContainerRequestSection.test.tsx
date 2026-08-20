@@ -85,12 +85,17 @@ const state = {
     error: null as Error | null,
   },
   notices: [] as unknown[],
+  // What the supplier holds unfinished, per the feed the ranked table's "They hold" column
+  // now folds in (captain follow-up, 20 Aug). Empty by default - only the "unmatched" tests
+  // below populate it.
+  unfinished: [] as { item_code: string; product_name: string | null; qty_unfinished: number; qty_packed: number; as_of: string | null }[],
 };
 
 vi.mock('../../hooks/useFulfilment', () => ({
   useContainerRequestBuild: () => state.build,
   useSendContainerRequest: () => state.send,
   useSupplierNotices: () => ({ data: state.notices }),
+  useUnfinishedStock: () => ({ data: state.unfinished }),
 }));
 
 import { ContainerRequestSection } from './ContainerRequestSection';
@@ -149,6 +154,7 @@ beforeEach(() => {
   };
   state.send = { mutate: vi.fn(), isPending: false, isError: false, error: null };
   state.notices = [];
+  state.unfinished = [];
   getNoticeDocumentUrlMock.mockReset();
   getNoticeDocumentUrlMock.mockResolvedValue({ url: 'https://cdn.test/doc.pdf', filename: 'doc.pdf' });
 });

@@ -281,16 +281,19 @@ describe('LoadingPlanView - the plan', () => {
     );
   });
 
-  it('lists unfinished stock separately from the plan', async () => {
-    // AC-E2: it is a production request, not freight, and mixing them is how somebody loads
-    // a container with things that do not exist.
+  it('feeds the Stage 2 "Unfinished" tile rather than a separate list', async () => {
+    // Superseded by the captain's 20 Aug follow-up: the standalone "Waiting on production"
+    // list is gone. Its figures now live on ContainerRequestSection's own ranked table (the
+    // "They hold" column, sortable - see ContainerRequestSection.test.tsx); this view only
+    // still reads the unfinished count for the Stage 2 summary tile's hint.
     state.unfinished = [
       { item_code: 'SRTWC8613', product_name: 'Toilet', qty_unfinished: 140, qty_packed: 2, as_of: '2026-07-31' },
     ];
     renderView();
     await chooseSupplier();
 
-    expect(await screen.findByText('Waiting on production')).toBeInTheDocument();
-    expect(screen.getByText('140')).toBeInTheDocument();
+    await screen.findByText('Items packed');
+    expect(screen.queryByText('Waiting on production')).not.toBeInTheDocument();
+    expect(screen.getByText('1 items')).toBeInTheDocument();
   });
 });

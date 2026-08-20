@@ -103,6 +103,32 @@ purchasing surface (no double-asking for OI-unnamed project SOs or decision-cove
 latest ingest stamp per document family; supplier resolution goes through `supplier_scope`
 (cross-company 404, never 500).
 
+**Amended 20 Aug, follow-up (captain, CWCY604 worked example):** `outstanding_po` came OUT of
+the netting - `suggested_qty = max(open_so_need - on_hand - incoming_spo, 0)`. In the
+captain's words: "don't need to deduct outstanding PO, need to deduct outstanding SPO." A PO
+placed but not yet allocated to a shipment is not supply this container can count on - it is
+often the very demand this request is asking the supplier to pack - whereas an SPO allocation
+is real incoming stock already on the water. `outstanding_po` still travels on every row as
+context (and the PO column stays on screen); only the subtraction is gone. Container-request
+only - the reorder run's own netting is untouched and a separate question.
+
+**Also folded in the same follow-up:** the "Waiting on production" list (a supplier's
+unfinished stock, `GET /supplier-inventory/unfinished`) is no longer a second list under the
+ranked table - captain: "why is it not combined with the top table." Every matched row already
+carries `qty_unfinished` in its "They hold" cell, now sortable, which replaces the list's own
+descending-by-unfinished ordering. The one case the table structurally cannot show - a
+stock-list item code with no product match at all, since a row needs a `product_id` - is kept
+visible in a small block of its own rather than dropped (`ContainerRequestSection`'s
+`unmatchedUnfinished`).
+
+**Also amended the same day:** "Plan until" (an optional `plan_horizon_date` request field on
+`build`, not a stored column since the endpoint recomputes on every call) narrows
+`open_so_need` to demand due on or before the given date, undated demand always counted -
+mirroring the reorder run's own `plan_horizon_date` rule (`demand.horizon_committed_select_sql`)
+exactly rather than inventing a second one. Threads through `open_so_need`, `suggested_qty`,
+the class split, `rank` and `lines` alike. The FE control sits next to the supplier picker,
+above this section; the build echoes back what it actually applied.
+
 Row scope: products on the supplier's latest stock list ("each identified product" - the
 stakeholder's words) that have nonzero outstanding SO need. Ranking: one
 `factors_for_demand_rows` call over the product rows (a product row's `required_date` /
