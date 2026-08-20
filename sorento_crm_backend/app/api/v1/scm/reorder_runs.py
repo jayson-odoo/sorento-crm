@@ -446,6 +446,14 @@ def list_price_history(
                 "standing_currency": a.standing_currency,
                 "standing_gap_pct": a.standing_gap_pct,
                 "free_of_charge_lines": a.free_of_charge_lines,
+                "other_supplier_code": a.other_supplier_code,
+                "other_supplier_name": a.other_supplier_name,
+                "history_last_date": (
+                    a.history_last_date.isoformat() if a.history_last_date else None
+                ),
+                "history_doc_number": a.history_doc_number,
+                "history_po_count": a.history_po_count,
+                "history_total_qty": a.history_total_qty,
             }
             for key, a in history.items()
         },
