@@ -26,7 +26,7 @@ from app.models.scm import OrderLinkClaim
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 from app.services.scm.demand import is_open_demand
-from app.services.scm.demand_class import class_of
+from app.services.scm.demand_class import DEMAND_CLASSES, class_of
 
 # Upper bound on suffix retries when reserving a unique DO number under contention.
 _DO_NUMBER_MAX_TRIES = 50
@@ -315,6 +315,11 @@ class SalesOrderService:
                 for ln in so.lines
                 if ln.warehouse is not None and ln.warehouse.warehouse_code
             }),
+            # The planning class this order was classified into ('project' / 'retail'), or
+            # None when nobody has ever said. `order_type_label` names the ERP document type
+            # (often blank, since AutoCount rarely states one); this is the answer people
+            # actually asked for on this screen.
+            "demand_class": so.demand_class,
             "created_at": so.created_at.isoformat() if so.created_at else "",
         }
 
@@ -371,7 +376,8 @@ class SalesOrderService:
              source: Optional[str] = None, *,
              date_from: Optional[date] = None, date_to: Optional[date] = None,
              customer_code: Optional[str] = None, outstanding: bool = False,
-             sales_agent_id: Optional[str] = None) -> dict:
+             sales_agent_id: Optional[str] = None,
+             demand_class: Optional[str] = None) -> dict:
         q = self.db.query(SalesOrder).options(
             joinedload(SalesOrder.lines).joinedload(SalesOrderLine.product),
             joinedload(SalesOrder.lines).joinedload(SalesOrderLine.warehouse),
@@ -418,6 +424,17 @@ class SalesOrderService:
             )
         if sales_agent_id:
             q = q.filter(SalesOrder.sales_agent_id == sales_agent_id)
+        # Same "matches nothing" rule as `source`/`status` above - a demand_class the
+        # vocabulary does not know is never silently ignored. `unclassified` reads the
+        # column as NULL rather than as a third stored value: the whole point of the closed
+        # vocabulary (`app.services.scm.demand_class`) is that "nobody said" is not a class.
+        if demand_class:
+            if demand_class == "unclassified":
+                q = q.filter(SalesOrder.demand_class.is_(None))
+            elif demand_class in DEMAND_CLASSES:
+                q = q.filter(SalesOrder.demand_class == demand_class)
+            else:
+                q = q.filter(text("false"))
         if outstanding:
             # The SAME rule the netting reads, so "still owed" cannot mean one thing on this
             # screen and another in the plan. Only when asked for: an unticked box must not

@@ -45,8 +45,10 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Switch } from '@/components/ui/switch';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { demandClassBadge } from '../../lib/demandClass';
 import { useCustomerOptions } from '../../hooks/useScmOptions';
 import { useRouter } from 'next/navigation';
 import {
@@ -129,6 +131,15 @@ const SOURCE_LABELS: Record<string, string> = {
   manual: 'Manual',
 };
 
+/** The planning class - what the classification agents actually resolved, as distinct from
+ *  the rarely-stated `order_type_label`. `unclassified` reads `demand_class IS NULL`. */
+const DEMAND_CLASS_FILTER_OPTIONS = [
+  { value: '', label: 'All types' },
+  { value: 'project', label: 'Project' },
+  { value: 'retail', label: 'Retail' },
+  { value: 'unclassified', label: 'Unclassified' },
+];
+
 const PRIORITY_FILTER_OPTIONS = [
   { value: '', label: 'All priorities' },
   { value: 'urgent', label: 'Urgent' },
@@ -153,6 +164,9 @@ export default function SalesOrdersList() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [customerFilter, setCustomerFilter] = useState('');
+  // The planning class the classification agents resolved - `order_type_label` is the ERP
+  // document type and is blank on almost every row, so it never answered this question.
+  const [demandClassFilter, setDemandClassFilter] = useState('');
   const [agentFilter, setAgentFilter] = useState('');
   const [outstandingOnly, setOutstandingOnly] = useState(false);
 
@@ -178,6 +192,7 @@ export default function SalesOrdersList() {
     customerId: customerFilter || null,
     outstanding: outstandingOnly,
     salesAgentId: agentFilter || null,
+    demandClass: demandClassFilter || null,
   });
 
   const customerOptions = useCustomerOptions();
@@ -200,6 +215,7 @@ export default function SalesOrdersList() {
     customerFilter,
     agentFilter,
     outstandingOnly,
+    demandClassFilter,
   ]);
 
   const rows = useMemo<SalesOrder[]>(() => data?.data ?? [], [data]);
@@ -219,6 +235,7 @@ export default function SalesOrdersList() {
           customer_code: customerFilter || undefined,
           outstanding: outstandingOnly ? 'true' : undefined,
           sales_agent_id: agentFilter || undefined,
+          demand_class: demandClassFilter || undefined,
         },
       ),
     [
@@ -234,6 +251,7 @@ export default function SalesOrdersList() {
       customerFilter,
       agentFilter,
       outstandingOnly,
+      demandClassFilter,
     ],
   );
 
@@ -316,13 +334,30 @@ export default function SalesOrdersList() {
         meta: { headerTitle: 'Agent' },
       },
       {
-        accessorKey: 'order_type_label',
+        accessorKey: 'demand_class',
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
-        cell: ({ row }) => (
-          <Badge variant="outline" appearance="ghost">
-            {row.original.order_type_label}
-          </Badge>
-        ),
+        // `order_type_label` is the ERP document type, and it is EMPTY on nearly every row
+        // in this book - the AutoCount export rarely states one. `demand_class` is what the
+        // classification agents actually resolved, so it is the primary answer here; the
+        // document type rides along as a subline only when the order carries one AND it
+        // says something different from Project/Retail.
+        cell: ({ row }) => {
+          const cls = demandClassBadge(row.original.demand_class);
+          const label = row.original.order_type_label;
+          const showLabel = label && label !== cls.label;
+          return (
+            <div className="flex flex-col gap-0.5">
+              <Badge variant={cls.variant} appearance="light" size="sm">
+                {cls.label}
+              </Badge>
+              {showLabel ? (
+                <span className="truncate text-2xs text-muted-foreground" title={label}>
+                  {label}
+                </span>
+              ) : null}
+            </div>
+          );
+        },
         size: 140,
         meta: { headerTitle: 'Type' },
       },
@@ -519,7 +554,8 @@ export default function SalesOrdersList() {
     (dateTo ? 1 : 0) +
     (customerFilter ? 1 : 0) +
     (agentFilter ? 1 : 0) +
-    (outstandingOnly ? 1 : 0);
+    (outstandingOnly ? 1 : 0) +
+    (demandClassFilter ? 1 : 0);
 
   // An empty book and an over-filtered one look identical in the grid, so they say different
   // things: one is a dead end the user can clear, the other is the step they have not done yet.
@@ -615,33 +651,32 @@ export default function SalesOrdersList() {
                         clearable
                       />
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <Label htmlFor="so-date-from" className="mb-1 block">
-                          Ordered from
-                        </Label>
-                        <Input
-                          id="so-date-from"
-                          type="date"
-                          value={dateFrom}
-                          // Bounded by each other so the range cannot be inverted into a
-                          // filter that silently matches nothing.
-                          max={dateTo || undefined}
-                          onChange={(e) => setDateFrom(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor="so-date-to" className="mb-1 block">
-                          Ordered to
-                        </Label>
-                        <Input
-                          id="so-date-to"
-                          type="date"
-                          value={dateTo}
-                          min={dateFrom || undefined}
-                          onChange={(e) => setDateTo(e.target.value)}
-                        />
-                      </div>
+                    <div>
+                      <Label htmlFor="so-date-range" className="mb-1 block">
+                        Ordered
+                      </Label>
+                      <DateRangePicker
+                        id="so-date-range"
+                        from={dateFrom || null}
+                        to={dateTo || null}
+                        onChange={({ from, to }) => {
+                          setDateFrom(from ?? '');
+                          setDateTo(to ?? '');
+                        }}
+                        placeholder="All dates"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="so-type" className="mb-1 block">
+                        Type
+                      </Label>
+                      <SearchableSelect
+                        id="so-type"
+                        value={demandClassFilter}
+                        onChange={setDemandClassFilter}
+                        options={DEMAND_CLASS_FILTER_OPTIONS}
+                        placeholder="All types"
+                      />
                     </div>
                     <div>
                       <Label htmlFor="so-status" className="mb-1 block">
@@ -694,6 +729,7 @@ export default function SalesOrdersList() {
                             setCustomerFilter('');
                             setAgentFilter('');
                             setOutstandingOnly(false);
+                            setDemandClassFilter('');
                           }}
                         >
                           Clear filters

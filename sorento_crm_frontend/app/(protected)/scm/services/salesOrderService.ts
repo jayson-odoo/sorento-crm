@@ -8,7 +8,8 @@
  * warehouse by its code, addressed by id in the path.
  *
  *   GET    /sales-orders            list (page/limit/sort/dir/query/status/priority/source,
-                                   date_from/date_to/customer_id/outstanding/sales_agent_id)
+                                   date_from/date_to/customer_id/outstanding/sales_agent_id,
+                                   demand_class: project | retail | unclassified)
  *   GET    /sales-orders/agents     sales-agent options for the Agent filter/select. Gated on
  *                                   `scm.dashboard.view` - the same read permission as this
  *                                   whole router - rather than the sales-agents master's own
@@ -48,6 +49,9 @@ export interface SalesOrderListQuery {
   /** Keep only orders with quantity still owed. `false` narrows nothing. */
   outstanding?: boolean;
   salesAgentId?: string | null;
+  /** The planning class: 'project' | 'retail' | 'unclassified' (demand_class IS NULL).
+   *  Omit for all. */
+  demandClass?: string | null;
 }
 
 /**
@@ -108,6 +112,7 @@ export async function getSalesOrders(
       // "no filter", which then rides into the detail URL and reads as an active filter.
       outstanding: params.outstanding ? 'true' : undefined,
       sales_agent_id: params.salesAgentId || undefined,
+      demand_class: params.demandClass || undefined,
     },
   );
   const res = await apiFetch(`${BASE}?${sp.toString()}`);

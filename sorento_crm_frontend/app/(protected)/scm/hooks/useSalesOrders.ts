@@ -28,6 +28,8 @@ interface UseSalesOrdersParams {
   /** Keep only orders with quantity still owed. `false` narrows nothing. */
   outstanding?: boolean;
   salesAgentId?: string | null;
+  /** The planning class: 'project' | 'retail' | 'unclassified'. Null for all. */
+  demandClass?: string | null;
 }
 
 export function useSalesOrders(params: UseSalesOrdersParams) {
@@ -48,6 +50,7 @@ export function useSalesOrders(params: UseSalesOrdersParams) {
         customerId: params.customerId ?? null,
         outstanding: params.outstanding ?? false,
         salesAgentId: params.salesAgentId ?? null,
+        demandClass: params.demandClass ?? null,
       }),
     staleTime: 10_000,
     refetchOnWindowFocus: false,

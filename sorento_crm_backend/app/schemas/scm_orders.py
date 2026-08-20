@@ -63,6 +63,11 @@ class SalesOrder(BaseModel):
     internal_note: Optional[str] = None
     #: Every distinct location its lines ship from. Plural: one order can land in two.
     stock_locations: List[str] = Field(default_factory=list)
+    #: The planning class this order was classified into (`project` / `retail`), or `None`
+    #: when nobody has ever said. See `app.services.scm.demand_class`. Distinct from
+    #: `order_type_label`, which names the ERP document type and is blank on almost every
+    #: row - this is what the list's "Type" column actually shows.
+    demand_class: Optional[str] = None
     #: The purchase orders its lines wait on, each with whether the pairing is resolved.
     #: Present on the LIST (attached in one query per page); absent on a single read.
     linked_purchase_orders: List[LinkedPurchaseOrder] = Field(default_factory=list)

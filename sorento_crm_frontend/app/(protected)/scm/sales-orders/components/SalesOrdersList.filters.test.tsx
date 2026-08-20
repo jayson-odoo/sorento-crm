@@ -38,6 +38,30 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
+// The real `DateRangePicker` is a Popover + react-day-picker Calendar - its own behaviour
+// (enforcing from <= to by construction) is not this list's concern and has no repo pattern
+// for driving a Calendar grid under jsdom. Stood in for here with a single button that fires
+// `onChange` with both ends at once - the ONE-FACT contract the real widget guarantees - so
+// what this suite asserts is that the list wires the range into both query params, not that
+// the calendar itself works.
+vi.mock('@/components/ui/date-range-picker', () => ({
+  DateRangePicker: (props: {
+    id?: string;
+    from?: string | null;
+    to?: string | null;
+    onChange: (next: { from: string | null; to: string | null }) => void;
+    placeholder?: string;
+  }) => (
+    <button
+      type="button"
+      id={props.id}
+      onClick={() => props.onChange({ from: '2026-03-01', to: '2026-03-31' })}
+    >
+      {props.from && props.to ? `${props.from} - ${props.to}` : (props.placeholder ?? 'Pick a date range')}
+    </button>
+  ),
+}));
+
 const push = vi.fn();
 // PARTIAL. The grid and its toolbar reach for other exports of this module, and replacing it
 // wholesale left them undefined - which showed up as a grid stuck on its loading skeleton
@@ -186,32 +210,17 @@ describe('SalesOrdersList - the whole row opens the order', () => {
 });
 
 describe('SalesOrdersList - dynamic filters', () => {
-  it('sends a date range', async () => {
+  it('sends a date range from the date-range picker, both ends at once', async () => {
+    // Two bare fields let "to" land before "from"; the range picker is ONE control that
+    // emits both ends together, so this asserts the list forwards that pair as-is.
     stub();
     renderList();
     await openFilters();
 
-    fireEvent.change(screen.getByLabelText('Ordered from'), {
-      target: { value: '2026-03-01' },
-    });
-    fireEvent.change(screen.getByLabelText('Ordered to'), { target: { value: '2026-03-31' } });
+    fireEvent.click(screen.getByLabelText('Ordered'));
 
     await waitFor(() => {
       expect(lastQuery()).toMatchObject({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
-    });
-  });
-
-  it('bounds each end of the range by the other, so it cannot be inverted', async () => {
-    stub();
-    renderList();
-    await openFilters();
-
-    fireEvent.change(screen.getByLabelText('Ordered from'), {
-      target: { value: '2026-03-01' },
-    });
-
-    await waitFor(() => {
-      expect(screen.getByLabelText('Ordered to')).toHaveAttribute('min', '2026-03-01');
     });
   });
 
@@ -245,17 +254,47 @@ describe('SalesOrdersList - dynamic filters', () => {
     });
   });
 
+  it('sends the demand class the user picked as "Type"', async () => {
+    stub();
+    renderList();
+    await openFilters();
+
+    expect(lastQuery()).toMatchObject({ demandClass: null });
+
+    fireEvent.click(screen.getByRole('combobox', { name: /type/i }));
+    const option = await screen.findByRole('option', { name: 'Project' });
+    fireEvent.click(option);
+
+    await waitFor(() => {
+      expect(lastQuery()).toMatchObject({ demandClass: 'project' });
+    });
+  });
+
+  it('sends "unclassified" for the Type filter, not the whole list', async () => {
+    stub();
+    renderList();
+    await openFilters();
+
+    fireEvent.click(screen.getByRole('combobox', { name: /type/i }));
+    const option = await screen.findByRole('option', { name: 'Unclassified' });
+    fireEvent.click(option);
+
+    await waitFor(() => {
+      expect(lastQuery()).toMatchObject({ demandClass: 'unclassified' });
+    });
+  });
+
   it('counts every active filter, so the badge does not undercount', async () => {
     stub();
     renderList();
     await openFilters();
 
-    fireEvent.change(screen.getByLabelText('Ordered from'), {
-      target: { value: '2026-03-01' },
-    });
+    // The date-range picker sets BOTH ends in one act - two of the eight filters this badge
+    // sums - plus the switch, so the count is 3, not 1.
+    fireEvent.click(screen.getByLabelText('Ordered'));
     fireEvent.click(screen.getByRole('switch', { name: /still outstanding/i }));
 
-    expect(await screen.findByText('2')).toBeInTheDocument();
+    expect(await screen.findByText('3')).toBeInTheDocument();
   });
 
   it('clears the new filters along with the old ones', async () => {
@@ -263,14 +302,19 @@ describe('SalesOrdersList - dynamic filters', () => {
     renderList();
     await openFilters();
 
-    fireEvent.change(screen.getByLabelText('Ordered from'), {
-      target: { value: '2026-03-01' },
-    });
+    fireEvent.click(screen.getByLabelText('Ordered'));
     fireEvent.click(screen.getByRole('switch', { name: /still outstanding/i }));
+    fireEvent.click(screen.getByRole('combobox', { name: /type/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Project' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Clear filters' }));
 
     await waitFor(() => {
-      expect(lastQuery()).toMatchObject({ dateFrom: null, outstanding: false });
+      expect(lastQuery()).toMatchObject({
+        dateFrom: null,
+        dateTo: null,
+        outstanding: false,
+        demandClass: null,
+      });
     });
   });
 });

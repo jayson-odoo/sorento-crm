@@ -311,6 +311,9 @@ export interface SalesOrder {
   internal_note?: string | null;
   /** Every distinct location its lines ship from. Plural: one order can land in two. */
   stock_locations?: string[];
+  /** The planning class this order was classified into, or `null` when nobody has ever
+   *  said. Distinct from `order_type_label` - see `lib/demandClass.ts`. */
+  demand_class?: 'project' | 'retail' | null;
   /** The purchase orders its lines wait on. Present on the LIST, absent on a single read. */
   linked_purchase_orders?: LinkedPurchaseOrder[];
   awaiting_purchase_orders?: number;

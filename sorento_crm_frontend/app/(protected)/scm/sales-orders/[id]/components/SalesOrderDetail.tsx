@@ -32,6 +32,7 @@ import {
 import { useSalesAgentOptions } from '../../hooks/useSalesAgentOptions';
 import SalesOrderNavigation from '../../components/SalesOrderNavigation';
 import { fmtDate, fmtInt } from '../../../lib/format';
+import { demandClassBadge } from '../../../lib/demandClass';
 import type { SalesOrder, SalesOrderLine, SalesOrderPriority } from '../../../types/scm.types';
 
 /**
@@ -684,6 +685,12 @@ export function SalesOrderDetail({ id }: { id: string }) {
             )}
           </Field>
           <Field label="Customer code">{so.customer_code || '-'}</Field>
+          {/* Primary value is the planning class (`demand_class`) - what the classification
+              agents actually resolved - not `order_type_label`, the ERP document type that
+              is blank on almost every row in this book. The document type still rides along
+              as a hint when the order carries one and it says something the class does not
+              already say. Editing is unchanged: it still sets `order_type`, which is what
+              derives `demand_class` on save (see `sales_order_service.update`). */}
           <Field label="Order type" htmlFor={isEditing ? 'so-edit-order-type' : undefined}>
             {isEditing ? (
               <SearchableSelect
@@ -695,7 +702,24 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 size="sm"
               />
             ) : (
-              so.order_type_label || '-'
+              (() => {
+                const cls = demandClassBadge(so.demand_class);
+                const hint = so.order_type_label;
+                const showHint = hint && hint !== cls.label;
+                return (
+                  <span className="inline-flex flex-wrap items-center gap-1.5">
+                    <Badge variant={cls.variant} appearance="light" size="sm">
+                      {cls.label}
+                    </Badge>
+                    {showHint ? (
+                      // `text-2xs`, not `text-xs` - the view/edit parity test walks
+                      // `span.text-xs` as the Field label selector, and this hint is a
+                      // VALUE, not a label.
+                      <span className="text-2xs font-normal text-muted-foreground">{hint}</span>
+                    ) : null}
+                  </span>
+                );
+              })()
             )}
           </Field>
           <Field label="Market segment">{so.market_segment || '-'}</Field>
