@@ -91,7 +91,7 @@ from app.models.projects import (
     ProjectTask,
 )
 from app.services.error_handler import AppException
-from app.services.scm import order_link_service
+from app.services.scm import order_link_service, priority
 from app.services.project_order_inquiry_engine import (
     CHANGE_DATE_EARLIER,
     CHANGE_DATE_LATER,
@@ -1784,12 +1784,23 @@ class ProjectOrderInquiryService:
         first already instead of suggesting and needing the users to click 1 by 1").
 
         Every RAISED, placeable row of the named products - or of every product with one,
-        when `product_ids` is omitted - is cascaded against its own open PO lines, OLDEST
-        NEED FIRST (`delivery_date`, then `created_at`, so the row purchasing has been
-        waiting on longest gets first claim on what just came in). A second run places
-        nothing further: a row this pass placed (or split) is no longer `raised`, so it
-        drops out of the very query that feeds the next run - the idempotence the three
-        triggers (import, decision confirm, the worklist button) all rely on.
+        when `product_ids` is omitted - is cascaded against its own open PO lines,
+        HIGHEST FULFILMENT PRIORITY FIRST. AC-H5 says the ranking that decides ANY
+        draw-down is the SAME policy, everywhere it applies - so which row claims a
+        scarce PO line first is scored through `scm.priority.factors_for_demand_rows`,
+        the identical assembly the fulfilment board and the Loading Plan already use,
+        rather than a private sort this method grew on its own. That answers the
+        captain's 20 Aug question - "do we account for both SO date and delivery date?"
+        - with both: `need_by_date` from the row's own `delivery_date`, and
+        `document_age` from the sales order's own document date (`published_at`, or
+        `created_at` before publish - see `_rank_raised_rows`). With no active
+        `PriorityPolicy` the call falls back to `DEFAULT_WEIGHTS` on its own; ties
+        (including "this policy weights nothing here") fall back to the original
+        ordering (`delivery_date` then `created_at`), so this is a strict refinement of
+        the old behaviour, never a different one. A second run places nothing further: a
+        row this pass placed (or split) is no longer `raised`, so it drops out of the
+        very query that feeds the next run - the idempotence the three triggers (import,
+        decision confirm, the worklist button) all rely on.
 
         `trigger` is stamped onto every placement it makes (`_apply_placement`'s
         `auto_trigger`), so "why is this placed" is always answerable from the row's own
@@ -1823,10 +1834,7 @@ class ProjectOrderInquiryService:
                 return {"placed_rows": 0, "allocations": 0, "products_touched": 0}
             query = query.filter(or_(*conditions))
 
-        rows = query.order_by(
-            OrderInquiryRow.delivery_date.asc().nulls_last(),
-            OrderInquiryRow.created_at.asc(),
-        ).all()
+        rows = self._rank_raised_rows(query.all())
 
         placed_rows = 0
         allocation_count = 0
@@ -1859,6 +1867,114 @@ class ProjectOrderInquiryService:
             "allocations": allocation_count,
             "products_touched": len(products_touched),
         }
+
+    def _rank_raised_rows(
+        self, rows: Sequence[OrderInquiryRow]
+    ) -> List[OrderInquiryRow]:
+        """Highest fulfilment priority first, for `auto_place_for_products` (AC-H5).
+
+        Scores every row through `scm.priority.factors_for_demand_rows` - the same call
+        the fulfilment board and the Loading Plan already use - so which RAISED row
+        claims a scarce PO line first is decided by the one active `PriorityPolicy`,
+        never a second convention this method invents for itself. The mapping per row:
+
+          * `row_key`            <- the row's own id.
+          * `required_date`      <- the row's `delivery_date` (`need_by_date`).
+          * `order_date`         <- the sales order's own document date, `published_at`
+            or `created_at` before publish - the identical fact `_context_for` already
+            surfaces as `so_date` for this same row set (`document_age`).
+          * `demand_class`       <- always `"project"`: every row this cascade sees came
+            off a project order inquiry.
+          * `payment_terms_days` <- the resolved customer's terms
+            (`_customer_ids_for_pso` + `priority.payment_terms_by_customer`) when a
+            customer is reachable, `None` otherwise - an unknown is ABSENT, not a
+            default.
+
+        `factors_for_demand_rows` resolves the active policy itself (falling back to
+        `DEFAULT_WEIGHTS` when none is active), so nothing here hand-rolls a fallback.
+        Rows tie on their score - including "this policy weights nothing here" - break
+        to the ORIGINAL ordering, `delivery_date` then `created_at`: this is a strict
+        refinement of what the cascade did before, not a different rule.
+        """
+        if not rows:
+            return []
+
+        inquiry_ids = {row.order_inquiry_id for row in rows}
+        joined = (
+            self.db.query(OrderInquiry.id, ProjectSalesOrder)
+            .join(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
+            )
+            .filter(OrderInquiry.id.in_(list(inquiry_ids)))
+            .all()
+        )
+        order_dates: Dict[str, Any] = {}
+        pso_by_inquiry: Dict[str, str] = {}
+        pso_ids: set = set()
+        for inquiry_id, order in joined:
+            order_dates[inquiry_id] = order.published_at or order.created_at
+            pso_by_inquiry[inquiry_id] = order.id
+            pso_ids.add(order.id)
+
+        customer_ids = self._customer_ids_for_pso(pso_ids)
+        terms_by_customer = priority.payment_terms_by_customer(
+            self.db, [cid for cid in customer_ids.values() if cid]
+        )
+
+        demand_rows = []
+        for row in rows:
+            pso_id = pso_by_inquiry.get(row.order_inquiry_id)
+            customer_id = customer_ids.get(pso_id) if pso_id else None
+            demand_rows.append(
+                {
+                    "row_key": row.id,
+                    "required_date": row.delivery_date,
+                    "order_date": order_dates.get(row.order_inquiry_id),
+                    "payment_terms_days": (
+                        terms_by_customer.get(customer_id) if customer_id else None
+                    ),
+                    "demand_class": "project",
+                }
+            )
+
+        factors_by_row = priority.factors_for_demand_rows(self.db, demand_rows)
+        scores = priority.scores_for(factors_by_row)
+
+        def _sort_key(row: OrderInquiryRow) -> Tuple[float, date, datetime]:
+            return (
+                -scores.get(row.id, 0.0),
+                row.delivery_date or date.max,
+                row.created_at or datetime.max,
+            )
+
+        return sorted(rows, key=_sort_key)
+
+    def _customer_ids_for_pso(self, pso_ids: set) -> Dict[str, Optional[str]]:
+        """Customer id per project sales order, the same resolution
+        `_project_customer_labels` uses for the display name: the project's billing
+        party first (`ProjectParty.customer_id` through the issuing purchase order),
+        the CORE sales order's own customer when there is no project party - an ADOPTED
+        order has none by design. Cheap on purpose: this only feeds an optional ranking
+        factor, so a customer that costs more than one join to reach stays ABSENT.
+        """
+        if not pso_ids:
+            return {}
+        rows = (
+            self.db.query(
+                ProjectSalesOrder.id,
+                func.coalesce(ProjectParty.customer_id, SalesOrder.customer_id),
+            )
+            .outerjoin(
+                ProjectPurchaseOrder,
+                ProjectPurchaseOrder.id == ProjectSalesOrder.purchase_order_id,
+            )
+            .outerjoin(ProjectParty, ProjectParty.id == ProjectPurchaseOrder.issuing_party_id)
+            .outerjoin(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
+            .filter(ProjectSalesOrder.id.in_(list(pso_ids)))
+            .all()
+        )
+        return {pso_id: customer_id for pso_id, customer_id in rows}
 
     def unplace(self, row_id: str, *, actor_user_id: str) -> Dict[str, Any]:
         """Untag: the row goes back to `raised` and the reorder engine sees it again."""

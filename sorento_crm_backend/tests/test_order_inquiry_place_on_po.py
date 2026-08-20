@@ -1209,3 +1209,136 @@ def test_partial_allocation_leaves_the_remainder_raised_and_in_committed_v():
         assert raised.qty == Decimal("15")
         assert placed.qty == Decimal("25")
         assert raised.qty + placed.qty == Decimal("40"), "the split never drops or invents quantity"
+
+
+# ---------------------------------------------------------------- G/AC-H5 demand ranking
+
+
+def _policy(db, factors: dict, class_weights: dict | None = None) -> None:
+    """A policy owned by this test. Deactivates any incumbent rather than deleting it -
+    the same convention `test_fulfilment_board.py` and `test_priority_demand_rows.py`
+    use for the identical row."""
+    from app.models.scm import PriorityPolicy
+
+    db.query(PriorityPolicy).filter(PriorityPolicy.is_active.is_(True)).update(
+        {"is_active": False}, synchronize_session=False
+    )
+    row = PriorityPolicy(
+        id=_uid(),
+        name=f"{MARKER}-policy-{_uid()[:6]}",
+        is_active=True,
+        factors=factors,
+        demand_class_weights=class_weights or {},
+    )
+    db.add(row)
+    db.flush()
+
+
+def _competing_row(
+    db, company_id: str, project, *, published_at: datetime, delivery_date: date,
+    qty: str, item_code: str,
+) -> OrderInquiryRow:
+    """A raised ORDER row on its OWN sales order and inquiry, so its document date
+    (`published_at`) and delivery date can be set independently of the sibling row it
+    competes with - one inquiry serves exactly one sales order (G2)."""
+    order = ProjectSalesOrder(
+        id=_uid(),
+        company_id=company_id,
+        project_id=project.id,
+        area_group="TOWER",
+        provisional_ref=f"ZZT-PSO-{_uid()[:8]}",
+        autocount_doc_no=f"SO{_uid()[:6].upper()}",
+        status=SO_STATUS_DRAFT,
+        grouping_origin="area",
+        published_at=published_at,
+    )
+    db.add(order)
+    db.flush()
+    inquiry = OrderInquiry(
+        id=_uid(), company_id=company_id, project_sales_order_id=order.id, state=INQUIRY_RAISED,
+    )
+    db.add(inquiry)
+    db.flush()
+    row = OrderInquiryRow(
+        id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id, item_code=item_code,
+        qty=Decimal(qty), delivery_date=delivery_date, verb=IV_ORDER, state=INQUIRY_RAISED,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_auto_place_ranks_by_the_active_policys_document_age_over_the_old_delivery_date_sort(api):
+    """AC-H5: the ranking that decides ANY draw-down is the same fulfilment priority
+    policy. `older` has the LATER delivery date - the old `delivery_date`/`created_at`
+    sort would have put it second - but its sales order is years older, and a policy
+    weighting `document_age` alone must still hand it the only PO quantity there is."""
+    client, db, world, user_id = api
+    _policy(db, {"document_age": 1.0}, {"project": 1.0})
+    _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="10", expected_date=date(2026, 9, 1),
+    )
+    older = _competing_row(
+        db, world["company_id"], world["project"],
+        published_at=datetime(2020, 1, 1), delivery_date=date(2026, 12, 1),
+        qty="10", item_code=world["product"].product_code,
+    )
+    newer = _competing_row(
+        db, world["company_id"], world["project"],
+        published_at=datetime(2026, 8, 1), delivery_date=date(2026, 9, 5),
+        qty="10", item_code=world["product"].product_code,
+    )
+    db.commit()
+
+    from app.models.base import company_scope
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    with company_scope(db, frozenset({world["company_id"]})):
+        result = ProjectOrderInquiryService(db).auto_place_for_products(
+            None, actor_user_id=user_id, trigger="test"
+        )
+        db.commit()
+
+    assert result == {"placed_rows": 1, "allocations": 1, "products_touched": 1}
+    db.refresh(older)
+    db.refresh(newer)
+    assert older.state == INQUIRY_PLACED, "the older document must draw the scarce quantity"
+    assert newer.state == INQUIRY_RAISED
+
+
+def test_auto_place_ranks_by_the_active_policys_need_by_date_over_the_old_delivery_date_sort(api):
+    """The mirror of the test above, same two rows: with `need_by_date` dominant instead,
+    the SOONER delivery date wins even though its own document is the newer one."""
+    client, db, world, user_id = api
+    _policy(db, {"need_by_date": 1.0}, {"project": 1.0})
+    _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="10", expected_date=date(2026, 9, 1),
+    )
+    older = _competing_row(
+        db, world["company_id"], world["project"],
+        published_at=datetime(2020, 1, 1), delivery_date=date(2026, 12, 1),
+        qty="10", item_code=world["product"].product_code,
+    )
+    newer = _competing_row(
+        db, world["company_id"], world["project"],
+        published_at=datetime(2026, 8, 1), delivery_date=date(2026, 9, 5),
+        qty="10", item_code=world["product"].product_code,
+    )
+    db.commit()
+
+    from app.models.base import company_scope
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    with company_scope(db, frozenset({world["company_id"]})):
+        result = ProjectOrderInquiryService(db).auto_place_for_products(
+            None, actor_user_id=user_id, trigger="test"
+        )
+        db.commit()
+
+    assert result == {"placed_rows": 1, "allocations": 1, "products_touched": 1}
+    db.refresh(older)
+    db.refresh(newer)
+    assert newer.state == INQUIRY_PLACED, "the sooner delivery date must draw the scarce quantity"
+    assert older.state == INQUIRY_RAISED
