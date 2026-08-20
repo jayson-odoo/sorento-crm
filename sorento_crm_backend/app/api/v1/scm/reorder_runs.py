@@ -868,7 +868,7 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
     # off the row's FROZEN `recommended_qty`, through the SAME rounding helper the engine
     # itself used (`reorder_run_service.set_moq_override`) — the persisted `rounded_qty`
     # / `inputs` never change, so a fresh run with no override still matches byte-for-byte.
-    moq_override = _f(r["moq_override"]) if is_priced else None
+    moq_override = _f(r.get("moq_override")) if is_priced else None
     eff_moq, moq_is_override = svc.effective_moq(inp, moq_override)
     if moq_is_override:
         eff_rounded = svc.recalc_rounded_qty(
