@@ -90,6 +90,7 @@ def create_reorder_run(
         budget_id=payload.budget_id,
         actor=(_user or {}).get("id"),
         include_market=payload.include_market,
+        plan_horizon_date=payload.plan_horizon_date,
     )
     if response is not None:
         response.status_code = 202
@@ -116,7 +117,7 @@ def list_reorder_runs(
     ).scalar() or 0
     rows = db.execute(text(f"""
         SELECT id, status, buy_scope, warehouse_ids, started_at, finished_at, run_log,
-               decision_grain, front_planning_contract_version
+               decision_grain, front_planning_contract_version, plan_horizon_date
         FROM scm.reorder_run
         {where}
         ORDER BY started_at DESC NULLS LAST, created_at DESC
@@ -198,6 +199,7 @@ def _list_item(r, code_by_id: dict, buy_counts: dict[str, int] | None = None) ->
         "summary": summary,
         "decision_grain": r["decision_grain"],
         "front_planning_contract_version": r["front_planning_contract_version"],
+        "plan_horizon_date": _iso(r["plan_horizon_date"]),
     }
 
 
@@ -293,7 +295,7 @@ def get_reorder_run(
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="crg")
     row = db.execute(text(
         "SELECT id, status, buy_scope, error_text, run_log, decision_grain, "
-        "       front_planning_contract_version FROM scm.reorder_run "
+        "       front_planning_contract_version, plan_horizon_date FROM scm.reorder_run "
         f"WHERE id = :id AND {co or 'true'}"
     ), {"id": run_id, **co_params}).mappings().first()
     if not row:
@@ -320,6 +322,7 @@ def get_reorder_run(
         "summary": summary,
         "decision_grain": row["decision_grain"],
         "front_planning_contract_version": row["front_planning_contract_version"],
+        "plan_horizon_date": _iso(row["plan_horizon_date"]),
     }
 
 

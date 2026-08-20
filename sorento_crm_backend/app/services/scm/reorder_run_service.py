@@ -37,6 +37,7 @@ from app.models.scm import ReorderRecommendation, ReorderRun
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm import cash_ranking
+from app.services.scm import demand
 from app.services.scm import reorder_engine as eng
 from app.services.scm import reorder_level_service as rl_service
 from app.services.scm.money import (
@@ -67,7 +68,8 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
                buy_scope: str = "warehouse",
                budget_id: Optional[str] = None, actor: Optional[str] = None,
                enqueue: bool = True, include_market: bool = False,
-               product_codes: Optional[list[str]] = None) -> dict:
+               product_codes: Optional[list[str]] = None,
+               plan_horizon_date: Optional[date] = None) -> dict:
     """Insert a ``running`` ``scm.reorder_run`` (scope snapshot + started_at) and
     enqueue the RQ ``run_reorder`` task. Returns ``{run_id, status, buy_scope, stage}``.
 
@@ -84,6 +86,12 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
     ``warehouse`` (per-warehouse planning; each buy is tied to a real warehouse, not
     an aggregated ``Network`` row). The HTTP request schema dropped it. Direct service
     callers may still pass ``network`` explicitly.
+
+    ``plan_horizon_date`` (captain, 20 Aug) is the optional "Plan until" cutoff: ``None``
+    (the default) plans against every open SO line regardless of when it is needed, exactly
+    as before. When set, it is stamped on the run and read back by ``_execute_run_scoped`` -
+    a per-RUN choice, never a live policy, so a past run's plan cannot move under a later
+    edit of it (there is no live setting to edit; each run states its own).
 
     The run STAMPS the admin plan-grain policy (front-planning plan 5.1) and the contract
     version here, at creation, and never again: the grain a screen shows for a run is its
@@ -104,6 +112,7 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
         buy_scope=buy_scope,
         budget_id=budget_id or None,
         include_market=bool(include_market),
+        plan_horizon_date=plan_horizon_date,
         policy_snapshot_ref=f"policies@{now.isoformat()}",
         started_at=now,
         run_log={"stage": _STAGES[0]},
@@ -215,7 +224,7 @@ def today_or_latest_run(db: Session, today: Optional[date] = None) -> Optional[d
     if today is None:
         today = datetime.now(_KL_TZ).date()
     cols = ("id, status, buy_scope, warehouse_ids, started_at, finished_at, run_log, "
-            "decision_grain, front_planning_contract_version")
+            "decision_grain, front_planning_contract_version, plan_horizon_date")
     # Company-scoped by hand: raw SQL, so the ORM isolation filter never sees it. Without the
     # predicate the reorder page opens on whichever company ran most recently, which is
     # another company's plan wearing this company's chrome.
@@ -375,7 +384,8 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
         policies = eng.load_policies(db)
         today = date.today()
 
-        rows = _planning_rows(db, run.warehouse_ids, run.product_ids)
+        rows = _planning_rows(db, run.warehouse_ids, run.product_ids,
+                             horizon=run.plan_horizon_date)
         # Confirmed Reserve / Borrow leaves the Retail free-supply pool before anything is
         # netted against it (AC-F07); stamped on the row so every planning path sees it.
         _apply_project_supply_reduction(db, rows)
@@ -470,7 +480,8 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
 # ===========================================================================
 
 def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
-                   product_ids: Optional[list[str]] = None) -> list[dict]:
+                   product_ids: Optional[list[str]] = None,
+                   horizon: Optional[date] = None) -> list[dict]:
     """Active + ongoing SKU×warehouse rows with a net position / demand in the selected
     warehouses (reuses the dashboard focus predicate).
 
@@ -481,6 +492,14 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     is an empty plan the operator can see rather than the whole catalogue dressed up as
     their request. Reading `[]` as "no filter" is what turned one mistyped location code
     into an 11,585-row plan of every warehouse.
+
+    ``horizon`` is the run's own "Plan until" date (captain, 20 Aug): when set, demand
+    with a stated required/delivery date AFTER it is excluded from ``committed`` and
+    ``net_position`` (unscheduled demand carrying no date is always still counted). ``None``
+    (the default, and every run before this existed) takes the ORIGINAL code path -
+    ``np.committed`` / ``np.net_position`` straight off ``scm.net_position_v`` - so an
+    unhorizoned run's SQL text, and therefore its numbers, is byte-identical to before.
+    On-hand and on-order are never touched either way; only which demand rows qualify.
 
     **Company-scoped by hand**, because this is raw SQL and the isolation filter runs on ORM
     execution ONLY. The predicate goes on the JOINED `warehouses` and `products` rather than on
@@ -510,6 +529,25 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
             return []
         where.append("np.warehouse_id::text = ANY(:wids)")
         params["wids"] = [str(w) for w in warehouse_ids]
+
+    # Planning horizon: the committed/net_position JOIN and the two figures read off it
+    # change ONLY when a horizon was asked for. `horizon is None` keeps the original
+    # `np.committed` / `np.net_position` columns straight off the view - the exact SQL
+    # text every run before this feature ran - so an unhorizoned run cannot be affected
+    # by this branch existing at all.
+    if horizon is not None:
+        cv_join = (f"LEFT JOIN ({demand.horizon_committed_select_sql()}) cv "
+                   "ON cv.product_id = np.product_id AND cv.warehouse_id = np.warehouse_id")
+        committed_col = "COALESCE(cv.committed, 0) AS committed"
+        net_position_col = ("(np.quantity_on_hand + np.on_order - COALESCE(cv.committed, 0)) "
+                            "AS net_position")
+        params["horizon"] = horizon
+    else:
+        cv_join = ("LEFT JOIN scm.committed_v cv "
+                   "ON cv.product_id = np.product_id AND cv.warehouse_id = np.warehouse_id")
+        committed_col = "np.committed"
+        net_position_col = "np.net_position"
+
     sql = text(f"""
         SELECT np.product_id, np.warehouse_id,
                p.product_code, p.product_name, pc.category_code, p.list_price,
@@ -518,11 +556,12 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
                p.reorder_level AS master_reorder_level,
                p.reorder_quantity AS master_reorder_quantity,
                w.warehouse_code, w.warehouse_name, w.segment,
-               np.quantity_on_hand, np.on_order, np.committed, np.net_position,
+               np.quantity_on_hand, np.on_order, {committed_col}, {net_position_col},
                -- Front planning 5.3: the SAME committed figure, split by demand channel.
-               -- Read off `committed_v` rather than `net_position_v` so the netting view
-               -- keeps exactly the columns and cardinality every other consumer already
-               -- reads (AC-F07). The three sum to `np.committed`.
+               -- Read off `committed_v` (or, under a horizon, its run-scoped override)
+               -- rather than `net_position_v` so the netting view keeps exactly the
+               -- columns and cardinality every other consumer already reads (AC-F07). The
+               -- three sum to the `committed` column above.
                COALESCE(cv.project_committed, 0) AS project_committed,
                COALESCE(cv.retail_committed, 0) AS retail_committed,
                COALESCE(cv.unclassified_committed, 0) AS unclassified_committed,
@@ -540,8 +579,7 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
         FROM scm.net_position_v np
         JOIN products p ON p.id = np.product_id
         JOIN warehouses w ON w.id = np.warehouse_id
-        LEFT JOIN scm.committed_v cv
-          ON cv.product_id = np.product_id AND cv.warehouse_id = np.warehouse_id
+        {cv_join}
         LEFT JOIN scm.po_ordered_v po
           ON po.product_id = np.product_id AND po.warehouse_id = np.warehouse_id
         LEFT JOIN product_categories pc ON pc.id = p.category_id

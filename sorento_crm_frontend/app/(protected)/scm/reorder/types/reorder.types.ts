@@ -425,4 +425,11 @@ export interface CreateReorderRunRequest {
   budget_id?: string | null;
   /** M7 - opt-in: factor market-trend signals into the funding priority (rank), not qty. */
   include_market?: boolean;
+  /**
+   * "Plan until" (captain, 20 Aug). Omitted/undefined plans every open SO line regardless
+   * of when it is needed - the default, unchanged behaviour. When set (`YYYY-MM-DD`),
+   * demand needed AFTER it is excluded from this run's netting; demand carrying no date
+   * is always still counted.
+   */
+  plan_horizon_date?: string | null;
 }

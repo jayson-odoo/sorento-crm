@@ -209,6 +209,11 @@ export interface ReorderRunHistoryItem {
   finished_at: string | null;
   /** Populated once the run completed; null while running / failed. */
   summary: ReorderRunSummary | null;
+  /**
+   * The "Plan until" cutoff this run was launched with (`YYYY-MM-DD`), or null when it
+   * carried none (every run has always planned every open SO line, unchanged).
+   */
+  plan_horizon_date?: string | null;
 }
 
 export interface ReorderRunHistoryPage {
@@ -315,6 +320,9 @@ export async function createReorderRun(req: CreateReorderRunRequest): Promise<Re
       // to what the backend accepts today, so adding the picker cannot change an
       // unnarrowed run.
       ...(req.product_codes?.length ? { product_codes: req.product_codes } : {}),
+      // "Plan until" (captain, 20 Aug). Omitted when empty, same reasoning: a run that
+      // never set a horizon must send a byte-identical request to before this existed.
+      ...(req.plan_horizon_date ? { plan_horizon_date: req.plan_horizon_date } : {}),
     }),
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to start planning run'));

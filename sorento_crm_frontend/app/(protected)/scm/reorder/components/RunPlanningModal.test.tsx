@@ -116,6 +116,7 @@ describe('RunPlanningModal (M8-D5)', () => {
       warehouse_codes: ['WH-JB'],
       product_codes: [],
       budget: 50000,
+      plan_horizon_date: '',
     });
   });
 
@@ -127,6 +128,7 @@ describe('RunPlanningModal (M8-D5)', () => {
       warehouse_codes: ['WH-KL', 'WH-JB'],
       product_codes: [],
       budget: 72000,
+      plan_horizon_date: '',
     });
   });
 
@@ -139,6 +141,7 @@ describe('RunPlanningModal (M8-D5)', () => {
       warehouse_codes: ['WH-KL'],
       product_codes: ['SRTWT7408'],
       budget: 72000,
+      plan_horizon_date: '',
     });
   });
 

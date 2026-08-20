@@ -7,6 +7,7 @@ supplier resolve to human codes/names (ids stay on the request path only).
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel
@@ -26,6 +27,11 @@ class CreateReorderRunRequest(BaseModel):
     product_codes: List[str] = []
     budget_id: Optional[str] = None  # M4 — ignored in M3
     include_market: bool = False  # M7 — opt-in market-trend priority factor
+    # "Plan until" (captain, 20 Aug): omitted/None plans every open SO line regardless of
+    # need date, unchanged from before this field existed. When set, demand needed AFTER
+    # it is excluded from the run's netting; demand carrying no date is always still
+    # counted.
+    plan_horizon_date: Optional[date] = None
 
 
 class ReorderRunAccepted(BaseModel):
@@ -56,6 +62,9 @@ class ReorderRunStatusResponse(BaseModel):
     # in either grain. Never the live setting - the FE chip reads the stamp.
     decision_grain: Optional[Literal["product", "location"]] = None
     front_planning_contract_version: Optional[int] = None
+    # The "Plan until" cutoff this run was launched with, ISO date, or None when the run
+    # carried no horizon (every run has always planned every open SO line, unchanged).
+    plan_horizon_date: Optional[str] = None
 
 
 # --- run history (list) -----------------------------------------------------
@@ -77,6 +86,9 @@ class ReorderRunListItem(BaseModel):
     # run's grain identically. NULL = legacy run.
     decision_grain: Optional[Literal["product", "location"]] = None
     front_planning_contract_version: Optional[int] = None
+    # Same field as ReorderRunStatusResponse - the plan header reads it off whichever of
+    # the two responses is on screen (today's run vs a past one).
+    plan_horizon_date: Optional[str] = None
 
 
 class ReorderRunListResponse(BaseModel):

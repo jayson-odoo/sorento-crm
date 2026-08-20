@@ -45,7 +45,7 @@ import { ReorderStatTiles, type ReorderPlanView } from './ReorderStatTiles';
 import { RunHistoryPanel } from './RunHistoryPanel';
 import { RunPlanningModal, type ManualPlanInputs } from './RunPlanningModal';
 import { SummaryOrderReportView } from './SummaryOrderReportView';
-import { DATE_LOCALE, DATE_PARTS, fmtInt } from '../../lib/format';
+import { DATE_LOCALE, DATE_PARTS, fmtDate, fmtInt } from '../../lib/format';
 
 /** Parse a naive-UTC ISO string as UTC, then format date / time in Malaysia.
  *
@@ -264,6 +264,8 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
       // Empty = every product (AC-B8a), which is what the scheduled daily run does.
       product_codes: inputs.product_codes,
       budget_id: null,
+      // Empty = no horizon (today's behaviour). Captain, 20 Aug.
+      plan_horizon_date: inputs.plan_horizon_date || null,
     });
     toast.info('Generating manual plan...');
   };
@@ -388,6 +390,19 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
           {/* The plan-grain chip lived here until the captain removed it (20 Aug: "remove
               these") - the grain still governs behavior via decisionLockReason /
               shouldGroupByChannel; it is just not announced in the header any more. */}
+          {/* Planning horizon (captain, 20 Aug): only shown when this run was launched
+              with one - an unhorizoned run (every run before this feature, and every
+              scheduled daily one) says nothing extra. */}
+          {currentItem?.plan_horizon_date ? (
+            <Badge
+              variant="secondary"
+              appearance="light"
+              size="sm"
+              title="Demand needed after this date was excluded from this plan's netting. Demand with no date is always counted."
+            >
+              Until {fmtDate(currentItem.plan_horizon_date)}
+            </Badge>
+          ) : null}
           <PlanMethodologySheet
             runContext={{
               dateLabel,

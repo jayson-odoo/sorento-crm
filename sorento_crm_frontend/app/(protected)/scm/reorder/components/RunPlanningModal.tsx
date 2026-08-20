@@ -31,6 +31,13 @@ export interface ManualPlanInputs {
    */
   product_codes: string[];
   budget: number;
+  /**
+   * "Plan until" (captain, 20 Aug). **Empty means no horizon** - every open SO line is
+   * planned regardless of when it is needed, today's behaviour. `YYYY-MM-DD` when set;
+   * demand needed after it is excluded from this run's netting, and demand carrying no
+   * date is always still counted.
+   */
+  plan_horizon_date: string;
 }
 
 /**
@@ -52,6 +59,7 @@ export function RunPlanningModal({
   const [warehouses, setWarehouses] = useState<string[]>([]);
   const [products, setProducts] = useState<string[]>([]);
   const [budget, setBudget] = useState('72000');
+  const [horizon, setHorizon] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const {
@@ -74,6 +82,7 @@ export function RunPlanningModal({
     setWarehouses([]);
     setProducts([]);
     setBudget('72000');
+    setHorizon('');
     setError(null);
   }, [open]);
 
@@ -90,6 +99,9 @@ export function RunPlanningModal({
       // the daily one it stands in for.
       product_codes: products,
       budget: Number(budget) || 0,
+      // Empty = no horizon (today's behaviour): every open SO line is planned
+      // regardless of when it is needed.
+      plan_horizon_date: horizon,
     });
   };
 
@@ -175,6 +187,23 @@ export function RunPlanningModal({
             />
             <p className="mt-1 text-2xs text-muted-foreground">
               You can tighten this on the plan afterwards to defer lower-ranked buys.
+            </p>
+          </div>
+
+          <div>
+            <Label htmlFor="manual-horizon" className="mb-1 block">
+              Plan until
+            </Label>
+            <Input
+              id="manual-horizon"
+              type="date"
+              value={horizon}
+              onChange={(e) => setHorizon(e.target.value)}
+            />
+            <p className="mt-1 text-2xs text-muted-foreground">
+              Empty = no cutoff, every open order counts. Demand needed after this date is
+              left out; demand with no date is always counted (unscheduled demand is still
+              demand).
             </p>
           </div>
         </DialogBody>

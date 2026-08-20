@@ -1,11 +1,13 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { Info } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { fmtInt, fmtSupplierCost } from '../../lib/format';
+import { orderInquiryWorklistHref } from '../lib/orderInquiryLink';
 import { useRecommendationDemand } from '../hooks/useReorderRun';
 import type { PlanDemand } from '../services/reorderRunService';
 
@@ -74,6 +76,37 @@ const SOURCE_CHIP: Record<string, { chip: string; title: string }> = {
   order_inquiry_confirmed: { chip: 'OI confirmed', title: 'Confirmed for buy by CS' },
 };
 
+/**
+ * Project vs Retail (captain, 20 Aug: "let me see the retail SO also"). The backend has
+ * always sent `demand_class` on every line - `sales_order`-sourced lines ARE the retail
+ * (and unclassified) ones, since a project-class order only reaches this list via the
+ * `order_inquiry` source - but this popover never rendered it, so a retail line and a
+ * project line looked identical beside the "SO" provenance chip. Colours match the plan
+ * grid's own Project/Retail chip (`PlanLinesGrid`) so the same word means the same colour
+ * across the screen.
+ */
+function ClassChip({ demandClass }: { demandClass: string | null | undefined }) {
+  if (demandClass === 'project') {
+    return (
+      <Badge variant="info" appearance="light" size="sm" className="font-normal">
+        Project
+      </Badge>
+    );
+  }
+  if (demandClass) {
+    return (
+      <Badge variant="success" appearance="light" size="sm" className="font-normal">
+        Retail
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="warning" appearance="light" size="sm" className="font-normal">
+      Unclassified
+    </Badge>
+  );
+}
+
 function PlanDemandBody({ runId, recId }: { runId: string | null; recId: string }) {
   const { data, isLoading, isError, error } = useRecommendationDemand(runId, recId, true);
   // N-6 (reviewer): computed once - `describeDemandTotals` was called twice for the same
@@ -111,9 +144,25 @@ function PlanDemandBody({ runId, recId }: { runId: string | null; recId: string 
             {data.lines.map((l, i) => (
               <li key={`${l.so_number}-${i}`} className="flex items-start gap-2 px-3 py-2">
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs font-medium" title={l.so_number}>
-                    {l.so_number}
-                  </div>
+                  {/* Click-through to the Order Inquiry worklist, scoped to this SO
+                      (captain, 20 Aug) - project channel only, since that worklist has
+                      nothing to show for a retail/unclassified line (it is scoped to
+                      Order Inquiry rows, and only a project-class order ever raises
+                      one). */}
+                  {l.source === 'order_inquiry' || l.source === 'order_inquiry_confirmed' ? (
+                    <Link
+                      href={orderInquiryWorklistHref(l.so_number)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="truncate text-xs font-medium hover:text-primary hover:underline"
+                      title={`Open ${l.so_number} on the Order Inquiry worklist`}
+                    >
+                      {l.so_number}
+                    </Link>
+                  ) : (
+                    <div className="truncate text-xs font-medium" title={l.so_number}>
+                      {l.so_number}
+                    </div>
+                  )}
                   <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-2xs text-muted-foreground">
                     {/* The location the ORDER named. "No location" is a fact about the
                         order, not a missing value, so it is said rather than dashed. */}
@@ -124,6 +173,7 @@ function PlanDemandBody({ runId, recId }: { runId: string | null; recId: string 
                     >
                       {l.warehouse_code ?? 'No location'}
                     </Badge>
+                    <ClassChip demandClass={l.demand_class} />
                     {l.source && SOURCE_CHIP[l.source] ? (
                       <Badge
                         variant="secondary"
