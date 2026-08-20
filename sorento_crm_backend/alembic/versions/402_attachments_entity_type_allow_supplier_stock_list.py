@@ -9,14 +9,14 @@ catch swallows it - the apply still succeeds, it just never keeps a copy.
 
 Rebuilt rather than extended in place, same as 326: Postgres has no "add a value to a CHECK".
 
-Revision ID: 402_attachments_entity_type_allow_supplier_stock_list
+Revision ID: 402_attach_supplier_stock_list
 Revises: 401_so_class_segment_rank
 """
 from alembic import op
 from sqlalchemy import text
 
 
-revision = "402_attachments_entity_type_allow_supplier_stock_list"
+revision = "402_attach_supplier_stock_list"
 down_revision = "401_so_class_segment_rank"
 branch_labels = None
 depends_on = None

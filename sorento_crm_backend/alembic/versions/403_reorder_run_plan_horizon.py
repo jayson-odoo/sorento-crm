@@ -12,7 +12,7 @@ Reads/writes live in `reorder_run_service._planning_rows` (netting) and the reor
 API schemas (`app/schemas/scm_reorder.py`) - this migration only adds the column.
 
 Revision ID: 403_reorder_run_plan_horizon
-Revises: 402_attachments_entity_type_allow_supplier_stock_list
+Revises: 402_attach_supplier_stock_list
 Create Date: 2026-08-20
 """
 from alembic import op
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 
 
 revision = "403_reorder_run_plan_horizon"
-down_revision = "402_attachments_entity_type_allow_supplier_stock_list"
+down_revision = "402_attach_supplier_stock_list"
 branch_labels = None
 depends_on = None
 
