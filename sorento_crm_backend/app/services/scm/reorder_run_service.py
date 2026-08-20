@@ -1346,6 +1346,13 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         "unclassified_need": unclassified_need,
         "project_supply_reduction": project_supply_reduction,
         "retail_net": retail_net,
+        # front-planning follow-up (19-20 Aug): the RAW `committed_v` split, i.e. this
+        # location's OPEN demand by channel - not the confirmed-for-buy subset above. The
+        # product view sums these across locations for its channel columns, and the three
+        # sum to `outstanding_sales` (== `committed`) the same way `committed_v` guarantees.
+        "project_committed": project_committed,
+        "retail_committed": float(row.get("retail_committed") or 0.0),
+        "unclassified_committed": unclassified_need,
         "rop": rop, "oup": oup, "triggered": triggered, "reason_label": reason_label,
         "recommended": recommended, "rounded": rounded, "doc": doc,
         "disposition": disp, "confidence": conf, "sample_size": sample_size,
@@ -1664,6 +1671,14 @@ def _network_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
         "project_supply_reduction": sum(
             float(c.get("project_supply_reduction") or 0.0) for c in (cells or [])),
         "retail_net": agg["agg_net"],
+        # Same additivity as the need columns above: the raw committed split sums across
+        # the aggregated locations.
+        "project_committed": sum(
+            float(c.get("project_committed") or 0.0) for c in (cells or [])),
+        "retail_committed": sum(
+            float(c.get("retail_committed") or 0.0) for c in (cells or [])),
+        "unclassified_committed": sum(
+            float(c.get("unclassified_committed") or 0.0) for c in (cells or [])),
         "rop": agg["reorder_point"], "oup": target_oup, "triggered": triggered,
         "reason_label": reason_label,
         "recommended": recommended, "rounded": rounded,
@@ -1841,6 +1856,13 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         "unclassified_need": _r(c.get("unclassified_need")),
         "project_supply_reduction": _r(c.get("project_supply_reduction")),
         "retail_net": _r(c.get("retail_net")),
+        # front-planning follow-up (19-20 Aug): the raw `committed_v` split - this row's
+        # OPEN demand by channel, before the Project column narrows to the confirmed-for-
+        # buy subset. The product view's channel columns sum these across locations and
+        # the three always sum to `committed` above.
+        "project_committed": _r(c.get("project_committed")),
+        "retail_committed": _r(c.get("retail_committed")),
+        "unclassified_committed": _r(c.get("unclassified_committed")),
         # The SIZING GROUP this buy belongs to, and the locations it was sized over
         # (`_plan_basis`). The four channel figures above describe THIS row's place; the
         # basis describes the decision, which for a pool or a network buy spans more

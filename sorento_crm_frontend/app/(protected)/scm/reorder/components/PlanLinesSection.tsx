@@ -153,6 +153,7 @@ export function PlanLinesSection({
         onAmendLevel={planLines.amendLevel}
         poFor={planLines.poFor}
         trendFor={planLines.trendFor}
+        channelTrendFor={planLines.channelTrendFor}
         trendSeriesMonths={planLines.trendSeriesMonths}
         purchaseTrendFor={planLines.purchaseTrendFor}
         purchaseTrendWindowMonths={planLines.purchaseTrendWindowMonths}

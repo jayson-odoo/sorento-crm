@@ -1,5 +1,5 @@
 /**
- * Product-grain channel grouping for the Buy view (PLAN-scm-front-planning.md 5.3).
+ * Product-grain grouping for the Buy view (PLAN-scm-front-planning.md 5.3).
  *
  * > "my expectation is 1 line of retail, 1 line of project, simple as that" - a buyer on a
  * >  Product-grain run saw the same SKU three times (one bare-site Retail row, two
@@ -7,13 +7,28 @@
  * >  recommendation, and the stored grain is always (product, warehouse) - Location need is
  * >  never re-netted, only re-presented (5.4).
  *
+ * SUPERSEDES the first cut of this file (grouped to one row per (product, channel)): the
+ * captain's refined ask is ONE row per PRODUCT, with channel as COLUMNS rather than row
+ * identity - "instead of 1 column SO, 1 column project, 1 column retail, it should be 2
+ * columns". The column SET is dynamic, derived from `channelOf` across the run's own rows
+ * (today: Project, Retail, and Unclassified only when a row actually carries it) - never
+ * hardcoded to two.
+ *
+ * Each channel column is that channel's OPEN demand for the product - `committed_v`'s split
+ * (`project_committed` / `retail_committed` / `unclassified_committed`), summed across the
+ * product's locations - NOT `project_need` (the confirmed-for-buy SUBSET of
+ * `project_committed`, 5.3). The three channel figures sum to the product's SO
+ * (`outstanding_sales`) total by construction, the same invariant `committed_v` guarantees
+ * per location. The confirmed subset is carried alongside as `projectConfirmedQty`, shown
+ * as an info aside on the Project cell rather than as the cell's own figure.
+ *
  * This is a PRESENTATION grouping, not a new calculation: the per-warehouse rows stay the
  * stored facts, and grouping only sums the shared display fields across a product's
- * warehouses within one channel. A group row's `rec` is a synthetic aggregate that exists
- * purely so the grid's existing per-rec cell renderers (`ChannelNeed`, `numCell`, the
- * product-keyed popovers) work unmodified on it; it is never sent anywhere and never
- * decided over directly (`decisionsReadOnly` is already true on every Product-grain run -
- * 5.4 - so a group row is read/drill only exactly like the rows it summarizes).
+ * warehouses. A group row's `rec` is a synthetic aggregate that exists purely so the grid's
+ * existing per-rec cell renderers (`numCell`, the product-keyed popovers) work unmodified on
+ * it; it is never sent anywhere and never decided over directly (`decisionsReadOnly` is
+ * already true on every Product-grain run - 5.4 - so a group row is read/drill only exactly
+ * like the rows it summarizes).
  */
 import type { PlanLine } from './planLine';
 import type { ReorderRecommendation } from '../types/reorder.types';
@@ -26,11 +41,19 @@ export const PLAN_CHANNEL_LABEL: Record<PlanChannel, string> = {
   unclassified: 'Unclassified',
 };
 
+/** Fixed rendering order - Project, then Retail, then Unclassified when it is present at
+ *  all. Not the order channels happen to first appear in the data. */
+export const PLAN_CHANNEL_ORDER: PlanChannel[] = ['project', 'retail', 'unclassified'];
+
 /**
- * Warehouse `segment` -> channel (5.2/5.4: channel is a warehouse fact, `dealer` for the
- * bare site and `project` for a suffixed bin). A missing segment is never guessed at - it
- * groups on its own Unclassified line, the same word the need columns already use for
- * demand with no persisted class, rather than being folded into Retail.
+ * Warehouse `segment` -> channel (5.2/5.4: channel is a warehouse fact for THIS mapping,
+ * `dealer` for the bare site and `project` for a suffixed bin). A missing segment is never
+ * guessed at - it reads Unclassified, the same word the need/committed columns already use
+ * for demand with no persisted class, rather than being folded into Retail.
+ *
+ * Used only to derive WHICH channel columns the grid renders (`presentChannels` below) and
+ * to keep the per-warehouse expand rows legible - never to decide a channel COLUMN's
+ * quantity, which reads `committed_v`'s own product-location split instead (5.3).
  */
 export function channelOf(line: Pick<PlanLine, 'rec'>): PlanChannel {
   const seg = line.rec.segment;
@@ -39,10 +62,20 @@ export function channelOf(line: Pick<PlanLine, 'rec'>): PlanChannel {
   return 'unclassified';
 }
 
-/** What one grouped (product, channel) row carries, beyond the `PlanLine` shape every
- *  existing cell renderer already knows how to read. */
+/**
+ * Which channel columns the grid renders, dynamically, off the rows actually present -
+ * never hardcoded to Project + Retail. Computed once over the WHOLE list passed in (not
+ * per product), so every product row in a grouped grid shares the same column set rather
+ * than a jagged table where one row grows a third column the others lack.
+ */
+export function presentChannels(lines: Pick<PlanLine, 'rec'>[]): PlanChannel[] {
+  const present = new Set(lines.map(channelOf));
+  return PLAN_CHANNEL_ORDER.filter((c) => present.has(c));
+}
+
+/** What one grouped PRODUCT row carries, beyond the `PlanLine` shape every existing cell
+ *  renderer already knows how to read. */
 export interface PlanChannelGroupMeta {
-  channel: PlanChannel;
   /** The per-warehouse lines this row summarizes, in their existing rank order. Every
    *  location-level fact (price, supplier, MOQ, AutoCount level, ...) lives here, not on
    *  the group row, because those are per-location facts and summing them would invent a
@@ -51,6 +84,19 @@ export interface PlanChannelGroupMeta {
   /** Every member's warehouse label, always the FULL list (used for the Location cell's
    *  title even when the cell itself shows a shortened "N locations"). */
   locationCodes: string[];
+  /** The channel columns THIS GRID renders (shared across every product row - see
+   *  `presentChannels`), so a cell renderer never has to re-derive the column set itself. */
+  channels: PlanChannel[];
+  /** This product's OPEN demand per channel - `committed_v`'s split, summed across the
+   *  product's locations (5.3). NULL is UNAVAILABLE (a legacy run carries no split), a
+   *  different fact from a channel that genuinely needs nothing and must not read as it.
+   *  The populated entries sum to `rec.outstanding_sales`. */
+  channelQty: Partial<Record<PlanChannel, number | null>>;
+  /** The CONFIRMED-for-buy subset of `channelQty.project` (`project_need` summed) - firm
+   *  demand that bypasses Retail netting entirely (5.3). Shown as an info aside on the
+   *  Project cell ("N confirmed for buy"), never as the cell's own figure, since the cell
+   *  states the channel's whole open demand like its siblings do. */
+  projectConfirmedQty: number | null;
 }
 
 export interface GroupedPlanLine extends PlanLine {
@@ -89,15 +135,15 @@ export function locationLabel(codes: string[]): string {
   return `${codes.length} locations`;
 }
 
-/** One synthetic `ReorderRecommendation` standing in for a channel's summed warehouses.
+/** One synthetic `ReorderRecommendation` standing in for a product's summed warehouses.
  *  Only the fields the grid actually reads for a group row are aggregated; every other
  *  field is left at its neutral/null default so the existing cells' OWN null handling
  *  (which already renders "not on file" honestly) applies rather than inventing a value -
  *  price, supplier, MOQ and AutoCount level are per-location facts and are never summed. */
-function buildGroupRec(channel: PlanChannel, members: PlanLine[]): ReorderRecommendation {
+function buildGroupRec(members: PlanLine[]): ReorderRecommendation {
   const first = members[0];
   return {
-    id: `group:${first.product_id ?? first.sku}:${channel}`,
+    id: `group:${first.product_id ?? first.sku}`,
     type: 'buy',
     sku: first.sku,
     product_name: first.product_name,
@@ -147,7 +193,9 @@ function buildGroupRec(channel: PlanChannel, members: PlanLine[]): ReorderRecomm
     funding_status: null,
     days_to_stockout: null,
     rank_factors: [],
-    segment: channel === 'project' ? 'project' : channel === 'retail' ? 'dealer' : null,
+    // No single warehouse's segment describes a product row spanning several channels -
+    // the channel columns (`__group.channelQty`) are the honest read, not this field.
+    segment: null,
     on_hand: sumOrNull(members.map((m) => m.rec.on_hand)),
     incoming_spo: sumOrNull(members.map((m) => m.rec.incoming_spo)),
     outstanding_po: sumOrNull(members.map((m) => m.rec.outstanding_po)),
@@ -155,10 +203,13 @@ function buildGroupRec(channel: PlanChannel, members: PlanLine[]): ReorderRecomm
     project_need: sumOrNull(members.map((m) => m.rec.project_need)),
     retail_need: sumOrNull(members.map((m) => m.rec.retail_need)),
     unclassified_need: sumOrNull(members.map((m) => m.rec.unclassified_need)),
+    project_committed: sumOrNull(members.map((m) => m.rec.project_committed)),
+    retail_committed: sumOrNull(members.map((m) => m.rec.retail_committed)),
+    unclassified_committed: sumOrNull(members.map((m) => m.rec.unclassified_committed)),
   } as ReorderRecommendation;
 }
 
-function buildGroupedLine(channel: PlanChannel, members: PlanLine[]): GroupedPlanLine {
+function buildGroupedLine(members: PlanLine[], channels: PlanChannel[]): GroupedPlanLine {
   const first = members[0];
   const locationCodes = members.map((m) => m.warehouse);
   const rankOrder = minOrNull(members.map((m) => m.rankOrder));
@@ -172,7 +223,12 @@ function buildGroupedLine(channel: PlanChannel, members: PlanLine[]): GroupedPla
       ? net / forecast_daily_demand
       : null;
   const purchasable = members.some((m) => m.purchasable);
-  const rec = buildGroupRec(channel, members);
+  const rec = buildGroupRec(members);
+  const channelQty: Partial<Record<PlanChannel, number | null>> = {
+    project: sumOrNull(members.map((m) => m.rec.project_committed)),
+    retail: sumOrNull(members.map((m) => m.rec.retail_committed)),
+    unclassified: sumOrNull(members.map((m) => m.rec.unclassified_committed)),
+  };
   return {
     id: rec.id,
     rank: rankOrder ?? 0,
@@ -207,24 +263,29 @@ function buildGroupedLine(channel: PlanChannel, members: PlanLine[]): GroupedPla
     status: first.status,
     purchasable,
     rankOrder,
-    __group: { channel, members, locationCodes },
+    __group: {
+      members,
+      locationCodes,
+      channels,
+      channelQty,
+      projectConfirmedQty: sumOrNull(members.map((m) => m.rec.project_need)),
+    },
   };
 }
 
 /**
- * One row per (product, channel), summing the shared display fields across the product's
- * warehouses within that channel. Preserves the input's own order: a group is placed at
- * the position of its FIRST member, so a plan already rank-sorted stays rank-sorted (5.1
- * governs the plan-grain policy this only ever runs under; the caller decides whether to
- * call this at all).
+ * One row per PRODUCT, summing the shared display fields across the product's warehouses.
+ * Channel is analysis inside the row (`__group.channelQty`), never row identity (5.3).
+ * Preserves the input's own order: a group is placed at the position of its FIRST member,
+ * so a plan already rank-sorted stays rank-sorted (5.1 governs the plan-grain policy this
+ * only ever runs under; the caller decides whether to call this at all).
  */
 export function groupPlanLinesByChannel(lines: PlanLine[]): GroupedPlanLine[] {
+  const channels = presentChannels(lines);
   const order: string[] = [];
   const buckets = new Map<string, PlanLine[]>();
   for (const line of lines) {
-    const channel = channelOf(line);
-    const productKey = line.product_id ?? `sku:${line.sku}`;
-    const key = `${productKey}::${channel}`;
+    const key = line.product_id ?? `sku:${line.sku}`;
     const bucket = buckets.get(key);
     if (bucket) {
       bucket.push(line);
@@ -233,8 +294,5 @@ export function groupPlanLinesByChannel(lines: PlanLine[]): GroupedPlanLine[] {
       order.push(key);
     }
   }
-  return order.map((key) => {
-    const members = buckets.get(key) as PlanLine[];
-    return buildGroupedLine(channelOf(members[0]), members);
-  });
+  return order.map((key) => buildGroupedLine(buckets.get(key) as PlanLine[], channels));
 }

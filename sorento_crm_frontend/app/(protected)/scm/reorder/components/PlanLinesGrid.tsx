@@ -76,8 +76,12 @@ import type { ReorderRecommendation } from '../types/reorder.types';
 import {
   groupPlanLinesByChannel,
   isGroupedLine,
+  presentChannels,
+  PLAN_CHANNEL_LABEL,
+  type PlanChannel,
   type PlanChannelGroupMeta,
 } from '../lib/planLineGrouping';
+import { channelTrendLine, type ChannelTrendEntry } from '../lib/trajectory';
 
 /**
  * ONE grid for every line of a plan.
@@ -155,6 +159,53 @@ function ChannelNeed({
   );
 }
 
+/**
+ * One channel COLUMN cell on the grouped (product-grain) grid (5.3 follow-up, 19-20 Aug):
+ * the channel's whole open demand (`committed_v`'s split, summed across the product's
+ * locations) - never `project_need`, the confirmed-for-buy SUBSET - plus a trend subline
+ * scoped to that channel's own orders. `confirmedNote` is the Project cell's own aside
+ * ("N confirmed for buy"), passed only for the Project column and only when > 0.
+ */
+function ChannelColumnCell({
+  value,
+  confirmedNote,
+  trend,
+}: {
+  value: number | null | undefined;
+  confirmedNote?: string | null;
+  trend: ChannelTrendEntry | undefined;
+}) {
+  if (value === null || value === undefined) {
+    return (
+      <span className="text-2xs text-muted-foreground" title="Unavailable on a legacy plan">
+        Unavailable
+      </span>
+    );
+  }
+  const line = channelTrendLine(trend);
+  return (
+    <div className="min-w-0">
+      <span className="inline-flex items-center gap-1 tabular-nums">
+        {fmtInt(value)}
+        {confirmedNote ? (
+          <span title={confirmedNote} className="text-muted-foreground/70">
+            <Info className="size-3" aria-hidden />
+          </span>
+        ) : null}
+      </span>
+      {line ? (
+        <span
+          className="block truncate text-2xs text-muted-foreground"
+          title={line.rateLabel ? `${line.label} - ${line.rateLabel}` : line.label}
+        >
+          {line.label}
+          {line.rateLabel ? ` - ${line.rateLabel}` : ''}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 /** A dash means "not on file", which is a different fact from zero and must not read as it. */
 function numCell(value: number | null | undefined) {
   return value === null || value === undefined ? (
@@ -165,10 +216,10 @@ function numCell(value: number | null | undefined) {
 }
 
 /**
- * The drill under a grouped (product, channel) row - the per-warehouse rows it summed,
- * unsummed, one per line (5.3/5.4: Location grain stays a read and drill view under
- * Product grain; nothing here is a decision). Every location-only fact that a group row
- * cannot show (price, supplier, MOQ, AutoCount level) lives on these rows, not the group.
+ * The drill under a grouped PRODUCT row - the per-warehouse rows it summed, unsummed, one
+ * per line (5.3/5.4: Location grain stays a read and drill view under Product grain;
+ * nothing here is a decision). Every location-only fact that a group row cannot show
+ * (price, supplier, MOQ, AutoCount level) lives on these rows, not the group.
  */
 function GroupMembersPanel({
   group,
@@ -245,6 +296,7 @@ export function PlanLinesGrid({
   onAmendLevel,
   poFor,
   trendFor,
+  channelTrendFor,
   trendSeriesMonths = 24,
   purchaseTrendFor,
   purchaseTrendWindowMonths = 3,
@@ -290,6 +342,10 @@ export function PlanLinesGrid({
   /** How far back that trend's series reaches, for the "no orders dated in the last N
    *  months" line. Off the payload, never a literal on the screen. */
   trendSeriesMonths?: number;
+  /** 5.3 follow-up (19-20 Aug): the order trend for one PRODUCT'S channel - drives the
+   *  trend subline under each dynamic channel column on the grouped grid. Undefined when
+   *  the caller has no opinion (ungrouped grid never reads this). */
+  channelTrendFor?: (productId: string | null, channel: PlanChannel) => ChannelTrendEntry | undefined;
   /** The mirror of `trendFor`, on the buy side: what we have actually purchased. */
   purchaseTrendFor?: (line: PlanLine) => ProductPurchaseTrend | undefined;
   /** The window the purchase-trend sentence compares (months). */
@@ -338,13 +394,14 @@ export function PlanLinesGrid({
   /** What the disabled control says, in place of the decision cell's own controls. */
   readOnlyReason?: string | null;
   /**
-   * Product-grain runs only (5.3): group the fetched per-warehouse rows into one row per
-   * (product, channel) - "1 line of retail, 1 line of project" - instead of one row per
-   * (product, warehouse). A group row sums the shared display fields across its
-   * warehouses; every location-only fact (price, supplier, MOQ, AutoCount level) stays on
-   * the per-warehouse rows reachable by expanding it. Omit or pass false to render the
-   * per-warehouse rows exactly as before (Location grain, a legacy run, or any other
-   * caller of this grid).
+   * Product-grain runs only (5.3, follow-up 19-20 Aug): group the fetched per-warehouse
+   * rows into one row per PRODUCT - "1 line of retail, 1 line of project" folded into ONE
+   * line, with Project/Retail/Unclassified as dynamic COLUMNS on it instead of a row each -
+   * rather than one row per (product, warehouse). A group row sums the shared display
+   * fields across its warehouses; every location-only fact (price, supplier, MOQ,
+   * AutoCount level) stays on the per-warehouse rows reachable by expanding it. Omit or
+   * pass false to render the per-warehouse rows exactly as before (Location grain, a
+   * legacy run, or any other caller of this grid).
    */
   groupByChannel?: boolean;
   isLoading?: boolean;
@@ -430,13 +487,22 @@ export function PlanLinesGrid({
     [filtered, decisions],
   );
 
-  // 5.3: one row per (product, channel) on a Product-grain run, each expandable to the
-  // per-warehouse rows it summed. Grouping runs AFTER the existing filter/sort pipeline,
-  // so search/status/side/price/action/level all narrow the same per-warehouse facts they
-  // always did; only the rendered ROW count changes.
+  // 5.3: one row per PRODUCT on a Product-grain run, each expandable to the per-warehouse
+  // rows it summed. Grouping runs AFTER the existing filter/sort pipeline, so search/
+  // status/side/price/action/level all narrow the same per-warehouse facts they always
+  // did; only the rendered ROW count changes.
   const tableData = useMemo<PlanLine[]>(
     () => (groupByChannel ? groupPlanLinesByChannel(ordered) : ordered),
     [groupByChannel, ordered],
+  );
+
+  // The channel COLUMN set (5.3 follow-up, 19-20 Aug): dynamic, off the whole run's rows
+  // (`lines`, unfiltered - a column must not appear/disappear as the buyer searches or
+  // filters), never hardcoded to two. Empty on the ungrouped grid, which has no channel
+  // columns at all.
+  const dynamicChannels = useMemo<PlanChannel[]>(
+    () => (groupByChannel ? presentChannels(lines) : []),
+    [groupByChannel, lines],
   );
 
   /**
@@ -618,7 +684,12 @@ export function PlanLinesGrid({
         enableSorting: true,
         meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-20" /> },
       },
-      {
+      // The Order-type chip and the SO/Project/Retail/Unclassified columns are an
+      // UNGROUPED-only chapter (5.3 follow-up, 19-20 Aug): grouped mode replaces all five
+      // with the dynamic channel columns below - "instead of 1 column SO, 1 column
+      // project, 1 column retail, it should be 2 columns" - so a channel is never both a
+      // chip AND a column at once.
+      ...(!groupByChannel ? [{
         id: 'side',
         accessorFn: (row) => row.rec.segment ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Order type" visibility column={column} />,
@@ -626,24 +697,6 @@ export function PlanLinesGrid({
         // anywhere on this screen (S13b): project demand is erratic and retail stable, so a
         // number spanning both describes neither. "Retail" not "Dealer" - the user's word.
         cell: ({ row }) => {
-          const group = isGroupedLine(row.original) ? row.original.__group : null;
-          if (group) {
-            // A grouped row's channel is never guessed at: Unclassified is its own line,
-            // the same word the need columns use for demand with no persisted class - it
-            // must not read as Retail just because the badge fell through to a default.
-            if (group.channel === 'unclassified') {
-              return (
-                <Badge variant="warning" appearance="light" size="sm">
-                  Unclassified
-                </Badge>
-              );
-            }
-            return (
-              <Badge variant={group.channel === 'project' ? 'info' : 'success'} appearance="light" size="sm">
-                {group.channel === 'project' ? 'Project' : 'Retail'}
-              </Badge>
-            );
-          }
           const seg = row.original.rec.segment;
           if (!seg) return <span className="text-muted-foreground">{EM_DASH}</span>;
           return (
@@ -655,8 +708,8 @@ export function PlanLinesGrid({
         size: 100,
         enableSorting: true,
         meta: { headerTitle: 'Order type', skeleton: <Skeleton className="h-5 w-14" /> },
-      },
-      {
+      } satisfies ColumnDef<PlanLine>] : []),
+      ...(!groupByChannel ? [{
         id: 'needed',
         accessorFn: (row) => row.rec.outstanding_sales ?? 0,
         // Named after the DOCUMENT it comes from (user markup, 2026-08-11: "the needed is
@@ -703,7 +756,7 @@ export function PlanLinesGrid({
         size: 130,
         enableSorting: true,
         meta: { headerTitle: 'SO (needed)', skeleton: <Skeleton className="h-4 w-10" /> },
-      },
+      } satisfies ColumnDef<PlanLine>,
       // The SO column's channel split (AC-F05 / AC-F07). Three DEMAND columns; the
       // supply columns below stay single shared facts of this product-location and
       // are deliberately NOT repeated per channel. Unclassified is visible and is
@@ -723,7 +776,7 @@ export function PlanLinesGrid({
         size: 90,
         enableSorting: true,
         meta: { headerTitle: 'Project need', skeleton: <Skeleton className="h-4 w-10" /> },
-      },
+      } satisfies ColumnDef<PlanLine>,
       {
         id: 'retail_need',
         accessorFn: (row) => row.rec.retail_need ?? -1,
@@ -739,7 +792,7 @@ export function PlanLinesGrid({
         size: 90,
         enableSorting: true,
         meta: { headerTitle: 'Retail need', skeleton: <Skeleton className="h-4 w-10" /> },
-      },
+      } satisfies ColumnDef<PlanLine>,
       {
         id: 'unclassified_need',
         accessorFn: (row) => row.rec.unclassified_need ?? -1,
@@ -756,7 +809,45 @@ export function PlanLinesGrid({
         size: 90,
         enableSorting: true,
         meta: { headerTitle: 'Unclassified need', skeleton: <Skeleton className="h-4 w-10" /> },
-      },
+      } satisfies ColumnDef<PlanLine>] : []),
+      // The dynamic channel columns (5.3 follow-up, 19-20 Aug): one per channel present in
+      // the run (`dynamicChannels`), each showing that channel's WHOLE open demand
+      // (`committed_v`'s split, summed across the product's locations) plus a trend
+      // subline scoped to that channel's own orders. The Project column carries the
+      // confirmed-for-buy subset as an info aside, never as its own figure - the columns
+      // sum to the product's SO total the same way `committed_v` sums per location.
+      ...(groupByChannel
+        ? dynamicChannels.map((channel): ColumnDef<PlanLine> => ({
+            id: `channel_${channel}`,
+            accessorFn: (row) =>
+              (isGroupedLine(row) ? row.__group.channelQty[channel] : null) ?? -1,
+            header: ({ column }) => (
+              <DataGridColumnHeader title={PLAN_CHANNEL_LABEL[channel]} visibility column={column} />
+            ),
+            cell: ({ row }) => {
+              const line = row.original;
+              if (!isGroupedLine(line)) return null;
+              const value = line.__group.channelQty[channel];
+              const confirmed =
+                channel === 'project' && (line.__group.projectConfirmedQty ?? 0) > 0
+                  ? `${fmtInt(line.__group.projectConfirmedQty as number)} confirmed for buy`
+                  : null;
+              return (
+                <ChannelColumnCell
+                  value={value}
+                  confirmedNote={confirmed}
+                  trend={channelTrendFor?.(line.product_id, channel)}
+                />
+              );
+            },
+            size: 110,
+            enableSorting: true,
+            meta: {
+              headerTitle: `${PLAN_CHANNEL_LABEL[channel]} (open demand)`,
+              skeleton: <Skeleton className="h-4 w-10" />,
+            },
+          }))
+        : []),
       // The three offsets, on the row rather than behind a popover. This is the arithmetic
       // that produced the suggested quantity, and the buyer has to be able to see it without
       // opening anything.
@@ -1130,7 +1221,7 @@ export function PlanLinesGrid({
       },
     ],
     [decisions, onDecide, onClear, runId, decisionsReadOnly, readOnlyReason,
-     coverFor, priceFor, cheaperFor, trendFor,
+     coverFor, priceFor, cheaperFor, trendFor, channelTrendFor, groupByChannel, dynamicChannels,
      levelFor, onAmendLevel, poFor, purchaseTrendFor, purchaseTrendWindowMonths,
      onOpenPurchaseTrend, hasPhotoFor, photoStatus, onOpenPhoto, economicsFor, healthThresholds,
      onDecideLifecycle, staleAfterDays, renderSuggestedQtyCell],
@@ -1138,15 +1229,31 @@ export function PlanLinesGrid({
 
   // The story order (see the header comment): each chapter leads with its result and is
   // followed by the columns that explain it. Deliberately NOT the definition order.
-  const [columnOrder, setColumnOrder] = useState<string[]>(() => [
-    'rank', 'side', 'sku', 'warehouse',
-    'suggested', 'needed', 'project_need', 'retail_need', 'unclassified_need',
-    'on_hand', 'incoming_spo', 'outstanding_po',
-    'decision',
-    'price', 'supplier', 'moq', 'cost',
-    'reorder_level', 'reorder_qty', 'level', 'health',
-    'net', 'days_cover',
-  ]);
+  //
+  // Computed once at mount from `groupByChannel`/`dynamicChannels` (a run's grain is fixed
+  // for its lifetime - 5.1 - so this never needs to react to either changing later); the
+  // buyer's own drag-reorder still lives on in `setColumnOrder` from there.
+  const [columnOrder, setColumnOrder] = useState<string[]>(() =>
+    groupByChannel
+      ? [
+          'rank', 'sku', 'warehouse',
+          'suggested', ...dynamicChannels.map((c) => `channel_${c}`),
+          'on_hand', 'incoming_spo', 'outstanding_po',
+          'decision',
+          'price', 'supplier', 'moq', 'cost',
+          'reorder_level', 'reorder_qty', 'level', 'health',
+          'net', 'days_cover',
+        ]
+      : [
+          'rank', 'side', 'sku', 'warehouse',
+          'suggested', 'needed', 'project_need', 'retail_need', 'unclassified_need',
+          'on_hand', 'incoming_spo', 'outstanding_po',
+          'decision',
+          'price', 'supplier', 'moq', 'cost',
+          'reorder_level', 'reorder_qty', 'level', 'health',
+          'net', 'days_cover',
+        ],
+  );
   // Computed steps, not decisions: off by default, one columns-menu click to bring back.
   const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>({
     net: false,

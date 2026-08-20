@@ -35,7 +35,8 @@ import {
   type CheaperAlternative,
   type PriceAdvice,
 } from '../lib/priceAdvice';
-import { trajectoryKey, type TrajectoryEntry } from '../lib/trajectory';
+import { trajectoryKey, type ChannelTrendEntry, type TrajectoryEntry } from '../lib/trajectory';
+import type { PlanChannel } from '../lib/planLineGrouping';
 import type { ProductPhotoStatus } from '../components/ProductPhotoPopover';
 import { levelKey, type LevelSuggestion } from '../lib/levelSuggestion';
 import type { PoReceipt } from '../lib/poCover';
@@ -349,6 +350,18 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [trend.data],
   );
 
+  /**
+   * The order trend for one PRODUCT'S channel (5.3 grouped view - "what is the trend in
+   * project, what is the trend in retail"). Additive to `trendFor` above, which stays keyed
+   * by warehouse segment for the ungrouped grid; this reads `channel_trends`, keyed by
+   * `sales_orders.demand_class`. Undefined = no opinion, render nothing.
+   */
+  const channelTrendFor = useCallback(
+    (productId: string | null, channel: PlanChannel): ChannelTrendEntry | undefined =>
+      productId ? trend.data?.channel_trends?.[productId]?.[channel] : undefined,
+    [trend.data],
+  );
+
   /** The sell/turnover facts for a line's product. Undefined = no opinion. */
   const economicsFor = useCallback(
     (line: PlanLine): ProductEconomics | undefined =>
@@ -377,6 +390,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
     priceFor,
     cheaperFor,
     trendFor,
+    channelTrendFor,
     levelFor,
     poFor,
     purchaseTrendFor,

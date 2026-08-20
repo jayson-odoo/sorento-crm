@@ -369,6 +369,18 @@ export interface ReorderRecommendation {
    */
   unclassified_need?: number | null;
   /**
+   * front-planning follow-up (19-20 Aug): the RAW `committed_v` split - this location's
+   * OPEN demand by channel, before Project narrows to the confirmed-for-buy subset above.
+   * The grouped Product view's channel COLUMNS read these (summed across a product's
+   * locations), not `project_need`/`retail_need`/`unclassified_need`, because a buyer
+   * reading "Project" as a column wants everything on a project-class order, not only the
+   * firm leg the engine already bypassed netting for. The three sum to
+   * `outstanding_sales`, the same invariant `committed_v` guarantees per location.
+   */
+  project_committed?: number | null;
+  retail_committed?: number | null;
+  unclassified_committed?: number | null;
+  /**
    * True when this run is decided at the Product grain, or is legacy, so the
    * per-location row is a read and drill row rather than a decision surface
    * (AC-F02 / AC-F09). The per-location view is never retired by Product grain.

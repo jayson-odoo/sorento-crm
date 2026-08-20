@@ -81,6 +81,31 @@ GROUP BY sol.product_id, COALESCE(w.segment, 'project'),
          date_trunc('month', so.order_date)
 """
 
+#: front-planning follow-up (19-20 Aug): the SAME order-flow series as `_SERIES_SQL`, keyed
+#: by CHANNEL (`sales_orders.demand_class`, the field committed_v splits on - 5.2) instead
+#: of by warehouse segment. Additive to `series` above, which stays keyed by
+#: `product_id:segment` for every existing reader (`trendFor`, the forecast add-on, product
+#: health) - this only feeds the grouped Buy view's per-channel trend subline, and channel
+#: is a property of the ORDER, never of where it happened to ship from.
+_CHANNEL_SERIES_SQL = """
+WITH prods AS (
+    SELECT DISTINCT r.product_id
+    FROM scm.reorder_recommendation r
+    WHERE r.run_id = CAST(:run_id AS uuid)
+)
+SELECT sol.product_id::text AS product_id,
+       COALESCE(so.demand_class, 'unclassified') AS channel,
+       to_char(date_trunc('month', so.order_date), 'YYYY-MM') AS month,
+       SUM(sol.qty_ordered) AS qty
+FROM sales_order_lines sol
+JOIN sales_orders so ON so.id = sol.sales_order_id
+JOIN prods p ON p.product_id = sol.product_id
+WHERE so.order_date >= :since AND so.order_date < :until
+  {co}
+GROUP BY sol.product_id, COALESCE(so.demand_class, 'unclassified'),
+         date_trunc('month', so.order_date)
+"""
+
 _CUSTOMERS_SQL = f"""
 WITH pairs AS (
     SELECT DISTINCT r.product_id, COALESCE(w.segment, 'project') AS segment
@@ -227,6 +252,42 @@ def trajectory_for_run(
             "agents": [],
             "agents_available": False,
         }
+
+    # front-planning follow-up (19-20 Aug): the same verdict, per product, split by CHANNEL
+    # (`sales_orders.demand_class`) rather than warehouse segment - additive, so it can sit
+    # beside `series` without disturbing any existing reader of it. Feeds the grouped Buy
+    # view's per-channel trend subline ("what is the trend in project, what is the trend in
+    # retail"), one column per channel next to its committed figure.
+    channel_monthly: dict[tuple[str, str], dict[str, float]] = {}
+    for r in db.execute(
+        text(_CHANNEL_SERIES_SQL.format(co=co_clause)), params
+    ).mappings().all():
+        channel_monthly.setdefault((r["product_id"], r["channel"]), {})[r["month"]] = \
+            float(r["qty"] or 0)
+
+    channel_trends: dict[str, dict[str, Any]] = {}
+    for (product_id, channel), series in channel_monthly.items():
+        months = (
+            windows["project_months"] if channel == "project"
+            else windows["retail_months"]
+        )
+        recent_start = _month_shift(until, -months)
+        prev_start = _month_shift(until, -2 * months)
+        recent = window_sum(series, recent_start, months)
+        previous = window_sum(series, prev_start, months)
+        t = assess_trajectory(recent=recent, previous=previous, year_ago=None)
+        channel_trends.setdefault(product_id, {})[channel] = {
+            "verdict": t.verdict,
+            "recent_qty": t.recent_qty,
+            "previous_qty": t.previous_qty,
+            "change_pct": t.change_pct,
+            "window_months": months,
+            # Units/day over the recent window, the same rate-over-a-window arithmetic the
+            # row's own "avg N/day" subline already uses - so a channel's trend reads with
+            # the same evidence the total figure does, just narrowed to its own orders.
+            "avg_day": round(recent / (months * 30), 2) if months > 0 else None,
+        }
+    out["channel_trends"] = channel_trends
     return out
 
 

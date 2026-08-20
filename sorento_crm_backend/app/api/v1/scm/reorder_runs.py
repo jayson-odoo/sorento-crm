@@ -904,6 +904,13 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         # so it is inside `retail_need` and is shown as evidence, not as an extra addend.
         "project_sheet_need": inp.get("project_sheet_need"),
         "unclassified_need": inp.get("unclassified_need"),
+        # front-planning follow-up (19-20 Aug): the raw `committed_v` split - this row's
+        # OPEN demand by channel (a superset of `project_need`, which is only the
+        # confirmed-for-buy leg). The Product view's channel columns sum these across a
+        # product's locations and the three always sum to `outstanding_sales` above.
+        "project_committed": inp.get("project_committed"),
+        "retail_committed": inp.get("retail_committed"),
+        "unclassified_committed": inp.get("unclassified_committed"),
         # True when the run is decided at Product grain, or is legacy. The row is still a
         # read and drill row; only its decision controls are closed (AC-F02, AC-F09).
         "decisions_read_only": decisions_read_only,
