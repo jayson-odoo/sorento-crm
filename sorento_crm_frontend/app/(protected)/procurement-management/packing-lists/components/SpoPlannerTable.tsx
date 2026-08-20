@@ -241,18 +241,20 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           const ln = row.original;
           return (
             <div className={ln.cannot_convert ? 'flex min-w-0 flex-col opacity-60' : 'flex min-w-0 flex-col'}>
-              <span className="truncate font-medium" title={ln.item_code ?? ''}>
-                {ln.item_code ?? EM_DASH}
+              <span className="flex items-center gap-1 truncate font-medium">
+                <span className="truncate" title={ln.item_code ?? ''}>
+                  {ln.item_code ?? EM_DASH}
+                </span>
+                {ln.reason ? (
+                  <span className="shrink-0" title={ln.reason}>
+                    <Info className="size-3.5 text-muted-foreground" aria-hidden />
+                  </span>
+                ) : null}
               </span>
               <span className="truncate text-2xs text-muted-foreground" title={ln.product_name ?? ''}>
                 {ln.product_name ?? EM_DASH}
                 {ln.supplier_name ? ` · ${ln.supplier_name}` : ''}
               </span>
-              {ln.reason ? (
-                <span className="truncate text-2xs text-muted-foreground" title={ln.reason}>
-                  {ln.reason}
-                </span>
-              ) : null}
             </div>
           );
         },
@@ -287,21 +289,6 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         size: 130,
         enableSorting: false,
         meta: { headerTitle: 'PO covers' },
-      },
-      {
-        id: 'no_po_qty',
-        header: ({ column }) => <DataGridColumnHeader title="No PO" column={column} />,
-        cell: ({ row }) => {
-          const v = row.original.no_po_qty;
-          return (
-            <span className={v > 0 ? 'tabular-nums text-amber-600' : 'tabular-nums text-muted-foreground'}>
-              {fmtInt(v)}
-            </span>
-          );
-        },
-        size: 85,
-        enableSorting: false,
-        meta: { headerTitle: 'No PO' },
       },
       {
         id: 'on_hand',

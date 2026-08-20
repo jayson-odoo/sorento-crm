@@ -61,6 +61,12 @@ from app.services.procurement_service import shipment_supplier_predicate
 # Line statuses considered "received" and therefore excluded from incoming-stock results.
 _RECEIVED_STATUSES = ("received",)
 
+# `proforma_invoice_service._DRAFT_SHIPMENT_STATUS` — a proforma-created shipment stays
+# 'draft' until someone actually places/confirms it. This whole service is the
+# MCP/AI-assistant-facing surface (see module docstring), so a draft must never
+# leak into a salesperson's answer as if it were a real incoming container.
+_DRAFT_SHIPMENT_STATUS = "draft"
+
 
 def _remaining_expr():
     """SQL expression: GREATEST(quantity_shipped - quantity_received, 0)."""
@@ -75,6 +81,11 @@ def _still_incoming_filter():
         ~InboundShipmentLine.line_status.in_(_RECEIVED_STATUSES),
         remaining > 0,
     )
+
+
+def _not_draft_shipment_filter():
+    """Filter clause: shipment is not a draft (proforma-created, not yet placed)."""
+    return InboundShipment.shipment_status != _DRAFT_SHIPMENT_STATUS
 
 
 def _unallocated_quantity(
@@ -289,7 +300,12 @@ class IncomingStockService:
             )
             .join(InboundShipment, InboundShipment.id == InboundShipmentLine.shipment_id)
             .join(Product, Product.id == InboundShipmentLine.product_id)
-            .filter(_still_incoming_filter(), *product_filters, *date_filters)
+            .filter(
+                _still_incoming_filter(),
+                _not_draft_shipment_filter(),
+                *product_filters,
+                *date_filters,
+            )
             .order_by(
                 Product.product_code.asc(),
                 InboundShipment.estimated_arrival_date.asc().nulls_last(),
@@ -401,8 +417,10 @@ class IncomingStockService:
                 return set()
             rows = (
                 self.db.query(InboundShipmentLine.product_id)
+                .join(InboundShipment, InboundShipment.id == InboundShipmentLine.shipment_id)
                 .filter(
                     _still_incoming_filter(),
+                    _not_draft_shipment_filter(),
                     InboundShipmentLine.product_id.in_(candidate_ids),
                 )
                 .distinct()
@@ -457,6 +475,7 @@ class IncomingStockService:
                 incoming_lines.c.total_remaining,
             )
             .join(incoming_lines, incoming_lines.c.sid == InboundShipment.id)
+            .filter(_not_draft_shipment_filter())
         )
 
         if shipment_ids:
@@ -611,7 +630,7 @@ class IncomingStockService:
                 InboundShipmentLine,
                 InboundShipmentLine.shipment_id == InboundShipment.id,
             )
-            .filter(*line_filters, *shipment_filters)
+            .filter(_not_draft_shipment_filter(), *line_filters, *shipment_filters)
             .distinct()
         )
         total = ship_q.count()
@@ -742,7 +761,9 @@ class IncomingStockService:
         shipment_uuid = resolved[0]
 
         shipment = (
-            self.db.query(InboundShipment).filter(InboundShipment.id == shipment_uuid).first()
+            self.db.query(InboundShipment)
+            .filter(InboundShipment.id == shipment_uuid, _not_draft_shipment_filter())
+            .first()
         )
         if not shipment:
             return {"data": None, "empty": True}
@@ -834,7 +855,7 @@ class IncomingStockService:
         row = (
             self.db.query(InboundShipment.shipment_number, Attachment)
             .outerjoin(Attachment, Attachment.id == InboundShipment.attachment_id)
-            .filter(InboundShipment.id == resolved[0])
+            .filter(InboundShipment.id == resolved[0], _not_draft_shipment_filter())
             .first()
         )
         if not row:
