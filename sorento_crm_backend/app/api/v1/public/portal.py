@@ -801,6 +801,9 @@ def portal_get_submission(
     detail["attachments"] = _list_attachments_for(db, _entity_type_for(kind), submission_id)
     # One call, no extra round trip (UAC B1).
     detail["revision"] = _revision_policy_block(db, k, submission_id)
+    from app.services.portal_revision_service import PortalRevisionService
+
+    detail["revision_draft"] = PortalRevisionService(db).get_draft(k, submission_id)
     return detail
 
 
@@ -864,6 +867,59 @@ def portal_revise_submission(
         "revision": result["policy"],
         "revision_no": result["revision_no"],
     }
+
+
+class ReviseDraftPayload(BaseModel):
+    """A revision saved before Send revision - the reason is optional (a draft
+    may be mid-thought) and there is no ``expected_revision_no`` gate here: Send
+    revision re-checks staleness against the live submission, not the draft."""
+
+    reason: Optional[str] = None
+    base_revision_no: int = Field(..., ge=0)
+    fields: dict = {}
+    products: Optional[list[dict]] = None
+
+
+@router.put("/submissions/{kind}/{submission_id}/revision-draft")
+def portal_save_revision_draft(
+    payload: ReviseDraftPayload,
+    kind: str = Path(...),
+    submission_id: str = Path(...),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Save (or update) an in-progress revision, without sending it."""
+    from app.services.portal_revision_service import PortalRevisionService
+
+    k = _check_kind(kind)
+    body = dict(payload.fields or {})
+    if payload.products is not None:
+        body["products"] = payload.products
+    return PortalRevisionService(db).save_draft(
+        token,
+        k,
+        submission_id,
+        body,
+        payload.reason,
+        payload.base_revision_no,
+    )
+
+
+@router.delete("/submissions/{kind}/{submission_id}/revision-draft")
+def portal_discard_revision_draft(
+    kind: str = Path(...),
+    submission_id: str = Path(...),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Discard the in-progress revision, if any. Idempotent."""
+    from app.services.portal_revision_service import PortalRevisionService
+
+    k = _check_kind(kind)
+    service = PortalRevisionService(db)
+    service.fetch_owned(token, k, submission_id)  # ownership: 403/404 as elsewhere
+    service.discard_draft(k, submission_id)
+    return {"ok": True}
 
 
 class SubmissionNeighboursResponse(BaseModel):

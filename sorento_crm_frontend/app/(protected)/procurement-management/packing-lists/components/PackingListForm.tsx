@@ -120,6 +120,40 @@ export default function PackingListForm({
     };
   }, [productSearch]);
 
+  /** Every product we have ever resolved a label for, keyed by id.
+   *  The combobox only ever holds ONE page of search results, and a line's saved
+   *  product is usually not on it, so a line whose product is missing from the
+   *  page renders as an empty "Select product" trigger even though the form value
+   *  is intact. Keying the fallback by id (not by row index) is what makes a row
+   *  survive a `remove()` - indexes shift, product ids do not. */
+  const [knownProducts, setKnownProducts] = useState<
+    Record<string, { id: string; product_code: string; product_name?: string }>
+  >({});
+
+  const mergeKnownProducts = (
+    incoming: Array<{ id: string; product_code: string; product_name?: string } | undefined | null>,
+  ) => {
+    setKnownProducts((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const p of incoming) {
+        if (p?.id && !next[p.id]) {
+          next[p.id] = p;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  };
+
+  useEffect(() => {
+    mergeKnownProducts(products);
+  }, [products]);
+
+  useEffect(() => {
+    mergeKnownProducts((packingList?.shipment_lines ?? []).map((l) => l.product));
+  }, [packingList]);
+
   const lastInitializedIdRef = useRef<string | null>(null);
   useEffect(() => {
     lastInitializedIdRef.current = null;
@@ -424,7 +458,7 @@ export default function PackingListForm({
                             value={field.value}
                             onChange={field.onChange}
                             products={products}
-                            productFallback={packingList?.shipment_lines?.[index]?.product}
+                            productFallback={knownProducts[field.value] ?? null}
                             placeholder="Select product"
                             onSearch={setProductSearch}
                           />

@@ -75,6 +75,13 @@ export interface PortalSubmissionSummary {
   is_editable: boolean;
   is_draft: boolean;
   created_at: string | null;
+  /** Denormalized revision counter (UAC N) - 0/null means never revised. */
+  revision_no?: number | null;
+  /** Set the moment a revision lands, so a list can sort/label by it. */
+  last_revised_at?: string | null;
+  /** True while an unsent revision draft is parked on this submission - the
+   *  row's own `status` stays the real one; this is what tells the two apart. */
+  has_revision_draft?: boolean;
   // Optional kind-specific summary fields surfaced for the mobile card layout.
   product_code?: string | null;
   project_title?: string | null;
@@ -132,6 +139,19 @@ export interface PortalRevisionPolicy {
    * generic sentence stands.
    */
   restart_stage_label?: string | null;
+}
+
+/**
+ * A revision the contact saved before Send revision. `stale` is true when the
+ * submission changed (its revision_no moved) since the draft was started - the
+ * draft is then not resumed automatically, only offered for discard.
+ */
+export interface PortalRevisionDraft {
+  fields: Record<string, unknown>;
+  reason: string | null;
+  base_revision_no: number;
+  updated_at: string;
+  stale: boolean;
 }
 
 /**
@@ -205,6 +225,7 @@ export interface PortalRevisionEntry {
 export interface PortalSubmissionDetail extends PortalSubmissionSummary {
   attachments?: PortalAttachment[];
   revision?: PortalRevisionPolicy;
+  revision_draft?: PortalRevisionDraft | null;
   // Free-form fields per type, populated by the backend serializer.
   [key: string]: unknown;
 }
@@ -233,7 +254,8 @@ export function readPortalToken(): string | null {
   if (typeof window === 'undefined') return null;
   // Impersonation (sessionStorage) wins over device trust (localStorage).
   return (
-    window.sessionStorage.getItem(TOKEN_KEY) ?? window.localStorage.getItem(TOKEN_KEY)
+    window.sessionStorage.getItem(TOKEN_KEY) ??
+    window.localStorage.getItem(TOKEN_KEY)
   );
 }
 
@@ -319,7 +341,10 @@ function absoluteApiUrl(path: string): string {
   return path;
 }
 
-async function portalFetch(input: string, init: RequestInit = {}): Promise<Response> {
+async function portalFetch(
+  input: string,
+  init: RequestInit = {},
+): Promise<Response> {
   const token = readPortalToken();
   const headers = new Headers(init.headers || {});
   if (token) headers.set('X-Portal-Token', token);
@@ -382,13 +407,19 @@ export async function fetchMeWithGrace(): Promise<PortalContact> {
   const wasImpersonation = isImpersonationToken();
   const writtenAt =
     typeof window !== 'undefined'
-      ? Number(window.sessionStorage.getItem('sorento.portalTokenWrittenAt') || '0')
+      ? Number(
+          window.sessionStorage.getItem('sorento.portalTokenWrittenAt') || '0',
+        )
       : 0;
   const tokenIsFresh = writtenAt > 0 && Date.now() - writtenAt < 30_000;
   try {
     return await fetchMe();
   } catch (firstErr) {
-    if (firstErr instanceof PortalUnauthorizedError && tokenIsFresh && existing) {
+    if (
+      firstErr instanceof PortalUnauthorizedError &&
+      tokenIsFresh &&
+      existing
+    ) {
       // Restore to the SAME store it came from - an impersonation token must
       // not be promoted into localStorage by the retry.
       writePortalToken(existing, { impersonation: wasImpersonation });
@@ -404,7 +435,9 @@ export async function stopPortalImpersonation(): Promise<void> {
     method: 'POST',
   });
   if (!res.ok) {
-    throw new Error(await extractApiError(res, 'Failed to exit impersonation.'));
+    throw new Error(
+      await extractApiError(res, 'Failed to exit impersonation.'),
+    );
   }
 }
 
@@ -414,24 +447,36 @@ export async function fetchSubmissions(
 ): Promise<PortalSubmissionSummary[]> {
   const usp = new URLSearchParams({ type: kind });
   if (q && q.trim()) usp.set('q', q.trim());
-  const res = await portalFetch(`/api/v1/public/portal/submissions?${usp.toString()}`);
-  const data = await unwrap<{ items: PortalSubmissionSummary[] }>(res, 'Failed to load submissions.');
+  const res = await portalFetch(
+    `/api/v1/public/portal/submissions?${usp.toString()}`,
+  );
+  const data = await unwrap<{ items: PortalSubmissionSummary[] }>(
+    res,
+    'Failed to load submissions.',
+  );
   return data.items ?? [];
 }
 
 export async function fetchSubmission(
   kind: PortalSubmissionKind,
-  id: string
+  id: string,
 ): Promise<PortalSubmissionDetail> {
-  const res = await portalFetch(`/api/v1/public/portal/submissions/${kind}/${encodeURIComponent(id)}`);
+  const res = await portalFetch(
+    `/api/v1/public/portal/submissions/${kind}/${encodeURIComponent(id)}`,
+  );
   // 403 OWNER_MISMATCH: session is valid but the form belongs to another
   // contact - surface as a typed error so the caller offers owner login.
   if (res.status === 403) {
     // The global handler flattens AppException to {message, detail, code}.
-    const body = await res.clone().json().catch(() => ({}));
+    const body = await res
+      .clone()
+      .json()
+      .catch(() => ({}));
     const code = body?.code ?? body?.detail?.code;
     if (code === 'OWNER_MISMATCH') {
-      throw new PortalOwnerMismatchError(body?.message ?? body?.detail?.message);
+      throw new PortalOwnerMismatchError(
+        body?.message ?? body?.detail?.message,
+      );
     }
   }
   return unwrap<PortalSubmissionDetail>(res, 'Failed to load submission.');
@@ -441,7 +486,7 @@ export async function saveDraft(
   kind: PortalSubmissionKind,
   fields: Record<string, unknown>,
   products?: Record<string, unknown>[],
-  id?: string
+  id?: string,
 ): Promise<PortalSubmissionDetail> {
   const url = id
     ? `/api/v1/public/portal/submissions/${kind}/${encodeURIComponent(id)}`
@@ -458,14 +503,20 @@ export async function submitDraft(
   kind: PortalSubmissionKind,
   id: string,
   fields?: Record<string, unknown>,
-  products?: Record<string, unknown>[]
+  products?: Record<string, unknown>[],
 ): Promise<PortalSubmissionDetail> {
-  const body = fields || products ? JSON.stringify({ fields: fields || {}, products }) : undefined;
-  const res = await portalFetch(`/api/v1/public/portal/submissions/${kind}/${encodeURIComponent(id)}/submit`, {
-    method: 'POST',
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body,
-  });
+  const body =
+    fields || products
+      ? JSON.stringify({ fields: fields || {}, products })
+      : undefined;
+  const res = await portalFetch(
+    `/api/v1/public/portal/submissions/${kind}/${encodeURIComponent(id)}/submit`,
+    {
+      method: 'POST',
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body,
+    },
+  );
   return unwrap<PortalSubmissionDetail>(res, 'Failed to submit.');
 }
 
@@ -527,6 +578,51 @@ export async function reviseSubmission(
   return unwrap<ReviseSubmissionResult>(res, 'Failed to send revision.');
 }
 
+export interface SaveRevisionDraftInput {
+  reason?: string | null;
+  baseRevisionNo: number;
+  fields: Record<string, unknown>;
+  products?: Record<string, unknown>[];
+}
+
+/** PUT .../submissions/{kind}/{id}/revision-draft - save (or update) an
+ *  in-progress revision, without sending it. */
+export async function saveRevisionDraft(
+  kind: PortalSubmissionKind,
+  id: string,
+  input: SaveRevisionDraftInput,
+): Promise<PortalRevisionDraft> {
+  const res = await portalFetch(
+    `/api/v1/public/portal/submissions/${kind}/${encodeURIComponent(id)}/revision-draft`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reason: input.reason ?? null,
+        base_revision_no: input.baseRevisionNo,
+        fields: input.fields,
+        products: input.products,
+      }),
+    },
+  );
+  return unwrap<PortalRevisionDraft>(res, 'Failed to save draft.');
+}
+
+/** DELETE .../submissions/{kind}/{id}/revision-draft - discard the in-progress
+ *  revision, if any. Idempotent. */
+export async function discardRevisionDraft(
+  kind: PortalSubmissionKind,
+  id: string,
+): Promise<void> {
+  const res = await portalFetch(
+    `/api/v1/public/portal/submissions/${kind}/${encodeURIComponent(id)}/revision-draft`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, 'Failed to discard draft.'));
+  }
+}
+
 export async function deleteDraftSubmission(
   kind: PortalSubmissionKind,
   id: string,
@@ -544,13 +640,16 @@ export async function deleteDraftSubmission(
 export async function uploadAttachment(
   kind: PortalSubmissionKind,
   submissionId: string,
-  file: File
+  file: File,
 ): Promise<PortalAttachment> {
   const form = new FormData();
   form.set('kind', kind);
   form.set('submission_id', submissionId);
   form.set('file', file, file.name);
-  const res = await portalMultipartFetch('/api/v1/public/portal/attachments', form);
+  const res = await portalMultipartFetch(
+    '/api/v1/public/portal/attachments',
+    form,
+  );
   return unwrap<PortalAttachment>(res, 'Upload failed.');
 }
 
@@ -598,16 +697,22 @@ export async function fetchPortalAttachmentBytes(
 }
 
 export async function deleteAttachment(linkId: string): Promise<void> {
-  const res = await portalFetch(`/api/v1/public/portal/attachments/${encodeURIComponent(linkId)}`, {
-    method: 'DELETE',
-  });
+  const res = await portalFetch(
+    `/api/v1/public/portal/attachments/${encodeURIComponent(linkId)}`,
+    {
+      method: 'DELETE',
+    },
+  );
   if (!res.ok) {
     const message = await extractApiError(res, 'Failed to remove attachment.');
     throw new Error(message);
   }
 }
 
-export async function requestOtp(contactId: string, spaceId: string): Promise<{ sent_to: string | null; expires_at: string }> {
+export async function requestOtp(
+  contactId: string,
+  spaceId: string,
+): Promise<{ sent_to: string | null; expires_at: string }> {
   const res = await fetch('/api/v1/public/portal/request-otp', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -619,7 +724,7 @@ export async function requestOtp(contactId: string, spaceId: string): Promise<{ 
 export async function verifyOtp(
   contactId: string,
   spaceId: string,
-  code: string
+  code: string,
 ): Promise<{ token: string; expires_at: string }> {
   const res = await fetch('/api/v1/public/portal/verify-otp', {
     method: 'POST',
@@ -654,7 +759,9 @@ export interface PortalSlugInfo {
 }
 
 /** GET /api/v1/public/portal/slug-info/{slug} - null mirrors the 404. */
-export async function fetchSlugInfo(slug: string): Promise<PortalSlugInfo | null> {
+export async function fetchSlugInfo(
+  slug: string,
+): Promise<PortalSlugInfo | null> {
   const res = await fetch(
     `/api/v1/public/portal/slug-info/${encodeURIComponent(slug)}`,
     { method: 'GET' },
@@ -759,13 +866,19 @@ export interface LookupSetOption {
   label: string;
 }
 
-export async function lookupProducts(q: string, limit = 20): Promise<ProductLookupItem[]> {
+export async function lookupProducts(
+  q: string,
+  limit = 20,
+): Promise<ProductLookupItem[]> {
   const url = `/api/v1/public/portal/lookups/products?q=${encodeURIComponent(q)}&limit=${limit}`;
   const res = await portalFetch(url);
   return unwrap<ProductLookupItem[]>(res, 'Failed to load products.');
 }
 
-export async function lookupDebtors(q: string, limit = 20): Promise<DebtorLookupItem[]> {
+export async function lookupDebtors(
+  q: string,
+  limit = 20,
+): Promise<DebtorLookupItem[]> {
   const url = `/api/v1/public/portal/lookups/debtors?q=${encodeURIComponent(q)}&limit=${limit}`;
   const res = await portalFetch(url);
   return unwrap<DebtorLookupItem[]>(res, 'Failed to load debtors.');
@@ -784,7 +897,10 @@ export interface ProjectLookupItem {
  * The backend scopes the list to the companies the contact is linked to, so an empty
  * result means "your company is not linked yet", not "no projects exist".
  */
-export async function lookupProjects(q: string, limit = 20): Promise<ProjectLookupItem[]> {
+export async function lookupProjects(
+  q: string,
+  limit = 20,
+): Promise<ProjectLookupItem[]> {
   const url = `/api/v1/public/portal/lookups/projects?q=${encodeURIComponent(q)}&limit=${limit}`;
   const res = await portalFetch(url);
   return unwrap<ProjectLookupItem[]>(res, 'Failed to load projects.');
@@ -826,11 +942,15 @@ export interface RequestorOptionsResult {
 
 /** GET /api/v1/public/portal/requestor-options?q= - names only, segment-gated
  *  (plus the submitting contact, always included server-side). */
-export async function fetchRequestorOptions(q?: string): Promise<RequestorOptionsResult> {
+export async function fetchRequestorOptions(
+  q?: string,
+): Promise<RequestorOptionsResult> {
   const usp = new URLSearchParams();
   if (q && q.trim()) usp.set('q', q.trim());
   const qs = usp.toString();
-  const res = await portalFetch(`/api/v1/public/portal/requestor-options${qs ? `?${qs}` : ''}`);
+  const res = await portalFetch(
+    `/api/v1/public/portal/requestor-options${qs ? `?${qs}` : ''}`,
+  );
   const data = await unwrap<{ items?: RequestorOption[]; has_more?: boolean }>(
     res,
     'Failed to load requestor options.',
@@ -866,10 +986,10 @@ export async function lookupSet(setKey: string): Promise<LookupSetResult> {
   if (_lookupSetCache[setKey]) return _lookupSetCache[setKey];
   const url = `/api/v1/public/portal/lookups/sets/${encodeURIComponent(setKey)}`;
   const res = await portalFetch(url);
-  const data = await unwrap<{ options: LookupSetOption[]; default_value: string | null }>(
-    res,
-    'Failed to load lookup options.',
-  );
+  const data = await unwrap<{
+    options: LookupSetOption[];
+    default_value: string | null;
+  }>(res, 'Failed to load lookup options.');
   const result: LookupSetResult = {
     options: data?.options ?? [],
     defaultValue: data?.default_value ?? null,
@@ -923,12 +1043,16 @@ export async function aiExtractFromFiles(
   formKey: string,
   files: File[],
 ): Promise<AIExtractResult> {
-  if (!files.length) throw new Error('Drop at least one file before extracting.');
+  if (!files.length)
+    throw new Error('Drop at least one file before extracting.');
   const form = new FormData();
   form.set('form_key', formKey);
   for (const file of files) {
     form.append('files', file, file.name);
   }
-  const res = await portalMultipartFetch('/api/v1/public/portal/ai-extract', form);
+  const res = await portalMultipartFetch(
+    '/api/v1/public/portal/ai-extract',
+    form,
+  );
   return unwrap<AIExtractResult>(res, 'AI extract failed.');
 }

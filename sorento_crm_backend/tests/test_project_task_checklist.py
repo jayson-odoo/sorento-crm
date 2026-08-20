@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from contextlib import contextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 from sqlalchemy import text
@@ -657,6 +657,13 @@ def test_task_history_reads_from_the_audit_trail_with_readable_values():
         # Stand in for the audit listeners, which fire on a real request flush. The
         # action is the one THEY write - "CREATE"; "INSERT" only ever came from a
         # hand-written call - so a timeline that renders this row renders a real one.
+        #
+        # `changed_at` is stamped EXPLICITLY, a minute apart. Its server default is
+        # `now()`, which in Postgres is the TRANSACTION timestamp, so two rows added
+        # in this one session get the identical value and the timeline's
+        # `order_by(changed_at)` is then free to return them either way round. That
+        # tie passed locally and failed in CI, reading as "created" arriving second.
+        created_at = datetime(2026, 7, 1, 9, 0, 0)
         db.add(
             AuditLog(
                 id=_uid(),
@@ -665,6 +672,7 @@ def test_task_history_reads_from_the_audit_trail_with_readable_values():
                 action="CREATE",
                 user_id=owner,
                 new_values={"name": "Visit the architect"},
+                changed_at=created_at,
             )
         )
         db.add(
@@ -676,6 +684,7 @@ def test_task_history_reads_from_the_audit_trail_with_readable_values():
                 user_id=owner,
                 old_values={"status_id": not_started.id, "assignee_user_id": None},
                 new_values={"status_id": in_progress.id, "assignee_user_id": eric},
+                changed_at=created_at + timedelta(minutes=1),
             )
         )
         db.flush()

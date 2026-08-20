@@ -565,7 +565,12 @@ def test_query_matches_the_project_code():
         project_a = _project(db, company_id, owner)
         target = _project_order(db, project_a, area_group="TOWER")
         _project_line(db, target, product, line_no=1, delivery_date=D1)
-        project_b = _project(db, company_id, owner)
+        # A distinct title, per `_project`'s contract: the duplicate detector matches
+        # titles fuzzily, so two default "Tuju Residences <rand>" registrations 409 the
+        # second one whenever the two random suffixes happen to look alike.
+        project_b = _project(
+            db, company_id, owner, title=f"{MARKER} Bandar Rimbayu {_uid()[:6]}"
+        )
         other = _project_order(db, project_b, area_group="TOWER")
         _project_line(db, other, product, line_no=1, delivery_date=D1)
         db.commit()
@@ -593,7 +598,12 @@ def test_query_matches_the_project_title():
         project_a = _project(db, company_id, owner)
         target = _project_order(db, project_a, area_group="TOWER")
         _project_line(db, target, product, line_no=1, delivery_date=D1)
-        project_b = _project(db, company_id, owner)
+        # A distinct title, per `_project`'s contract: the duplicate detector matches
+        # titles fuzzily, so two default "Tuju Residences <rand>" registrations 409 the
+        # second one whenever the two random suffixes happen to look alike.
+        project_b = _project(
+            db, company_id, owner, title=f"{MARKER} Bandar Rimbayu {_uid()[:6]}"
+        )
         other = _project_order(db, project_b, area_group="TOWER")
         _project_line(db, other, product, line_no=1, delivery_date=D1)
         db.commit()

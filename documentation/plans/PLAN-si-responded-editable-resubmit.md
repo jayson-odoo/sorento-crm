@@ -1,6 +1,7 @@
 # PLAN — Portal: make a `responded` Stock Inquiry editable + resubmittable
 
 **Status:** Built + verified (Playwright + pytest) — 2026-07-23. Not committed.
+**Superseded 2026-08-20 (captain):** a `responded` stock inquiry is read-only on the portal again; it changes only through Revise (`PortalRevisionService.revise`, UAC-portal-submission-revisions). The plain submit/draft gates reject `responded`. Branch `fm/si-revision-ux`.
 
 > **Build note — plan missed two backend gates.** The editability gate that actually
 > raised "This submission is not editable." is `_fetch_for_edit:1134`
