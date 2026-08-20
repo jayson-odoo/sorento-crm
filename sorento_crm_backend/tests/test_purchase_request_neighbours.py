@@ -213,31 +213,50 @@ def test_neighbours_out_of_filter_falls_back_scoped_to_request_type(db: Session)
     # The record exists but is NOT in the active filtered set. The service must fall
     # back to the default-sorted set (still scoped to request_type) so the pager is
     # never dead, and the total reflects the request_type-scoped count.
-    _seed_ordered_set(db, 3)  # match query=PREFIX (purchase_request)
+    #
+    # This used to prove that second half by comparing two SEPARATELY fetched live
+    # totals of the real, shared `purchase_requests` table for equality. That table
+    # is not this test's own - it is the whole suite's, and another xdist worker's
+    # file can insert/delete rows in the gap between those two reads, so "total at
+    # time A" can stop equalling "total at time B" on a run that never touched
+    # this file (BL-034 shape). What this test actually requires - that the
+    # fallback stayed scoped to request_type, not the query filter - is provable
+    # from this test's own marker rows alone, with no dependency on the ambient
+    # row count.
+    in_set = _seed_ordered_set(db, 3)  # match query=PREFIX (purchase_request)
     # A PR that does NOT match query=PREFIX.
     outside = _seed(db, request_number="PRNBR-OUTSIDE-1", customer_name="ZZZ-out")
     # A sponsorship form that must NOT be counted on the PR fallback.
-    _seed(
+    sf_outside = _seed(
         db,
         request_number="PRNBR-OUTSIDE-SF",
         request_type="sponsorship_form",
         customer_name="ZZZ-sf",
     )
+    own_pr_ids = {r.id for r in in_set} | {outside.id}
 
     svc = PurchaseRequestService(db)
-    # True PR-only unfiltered total to compare against.
-    pr_only_total = svc.neighbours(outside.id, request_type="purchase_request")["total"]
-
     out = svc.neighbours(
         outside.id,
         query=PREFIX,
         request_type="purchase_request",
         sort_field="customer_name",
     )
-    # Fell back: index resolved, total == the PR-only count (never wraps into SFs).
+    # Fell back: index resolved, and still bigger than the filtered subset.
     assert out["index"] is not None, "D2 fallback must resolve the record"
-    assert out["total"] == pr_only_total
     assert out["total"] > 3  # bigger than the filtered subset
+
+    # And dropped ENTIRELY, not just widened to some other partial filter: every
+    # one of this test's own PR rows must be reachable in the SAME request_type
+    # scope `neighbours()`'s own D2 branch reads, while the sponsorship form stays
+    # excluded (never wraps into SFs).
+    fallback_q = svc._build_request_list_query(request_type="purchase_request")
+    fallback_ids = {
+        str(row[0])
+        for row in fallback_q.with_entities(PurchaseRequestHeader.id).all()
+    }
+    assert own_pr_ids <= fallback_ids
+    assert sf_outside.id not in fallback_ids
 
 
 def test_neighbours_no_filter_uses_full_set(db: Session) -> None:

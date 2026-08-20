@@ -94,7 +94,9 @@ describe('InternalCommentComposer', () => {
     type('@Te');
 
     await waitFor(() => expect(screen.getByTestId('mention-typeahead')).toBeInTheDocument());
-    expect(getUsersSelect).toHaveBeenCalledWith(expect.objectContaining({ query: '@Te'.slice(1) }));
+    await waitFor(() =>
+      expect(getUsersSelect).toHaveBeenCalledWith(expect.objectContaining({ query: '@Te'.slice(1) })),
+    );
     expect(await screen.findByText('Team Lead')).toBeInTheDocument();
   });
 

@@ -232,18 +232,35 @@ def test_neighbours_out_of_filter_falls_back_to_unfiltered(db: Session) -> None:
     # The record exists but is NOT in the active filtered set. The service must fall
     # back to the unfiltered conversation set so the pager is never dead, and the
     # total reflects the unfiltered count.
-    _seed_ordered_set(db, 3)  # match query=NAME_MARKER
+    #
+    # This used to prove that second half by comparing two SEPARATELY fetched live
+    # totals of the real, shared `conversation_sla_tracking` table for equality.
+    # That table is not this test's own - it is the whole suite's, and another
+    # xdist worker's file can insert/delete rows in the gap between those two
+    # reads, so "total at time A" can stop equalling "total at time B" on a run
+    # that never touched this file (BL-034 shape). What this test actually
+    # requires - that the fallback used the unfiltered scope, not the filtered
+    # one - is provable from this test's own marker rows alone, with no
+    # dependency on the ambient row count.
+    in_set = _seed_ordered_set(db, 3)  # match query=NAME_MARKER
     policy = _seed_policy(db)
     outside_contact = _seed_contact(db, 200, name_marker="NBRCONVOUTSIDE")
     outside = _seed_tracking(db, policy, outside_contact, current_tier=9)
+    own_ids = {r.id for r in in_set} | {outside.id}
 
     svc = ConversationSLATrackingService(db)
-    unfiltered_total = svc.neighbours(outside.id)["total"]
-
     out = svc.neighbours(outside.id, query=NAME_MARKER + "-", sort_field="current_tier")
     assert out["index"] is not None, "D2 fallback must resolve the record"
-    assert out["total"] == unfiltered_total
     assert out["total"] > 3  # bigger than the filtered subset
+
+    # And dropped ENTIRELY, not just widened to some other partial filter: every
+    # one of this test's own rows must be reachable in the SAME unfiltered
+    # conversation scope `neighbours()`'s own D2 branch reads.
+    unfiltered_q = svc._build_conversation_list_query(db.query(ConversationSLATracking))
+    fallback_ids = {
+        str(row[0]) for row in unfiltered_q.with_entities(ConversationSLATracking.id).all()
+    }
+    assert own_ids <= fallback_ids
 
 
 def test_neighbours_excludes_form_sla_rows(db: Session) -> None:
