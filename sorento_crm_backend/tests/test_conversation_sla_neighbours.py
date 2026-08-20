@@ -106,7 +106,12 @@ def _seed_policy(db: Session) -> SLAPolicy:
 def _seed_contact(db: Session, idx: int, *, name_marker: str = NAME_MARKER) -> RespondContact:
     c = RespondContact(
         id=str(uuid.uuid4()),
-        phone_number=f"{PHONE_PREFIX}{idx:04d}",
+        # Unique per row, not just per index. `phone_number` is UNIQUE and the
+        # cleanup below deletes by NAME, so any contact this file leaves behind -
+        # a run killed mid-test, or a wipe that rolled back on someone else's FK -
+        # made every later test in the file die on a duplicate key rather than on
+        # anything it was testing.
+        phone_number=f"{PHONE_PREFIX}{idx:04d}-{uuid.uuid4().hex[:8]}",
         name=f"{name_marker}-{idx:03d}",
     )
     db.add(c)

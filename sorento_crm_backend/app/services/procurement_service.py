@@ -3472,6 +3472,9 @@ class StockInquiryService:
             "salesperson": StockInquiry.salesperson,
             "status": StockInquiry.status,
             "last_responded_at": StockInquiry.last_responded_at,
+            "last_activity_at": func.coalesce(
+                StockInquiry.last_revised_at, StockInquiry.created_at
+            ),
         }
         sort_column = sort_map.get(sort_field, StockInquiry.created_at)
 

@@ -19,7 +19,10 @@ import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
-import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
+import {
+  buildSelectColumn,
+  selectedRowIds,
+} from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -38,8 +41,14 @@ import { STOCK_INQUIRY_STATUS_LABELS } from '../types/stockInquiry.types';
 import StockInquiryBulkDeleteDialog from './StockInquiryBulkDeleteDialog';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 
-/** The listing's shipped default, used until the user has left one behind. */
-const DEFAULT_SORTING: SortingState = [{ id: 'created_at', desc: true }];
+/**
+ * The listing's shipped default, used until the user has left one behind.
+ *
+ * A revision is new work for whoever reads the list, so it sorts as if created
+ * then rather than staying buried at its original submission date.
+ * `last_activity_at` resolves server-side to coalesce(last_revised_at, created_at).
+ */
+const DEFAULT_SORTING: SortingState = [{ id: 'last_activity_at', desc: true }];
 
 /**
  * Shape of what this page stores in the opaque `filters` blob. BUMP THIS whenever
@@ -76,7 +85,10 @@ export default function StockInquiriesList() {
     filtersVersion: FILTERS_VERSION,
   });
 
-  const statusFilter = useMemo(() => viewFilters?.statuses ?? [], [viewFilters]);
+  const statusFilter = useMemo(
+    () => viewFilters?.statuses ?? [],
+    [viewFilters],
+  );
 
   const { data, isLoading, refetch, isFetching } = useStockInquiries({
     pageIndex: pagination.pageIndex,
@@ -151,11 +163,16 @@ export default function StockInquiriesList() {
             </span>
           );
         },
-        meta: { headerTitle: 'Stock inquiry number', skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: {
+          headerTitle: 'Stock inquiry number',
+          skeleton: <Skeleton className="h-4 w-20" />,
+        },
       },
       {
         accessorKey: 'revision_no',
-        header: ({ column }) => <DataGridColumnHeader title="Rev" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Rev" column={column} />
+        ),
         size: 80,
         enableSorting: false,
         // Denormalized on the row - no per-row query (UAC H4).
@@ -168,7 +185,10 @@ export default function StockInquiriesList() {
             </Badge>
           );
         },
-        meta: { headerTitle: 'Rev', skeleton: <Skeleton className="h-4 w-10" /> },
+        meta: {
+          headerTitle: 'Rev',
+          skeleton: <Skeleton className="h-4 w-10" />,
+        },
       },
       {
         accessorKey: 'product_code',
@@ -177,7 +197,10 @@ export default function StockInquiriesList() {
         ),
         size: 150,
         cell: ({ row }) => row.original.product_code || '-',
-        meta: { headerTitle: 'Product Code', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: {
+          headerTitle: 'Product Code',
+          skeleton: <Skeleton className="h-4 w-24" />,
+        },
       },
       {
         accessorKey: 'item_description',
@@ -186,7 +209,10 @@ export default function StockInquiriesList() {
         ),
         size: 200,
         cell: ({ row }) => row.original.item_description || '-',
-        meta: { headerTitle: 'Item Description', skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: {
+          headerTitle: 'Item Description',
+          skeleton: <Skeleton className="h-4 w-32" />,
+        },
       },
       {
         accessorKey: 'project_customer',
@@ -195,7 +221,10 @@ export default function StockInquiriesList() {
         ),
         size: 150,
         cell: ({ row }) => row.original.project_customer || '-',
-        meta: { headerTitle: 'Project Customer', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: {
+          headerTitle: 'Project Customer',
+          skeleton: <Skeleton className="h-4 w-24" />,
+        },
       },
       {
         accessorKey: 'project_name',
@@ -204,7 +233,10 @@ export default function StockInquiriesList() {
         ),
         size: 150,
         cell: ({ row }) => row.original.project_name || '-',
-        meta: { headerTitle: 'Project Name', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: {
+          headerTitle: 'Project Name',
+          skeleton: <Skeleton className="h-4 w-24" />,
+        },
       },
       {
         accessorKey: 'quantity',
@@ -213,7 +245,10 @@ export default function StockInquiriesList() {
         ),
         size: 100,
         cell: ({ row }) => row.original.quantity || '-',
-        meta: { headerTitle: 'Quantity', skeleton: <Skeleton className="h-4 w-16" /> },
+        meta: {
+          headerTitle: 'Quantity',
+          skeleton: <Skeleton className="h-4 w-16" />,
+        },
       },
       {
         accessorKey: 'delivery_date',
@@ -222,7 +257,10 @@ export default function StockInquiriesList() {
         ),
         cell: ({ row }) => row.original.delivery_date ?? '-',
         size: 150,
-        meta: { headerTitle: 'Delivery Date', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: {
+          headerTitle: 'Delivery Date',
+          skeleton: <Skeleton className="h-4 w-24" />,
+        },
       },
       {
         accessorKey: 'remark',
@@ -232,27 +270,38 @@ export default function StockInquiriesList() {
         cell: ({ row }) => {
           const remark = row.original.remark;
           return remark ? (
-            <span className="line-clamp-2" title={remark}>{remark}</span>
+            <span className="line-clamp-2" title={remark}>
+              {remark}
+            </span>
           ) : (
             '-'
           );
         },
         size: 180,
-        meta: { headerTitle: 'Remark', skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: {
+          headerTitle: 'Remark',
+          skeleton: <Skeleton className="h-4 w-20" />,
+        },
       },
       {
-        accessorKey: 'created_at',
+        id: 'last_activity_at',
         header: ({ column }) => (
-          <DataGridColumnHeader title="Created" column={column} />
+          <DataGridColumnHeader title="Last activity" column={column} />
         ),
         size: 150,
         cell: ({ row }) => {
-          const raw = row.original.created_at;
+          const { created_at, revision_no, last_revised_at } = row.original;
+          const isRevised = (revision_no ?? 0) > 0 && last_revised_at != null;
+          const raw = isRevised ? last_revised_at : created_at;
           if (raw == null) return '-';
           const formatted = formatDateTimeInMalaysia(raw);
-          return formatted || '-';
+          if (!formatted) return '-';
+          return isRevised ? `Revised ${formatted}` : formatted;
         },
-        meta: { headerTitle: 'Created', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: {
+          headerTitle: 'Last activity',
+          skeleton: <Skeleton className="h-4 w-24" />,
+        },
       },
       {
         accessorKey: 'salesperson',
@@ -261,7 +310,10 @@ export default function StockInquiriesList() {
         ),
         size: 150,
         cell: ({ row }) => row.original.salesperson || '-',
-        meta: { headerTitle: 'Salesperson', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: {
+          headerTitle: 'Salesperson',
+          skeleton: <Skeleton className="h-4 w-24" />,
+        },
       },
       {
         accessorKey: 'status',
@@ -278,7 +330,10 @@ export default function StockInquiriesList() {
             </span>
           );
         },
-        meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-16" /> },
+        meta: {
+          headerTitle: 'Status',
+          skeleton: <Skeleton className="h-4 w-16" />,
+        },
       },
       {
         accessorKey: 'assigned_to_name',
@@ -288,11 +343,17 @@ export default function StockInquiriesList() {
         size: 160,
         enableSorting: false,
         cell: ({ row }) => (
-          <span className="truncate" title={row.original.assigned_to_name ?? undefined}>
+          <span
+            className="truncate"
+            title={row.original.assigned_to_name ?? undefined}
+          >
             {row.original.assigned_to_name ?? '-'}
           </span>
         ),
-        meta: { headerTitle: 'Assigned To', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: {
+          headerTitle: 'Assigned To',
+          skeleton: <Skeleton className="h-4 w-24" />,
+        },
       },
       {
         accessorKey: 'handled_by_name',
@@ -302,11 +363,17 @@ export default function StockInquiriesList() {
         size: 160,
         enableSorting: false,
         cell: ({ row }) => (
-          <span className="truncate" title={row.original.handled_by_name ?? undefined}>
+          <span
+            className="truncate"
+            title={row.original.handled_by_name ?? undefined}
+          >
             {row.original.handled_by_name ?? '-'}
           </span>
         ),
-        meta: { headerTitle: 'Handled By', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: {
+          headerTitle: 'Handled By',
+          skeleton: <Skeleton className="h-4 w-24" />,
+        },
       },
       {
         accessorKey: 'print_count',
@@ -323,7 +390,10 @@ export default function StockInquiriesList() {
             count={row.original.print_count ?? 0}
           />
         ),
-        meta: { headerTitle: 'Print Count', skeleton: <Skeleton className="h-4 w-12" /> },
+        meta: {
+          headerTitle: 'Print Count',
+          skeleton: <Skeleton className="h-4 w-12" />,
+        },
       },
       {
         accessorKey: 'actions',
@@ -405,29 +475,31 @@ export default function StockInquiriesList() {
                   </div>
                   <Separator />
                   <div className="py-1">
-                    {Object.entries(STOCK_INQUIRY_STATUS_LABELS).map(([value, label]) => {
-                      const checked = statusFilter.includes(value);
-                      return (
-                        <button
-                          key={value}
-                          type="button"
-                          onClick={() => toggleStatusFilter(value)}
-                          className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
-                        >
-                          <span
-                            className={cn(
-                              'flex size-4 items-center justify-center rounded-sm border border-primary',
-                              checked
-                                ? 'bg-primary text-primary-foreground'
-                                : 'opacity-50 [&_svg]:invisible',
-                            )}
+                    {Object.entries(STOCK_INQUIRY_STATUS_LABELS).map(
+                      ([value, label]) => {
+                        const checked = statusFilter.includes(value);
+                        return (
+                          <button
+                            key={value}
+                            type="button"
+                            onClick={() => toggleStatusFilter(value)}
+                            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
                           >
-                            <Check className="size-3.5" />
-                          </span>
-                          <span>{label}</span>
-                        </button>
-                      );
-                    })}
+                            <span
+                              className={cn(
+                                'flex size-4 items-center justify-center rounded-sm border border-primary',
+                                checked
+                                  ? 'bg-primary text-primary-foreground'
+                                  : 'opacity-50 [&_svg]:invisible',
+                              )}
+                            >
+                              <Check className="size-3.5" />
+                            </span>
+                            <span>{label}</span>
+                          </button>
+                        );
+                      },
+                    )}
                   </div>
                   {statusFilter.length > 0 && (
                     <>

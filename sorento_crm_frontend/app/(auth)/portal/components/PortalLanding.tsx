@@ -10,7 +10,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertCircle, Filter, FileText, LogOut, Plus, Star } from 'lucide-react';
+import {
+  AlertCircle,
+  Filter,
+  FileText,
+  LogOut,
+  Plus,
+  Star,
+} from 'lucide-react';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -48,7 +55,11 @@ import {
   readPortalToken,
   statusLabel,
 } from '../lib/portal-client';
-import { complaintStatusLabel, complaintStatusPillClass } from '@/lib/complaint-status';
+import {
+  complaintStatusLabel,
+  complaintStatusPillClass,
+} from '@/lib/complaint-status';
+import { revisionBadgeLabel } from '@/lib/document-number';
 import {
   portalDetailPath,
   portalNewPath,
@@ -67,7 +78,13 @@ const TYPES: PortalSubmissionKind[] = [
 
 type StatusFilter = 'all' | 'draft' | 'submitted' | 'rejected';
 
-type BadgeVariant = 'primary' | 'secondary' | 'destructive' | 'success' | 'warning' | 'info';
+type BadgeVariant =
+  | 'primary'
+  | 'secondary'
+  | 'destructive'
+  | 'success'
+  | 'warning'
+  | 'info';
 
 // Status → badge colour. draft is intentionally neutral (no colour) so it
 // reads as "not yet meaningful". The other states map to a unique colour so
@@ -121,9 +138,11 @@ function effectiveStatus(row: PortalSubmissionSummary): StatusFilter {
 }
 
 // Per-kind primary/secondary metadata picked for the compact card layout.
-function pickCardMeta(
-  row: PortalSubmissionSummary,
-): { product?: string; project?: string; customer?: string } {
+function pickCardMeta(row: PortalSubmissionSummary): {
+  product?: string;
+  project?: string;
+  customer?: string;
+} {
   if (row.kind === 'complaint') {
     return {
       product: row.product_code ?? undefined,
@@ -148,7 +167,9 @@ export function PortalLanding({ slug }: { slug?: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [contact, setContact] = useState<PortalContact | null>(null);
-  const [submissions, setSubmissions] = useState<Record<PortalSubmissionKind, PortalSubmissionSummary[]>>({
+  const [submissions, setSubmissions] = useState<
+    Record<PortalSubmissionKind, PortalSubmissionSummary[]>
+  >({
     complaint: [],
     stock_inquiry: [],
     purchase_request: [],
@@ -162,7 +183,8 @@ export function PortalLanding({ slug }: { slug?: string }) {
     const t = searchParams?.get('type');
     return isSubmissionKind(t) ? t : 'stock_inquiry';
   })();
-  const [activeTab, setActiveTab] = useState<PortalSubmissionKind>(initialTabFromUrl);
+  const [activeTab, setActiveTab] =
+    useState<PortalSubmissionKind>(initialTabFromUrl);
   const userPickedTabRef = useRef<boolean>(Boolean(searchParams?.get('type')));
   // Mirror current URL `?type=` so loadAll's expired-token redirect can read it
   // without depending on `searchParams` (which would re-create loadAll and
@@ -197,7 +219,8 @@ export function PortalLanding({ slug }: { slug?: string }) {
     return `sorento.portalDefaultTab.${contact.contact_id}`;
   }, [contact?.contact_id]);
 
-  const [savedDefaultTab, setSavedDefaultTab] = useState<PortalSubmissionKind | null>(null);
+  const [savedDefaultTab, setSavedDefaultTab] =
+    useState<PortalSubmissionKind | null>(null);
   useEffect(() => {
     if (!defaultTabKey || typeof window === 'undefined') {
       setSavedDefaultTab(null);
@@ -226,55 +249,60 @@ export function PortalLanding({ slug }: { slug?: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
-  const loadAll = useCallback(async (q?: string) => {
-    const existing = readPortalToken();
-    if (!existing) {
-      router.replace(portalVerifyPath({ slug: slug ?? null }));
-      return;
-    }
-    const isInitial = !initialLoadDone.current;
-    if (isInitial) setLoading(true);
-    try {
-      // fetchMeWithGrace absorbs the post-verify commit-visibility race
-      // (fresh token transiently 401s) before bouncing back to verify.
-      const me = await fetchMeWithGrace();
-      setContact(me);
-      const lists = await Promise.all(TYPES.map((t) => fetchSubmissions(t, q)));
-      setSubmissions({
-        stock_inquiry: lists[0],
-        complaint: lists[1],
-        purchase_request: lists[2],
-        sponsorship_form: lists[3],
-      });
-      setError(null);
-      // Token validated — clear the freshness stamp so subsequent transient
-      // 401s (e.g. real expiry) bounce back immediately without retry.
-      if (typeof window !== 'undefined') {
-        window.sessionStorage.removeItem('sorento.portalTokenWrittenAt');
-      }
-    } catch (e) {
-      if (e instanceof PortalUnauthorizedError) {
-        // Token expired/revoked. The slug tree recovers identity from the
-        // slug itself; the legacy tree forwards the dead token so
-        // /portal/verify can look up contact/space via /token-info.
-        router.replace(
-          portalVerifyPath({
-            slug: slug ?? null,
-            reason: 'expired',
-            token: existing,
-            type: typeQueryRef.current,
-          }),
-        );
+  const loadAll = useCallback(
+    async (q?: string) => {
+      const existing = readPortalToken();
+      if (!existing) {
+        router.replace(portalVerifyPath({ slug: slug ?? null }));
         return;
       }
-      setError(e instanceof Error ? e.message : 'Failed to load portal.');
-    } finally {
-      if (isInitial) {
-        setLoading(false);
-        initialLoadDone.current = true;
+      const isInitial = !initialLoadDone.current;
+      if (isInitial) setLoading(true);
+      try {
+        // fetchMeWithGrace absorbs the post-verify commit-visibility race
+        // (fresh token transiently 401s) before bouncing back to verify.
+        const me = await fetchMeWithGrace();
+        setContact(me);
+        const lists = await Promise.all(
+          TYPES.map((t) => fetchSubmissions(t, q)),
+        );
+        setSubmissions({
+          stock_inquiry: lists[0],
+          complaint: lists[1],
+          purchase_request: lists[2],
+          sponsorship_form: lists[3],
+        });
+        setError(null);
+        // Token validated — clear the freshness stamp so subsequent transient
+        // 401s (e.g. real expiry) bounce back immediately without retry.
+        if (typeof window !== 'undefined') {
+          window.sessionStorage.removeItem('sorento.portalTokenWrittenAt');
+        }
+      } catch (e) {
+        if (e instanceof PortalUnauthorizedError) {
+          // Token expired/revoked. The slug tree recovers identity from the
+          // slug itself; the legacy tree forwards the dead token so
+          // /portal/verify can look up contact/space via /token-info.
+          router.replace(
+            portalVerifyPath({
+              slug: slug ?? null,
+              reason: 'expired',
+              token: existing,
+              type: typeQueryRef.current,
+            }),
+          );
+          return;
+        }
+        setError(e instanceof Error ? e.message : 'Failed to load portal.');
+      } finally {
+        if (isInitial) {
+          setLoading(false);
+          initialLoadDone.current = true;
+        }
       }
-    }
-  }, [router, slug]);
+    },
+    [router, slug],
+  );
 
   useEffect(() => {
     void loadAll();
@@ -315,7 +343,9 @@ export function PortalLanding({ slug }: { slug?: string }) {
     }
     clearPortalToken();
     const qs = !slug && t ? t : null;
-    router.replace(portalVerifyPath({ slug: slug ?? null, reason: 'logout', token: qs }));
+    router.replace(
+      portalVerifyPath({ slug: slug ?? null, reason: 'logout', token: qs }),
+    );
   }, [router, slug]);
 
   if (loading) {
@@ -337,7 +367,12 @@ export function PortalLanding({ slug }: { slug?: string }) {
           </AlertIcon>
           <AlertTitle>{error}</AlertTitle>
         </Alert>
-        <Button variant="outline" onClick={() => router.replace(portalVerifyPath({ slug: slug ?? null }))}>
+        <Button
+          variant="outline"
+          onClick={() =>
+            router.replace(portalVerifyPath({ slug: slug ?? null }))
+          }
+        >
           Verify with OTP
         </Button>
       </div>
@@ -402,10 +437,16 @@ export function PortalLanding({ slug }: { slug?: string }) {
               value={statusFilter}
               onValueChange={(v) => setStatusFilter(v as StatusFilter)}
             >
-              <DropdownMenuRadioItem value="all">All statuses</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="all">
+                All statuses
+              </DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="draft">Draft</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="submitted">Submitted</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="rejected">Rejected</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="submitted">
+                Submitted
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="rejected">
+                Rejected
+              </DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -415,7 +456,10 @@ export function PortalLanding({ slug }: { slug?: string }) {
         <SearchableSelect
           value={activeTab}
           onChange={(v) => handleTabChange(v as PortalSubmissionKind)}
-          options={TYPES.map((t) => ({ value: t, label: SUBMISSION_LABELS[t] }))}
+          options={TYPES.map((t) => ({
+            value: t,
+            label: SUBMISSION_LABELS[t],
+          }))}
           size="lg"
           triggerClassName="flex-1 h-12 text-base"
           renderTriggerLabel={(opt) => {
@@ -472,7 +516,9 @@ export function PortalLanding({ slug }: { slug?: string }) {
         >
           <Star
             className={`h-4 w-4 ${
-              savedDefaultTab === activeTab ? 'fill-yellow-400 text-yellow-500' : ''
+              savedDefaultTab === activeTab
+                ? 'fill-yellow-400 text-yellow-500'
+                : ''
             }`}
           />
         </Button>
@@ -506,7 +552,9 @@ function SubmissionList({
     return items.filter((r) => effectiveStatus(r) === statusFilter);
   }, [items, statusFilter]);
 
-  const [previewRow, setPreviewRow] = useState<PortalSubmissionSummary | null>(null);
+  const [previewRow, setPreviewRow] = useState<PortalSubmissionSummary | null>(
+    null,
+  );
 
   return (
     <div className="space-y-3">
@@ -642,36 +690,70 @@ function SubmissionCard({
         </Badge>
       )}
       <div className="space-y-1 pr-[45%]">
-        <p className="text-base font-semibold break-words" title={primary}>
-          {primary}
-        </p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <p className="text-base font-semibold break-words" title={primary}>
+            {primary}
+          </p>
+          {revisionBadgeLabel(row.revision_no) && (
+            <Badge variant="secondary">
+              {revisionBadgeLabel(row.revision_no)}
+            </Badge>
+          )}
+          {row.has_revision_draft && (
+            <Badge variant="warning" data-testid="revising-chip">
+              Revising
+            </Badge>
+          )}
+        </div>
       </div>
       <div className="space-y-1 mt-1">
         {meta.product && (
-          <p className="text-sm text-foreground/80 break-words" title={meta.product}>
+          <p
+            className="text-sm text-foreground/80 break-words"
+            title={meta.product}
+          >
             <span className="text-muted-foreground">Product: </span>
             {meta.product}
           </p>
         )}
         {meta.project && (
-          <p className="text-sm text-foreground/80 break-words" title={meta.project}>
+          <p
+            className="text-sm text-foreground/80 break-words"
+            title={meta.project}
+          >
             <span className="text-muted-foreground">Project: </span>
             {meta.project}
           </p>
         )}
         {meta.customer && (
-          <p className="text-sm text-foreground/80 break-words" title={meta.customer}>
+          <p
+            className="text-sm text-foreground/80 break-words"
+            title={meta.customer}
+          >
             <span className="text-muted-foreground">Customer: </span>
             {meta.customer}
           </p>
         )}
-        {row.created_at && (
+        {row.last_revised_at ? (
           <p className="text-xs text-muted-foreground">
-            {new Date(row.created_at).toLocaleDateString(undefined, { dateStyle: 'medium' })}
+            Revised{' '}
+            {new Date(row.last_revised_at).toLocaleDateString(undefined, {
+              dateStyle: 'medium',
+            })}
           </p>
+        ) : (
+          row.created_at && (
+            <p className="text-xs text-muted-foreground">
+              {new Date(row.created_at).toLocaleDateString(undefined, {
+                dateStyle: 'medium',
+              })}
+            </p>
+          )
         )}
         {row.rejection_reason && (
-          <p className="text-xs text-destructive line-clamp-2">{row.rejection_reason}</p>
+          <p className="text-xs text-destructive line-clamp-2">
+            {row.rejection_reason}
+          </p>
         )}
       </div>
     </div>
@@ -693,16 +775,22 @@ function SubmissionPreviewDialog({
   // The list carries no policy block, so the card reads the same `revision`
   // block the detail page renders from. One GET, opened on long press only.
   const { policy } = useRevisionPolicy(kind, row?.id ?? null);
-  const meta = row ? pickCardMeta(row) : { product: undefined, project: undefined, customer: undefined };
+  const meta = row
+    ? pickCardMeta(row)
+    : { product: undefined, project: undefined, customer: undefined };
   const entries: { label: string; value: string }[] = [];
   if (row) {
-    if (row.document_number) entries.push({ label: 'Document number', value: row.document_number });
+    if (row.document_number)
+      entries.push({ label: 'Document number', value: row.document_number });
     if (row.title) entries.push({ label: 'Title', value: row.title });
     if (meta.product) entries.push({ label: 'Product', value: meta.product });
     if (meta.project) entries.push({ label: 'Project', value: meta.project });
-    if (meta.customer) entries.push({ label: 'Customer', value: meta.customer });
-    if (row.delivery_order_number) entries.push({ label: 'DO number', value: row.delivery_order_number });
-    if (row.item_description) entries.push({ label: 'Item description', value: row.item_description });
+    if (meta.customer)
+      entries.push({ label: 'Customer', value: meta.customer });
+    if (row.delivery_order_number)
+      entries.push({ label: 'DO number', value: row.delivery_order_number });
+    if (row.item_description)
+      entries.push({ label: 'Item description', value: row.item_description });
     if (row.purpose) entries.push({ label: 'Purpose', value: row.purpose });
     if (row.reference && row.reference !== row.document_number) {
       entries.push({ label: 'Reference', value: row.reference });
@@ -716,7 +804,8 @@ function SubmissionPreviewDialog({
         }),
       });
     }
-    if (row.rejection_reason) entries.push({ label: 'Rejection reason', value: row.rejection_reason });
+    if (row.rejection_reason)
+      entries.push({ label: 'Rejection reason', value: row.rejection_reason });
   }
 
   return (
@@ -747,7 +836,9 @@ function SubmissionPreviewDialog({
               <p className="text-xs uppercase tracking-wide text-muted-foreground">
                 {e.label}
               </p>
-              <p className="text-sm break-words whitespace-pre-wrap">{e.value}</p>
+              <p className="text-sm break-words whitespace-pre-wrap">
+                {e.value}
+              </p>
             </div>
           ))}
         </div>
@@ -760,7 +851,11 @@ function SubmissionPreviewDialog({
           className="border-t pt-3"
         />
         <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)} className="h-10">
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            className="h-10"
+          >
             Close
           </Button>
           <Button

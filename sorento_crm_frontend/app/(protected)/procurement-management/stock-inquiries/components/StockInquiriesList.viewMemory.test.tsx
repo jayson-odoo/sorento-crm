@@ -261,14 +261,14 @@ describe('StockInquiriesList remembered view', () => {
     expect(service.upsertUserListColumnConfig).not.toHaveBeenCalled();
   });
 
-  it('falls back to the shipped default (newest first, no filter) with nothing stored (AC-B2)', async () => {
+  it('falls back to the shipped default (latest activity first, no filter) with nothing stored (AC-B2)', async () => {
     storedConfig(null);
     mockList([inquiry()]);
     renderList();
 
     expect(await screen.findByText('SI-26-0184')).toBeInTheDocument();
     const last = enabledFetches().at(-1)!;
-    expect(last.sorting).toEqual([{ id: 'created_at', desc: true }]);
+    expect(last.sorting).toEqual([{ id: 'last_activity_at', desc: true }]);
     expect(last.statuses).toEqual([]);
     expect(
       screen.queryByRole('button', { name: /^Clear filter:/ }),

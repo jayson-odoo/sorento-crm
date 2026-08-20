@@ -32,7 +32,12 @@ from typing import Any, Callable, Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.portal import PortalFormRevision, PortalRevisionConfig, PortalToken
+from app.models.portal import (
+    PortalFormRevision,
+    PortalRevisionConfig,
+    PortalRevisionDraft,
+    PortalToken,
+)
 from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine, StockInquiry
 from app.services.document_number import suffix_revision
 from app.services.error_handler import handle_conflict, handle_unprocessable
@@ -1017,6 +1022,120 @@ class PortalRevisionService:
             )
         return row
 
+    # ---------------- revision drafts ----------------
+    #
+    # A draft is a work-in-progress revision the contact can leave and resume.
+    # It never touches the entity - it lives entirely in `portal_revision_drafts`
+    # until Send revision, which applies the SAME payload through `revise` and
+    # deletes the draft row.
+
+    def _get_draft_row(
+        self, source_entity_type: str, submission_id: str
+    ) -> Optional[PortalRevisionDraft]:
+        return (
+            self.db.query(PortalRevisionDraft)
+            .filter(
+                PortalRevisionDraft.source_entity_type == source_entity_type,
+                PortalRevisionDraft.source_entity_id == str(submission_id),
+            )
+            .first()
+        )
+
+    def _draft_as_dict(self, adapter: RevisionAdapter, row: Any, draft: PortalRevisionDraft) -> dict:
+        current_revision_no = int(getattr(row, adapter.revision_no_attr, 0) or 0)
+        return {
+            "fields": draft.payload_json or {},
+            "reason": draft.reason,
+            "base_revision_no": draft.base_revision_no,
+            "updated_at": draft.updated_at.isoformat() if draft.updated_at else None,
+            "stale": draft.base_revision_no != current_revision_no,
+        }
+
+    def get_draft(self, source_entity_type: str, submission_id: str) -> Optional[dict]:
+        """The stored draft for one submission, or ``None`` when there is none.
+
+        No ownership check here - the caller (``portal_get_submission``) already
+        ran ``PortalService.get_submission`` under the token, which is the same
+        403/404 the rest of the portal makes.
+        """
+        adapter = get_adapter(source_entity_type)
+        if adapter is None:
+            return None
+        draft = self._get_draft_row(source_entity_type, submission_id)
+        if draft is None:
+            return None
+        row = (
+            self.db.query(adapter.model)
+            .filter(adapter.model.id == str(submission_id))
+            .first()
+        )
+        if row is None:
+            return None
+        return self._draft_as_dict(adapter, row, draft)
+
+    def save_draft(
+        self,
+        token: PortalToken,
+        source_entity_type: str,
+        submission_id: str,
+        payload: dict,
+        reason: Optional[str],
+        base_revision_no: int,
+    ) -> dict:
+        """Upsert the draft for one submission.
+
+        Re-runs the SAME policy gate ``revise`` uses: a draft that could never be
+        sent must not be storable. The reason is optional here (a draft may be
+        mid-thought) but capped at the same length.
+        """
+        adapter = get_adapter(source_entity_type)
+        if adapter is None:
+            raise handle_unprocessable(_DISABLED_SENTENCE)
+
+        row = self.fetch_owned(token, source_entity_type, submission_id)
+
+        policy = self.resolve_policy(source_entity_type, row)
+        if not policy.allowed:
+            raise handle_unprocessable(policy.blocked_reason or _DISABLED_SENTENCE)
+
+        reason_text = (reason or "").strip() or None
+        if reason_text and len(reason_text) > REASON_MAX_LEN:
+            raise handle_unprocessable(f"Keep the reason under {REASON_MAX_LEN} characters.")
+
+        # Same stripping `revise` does - a draft cannot smuggle a frozen field in
+        # either (UAC AB1/AB2).
+        clean_payload = {
+            key: value
+            for key, value in (payload or {}).items()
+            if key not in adapter.frozen_on_revise
+        }
+
+        draft = self._get_draft_row(source_entity_type, str(row.id))
+        if draft is None:
+            draft = PortalRevisionDraft(
+                source_entity_type=source_entity_type,
+                source_entity_id=str(row.id),
+                contact_id=token.contact_id,
+            )
+            self.db.add(draft)
+        draft.contact_id = token.contact_id
+        draft.base_revision_no = int(base_revision_no)
+        draft.payload_json = clean_payload
+        draft.reason = reason_text
+        self.db.commit()
+        self.db.refresh(draft)
+
+        return self._draft_as_dict(adapter, row, draft)
+
+    def discard_draft(self, source_entity_type: str, submission_id: str) -> None:
+        """Delete the draft row for one submission. Idempotent - no error when
+        there is none."""
+        self.db.query(PortalRevisionDraft).filter(
+            PortalRevisionDraft.source_entity_type == source_entity_type,
+            PortalRevisionDraft.source_entity_id == str(submission_id),
+        ).delete(synchronize_session=False)
+        self.db.commit()
+
     def revise(
         self,
         token: PortalToken,
@@ -1153,6 +1272,12 @@ class PortalRevisionService:
                 f"Revision {new_revision_no} submitted by the contact. Reason: {reason_text}"
             ),
         )
+
+        # 10a. A sent revision has no leftover draft.
+        self.db.query(PortalRevisionDraft).filter(
+            PortalRevisionDraft.source_entity_type == source_entity_type,
+            PortalRevisionDraft.source_entity_id == str(row.id),
+        ).delete(synchronize_session=False)
 
         # 11. One transaction ends here.
         self.db.commit()

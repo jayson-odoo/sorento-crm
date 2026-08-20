@@ -161,3 +161,39 @@ class PortalRevisionConfig(Base):
         # the SAME constraint name - the config seed upserts against it.
         UniqueConstraint("source_entity_type", name="uq_portal_revision_configs_type"),
     )
+
+
+class PortalRevisionDraft(Base):
+    """An in-progress revision, saved by the contact before Send revision.
+
+    Generic on ``(source_entity_type, source_entity_id)``, same as
+    :class:`PortalFormRevision`, and deliberately NOT company-scoped for the same
+    reason: the parent entity already carries the company, and the portal reads
+    this table under a contact token where no company scope applies.
+    """
+
+    __tablename__ = "portal_revision_drafts"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_entity_type = Column(String(50), nullable=False)
+    source_entity_id = Column(UUID(as_uuid=False), nullable=False)
+    # The internal respond_contacts.id that owns this draft - what
+    # PortalToken.contact_id holds (NOT the Respond.io respond_io_id).
+    contact_id = Column(UUID(as_uuid=False), nullable=False)
+    # The entity's revision_no when the draft was started; staleness is
+    # base_revision_no != entity.revision_no.
+    base_revision_no = Column(Integer, nullable=False)
+    payload_json = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    reason = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        # One open draft per submission.
+        UniqueConstraint(
+            "source_entity_type", "source_entity_id", name="uq_portal_revision_drafts_entity"
+        ),
+        Index("ix_portal_revision_drafts_contact_id", "contact_id"),
+    )

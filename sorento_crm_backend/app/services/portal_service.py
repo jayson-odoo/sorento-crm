@@ -24,13 +24,13 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 from uuid import UUID
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
 from app.models.access import RespondContact
 from app.models.complaints import Complaint
-from app.models.portal import PortalOtpCode, PortalToken
+from app.models.portal import PortalOtpCode, PortalRevisionDraft, PortalToken
 from app.models.procurement import (
     PurchaseRequestHeader,
     PurchaseRequestLine,
@@ -654,6 +654,26 @@ class PortalService:
             raise handle_not_found("Contact", token.contact_id)
         return contact
 
+    def _ids_with_revision_draft(self, source_entity_type: str, ids: list[str]) -> set[str]:
+        """Ids among ``ids`` that have an unsent revision draft parked.
+
+        One query per list call, skipped entirely when there is nothing to check
+        against - the list row marks "you have unsent changes here", not the
+        submission's real status (that stays untouched; see the revising banner
+        on the form itself for the "not sent yet" message).
+        """
+        if not ids:
+            return set()
+        rows = (
+            self.db.query(PortalRevisionDraft.source_entity_id)
+            .filter(
+                PortalRevisionDraft.source_entity_type == source_entity_type,
+                PortalRevisionDraft.source_entity_id.in_(ids),
+            )
+            .all()
+        )
+        return {str(r[0]) for r in rows}
+
     # ---------- List submissions ----------
 
     def list_submissions(
@@ -714,8 +734,20 @@ class PortalService:
                         StockInquiry.status.ilike(like),
                     )
                 )
-            rows = query.order_by(StockInquiry.created_at.desc()).all()
-            return [self._serialize_stock_inquiry_summary(r) for r in rows]
+            # A revision is new work for the reader, so it sorts as if created then.
+            rows = query.order_by(
+                func.coalesce(StockInquiry.last_revised_at, StockInquiry.created_at).desc(),
+                StockInquiry.id.asc(),
+            ).all()
+            draft_ids = self._ids_with_revision_draft(
+                "stock_inquiry", [str(r.id) for r in rows]
+            )
+            return [
+                self._serialize_stock_inquiry_summary(
+                    r, has_revision_draft=str(r.id) in draft_ids
+                )
+                for r in rows
+            ]
         # purchase_request / sponsorship_form
         query = self.db.query(PurchaseRequestHeader).filter(
             PurchaseRequestHeader.contact_id == token.contact_id,
@@ -747,8 +779,18 @@ class PortalService:
                     PurchaseRequestHeader.id.in_(line_subq),
                 )
             )
-        rows = query.order_by(PurchaseRequestHeader.created_at.desc()).all()
-        return [self._serialize_request_summary(r) for r in rows]
+        # A revision is new work for the reader, so it sorts as if created then.
+        rows = query.order_by(
+            func.coalesce(PurchaseRequestHeader.last_revised_at, PurchaseRequestHeader.created_at).desc(),
+            PurchaseRequestHeader.id.asc(),
+        ).all()
+        # source_entity_type on portal_revision_drafts matches `kind` exactly for
+        # both purchase_request and sponsorship_form (see the revision adapters).
+        draft_ids = self._ids_with_revision_draft(kind, [str(r.id) for r in rows])
+        return [
+            self._serialize_request_summary(r, has_revision_draft=str(r.id) in draft_ids)
+            for r in rows
+        ]
 
     # ---------- Detail ----------
 
@@ -849,12 +891,15 @@ class PortalService:
             )
             row_status = (getattr(row, "status", None) or "").strip().lower()
             row_status_rejected = row_status == "rejected"
-            # A `responded` stock inquiry that the salesperson reopens is submit-only,
-            # mirroring `rejected` - no parking it back in draft.
+            # A `responded` stock inquiry can only be changed through Revise -
+            # mirroring `rejected`, which can only progress via Submit - no parking
+            # either back in a plain draft save.
             row_status_responded = row_status == "responded"
             if approval_rejected or row_status_rejected or row_status_responded:
-                # A rejected/responded submission can only progress via Submit;
-                # salesperson cannot park it back in draft.
+                if row_status_responded:
+                    raise handle_validation_error(
+                        "This submission can only be changed through Revise."
+                    )
                 raise handle_validation_error(
                     "This submission must be resent via Submit — draft saves are disabled."
                 )
@@ -898,10 +943,9 @@ class PortalService:
                 )
             row.status = "submitted"
         elif kind == "stock_inquiry":
-            # `responded` is included so a salesperson can act on purchasing's
-            # clarifying reply (edit + resubmit) without waiting for a formal
-            # purchasing_reject. Resubmit re-runs project-sales vetting.
-            if previous_status not in ("draft", "rejected", "responded"):
+            # A `responded` inquiry is read-only on this path - it changes only
+            # through the revision endpoint (`PortalRevisionService.revise`).
+            if previous_status not in ("draft", "rejected"):
                 raise handle_validation_error(
                     f"Cannot submit stock inquiry with status {previous_status!r}."
                 )
@@ -1737,7 +1781,9 @@ class PortalService:
         )
         return base
 
-    def _serialize_stock_inquiry_summary(self, row: StockInquiry) -> dict:
+    def _serialize_stock_inquiry_summary(
+        self, row: StockInquiry, *, has_revision_draft: bool = False
+    ) -> dict:
         return {
             "id": str(row.id),
             "kind": "stock_inquiry",
@@ -1748,11 +1794,15 @@ class PortalService:
             "document_number": display_document_number(row) or row.inquiry_number,
             "status": row.status,
             "rejection_reason": row.rejection_reason,
-            "is_editable": bool(row.portal_draft_at)
-            or row.status == "rejected"
-            or row.status == "responded",
+            "is_editable": bool(row.portal_draft_at) or row.status == "rejected",
             "is_draft": row.portal_draft_at is not None,
             "created_at": row.created_at.isoformat() if row.created_at else None,
+            "last_revised_at": row.last_revised_at.isoformat() if row.last_revised_at else None,
+            "revision_no": int(row.revision_no or 0),
+            # Marks a list row that has an unsent revision draft parked - the row's
+            # own `status` stays the real one; this is what tells the two apart
+            # from the entity that simply hasn't been touched (UAC: revision drafts).
+            "has_revision_draft": has_revision_draft,
             "product_code": row.product_code,
             "project_name": row.project_name,
             "project_customer": row.project_customer,
@@ -1789,7 +1839,9 @@ class PortalService:
         )
         return base
 
-    def _serialize_request_summary(self, row: PurchaseRequestHeader) -> dict:
+    def _serialize_request_summary(
+        self, row: PurchaseRequestHeader, *, has_revision_draft: bool = False
+    ) -> dict:
         approval_rejected = (
             (getattr(row, "approval_status", None) or "").strip().lower() == "rejected"
         )
@@ -1810,6 +1862,10 @@ class PortalService:
             "is_editable": is_editable,
             "is_draft": row.portal_draft_at is not None,
             "created_at": row.created_at.isoformat() if row.created_at else None,
+            "last_revised_at": row.last_revised_at.isoformat() if row.last_revised_at else None,
+            "revision_no": int(row.revision_no or 0),
+            # See _serialize_stock_inquiry_summary - same convention here.
+            "has_revision_draft": has_revision_draft,
             "project_title": row.project_title,
             "customer_name": row.customer_name,
             "sponsor_subject": row.sponsor_subject,
