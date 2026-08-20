@@ -388,7 +388,10 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
                              horizon=run.plan_horizon_date)
         # Confirmed Reserve / Borrow leaves the Retail free-supply pool before anything is
         # netted against it (AC-F07); stamped on the row so every planning path sees it.
-        _apply_project_supply_reduction(db, rows)
+        # Horizoned on the SAME rule as the demand it offsets (AC-F-horizon): a reserve
+        # claimed against a project line beyond "Plan until" must leave the pool together
+        # with that line's own demand, or it keeps subtracting cover nobody asked for.
+        _apply_project_supply_reduction(db, rows, horizon=run.plan_horizon_date)
         last_move = _last_movement_map(db, [r["product_id"] for r in rows], run.warehouse_ids)
         # L5 - how long the stock sitting there has been sitting. Only ever consulted for a
         # SKU that has never moved, where until now there was no evidence at all.
@@ -413,7 +416,8 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
         else:
             recs = _plan_per_warehouse(db, run_id, rows, policies, today, last_move,
                                        wh_meta, last_buy=last_buy, rates=rates,
-                                       levels=levels, last_cost=last_cost)
+                                       levels=levels, last_cost=last_cost,
+                                       horizon=run.plan_horizon_date)
 
         # M4 cash stage — compute + FREEZE each buy's rank_score / rank / rank_factors
         # (funded/deferred is computed live at view-time against a budget, not here).
@@ -593,7 +597,8 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     return [dict(r) for r in db.execute(sql, params).mappings().all()]
 
 
-def _project_supply_reduction_map(db: Session, rows: list[dict]) -> dict[tuple, float]:
+def _project_supply_reduction_map(db: Session, rows: list[dict],
+                                  horizon: Optional[date] = None) -> dict[tuple, float]:
     """``{(product_id, warehouse_id): qty}`` of stock an ACTIVE Project decision has
     already claimed, at the location it was claimed FROM.
 
@@ -611,6 +616,12 @@ def _project_supply_reduction_map(db: Session, rows: list[dict]) -> dict[tuple, 
 
     Timely SPO cover carries no allocation row today (it is dated location supply, not a
     persisted SO-line link), so it enters here only once Stage 1C writes it as a component.
+
+    ``horizon`` filters on the CORE line's own ``required_date`` - the same demand this
+    claim reduces `project_need` against (`project_confirmed_committed`, already horizoned
+    through `demand.horizon_committed_select_sql`) - so a reserve and the demand it offsets
+    leave the plan together. Undated demand stays in, same rule as every other horizon
+    predicate in this module.
     """
     pids = list({str(r["product_id"]) for r in rows})
     if not pids:
@@ -627,19 +638,22 @@ def _project_supply_reduction_map(db: Session, rows: list[dict]) -> dict[tuple, 
          AND d.state = 'active'
         WHERE a.source_type <> 'order'
           AND sol.product_id::text = ANY(:pids)
+          AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
+               OR sol.required_date <= CAST(:horizon AS date))
         GROUP BY 1, 2
-    """), {"pids": pids}).fetchall()
+    """), {"pids": pids, "horizon": horizon}).fetchall()
     return {(str(r[0]), str(r[1])): float(r[2] or 0.0)
             for r in found if r[1] is not None and float(r[2] or 0.0) > 0}
 
 
-def _apply_project_supply_reduction(db: Session, rows: list[dict]) -> None:
+def _apply_project_supply_reduction(db: Session, rows: list[dict],
+                                    horizon: Optional[date] = None) -> None:
     """Stamp each planning row with the confirmed Project claim on its own stock.
 
     Mutated onto the row rather than passed down, exactly like `_apply_unlocated_demand`,
     so every path that computes a cell sees it without a new parameter on four signatures.
     """
-    claims = _project_supply_reduction_map(db, rows)
+    claims = _project_supply_reduction_map(db, rows, horizon=horizon)
     if not claims:
         return
     for r in rows:
@@ -822,7 +836,8 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
                         last_buy: Optional[dict] = None,
                         rates: Optional[dict] = None,
                         levels: Optional[dict] = None,
-                        last_cost: Optional[dict] = None) -> list[ReorderRecommendation]:
+                        last_cost: Optional[dict] = None,
+                        horizon: Optional[date] = None) -> list[ReorderRecommendation]:
     """Plan each SKU against each fulfilment POOL, not each warehouse.
 
     A shortage in one bin is covered from the shared pool its site draws on before it is
@@ -847,7 +862,7 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
     for r in rows:
         by_product.setdefault(str(r["product_id"]), []).append(r)
 
-    _apply_unlocated_demand(db, by_product)
+    _apply_unlocated_demand(db, by_product, horizon=horizon)
 
     for pid, prows in by_product.items():
         # Each location is its own pool unless the policy says siblings may cover for one
@@ -877,13 +892,20 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
     return recs
 
 
-def _unlocated_demand_map(db: Session, product_ids: list[str]) -> dict[str, float]:
+def _unlocated_demand_map(db: Session, product_ids: list[str],
+                          horizon: Optional[date] = None) -> dict[str, float]:
     """``{product_id: qty}`` of open demand whose sales-order line names no warehouse.
 
     97% of the customer's open lines are like this. Grouped away by ``scm.committed_v``
     under a NULL key that ``scm.net_position_v`` then fails to join to itself (``NULL =
     NULL`` is not true), so this demand was netted against nothing, anywhere, and the
     products carrying it simply never appeared in a plan.
+
+    ``horizon`` mirrors ``demand.horizon_committed_select_sql``'s own rule exactly (the
+    two must not drift, or a located line beyond the cutoff is excluded while an
+    unlocated line for the same product is not): a stated ``required_date`` after the
+    cutoff is excluded, a NULL date is always in. ``None`` reproduces the unhorizoned
+    query byte-for-byte.
     """
     if not product_ids:
         return {}
@@ -899,12 +921,15 @@ def _unlocated_demand_map(db: Session, product_ids: list[str]) -> dict[str, floa
           AND sol.purchasing_status <> 'covered'
           AND sol.product_id::text = ANY(:pids)
           {("AND " + co) if co else ""}
+          AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
+               OR sol.required_date <= CAST(:horizon AS date))
         GROUP BY sol.product_id
-    """), {"pids": [str(p) for p in product_ids], **co_params}).fetchall()
+    """), {"pids": [str(p) for p in product_ids], "horizon": horizon, **co_params}).fetchall()
     return {str(r[0]): float(r[1] or 0.0) for r in rows if float(r[1] or 0.0) > 0}
 
 
-def _apply_unlocated_demand(db: Session, by_product: dict[str, list[dict]]) -> None:
+def _apply_unlocated_demand(db: Session, by_product: dict[str, list[dict]],
+                            horizon: Optional[date] = None) -> None:
     """Land each product's unlocated demand on the location that would actually ship it.
 
     > "all SO line should have warehouse one, no warehouse we can just put it under net"
@@ -919,8 +944,12 @@ def _apply_unlocated_demand(db: Session, by_product: dict[str, list[dict]]) -> N
     The rows are mutated in place, so everything downstream - netting, trigger, order size,
     the covered-by-stock suggestion - sees it as ordinary demand at that location. The
     quantity is stamped on the row so the plan can say where it came from.
+
+    ``horizon`` is the run's own "Plan until" cutoff, threaded straight through to
+    ``_unlocated_demand_map`` - this path alone carries ~97% of the book, so leaving it
+    unhorizoned defeated the horizon for nearly the whole plan.
     """
-    unlocated = _unlocated_demand_map(db, list(by_product.keys()))
+    unlocated = _unlocated_demand_map(db, list(by_product.keys()), horizon=horizon)
     if not unlocated:
         return
     for pid, qty in unlocated.items():
@@ -2395,18 +2424,29 @@ def recalc_rounded_qty(recommended_qty, moq: Optional[float],
 
 def set_moq_override(db: Session, rec_id: str, moq: Optional[float]) -> dict:
     """Persist (or clear, on ``None``) the buyer's own MoQ for one recommendation row,
-    and return the recalculated figures so the plan grid updates the row WITHOUT a full
-    re-run — captain's 20 Aug live-test ask ("MoQ is varying ... let them input it, and
-    when they change it, recalculate").
+    and recalculate + PERSIST ``rounded_qty`` / ``cash_impact`` off it so the plan grid
+    updates the row WITHOUT a full re-run - captain's 20 Aug live-test ask ("MoQ is
+    varying ... let them input it, and when they change it, recalculate").
 
-    Never rewrites the persisted ``rounded_qty`` / ``inputs`` columns — AC-M3.11's freeze
-    still describes exactly what the engine computed; the override lives alongside it and
-    is applied live, the same way M4's ``funding_status`` is applied live against a
-    slid budget with no persistence until Apply."""
+    ``rounded_qty`` / ``cash_impact`` ARE rewritten (unlike the frozen ``inputs`` blob,
+    which never moves - AC-M3.11's freeze is about reproducing a fresh run's arithmetic
+    byte-for-byte, not about pinning a derived column the buyer just told us is wrong).
+    Every reader of those two columns - the draft-PO line at confirm, the budget
+    allocator, the grid's server-side sort, the M8 explainer/market/simulation views -
+    is a straight column read with no override-awareness of its own, so an override that
+    only lived in the live recompute here (the previous shape) was invisible to all of
+    them. Making the column itself correct fixes every reader at once instead of teaching
+    each one about ``moq_override``.
+
+    Guarded like a location decision (AC-F09, AC-F10): the MoQ is what a location
+    recommendation gets accepted/adjusted AT, so changing it is refused on the same grain
+    and legacy-run terms as Accept/Adjust/Reject, and refused outright once the row has
+    already been decided - an accepted/adjusted rec may already sit in a draft PO line
+    keyed off the qty this would silently move out from under it."""
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="mvo")
     rec = db.execute(text(
-        "SELECT id, rec_type, recommended_qty, unit_cost, currency, rate_to_base, "
-        "       rate_as_of, inputs FROM scm.reorder_recommendation "
+        "SELECT id, run_id, rec_type, status, recommended_qty, unit_cost, currency, "
+        "       rate_to_base, rate_as_of, inputs FROM scm.reorder_recommendation "
         f"WHERE id = :id AND {co or 'true'}"
     ), {"id": rec_id, **co_params}).mappings().first()
     if not rec:
@@ -2418,17 +2458,30 @@ def set_moq_override(db: Session, rec_id: str, moq: Optional[float]) -> dict:
     if moq is not None and float(moq) < 0:
         raise AppException(status_code=422, message="MoQ cannot be negative.")
 
-    moq_value = float(moq) if moq is not None else None
-    db.execute(text(
-        "UPDATE scm.reorder_recommendation SET moq_override = :m WHERE id = :id"
-    ), {"m": moq_value, "id": rec_id})
-    db.commit()
+    run = db.query(ReorderRun).filter(ReorderRun.id == rec["run_id"]).first()
+    if run is None:
+        raise AppException(status_code=404, message="Reorder run not found.")
+    plan_grain.assert_decision_grain(run, plan_grain.LOCATION_GRAIN)
+    if rec["status"] != "proposed":
+        raise AppException(
+            status_code=409,
+            message="This row has already been decided, so its MoQ can no longer be "
+                    "changed. Reset the decision first.",
+            code="recommendation_already_decided",
+        )
 
+    moq_value = float(moq) if moq is not None else None
     inp = rec["inputs"] or {}
     effective, is_override = effective_moq(inp, moq_value)
     rounded = recalc_rounded_qty(rec["recommended_qty"], effective, inp.get("order_multiple"))
     cash_impact = _cash_impact_in_base(
         rounded, rec["unit_cost"], rec["currency"], rec["rate_to_base"], rec["rate_as_of"])
+    db.execute(text(
+        "UPDATE scm.reorder_recommendation "
+        "SET moq_override = :m, rounded_qty = :rq, cash_impact = :ci WHERE id = :id"
+    ), {"m": moq_value, "rq": rounded, "ci": cash_impact, "id": rec_id})
+    db.commit()
+
     return {
         "recommendation_id": rec_id,
         "moq": effective,

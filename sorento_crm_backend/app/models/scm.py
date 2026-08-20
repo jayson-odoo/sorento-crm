@@ -324,9 +324,11 @@ class ReorderRecommendation(Base, CompanyScopedMixin):
     recommended_qty = Column(Numeric, nullable=True)
     rounded_qty = Column(Numeric, nullable=True)
     #: The buyer's own MoQ, replacing the frozen master figure for THIS row only. NULL =
-    #: use the master value frozen in `inputs.moq` at run time. Never rewrites `rounded_qty`
-    #: or the frozen `inputs` (AC-M3.11 stays intact) - the effective quantity is re-derived
-    #: live at read time (`reorder_run_service.set_moq_override` / the recommendations list).
+    #: use the master value frozen in `inputs.moq` at run time. Setting it RECALCULATES
+    #: AND PERSISTS `rounded_qty` / `cash_impact` (see `reorder_run_service.set_moq_override`)
+    #: so every consumer of those columns - draft PO lines, the budget allocator, sort -
+    #: is correct with no override-awareness of its own. `inputs` (AC-M3.11's freeze) never
+    #: moves - a fresh run with no override still reproduces byte-for-byte.
     moq_override = Column(Numeric, nullable=True)
     #: What the SUPPLIER charges, in `currency`. This is the figure a PO will carry.
     unit_cost = Column(Numeric(12, 2), nullable=True)

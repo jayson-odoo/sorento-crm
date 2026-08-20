@@ -8,6 +8,7 @@ quantity was built from, including the ones that named no location.
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
 import pytest
 from sqlalchemy import text
@@ -23,7 +24,7 @@ pytestmark = requires_pg
 
 
 def _so(db, pid, wid, qty, *, order_type="project", number=None,
-        customer_id=None, debtor_code=None, unit_price=None):
+        customer_id=None, debtor_code=None, unit_price=None, required_date=None):
     soid = str(uuid.uuid4())
     # S13b: a project-class order is committed demand only when the Order Inquiry
     # created or named it (`is_plan_demand_order()` / `scm.committed_v`). This test is
@@ -38,10 +39,11 @@ def _so(db, pid, wid, qty, *, order_type="project", number=None,
         "c": customer_id, "d": debtor_code})
     db.execute(text(
         "INSERT INTO sales_order_lines (id, sales_order_id, product_id, warehouse_id, "
-        "qty_ordered, qty_required, qty_delivered, unit_price, line_status, "
+        "qty_ordered, qty_required, qty_delivered, unit_price, required_date, line_status, "
         "purchasing_status, created_at, updated_at) "
-        "VALUES (:i, :so, :p, :w, :q, :q, 0, :up, 'open', 'needs_purchase', now(), now())"
-    ), {"i": str(uuid.uuid4()), "so": soid, "p": pid, "w": wid, "q": qty, "up": unit_price})
+        "VALUES (:i, :so, :p, :w, :q, :q, 0, :up, :rd, 'open', 'needs_purchase', now(), now())"
+    ), {"i": str(uuid.uuid4()), "so": soid, "p": pid, "w": wid, "q": qty, "up": unit_price,
+        "rd": required_date})
 
 
 def _customer(db, code, name, company_id=None):
@@ -629,3 +631,79 @@ def test_sf2_channel_totals_are_read_off_the_uncapped_set(scm_app):
         out["project_total"] + out["retail_total"] + out["unclassified_total"]
         == out["committed_total"]
     )
+
+
+# =============================================================================
+# S1 (review fix) - the drill speaks the SAME horizon the run itself was sized against
+# =============================================================================
+
+def test_drill_matches_the_frozen_row_under_a_horizon(scm_app):
+    """Before threading the run's `plan_horizon_date` through, the drill compared a LIVE
+    UNHORIZONED total against the FROZEN, HORIZONED `inputs.committed` the run actually
+    sized the row against. A line dated well past the horizon inflated the live sum past
+    the frozen figure, so `committed_total` (and the lines list) stopped summing to the
+    row - the exact drift the scope test exists to prevent."""
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-HZN1")
+    pid = _mk_product(db, f"ZZTP-HZN1-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _so(db, pid, wid, 40, order_type="retail", number="ZZTSO-HZN-NEAR",
+        required_date=date(2026, 6, 1))
+    # Horizoned OUT of the run's own committed figure - must be horizoned out of the
+    # drill too, or the drill disagrees with the row that opened it.
+    _so(db, pid, wid, 900, order_type="retail", number="ZZTSO-HZN-FAR",
+        required_date=date(2030, 1, 1))
+    _link(db, pid, _mk_supplier(db, "ZZT Hzn1 Supplier"), moq=None, mult=None)
+    db.flush()
+
+    created = svc.create_run(db, ["ZZTW-HZN1"], enqueue=False,
+                             plan_horizon_date=date(2026, 12, 31))
+    svc.run_reorder(created["run_id"], db=db)
+    rec = _rec_row(db, created["run_id"], pid, wid)
+    assert float((rec["inputs"] or {}).get("committed")) == 40.0, (
+        "the run's own frozen committed figure must already exclude the 2030 line"
+    )
+
+    out = dbs.demand_for_recommendation(db, str(rec["id"]))
+
+    assert out["scope"] == "warehouse", "a single unpooled location - never mislabelled pool"
+    assert out["committed_total"] == 40.0, "must match the run's own horizoned figure"
+    assert [l["so_number"] for l in out["lines"]] == ["ZZTSO-HZN-NEAR"], (
+        "the far-dated line must not appear in the drill either"
+    )
+
+
+def test_drill_keeps_a_horizoned_pool_row_from_reading_as_a_sibling_pool(scm_app):
+    """S1's own example: a pooled row, sized by the run under a horizon. Without the
+    fix, a beyond-horizon line at the row's OWN location inflates `total_for([wid])`
+    past the frozen `committed`, and the scope test falls through toward the pool
+    reading - the row's popover would then list a SIBLING warehouse's orders."""
+    _, db, _, _ = scm_app
+    root = _mk_warehouse(db, "ZZTW-HZNROOT")
+    bin_ = _mk_warehouse(db, "ZZTW-HZNBIN")
+    db.execute(text("UPDATE warehouses SET pool_warehouse_id = :r WHERE id = :b"),
+              {"r": root, "b": bin_})
+    pid = _mk_product(db, f"ZZTP-HZNPOOL-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, root, 0)
+    _mk_stock(db, pid, bin_, 0)
+    _mk_demand(db, pid, root, 0.0)
+    _mk_demand(db, pid, bin_, 0.0)
+    _so(db, pid, bin_, 40, number="ZZTSO-HZNBIN-NEAR", required_date=date(2026, 6, 1))
+    _so(db, pid, bin_, 900, number="ZZTSO-HZNBIN-FAR", required_date=date(2030, 1, 1))
+    _link(db, pid, _mk_supplier(db, "ZZT HznPool Supplier"), moq=None, mult=None)
+    db.flush()
+
+    created = svc.create_run(db, ["ZZTW-HZNROOT", "ZZTW-HZNBIN"], enqueue=False,
+                             plan_horizon_date=date(2026, 12, 31))
+    svc.run_reorder(created["run_id"], db=db)
+    rec = _rec_row(db, created["run_id"], pid, bin_)
+
+    out = dbs.demand_for_recommendation(db, str(rec["id"]))
+
+    assert out["scope"] == "warehouse", (
+        "the row's own location reproduces the frozen figure once horizoned; it must "
+        "never be mislabelled pool and list the root's unrelated orders"
+    )
+    assert out["locations"] == ["ZZTW-HZNBIN"]
+    assert [l["so_number"] for l in out["lines"]] == ["ZZTSO-HZNBIN-NEAR"]

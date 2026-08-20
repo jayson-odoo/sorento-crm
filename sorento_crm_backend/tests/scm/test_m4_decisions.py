@@ -126,6 +126,56 @@ def test_accept_stages_no_po_until_confirm(scm_app):
 
 
 # ===========================================================================
+# B1 (review fix) - a MoQ override reaches the draft PO at Confirm, not just the grid
+# ===========================================================================
+
+def test_moq_override_reaches_the_draft_po_at_confirm(scm_app):
+    """Before the fix, `_line_inputs` built the draft PO line off the STALE `rounded_qty`
+    column: a buyer's MoQ override recalculated the grid but Accept + Confirm still raised
+    the PO at the OLD master rounding. `set_moq_override` now persists the recalculated
+    `rounded_qty` (and `cash_impact`), so Confirm reads the SAME figure the buyer saw and
+    agreed to. The override is set well ABOVE the engine's own master rounding (never
+    assumed - the engine's sizing is independent of this test) so the two can never
+    coincide by chance and the pin is discriminating."""
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "M4W-MOQOV")
+    p = _mk_product(db, "M4P-MOQOV")
+    _mk_stock(db, p, wid, 5)
+    _mk_demand(db, p, wid, 10.0)
+    _link(db, p, _mk_supplier(db, "M4 MoQ Override Supplier"), moq=500, mult=1, cost=60)
+    db.flush()
+
+    run_id = _run_buys(db, "M4W-MOQOV")
+    recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
+    assert p in recs
+    rec = recs[p]
+    master_rounded = float(rec["rounded_qty"])
+
+    # A MoQ well above whatever the engine sized, so the override is unmistakably a
+    # DIFFERENT figure from the master rounding, however the engine happened to size it.
+    override_moq = master_rounded + 5000
+    override = run_svc.set_moq_override(db, rec["id"], override_moq)
+    overridden_qty = override["order_qty"]
+    assert overridden_qty == override_moq, "need floors up to the (huge) override MoQ"
+    assert overridden_qty != master_rounded, "the override must actually change the order"
+
+    dsvc.accept_recommendation(db, rec["id"], actor="tester")
+    dsvc.confirm_decisions(db, run_id, ids=None, actor="tester")
+
+    po_id = _po_id_for_rec(db, rec["id"])
+    assert po_id is not None, "accept + confirm must still raise a draft PO"
+    line_qty = db.execute(text(
+        "SELECT qty_ordered FROM purchase_order_lines WHERE source_ref = :r"
+    ), {"r": rec["id"]}).scalar()
+    assert float(line_qty) == overridden_qty, (
+        "the draft PO line must raise at the buyer's overridden quantity"
+    )
+    assert float(line_qty) != master_rounded, (
+        "the draft PO line must NOT raise at the stale master rounding"
+    )
+
+
+# ===========================================================================
 # AC-M4.5 — Confirm decisions consolidates a draft PO per supplier
 # ===========================================================================
 

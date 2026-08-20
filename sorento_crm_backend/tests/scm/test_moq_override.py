@@ -1,21 +1,28 @@
-"""The buyer's own MoQ override (commit cefa08670) — "the buyer states the MoQ the
-supplier is actually holding to".
+"""The buyer's own MoQ override (commit cefa08670, hardened for the B1 review finding) -
+"the buyer states the MoQ the supplier is actually holding to".
 
 Traces to `app/services/scm/reorder_run_service.py::set_moq_override` /
 `effective_moq` / `recalc_rounded_qty` and `PUT /api/v1/scm/recommendations/{id}/moq`.
 
 The contract under test:
-  * `moq_override` lives ALONGSIDE the frozen `rounded_qty` / `inputs` (AC-M3.11) — it is
-    never rewritten by an override, so a fresh run with no override still matches
-    byte-for-byte.
+  * `moq_override` is PERSISTED alongside a RECALCULATED `rounded_qty` / `cash_impact` -
+    every existing reader of those two columns (the draft PO line at confirm, the M4
+    budget allocator, the results-grid sort, the M8 explainer/market/simulation views) is
+    a straight column read with no override-awareness of its own, so the override must be
+    correct AT THE COLUMN, not only at read time. `inputs` (AC-M3.11's freeze) is the one
+    thing that never moves - a fresh run with no override still matches it byte-for-byte.
   * Setting an override re-rounds `order_qty` through the SAME `reorder_engine.round_order_qty`
     the run itself used, off the row's FROZEN `recommended_qty` — the need never moves,
     only the rounding rung.
   * `cash_impact` follows the re-rounded qty (in BASE_CURRENCY).
-  * Clearing (`moq: null`) reverts to the frozen master figure (`inputs.moq`).
-  * The recommendations LIST endpoint reflects the override live, with no engine re-run.
-  * 404 for an unknown rec id, 422 for a negative/non-numeric moq, company isolation, and
-    403 without `scm.reorder.run`.
+  * Clearing (`moq: null`) reverts to the frozen master figure (`inputs.moq`), and PERSISTS
+    the master rounding back onto the row.
+  * The recommendations LIST endpoint reflects the persisted figure (still recomputed
+    live as a defensive re-derive, so the two never disagree).
+  * Grain guard (only a LOCATION-grain run may set/clear a MoQ) and lifecycle guard (a row
+    already accepted/adjusted/dismissed refuses further changes) - both 409.
+  * 404 for an unknown rec id, 422 for a negative/non-numeric/boolean moq, company
+    isolation, and 403 without `scm.reorder.run`.
 
 Two fixture styles, matching the shape of what each test needs:
   * `db` (`pg_session`) for the plain service-level tests and the company-isolation test —
@@ -72,6 +79,11 @@ def db():
 
 
 def _mk_run(db, **kw) -> ReorderRun:
+    # LOCATION grain by default: `set_moq_override` is guarded exactly like Accept /
+    # Adjust / Reject (S7), and every test in this file exercises it against a rec on
+    # this run, so it must be a run those decisions may land on.
+    kw.setdefault("decision_grain", "location")
+    kw.setdefault("front_planning_contract_version", 1)
     run = ReorderRun(
         id=_u(), status="completed", buy_scope="warehouse",
         source_system="scm", source_ref=_code("RUN"), **kw,
@@ -163,20 +175,23 @@ def test_clearing_the_override_reverts_to_master_rounding(db):
     assert result["cash_impact"] == pytest.approx(100.0 * 60.0)
 
 
-def test_override_changes_only_rounding_never_recommended_qty_or_need(db):
-    """The override must never touch the frozen `recommended_qty` / `inputs` columns —
-    AC-M3.11's freeze is untouched; only the LIVE re-derivation at read time moves."""
+def test_override_changes_rounding_but_never_recommended_qty_or_inputs(db):
+    """The override PERSISTS the recalculated `rounded_qty` (B1 - every consumer of that
+    column must see the override, not just a live re-derive), but never touches the frozen
+    `recommended_qty` / `inputs` columns - AC-M3.11's freeze describes the engine's own
+    arithmetic, not a derived column the buyer just corrected."""
     f = _mk_chain(db, master_moq=100, order_multiple=50, recommended_qty=40, unit_cost=60)
     rec = f["rec"]
-    original_rounded = float(rec.rounded_qty)
     original_inputs = dict(rec.inputs)
 
     svc.set_moq_override(db, rec.id, 250)
 
     db.refresh(rec)
     assert float(rec.recommended_qty) == 40.0, "the frozen need column never moves"
-    assert float(rec.rounded_qty) == original_rounded, (
-        "set_moq_override must never rewrite the persisted rounded_qty"
+    # floor(40, 250) = 250 -> ceil(250/50)*50 = 250, matching reorder_engine.round_order_qty
+    assert float(rec.rounded_qty) == 250.0, (
+        "set_moq_override must persist the recalculated rounded_qty, or every reader of "
+        "that column (draft PO, budget allocator, sort) stays stale"
     )
     assert rec.inputs == original_inputs, "the frozen inputs (master moq) are never rewritten"
 
@@ -211,6 +226,53 @@ def test_a_negative_moq_is_a_422(db):
     with pytest.raises(AppException) as caught:
         svc.set_moq_override(db, f["rec"].id, -1)
     assert caught.value.status_code == 422
+
+
+# =============================================================================
+# S7 (review fix) - grain guard + lifecycle guard on the MoQ write
+# =============================================================================
+
+def test_a_product_grain_run_refuses_the_moq_override(db):
+    """Guarded exactly like Accept/Adjust/Reject (AC-F09): a MoQ is what a LOCATION
+    decision gets accepted at, so a run stamped at the OTHER grain may not take it."""
+    f = _mk_chain(db)
+    f["run"].decision_grain = "product"
+    db.add(f["run"])
+    db.flush()
+
+    with pytest.raises(AppException) as caught:
+        svc.set_moq_override(db, f["rec"].id, 10)
+    assert caught.value.status_code == 409
+    assert caught.value.detail["code"] == "decision_grain_mismatch"
+
+
+def test_a_legacy_run_refuses_the_moq_override(db):
+    """AC-F10: a run that predates the front-planning contract is read only."""
+    f = _mk_chain(db)
+    f["run"].decision_grain = None
+    f["run"].front_planning_contract_version = None
+    db.add(f["run"])
+    db.flush()
+
+    with pytest.raises(AppException) as caught:
+        svc.set_moq_override(db, f["rec"].id, 10)
+    assert caught.value.status_code == 409
+    assert caught.value.detail["code"] == "legacy_run_read_only"
+
+
+def test_an_already_decided_rec_refuses_further_moq_changes(db):
+    """A rec already accepted into a draft PO must not have its MoQ moved out from
+    under the PO line it may already sit in."""
+    from app.services.scm import decision_service as dsvc
+
+    f = _mk_chain(db)
+    dsvc.accept_recommendation(db, f["rec"].id, actor="tester")
+    db.flush()
+
+    with pytest.raises(AppException) as caught:
+        svc.set_moq_override(db, f["rec"].id, 10)
+    assert caught.value.status_code == 409
+    assert caught.value.detail["code"] == "recommendation_already_decided"
 
 
 # =============================================================================
@@ -308,6 +370,16 @@ def test_put_moq_non_numeric_is_422(scm_app):
     assert res.status_code == 422
 
 
+def test_put_moq_boolean_is_422(scm_app):
+    """S7 (review fix): `isinstance(True, (int, float))` is `True` in Python, so a bare
+    numeric-type check silently accepted a boolean as a MoQ - it must be rejected."""
+    app, db = _client(scm_app, "purchasing")
+    f = _mk_http_chain(db)
+    with TestClient(app) as c:
+        res = c.put(f"/api/v1/scm/recommendations/{f['rec'].id}/moq", json={"moq": True})
+    assert res.status_code == 422
+
+
 def test_put_moq_denied_without_reorder_run_permission(scm_app):
     """Auth: setting a MoQ override is a planning action -> needs `scm.reorder.run`,
     same family as Accept/Adjust/Reject and the budget apply."""
@@ -318,10 +390,11 @@ def test_put_moq_denied_without_reorder_run_permission(scm_app):
     assert res.status_code == 403
 
 
-def test_recommendations_list_reflects_the_override_without_an_engine_rerun(scm_app):
-    """The list read live-recomputes `order_qty` / `cash_impact` off the override — no
-    re-run needed — and the persisted `rounded_qty` column stays exactly what the run
-    froze, proving the list is reading it live rather than a second write having landed."""
+def test_recommendations_list_reflects_the_persisted_override(scm_app):
+    """The list read reflects the override without a full engine re-run, and the
+    persisted `rounded_qty` / `cash_impact` columns carry the SAME recalculated figure
+    (B1) - not the master rounding - so every other reader of those columns agrees with
+    what the grid shows."""
     app, db = _client(scm_app, "purchasing")
     f = _mk_http_chain(db, master_moq=100, order_multiple=None, recommended_qty=40)
     run_id = f["run"].id
@@ -342,12 +415,14 @@ def test_recommendations_list_reflects_the_override_without_an_engine_rerun(scm_
     assert row["master_moq"] == 100.0
     assert row["cash_impact"] == pytest.approx(40.0 * 60.0)
 
-    # never re-run: the persisted rounded_qty on the row is still the FROZEN master figure
+    # B1: the persisted rounded_qty on the row now carries the OVERRIDE figure, not the
+    # frozen master rounding - every non-list reader (draft PO, budget allocator, sort)
+    # is a straight column read, so this is what makes them correct too.
     from sqlalchemy import text as _text
     stored = db.execute(_text(
-        "SELECT rounded_qty FROM scm.reorder_recommendation WHERE id = :id"
-    ), {"id": rec_id}).scalar()
-    assert float(stored) == 100.0, (
-        "the list must read the override live, not by re-running the engine and "
-        "rewriting rounded_qty"
+        "SELECT rounded_qty, cash_impact FROM scm.reorder_recommendation WHERE id = :id"
+    ), {"id": rec_id}).mappings().first()
+    assert float(stored["rounded_qty"]) == 40.0, (
+        "set_moq_override must persist the recalculated rounded_qty"
     )
+    assert float(stored["cash_impact"]) == pytest.approx(40.0 * 60.0)

@@ -158,6 +158,15 @@ def demand_for_recommendation(db: Session, rec_id: str,
                 "project_window_months": None, "retail_window_months": None,
                 "demand_context_as_of": None}
 
+    # The run's own "Plan until" cutoff (captain, 20 Aug), so this drill speaks the SAME
+    # window `inputs.committed` was frozen against. Without it the scope test compares a
+    # live, unhorizoned total to a horizoned frozen figure - the two can never tie, so a
+    # row is mislabelled "pool" and lists a sibling warehouse's lines, and even a correctly
+    # scoped row's lines fail to sum to it (a live sum over dates the run itself excluded).
+    horizon = db.execute(text(
+        "SELECT plan_horizon_date FROM scm.reorder_run WHERE id = :rid"
+    ), {"rid": rec["run_id"]}).scalar()
+
     # Unlocated demand was attributed to exactly one location per product, so it belongs to
     # this row only when THIS row is the one carrying it.
     include_unlocated = bool((rec["inputs"] or {}).get("unlocated_demand"))
@@ -172,6 +181,11 @@ def demand_for_recommendation(db: Session, rec_id: str,
     plan_demand = f"{PLAN_DEMAND_ORDER_SQL} AND {PLAN_DEMAND_LINE_SQL}"
     if include_unlocated:
         where_loc = f"({where_loc} OR sol.warehouse_id IS NULL)"
+    # Same horizon rule as `demand.horizon_committed_select_sql` / `reorder_run_service`'s
+    # own horizon predicates: a stated `required_date` past the cutoff is excluded, no
+    # date at all is always in. A NULL `:horizon` reproduces the unhorizoned query.
+    horizon_pred = ("(CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL "
+                    "OR sol.required_date <= CAST(:horizon AS date))")
 
     sql = f"""
         SELECT so.so_number, so.order_type, so.demand_class, so.order_date,
@@ -189,6 +203,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
           AND {qty} > 0
           AND {plan_demand}
           AND {where_loc}
+          AND {horizon_pred}
           {("AND " + co) if co else ""}
     """
 
@@ -200,13 +215,14 @@ def demand_for_recommendation(db: Session, rec_id: str,
         """
         return float(db.execute(
             text(f"SELECT COALESCE(sum(qty), 0) FROM ({sql}) t"),
-            {"pid": rec["product_id"], "members": candidate, **co_params},
+            {"pid": rec["product_id"], "members": candidate, "horizon": horizon, **co_params},
         ).scalar() or 0)
 
     members, scope, pool_code = _scope_for(db, rec, total_for)
 
     limit_n = max(1, int(limit or DEFAULT_LIMIT))
-    params: dict[str, Any] = {"pid": rec["product_id"], "members": members, **co_params}
+    params: dict[str, Any] = {"pid": rec["product_id"], "members": members,
+                              "horizon": horizon, **co_params}
     rows = db.execute(text(
         sql + " ORDER BY sol.required_date NULLS LAST, so.so_number LIMIT :limit"
     ), {**params, "limit": limit_n}).mappings().all()
@@ -288,10 +304,14 @@ def demand_for_recommendation(db: Session, rec_id: str,
               AND oir.qty > 0
               AND sol.product_id::text = :pid
               AND sol.warehouse_id::text = ANY(:members)
+              -- Same horizon rule as `demand.horizon_committed_select_sql`'s confirmed
+              -- leg: off the inquiry row's own delivery date, not the sheet leg's.
+              AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
+                   OR oir.delivery_date <= CAST(:horizon AS date))
               {("AND " + co) if co else ""}
         """
         confirmed_params = {
-            "pid": rec["product_id"], "members": members,
+            "pid": rec["product_id"], "members": members, "horizon": horizon,
             "active_state": ACTIVE_DECISION_STATE, "buy_verb": BUY_VERB,
             "unplaced_state": UNPLACED_INQUIRY_STATE, **co_params,
         }

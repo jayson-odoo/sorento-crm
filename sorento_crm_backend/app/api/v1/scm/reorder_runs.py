@@ -823,10 +823,14 @@ def set_recommendation_moq(
     absent key clears it back to the frozen master figure. Mutates planning state
     (a decision-adjacent input, same as Accept/Adjust/Reject) → ``scm.reorder.run``.
 
+    Grain (only a LOCATION-grain run may take it) and lifecycle (a row already accepted
+    /adjusted/dismissed refuses further MoQ changes) are guarded inside
+    ``set_moq_override`` itself, same as every other decision write.
+
     Returns the recalculated ``order_qty`` / ``cash_impact`` so the plan grid can update
     the row in place, without waiting on a full re-run."""
     moq = payload.get("moq")
-    if moq is not None and not isinstance(moq, (int, float)):
+    if moq is not None and (isinstance(moq, bool) or not isinstance(moq, (int, float))):
         raise AppException(status_code=422, message="MoQ must be a number or null.")
     result = svc.set_moq_override(db, rec_id, float(moq) if moq is not None else None)
     return result
@@ -864,10 +868,11 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
                        "warehouse_name": a.get("warehouse_name"),
                        "qty": a.get("qty")} for a in r["allocation"]]
     # The buyer's own MoQ (20 Aug live test) — master data drifts and they cannot wait
-    # for a re-run to fix it. `moq_override` re-derives `order_qty`/`cash_impact` live,
-    # off the row's FROZEN `recommended_qty`, through the SAME rounding helper the engine
-    # itself used (`reorder_run_service.set_moq_override`) — the persisted `rounded_qty`
-    # / `inputs` never change, so a fresh run with no override still matches byte-for-byte.
+    # for a re-run to fix it. `set_moq_override` already persists the recalculated
+    # `rounded_qty` / `cash_impact` onto the row (every other consumer reads those columns
+    # straight, with no override-awareness of its own), so this is a defensive re-derive
+    # off the row's FROZEN `recommended_qty` through the SAME rounding helper, not the
+    # only place the override is honoured. `inputs` never changes (AC-M3.11).
     moq_override = _f(r.get("moq_override")) if is_priced else None
     eff_moq, moq_is_override = svc.effective_moq(inp, moq_override)
     if moq_is_override:
