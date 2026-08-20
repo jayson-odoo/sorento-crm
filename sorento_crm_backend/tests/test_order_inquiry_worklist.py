@@ -39,6 +39,7 @@ from app.models.procurement import (
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
     INQUIRY_ACTIONED,
+    INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ALREADY_INBOUND,
     IV_ORDER,
@@ -373,6 +374,55 @@ def _placed_supply(
     db.flush()
     db.commit()
     return {"supplier": supplier, "purchase_order": order}
+
+
+def _purchase_order(db, company_id: str, **overrides) -> dict:
+    """A standalone purchase order with one line - the "PO no" popup's own fixture,
+    unlinked from any order inquiry row (unlike `_placed_supply`, which exists to make a
+    ROW traceable through its SPO reference)."""
+    supplier = Supplier(
+        id=_uid(),
+        company_id=company_id,
+        supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} PO SUPPLIER",
+    )
+    warehouse = Warehouse(
+        id=_uid(),
+        company_id=company_id,
+        warehouse_code=f"ZZT{_uid()[:6]}",
+        warehouse_name=f"{MARKER} PO WH",
+    )
+    db.add_all([supplier, warehouse])
+    db.flush()
+    order = PurchaseOrder(
+        id=_uid(),
+        company_id=company_id,
+        po_number=f"ZZT-PO-{_uid()[:8]}",
+        supplier_id=supplier.id,
+        expected_date=overrides.get("expected_date", date(2026, 5, 1)),
+        status=overrides.get("status", "active"),
+    )
+    db.add(order)
+    db.flush()
+    product = _product(db, f"ZZT-POLINE-{_uid()[:6]}", f"{MARKER} po line item")
+    line = PurchaseOrderLine(
+        id=_uid(),
+        company_id=company_id,
+        purchase_order_id=order.id,
+        product_id=product.id,
+        warehouse_id=warehouse.id,
+        qty_ordered=Decimal("40"),
+        qty_received=Decimal("15"),
+    )
+    db.add(line)
+    db.commit()
+    return {
+        "order": order,
+        "supplier": supplier,
+        "warehouse": warehouse,
+        "product": product,
+        "line": line,
+    }
 
 
 def _api(permissions):
@@ -882,6 +932,150 @@ def test_an_empty_export_is_still_a_workbook_a_person_can_open(api):
     book = openpyxl.load_workbook(io.BytesIO(response.content))
     assert book.sheetnames == ["ORDER INQUIRY"]
     assert book.worksheets[0].max_row == 2
+
+
+# ---------------------------------------------------- taken from PO / remaining open
+
+
+def _line_on_authored_order(db, company_id: str, seeded: dict, *, qty: str, day: int):
+    """A fresh SO line on the seed's own authored order, so its rows are addressable
+    through the existing project inquiry without disturbing the seed's own two rows."""
+    line = ProjectSalesOrderLine(
+        id=_uid(),
+        company_id=company_id,
+        project_sales_order_id=seeded["authored"].id,
+        line_no=99,
+        product_id=_product(db, f"ZZT-FLOW-{_uid()[:6]}", f"{MARKER} flow line").id,
+        description=f"{MARKER} flow line",
+        qty=Decimal(qty),
+        uom="UNIT",
+        unit_price=Decimal("10.00"),
+        amount=Decimal("0"),
+        delivery_date=date(2026, 4, day),
+    )
+    db.add(line)
+    db.flush()
+    return line
+
+
+def test_taken_from_po_and_remaining_open_reflect_the_g2_cascade_split(api):
+    """One line, split by the cascade into a placed allocation (5) and a raised
+    remainder (14): both rows report the SAME pair, because both describe the same
+    line - what was actually taken off a PO, and what still flows to reorder planning."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    line = _line_on_authored_order(db, company_id, seeded, qty="19", day=1)
+    placed = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=line.id,
+        item_code=f"{MARKER}-SPLIT",
+        qty="5",
+        state=INQUIRY_PLACED,
+        delivery_date=date(2026, 4, 1),
+    )
+    raised = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=line.id,
+        item_code=f"{MARKER}-SPLIT",
+        qty="14",
+        state=INQUIRY_RAISED,
+        delivery_date=date(2026, 4, 1),
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"delivery_month": "2026-04"}).json()
+    by_id = {row["id"]: row for row in body["data"]}
+
+    assert by_id[placed.id]["taken_from_po"] == "5"
+    assert by_id[placed.id]["remaining_open"] == "14"
+    assert by_id[raised.id]["taken_from_po"] == "5"
+    # A raised row IS the uncovered remainder, so its own quantity counts towards it.
+    assert by_id[raised.id]["remaining_open"] == "14"
+
+
+def test_an_unplaced_lines_row_reports_zero_taken_and_its_full_qty_as_remaining(api):
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    line = _line_on_authored_order(db, company_id, seeded, qty="12", day=2)
+    raised = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=line.id,
+        item_code=f"{MARKER}-UNPLACED",
+        qty="12",
+        delivery_date=date(2026, 4, 2),
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"delivery_month": "2026-04"}).json()
+    row = next(r for r in body["data"] if r["id"] == raised.id)
+
+    assert row["taken_from_po"] == "0"
+    assert row["remaining_open"] == "12"
+
+
+# ---------------------------------------------------------------- the po popup
+
+
+def test_the_po_detail_route_answers_the_header_and_every_line(api):
+    client, db, company_id, _seeded = api
+    placed = _purchase_order(db, company_id)
+
+    response = client.get(f"{BASE}/order-inquiries/po/{placed['order'].id}")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["po_number"] == placed["order"].po_number
+    assert body["supplier_code"] == placed["supplier"].supplier_code
+    assert body["supplier_name"] == placed["supplier"].supplier_name
+    assert body["expected_date"] == "2026-05-01"
+    assert body["status"] == "active"
+    assert len(body["lines"]) == 1
+    line = body["lines"][0]
+    assert line["sku"] == placed["product"].product_code
+    assert line["product_name"] == placed["product"].product_name
+    assert line["qty_ordered"] == "40"
+    assert line["qty_received"] == "15"
+    assert line["remaining"] == "25"
+    assert line["location"] == placed["warehouse"].warehouse_code
+
+
+def test_the_po_detail_route_404s_on_a_po_from_another_company(api):
+    client, db, _company_id, _seeded = api
+    from app.models.base import company_scope
+    from app.models.company import Company
+
+    other_id = _uid()
+    with company_scope(db, None):
+        db.add(Company(id=other_id, name=f"{MARKER} Other PO Co", code=f"ZZ{_uid()[:6]}"))
+        db.flush()
+        placed = _purchase_order(db, other_id)
+
+    response = client.get(f"{BASE}/order-inquiries/po/{placed['order'].id}")
+
+    assert response.status_code == 404
+
+
+def test_the_po_detail_route_404s_on_an_unknown_id(api):
+    client, _db, _company_id, _seeded = api
+
+    response = client.get(f"{BASE}/order-inquiries/po/{_uid()}")
+
+    assert response.status_code == 404
+
+
+def test_the_po_detail_route_denies_a_user_without_the_view_permission(stranger_api):
+    client, db, company_id, _seeded = stranger_api
+    placed = _purchase_order(db, company_id)
+
+    response = client.get(f"{BASE}/order-inquiries/po/{placed['order'].id}")
+
+    assert response.status_code == 403
 
 
 # ---------------------------------------------------------- auth and company

@@ -103,6 +103,16 @@ class OrderInquiryWorklistRow(BaseModel):
     # the confirmed allocation's warehouse for a plan/confirmed row, otherwise the line's
     # own fulfilment location. Blank when neither is known.
     location: Optional[str] = None
+    # What flows to reorder planning, for this row's own SO line (the captain, 20 Aug: "show
+    # the quantity, quantity taken from PO, and the remaining quantity, cause this is what
+    # flows to reorder planning"). `taken_from_po` sums every SIBLING placed ORDER row on the
+    # same line - the PO no cell links to one PO, but a line may have been covered across
+    # several; `remaining_open` sums every raised ORDER row on the line, which is exactly
+    # `committed_v`'s confirmed leg (`verb='ORDER' AND state='raised'`) - what still counts as
+    # demand to the reorder engine. On a raised row that includes itself. `0` for a row with
+    # no `so_line_id` (an amendment exception row traces to none).
+    taken_from_po: str = "0"
+    remaining_open: str = "0"
     # Same as `OrderInquiryRowOut.has_open_po_line` - whether this row's own product
     # still has an outstanding PO line, computed the same way so the two listings that
     # render "Place on PO" can never disagree with the dialog.
@@ -122,6 +132,10 @@ class OrderInquiryWorklistRow(BaseModel):
     project_sales_order_id: Optional[str] = None
     core_sales_order_id: Optional[str] = None
     is_adopted: bool = False
+    # The placed purchase order this row traces to (same coalesce the PO NO column reads),
+    # so the "PO no" cell's popup can address `GET .../order-inquiries/po/{po_id}` without
+    # a second lookup. Null on a row nobody has placed yet.
+    po_id: Optional[str] = None
 
 
 class OrderInquiryMonthTotal(BaseModel):
@@ -245,3 +259,30 @@ class AutoPlaceResult(BaseModel):
     placed_rows: int = 0
     allocations: int = 0
     products_touched: int = 0
+
+
+class OrderInquiryPoDetailLine(BaseModel):
+    """One line of the purchase order behind a placed worklist row - the "PO no" cell's
+    popup (the captain, 20 Aug). Read straight off `purchase_order_lines`, never netted
+    against other rows' claims - that reading belongs to the "Place on PO" candidates,
+    not to a plain look at what was ordered."""
+
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    qty_ordered: str
+    qty_received: str
+    remaining: str
+    location: Optional[str] = None
+
+
+class OrderInquiryPoDetail(BaseModel):
+    """The PO popup's whole answer: the header purchasing already reads off the sheet,
+    plus every line, not only the one this row happened to be tagged to."""
+
+    id: str
+    po_number: str
+    supplier_code: Optional[str] = None
+    supplier_name: Optional[str] = None
+    expected_date: Optional[date] = None
+    status: str
+    lines: List[OrderInquiryPoDetailLine] = []

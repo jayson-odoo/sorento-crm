@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import {
   autoPlaceOrderInquiryRows,
   getOrderInquiryPoCandidates,
+  getOrderInquiryPoDetail,
   getOrderInquirySummary,
   getOrderInquiryWorklistSummary,
   getSalesOrderInquiry,
@@ -28,6 +29,7 @@ export const ORDER_INQUIRY_KEY = 'project-order-inquiry';
 export const ORDER_INQUIRY_WORKLIST_KEY = 'order-inquiry-worklist';
 export const ORDER_INQUIRY_WORKLIST_SUMMARY_KEY = 'order-inquiry-worklist-summary';
 export const ORDER_INQUIRY_PO_CANDIDATES_KEY = 'order-inquiry-po-candidates';
+export const ORDER_INQUIRY_PO_DETAIL_KEY = 'order-inquiry-po-detail';
 
 export const orderInquiryRowsKey = (
   projectId: string,
@@ -146,6 +148,19 @@ export function useOrderInquiryPoCandidates(
     queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY, rowId],
     queryFn: () => getOrderInquiryPoCandidates(rowId as string),
     enabled: Boolean(rowId) && options.enabled !== false,
+  });
+}
+
+/** The "PO no" cell's popup: that purchase order's header and every line, fetched only
+ * while the popover is open - `enabled` holds the request off until then. */
+export function useOrderInquiryPoDetail(
+  poId: string | undefined,
+  options: { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: [ORDER_INQUIRY_PO_DETAIL_KEY, poId],
+    queryFn: () => getOrderInquiryPoDetail(poId as string),
+    enabled: Boolean(poId) && options.enabled !== false,
   });
 }
 

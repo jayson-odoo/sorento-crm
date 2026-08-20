@@ -26,6 +26,7 @@ from app.schemas.project_order_inquiry import (
     MarkInquiryRowsRequest,
     OrderInquiryDetail,
     OrderInquiryPoCandidate,
+    OrderInquiryPoDetail,
     OrderInquiryRowOut,
     OrderInquirySummary,
     OrderInquiryWorklistRow,
@@ -196,6 +197,27 @@ def export_order_inquiry_worklist(
             media_type=WORKLIST_XLSX,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/order-inquiries/po/{po_id}", response_model=OrderInquiryPoDetail)
+def get_order_inquiry_po_detail(
+    po_id: str,
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The "PO no" cell's popup: that purchase order's header and every one of its lines.
+
+    Gated the same as the worklist's own read (`projects.projects.view`), never
+    `scm.dashboard.view` - purchasing works this worklist off project permissions, the
+    same gotcha "Place on PO" already worked around, so this reads
+    `purchase_orders`/`purchase_order_lines` off the PROJECTS router rather than calling
+    the SCM purchase-orders route.
+    """
+    try:
+        validate_uuid_path(po_id, resource="Purchase order")
+        return OrderInquiryWorklistService(db).get_po_detail(po_id)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

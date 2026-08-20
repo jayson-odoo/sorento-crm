@@ -8,6 +8,7 @@ import type {
   OrderInquiryListParams,
   OrderInquiryPoAllocation,
   OrderInquiryPoCandidate,
+  OrderInquiryPoDetail,
   OrderInquiryRow,
   OrderInquirySummary,
   OrderInquiryWorklistEnvelope,
@@ -327,6 +328,19 @@ export async function downloadOrderInquiryWorklistXlsx(
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to export the order inquiry'));
   return response.blob();
+}
+
+/**
+ * The "PO no" cell's popup: that purchase order's own header and every one of its
+ * lines, not only the one this row happened to be tagged to. Gated the same as the
+ * worklist's own read (`projects.projects.view`) - never the SCM purchase-orders route,
+ * which purchasing on this worklist holds no grant for.
+ */
+export async function getOrderInquiryPoDetail(poId: string): Promise<OrderInquiryPoDetail> {
+  const response = await apiFetch(`${BASE}/order-inquiries/po/${poId}`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load this purchase order'));
+  return response.json();
 }
 
 /**

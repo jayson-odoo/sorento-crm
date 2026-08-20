@@ -16,6 +16,7 @@ import {
 } from '../../_shared/components/OrderInquiryVerbPill';
 import { formatInquiryQty, orderInquiryRowHref } from '../../_shared/lib/orderInquiryWorklist';
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
+import { OrderInquiryPoDetailPopover } from './OrderInquiryPoDetailPopover';
 
 function Muted({ children }: { children: React.ReactNode }) {
   return <span className="text-muted-foreground">{children}</span>;
@@ -196,14 +197,50 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
         header: ({ column }) => <DataGridColumnHeader title="PO no" column={column} />,
         size: 150,
         meta: { headerTitle: 'PO no', skeleton: <Skeleton className="h-4 w-20" /> },
+        // A placed row's PO number opens that purchase order's own header and every
+        // line (the captain, 20 Aug) - a row nobody has placed has nothing to open.
         cell: ({ row }) =>
-          row.original.po_number ? (
+          row.original.po_number && row.original.po_id ? (
+            <OrderInquiryPoDetailPopover
+              poId={row.original.po_id}
+              poNumber={row.original.po_number}
+            />
+          ) : row.original.po_number ? (
             <span className="block truncate tabular-nums" title={row.original.po_number}>
               {row.original.po_number}
             </span>
           ) : (
             <Muted>Not placed</Muted>
           ),
+      },
+      {
+        accessorKey: 'taken_from_po',
+        header: ({ column }) => <DataGridColumnHeader title="Taken from PO" column={column} />,
+        size: 130,
+        enableSorting: false,
+        meta: { headerTitle: 'Taken from PO', skeleton: <Skeleton className="h-4 w-14" /> },
+        // What has actually been taken off a purchase order for this row's own SO line -
+        // the sum of every PLACED sibling row, never this row's own qty alone.
+        cell: ({ row }) => (
+          <span className="tabular-nums">
+            {formatInquiryQty(row.original.taken_from_po ?? '0')}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'remaining_open',
+        header: ({ column }) => <DataGridColumnHeader title="Remaining" column={column} />,
+        size: 120,
+        enableSorting: false,
+        meta: { headerTitle: 'Remaining', skeleton: <Skeleton className="h-4 w-14" /> },
+        cell: ({ row }) => (
+          <span
+            className="tabular-nums"
+            title="What still flows to reorder planning"
+          >
+            {formatInquiryQty(row.original.remaining_open ?? '0')}
+          </span>
+        ),
       },
       {
         accessorKey: 'verb',

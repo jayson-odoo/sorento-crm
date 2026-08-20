@@ -346,6 +346,34 @@ describe('OrderInquiriesClient', () => {
     expect(within(unlocated).queryByText('BRW-BB')).not.toBeInTheDocument();
   });
 
+  it('shows what was taken off a PO and what still flows to reorder planning', async () => {
+    renderClient();
+
+    // Row 1 is fully covered: qty (35) and Taken from PO (35) both print - two cells
+    // sharing the same figure - and Remaining is the single "0" left in its row.
+    const placed = (await screen.findByText('SO385126')).closest('tr') as HTMLElement;
+    expect(within(placed).getAllByText('35')).toHaveLength(2);
+    expect(within(placed).getByText('0')).toBeInTheDocument();
+
+    // Row 2 is untouched: nothing has been taken (the single "0" in its row) and the
+    // whole quantity (85) still flows to reorder planning - qty and Remaining agree.
+    const unplaced = screen.getByText('SO386461').closest('tr') as HTMLElement;
+    expect(within(unplaced).getAllByText('85')).toHaveLength(2);
+    expect(within(unplaced).getByText('0')).toBeInTheDocument();
+  });
+
+  it('turns a placed row\'s PO number into a button that opens its own purchase order', async () => {
+    renderClient();
+
+    const placed = (await screen.findByText('SO385126')).closest('tr') as HTMLElement;
+    expect(
+      within(placed).getByRole('button', { name: '202601-S0015' }),
+    ).toBeInTheDocument();
+
+    const unplaced = screen.getByText('SO386461').closest('tr') as HTMLElement;
+    expect(within(unplaced).queryByRole('button', { name: /S00/ })).not.toBeInTheDocument();
+  });
+
   it('says "not placed" rather than inventing a supplier', async () => {
     listOrderInquiryWorklist.mockResolvedValue(
       envelope([MOCK_WORKLIST_ROWS[1]]),

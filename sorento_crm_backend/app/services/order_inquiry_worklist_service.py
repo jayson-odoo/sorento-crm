@@ -45,7 +45,9 @@ from app.models.product import Product
 from app.models.project_so import (
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
+    INQUIRY_PLACED,
     INQUIRY_RAISED,
+    IV_ORDER,
     OrderInquiry,
     OrderInquiryRow,
     ProjectSalesOrder,
@@ -220,6 +222,7 @@ _SORT_EXPRESSIONS = {
 
 _COLUMNS = (
     OrderInquiryRow.id.label("id"),
+    OrderInquiryRow.so_line_id.label("so_line_id"),
     OrderInquiryRow.item_code.label("item_code"),
     OrderInquiryRow.qty.label("qty"),
     OrderInquiryRow.delivery_date.label("delivery_date"),
@@ -239,6 +242,7 @@ _COLUMNS = (
     SalesOrder.id.label("core_sales_order_id"),
     Supplier.id.label("supplier_id"),
     Supplier.supplier_name.label("supplier"),
+    PurchaseOrder.id.label("po_id"),
     PurchaseOrder.po_number.label("po_number"),
     _LOCATION.label("location"),
     SalesAgent.sales_agent.label("agent_code"),
@@ -441,8 +445,11 @@ class OrderInquiryWorklistService:
             .all()
         )
         product_by_row, open_products = self._open_po_line_context(rows)
+        flow = self._quantity_flow_by_so_line(rows)
         return {
-            "data": [self._serialize(row, product_by_row, open_products) for row in rows],
+            "data": [
+                self._serialize(row, product_by_row, open_products, flow) for row in rows
+            ],
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
@@ -470,12 +477,59 @@ class OrderInquiryWorklistService:
         )
         return product_by_row, open_products
 
+    def _quantity_flow_by_so_line(self, rows) -> Dict[str, Dict[str, Decimal]]:
+        """"Taken from PO" and "Remaining" for a whole PAGE, bulk-answered once (the
+        captain, 20 Aug: "show the quantity, quantity taken from PO, and the remaining
+        quantity, cause this is what flows to reorder planning").
+
+        The G2 cascade SPLITS a line's rows: a placed row's own `qty` is its allocation,
+        and the raised remainder row keeps whatever is still uncovered. So per `so_line_id`
+        this sums TWO separate things, both restricted to `verb = 'ORDER'` - the verb
+        `committed_v`'s confirmed leg counts, and the only one "taken off a PO" or "still
+        flowing to reorder" means anything for:
+
+        * `taken` - every PLACED sibling's `qty`, the quantity actually taken off a PO;
+        * `remaining` - every RAISED sibling's `qty`, which is exactly `committed_v`'s own
+          predicate (`state = 'raised'`) - what still counts as demand. On a raised row
+          this includes the row itself, because a row that has not been placed IS the
+          uncovered remainder.
+
+        One `GROUP BY (so_line_id, state)` query, not one query per row.
+        """
+        so_line_ids = {row.so_line_id for row in rows if row.so_line_id}
+        if not so_line_ids:
+            return {}
+        agg = (
+            self.db.query(
+                OrderInquiryRow.so_line_id,
+                OrderInquiryRow.state,
+                func.coalesce(func.sum(OrderInquiryRow.qty), 0),
+            )
+            .filter(
+                OrderInquiryRow.so_line_id.in_(so_line_ids),
+                OrderInquiryRow.verb == IV_ORDER,
+                OrderInquiryRow.state.in_((INQUIRY_PLACED, INQUIRY_RAISED)),
+            )
+            .group_by(OrderInquiryRow.so_line_id, OrderInquiryRow.state)
+            .all()
+        )
+        flow: Dict[str, Dict[str, Decimal]] = {}
+        for so_line_id, state, qty in agg:
+            entry = flow.setdefault(so_line_id, {"taken": _ZERO, "remaining": _ZERO})
+            if state == INQUIRY_PLACED:
+                entry["taken"] = _dec(qty)
+            elif state == INQUIRY_RAISED:
+                entry["remaining"] = _dec(qty)
+        return flow
+
     def _serialize(
         self,
         row,
         product_by_row: Optional[Dict[str, Optional[str]]] = None,
         open_products: Optional[set] = None,
+        flow: Optional[Dict[str, Dict[str, Decimal]]] = None,
     ) -> Dict[str, Any]:
+        line_flow = (flow or {}).get(row.so_line_id, {})
         return {
             "id": row.id,
             "so_date": row.so_date,
@@ -490,7 +544,10 @@ class OrderInquiryWorklistService:
             "supplier": row.supplier,
             "supplier_id": row.supplier_id,
             "po_number": row.po_number,
+            "po_id": row.po_id,
             "location": row.location,
+            "taken_from_po": _qty_str(line_flow.get("taken", _ZERO)),
+            "remaining_open": _qty_str(line_flow.get("remaining", _ZERO)),
             "has_open_po_line": bool(
                 product_by_row and open_products and product_by_row.get(row.id) in open_products
             ),
@@ -506,6 +563,68 @@ class OrderInquiryWorklistService:
             # An adopted record is a mirror of a core sales order and has no project
             # registration; that pair is the whole distinction and the screen links on it.
             "is_adopted": bool(row.core_sales_order_id) and row.project_id is None,
+        }
+
+    # -------------------------------------------------------------- po detail
+
+    def get_po_detail(self, po_id: str) -> Dict[str, Any]:
+        """The "PO no" cell's popup: this purchase order's own header and every one of
+        its lines (the captain, 20 Aug).
+
+        Purchasing on this worklist holds `projects.projects.view`, not
+        `scm.dashboard.view` - the same permission gotcha "Place on PO" already worked
+        around - so this reads `purchase_orders` / `purchase_order_lines` off the
+        PROJECTS router by plain ORM query rather than calling the SCM purchase-orders
+        route. Both tables are `CompanyScopedMixin`, so the session-level company scope
+        listener (`app.services.company_scope`) already restricts every query here to the
+        caller's own company - a foreign company's PO id resolves to nothing, same as an
+        unknown one.
+        """
+        po = self.db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).first()
+        if po is None:
+            raise AppException(
+                status_code=404,
+                message="That purchase order no longer exists.",
+                code="order_inquiry_po_not_found",
+            )
+        supplier = (
+            self.db.query(Supplier).filter(Supplier.id == po.supplier_id).first()
+            if po.supplier_id
+            else None
+        )
+        lines = (
+            self.db.query(
+                Product.product_code,
+                Product.product_name,
+                PurchaseOrderLine.qty_ordered,
+                PurchaseOrderLine.qty_received,
+                Warehouse.warehouse_code,
+            )
+            .select_from(PurchaseOrderLine)
+            .outerjoin(Product, Product.id == PurchaseOrderLine.product_id)
+            .outerjoin(Warehouse, Warehouse.id == PurchaseOrderLine.warehouse_id)
+            .filter(PurchaseOrderLine.purchase_order_id == po.id)
+            .order_by(Product.product_code.asc().nulls_last())
+            .all()
+        )
+        return {
+            "id": po.id,
+            "po_number": po.po_number,
+            "supplier_code": supplier.supplier_code if supplier else None,
+            "supplier_name": supplier.supplier_name if supplier else None,
+            "expected_date": po.expected_date,
+            "status": po.status,
+            "lines": [
+                {
+                    "sku": sku,
+                    "product_name": product_name,
+                    "qty_ordered": _qty_str(_dec(qty_ordered)),
+                    "qty_received": _qty_str(_dec(qty_received)),
+                    "remaining": _qty_str(_dec(qty_ordered) - _dec(qty_received)),
+                    "location": warehouse_code,
+                }
+                for sku, product_name, qty_ordered, qty_received, warehouse_code in lines
+            ],
         }
 
     # ---------------------------------------------------------------- summary

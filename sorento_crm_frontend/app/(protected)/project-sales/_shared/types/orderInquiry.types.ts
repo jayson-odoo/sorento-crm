@@ -156,6 +156,16 @@ export interface OrderInquiryWorklistRow {
    * fulfilment location. Blank when neither is known.
    */
   location?: string | null;
+  /**
+   * What flows to reorder planning, for this row's own SO line (the captain, 20 Aug:
+   * "show the quantity, quantity taken from PO, and the remaining quantity, cause this
+   * is what flows to reorder planning"). `taken_from_po` sums every SIBLING placed
+   * ORDER row on the same line; `remaining_open` sums every raised ORDER row on the
+   * line - `committed_v`'s own confirmed leg, what still counts as demand. On a raised
+   * row that includes itself.
+   */
+  taken_from_po?: string;
+  remaining_open?: string;
   /** Same as `OrderInquiryRow.has_open_po_line`, for this cross-project worklist. */
   has_open_po_line?: boolean;
   /** Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`), off the same core
@@ -175,6 +185,12 @@ export interface OrderInquiryWorklistRow {
   core_sales_order_id?: string | null;
   /** Came from the AutoCount book rather than a document authored here. */
   is_adopted?: boolean;
+  /**
+   * The placed purchase order this row traces to (same coalesce the `po_number` column
+   * reads) - addresses the "PO no" cell's popup, `GET .../order-inquiries/po/{po_id}`.
+   * Null on a row nobody has placed yet.
+   */
+  po_id?: string | null;
 }
 
 export interface OrderInquiryWorklistParams {
@@ -351,4 +367,34 @@ export interface AutoPlaceResult {
   placed_rows: number;
   allocations: number;
   products_touched: number;
+}
+
+/* ----------------------------------------------------------- the PO popup
+ *
+ * `GET {BASE}/order-inquiries/po/{po_id}` - the "PO no" cell's popover (the captain,
+ * 20 Aug). Gated the same as the worklist's own read (`projects.projects.view`), never
+ * `scm.dashboard.view` - purchasing works this worklist off project permissions, so it
+ * never calls the SCM purchase-orders route.
+ */
+
+/** One line of the purchase order behind a placed worklist row. Read straight off the
+ * line's own balance - never netted against other rows' claims, which is a different
+ * reading that belongs to the "Place on PO" candidates. */
+export interface OrderInquiryPoDetailLine {
+  sku?: string | null;
+  product_name?: string | null;
+  qty_ordered: string;
+  qty_received: string;
+  remaining: string;
+  location?: string | null;
+}
+
+export interface OrderInquiryPoDetail {
+  id: string;
+  po_number: string;
+  supplier_code?: string | null;
+  supplier_name?: string | null;
+  expected_date?: string | null;
+  status: string;
+  lines: OrderInquiryPoDetailLine[];
 }
