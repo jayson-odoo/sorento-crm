@@ -351,11 +351,13 @@ describe('PackingListUploadDialog - the currency, asked for only when nothing el
         currency: 'USD',
       }),
     );
-    expect(applyPackingList).toHaveBeenCalledWith(file, {
-      supplierId: 'sup-1',
-      currency: 'USD',
-      validateOnly: true,
-    });
+    await waitFor(() =>
+      expect(applyPackingList).toHaveBeenCalledWith(file, {
+        supplierId: 'sup-1',
+        currency: 'USD',
+        validateOnly: true,
+      }),
+    );
 
     // Confirm stays disabled until BOTH the read and the validate-only apply have
     // resolved (`canConfirm` is false while `testing`). Being called is not being

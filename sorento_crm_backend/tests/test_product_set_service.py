@@ -12,7 +12,7 @@ Plan: documentation/plans/PLAN-spec-backward-search.md.
 from __future__ import annotations
 
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -33,6 +33,15 @@ from app.services.product_set_service import resolve_product_set
 from tests._pg_fixture import blank_session
 
 _REFS: dict = {}
+
+
+def _utc_today() -> date:
+    """The service compares validity against `func.current_date()` on a
+    session pinned to UTC (`app/database.py` sets `options=-c timezone=utc`).
+    Seed fixtures against that same clock, not the local wall clock, or a
+    test run between 00:00 and 08:00 Malaysia time seeds a date the service
+    still reads as 'today'."""
+    return datetime.now(timezone.utc).date()
 
 
 @pytest.fixture
@@ -207,8 +216,8 @@ def test_certificate_leg_bare_true_means_any_active_register_cert(db):
 def test_certificate_object_form_filters_on_validity(db):
     valid = _product(db, "ZZT-SINK-A", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)")
     expired = _product(db, "ZZT-SINK-B", "SORENTO S/STEEL KITCHEN SINK (800X450X200MM)")
-    _certificate(db, valid, valid_until=date.today() + timedelta(days=30))
-    _certificate(db, expired, valid_until=date.today() - timedelta(days=1))
+    _certificate(db, valid, valid_until=_utc_today() + timedelta(days=30))
+    _certificate(db, expired, valid_until=_utc_today() - timedelta(days=1))
     out = _totals(db, {"certificate": {"validity_state": "valid"}}, ["kitchen sink"])
     codes = [c["product_code"] for c in out["candidates"]]
     assert codes == ["ZZT-SINK-A"]
@@ -219,7 +228,7 @@ def test_promotion_leg_requires_an_active_unexpired_promotion(db):
     lapsed = _product(db, "ZZT-SINK-B", "SORENTO S/STEEL KITCHEN SINK (800X450X200MM)")
     switched_off = _product(db, "ZZT-SINK-C", "CABANA CERAMIC KITCHEN SINK (1000X500X140MM)")
     _promotion(db, promoted)
-    _promotion(db, lapsed, end_date=date.today() - timedelta(days=1))
+    _promotion(db, lapsed, end_date=_utc_today() - timedelta(days=1))
     _promotion(db, switched_off, is_active=False)
     out = _totals(db, {"promotion": True}, ["kitchen sink"])
     codes = [c["product_code"] for c in out["candidates"]]
