@@ -4,15 +4,17 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   CellContext,
   ColumnDef,
+  ExpandedState,
   PaginationState,
   SortingState,
   getCoreRowModel,
+  getExpandedRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Info, Search, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Info, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -71,6 +73,11 @@ import {
 import { OrderQtyLedger } from './PlanOrderQtyLedger';
 import { ReorderExplanationDialog } from './ReorderExplanationDialog';
 import type { ReorderRecommendation } from '../types/reorder.types';
+import {
+  groupPlanLinesByChannel,
+  isGroupedLine,
+  type PlanChannelGroupMeta,
+} from '../lib/planLineGrouping';
 
 /**
  * ONE grid for every line of a plan.
@@ -157,6 +164,75 @@ function numCell(value: number | null | undefined) {
   );
 }
 
+/**
+ * The drill under a grouped (product, channel) row - the per-warehouse rows it summed,
+ * unsummed, one per line (5.3/5.4: Location grain stays a read and drill view under
+ * Product grain; nothing here is a decision). Every location-only fact that a group row
+ * cannot show (price, supplier, MOQ, AutoCount level) lives on these rows, not the group.
+ */
+function GroupMembersPanel({
+  group,
+  onOpenMember,
+}: {
+  group: PlanChannelGroupMeta;
+  onOpenMember: (rec: ReorderRecommendation) => void;
+}) {
+  return (
+    <div className="border-t bg-muted/30 px-5 py-3">
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-muted-foreground">
+              <th className="px-2 py-1 text-left font-medium">Location</th>
+              <th className="px-2 py-1 text-right font-medium">SO</th>
+              <th className="px-2 py-1 text-right font-medium">Project</th>
+              <th className="px-2 py-1 text-right font-medium">Retail</th>
+              <th className="px-2 py-1 text-right font-medium">Unclass.</th>
+              <th className="px-2 py-1 text-right font-medium">On hand</th>
+              <th className="px-2 py-1 text-right font-medium">SPO</th>
+              <th className="px-2 py-1 text-right font-medium">PO</th>
+              <th className="px-2 py-1 text-right font-medium">Suggested qty</th>
+            </tr>
+          </thead>
+          <tbody>
+            {group.members.map((m) => (
+              <tr
+                key={m.id}
+                className="cursor-pointer border-t border-border/60 hover:bg-muted/60"
+                onClick={() => onOpenMember(m.rec)}
+              >
+                <td className="max-w-40 truncate px-2 py-1" title={m.warehouse}>
+                  {m.warehouse}
+                </td>
+                <td className="px-2 py-1 text-right tabular-nums">
+                  {numCell(m.rec.outstanding_sales)}
+                </td>
+                <td className="px-2 py-1 text-right tabular-nums">
+                  {numCell(m.rec.project_need)}
+                </td>
+                <td className="px-2 py-1 text-right tabular-nums">
+                  {numCell(m.rec.retail_need)}
+                </td>
+                <td className="px-2 py-1 text-right tabular-nums">
+                  {numCell(m.rec.unclassified_need)}
+                </td>
+                <td className="px-2 py-1 text-right tabular-nums">{numCell(m.rec.on_hand)}</td>
+                <td className="px-2 py-1 text-right tabular-nums">
+                  {numCell(m.rec.incoming_spo)}
+                </td>
+                <td className="px-2 py-1 text-right tabular-nums">
+                  {numCell(m.rec.outstanding_po)}
+                </td>
+                <td className="px-2 py-1 text-right tabular-nums">{fmtInt(m.order_qty)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export function PlanLinesGrid({
   lines,
   decisions,
@@ -188,6 +264,7 @@ export function PlanLinesGrid({
   runId,
   decisionsReadOnly = false,
   readOnlyReason = null,
+  groupByChannel = false,
   isLoading,
 }: {
   lines: PlanLine[];
@@ -260,6 +337,16 @@ export function PlanLinesGrid({
   decisionsReadOnly?: boolean;
   /** What the disabled control says, in place of the decision cell's own controls. */
   readOnlyReason?: string | null;
+  /**
+   * Product-grain runs only (5.3): group the fetched per-warehouse rows into one row per
+   * (product, channel) - "1 line of retail, 1 line of project" - instead of one row per
+   * (product, warehouse). A group row sums the shared display fields across its
+   * warehouses; every location-only fact (price, supplier, MOQ, AutoCount level) stays on
+   * the per-warehouse rows reachable by expanding it. Omit or pass false to render the
+   * per-warehouse rows exactly as before (Location grain, a legacy run, or any other
+   * caller of this grid).
+   */
+  groupByChannel?: boolean;
   isLoading?: boolean;
 }) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
@@ -267,6 +354,10 @@ export function PlanLinesGrid({
   // (undecided first, decided sunk to the bottom, rank-ordered within each). Clicking a
   // header still sorts normally - the buyer overriding the default is a real request.
   const [sorting, setSorting] = useState<SortingState>([]);
+  // Which grouped rows (5.3) are drilled open. Keyed by row id, same as the table's own
+  // `getRowId` - a group row is never expanded by default, matching "1 line of retail, 1
+  // line of project" being the resting state the buyer asked for.
+  const [expanded, setExpanded] = useState<ExpandedState>({});
   const [searchQuery, setSearchQuery] = useState('');
   const statusFilter: string = statusFilterProp ?? 'all';
   const setStatusFilter = (next: string) =>
@@ -337,6 +428,15 @@ export function PlanLinesGrid({
   const ordered = useMemo(
     () => [...filtered].sort((a, b) => (decisions[a.id] ? 1 : 0) - (decisions[b.id] ? 1 : 0)),
     [filtered, decisions],
+  );
+
+  // 5.3: one row per (product, channel) on a Product-grain run, each expandable to the
+  // per-warehouse rows it summed. Grouping runs AFTER the existing filter/sort pipeline,
+  // so search/status/side/price/action/level all narrow the same per-warehouse facts they
+  // always did; only the rendered ROW count changes.
+  const tableData = useMemo<PlanLine[]>(
+    () => (groupByChannel ? groupPlanLinesByChannel(ordered) : ordered),
+    [groupByChannel, ordered],
   );
 
   /**
@@ -429,35 +529,54 @@ export function PlanLinesGrid({
         id: 'sku',
         accessorKey: 'sku',
         header: ({ column }) => <DataGridColumnHeader title="Product" visibility column={column} />,
-        cell: ({ row }) => (
-          <div className="min-w-0 space-y-px">
-            <div className="flex items-center gap-1.5">
-              <span className="truncate text-sm font-medium" title={row.original.sku}>
-                {row.original.sku}
-              </span>
-              {/* Which orders this quantity is for, and the lookups the buyer used to do by
-                  hand. Both were on the old row and are the reason a number is trustworthy. */}
-              <StopClick>
-                <PlanDemandPopover runId={runId ?? null} recId={row.original.id} />
-                <PlanChecklistPopover rec={row.original.rec} />
-                {/* What the thing IS. A buyer who never handles the goods cannot tell two
-                    codes apart, and the photo is the one Dealer Kit already chose. */}
-                <ProductPhotoPopover
-                  runId={runId ?? null}
-                  productId={row.original.product_id}
-                  sku={row.original.sku}
-                  productName={row.original.product_name}
-                  hasPhoto={hasPhotoFor?.(row.original) ?? false}
-                  status={photoStatus}
-                  onOpen={onOpenPhoto}
-                />
-              </StopClick>
+        cell: ({ row }) => {
+          const group = isGroupedLine(row.original) ? row.original.__group : null;
+          return (
+            <div className="min-w-0 space-y-px">
+              <div className="flex items-center gap-1.5">
+                {/* 5.3: the chevron is purely a state indicator - the whole row already
+                    toggles the drill open (`onRowClick`), same as any other row opens the
+                    explanation dialog. */}
+                {group && (
+                  row.getIsExpanded() ? (
+                    <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                  ) : (
+                    <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                  )
+                )}
+                <span className="truncate text-sm font-medium" title={row.original.sku}>
+                  {row.original.sku}
+                </span>
+                {/* Which orders this quantity is for, and the lookups the buyer used to do by
+                    hand. Both were on the old row and are the reason a number is trustworthy.
+                    A group row carries none of these: they are keyed to ONE recommendation
+                    (the demand/checklist popovers) or would repeat once per member. */}
+                <StopClick>
+                  {!group && (
+                    <>
+                      <PlanDemandPopover runId={runId ?? null} recId={row.original.id} />
+                      <PlanChecklistPopover rec={row.original.rec} />
+                    </>
+                  )}
+                  {/* What the thing IS - keyed by product, so it reads the same at either
+                      grain. */}
+                  <ProductPhotoPopover
+                    runId={runId ?? null}
+                    productId={row.original.product_id}
+                    sku={row.original.sku}
+                    productName={row.original.product_name}
+                    hasPhoto={hasPhotoFor?.(row.original) ?? false}
+                    status={photoStatus}
+                    onOpen={onOpenPhoto}
+                  />
+                </StopClick>
+              </div>
+              <div className="truncate text-xs text-muted-foreground" title={row.original.product_name}>
+                {row.original.product_name}
+              </div>
             </div>
-            <div className="truncate text-xs text-muted-foreground" title={row.original.product_name}>
-              {row.original.product_name}
-            </div>
-          </div>
-        ),
+          );
+        },
         size: 240,
         enableSorting: true,
         enableHiding: false,
@@ -469,17 +588,32 @@ export function PlanLinesGrid({
               <Skeleton className="h-3 w-24" />
             </div>
           ),
+          // The per-warehouse rows a grouped row summed (5.3/5.4) - a read and drill panel,
+          // never a decision surface. `DataGridTable` renders this full-width below any row
+          // whose `getIsExpanded()` is true, same mechanism as `POIntakeLinesGrid`'s note
+          // panel; only a group row (below) ever turns that on.
+          expandedContent: (line: PlanLine) =>
+            isGroupedLine(line) ? (
+              <GroupMembersPanel group={line.__group} onOpenMember={(rec) => setDetailRec(rec)} />
+            ) : null,
         },
       },
       {
         id: 'warehouse',
         accessorKey: 'warehouse',
         header: ({ column }) => <DataGridColumnHeader title="Location" visibility column={column} />,
-        cell: ({ row }) => (
-          <span className="block truncate text-sm" title={row.original.warehouse}>
-            {row.original.warehouse}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const group = isGroupedLine(row.original) ? row.original.__group : null;
+          // A group's `warehouse` field is already the compact display text
+          // (`locationLabel`); the title always carries the FULL list, even once the cell
+          // itself has fallen back to "N locations" (5.3).
+          const title = group ? group.locationCodes.join(', ') : row.original.warehouse;
+          return (
+            <span className="block truncate text-sm" title={title}>
+              {row.original.warehouse}
+            </span>
+          );
+        },
         size: 130,
         enableSorting: true,
         meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-20" /> },
@@ -492,6 +626,24 @@ export function PlanLinesGrid({
         // anywhere on this screen (S13b): project demand is erratic and retail stable, so a
         // number spanning both describes neither. "Retail" not "Dealer" - the user's word.
         cell: ({ row }) => {
+          const group = isGroupedLine(row.original) ? row.original.__group : null;
+          if (group) {
+            // A grouped row's channel is never guessed at: Unclassified is its own line,
+            // the same word the need columns use for demand with no persisted class - it
+            // must not read as Retail just because the badge fell through to a default.
+            if (group.channel === 'unclassified') {
+              return (
+                <Badge variant="warning" appearance="light" size="sm">
+                  Unclassified
+                </Badge>
+              );
+            }
+            return (
+              <Badge variant={group.channel === 'project' ? 'info' : 'success'} appearance="light" size="sm">
+                {group.channel === 'project' ? 'Project' : 'Retail'}
+              </Badge>
+            );
+          }
           const seg = row.original.rec.segment;
           if (!seg) return <span className="text-muted-foreground">{EM_DASH}</span>;
           return (
@@ -754,17 +906,25 @@ export function PlanLinesGrid({
         header: ({ column }) => (
           <DataGridColumnHeader title="Suggested supplier" visibility column={column} />
         ),
-        cell: ({ row }) => (
-          <StopClick>
-            <PlanSupplierCell
-              supplier={row.original.supplier ?? null}
-              alternatives={row.original.alternatives ?? []}
-              price={priceFor?.(row.original)}
-              cheaper={cheaperFor?.(row.original) ?? null}
-              purchasable={row.original.purchasable}
-            />
-          </StopClick>
-        ),
+        cell: ({ row }) =>
+          isGroupedLine(row.original) ? (
+            // A supplier is a per-location fact (5.3) - summing it would invent a choice
+            // nobody made, and `PlanSupplierCell`'s own "No supplier linked" fallback would
+            // be a false claim here. Expand the row to see each location's own supplier.
+            <span className="text-muted-foreground" title="Varies by location - expand to see each one">
+              {EM_DASH}
+            </span>
+          ) : (
+            <StopClick>
+              <PlanSupplierCell
+                supplier={row.original.supplier ?? null}
+                alternatives={row.original.alternatives ?? []}
+                price={priceFor?.(row.original)}
+                cheaper={cheaperFor?.(row.original) ?? null}
+                purchasable={row.original.purchasable}
+              />
+            </StopClick>
+          ),
         size: 180,
         enableSorting: true,
         meta: { headerTitle: 'Suggested supplier', skeleton: <Skeleton className="h-4 w-24" /> },
@@ -880,6 +1040,15 @@ export function PlanLinesGrid({
         // is where the silence ends.
         cell: ({ row }) => {
           const line = row.original;
+          if (isGroupedLine(line)) {
+            // The supplier's MOQ is a per-location fact too (5.3) - it is never absent the
+            // way a real no-MOQ line is, it just varies by which location you expand into.
+            return (
+              <span className="text-muted-foreground" title="Varies by location - expand to see each one">
+                {EM_DASH}
+              </span>
+            );
+          }
           const moq = line.order_qty_inputs?.moq ?? null;
           if (!line.purchasable || moq === null) {
             return (
@@ -923,7 +1092,13 @@ export function PlanLinesGrid({
         // replaces used to be alone, since it now carries what both of them said.
         header: ({ column }) => <DataGridColumnHeader title="Decision" visibility column={column} />,
         cell: ({ row }) =>
-          decisionsReadOnly ? (
+          // A group row is never a decision surface (5.3/5.4) - it is a summed READING,
+          // and its `id` names no real recommendation to write a decision against. Checked
+          // ahead of `decisionsReadOnly` so this holds even if a future caller groups
+          // without also passing the read-only flag; in practice grouping is only ever on
+          // for a Product-grain run, which already carries `decisionsReadOnly` from the
+          // caller (5.4: Location recommendations are read-only under Product grain too).
+          decisionsReadOnly || isGroupedLine(row.original) ? (
             // Disabled and explained, never silently inert: the buyer needs to know
             // WHICH screen owns this decision (AC-F02).
             <span
@@ -980,25 +1155,34 @@ export function PlanLinesGrid({
 
   const table = useReactTable({
     columns,
-    data: ordered,
-    pageCount: Math.ceil(ordered.length / pagination.pageSize),
+    data: tableData,
+    pageCount: Math.ceil(tableData.length / pagination.pageSize),
     getRowId: (row: PlanLine) => row.id,
-    state: { pagination, sorting, columnOrder, columnVisibility },
+    state: { pagination, sorting, columnOrder, columnVisibility, expanded },
     columnResizeMode: 'onChange',
     onColumnOrderChange: setColumnOrder,
     onColumnVisibilityChange: setColumnVisibility,
+    onExpandedChange: setExpanded,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
   });
 
+  // Never a group row's own synthetic `rec` (5.3: it exists to feed the grid's cells, not
+  // to be explained on its own) - Next/Prev inside the detail dialog must only ever land
+  // on a real per-warehouse recommendation.
   const pageRecs = useMemo<ReorderRecommendation[]>(
-    () => table.getRowModel().rows.map((r) => r.original.rec),
+    () =>
+      table
+        .getRowModel()
+        .rows.filter((r) => !isGroupedLine(r.original))
+        .map((r) => r.original.rec),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [table, ordered, pagination, sorting],
+    [table, tableData, pagination, sorting, expanded],
   );
 
   const statusOptions = useMemo(
@@ -1121,7 +1305,7 @@ export function PlanLinesGrid({
   return (
     <DataGrid
       table={table}
-      recordCount={filtered.length}
+      recordCount={tableData.length}
       isLoading={isLoading}
       standardToolbar={false}
       tableLayout={{
@@ -1132,7 +1316,18 @@ export function PlanLinesGrid({
         columnsVisibility: true,
       }}
       tableClassNames={{ edgeCell: 'px-5' }}
-      onRowClick={(row) => setDetailRec(row.rec)}
+      onRowClick={(row) => {
+        // A group row has no single recommendation to explain (5.3) - clicking it opens
+        // its per-warehouse drill instead of the explanation dialog.
+        if (isGroupedLine(row)) {
+          setExpanded((prev) => {
+            const current = typeof prev === 'boolean' ? {} : prev;
+            return { ...current, [row.id]: !current[row.id] };
+          });
+          return;
+        }
+        setDetailRec(row.rec);
+      }}
     >
       <Card>
         {toolbar}

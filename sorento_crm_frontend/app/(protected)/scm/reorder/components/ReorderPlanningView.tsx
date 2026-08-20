@@ -22,7 +22,7 @@ import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { resetRunDecisions } from '../services/reorderRunService';
-import { decisionLockReason, planGrainLabel, isLegacyRun } from '../lib/planGrain';
+import { decisionLockReason, planGrainLabel, isLegacyRun, shouldGroupByChannel } from '../lib/planGrain';
 import { PlanExceptionsView } from './PlanExceptionsView';
 import { PoWorklistView } from './PoWorklistView';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
@@ -165,6 +165,9 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
    * retired - and only its decision controls go quiet.
    */
   const locationLockReason = decisionLockReason(currentItem, 'location');
+  // 5.3: "1 line of retail, 1 line of project" - the Buy view groups its per-warehouse
+  // rows into one row per (product, channel) whenever THIS run is stamped Product grain.
+  const groupByChannel = shouldGroupByChannel(currentItem);
 
   const summary = currentItem?.summary ?? null;
   const { date: dateLabel, time: timeLabel } = labelsFor(currentItem?.started_at ?? null);
@@ -572,6 +575,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             secondaryActions={reportLinks}
             decisionsReadOnly={!!locationLockReason}
             readOnlyReason={locationLockReason}
+            groupByChannel={groupByChannel}
           />
         </>
       )}

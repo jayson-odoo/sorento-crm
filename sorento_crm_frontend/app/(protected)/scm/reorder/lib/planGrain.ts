@@ -47,6 +47,17 @@ export function planGrainLabel(run: RunGrainState | null | undefined): string {
 }
 
 /**
+ * Whether the Buy view groups its per-warehouse rows into one row per (product, channel)
+ * (5.3: "1 line of retail, 1 line of project"). Product-grain runs only: under Location
+ * grain the per-warehouse row IS the decision surface (5.4), so grouping it away would
+ * hide the thing the buyer is deciding over. A legacy run has no stamped grain at all.
+ */
+export function shouldGroupByChannel(run: RunGrainState | null | undefined): boolean {
+  if (!run || isLegacyRun(run)) return false;
+  return run.decision_grain === 'product';
+}
+
+/**
  * Why a decision control is disabled, or null when it is actionable.
  *
  * `surface` is the grain the control would write in. A run answers exactly one of

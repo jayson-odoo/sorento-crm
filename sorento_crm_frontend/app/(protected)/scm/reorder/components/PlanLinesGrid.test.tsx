@@ -988,3 +988,95 @@ describe('PlanLinesGrid - product photo on the row (AC-7)', () => {
     expect(onOpenPhoto).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('PlanLinesGrid - product-grain channel grouping (5.3)', () => {
+  // The captain's TPE-9204 complaint: 1 product across 3 warehouses (1 bare-site Retail,
+  // 2 suffixed-bin Project) must read as "1 line of retail, 1 line of project".
+  const retail = line({
+    id: 'a', warehouse_id: 'w-brw', warehouse_code: 'BRW', warehouse_name: 'Butterworth',
+    segment: 'dealer', rank: 1, order_qty: 3,
+  });
+  const projectIb = line({
+    id: 'b', warehouse_id: 'w-ib', warehouse_code: 'BRW-IB', warehouse_name: 'BRW - IB',
+    segment: 'project', rank: 2, order_qty: 4,
+  });
+  const projectIr = line({
+    id: 'c', warehouse_id: 'w-ir', warehouse_code: 'BRW-IR', warehouse_name: 'BRW - IR',
+    segment: 'project', rank: 3, order_qty: 5,
+  });
+
+  function renderGroupedGrid(lines: PlanLine[]) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <PlanLinesGrid
+          lines={lines}
+          decisions={{}}
+          onDecide={vi.fn()}
+          onClear={vi.fn()}
+          groupByChannel
+          decisionsReadOnly
+          readOnlyReason="Decided at Product grain"
+          staleAfterDays={180}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  // "Project" / "Retail" also appear as plain <option> text in the (mocked) Order-type
+  // filter select, so a bare `getByText` is ambiguous - the order-type BADGE is the only
+  // element carrying `data-slot="badge"`.
+  function orderTypeBadges(label: string): HTMLElement[] {
+    return screen.getAllByText(label).filter((el) => el.getAttribute('data-slot') === 'badge');
+  }
+
+  it('an ungrouped (Location-grain) plan renders the fixture exactly as before: 3 rows', () => {
+    renderGrid([retail, projectIb, projectIr]);
+    expect(screen.getAllByText('SKU-1')).toHaveLength(3);
+    expect(screen.getByText('Butterworth')).toBeInTheDocument();
+    expect(screen.getByText('BRW - IB')).toBeInTheDocument();
+    expect(screen.getByText('BRW - IR')).toBeInTheDocument();
+  });
+
+  it('collapses the same 3 rows into 2 once grouped - one Retail, one Project', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    expect(screen.getAllByText('SKU-1')).toHaveLength(2);
+    expect(orderTypeBadges('Retail')).toHaveLength(1);
+    expect(orderTypeBadges('Project')).toHaveLength(1);
+  });
+
+  it('the Project row shows both locations, joined, in the Location column', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    expect(screen.getByText('BRW - IB, BRW - IR')).toBeInTheDocument();
+    expect(screen.getByText('Butterworth')).toBeInTheDocument();
+  });
+
+  it('sums order qty across the group\'s warehouses', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    const projectRow = orderTypeBadges('Project')[0].closest('tr') as HTMLElement;
+    expect(within(projectRow).getByText('9')).toBeInTheDocument(); // 4 + 5
+  });
+
+  it('expanding the Project row reveals its 2 underlying location rows', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    expect(screen.queryByText('BRW - IB')).not.toBeInTheDocument();
+    fireEvent.click(orderTypeBadges('Project')[0]);
+    expect(screen.getByText('BRW - IB')).toBeInTheDocument();
+    expect(screen.getByText('BRW - IR')).toBeInTheDocument();
+  });
+
+  it('a group row is always read-only, regardless of which SKU', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    expect(screen.getAllByTestId(/^decision-read-only-group:/)).toHaveLength(2);
+  });
+
+  it('a warehouse with no persisted segment groups on its own Unclassified line, not Retail', () => {
+    const unmapped = line({
+      id: 'd', sku: 'SKU-1', warehouse_id: 'w-x', warehouse_code: 'WHX', warehouse_name: 'Unmapped',
+      segment: null, rank: 4,
+    });
+    renderGroupedGrid([retail, unmapped]);
+    expect(orderTypeBadges('Unclassified')).toHaveLength(1);
+    expect(orderTypeBadges('Retail')).toHaveLength(1); // the real dealer group only
+  });
+});

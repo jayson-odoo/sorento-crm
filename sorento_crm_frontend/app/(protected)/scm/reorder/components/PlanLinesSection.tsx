@@ -35,6 +35,7 @@ export function PlanLinesSection({
   secondaryActions,
   decisionsReadOnly = false,
   readOnlyReason = null,
+  groupByChannel = false,
 }: {
   runId: string | null;
   statusFilter?: PlanLineStatus | null;
@@ -52,6 +53,11 @@ export function PlanLinesSection({
   /** The run is decided at the Product grain, or is legacy: read and drill only. */
   decisionsReadOnly?: boolean;
   readOnlyReason?: string | null;
+  /** Forwarded to `PlanLinesGrid` (5.3): group the grid into one row per (product,
+   *  channel) instead of one row per (product, warehouse). The caller derives this from
+   *  the run's own stamped `decision_grain` (`lib/planGrain.ts`'s `shouldGroupByChannel`),
+   *  never decided here. */
+  groupByChannel?: boolean;
 }) {
   const [ownStatusFilter, setOwnStatusFilter] = useState<PlanLineStatus | null>(null);
   const statusFilter = statusFilterProp !== undefined ? statusFilterProp : ownStatusFilter;
@@ -135,6 +141,7 @@ export function PlanLinesSection({
         secondaryActions={secondaryActions}
         decisionsReadOnly={decisionsReadOnly}
         readOnlyReason={readOnlyReason}
+        groupByChannel={groupByChannel}
         lines={visibleLines}
         decisions={planLines.decisions}
         onDecide={(line, next) => planLines.decide(line, next)}
