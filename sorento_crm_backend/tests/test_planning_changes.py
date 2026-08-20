@@ -647,7 +647,11 @@ def test_apply_release_moves_the_lines_order_row_to_the_pool_and_raises_a_releas
         .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
         .one()
     )
-    assert order_row.stock_location == world.pool_wh.warehouse_code
+    # Captain, 20 August 2026: confirm-time stamping now always names the line's OWN
+    # fulfilment warehouse (AC-H5), regardless of which locations the reserve drew from -
+    # the row names one location, the buy's destination, not a description of the
+    # composition. Only RELEASE (below) moves it to the pool.
+    assert order_row.stock_location == world.own_wh.warehouse_code
 
     changed = _diff_change(
         DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",

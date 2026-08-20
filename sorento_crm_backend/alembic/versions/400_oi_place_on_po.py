@@ -55,6 +55,14 @@ def _has_index(table: str, name: str, schema: str = _SCHEMA) -> bool:
     return name in {idx["name"] for idx in _inspector().get_indexes(table, schema=schema)}
 
 
+def _has_fk(table: str, name: str, schema: str = _SCHEMA) -> bool:
+    if not _has_table(table, schema=schema):
+        return False
+    return name in {
+        fk["name"] for fk in _inspector().get_foreign_keys(table, schema=schema)
+    }
+
+
 def upgrade() -> None:
     if not _has_table(_TABLE):
         return
@@ -95,12 +103,18 @@ def downgrade() -> None:
     if _has_index(_TABLE, "ix_project_order_inquiry_rows_po_line"):
         op.drop_index("ix_project_order_inquiry_rows_po_line", table_name=_TABLE, schema=_SCHEMA)
     if _has_column(_TABLE, "po_line_id"):
-        op.drop_constraint(
-            "fk_project_order_inquiry_rows_po_line",
-            _TABLE,
-            schema=_SCHEMA,
-            type_="foreignkey",
-        )
+        # The column's presence doesn't imply THIS constraint name exists - a schema
+        # built via `create_all` from the model (CI) or a partially-migrated state can
+        # name the FK differently, or have none. Guard on the constraint itself; dropping
+        # the column still removes any differently-named FK automatically (Postgres drops
+        # dependent constraints with the column).
+        if _has_fk(_TABLE, "fk_project_order_inquiry_rows_po_line"):
+            op.drop_constraint(
+                "fk_project_order_inquiry_rows_po_line",
+                _TABLE,
+                schema=_SCHEMA,
+                type_="foreignkey",
+            )
         op.drop_column(_TABLE, "po_line_id", schema=_SCHEMA)
     if _has_column(_TABLE, "po_ref"):
         op.drop_column(_TABLE, "po_ref", schema=_SCHEMA)
