@@ -29,6 +29,12 @@ import {
  * Runs for a DRAFT shipment too (the captain will often act before the real packing list
  * arrives) - the base quantity is then the draft's own PACKED figure, same as any other
  * shipment, and the copy below says so explicitly.
+ *
+ * **UNREFERENCED as of the captain's second amendment (21 Aug 00:40).** The surface and shape
+ * both moved: `SpoPlannerTable` on `/procurement-management/packing-lists/{id}` (a planner
+ * TABLE, not this checkbox list) is where "Create SPO" lives now. This file and its own test
+ * (`CreateSpoPanel.test.tsx`) are kept, deliberately unmounted from `IncomingContainersView`,
+ * rather than deleted - see the plan doc for why the surface moved.
  */
 
 export function CreateSpoPanel({ shipmentId }: { shipmentId: string }) {

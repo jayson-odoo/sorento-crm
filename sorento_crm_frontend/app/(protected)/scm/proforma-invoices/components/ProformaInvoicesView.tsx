@@ -258,11 +258,10 @@ export function ProformaInvoicesView() {
           result.lines_created === 1 ? '' : 's'
         }${skippedMsg}`,
       );
-      router.push(
-        result.shipment_number
-          ? `/scm/incoming?shipment=${encodeURIComponent(result.shipment_number)}`
-          : '/scm/incoming',
-      );
+      // The captain's second amendment moves the packing-list-to-SPO journey to the
+      // procurement packing-list book, over this same `inbound_shipments` row - so the
+      // convert hand-off lands there, by id, rather than on `/scm/incoming`.
+      router.push(`/procurement-management/packing-lists/${result.shipment_id}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to draft a shipment');
     }

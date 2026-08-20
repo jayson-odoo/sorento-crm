@@ -822,10 +822,10 @@ export async function downloadPackingListExport(
  *       `scm.dashboard.view`. `already_converted: true` when this shipment already has
  *       SPOs from a prior run - `lines` is empty and `existing_spos` names them instead.
  *  POST /api/v1/scm/inbound-shipments/{id}/spo -> 201 SpoCreateResult. Body:
- *       { lines: [{shipment_line_id, qty, include}] } - EVERY line on the shipment, ticked
- *       or not. 409 when this shipment was already converted (names the existing SPOs).
- *       Auth: `scm.reorder.run` (a PO-book write, same permission the packing-list apply
- *       and PI-convert paths use).
+ *       { lines: [{shipment_line_id, qty, include, warehouse_id}] } - EVERY line on the
+ *       shipment, ticked or not. 409 when this shipment was already converted (names the
+ *       existing SPOs). Auth: `scm.reorder.run` (a PO-book write, same permission the
+ *       packing-list apply and PI-convert paths use).
  *  GET  /api/v1/scm/inbound-shipments/{id}/spo-worksheet/export -> 200 .xlsx bytes. The
  *       AutoCount handoff - what to key, per supplier. 404 until "Create SPO" has run.
  *
@@ -833,8 +833,53 @@ export async function downloadPackingListExport(
  * factories, and AutoCount POs are per supplier too. A line with no supplier recorded
  * (the n8n PDF path) cannot convert; a line already covered by an open PO or by stock
  * reads as covered, unticked by default, one line saying why.
+ *
+ * ── SECOND AMENDMENT (captain, 21 Aug 00:40) - the planner table ────────────
+ * The surface moves to `/procurement-management/packing-lists/{id}` (the planner tab), and
+ * the shape moves from a checkbox list to a loading-plan-style table (`SpoPlannerTable`,
+ * visual precedent `ContainerRequestSection`). `suggest`'s payload grew, additively:
+ *
+ *   * `po_takes` - the `po_covered_qty` total broken into the per-PO takes an EARLIEST-FIRST
+ *     cascade would make (soonest `expected_date`, then the PO's own number) - the same
+ *     discipline Place-on-PO's cascade embodies. `matched_po_number` stays the FIRST take's
+ *     number for backward compat; `po_covered_qty` is unchanged in value.
+ *   * `location_options` + `suggested_warehouse_id` - candidate destination warehouses for
+ *     this product, each with its outstanding SO, on hand and incoming SPO, ranked by the
+ *     shared Fulfilment Priority policy (project earlier delivery first, then retail). The
+ *     "after figure" (what a location's `available` becomes once this SPO lands there) is
+ *     computed on screen as `available + <the edited SPO qty>`, never sent stale from the
+ *     server - the qty is live-edited on this same screen.
+ *
+ * `SpoConfirmLine.warehouse_id` is the matching write-side addition: OPTIONAL, and when a
+ * line carries one, "Create SPO" ALSO writes the `spo_allocations` row for it in the SAME
+ * action - one confirm, two writes (see `spo_conversion_service.create`'s docstring for why
+ * this does not disturb the pre-existing "no allocation, no `on_order_v` count" rule).
+ * `SpoCreateResult.allocations` names what was written.
  */
 export type SpoMatchedBy = 'po_ref' | 'product' | null;
+
+/** One EARLIEST-FIRST cascade take behind `po_covered_qty`. */
+export interface SpoPoTake {
+  po_line_id: string;
+  po_number: string;
+  qty: number;
+  expected_date: string | null;
+}
+
+/** One candidate destination warehouse for a line's SPO qty, ranked. */
+export interface SpoLocationOption {
+  warehouse_id: string;
+  warehouse_code: string | null;
+  outstanding_so: number;
+  on_hand: number;
+  incoming_spo: number;
+  /** Signed, never clamped - `on_hand - outstanding_so + incoming_spo`. Add the qty being
+   *  proposed for this location to get the "after" figure the plan asks for. */
+  available: number;
+  /** Fulfilment Priority score, absent on a location with no open demand behind it - those
+   *  sort after every ranked one, by `warehouse_code`. */
+  rank_score: number | null;
+}
 
 export interface SpoSuggestionLine {
   shipment_line_id: string;
@@ -847,6 +892,8 @@ export interface SpoSuggestionLine {
   po_covered_qty: number;
   matched_po_number: string | null;
   matched_by: SpoMatchedBy;
+  /** Earliest-first breakdown of `po_covered_qty` - empty when nothing is covered. */
+  po_takes: SpoPoTake[];
   on_hand: number;
   incoming_spo: number;
   /** `packed - po_covered_qty - on_hand - incoming_spo`, floored at 0 - editable. */
@@ -859,6 +906,10 @@ export interface SpoSuggestionLine {
   reason: string | null;
   unit_cost: number | null;
   currency: string | null;
+  /** Candidate destinations for this line's SPO qty, ranked - empty on a line that cannot
+   *  convert. */
+  location_options: SpoLocationOption[];
+  suggested_warehouse_id: string | null;
 }
 
 export interface SpoRef {
@@ -883,6 +934,9 @@ export interface SpoConfirmLine {
   shipment_line_id: string;
   qty: number;
   include: boolean;
+  /** The chosen destination (second amendment) - optional; absent writes no allocation for
+   *  this line, same as every call before the amendment. */
+  warehouse_id?: string | null;
 }
 
 export interface CreatedSpo extends SpoRef {
@@ -891,11 +945,20 @@ export interface CreatedSpo extends SpoRef {
   qty: number;
 }
 
+/** One `spo_allocations` row `create` wrote alongside its SPO line. */
+export interface SpoAllocationWritten {
+  shipment_line_id: string;
+  warehouse_id: string;
+  allocation_id: string;
+  qty: number;
+}
+
 export interface SpoCreateResult {
   shipment_id: string;
   shipment_number: string | null;
   created_spos: CreatedSpo[];
   skipped: { shipment_line_id: string; item_code: string | null; reason: string }[];
+  allocations: SpoAllocationWritten[];
 }
 
 export async function getSpoSuggestion(shipmentId: string): Promise<SpoSuggestion> {

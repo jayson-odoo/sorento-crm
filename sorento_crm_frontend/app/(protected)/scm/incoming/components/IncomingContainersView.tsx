@@ -13,13 +13,18 @@ import { getIncomingShipments, type IncomingShipment } from '../../services/fulf
 import { PackingListUploadDialog } from './PackingListUploadDialog';
 import { ConsolidatedPackingListPanel } from './ConsolidatedPackingListPanel';
 import { AllocationPanel } from './AllocationPanel';
-import { CreateSpoPanel } from './CreateSpoPanel';
 
 /**
- * Ms Tee's steps four, five and the "Create SPO" hand-off: read the packing list, decide what
- * still needs an SPO, then what each container draws down. Panels rather than pages, because
- * each is only ever reached from the container list and a page transition between them would
- * lose which container she was looking at.
+ * Ms Tee's steps four and five: read the packing list, then what each container draws down.
+ * Panels rather than pages, because each is only ever reached from the container list and a
+ * page transition between them would lose which container she was looking at.
+ *
+ * "Create SPO" used to have its own panel here (`CreateSpoPanel.tsx`) - moved by the captain's
+ * second amendment (`PLAN-scm-proforma-to-spo.md`, 21 Aug 00:40) to a planner tab on
+ * `/procurement-management/packing-lists/{id}` (`SpoPlannerTable`), the packing-list book over
+ * this same `inbound_shipments` table, so there is one surface for it rather than two. The
+ * component file stays - its own test still exercises it directly - but it is deliberately
+ * UNREFERENCED here.
  */
 
 export function IncomingContainersView() {
@@ -137,8 +142,6 @@ export function IncomingContainersView() {
       )}
 
       <ConsolidatedPackingListPanel shipmentId={selected} />
-
-      {selected ? <CreateSpoPanel shipmentId={selected} /> : null}
 
       {selected ? <AllocationPanel shipmentId={selected} /> : null}
 

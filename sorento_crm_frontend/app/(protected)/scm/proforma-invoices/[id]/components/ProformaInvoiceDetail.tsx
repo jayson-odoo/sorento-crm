@@ -59,11 +59,10 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
           result.lines_created === 1 ? '' : 's'
         }${skippedMsg}`,
       );
-      router.push(
-        result.shipment_number
-          ? `/scm/incoming?shipment=${encodeURIComponent(result.shipment_number)}`
-          : '/scm/incoming',
-      );
+      // The captain's second amendment moves the packing-list-to-SPO journey to the
+      // procurement packing-list book, over this same `inbound_shipments` row - so the
+      // convert hand-off lands there, by id, rather than on `/scm/incoming`.
+      router.push(`/procurement-management/packing-lists/${result.shipment_id}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to draft a shipment');
     }
@@ -171,10 +170,10 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         header: ({ column }) => <DataGridColumnHeader title="Went to" column={column} />,
         cell: ({ row }) => {
           const line = row.original;
-          if (line.shipment_number) {
+          if (line.shipment_number && line.shipment_id) {
             return (
               <Link
-                href={`/scm/incoming?shipment=${encodeURIComponent(line.shipment_number)}`}
+                href={`/procurement-management/packing-lists/${line.shipment_id}`}
                 className="truncate font-medium text-primary hover:underline"
                 title={`Open shipment ${line.shipment_number}`}
               >
@@ -297,7 +296,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 {data.converted_shipments.map((s) => (
                   <Link
                     key={s.shipment_id}
-                    href={`/scm/incoming?shipment=${encodeURIComponent(s.shipment_number ?? '')}`}
+                    href={`/procurement-management/packing-lists/${s.shipment_id}`}
                     className="text-primary hover:underline"
                   >
                     {s.shipment_number ?? EM_DASH}

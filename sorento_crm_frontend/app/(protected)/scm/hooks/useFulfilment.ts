@@ -6,13 +6,16 @@ import {
   approveLoadingPlan,
   buildContainerRequest,
   createLoadingPlan,
+  createSpo,
   deleteLoadingPlan,
+  downloadSpoWorksheet,
   getConsolidatedPackingList,
   getContainerSizes,
   getFulfilmentSuppliers,
   getLoadingPlan,
   getLoadingPlans,
   getPlanNotices,
+  getSpoSuggestion,
   getSupplierNotices,
   getSupplierStock,
   getSupplierStockListFile,
@@ -22,6 +25,7 @@ import {
   type ContainerRequestLine,
   type LoadingPlan,
   type LoadingPlanRequest,
+  type SpoConfirmLine,
 } from '../services/fulfilmentService';
 import { fmtTrimmedDecimal } from '../lib/format';
 
@@ -227,5 +231,49 @@ export function useConsolidatedPackingList(shipmentId: string | null) {
     queryFn: () => getConsolidatedPackingList(shipmentId as string),
     enabled: !!shipmentId,
     refetchOnWindowFocus: false,
+  });
+}
+
+/**
+ * The SPO planner table (`PLAN-scm-proforma-to-spo.md`'s second amendment) - hoisted here so
+ * the packing-list detail page's planner tab (`procurement-management/packing-lists/[id]`)
+ * and any future caller share one cache key and one mutation shape, rather than each rolling
+ * its own inline `useQuery`/`useMutation` the way the first cut's `CreateSpoPanel` did.
+ */
+export function useSpoSuggestion(shipmentId: string | null) {
+  return useQuery({
+    queryKey: [...KEY, 'spo-suggestion', shipmentId],
+    queryFn: () => getSpoSuggestion(shipmentId as string),
+    enabled: !!shipmentId,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useCreateSpo(shipmentId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (lines: SpoConfirmLine[]) => createSpo(shipmentId as string, lines),
+    onSuccess: (out) => {
+      void qc.invalidateQueries({ queryKey: [...KEY, 'spo-suggestion', shipmentId] });
+      const names = out.created_spos.map((s) => s.po_number).filter(Boolean).join(', ');
+      const allocated = out.allocations.length;
+      const allocatedMsg = allocated
+        ? ` ${allocated} location${allocated === 1 ? '' : 's'} allocated.`
+        : '';
+      toast.success(
+        out.created_spos.length
+          ? `Created ${out.created_spos.length === 1 ? 'SPO' : `${out.created_spos.length} SPOs`}: ${names}.${allocatedMsg}`
+          : 'Nothing was created - every line was already covered.',
+      );
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useDownloadSpoWorksheet(shipmentId: string | null) {
+  return useMutation({
+    mutationFn: (fallbackName?: string | null) =>
+      downloadSpoWorksheet(shipmentId as string, fallbackName),
+    onError: (e: Error) => toast.error(e.message),
   });
 }

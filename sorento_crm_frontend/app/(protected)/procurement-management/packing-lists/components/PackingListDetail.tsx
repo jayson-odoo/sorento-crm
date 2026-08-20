@@ -32,6 +32,7 @@ import { toast } from 'sonner';
 import LinkAttachmentBrowserDialog from '@/components/common/LinkAttachmentBrowserDialog';
 import ClearanceDeliveryCard from './ClearanceDeliveryCard';
 import { CLEARANCE_ATTRIBUTE_FIELDS } from '../forms/packing-list-schema';
+import SpoPlannerTable from './SpoPlannerTable';
 
 interface PackingListDetailProps {
   packingListId: string;
@@ -46,7 +47,7 @@ export default function PackingListDetail({
 
   // `?tab=` so a tab survives a refresh and can be linked to directly. Written
   // with replace() so tab switching does not fill the back button with history.
-  const TABS = ['timeline', 'details', 'documents', 'lines'] as const;
+  const TABS = ['timeline', 'details', 'documents', 'lines', 'spo'] as const;
   const requestedTab = searchParams.get('tab');
   const activeTab = TABS.includes(requestedTab as (typeof TABS)[number])
     ? (requestedTab as string)
@@ -362,6 +363,7 @@ export default function PackingListDetail({
               </Badge>
             )}
           </TabsTrigger>
+          <TabsTrigger value="spo">SPO Planner</TabsTrigger>
         </TabsList>
 
         <TabsContent value="timeline" className="mt-6">
@@ -860,6 +862,10 @@ export default function PackingListDetail({
             </CardContent>
           </Card>
         )}
+        </TabsContent>
+
+        <TabsContent value="spo" className="mt-6">
+          <SpoPlannerTable shipmentId={packingListId} />
         </TabsContent>
       </Tabs>
     </div>
