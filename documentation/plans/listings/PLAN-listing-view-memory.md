@@ -1,6 +1,6 @@
 # PLAN - Listing view memory (sticky sort + sticky filter)
 
-**Status:** Approved, not started
+**Status:** Implemented on `fm/listing-view-memory` (pilot: Stock Inquiries). Browser evidence run pending - no free stack slot at hand-off; AC-E4 is covered by a listing-level vitest instead of a new Playwright spec (repo standing order).
 **Classification:** CORE - `public` schema, no new table, no migration
 **UAC (the contract):** `documentation/plans/listings/listing-view-memory-acceptance-criteria.md`
 **Pilot listing:** Procurement Management -> Stock Inquiries
@@ -230,6 +230,19 @@ Branch: `feat/listing-view-memory`. Never merged to main by an agent.
 
 ## 7. Open questions
 
-None. Ownership (personal only), scope (sticky sort + sticky filter, no segments) and rollout
-(Stock Inquiries pilot) were decided on the design note at
-`.lavish/list-view-memory.html`.
+**Ownership: personal or role?** Still with the captain (design note, question 1). This PR
+ships the personal behaviour. A role default can layer on later WITHOUT touching the rows
+written today:
+
+- The blob shape is already the contract. A role default is the same
+  `{ sorting, filters, filtersVersion }` blob, keyed by `(role_id, listing_key)` instead of
+  `(user_id, listing_key)`. It needs its own home - one small table, or a JSONB column on
+  `roles` - which is the one migration the feature would cost.
+- The resolution happens in `GET /list-query/column-config/{key}`: return
+  `{**role_default, **user_row}`. The hook applies whatever the GET returns, so the client
+  does not change, and a user's own row still wins ("role default + personal override").
+  "Role default only" is the same GET with the user row's view keys ignored.
+- The page's `filtersVersion` guard covers a role blob exactly as it covers a user blob.
+
+Scope (sticky sort + sticky filter, no segments) and rollout (Stock Inquiries pilot) were
+decided on the design note at `.lavish/list-view-memory.html`.

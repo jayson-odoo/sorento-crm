@@ -1,6 +1,6 @@
 # UAC - Listing view memory (sticky sort + sticky filter)
 
-**Status:** Approved, not started
+**Status:** Implemented on `fm/listing-view-memory` (pilot: Stock Inquiries). Browser evidence run pending - no free stack slot at hand-off; AC-E4 is covered by a listing-level vitest instead of a new Playwright spec (repo standing order).
 **Classification:** CORE (`public` schema, no new table)
 **Plan:** `documentation/plans/listings/PLAN-listing-view-memory.md`
 **Pilot listing:** Procurement Management -> Stock Inquiries
