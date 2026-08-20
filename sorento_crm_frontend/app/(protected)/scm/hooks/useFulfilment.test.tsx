@@ -16,6 +16,7 @@ const createLoadingPlan = vi.fn();
 const buildContainerRequest = vi.fn();
 const sendContainerRequest = vi.fn();
 const getSupplierNotices = vi.fn();
+const deleteSpo = vi.fn();
 
 vi.mock('sonner', () => ({
   toast: { success: (...a: unknown[]) => success(...a), error: (...a: unknown[]) => error(...a) },
@@ -35,9 +36,15 @@ vi.mock('../services/fulfilmentService', () => ({
   buildContainerRequest: (...a: unknown[]) => buildContainerRequest(...a),
   sendContainerRequest: (...a: unknown[]) => sendContainerRequest(...a),
   getSupplierNotices: (...a: unknown[]) => getSupplierNotices(...a),
+  deleteSpo: (...a: unknown[]) => deleteSpo(...a),
 }));
 
-import { useBuildLoadingPlan, useContainerRequestBuild, useSendContainerRequest } from './useFulfilment';
+import {
+  useBuildLoadingPlan,
+  useContainerRequestBuild,
+  useDeleteSpo,
+  useSendContainerRequest,
+} from './useFulfilment';
 
 function wrapper({ children }: { children: React.ReactNode }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -51,6 +58,7 @@ beforeEach(() => {
   buildContainerRequest.mockReset();
   sendContainerRequest.mockReset();
   getSupplierNotices.mockReset();
+  deleteSpo.mockReset();
 });
 
 describe('useBuildLoadingPlan', () => {
@@ -139,6 +147,57 @@ describe('useSendContainerRequest', () => {
     });
 
     await waitFor(() => expect(error).toHaveBeenCalledWith('This supplier has no email on file.'));
+    expect(success).not.toHaveBeenCalled();
+  });
+});
+
+describe('useDeleteSpo', () => {
+  it('toasts the single deleted SPO by number', async () => {
+    deleteSpo.mockResolvedValue({
+      shipment_id: 'ship-1',
+      shipment_number: 'SH-1',
+      deleted_po_numbers: ['CRM-SPO-0001'],
+      deleted_spo_count: 1,
+      deleted_allocation_count: 0,
+    });
+    const { result } = renderHook(() => useDeleteSpo('ship-1'), { wrapper });
+
+    result.current.mutate();
+
+    await waitFor(() => expect(success).toHaveBeenCalled());
+    expect(deleteSpo).toHaveBeenCalledWith('ship-1');
+    expect(success).toHaveBeenCalledWith('Deleted SPO CRM-SPO-0001.');
+  });
+
+  it('toasts the count and every number when more than one SPO is deleted', async () => {
+    deleteSpo.mockResolvedValue({
+      shipment_id: 'ship-1',
+      shipment_number: 'SH-1',
+      deleted_po_numbers: ['CRM-SPO-0001', 'CRM-SPO-0002'],
+      deleted_spo_count: 2,
+      deleted_allocation_count: 1,
+    });
+    const { result } = renderHook(() => useDeleteSpo('ship-1'), { wrapper });
+
+    result.current.mutate();
+
+    await waitFor(() => expect(success).toHaveBeenCalled());
+    expect(success).toHaveBeenCalledWith('Deleted 2 SPOs: CRM-SPO-0001, CRM-SPO-0002.');
+  });
+
+  it('surfaces the guard message on a refused delete rather than a generic one', async () => {
+    deleteSpo.mockRejectedValue(
+      new Error('CRM-SPO-9999 was not created by Create SPO and cannot be deleted from this screen.'),
+    );
+    const { result } = renderHook(() => useDeleteSpo('ship-1'), { wrapper });
+
+    result.current.mutate();
+
+    await waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        'CRM-SPO-9999 was not created by Create SPO and cannot be deleted from this screen.',
+      ),
+    );
     expect(success).not.toHaveBeenCalled();
   });
 });

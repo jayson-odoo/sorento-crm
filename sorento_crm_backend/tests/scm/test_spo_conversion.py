@@ -250,6 +250,47 @@ def test_a_po_ref_from_pi_provenance_pins_the_match_over_a_product_only_candidat
         assert line["suggested_qty"] == 85
 
 
+def test_a_po_ref_pin_still_matches_when_the_book_supplier_is_spelled_differently():
+    """DB evidence, live case (captain, 21 Aug): PI line SRTWT7443 states po_ref
+    202605-S0060, an open PO with 1,880 open - booked under the importer's own name-squashed
+    KAILU identity, while the shipment line itself carries the PI's own 400-J006 supplier
+    code. `_pinned_po_candidates` must trust the STATED document regardless of supplier
+    spelling - the module's own rule, "a stated po_ref outranks inference"."""
+    with pg_session() as db:
+        w = World(db)
+        book_supplier = w.supplier("KAILU")
+        shipment_supplier = w.supplier("J006")
+        pinned = w.po("PIN", book_supplier, [("A", 1880, 0)])
+        shipment, lines = w.shipment([("A", 100, shipment_supplier)])
+        w.pi_po_ref(lines[0], pinned.po_number)
+
+        out = svc.suggest(db, str(shipment.id))
+
+        line = _line(out, str(lines[0].id))
+        assert line["matched_by"] == "po_ref"
+        assert line["matched_po_number"] == pinned.po_number
+        assert line["po_covered_qty"] == 100
+        assert line["suggested_qty"] == 0
+
+
+def test_the_inference_path_still_refuses_a_cross_supplier_po_with_no_stated_ref():
+    """No po_ref at all - the UN-pinned (product-match) path must still refuse a PO booked
+    under a different supplier, or the pin fix above would silently widen inference too."""
+    with pg_session() as db:
+        w = World(db)
+        book_supplier = w.supplier("KAILU")
+        shipment_supplier = w.supplier("J006")
+        w.po("OTHER", book_supplier, [("A", 500, 0)])
+        shipment, lines = w.shipment([("A", 100, shipment_supplier)])
+
+        out = svc.suggest(db, str(shipment.id))
+
+        line = _line(out, str(lines[0].id))
+        assert line["matched_by"] is None
+        assert line["po_covered_qty"] == 0
+        assert line["suggested_qty"] == 100
+
+
 def test_on_hand_and_incoming_spo_surplus_net_the_suggested_qty():
     with pg_session() as db:
         w = World(db)
@@ -466,6 +507,171 @@ def test_created_spo_lines_are_absent_from_on_order_v_until_allocated():
 
 
 # --------------------------------------------------------------------------- #
+# unwind (delete) + self-heal - third amendment, captain live case 21 Aug
+# --------------------------------------------------------------------------- #
+
+
+def test_unwind_deletes_po_lines_headers_links_and_allocations_then_suggest_recovers():
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        shipment, lines = w.shipment([("A", 40, supplier)])
+
+        created = svc.create(db, str(shipment.id), _confirm_all(lines), actor="tester")
+        po_id = created["created_spos"][0]["purchase_order_id"]
+        po_number = created["created_spos"][0]["po_number"]
+        po_line = db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.purchase_order_id == po_id
+        ).one()
+        # An allocation hanging off the created PO line - the state `unwind` must clean up
+        # itself (the FK there is SET NULL, not CASCADE), not just leave orphaned once the
+        # PO line under it is gone.
+        db.add(SPOAllocation(
+            id=_u(), inbound_shipment_id=shipment.id, warehouse_id=wh.id,
+            product_id=lines[0].product_id, allocated_quantity=40,
+            receipt_status="pending", quantity_received=0, po_line_id=po_line.id,
+        ))
+        db.flush()
+
+        out = svc.unwind(db, str(shipment.id))
+
+        assert out["deleted_spo_count"] == 1
+        assert out["deleted_po_numbers"] == [po_number]
+        assert out["deleted_allocation_count"] == 1
+        assert db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).one_or_none() is None
+        assert db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.purchase_order_id == po_id
+        ).count() == 0
+        assert db.query(ShipmentLineSpoLink).filter(
+            ShipmentLineSpoLink.inbound_shipment_id == shipment.id
+        ).count() == 0
+        assert db.query(SPOAllocation).filter(SPOAllocation.po_line_id == po_line.id).count() == 0
+
+        again = svc.suggest(db, str(shipment.id))
+        assert again["already_converted"] is False
+        assert again["lines"][0]["suggested_qty"] == 40
+
+
+def test_unwind_refuses_a_non_crm_spo_header_409_and_leaves_it_untouched():
+    """A defensive guard: `unwind` must never delete a PO it did not itself create, however
+    it ended up linked - simulate an AutoCount-imported PO wired to this shipment by some
+    other path."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        shipment, lines = w.shipment([("A", 40, supplier)])
+        po = w.po("AC", supplier, [("A", 40, 0)])  # source_system left None - not crm_spo
+        po_line = db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.purchase_order_id == po.id
+        ).one()
+        db.add(ShipmentLineSpoLink(
+            id=_u(), inbound_shipment_id=shipment.id, inbound_shipment_line_id=lines[0].id,
+            purchase_order_id=po.id, purchase_order_line_id=po_line.id,
+        ))
+        db.flush()
+
+        with pytest.raises(AppException) as exc:
+            svc.unwind(db, str(shipment.id))
+
+        assert exc.value.status_code == 409
+        assert po.po_number in str(exc.value.detail)
+        assert db.query(PurchaseOrder).filter(PurchaseOrder.id == po.id).one_or_none() is not None
+        assert db.query(ShipmentLineSpoLink).filter(
+            ShipmentLineSpoLink.inbound_shipment_id == shipment.id
+        ).count() == 1
+
+
+def test_unwind_only_touches_this_shipments_spo_not_anothers():
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        shipment_a, lines_a = w.shipment([("A", 40, supplier)])
+        shipment_b, lines_b = w.shipment([("B", 25, supplier)])
+        svc.create(db, str(shipment_a.id), _confirm_all(lines_a), actor="tester")
+        created_b = svc.create(db, str(shipment_b.id), _confirm_all(lines_b), actor="tester")
+        po_b_id = created_b["created_spos"][0]["purchase_order_id"]
+
+        svc.unwind(db, str(shipment_a.id))
+
+        assert db.query(PurchaseOrder).filter(PurchaseOrder.id == po_b_id).one_or_none() is not None
+        again_a = svc.suggest(db, str(shipment_a.id))
+        assert again_a["already_converted"] is False
+        again_b = svc.suggest(db, str(shipment_b.id))
+        assert again_b["already_converted"] is True
+
+
+def test_unwind_on_a_never_converted_shipment_is_404():
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        shipment, _lines = w.shipment([("A", 40, supplier)])
+
+        with pytest.raises(AppException) as exc:
+            svc.unwind(db, str(shipment.id))
+        assert exc.value.status_code == 404
+
+
+def test_heal_stale_link_cleans_up_a_link_pointing_at_a_deleted_po_and_suggest_answers_honestly():
+    """Simulate a CRM SPO removed by some path OTHER than `unwind` - delete the PO line then
+    the header directly (Postgres's own `ON DELETE SET NULL`, migration 406, then clears the
+    link's ids, the exact signature `_heal_stale_links` must catch)."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        shipment, lines = w.shipment([("A", 40, supplier)])
+        created = svc.create(db, str(shipment.id), _confirm_all(lines), actor="tester")
+        po_id = created["created_spos"][0]["purchase_order_id"]
+
+        db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.purchase_order_id == po_id
+        ).delete(synchronize_session=False)
+        db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).delete(synchronize_session=False)
+        db.flush()
+        assert db.query(ShipmentLineSpoLink).filter(
+            ShipmentLineSpoLink.inbound_shipment_id == shipment.id
+        ).count() == 1
+
+        out = svc.suggest(db, str(shipment.id))
+
+        assert out["already_converted"] is False
+        assert out["self_heal_note"] is not None
+        assert out["lines"][0]["suggested_qty"] == 40
+        assert db.query(ShipmentLineSpoLink).filter(
+            ShipmentLineSpoLink.inbound_shipment_id == shipment.id
+        ).count() == 0
+
+
+def test_heal_partial_alive_conversion_shows_the_alive_spo_and_notes_the_cleared_one():
+    with pg_session() as db:
+        w = World(db)
+        jiangmen = w.supplier("JIANGMEN")
+        kailu = w.supplier("KAILU")
+        shipment, lines = w.shipment([
+            ("A", 50, jiangmen),
+            ("B", 30, kailu),
+        ])
+        created = svc.create(db, str(shipment.id), _confirm_all(lines), actor="tester")
+        dead = next(s for s in created["created_spos"] if s["supplier_id"] == str(jiangmen.id))
+        alive = next(s for s in created["created_spos"] if s["supplier_id"] == str(kailu.id))
+
+        db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.purchase_order_id == dead["purchase_order_id"]
+        ).delete(synchronize_session=False)
+        db.query(PurchaseOrder).filter(
+            PurchaseOrder.id == dead["purchase_order_id"]
+        ).delete(synchronize_session=False)
+        db.flush()
+
+        out = svc.suggest(db, str(shipment.id))
+
+        assert out["already_converted"] is True
+        assert out["self_heal_note"] is not None
+        remaining_ids = {s["purchase_order_id"] for s in out["existing_spos"]}
+        assert remaining_ids == {alive["purchase_order_id"]}
+
+
+# --------------------------------------------------------------------------- #
 # routes
 # --------------------------------------------------------------------------- #
 
@@ -654,3 +860,53 @@ def test_route_draft_shipment_converts_too(scm_app):
         json={"lines": [{"shipment_line_id": str(line.id), "qty": 15, "include": True}]},
     )
     assert r.status_code == 201, r.text
+
+
+def test_route_delete_spo_happy_path(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    shipment, line = _seed_route_shipment(db)
+    client = TestClient(app)
+    created = client.post(
+        f"{_BASE}/{shipment.id}/spo",
+        json={"lines": [{"shipment_line_id": str(line.id), "qty": 15, "include": True}]},
+    )
+    assert created.status_code == 201, created.text
+
+    r = client.delete(f"{_BASE}/{shipment.id}/spo")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["deleted_spo_count"] == 1
+
+    again = client.get(f"{_BASE}/{shipment.id}/spo-suggestion")
+    assert again.json()["already_converted"] is False
+
+
+def test_route_delete_spo_requires_the_operator_permission(scm_app):
+    from tests.scm.conftest import as_user, seed_user
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    shipment, line = _seed_route_shipment(db)
+    client = TestClient(app)
+    created = client.post(
+        f"{_BASE}/{shipment.id}/spo",
+        json={"lines": [{"shipment_line_id": str(line.id), "qty": 15, "include": True}]},
+    )
+    assert created.status_code == 201, created.text
+    # Swap to a principal with no grants at all, same company scope untouched.
+    as_user(app, gcu, gcuk, seed_user(db, None))
+
+    r = client.delete(f"{_BASE}/{shipment.id}/spo")
+
+    assert r.status_code == 403, r.text
+
+
+def test_route_delete_spo_with_nothing_converted_is_404(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    shipment, _line = _seed_route_shipment(db)
+
+    r = TestClient(app).delete(f"{_BASE}/{shipment.id}/spo")
+
+    assert r.status_code == 404, r.text

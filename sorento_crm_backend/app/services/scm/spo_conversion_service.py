@@ -85,9 +85,43 @@ which is the invariant `test_created_spo_lines_are_absent_from_on_order_v_until_
 already locks in and this amendment does not disturb: allocation was always a decision, not a
 default, and it still is - it is simply now a decision made on the SAME screen instead of a
 second one, because the captain's plan for this table has her decide both there.
+
+**Third amendment (captain live case, 21 Aug): delete the SPO, and self-heal a link that
+outlives it.** He created SPOs from a draft shipment, then deleted their `spo_allocations` on
+the SPO Allocations screen, and the planner tab stayed on "SPO already created" with no way
+back - the SPO header and its `shipment_line_spo_link` row were both still there, only the
+allocation was gone. Two moves:
+
+  * `unwind` - the mirror of `create`. Deletes the `purchase_order_lines` + `purchase_orders`
+    headers a shipment's `create` minted, the `shipment_line_spo_link` rows for the whole
+    shipment, and any `spo_allocations` still hanging off those PO lines. Guarded twice: only
+    `source_system == crm_spo` headers (an AutoCount import is refused, 409), and only headers
+    linked to THIS shipment. Exposed on the planner as a Delete action on the already-converted
+    state.
+  * `_heal_stale_links` - `suggest`'s own defence against a CRM SPO removed by some path OTHER
+    than `unwind` (a generic PO delete, a bad migration): a `shipment_line_spo_link` naming a
+    PO/PO line that no longer exists is deleted on read, with a warning log, rather than
+    trusted. A shipment left fully stale returns to `suggest`'s normal (non-converted) state; a
+    shipment left partially stale (some SPOs deleted, some not) keeps `already_converted: true`
+    and names only the SPOs still alive - `self_heal_note` says how many were cleared either
+    way, non-null only when this run actually cleaned something up.
+
+**Fourth amendment (captain, DB evidence, live case): the po_ref pin is supplier-scoped and
+that defeats it.** PI line SRTWT7443 states po_ref `202605-S0060`, an open PO with 1,880 of
+the product - but that PO is booked under the importer's name-squashed KAILU identity while
+the shipment line itself carries the PI's own `400-J006` supplier code. `_po_cascade_lines`'s
+pinned call ANDed `PurchaseOrder.supplier_id == supplier_id` onto the pin, so it returned
+nothing and the planner read the line as covering 0 - exactly backwards from the module's own
+rule, "a stated po_ref outranks inference". `_pinned_po_candidates` now resolves the STATED
+number on its own (`po_number` is unique on `purchase_orders` in practice, so this is almost
+always exactly one purchase order) and trusts it regardless of supplier spelling; the supplier
+filter only comes back as a tiebreak on the rare/defensive case of more than one match. The
+UN-pinned (product-match) path is unchanged - it still filters by supplier, because inference
+with no stated document has nothing else to anchor it to.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date as _date
 from decimal import Decimal
@@ -103,6 +137,7 @@ from app.models.procurement import (
     InboundShipmentLine,
     PurchaseOrder,
     PurchaseOrderLine,
+    SPOAllocation,
     Supplier,
 )
 from app.models.scm import ProformaInvoiceLine, ProformaInvoiceShipmentLink, ShipmentLineSpoLink
@@ -110,6 +145,8 @@ from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 from app.services.scm.supplier_scope import is_uuid as _is_uuid
+
+logger = logging.getLogger(__name__)
 
 #: The CRM-originated marker on `purchase_orders.source_system` / `purchase_order_lines.
 #: source_system`. Distinct from every AutoCount import stamp (`scm_po_history`,
@@ -181,6 +218,80 @@ def _existing_spos(db: Session, shipment_id: str) -> list[dict]:
     ]
 
 
+def _heal_stale_links(
+    db: Session, shipment_id: str, links: list[ShipmentLineSpoLink]
+) -> tuple[list[ShipmentLineSpoLink], int]:
+    """Verify every MATCHED link still names a live PO/PO line, and self-heal the ones that do
+    not (the captain's second ask, 21 Aug: allocations deleted elsewhere left the planner stuck
+    on "SPO already created" with nothing behind it). A CRM SPO removed by any path other than
+    `unwind` above - a generic PO delete, a bad migration - leaves `shipment_line_spo_link`
+    behind: both FKs here are `ON DELETE SET NULL` (migration 406), so Postgres itself already
+    clears `purchase_order_id` / `purchase_order_line_id` the moment the row they name is
+    deleted, however that deletion happened. The tell is the COMBINATION this can only ever
+    reach by that route: `unmatched_reason IS NULL` (so it was written as a MATCH, never a
+    skip - every skip `create` writes always carries a reason) with `purchase_order_id IS NULL`
+    (so whatever it matched is now gone). Trusting the row at face value is exactly what left
+    the captain's planner stuck; this re-derives the truth from what Postgres already did to it
+    rather than repeating that mistake. A `purchase_order_id` that is still present is
+    re-queried for real (belt and braces against a schema where the delete path did not go
+    through the FK at all), same for a lone orphaned `purchase_order_line_id` under a header
+    that is otherwise still alive.
+
+    Stale rows are DELETED here, on read, so the very next `suggest` answers honestly - back to
+    its normal (non-`already_converted`) state when every link was stale, or naming only the
+    SPOs still alive when some were (the partially-alive case: some SPOs deleted, some not).
+
+    Returns the surviving links and how many were cleaned up, so the caller can say so.
+    """
+    candidates = [l for l in links if l.unmatched_reason is None]
+    if not candidates:
+        return links, 0
+
+    po_ids = {str(l.purchase_order_id) for l in candidates if l.purchase_order_id}
+    line_ids = {str(l.purchase_order_line_id) for l in candidates if l.purchase_order_line_id}
+    live_po_ids = (
+        {str(r[0]) for r in db.query(PurchaseOrder.id).filter(PurchaseOrder.id.in_(po_ids)).all()}
+        if po_ids
+        else set()
+    )
+    live_line_ids = (
+        {
+            str(r[0])
+            for r in db.query(PurchaseOrderLine.id).filter(PurchaseOrderLine.id.in_(line_ids)).all()
+        }
+        if line_ids
+        else set()
+    )
+
+    alive: list[ShipmentLineSpoLink] = []
+    stale: list[ShipmentLineSpoLink] = []
+    for link in links:
+        if link.unmatched_reason is not None:
+            alive.append(link)  # a genuine skip - nothing named, nothing to verify
+            continue
+        if link.purchase_order_id is None and link.purchase_order_line_id is None:
+            # The SET-NULL signature: this was a MATCH (no reason) with nothing left to
+            # name - its PO was deleted by some path other than `unwind`.
+            stale.append(link)
+            continue
+        po_ok = link.purchase_order_id is None or str(link.purchase_order_id) in live_po_ids
+        line_ok = link.purchase_order_line_id is None or str(link.purchase_order_line_id) in live_line_ids
+        (alive if (po_ok and line_ok) else stale).append(link)
+
+    if stale:
+        logger.warning(
+            "shipment_line_spo_link: %d stale row(s) for shipment %s point at a deleted "
+            "purchase order/line - cleaning up on read",
+            len(stale),
+            shipment_id,
+        )
+        for link in stale:
+            db.delete(link)
+        db.flush()
+
+    return alive, len(stale)
+
+
 def _po_refs_for_line(db: Session, shipment_line_id: str) -> set[str]:
     """The `po_ref`(s) named on the PI line(s) this shipment line was drafted from, if any.
 
@@ -225,27 +336,9 @@ def _cascade_take(
     return takes
 
 
-def _po_cascade_lines(
-    db: Session, supplier_id: str, product_id: str, *, po_number: Optional[str] = None
-) -> list[tuple[PurchaseOrderLine, PurchaseOrder, float]]:
-    """Open PO lines to this supplier for this product, EARLIEST `expected_date` FIRST, then
-    document sequence - `project_order_inquiry_service._open_po_lines_for_product`'s own
-    ordering, so a "which PO covers this" answer here can never disagree with what the
-    Place-on-PO cascade would say about the same purchase order. `po_number` narrows to ONE
-    pinned document (the plan's "a stated po_ref outranks inference") - still walked as a
-    cascade rather than summed, because one po_number can span more than one open line."""
-    q = (
-        db.query(PurchaseOrderLine, PurchaseOrder)
-        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-        .filter(
-            PurchaseOrder.supplier_id == supplier_id,
-            PurchaseOrder.status.notin_(("draft", "draft_recommendation")),
-            PurchaseOrderLine.product_id == product_id,
-            PurchaseOrderLine.line_status == "open",
-        )
-    )
-    if po_number:
-        q = q.filter(PurchaseOrder.po_number == po_number)
+def _open_line_rows(q) -> list[tuple[PurchaseOrderLine, PurchaseOrder, float]]:
+    """Shared tail of both cascade lookups below: order earliest-first, then keep only the
+    lines with real open balance."""
     rows = q.order_by(
         PurchaseOrderLine.expected_date.asc().nulls_last(),
         PurchaseOrder.po_number.asc(),
@@ -257,6 +350,65 @@ def _po_cascade_lines(
         if available > 0:
             out.append((line, po, available))
     return out
+
+
+def _po_cascade_lines(
+    db: Session, supplier_id: str, product_id: str
+) -> list[tuple[PurchaseOrderLine, PurchaseOrder, float]]:
+    """Open PO lines to this supplier for this product, EARLIEST `expected_date` FIRST, then
+    document sequence - `project_order_inquiry_service._open_po_lines_for_product`'s own
+    ordering, so a "which PO covers this" answer here can never disagree with what the
+    Place-on-PO cascade would say about the same purchase order. The PRODUCT-match (inference)
+    path only - a STATED po_ref is resolved by `_pinned_po_candidates` below, which does NOT
+    filter by supplier (see that function's docstring for why the two paths diverge)."""
+    q = (
+        db.query(PurchaseOrderLine, PurchaseOrder)
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .filter(
+            PurchaseOrder.supplier_id == supplier_id,
+            PurchaseOrder.status.notin_(("draft", "draft_recommendation")),
+            PurchaseOrderLine.product_id == product_id,
+            PurchaseOrderLine.line_status == "open",
+        )
+    )
+    return _open_line_rows(q)
+
+
+def _pinned_po_candidates(
+    db: Session, po_number: str, supplier_id: str, product_id: str
+) -> list[tuple[PurchaseOrderLine, PurchaseOrder, float]]:
+    """Resolve a STATED po_ref - the module's own rule, "a stated po_ref outranks inference" -
+    WITHOUT filtering by supplier first (captain, DB evidence, live case): a PI's supplier name
+    and the CRM book's supplier for the same factory can be spelled differently (an importer's
+    name-squashed identity vs the PI's own code) - PI line SRTWT7443 states po_ref
+    202605-S0060, an open PO with 1,880 of the product, booked under KAILU, while the shipment
+    line itself carries supplier 400-J006. Filtering the PIN by supplier as well as by number
+    defeated the pin in exactly the case it exists for, and the planner read the line as
+    covering 0.
+
+    `po_number` is UNIQUE on `purchase_orders` in practice, so this almost always resolves to
+    exactly one purchase order - trust the stated document then, regardless of supplier
+    spelling. If it somehow resolves to MORE than one (the schema does not forbid it even
+    though the live data does), the supplier is the tiebreak: narrow to the match(es) that
+    also agree with it, the same filter the inference path always applies.
+    """
+    matches = db.query(PurchaseOrder).filter(PurchaseOrder.po_number == po_number).all()
+    if len(matches) > 1:
+        matches = [po for po in matches if str(po.supplier_id) == str(supplier_id)]
+    po_ids = [po.id for po in matches]
+    if not po_ids:
+        return []
+    q = (
+        db.query(PurchaseOrderLine, PurchaseOrder)
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .filter(
+            PurchaseOrderLine.purchase_order_id.in_(po_ids),
+            PurchaseOrder.status.notin_(("draft", "draft_recommendation")),
+            PurchaseOrderLine.product_id == product_id,
+            PurchaseOrderLine.line_status == "open",
+        )
+    )
+    return _open_line_rows(q)
 
 
 def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
@@ -304,7 +456,16 @@ def _demand_by_warehouse(db: Session, product_id: str) -> dict[str, dict]:
     candidate locations through the shared Fulfilment Priority policy instead of a private
     sort. Class follows the repo's own rule (not a literal match): a warehouse with ANY
     project-class line ranks as project (project need is what the plan cares about seeing
-    first), else retail when any line names a class, else unclassified."""
+    first), else retail when any line names a class, else unclassified.
+
+    `payment_terms_days` is sourced the SAME way the auto-place ranking already does
+    (`priority.payment_terms_by_customer`, `project_supply_service`/`project_fulfilment_board
+    _service`'s own reads) rather than left hard-coded absent: every customer with open demand
+    behind this warehouse is looked up, and the SHORTEST of their terms is kept - the same
+    "shorter is higher" reading `priority.factors_for_demand_rows` gives the `customer_credit`
+    factor generally, applied here at the location's most credit-sensitive customer. None
+    (ABSENT, never a false best/worst) when nobody behind this location has been assessed."""
+    from app.services.scm import priority
     from app.services.scm.demand import is_open_demand
 
     rows = (
@@ -327,13 +488,42 @@ def _demand_by_warehouse(db: Session, product_id: str) -> dict[str, dict]:
         .group_by(SalesOrderLine.warehouse_id)
         .all()
     )
+    if not rows:
+        return {}
+
+    customer_pairs = (
+        db.query(SalesOrderLine.warehouse_id, SalesOrder.customer_id)
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .filter(
+            SalesOrderLine.product_id == product_id,
+            SalesOrder.status == "open",
+            is_open_demand(),
+            SalesOrderLine.warehouse_id.isnot(None),
+            SalesOrder.customer_id.isnot(None),
+        )
+        .distinct()
+        .all()
+    )
+    customers_by_warehouse: dict[str, set[str]] = {}
+    for wh_id, cust_id in customer_pairs:
+        customers_by_warehouse.setdefault(str(wh_id), set()).add(str(cust_id))
+    all_customer_ids = {cid for ids in customers_by_warehouse.values() for cid in ids}
+    terms_by_customer = priority.payment_terms_by_customer(db, list(all_customer_ids))
+
     out: dict[str, dict] = {}
     for r in rows:
         klass = "project" if r.has_project else "retail" if r.has_retail else None
-        out[str(r.warehouse_id)] = {
+        wh_key = str(r.warehouse_id)
+        terms_here = [
+            terms_by_customer[cid]
+            for cid in customers_by_warehouse.get(wh_key, ())
+            if terms_by_customer.get(cid) is not None
+        ]
+        out[wh_key] = {
             "required_date": r.required_date,
             "order_date": r.order_date,
             "demand_class": klass,
+            "payment_terms_days": min(terms_here) if terms_here else None,
         }
     return out
 
@@ -379,7 +569,7 @@ def _location_options(db: Session, product_id: str) -> dict:
             "row_key": loc["warehouse_id"],
             "required_date": demand[loc["warehouse_id"]]["required_date"],
             "order_date": demand[loc["warehouse_id"]]["order_date"],
-            "payment_terms_days": None,
+            "payment_terms_days": demand[loc["warehouse_id"]]["payment_terms_days"],
             "demand_class": demand[loc["warehouse_id"]]["demand_class"],
         }
         for loc in locations
@@ -418,7 +608,11 @@ def _location_options(db: Session, product_id: str) -> dict:
 
 
 def suggest(db: Session, shipment_id: str) -> dict:
-    """What "Create SPO" would ask for, per shipment line. Pure read - persists nothing."""
+    """What "Create SPO" would ask for, per shipment line. Almost a pure read - the one
+    exception is `_heal_stale_links`, which deletes any link row a prior `create` wrote that
+    no longer points at a live PO/PO line (see that function's docstring). The caller must
+    `db.commit()` after this, same as every other lazily-self-healing GET in this codebase
+    (`explainer.py`'s cached-explanation routes)."""
     shipment = _shipment_or_404(db, shipment_id)
     lines = (
         db.query(InboundShipmentLine)
@@ -426,7 +620,13 @@ def suggest(db: Session, shipment_id: str) -> dict:
         .all()
     )
 
-    already = _existing_links(db, shipment.id)
+    already, healed_count = _heal_stale_links(db, shipment.id, _existing_links(db, shipment.id))
+    self_heal_note = (
+        f"{healed_count} SPO{'s' if healed_count != 1 else ''} previously linked to this "
+        "shipment no longer exist and have been cleared - Create SPO can be run again for them."
+        if healed_count
+        else None
+    )
     if already:
         return {
             "shipment_id": str(shipment.id),
@@ -435,6 +635,7 @@ def suggest(db: Session, shipment_id: str) -> dict:
             "already_converted": True,
             "existing_spos": _existing_spos(db, shipment.id),
             "lines": [],
+            "self_heal_note": self_heal_note,
         }
 
     product_ids = [str(ln.product_id) for ln in lines if ln.product_id]
@@ -491,8 +692,8 @@ def suggest(db: Session, shipment_id: str) -> dict:
         matched_by: Optional[str] = None
         takes: list[tuple[PurchaseOrderLine, PurchaseOrder, float]] = []
         if len(po_refs) == 1:
-            pinned_lines = _po_cascade_lines(
-                db, supplier_id, str(ln.product_id), po_number=next(iter(po_refs))
+            pinned_lines = _pinned_po_candidates(
+                db, next(iter(po_refs)), supplier_id, str(ln.product_id)
             )
             if pinned_lines:
                 takes = _cascade_take(pinned_lines, packed)
@@ -564,6 +765,7 @@ def suggest(db: Session, shipment_id: str) -> dict:
         "already_converted": False,
         "existing_spos": [],
         "lines": out_lines,
+        "self_heal_note": self_heal_note,
     }
 
 
@@ -815,6 +1017,84 @@ def _write_allocations(
         forward_match_grn_lines_for_spo_best_effort(db, spo_number, company_id=company_id)
 
     return written
+
+
+def unwind(db: Session, shipment_id: str) -> dict:
+    """Undo `create` for one shipment - the Delete action on an already-converted planner row
+    (captain live case, 21 Aug: he created SPOs, then deleted their `spo_allocations` on the
+    SPO Allocations screen, and had no way back to a clean "suggest" state because the SPO
+    itself, and the link naming it, were both still there). Deletes the `purchase_order_lines`
+    + `purchase_orders` headers this shipment's `create` minted, every `shipment_line_spo_link`
+    row for the shipment (matched AND skipped - the whole create run, not half of it), and any
+    `spo_allocations` still hanging off those PO lines. That last one is not automatic: the FK
+    from `spo_allocations.po_line_id` is `ON DELETE SET NULL`, not `CASCADE` (a stock arrival
+    can legitimately have no PO behind it), so deleting the PO line alone would leave a
+    now-untraceable allocation still counting as incoming supply - the exact half-undone state
+    this action exists to avoid.
+
+    Two hard guards, both refused with a 409 rather than a partial delete:
+      * every header touched must carry `source_system == crm_spo` (`SOURCE_SYSTEM`) - an
+        AutoCount import must never be deleted from this screen, however it ended up linked;
+      * only headers actually LINKED TO THIS SHIPMENT are touched at all - the query never
+        reaches a PO belonging to another shipment's conversion.
+
+    After this, `suggest(db, shipment_id)` returns to its normal (non-`already_converted`)
+    state - nothing is left behind to make the next `suggest` call answer any differently than
+    a shipment that never ran "Create SPO" at all. Same permission as `create`
+    (`scm.reorder.run`, enforced by the route) - unwinding a PO-book write is the same class of
+    write as making one.
+    """
+    shipment = _shipment_or_404(db, shipment_id)
+    links = _existing_links(db, shipment.id)
+    if not links:
+        raise AppException(404, "This shipment has no SPO to delete.")
+
+    po_ids = {str(l.purchase_order_id) for l in links if l.purchase_order_id}
+    if not po_ids:
+        raise AppException(404, "This shipment has no SPO to delete.")
+
+    pos = db.query(PurchaseOrder).filter(PurchaseOrder.id.in_(po_ids)).all()
+    foreign = [po for po in pos if po.source_system != SOURCE_SYSTEM]
+    if foreign:
+        names = ", ".join(sorted({po.po_number or "?" for po in foreign}))
+        raise AppException(
+            409,
+            f"{names} was not created by Create SPO and cannot be deleted from this screen.",
+            detail="not_crm_spo",
+        )
+
+    po_numbers = sorted({po.po_number or "?" for po in pos})
+
+    po_lines = (
+        db.query(PurchaseOrderLine)
+        .filter(PurchaseOrderLine.purchase_order_id.in_(po_ids))
+        .all()
+    )
+    po_line_ids = [str(pl.id) for pl in po_lines]
+
+    deleted_allocations = 0
+    if po_line_ids:
+        deleted_allocations = (
+            db.query(SPOAllocation)
+            .filter(SPOAllocation.po_line_id.in_(po_line_ids))
+            .delete(synchronize_session=False)
+        )
+
+    for pl in po_lines:
+        db.delete(pl)
+    for po in pos:
+        db.delete(po)
+    for link in links:
+        db.delete(link)
+    db.flush()
+
+    return {
+        "shipment_id": str(shipment.id),
+        "shipment_number": shipment.shipment_number,
+        "deleted_po_numbers": po_numbers,
+        "deleted_spo_count": len(pos),
+        "deleted_allocation_count": deleted_allocations,
+    }
 
 
 # --------------------------------------------------------------------------- #

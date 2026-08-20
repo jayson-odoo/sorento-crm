@@ -855,6 +855,22 @@ export async function downloadPackingListExport(
  * action - one confirm, two writes (see `spo_conversion_service.create`'s docstring for why
  * this does not disturb the pre-existing "no allocation, no `on_order_v` count" rule).
  * `SpoCreateResult.allocations` names what was written.
+ *
+ * ── THIRD AMENDMENT (captain live case, 21 Aug) - delete + self-heal ────────
+ * He created SPOs, then deleted their `spo_allocations` on the SPO Allocations screen, and
+ * the planner stayed stuck on "SPO already created" with no way back. Two additions:
+ *
+ *  DELETE /api/v1/scm/inbound-shipments/{id}/spo -> 200 SpoDeleteResult. Auth: `scm.reorder.
+ *       run` (same as create). Unwinds the whole conversion for this shipment - every
+ *       `purchase_orders` header it minted, their lines, the `shipment_line_spo_link` rows,
+ *       and any `spo_allocations` left hanging off those PO lines. 409 (`not_crm_spo`) when a
+ *       linked header was not created by Create SPO (an AutoCount import) - refused, not
+ *       skipped. 404 when this shipment has no SPO to delete. Exposed on the planner as the
+ *       Delete action on the already-converted state.
+ *  `SpoSuggestion.self_heal_note` - non-null only when THIS `spo-suggestion` call actually
+ *       cleaned up a link left behind by a CRM SPO removed some OTHER way than the DELETE
+ *       above (a generic PO delete, a bad migration) - shown as a small informational note,
+ *       never a toast, since it describes something that already happened silently.
  */
 export type SpoMatchedBy = 'po_ref' | 'product' | null;
 
@@ -928,6 +944,9 @@ export interface SpoSuggestion {
   already_converted: boolean;
   existing_spos: SpoRef[];
   lines: SpoSuggestionLine[];
+  /** Non-null only when this call self-healed a stale link (a CRM SPO removed some way
+   *  other than the DELETE below) - see the module docstring's third amendment. */
+  self_heal_note: string | null;
 }
 
 export interface SpoConfirmLine {
@@ -976,6 +995,22 @@ export async function createSpo(
     body: JSON.stringify({ lines }),
   });
   return readJson<SpoCreateResult>(res, 'Failed to create the SPO');
+}
+
+/** The result of the Delete action on an already-converted planner row. */
+export interface SpoDeleteResult {
+  shipment_id: string;
+  shipment_number: string | null;
+  deleted_po_numbers: string[];
+  deleted_spo_count: number;
+  deleted_allocation_count: number;
+}
+
+export async function deleteSpo(shipmentId: string): Promise<SpoDeleteResult> {
+  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/spo`, {
+    method: 'DELETE',
+  });
+  return readJson<SpoDeleteResult>(res, 'Failed to delete the SPO');
 }
 
 export async function downloadSpoWorksheet(

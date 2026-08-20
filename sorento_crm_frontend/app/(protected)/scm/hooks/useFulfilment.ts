@@ -8,6 +8,7 @@ import {
   createLoadingPlan,
   createSpo,
   deleteLoadingPlan,
+  deleteSpo,
   downloadSpoWorksheet,
   getConsolidatedPackingList,
   getContainerSizes,
@@ -264,6 +265,27 @@ export function useCreateSpo(shipmentId: string | null) {
         out.created_spos.length
           ? `Created ${out.created_spos.length === 1 ? 'SPO' : `${out.created_spos.length} SPOs`}: ${names}.${allocatedMsg}`
           : 'Nothing was created - every line was already covered.',
+      );
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/** Delete action on the already-converted planner row (third amendment) - unwinds the whole
+ *  conversion for this shipment. On success, the planner's own suggestion query is
+ *  invalidated so it falls back to a normal (non-converted) `suggest` and re-renders the
+ *  confirm table. */
+export function useDeleteSpo(shipmentId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => deleteSpo(shipmentId as string),
+    onSuccess: (out) => {
+      void qc.invalidateQueries({ queryKey: [...KEY, 'spo-suggestion', shipmentId] });
+      const names = out.deleted_po_numbers.join(', ');
+      toast.success(
+        out.deleted_spo_count === 1
+          ? `Deleted SPO ${names}.`
+          : `Deleted ${out.deleted_spo_count} SPOs: ${names}.`,
       );
     },
     onError: (e: Error) => toast.error(e.message),

@@ -770,9 +770,13 @@ def spo_suggestion(
     destination warehouses, ranked by Fulfilment Priority) - see `spo_conversion_service`'s
     module docstring, "second amendment". `already_converted: true` when this shipment
     already has SPOs (409 on the write below); the caller shows the existing SPOs instead of
-    the confirm screen.
+    the confirm screen. `self_heal_note` is non-null only when this call actually cleaned up a
+    stale link (a CRM SPO removed some other way than the DELETE below) - see
+    `spo_conversion_service._heal_stale_links`.
     """
-    return spo_conversion_service.suggest(db, shipment_id)
+    out = spo_conversion_service.suggest(db, shipment_id)
+    db.commit()  # persists any self-heal cleanup (get_db closes without commit)
+    return out
 
 
 @router.post("/inbound-shipments/{shipment_id}/spo", status_code=status.HTTP_201_CREATED)
@@ -794,6 +798,23 @@ def create_spo(
         actor=_actor(current_user),
         actor_user_id=current_user.get("id"),
     )
+    db.commit()
+    return out
+
+
+@router.delete("/inbound-shipments/{shipment_id}/spo")
+def delete_spo(
+    shipment_id: str,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Unwind this shipment's SPO conversion - the Delete action on the planner's
+    already-converted state. The mirror of `create_spo` above: same permission, same
+    shipment scoping. Refused (409) if any header this shipment is linked to was not created
+    by Create SPO (`source_system != crm_spo`) - an AutoCount import is never touched here.
+    404 when this shipment has no SPO to delete (nothing ever converted, or a prior self-heal
+    already cleared it)."""
+    out = spo_conversion_service.unwind(db, shipment_id)
     db.commit()
     return out
 

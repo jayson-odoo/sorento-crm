@@ -6,7 +6,18 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Check, Download, FileText, Info, LoaderCircle, RefreshCw } from 'lucide-react';
+import { Check, Download, FileText, Info, LoaderCircle, RefreshCw, Trash2 } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -14,12 +25,13 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   useCreateSpo,
+  useDeleteSpo,
   useDownloadSpoWorksheet,
   useSpoSuggestion,
 } from '@/app/(protected)/scm/hooks/useFulfilment';
@@ -63,7 +75,9 @@ function fmtSigned(value: number): string {
 export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   const suggestion = useSpoSuggestion(shipmentId);
   const create = useCreateSpo(shipmentId);
+  const deleteSpo = useDeleteSpo(shipmentId);
   const worksheet = useDownloadSpoWorksheet(shipmentId);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   type LineState = { qty: number; warehouseId: string | null };
   const [state, setState] = useState<Record<string, LineState>>({});
@@ -288,8 +302,15 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   }
 
   if (alreadyConverted) {
+    const existingSpos = suggestion.data?.existing_spos ?? [];
+    const spoNumbers = existingSpos.map((s) => s.po_number ?? EM_DASH).join(', ');
     return (
       <Card className="p-4">
+        {suggestion.data?.self_heal_note ? (
+          <Alert variant="warning" size="sm" className="mb-3">
+            <AlertDescription>{suggestion.data.self_heal_note}</AlertDescription>
+          </Alert>
+        ) : null}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <h3 className="text-sm font-semibold">SPO already created</h3>
@@ -297,29 +318,66 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
               This packing list has already gone through Create SPO.
             </p>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => worksheet.mutate(suggestion.data?.shipment_number ?? 'container')}
-            disabled={worksheet.isPending}
-          >
-            {worksheet.isPending ? (
-              <LoaderCircle className="size-4 animate-spin" aria-hidden />
-            ) : (
-              <Download className="size-4" aria-hidden />
-            )}
-            Download worksheet
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => worksheet.mutate(suggestion.data?.shipment_number ?? 'container')}
+              disabled={worksheet.isPending}
+            >
+              {worksheet.isPending ? (
+                <LoaderCircle className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <Download className="size-4" aria-hidden />
+              )}
+              Download worksheet
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-destructive hover:text-destructive"
+              onClick={() => setDeleteOpen(true)}
+              disabled={!existingSpos.length}
+            >
+              <Trash2 className="size-4" aria-hidden />
+              Delete SPO
+            </Button>
+          </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-          {(suggestion.data?.existing_spos ?? []).map((spo) => (
+          {existingSpos.map((spo) => (
             <Badge key={spo.purchase_order_id} variant="secondary" size="sm">
               {spo.po_number ?? EM_DASH}
               {spo.supplier_name ? ` · ${spo.supplier_name}` : ''}
             </Badge>
           ))}
         </div>
+
+        <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Confirm delete</AlertDialogTitle>
+              <AlertDialogDescription>
+                {existingSpos.length === 1
+                  ? `This deletes ${spoNumbers}. `
+                  : `This deletes ${existingSpos.length} SPOs: ${spoNumbers}. `}
+                The planner can create them again, but the numbers are minted fresh - the ones
+                deleted here are gone. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleteSpo.isPending}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => deleteSpo.mutate(undefined, { onSuccess: () => setDeleteOpen(false) })}
+                disabled={deleteSpo.isPending}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {deleteSpo.isPending ? 'Deleting...' : 'Delete'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </Card>
     );
   }
@@ -340,6 +398,11 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
       emptyMessage="This container has no line we hold a product for."
     >
       <Card>
+        {suggestion.data?.self_heal_note ? (
+          <Alert variant="warning" size="sm" className="m-3 mb-0">
+            <AlertDescription>{suggestion.data.self_heal_note}</AlertDescription>
+          </Alert>
+        ) : null}
         <CardHeader className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <h3 className="text-sm font-semibold">SPO planner</h3>
@@ -398,19 +461,21 @@ function PoTakesDrillPopover({
           <Info className="size-3.5 text-muted-foreground" aria-hidden />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-72 space-y-2 p-3">
-        <p className="text-xs font-medium">{title} - covered by PO</p>
-        <div className="space-y-1">
-          {takes.map((t) => (
-            <div key={t.po_line_id} className="flex items-center justify-between text-xs">
-              <span className="truncate" title={t.po_number}>
-                {t.po_number}
-              </span>
-              <span className="tabular-nums">{fmtInt(t.qty)}</span>
-            </div>
-          ))}
-        </div>
-      </PopoverContent>
+      <PopoverPortal>
+        <PopoverContent align="start" className="w-72 space-y-2 p-3">
+          <p className="text-xs font-medium">{title} - covered by PO</p>
+          <div className="space-y-1">
+            {takes.map((t) => (
+              <div key={t.po_line_id} className="flex items-center justify-between text-xs">
+                <span className="truncate" title={t.po_number}>
+                  {t.po_number}
+                </span>
+                <span className="tabular-nums">{fmtInt(t.qty)}</span>
+              </div>
+            ))}
+          </div>
+        </PopoverContent>
+      </PopoverPortal>
     </Popover>
   );
 }
@@ -438,42 +503,44 @@ function LocationOptionsDrillPopover({
           <Info className="size-4" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-96 space-y-2 p-3">
-        <p className="text-xs font-medium">{title} - candidate locations</p>
-        <p className="text-2xs text-muted-foreground">
-          Ranked by Fulfilment Priority (project earlier delivery first, then retail).
-        </p>
-        <div className="space-y-2">
-          {options.map((o) => (
-            <div
-              key={o.warehouse_id}
-              className={
-                o.warehouse_id === selectedWarehouseId
-                  ? 'rounded-md border border-primary/40 bg-primary/5 px-2 py-1.5'
-                  : 'rounded-md border px-2 py-1.5'
-              }
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="truncate text-xs font-medium" title={o.warehouse_code ?? undefined}>
-                  {o.warehouse_code ?? EM_DASH}
-                </span>
-                {o.rank_score === null ? (
-                  <span className="text-2xs text-muted-foreground">No open demand</span>
-                ) : null}
+      <PopoverPortal>
+        <PopoverContent align="start" className="w-96 space-y-2 p-3">
+          <p className="text-xs font-medium">{title} - candidate locations</p>
+          <p className="text-2xs text-muted-foreground">
+            Ranked by Fulfilment Priority (project earlier delivery first, then retail).
+          </p>
+          <div className="space-y-2">
+            {options.map((o) => (
+              <div
+                key={o.warehouse_id}
+                className={
+                  o.warehouse_id === selectedWarehouseId
+                    ? 'rounded-md border border-primary/40 bg-primary/5 px-2 py-1.5'
+                    : 'rounded-md border px-2 py-1.5'
+                }
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-xs font-medium" title={o.warehouse_code ?? undefined}>
+                    {o.warehouse_code ?? EM_DASH}
+                  </span>
+                  {o.rank_score === null ? (
+                    <span className="text-2xs text-muted-foreground">No open demand</span>
+                  ) : null}
+                </div>
+                <div className="mt-1 grid grid-cols-4 gap-1 text-2xs text-muted-foreground">
+                  <span>SO {fmtInt(o.outstanding_so)}</span>
+                  <span>On hand {fmtInt(o.on_hand)}</span>
+                  <span>SPO {fmtInt(o.incoming_spo)}</span>
+                  <span title="available now">Now {fmtSigned(o.available)}</span>
+                </div>
+                <div className="mt-0.5 text-2xs">
+                  After this SPO: <span className="tabular-nums font-medium">{fmtSigned(o.available + qty)}</span>
+                </div>
               </div>
-              <div className="mt-1 grid grid-cols-4 gap-1 text-2xs text-muted-foreground">
-                <span>SO {fmtInt(o.outstanding_so)}</span>
-                <span>On hand {fmtInt(o.on_hand)}</span>
-                <span>SPO {fmtInt(o.incoming_spo)}</span>
-                <span title="available now">Now {fmtSigned(o.available)}</span>
-              </div>
-              <div className="mt-0.5 text-2xs">
-                After this SPO: <span className="tabular-nums font-medium">{fmtSigned(o.available + qty)}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </PopoverContent>
+            ))}
+          </div>
+        </PopoverContent>
+      </PopoverPortal>
     </Popover>
   );
 }
