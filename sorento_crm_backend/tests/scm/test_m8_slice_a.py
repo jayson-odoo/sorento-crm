@@ -3,8 +3,10 @@
 Three drills keyed to the M8 UAC:
 
   * M8-A1 — the Net drill lists the OPEN sales-order lines behind ``committed`` (SO
-    number, qty, customer, order date), summing to the committed figure, and the four
-    components satisfy ``on_hand + on_order - committed == net``. Endpoint
+    number, qty, customer, order date), summing to the committed figure, and the five
+    components satisfy ``on_hand + on_order + po_ordered - committed == net`` (21 Aug fix
+    — ``po_ordered`` is a new leg, added once the sizing engine started netting the
+    outstanding PO book into the frozen recommendation `net` itself). Endpoint
     ``GET /reorder-runs recommendations/{rec_id}/explain-net``.
   * M8-A2 — ``GET /analytics/explain/demand`` also carries ``demand_dos``: the delivery
     orders that drove the outflow in the window, as a navigable list; cancelled DOs are
@@ -119,8 +121,9 @@ def _seed_buy_with_committed(db):
 # ===========================================================================
 
 def test_explain_net_lists_committed_sos_and_arithmetic(scm_app):
-    """The net drill returns the four components + the open SO lines behind committed;
-    the listed line qtys sum to committed, and on_hand + on_order - committed == net."""
+    """The net drill returns the five components + the open SO lines behind committed;
+    the listed line qtys sum to committed, and
+    on_hand + on_order + po_ordered - committed == net (21 Aug fix: po_ordered leg)."""
     app, db = _client(scm_app, "purchasing")
     _, pid, so_numbers = _seed_buy_with_committed(db)
     created = svc.create_run(db, ["M8W-A"], "warehouse", enqueue=False)
@@ -135,12 +138,17 @@ def test_explain_net_lists_committed_sos_and_arithmetic(scm_app):
         assert res.status_code == 200, res.text
         body = res.json()
 
-    assert set(body) == {"on_hand", "on_order", "committed", "net", "committed_sos"}
+    assert set(body) == {
+        "on_hand", "on_order", "po_ordered", "committed", "net", "committed_sos",
+    }
     # committed = 12 (SO-001) + (8-3) (SO-002) = 17
     assert body["committed"] == pytest.approx(17.0)
     assert body["on_hand"] == pytest.approx(40.0)
-    # net arithmetic holds (M8-A1)
-    assert body["on_hand"] + body["on_order"] - body["committed"] == pytest.approx(body["net"])
+    # no PO seeded in this fixture
+    assert body["po_ordered"] == pytest.approx(0.0)
+    # net arithmetic holds, the honest way (M8-A1, 21 Aug fix)
+    assert (body["on_hand"] + body["on_order"] + body["po_ordered"] - body["committed"]
+            == pytest.approx(body["net"]))
 
     lines = body["committed_sos"]
     assert {l["so_number"] for l in lines} == set(so_numbers)
@@ -174,7 +182,8 @@ def test_explain_net_empty_when_no_open_sos(scm_app):
         body = c.get(f"/api/v1/scm/recommendations/{rec_id}/explain-net").json()
     assert body["committed_sos"] == []
     assert body["committed"] == pytest.approx(0.0)
-    assert body["on_hand"] + body["on_order"] - body["committed"] == pytest.approx(body["net"])
+    assert (body["on_hand"] + body["on_order"] + body["po_ordered"] - body["committed"]
+            == pytest.approx(body["net"]))
 
 
 def test_explain_net_404_for_unknown_rec(scm_app):

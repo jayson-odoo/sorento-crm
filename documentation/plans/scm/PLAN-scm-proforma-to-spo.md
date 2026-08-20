@@ -148,6 +148,27 @@ from the Amendment's first decision. What shipped:
   list cost and a matched PO's cost (out of scope per the original design notes - the two
   prices are shown side by side on the suggestion, no gate).
 
+**Second amendment (captain, 21 Aug 00:40, live on the shipped Create SPO panel):** the
+surface and the shape both move.
+
+- **Surface:** the packing-list-to-SPO journey lives on `/procurement-management/packing-lists`
+  (the procurement packing-list book over the same `inbound_shipments` table), not on
+  `/scm/incoming?shipment=`. The convert handoff should land there.
+- **Shape:** not a checkbox list of products. A LOADING-PLAN-STYLE TABLE: one row per packed
+  product with its quantity, and the columns answer, in his words, "instead of looking at SO
+  for loading plan, now I look at PO":
+  1. **Which PO covers this quantity** - take from the EARLIEST PO first (the same
+     earliest-first cascade Place-on-PO uses), with the per-PO takes visible.
+  2. **Which location the SPO should go to** - driven by demand at each location: outstanding
+     SO, on hand, SPO already incoming, and **what the location's available becomes if we SPO
+     this quantity there** (the after figure shown, not implied).
+  3. Allocation priority mirrors the loading plan's ranking: project with the earlier
+     delivery first, then retail - the existing priority policy, not a second sort.
+- Existing machinery to reuse, not re-implement: the earliest-first PO cascade
+  (`project_order_inquiry_service._cascade_take`), `priority.factors_for_demand_rows`,
+  `allocation_suggestion_service` (already links an SPO to its PO line and writes
+  `spo_allocations` on approve), and the container-request table UI as the visual precedent.
+
 **Serves:** the proforma UAC's own named "next task" (the PI-vs-PO verification screen this
 plan absorbs) - `scm-proforma-invoice-acceptance-criteria.md`. Depends on the proforma FE
 (`PLAN-scm-proforma-invoice-frontend.md`, shipped this batch).

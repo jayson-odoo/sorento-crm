@@ -336,6 +336,13 @@ def recommendation_demand(
     # everything). Unrecognised/omitted is unfiltered - `demand_for_recommendation`
     # normalises it, so this never has to validate the enum itself.
     channel: Optional[str] = Query(None),
+    # "product" widens the drill to every recommendation this run wrote for the SAME
+    # product (21 Aug live ask: the grouped Buy view's TOP product-grain row needs the
+    # same drill trigger the per-location group panel already has, and that row's own
+    # channel cells sum across every one of the product's locations). Anything else is
+    # the existing single-row scope - `demand_for_recommendation` normalises it the same
+    # tolerant way `channel` already is.
+    scope: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
@@ -344,7 +351,9 @@ def recommendation_demand(
     Answers "why is it bought into BRW when I ordered for BRW-IB, and why so many" from the
     row itself: pooled netting is the reason, and the orders are the evidence."""
     svc.assert_run_visible(db, run_id)
-    return demand_breakdown_service.demand_for_recommendation(db, rec_id, limit, channel)
+    return demand_breakdown_service.demand_for_recommendation(
+        db, rec_id, limit, channel, scope
+    )
 
 
 @router.get("/reorder-runs/{run_id}/cover-sources")
@@ -828,9 +837,10 @@ def set_recommendation_moq(
     absent key clears it back to the frozen master figure. Mutates planning state
     (a decision-adjacent input, same as Accept/Adjust/Reject) → ``scm.reorder.run``.
 
-    Grain (only a LOCATION-grain run may take it) and lifecycle (a row already accepted
-    /adjusted/dismissed refuses further MoQ changes) are guarded inside
-    ``set_moq_override`` itself, same as every other decision write.
+    NOT grain-guarded (21 Aug fix): a MoQ override is an input to the suggestion, not a
+    location decision, so a product-grain run takes it exactly like a location-grain one.
+    Legacy-run (AC-F10) and lifecycle (a row already accepted/adjusted/dismissed refuses
+    further MoQ changes) are still guarded inside ``set_moq_override`` itself.
 
     Returns the recalculated ``order_qty`` / ``cash_impact`` so the plan grid can update
     the row in place, without waiting on a full re-run."""
@@ -847,11 +857,13 @@ def explain_recommendation_net(
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    """M8-A1 — net-breakdown drill: ``on_hand`` / ``on_order`` / ``committed`` / ``net``
-    for the rec's product×warehouse plus the list of OPEN sales-order lines behind
-    ``committed`` (each navigable — SO number, customer, qty, order date), summing to the
-    committed figure. Read-only; no numeric write. IDs resolve to human-readable
-    SO number + customer name (no UUIDs surface)."""
+    """M8-A1 — net-breakdown drill: ``on_hand`` / ``on_order`` / ``po_ordered`` /
+    ``committed`` / ``net`` for the rec's product×warehouse plus the list of OPEN
+    sales-order lines behind ``committed`` (each navigable — SO number, customer, qty,
+    order date), summing to the committed figure. ``po_ordered`` (21 Aug fix) is the
+    outstanding PO leg the sizing engine already nets into ``net``, so
+    ``on_hand + on_order + po_ordered - committed == net``. Read-only; no numeric write.
+    IDs resolve to human-readable SO number + customer name (no UUIDs surface)."""
     return svc.explain_net(db, rec_id)
 
 

@@ -19,8 +19,10 @@ The contract under test:
     the master rounding back onto the row.
   * The recommendations LIST endpoint reflects the persisted figure (still recomputed
     live as a defensive re-derive, so the two never disagree).
-  * Grain guard (only a LOCATION-grain run may set/clear a MoQ) and lifecycle guard (a row
-    already accepted/adjusted/dismissed refuses further changes) - both 409.
+  * NOT grain-guarded (21 Aug fix): a MoQ override is an INPUT to the suggestion, not a
+    location decision, so a PRODUCT-grain run accepts it exactly like a location-grain
+    one - only a legacy run (AC-F10) and the lifecycle guard (a row already accepted
+    /adjusted/dismissed refuses further changes) still 409.
   * 404 for an unknown rec id, 422 for a negative/non-numeric/boolean moq, company
     isolation, and 403 without `scm.reorder.run`.
 
@@ -79,9 +81,9 @@ def db():
 
 
 def _mk_run(db, **kw) -> ReorderRun:
-    # LOCATION grain by default: `set_moq_override` is guarded exactly like Accept /
-    # Adjust / Reject (S7), and every test in this file exercises it against a rec on
-    # this run, so it must be a run those decisions may land on.
+    # LOCATION grain by default - an arbitrary choice now that the MoQ write is no longer
+    # grain-guarded (21 Aug fix); `test_a_product_grain_run_accepts_the_moq_override`
+    # below is what actually pins that a PRODUCT-grain run works too.
     kw.setdefault("decision_grain", "location")
     kw.setdefault("front_planning_contract_version", 1)
     run = ReorderRun(
@@ -229,21 +231,21 @@ def test_a_negative_moq_is_a_422(db):
 
 
 # =============================================================================
-# S7 (review fix) - grain guard + lifecycle guard on the MoQ write
+# 21 Aug fix - NOT grain-guarded; legacy-run guard + lifecycle guard still apply
 # =============================================================================
 
-def test_a_product_grain_run_refuses_the_moq_override(db):
-    """Guarded exactly like Accept/Adjust/Reject (AC-F09): a MoQ is what a LOCATION
-    decision gets accepted at, so a run stamped at the OTHER grain may not take it."""
-    f = _mk_chain(db)
+def test_a_product_grain_run_accepts_the_moq_override(db):
+    """21 Aug fix (captain, live test): an MoQ override is an INPUT to the suggestion,
+    not a location decision, so a run stamped at Product grain - exactly where the
+    buyer edits MoQ day to day - takes it same as a Location-grain run."""
+    f = _mk_chain(db, master_moq=100, recommended_qty=40)
     f["run"].decision_grain = "product"
     db.add(f["run"])
     db.flush()
 
-    with pytest.raises(AppException) as caught:
-        svc.set_moq_override(db, f["rec"].id, 10)
-    assert caught.value.status_code == 409
-    assert caught.value.detail["code"] == "decision_grain_mismatch"
+    result = svc.set_moq_override(db, f["rec"].id, 10)
+    assert result["moq"] == 10.0
+    assert result["moq_is_override"] is True
 
 
 def test_a_legacy_run_refuses_the_moq_override(db):

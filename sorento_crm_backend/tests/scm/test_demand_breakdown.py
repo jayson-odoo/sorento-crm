@@ -906,6 +906,227 @@ def test_a_sheet_leg_line_with_a_live_inquiry_row_says_so(scm_app):
     assert out["lines"][0]["has_inquiry_row"] is True
 
 
+# =============================================================================
+# 21 Aug live diagnosis - defect C: who sold it, and the top product-grain row's own drill
+# =============================================================================
+#
+# "for project, what's the sales order for the past year, who is the customer and agent...
+# and of course the price" - the agent is the `sales_agents` master
+# (`sales_orders.sales_agent_id`), never invented when the order carries none.
+
+def _agent(db, code, person_label=None):
+    from app.models.sales_agent import SalesAgent
+
+    row = SalesAgent(id=str(uuid.uuid4()), sales_agent=code, person_label=person_label)
+    db.add(row)
+    db.flush()
+    return row.id
+
+
+def test_a_line_names_the_agent_who_sold_it_when_the_order_carries_one(scm_app):
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-AGT1")
+    pid = _mk_product(db, f"ZZTP-AGT1-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    aid = _agent(db, f"ZZT-AGT-{uuid.uuid4().hex[:6]}", person_label="ZZT Jeremy")
+    db.execute(text(
+        "INSERT INTO sales_orders (id, so_number, status, order_type, demand_class, "
+        "demand_origin, sales_agent_id, created_at, updated_at) "
+        "VALUES (:i, :n, 'open', 'retail', 'retail', NULL, :a, now(), now())"
+    ), {"i": str(uuid.uuid4()), "n": "ZZTSO-AGT1-NAMED", "a": aid})
+    so_id = db.execute(text(
+        "SELECT id FROM sales_orders WHERE so_number = 'ZZTSO-AGT1-NAMED'"
+    )).scalar()
+    db.execute(text(
+        "INSERT INTO sales_order_lines (id, sales_order_id, product_id, warehouse_id, "
+        "qty_ordered, qty_required, qty_delivered, line_status, purchasing_status, "
+        "created_at, updated_at) "
+        "VALUES (:i, :so, :p, :w, 5, 5, 0, 'open', 'needs_purchase', now(), now())"
+    ), {"i": str(uuid.uuid4()), "so": so_id, "p": pid, "w": wid})
+    _so(db, pid, wid, 6, order_type="retail", number="ZZTSO-AGT1-BARE")
+    _link(db, pid, _mk_supplier(db, "ZZT Agt1 Supplier"), moq=None, mult=None)
+    db.flush()
+
+    out = dbs.demand_for_recommendation(db, _rec(db, ["ZZTW-AGT1"], pid))
+    agent = {l["so_number"]: l["agent_label"] for l in out["lines"]}
+
+    assert agent["ZZTSO-AGT1-NAMED"] == "ZZT Jeremy", "person_label wins when a human set it"
+    assert agent["ZZTSO-AGT1-BARE"] is None, "an order with no agent is honestly absent"
+
+
+def test_a_confirmed_leg_line_also_names_its_agent_and_price(scm_app):
+    """The confirmed leg reads the SAME agent/price columns off the core order the sheet
+    leg does - `so.sales_agent_id` and `sol`/`psl.unit_price` - so the drill answers "who
+    sold it, at what price" the same way on both legs."""
+    from tests.scm.test_channel_read_model import _confirmed_leg
+
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-AGT2")
+    pid = _mk_product(db, f"ZZTP-AGT2-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    aid = _agent(db, f"ZZT-AGT2-{uuid.uuid4().hex[:6]}")
+    _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=8,
+                   sales_agent_id=aid, unit_price="12.50")
+    _link(db, pid, _mk_supplier(db, "ZZT Agt2 Supplier"), moq=None, mult=None)
+    db.flush()
+
+    out = dbs.demand_for_recommendation(db, _rec(db, ["ZZTW-AGT2"], pid))
+
+    confirmed = [l for l in out["lines"] if l["source"] == "order_inquiry_confirmed"]
+    assert len(confirmed) == 1
+    assert confirmed[0]["agent_label"] is not None, "the code itself, absent a person_label"
+    assert confirmed[0]["unit_price"] == 12.5
+
+
+# --- the product-grain top row's own drill (scope="product") ----------------------
+#
+# "put the same per-channel drill trigger... on the TOP row's three channel cells,
+# product grain and location grain alike" - a grouped product row sums every
+# recommendation the run wrote for the product; its own drill has to union the same set.
+
+def test_scope_product_unions_every_recommendation_of_the_product_in_the_run(scm_app):
+    _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = false"))
+    wa = _mk_warehouse(db, "ZZTW-PWIDE-A")
+    wb = _mk_warehouse(db, "ZZTW-PWIDE-B")
+    pid = _mk_product(db, f"ZZTP-PWIDE-{uuid.uuid4().hex[:6]}")
+    for wid in (wa, wb):
+        _mk_stock(db, pid, wid, 0)
+        _mk_demand(db, pid, wid, 0.0)
+    _so(db, pid, wa, 5, order_type="project", number="ZZTSO-PWIDE-A")
+    _so(db, pid, wb, 7, order_type="retail", number="ZZTSO-PWIDE-B")
+    _link(db, pid, _mk_supplier(db, "ZZT Pwide Supplier"), moq=None, mult=None)
+    db.flush()
+
+    run_id = _run(db, ["ZZTW-PWIDE-A", "ZZTW-PWIDE-B"])
+    rec_a = _rec_row(db, run_id, pid, wid=wa)
+
+    row_scope = dbs.demand_for_recommendation(db, str(rec_a["id"]))
+    product_scope = dbs.demand_for_recommendation(db, str(rec_a["id"]), scope="product")
+
+    assert [l["so_number"] for l in row_scope["lines"]] == ["ZZTSO-PWIDE-A"], (
+        "the row's own scope is unaffected by the new parameter's default"
+    )
+    assert sorted(l["so_number"] for l in product_scope["lines"]) == [
+        "ZZTSO-PWIDE-A", "ZZTSO-PWIDE-B",
+    ]
+    assert product_scope["scope"] == "product"
+    assert product_scope["pool_code"] is None
+    assert product_scope["committed_total"] == 12.0
+    assert sorted(product_scope["locations"]) == ["ZZTW-PWIDE-A", "ZZTW-PWIDE-B"]
+
+
+def test_scope_product_still_gives_each_sibling_its_own_pool(scm_app):
+    """A sibling that was ITSELF pooled contributes its whole pool, not just its own
+    cell - the union is of NETTED SETS, not of bare warehouse ids."""
+    _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = true"))
+    root, bin_, pid = _two_bin_pool(db, "PWIDE2")
+    lone = _mk_warehouse(db, "ZZTW-PWIDE2-LONE")
+    _mk_stock(db, pid, lone, 0)
+    _mk_demand(db, pid, lone, 0.0)
+    _so(db, pid, lone, 15, order_type="retail", number="ZZTSO-PWIDE2-LONE")
+    db.flush()
+
+    run_id = _run(db, ["ZZTW-PWIDE2-R", "ZZTW-PWIDE2-B", "ZZTW-PWIDE2-LONE"])
+    rec_pool = _rec_row(db, run_id, pid)
+    rec_lone = _rec_row(db, run_id, pid, wid=lone)
+
+    out = dbs.demand_for_recommendation(db, str(rec_pool["id"]), scope="product")
+
+    assert sorted(l["so_number"] for l in out["lines"]) == [
+        "ZZTSO-PWIDE2-B", "ZZTSO-PWIDE2-LONE", "ZZTSO-PWIDE2-R",
+    ]
+    assert sorted(out["locations"]) == [
+        "ZZTW-PWIDE2-B", "ZZTW-PWIDE2-LONE", "ZZTW-PWIDE2-R",
+    ]
+    assert str(rec_lone["id"]) != str(rec_pool["id"])
+
+
+# --- the trailing-window order-history section (AC point 3) -----------------------
+#
+# "for project, what's the sales order for the past year... for retail, past 3 months...
+# including delivered ones" - fed by the same window `demand_context_for_product`
+# already computes the 12m/3m totals from, as a second section alongside the open-demand
+# lines rather than folded into them.
+
+def test_history_lines_include_delivered_orders_within_the_window(scm_app):
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-HIST1")
+    pid = _mk_product(db, f"ZZTP-HIST1-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    aid = _agent(db, f"ZZT-HIST-{uuid.uuid4().hex[:6]}")
+    # A fully DELIVERED project order, inside the trailing window - invisible to the
+    # open-demand `lines` (line_status/qty_delivered exclude it) but must appear here.
+    db.execute(text(
+        "INSERT INTO sales_orders (id, so_number, status, order_type, demand_class, "
+        "demand_origin, sales_agent_id, order_date, created_at, updated_at) "
+        "VALUES (:i, :n, 'open', 'project', 'project', 'scm_order_inquiry', :a, "
+        "CURRENT_DATE - INTERVAL '2 months', now(), now())"
+    ), {"i": str(uuid.uuid4()), "n": "ZZTSO-HIST1-DELIVERED", "a": aid})
+    so_id = db.execute(text(
+        "SELECT id FROM sales_orders WHERE so_number = 'ZZTSO-HIST1-DELIVERED'"
+    )).scalar()
+    db.execute(text(
+        "INSERT INTO sales_order_lines (id, sales_order_id, product_id, warehouse_id, "
+        "qty_ordered, qty_delivered, unit_price, line_status, purchasing_status, "
+        "created_at, updated_at) "
+        "VALUES (:i, :so, :p, :w, 20, 20, 45.0, 'closed', 'covered', now(), now())"
+    ), {"i": str(uuid.uuid4()), "so": so_id, "p": pid, "w": wid})
+    _link(db, pid, _mk_supplier(db, "ZZT Hist1 Supplier"), moq=None, mult=None)
+    db.flush()
+
+    out = dbs.demand_for_recommendation(db, _rec(db, ["ZZTW-HIST1"], pid), channel="project")
+
+    assert out["lines"] == [], "the delivered order is not OPEN demand"
+    hist = {l["so_number"]: l for l in out["history_lines"]}
+    assert "ZZTSO-HIST1-DELIVERED" in hist
+    assert hist["ZZTSO-HIST1-DELIVERED"]["delivered"] is True
+    assert hist["ZZTSO-HIST1-DELIVERED"]["qty"] == 20.0
+    assert hist["ZZTSO-HIST1-DELIVERED"]["unit_price"] == 45.0
+    assert hist["ZZTSO-HIST1-DELIVERED"]["agent_label"] is not None
+    assert out["history_shown"] == len(out["history_lines"])
+
+
+def test_history_lines_are_empty_off_the_window_and_off_unclassified(scm_app):
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-HIST2")
+    pid = _mk_product(db, f"ZZTP-HIST2-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    # Outside even the 12-month project window.
+    db.execute(text(
+        "INSERT INTO sales_orders (id, so_number, status, order_type, demand_class, "
+        "demand_origin, order_date, created_at, updated_at) "
+        "VALUES (:i, :n, 'open', 'project', 'project', 'scm_order_inquiry', "
+        "CURRENT_DATE - INTERVAL '3 years', now(), now())"
+    ), {"i": str(uuid.uuid4()), "n": "ZZTSO-HIST2-OLD"})
+    so_id = db.execute(text(
+        "SELECT id FROM sales_orders WHERE so_number = 'ZZTSO-HIST2-OLD'"
+    )).scalar()
+    db.execute(text(
+        "INSERT INTO sales_order_lines (id, sales_order_id, product_id, warehouse_id, "
+        "qty_ordered, qty_delivered, line_status, purchasing_status, created_at, updated_at) "
+        "VALUES (:i, :so, :p, :w, 20, 20, 'closed', 'covered', now(), now())"
+    ), {"i": str(uuid.uuid4()), "so": so_id, "p": pid, "w": wid})
+    _link(db, pid, _mk_supplier(db, "ZZT Hist2 Supplier"), moq=None, mult=None)
+    db.flush()
+    rec_id = _rec(db, ["ZZTW-HIST2"], pid)
+
+    old_line = dbs.demand_for_recommendation(db, rec_id, channel="project")
+    unfiltered = dbs.demand_for_recommendation(db, rec_id)
+    unclassified = dbs.demand_for_recommendation(db, rec_id, channel="unclassified")
+
+    assert old_line["history_lines"] == [], "outside the 12-month project window"
+    assert unfiltered["history_lines"] == [], "no channel picked - no window to speak of"
+    assert unclassified["history_lines"] == [], "unclassified has no configured window"
+
+
 def test_a_confirmed_leg_line_always_has_an_inquiry_row(scm_app):
     """The confirmed leg is BUILT from a live row (S13b) - `has_inquiry_row` is trivially
     true, and the worklist link must never be gated off it for this source."""

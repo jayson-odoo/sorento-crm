@@ -151,20 +151,22 @@ def world(db):
 
 
 def _core_so_line(db, *, product_id, warehouse_id, qty=10, delivered=0, demand_class=None,
-                  demand_origin=None, status="open", line_status="open"):
+                  demand_origin=None, status="open", line_status="open",
+                  sales_agent_id=None, unit_price=None):
     """One core `public.sales_order_lines` row with its own header. Reusable by the
     view-level tests (`world`-shaped) and the recommendation-snapshot tests, which only
     have bare ids off `tests.scm.test_m3_run`'s raw-SQL builders."""
     so = SalesOrder(
         id=_u(), so_number=_code("SO"), status=status,
         demand_class=demand_class, demand_origin=demand_origin,
+        sales_agent_id=sales_agent_id,
     )
     db.add(so)
     db.flush()
     line = SalesOrderLine(
         id=_u(), sales_order_id=so.id, product_id=product_id, warehouse_id=warehouse_id,
         qty_ordered=qty, qty_delivered=delivered, line_status=line_status,
-        required_date=_today() + timedelta(days=14),
+        required_date=_today() + timedelta(days=14), unit_price=unit_price,
     )
     db.add(line)
     db.flush()
@@ -306,7 +308,8 @@ def test_project_class_without_sheet_origin_or_decision_is_set_aside(db, world):
 # --------------------------------------------------------------------------- #
 
 def _confirmed_leg(db, *, product_id, warehouse_id, buy_qty, decision_state="active",
-                    inquiry_state=None, core_line=None):
+                    inquiry_state=None, core_line=None, sales_agent_id=None,
+                    unit_price=None):
     """The full section-4 chain: a Project SO whose core SO line is reconciled, with one
     Buy-verb Order Inquiry row pointing at an `active` `SOSupplyDecision`.
 
@@ -334,6 +337,7 @@ def _confirmed_leg(db, *, product_id, warehouse_id, buy_qty, decision_state="act
         so, core_line = _core_so_line(
             db, product_id=product_id, warehouse_id=warehouse_id, qty=buy_qty,
             demand_class="project", demand_origin=None,
+            sales_agent_id=sales_agent_id,
         )
 
     owner_id = _u()
@@ -354,6 +358,7 @@ def _confirmed_leg(db, *, product_id, warehouse_id, buy_qty, decision_state="act
         id=_u(), company_id=SORENTO_COMPANY_ID, project_sales_order_id=pso.id,
         line_no=1, product_id=product_id, qty=buy_qty,
         core_sales_order_line_id=core_line.id,
+        **({"unit_price": unit_price} if unit_price is not None else {}),
     )
     db.add(pso_line)
     db.flush()

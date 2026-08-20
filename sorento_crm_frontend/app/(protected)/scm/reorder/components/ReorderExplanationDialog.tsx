@@ -581,12 +581,21 @@ function BuyDerivation({ rec }: { rec: ReorderRecommendation }) {
   if (rec.order_multiple != null && rec.order_multiple > 0)
     roundingNote.push(`pack multiple ${dec(rec.order_multiple)}`);
 
+  // "-" glued straight onto a unit ("- days") reads as a formatting bug rather than "no
+  // lead time / review period is on file for this row" (21 Aug fix) - name it in words
+  // instead, same rule the order-qty ledger applies to its own "-d review"/"-d lead".
+  const hasReview = rec.review_days != null;
+  const netPositionWhy =
+    (rec.outstanding_po ?? 0) > 0
+      ? 'On hand + on order + open PO − committed'
+      : 'On hand + on order − committed';
+
   return (
     <div>
       <ForecastDemandStep rec={rec} />
       <Step
         label="Lead time"
-        value={`${dec(rec.lead_time_days)} days`}
+        value={rec.lead_time_days != null ? `${dec(rec.lead_time_days)} days` : 'no lead time on file'}
         why={
           rec.lead_time_source
             ? `Source: ${LEAD_SOURCE_WHY[rec.lead_time_source] ?? rec.lead_time_source}.`
@@ -619,7 +628,7 @@ function BuyDerivation({ rec }: { rec: ReorderRecommendation }) {
       <Step
         label="Net position"
         value={dec(rec.net_position)}
-        why="On hand + on order − committed"
+        why={netPositionWhy}
       />
       <Step
         label="Runway"
@@ -629,12 +638,20 @@ function BuyDerivation({ rec }: { rec: ReorderRecommendation }) {
       <Step
         emphasis
         label="Order-up-to target"
-        why={`Reorder point + one review period (${dec(rec.review_days)} days) of demand`}
+        why={
+          hasReview
+            ? `Reorder point + one review period (${dec(rec.review_days)} days) of demand`
+            : 'Reorder point (no review period set for this policy)'
+        }
         value={
-          <>
-            {dec(rec.reorder_point)} + {dec(rec.forecast_daily_demand)} × {dec(rec.review_days)} ={' '}
+          hasReview ? (
+            <>
+              {dec(rec.reorder_point)} + {dec(rec.forecast_daily_demand)} × {dec(rec.review_days)} ={' '}
+              <span className="text-foreground">{dec(rec.order_up_to)}</span>
+            </>
+          ) : (
             <span className="text-foreground">{dec(rec.order_up_to)}</span>
-          </>
+          )
         }
       />
       {rec.type === 'buy' ? (

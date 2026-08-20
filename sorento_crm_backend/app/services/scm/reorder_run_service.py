@@ -2415,16 +2415,19 @@ def apply_run_budget(db: Session, run_id: str, budget: Optional[float],
 def explain_net(db: Session, rec_id: str) -> dict:
     """M8-A1 net-breakdown drill for a recommendation.
 
-    Returns the four position components (on_hand / on_order / committed / net) for the
-    rec's product×warehouse plus the OPEN sales-order lines behind ``committed`` — each
-    navigable (SO number, customer, qty, order date) rather than a pre-aggregated total.
+    Returns the five position components (on_hand / on_order / po_ordered / committed /
+    net) for the rec's product×warehouse plus the OPEN sales-order lines behind
+    ``committed`` — each navigable (SO number, customer, qty, order date) rather than a
+    pre-aggregated total.
 
     Positions come from ``scm.net_position_v`` (the SAME source the run froze
-    ``net_position`` from, via ``_positions``); the committed lines come from the base
-    ``sales_order_lines`` tables. Both apply the identical filter
+    ``net_position`` from) plus ``scm.po_ordered_v`` for the ``po_ordered`` leg (21 Aug
+    fix — the sizing engine has netted this leg into the recommendation's own ``net``
+    since ``_compute_cell`` started adding it; the drill now matches); the committed
+    lines come from the base ``sales_order_lines`` tables. All apply the identical filter
     (``status='open' AND qty_ordered > qty_delivered``) so the listed line qtys sum to
-    ``committed``, and ``on_hand + on_order - committed == net`` holds. Read-only; no
-    numeric write anywhere.
+    ``committed``, and ``on_hand + on_order + po_ordered - committed == net`` holds.
+    Read-only; no numeric write anywhere.
     """
     # Raw SQL, so company-scoped by hand: a recommendation id from another company's plan
     # must read as absent, not as a net breakdown of stock this caller cannot see.
@@ -2446,6 +2449,19 @@ def net_breakdown(db: Session, product_id: str,
                   warehouse_id: Optional[str]) -> dict:
     """Net components + open-SO-line contributors for a product (+ optional warehouse).
 
+    ``po_ordered`` (captain, 20-21 Aug: "for reorder plan need to deduct both SPO and PO
+    to determine the suggested quantity") is a leg the sizing engine (``_compute_cell``)
+    has netted into the frozen figure it actually decided the recommendation against
+    since that fix landed - ``net = net_position + po_ordered``. This drill used to stop
+    at ``on_hand + on_order - committed``, which is a DIFFERENT, smaller number than the
+    one the recommendation was sized off, so the popup could read "Net -1,141" beside a
+    PO leg of 3,642 for the exact same shortage and the two would not explain each other.
+    ``net`` here is now recomputed the SAME way the engine computes it (``on_hand +
+    on_order + po_ordered - committed``), with ``po_ordered`` surfaced as its own key so
+    the arithmetic is honest and re-derivable rather than asserted. The other three keys
+    are unchanged (contract note: a caller pinned to the old 4-key shape now sees a 5th
+    key; the old three legs and their meanings do not change).
+
     When ``warehouse_id`` is None (a network rec) positions are summed across all of the
     product's warehouse cells and the committed SO lines are listed network-wide."""
     wh_pos = "AND warehouse_id = :wid" if warehouse_id else ""
@@ -2455,11 +2471,20 @@ def net_breakdown(db: Session, product_id: str,
     pos = db.execute(text(f"""
         SELECT COALESCE(SUM(quantity_on_hand), 0) AS on_hand,
                COALESCE(SUM(on_order), 0)         AS on_order,
-               COALESCE(SUM(committed), 0)        AS committed,
-               COALESCE(SUM(net_position), 0)     AS net
+               COALESCE(SUM(committed), 0)        AS committed
         FROM scm.net_position_v
         WHERE product_id = :pid {wh_pos}
     """), params).mappings().first()
+
+    # Same view `_planning_rows` reads for the S10 checklist column - "still to come" on
+    # an open, not-fully-received PO line. Summed the same way (product, optional
+    # warehouse) as the three legs above so all four are read off the identical scope.
+    wh_po = "AND warehouse_id = :wid" if warehouse_id else ""
+    po_ordered = db.execute(text(f"""
+        SELECT COALESCE(SUM(ordered), 0) AS po_ordered
+        FROM scm.po_ordered_v
+        WHERE product_id = :pid {wh_po}
+    """), params).scalar() or 0
 
     wh_sol = "AND sol.warehouse_id = :wid" if warehouse_id else ""
     sos = db.execute(text(f"""
@@ -2477,11 +2502,16 @@ def net_breakdown(db: Session, product_id: str,
         ORDER BY so.order_date DESC NULLS LAST, so.so_number
     """), params).mappings().all()
 
+    on_hand = _fnum(pos["on_hand"]) or 0.0
+    on_order = _fnum(pos["on_order"]) or 0.0
+    committed = _fnum(pos["committed"]) or 0.0
+    po_ordered_val = _fnum(po_ordered) or 0.0
     return {
-        "on_hand": _fnum(pos["on_hand"]),
-        "on_order": _fnum(pos["on_order"]),
-        "committed": _fnum(pos["committed"]),
-        "net": _fnum(pos["net"]),
+        "on_hand": on_hand,
+        "on_order": on_order,
+        "po_ordered": po_ordered_val,
+        "committed": committed,
+        "net": on_hand + on_order + po_ordered_val - committed,
         "committed_sos": [{
             "so_number": r["so_number"],
             "qty": _fnum(r["qty"]),
@@ -2531,11 +2561,18 @@ def set_moq_override(db: Session, rec_id: str, moq: Optional[float]) -> dict:
     them. Making the column itself correct fixes every reader at once instead of teaching
     each one about ``moq_override``.
 
-    Guarded like a location decision (AC-F09, AC-F10): the MoQ is what a location
-    recommendation gets accepted/adjusted AT, so changing it is refused on the same grain
-    and legacy-run terms as Accept/Adjust/Reject, and refused outright once the row has
-    already been decided - an accepted/adjusted rec may already sit in a draft PO line
-    keyed off the qty this would silently move out from under it."""
+    NOT grain-guarded (captain, live test, 21 Aug: "This plan is decided at Product grain,
+    so a Location decision cannot be recorded on it - I got this when setting the MoQ
+    manually"). A prior version of this guard treated a MoQ override like Accept/Adjust
+    /Reject (AC-F09), which was wrong: those are DECISIONS about a location's recommended
+    quantity, made only where the run's decision grain says that location may decide.
+    An MoQ override is not a decision at all - it is an INPUT the buyer is correcting
+    before the suggestion is even acted on ("the supplier's MoQ drifted, my number is
+    right") - and a product-grain run is exactly where that correction is made, since the
+    location-level rows are what a product-grain plan is built FROM. So this stays refused
+    only on a legacy run (AC-F10 - the run predates the contract and is read only outright)
+    and once the row has already been decided - an accepted/adjusted rec may already sit
+    in a draft PO line keyed off the qty this would silently move out from under it."""
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="mvo")
     rec = db.execute(text(
         "SELECT id, run_id, rec_type, status, recommended_qty, unit_cost, currency, "
@@ -2554,7 +2591,7 @@ def set_moq_override(db: Session, rec_id: str, moq: Optional[float]) -> dict:
     run = db.query(ReorderRun).filter(ReorderRun.id == rec["run_id"]).first()
     if run is None:
         raise AppException(status_code=404, message="Reorder run not found.")
-    plan_grain.assert_decision_grain(run, plan_grain.LOCATION_GRAIN)
+    plan_grain.assert_not_legacy(run)
     if rec["status"] != "proposed":
         raise AppException(
             status_code=409,

@@ -136,6 +136,30 @@ describe('order-qty ledger - THE LINE varies by mode', () => {
     expect(screen.getByText('Gap to line')).toBeInTheDocument();
     expect(screen.getByText('16')).toBeInTheDocument();
   });
+
+  it('Net now counts the outstanding PO leg (21 Aug fix)', () => {
+    renderLedger({
+      line: line({ on_hand: 5, incoming_spo: 3, outstanding_po: 50, outstanding_sales: 24 }),
+    });
+    expect(screen.getByText('+ PO (open)')).toBeInTheDocument();
+    expect(screen.getByText('50')).toBeInTheDocument();
+  });
+});
+
+describe('order-qty ledger - no "-d" formatting when the review period is absent (21 Aug fix)', () => {
+  it('auto mode with no review period names it in words, never "-d review"', () => {
+    renderLedger({ line: line({ policy_type: 'reorder_point', review_days: null }) });
+    expect(screen.getByText('no review period set')).toBeInTheDocument();
+    expect(screen.queryByText(/-d review/)).not.toBeInTheDocument();
+    // The reorder-point half is unaffected - it has its own lead-time term.
+    expect(screen.getByText(/30d lead/)).toBeInTheDocument();
+  });
+
+  it('auto mode with a review period still shows the formula', () => {
+    renderLedger({ line: line({ policy_type: 'reorder_point', review_days: 30 }) });
+    expect(screen.getByText(/30d review/)).toBeInTheDocument();
+    expect(screen.getByText(/30d lead/)).toBeInTheDocument();
+  });
 });
 
 describe('order-qty ledger - the line\'s own breach status (covered rows never show a bogus gap)', () => {
@@ -190,16 +214,17 @@ describe('order-qty ledger - the line\'s own breach status (covered rows never s
   });
 });
 
-describe('order-qty ledger - the PO book is named but never counted', () => {
-  it('shows the PO line, labelled not counted, only when outstanding PO > 0', () => {
+describe('order-qty ledger - the PO book is counted in Net now (21 Aug fix)', () => {
+  it('shows the PO leg inside Net now, only when outstanding PO > 0', () => {
     renderLedger({ line: line({ outstanding_po: 30 }) });
-    expect(screen.getByText('PO (open)')).toBeInTheDocument();
-    expect(screen.getByText('not counted')).toBeInTheDocument();
+    expect(screen.getByText('+ PO (open)')).toBeInTheDocument();
+    // The sizing engine already nets it - stating "not counted" would be false now.
+    expect(screen.queryByText('not counted')).not.toBeInTheDocument();
   });
 
-  it('omits the PO line entirely when nothing is outstanding', () => {
+  it('omits the PO leg entirely when nothing is outstanding', () => {
     renderLedger({ line: line({ outstanding_po: 0 }) });
-    expect(screen.queryByText('PO (open)')).not.toBeInTheDocument();
+    expect(screen.queryByText('+ PO (open)')).not.toBeInTheDocument();
   });
 });
 
@@ -480,8 +505,7 @@ describe('order-qty ledger - shaped fixtures render coherently', () => {
     ];
     renderLedger({ line: l, poReceipts: receipts });
 
-    expect(screen.getByText('PO (open)')).toBeInTheDocument();
-    expect(screen.getByText('not counted')).toBeInTheDocument();
+    expect(screen.getByText('+ PO (open)')).toBeInTheDocument();
     expect(screen.getByText(/SPO arriving 20 - already counted/)).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /Use PO PO-2026\/08-0030 30/ })).toBeInTheDocument();
     expect(screen.getByText('Buy before rounding')).toBeInTheDocument();

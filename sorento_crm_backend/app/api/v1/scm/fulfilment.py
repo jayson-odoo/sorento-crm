@@ -499,6 +499,10 @@ class SpoLineConfirm(BaseModel):
     shipment_line_id: str
     qty: float = Field(0, ge=0)
     include: bool = False
+    # The second amendment's location decision, made on the SAME screen (see
+    # `spo_conversion_service.create`'s docstring). Optional: absent means no allocation is
+    # written for this line, byte-identical to every call before the amendment.
+    warehouse_id: Optional[str] = None
 
 
 class SpoCreateRequest(BaseModel):
@@ -759,10 +763,14 @@ def spo_suggestion(
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    """"Create SPO" screen: per shipment line, the suggested SPO quantity - packed, minus
+    """The SPO planner table: per shipment line, the suggested SPO quantity - packed, minus
     what an open PO already covers, minus stock/incoming - and why a line is covered or
-    cannot convert. `already_converted: true` when this shipment already has SPOs (409 on
-    the write below); the caller shows the existing SPOs instead of the confirm screen.
+    cannot convert. Also carries `po_takes` (the earliest-first per-PO breakdown behind
+    `po_covered_qty`) and `location_options` + `suggested_warehouse_id` (candidate
+    destination warehouses, ranked by Fulfilment Priority) - see `spo_conversion_service`'s
+    module docstring, "second amendment". `already_converted: true` when this shipment
+    already has SPOs (409 on the write below); the caller shows the existing SPOs instead of
+    the confirm screen.
     """
     return spo_conversion_service.suggest(db, shipment_id)
 
@@ -784,6 +792,7 @@ def create_spo(
         shipment_id,
         [ln.model_dump() for ln in body.lines],
         actor=_actor(current_user),
+        actor_user_id=current_user.get("id"),
     )
     db.commit()
     return out

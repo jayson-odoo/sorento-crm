@@ -33,9 +33,27 @@ PER LINE by construction: a core line only ever appears in the confirmed leg her
 active decision's `line_snapshots` names it, and that is exactly the condition
 `PLAN_DEMAND_LINE_SQL` excludes it on in the sheet leg - so summing both is additive,
 never double-counted.
+
+WHO SOLD IT (21 Aug live ask): `sales_orders.sales_agent_id` -> `sales_agents`, the same
+salesperson master `sales_order_service._agent_fields` already reads for the SO detail
+page. Every code ships with `person_label` unset today (measured on the live book: 0 of
+the codes carry one), so `AGENT_LABEL_SQL` falls back from the grouping label to the code
+itself - never invented, and never the raw FK. NULL on a sheet-leg line built by the Order
+Inquiry import (`project_order_inquiry_import_service` never sets it), which is the honest
+reading for it: nobody has attributed an agent to that order yet.
+
+WHAT THEY PAY (21 Aug live ask): `sol.unit_price` / `psl.unit_price` were already the read
+- this module has carried them since the price question was first asked (see the PROVENANCE
+history below). A captain-witnessed "RM 0.00" is a real value on that line, not a
+serializer bug: measured live, 60% of sheet-leg Order-Inquiry lines and 50% of confirmed-leg
+lines carry a positive price, and the rest are genuinely priced at 0.00 or carry no price at
+all - the FE already tells those two apart (a null price renders nothing, a stated 0.00
+renders "RM 0.00"). Nothing here changed for the price read; this note exists so the next
+person who goes looking for the bug does not re-derive the same investigation.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Callable, Optional
 
 from sqlalchemy import text
@@ -52,6 +70,7 @@ from app.services.scm.demand import (
     PROJECT_CLASS,
     UNPLACED_INQUIRY_STATE,
 )
+from app.services.scm.trajectory import month_shift
 from app.services.scm.trajectory_service import demand_context_for_product
 
 # One screen's worth. A pool with thousands of lines is a reading problem, not a listing
@@ -70,6 +89,14 @@ _CHANNELS = {"project", "retail", "unclassified"}
 # Quantities are floats out of NUMERIC, and "does this set reproduce the frozen figure"
 # must not turn on the last bit of a sum.
 _QTY_TOLERANCE = 0.001
+
+#: Who sold it - the salesperson master, resolved off `sales_orders.sales_agent_id`
+#: (`app/models/sales_agent.py`). `person_label` is the grouping a human sets on top of
+#: the raw code ("SEAN I"/"SEAN III"/"LCL" are three agents, one person); every code ships
+#: with it unset today, so this reads as the code itself until someone groups it. NULL
+#: when the order carries no agent at all - never invented (see the module docstring).
+#: Assumes the query joins `LEFT JOIN sales_agents sa ON sa.id = so.sales_agent_id`.
+AGENT_LABEL_SQL = "COALESCE(sa.person_label, sa.sales_agent)"
 
 
 def _pool_of(db: Session, wid: str) -> tuple[list[str], Optional[str]]:
@@ -153,7 +180,8 @@ def _scope_for(db: Session, rec,
 
 def demand_for_recommendation(db: Session, rec_id: str,
                               limit: int = DEFAULT_LIMIT,
-                              channel: Optional[str] = None) -> dict[str, Any]:
+                              channel: Optional[str] = None,
+                              scope: Optional[str] = None) -> dict[str, Any]:
     """Open demand behind one recommendation, newest-needed first.
 
     `channel` narrows the list to ONE of `project`/`retail`/`unclassified` - anything else
@@ -162,6 +190,16 @@ def demand_for_recommendation(db: Session, rec_id: str,
     before the display cap and before the sort, never after, and the SCOPE test below still
     runs against the UNFILTERED total - a channel is a display slice of an already-resolved
     row, never a second opinion on which locations that row was netted over.
+
+    `scope="product"` (5.3 follow-up, 21 Aug live ask: "put the tooltip on the TOP
+    product-grain row too") unions this recommendation's own netted locations with every
+    SIBLING recommendation this run wrote for the SAME product - each resolved by the same
+    `_scope_for` test, so a sibling that was itself pooled contributes its whole pool, not
+    just its own cell. This is the exact union the grouped Buy view's channel columns
+    already sum (`planLineGrouping.ts`'s `channelQty`), so a drill opened from the top
+    product-grain row lists precisely the orders behind the number printed beside it.
+    Anything else (the default) keeps the existing ROW scope - a pool, or the row's own
+    warehouse.
     """
     channel = channel if channel in _CHANNELS else None
     rec = db.execute(text(
@@ -175,7 +213,8 @@ def demand_for_recommendation(db: Session, rec_id: str,
                 "pool_code": None, "project_total": 0.0, "retail_total": 0.0,
                 "unclassified_total": 0.0, "project_12m_qty": 0.0, "retail_3m_qty": 0.0,
                 "project_window_months": None, "retail_window_months": None,
-                "demand_context_as_of": None, "channel": channel}
+                "demand_context_as_of": None, "channel": channel,
+                "history_lines": [], "history_shown": 0}
 
     # The run's own "Plan until" cutoff (captain, 20 Aug), so this drill speaks the SAME
     # window `inputs.committed` was frozen against. Without it the scope test compares a
@@ -193,18 +232,75 @@ def demand_for_recommendation(db: Session, rec_id: str,
     co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="dbk")
     qty = ("GREATEST(COALESCE(sol.qty_required, sol.qty_ordered) "
            "         - COALESCE(sol.qty_delivered, 0), 0)")
-    where_loc = "sol.warehouse_id::text = ANY(:members)"
     # Both halves of the rule: which orders the sheet speaks for, and which of their lines
     # CS has already decided (`demand.py`). Applying only the first would show a buyer the
     # sheet quantity of a line whose confirmed Buy is already in the plan beside it.
     plan_demand = f"{PLAN_DEMAND_ORDER_SQL} AND {PLAN_DEMAND_LINE_SQL}"
-    if include_unlocated:
-        where_loc = f"({where_loc} OR sol.warehouse_id IS NULL)"
     # Same horizon rule as `demand.horizon_committed_select_sql` / `reorder_run_service`'s
     # own horizon predicates: a stated `required_date` past the cutoff is excluded, no
     # date at all is always in. A NULL `:horizon` reproduces the unhorizoned query.
     horizon_pred = ("(CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL "
                     "OR sol.required_date <= CAST(:horizon AS date))")
+
+    def _committed_total(candidate: list[str], include_unloc: bool) -> float:
+        """What this candidate location set commits for this product, by the same filter
+        the display list uses - the scope test has to ask the question the list will
+        answer, or the header could name a set the lines below it do not add up to.
+
+        Parametrized on `include_unloc` (rather than closing over the row's own
+        `include_unlocated`) so a SIBLING recommendation's own unlocated attribution
+        (`scope="product"`, below) is tested against ITS OWN flag, not the primary row's -
+        unlocated demand is attributed to exactly one row per product, and only that row's
+        own scope test should ever fold it in.
+        """
+        loc = "sol.warehouse_id::text = ANY(:members)"
+        if include_unloc:
+            loc = f"({loc} OR sol.warehouse_id IS NULL)"
+        return float(db.execute(
+            text(f"""
+                SELECT COALESCE(sum({qty}), 0)
+                FROM sales_order_lines sol
+                JOIN sales_orders so ON so.id = sol.sales_order_id
+                WHERE sol.product_id::text = :pid
+                  AND so.status = 'open' AND sol.line_status = 'open'
+                  AND sol.purchasing_status <> 'covered'
+                  AND {qty} > 0
+                  AND {plan_demand}
+                  AND {loc}
+                  AND {horizon_pred}
+                  {("AND " + co) if co else ""}
+            """),
+            {"pid": rec["product_id"], "members": candidate, "horizon": horizon, **co_params},
+        ).scalar() or 0)
+
+    members, rec_scope, pool_code = _scope_for(
+        db, rec, lambda candidate: _committed_total(candidate, include_unlocated)
+    )
+
+    if scope == "product":
+        siblings = db.execute(text(
+            "SELECT id::text AS id, warehouse_id::text AS warehouse_id, inputs, allocation "
+            "FROM scm.reorder_recommendation "
+            "WHERE run_id = :rid AND product_id = :pid AND id <> :self_id"
+        ), {"rid": rec["run_id"], "pid": rec["product_id"], "self_id": rec_id}).mappings().all()
+        member_set = set(members)
+        for srec in siblings:
+            s_include = bool((srec["inputs"] or {}).get("unlocated_demand"))
+            s_members, _, _ = _scope_for(
+                db, srec, lambda candidate, incl=s_include: _committed_total(candidate, incl)
+            )
+            member_set.update(s_members)
+            include_unlocated = include_unlocated or s_include
+        members = sorted(member_set)
+        # Distinct from "warehouse"/"pool" - a product-wide union is neither a single
+        # location nor one pool, and calling it either would invent a netting decision the
+        # run never made. The FE already treats an unrecognised scope word as "no pool
+        # suffix", so this reads as the plain location list plus its own count.
+        rec_scope, pool_code = "product", None
+
+    where_loc = "sol.warehouse_id::text = ANY(:members)"
+    if include_unlocated:
+        where_loc = f"({where_loc} OR sol.warehouse_id IS NULL)"
 
     # Whether an Order Inquiry row exists for THIS core line right now - not whether the
     # order was ever TOUCHED by the OI import (`source`/`demand_origin` below, which is a
@@ -239,11 +335,13 @@ def demand_for_recommendation(db: Session, rec_id: str,
                    so.demand_origin,
                    sol.required_date, w.warehouse_code, sol.unit_price,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
+                   {AGENT_LABEL_SQL} AS agent_label,
                    {qty} AS qty, {has_inquiry_pred} AS has_inquiry_row
             FROM sales_order_lines sol
             JOIN sales_orders so ON so.id = sol.sales_order_id
             LEFT JOIN warehouses w ON w.id = sol.warehouse_id
             LEFT JOIN customers c ON {CUSTOMER_JOIN_ON}
+            LEFT JOIN sales_agents sa ON sa.id = so.sales_agent_id
             WHERE sol.product_id::text = :pid
               AND so.status = 'open' AND sol.line_status = 'open'
               AND sol.purchasing_status <> 'covered'
@@ -255,29 +353,8 @@ def demand_for_recommendation(db: Session, rec_id: str,
               {("AND " + co) if co else ""}
         """
 
-    # UNFILTERED, always - the scope test below decides "warehouse" vs "pool" by comparing
-    # this to the run's own frozen `inputs.committed`, which was never sized against one
-    # channel alone. A channel is a display slice of an already-resolved row, so resolving
-    # scope on a filtered sum would compare a partial total to a whole one and mislabel a
-    # pooled row as its own single warehouse the moment a channel filter is applied.
-    sql = _sql_for("TRUE")
-
-    def total_for(candidate: list[str]) -> float:
-        """What this candidate set of locations commits, by the same filter as the list.
-
-        The scope test has to ask the question the list will answer, or the header could
-        name a set the lines below it do not add up to.
-        """
-        return float(db.execute(
-            text(f"SELECT COALESCE(sum(qty), 0) FROM ({sql}) t"),
-            {"pid": rec["product_id"], "members": candidate, "horizon": horizon,
-             "channel_project_class": PROJECT_CLASS, **co_params},
-        ).scalar() or 0)
-
-    members, scope, pool_code = _scope_for(db, rec, total_for)
-
     # The channel-filtered query, used for everything shown to the reader - the lines, the
-    # display cap, and the totals below. Equal to `sql` when unfiltered.
+    # display cap, and the totals below. Equal to `_sql_for("TRUE")` when unfiltered.
     display_sql = _sql_for(channel_pred)
 
     limit_n = max(1, int(limit or DEFAULT_LIMIT))
@@ -318,10 +395,12 @@ def demand_for_recommendation(db: Session, rec_id: str,
             "order_date": r["order_date"].isoformat() if r["order_date"] else None,
             "required_date": r["required_date"].isoformat() if r["required_date"] else None,
             "qty": float(r["qty"] or 0),
-            # Who ordered it, and what they pay. Both are read off the order rather than
-            # looked up elsewhere: an unresolvable debtor code is still an attribution,
-            # and a line the extract carries no price for says nothing rather than 0.
+            # Who ordered it, who sold it, and what they pay. Both people are read off the
+            # order rather than looked up elsewhere: an unresolvable debtor code is still an
+            # attribution, and a line the extract carries no price for says nothing rather
+            # than 0.
             "customer_label": r["customer_label"],
+            "agent_label": r["agent_label"],
             "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
             # "for project is order inquiry, for retail is sales order directly" - which
             # feed wrote the order this line belongs to. `order_inquiry` here means the
@@ -360,6 +439,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
                    oir.delivery_date AS required_date, w.warehouse_code,
                    psl.unit_price AS unit_price,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
+                   {AGENT_LABEL_SQL} AS agent_label,
                    oir.qty AS qty
             FROM projects.order_inquiry_rows oir
             JOIN projects.so_supply_decisions d
@@ -369,6 +449,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
             JOIN sales_orders so ON so.id = sol.sales_order_id
             LEFT JOIN warehouses w ON w.id = sol.warehouse_id
             LEFT JOIN customers c ON {CUSTOMER_JOIN_ON}
+            LEFT JOIN sales_agents sa ON sa.id = so.sales_agent_id
             WHERE oir.verb = :buy_verb
               AND oir.state = :unplaced_state
               AND oir.qty > 0
@@ -406,6 +487,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
             "required_date": r["required_date"].isoformat() if r["required_date"] else None,
             "qty": float(r["qty"] or 0),
             "customer_label": r["customer_label"],
+            "agent_label": r["agent_label"],
             "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
             "source": "order_inquiry_confirmed",
             # This leg is BUILT from `projects.order_inquiry_rows` - there is always a row,
@@ -427,6 +509,64 @@ def demand_for_recommendation(db: Session, rec_id: str,
     # still-OPEN demand this row was netted against, not the historical order flow.
     context = demand_context_for_product(db, rec["product_id"])
 
+    # The order-level evidence behind that same window (21 Aug live ask: "for project,
+    # what's the sales order for the past year, who is the customer and agent... for
+    # retail, past 3 months, same"). `context` above already carries the number; this is
+    # the SAME window (`month_shift`, the identical arithmetic `trajectory_service` uses),
+    # fed as a second section rather than folded into `lines` above - the sheet-leg list is
+    # OPEN, undelivered demand scoped to this row's own location(s), and the window here is
+    # the WHOLE product's order flow regardless of status or location, exactly like
+    # `project_12m_qty`/`retail_3m_qty` already are. Two different questions ("what is
+    # still owed here" vs "what did we sell of this, everywhere, lately") sharing one
+    # response is cheaper than a second endpoint/hook, and honest about which one each
+    # section answers. Unclassified has no configured window (S13d), so it stays empty.
+    history_lines: list[dict[str, Any]] = []
+    if channel in ("project", "retail"):
+        as_of = date.today()
+        months = context["project_months"] if channel == "project" else context["retail_months"]
+        until = month_shift(as_of, 0)
+        since = month_shift(until, -months)
+        hist_pred = (
+            "so.demand_class = :hist_project_class" if channel == "project"
+            else "so.demand_class IS DISTINCT FROM :hist_project_class"
+        )
+        hist_rows = db.execute(text(f"""
+            SELECT so.so_number, so.order_date, so.demand_class,
+                   sol.qty_ordered AS qty, sol.qty_delivered, sol.unit_price,
+                   {CUSTOMER_LABEL_SQL} AS customer_label,
+                   {AGENT_LABEL_SQL} AS agent_label
+            FROM sales_order_lines sol
+            JOIN sales_orders so ON so.id = sol.sales_order_id
+            LEFT JOIN customers c ON {CUSTOMER_JOIN_ON}
+            LEFT JOIN sales_agents sa ON sa.id = so.sales_agent_id
+            WHERE sol.product_id::text = :pid
+              AND so.order_date >= :since AND so.order_date < :until
+              AND {hist_pred}
+              {("AND " + co) if co else ""}
+            ORDER BY so.order_date DESC, so.so_number
+            LIMIT :limit
+        """), {"pid": rec["product_id"], "since": since, "until": until,
+               "hist_project_class": PROJECT_CLASS, "limit": limit_n,
+               **co_params}).mappings().all()
+        history_lines = [
+            {
+                "so_number": r["so_number"],
+                "order_date": r["order_date"].isoformat() if r["order_date"] else None,
+                "demand_class": r["demand_class"],
+                "qty": float(r["qty"] or 0),
+                # Delivered vs still owed - "clearly separated or marked" (captain, 21
+                # Aug), since this section, unlike the sheet leg above, includes both.
+                "delivered": bool(
+                    r["qty"] and float(r["qty"] or 0) > 0
+                    and float(r["qty_delivered"] or 0) >= float(r["qty"] or 0)
+                ),
+                "customer_label": r["customer_label"],
+                "agent_label": r["agent_label"],
+                "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
+            }
+            for r in hist_rows
+        ]
+
     return {
         "lines": all_lines,
         "total": int(totals["n"] or 0) + confirmed_n,
@@ -441,10 +581,11 @@ def demand_for_recommendation(db: Session, rec_id: str,
         # Where the demand actually sits, so "why BRW when I ordered for BRW-IB" is answered
         # by the row itself rather than by opening every order.
         "locations": sorted({(ln["warehouse_code"] or "No location") for ln in all_lines}),
-        # Which set of locations the list was drawn from, and the pool's name when it is
-        # the pool. Without it a pooled total reads as this bin's, which is the reading
-        # the whole popover exists to correct.
-        "scope": scope,
+        # Which set of locations the list was drawn from - the row's own warehouse, its
+        # pool, or (scope="product") the union across every recommendation this run wrote
+        # for the product. Without it a pooled/unioned total reads as this bin's, which is
+        # the reading the whole popover exists to correct.
+        "scope": rec_scope,
         "pool_code": pool_code,
         # SF-2: read off the UNCAPPED `totals`/`confirmed_total` figures, never off
         # `all_lines` (the capped display set) - past the cap the two diverged. The
@@ -461,4 +602,9 @@ def demand_for_recommendation(db: Session, rec_id: str,
         # Which channel this list was narrowed to, echoed back so the caller never has to
         # trust its own request state - None means unfiltered (every existing caller).
         "channel": channel,
+        # The trailing-window order-history section (see the comment above) - every order
+        # PLACED in the window, whatever its status today. Empty when `channel` was not
+        # project/retail, or the window carries nothing.
+        "history_lines": history_lines,
+        "history_shown": len(history_lines),
     }
