@@ -13,7 +13,13 @@
  *    grains, and never backfilled.
  */
 import { describe, it, expect } from 'vitest';
-import { decisionLockReason, isLegacyRun, planGrainLabel, type RunGrainState } from './planGrain';
+import {
+  decisionLockReason,
+  isLegacyRun,
+  legacyLockReason,
+  planGrainLabel,
+  type RunGrainState,
+} from './planGrain';
 
 const PRODUCT_RUN: RunGrainState = { decision_grain: 'product', front_planning_contract_version: 1 };
 const LOCATION_RUN: RunGrainState = { decision_grain: 'location', front_planning_contract_version: 1 };
@@ -103,5 +109,30 @@ describe('decisionLockReason', () => {
     // "decided at the other (null) grain" mismatch instead of "legacy".
     const reason = decisionLockReason(LEGACY_RUN, 'product');
     expect(reason).not.toMatch(/Decided at/);
+  });
+});
+
+/**
+ * S16 (captain, 21 Aug, 3rd time requested): "I want the decision made here" - the
+ * reorder plan row's OWN lock. Unlike `decisionLockReason` (still the Order summary
+ * sheet's own grain-scoped lock, unchanged above), the plan row is a decision surface at
+ * EVERY grain now - the only thing that still locks it is a run that predates the
+ * front-planning contract.
+ */
+describe('legacyLockReason', () => {
+  it('is null (actionable) when the run is not loaded yet', () => {
+    expect(legacyLockReason(null)).toBeNull();
+    expect(legacyLockReason(undefined)).toBeNull();
+  });
+
+  it('is null for BOTH grains of a front-planning run - grain no longer locks the row', () => {
+    expect(legacyLockReason(PRODUCT_RUN)).toBeNull();
+    expect(legacyLockReason(LOCATION_RUN)).toBeNull();
+  });
+
+  it('locks a legacy run, with the same wording decisionLockReason uses for it', () => {
+    expect(legacyLockReason(LEGACY_RUN)).toBe(
+      'Legacy run - read only. Create a new plan to decide.',
+    );
   });
 });

@@ -4,8 +4,10 @@ import { useCallback, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   amendLevelSuggestion,
+  clearPlanRowDecision,
   getCoverSources,
   getLevelSuggestions,
+  getPlanRowDecisions,
   getPoBook,
   getPriceHistory,
   getProductEconomics,
@@ -13,6 +15,7 @@ import {
   getPurchaseTrend,
   getTrajectory,
   recordLifecycleDecision,
+  recordPlanRowDecision,
   getBuyRecommendationsForCash,
   getAllDispositionRecommendations,
   getCoveredRecommendations,
@@ -28,7 +31,13 @@ import {
   type TakenByWarehouse,
 } from '../lib/coverPlan';
 import { poolWarehouseIdOf } from '../lib/planLine';
-import { planTotals, type PlanDecision, type PlanDecisionMap } from '../lib/planDecisions';
+import {
+  planTotals,
+  serverDecisionsToMap,
+  toRecordPlanRowDecisionPayload,
+  type PlanDecision,
+  type PlanDecisionMap,
+} from '../lib/planDecisions';
 import type { ProductEconomics } from '../lib/productHealth';
 import {
   cheaperAlternative,
@@ -51,12 +60,19 @@ import type { ProductPurchaseTrend } from '../lib/purchaseTrend';
  * is a field on it. No budget appears anywhere in this hook - it is a question for the review
  * panel, asked of the finished decisions.
  *
- * Decisions are client state for now. They are staged the same way the old screen staged
- * accept and adjust, so persisting them is a matter of posting each one; that lands with the
- * confirm step rather than here, so a half-made decision is never written to the run.
+ * Decisions (S16, captain 21 Aug) are the server's own - `decisions` below is the persisted
+ * `plan_row_decision` list (`GET .../plan-row-decisions`) folded back into the FE's
+ * `PlanDecisionMap`, and `decide`/`clear` write straight through to
+ * `POST`/`DELETE .../recommendations/{rec_id}/decision`. There is no local decision
+ * state left to drift out of step with it.
  */
+/** Cache key for the run's persisted row decisions (S16) - exported so a caller that
+ *  clears a run's decisions server-side (the demo Reset action) can invalidate it. */
+export const planRowDecisionsKey = (runId: string | null) => ['plan-lines', runId, 'row-decisions'];
+
 export function usePlanLines(runId: string | null, enabled = true) {
   const on = Boolean(runId) && enabled;
+  const qc = useQueryClient();
 
   const buys = useQuery({
     queryKey: ['plan-lines', runId, 'buy'],
@@ -85,6 +101,16 @@ export function usePlanLines(runId: string | null, enabled = true) {
     enabled: on,
     // A missing pool means "nothing to cover from", which is a safe reading: the plan then
     // proposes buying, which is what it did before cover existed.
+    retry: false,
+  });
+
+  /** S16: every row decision persisted on this run, plus the "N of Total made" header's
+   *  own server-counted decided/total (see `usePlanLines.decidedCount` /
+   *  `.totalDecidableCount` below). */
+  const planRowDecisions = useQuery({
+    queryKey: planRowDecisionsKey(runId),
+    queryFn: () => getPlanRowDecisions(runId as string),
+    enabled: on,
     retry: false,
   });
 
@@ -203,24 +229,81 @@ export function usePlanLines(runId: string | null, enabled = true) {
         ? 'error'
         : 'loading';
 
-  const [decisions, setDecisions] = useState<Record<string, PlanDecision | undefined>>({});
+  /**
+   * The server's persisted decisions, folded into the FE's own shape - see
+   * `serverDecisionsToMap`. `cover.data?.sources` resolves each stock take's warehouse
+   * CODE back to an id (the server only ever stores/returns the code).
+   */
+  const decisions = useMemo<PlanDecisionMap>(
+    () => serverDecisionsToMap(planRowDecisions.data?.data ?? [], lines, cover.data?.sources ?? {}),
+    [planRowDecisions.data, lines, cover.data],
+  );
 
-  const decide = useCallback((line: PlanLine, next: PlanDecision) => {
-    setDecisions((d) => ({ ...d, [line.id]: next }));
-  }, []);
+  /** The header's own "N of Total made" - counted server-side, never off this session's
+   *  own state (S16). */
+  const decidedCount = planRowDecisions.data?.decided_count ?? 0;
+  const totalDecidableCount = planRowDecisions.data?.total_count ?? 0;
 
-  // Delete the key rather than storing a falsy decision: `undecided` is the absence of an
-  // entry, and every count in `planTotals` reads it that way.
-  const clear = useCallback((line: PlanLine) => {
-    setDecisions((d) => {
-      const next = { ...d };
-      delete next[line.id];
-      return next;
-    });
-  }, []);
+  /**
+   * Record a row decision. A GROUPED (product-grain) line fans the SAME decision out to
+   * every member recommendation id, exactly the way `updateMoq` already fans a MOQ edit
+   * out - this hook is the only place that knows a group row is several real rows
+   * underneath. `Promise.allSettled`, not `Promise.all` (S8, code review 20 Aug, same
+   * doctrine as `updateMoq`): one member's failure must not hide the members that DID
+   * save. Every query is invalidated regardless of outcome, so the grid reflects what
+   * actually changed; a failure is re-thrown (with the count, on a grouped line) for the
+   * caller - which owns the control the buyer is looking at - to toast.
+   */
+  const decide = useCallback(
+    async (line: PlanLine, next: PlanDecision) => {
+      const recIds = isGroupedLine(line)
+        ? line.__group.members.map((m) => m.rec.id)
+        : [line.rec.id];
+      const payload = toRecordPlanRowDecisionPayload(next);
+      const results = await Promise.allSettled(
+        recIds.map((id) => recordPlanRowDecision(id, payload)),
+      );
+      await qc.invalidateQueries({ queryKey: planRowDecisionsKey(runId) });
+      const failures = results.filter(
+        (r): r is PromiseRejectedResult => r.status === 'rejected',
+      );
+      if (failures.length === 0) return;
+      const reason = failures[0].reason;
+      const detail = reason instanceof Error ? reason.message : 'Failed to record the decision.';
+      throw new Error(
+        recIds.length > 1
+          ? `${detail} (${failures.length} of ${recIds.length} locations did not save)`
+          : detail,
+      );
+    },
+    [qc, runId],
+  );
+
+  /** Withdraw a row decision back to undecided - the same per-member fan-out as `decide`. */
+  const clear = useCallback(
+    async (line: PlanLine) => {
+      const recIds = isGroupedLine(line)
+        ? line.__group.members.map((m) => m.rec.id)
+        : [line.rec.id];
+      const results = await Promise.allSettled(recIds.map((id) => clearPlanRowDecision(id)));
+      await qc.invalidateQueries({ queryKey: planRowDecisionsKey(runId) });
+      const failures = results.filter(
+        (r): r is PromiseRejectedResult => r.status === 'rejected',
+      );
+      if (failures.length === 0) return;
+      const reason = failures[0].reason;
+      const detail = reason instanceof Error ? reason.message : 'Failed to clear the decision.';
+      throw new Error(
+        recIds.length > 1
+          ? `${detail} (${failures.length} of ${recIds.length} locations did not save)`
+          : detail,
+      );
+    },
+    [qc, runId],
+  );
 
   const totals = useMemo(
-    () => planTotals(lines, decisions as PlanDecisionMap),
+    () => planTotals(lines, decisions),
     [lines, decisions],
   );
 
@@ -365,7 +448,6 @@ export function usePlanLines(runId: string | null, enabled = true) {
   );
 
   /** S14: record (or withdraw, with null) the buyer's own figure beside the engine's. */
-  const qc = useQueryClient();
   const amendLevel = useCallback(
     async (s: LevelSuggestion, amended: number | null) => {
       await amendLevelSuggestion({
@@ -461,9 +543,14 @@ export function usePlanLines(runId: string | null, enabled = true) {
 
   return {
     lines,
-    decisions: decisions as PlanDecisionMap,
+    decisions,
     decide,
     clear,
+    // The "N of Total made" header's own server-counted figures (S16) - the caller no
+    // longer derives them from `decisions`/`totals`, which count whatever is on screen
+    // right now rather than what the backend actually holds.
+    decidedCount,
+    totalDecidableCount,
     totals,
     coverFor,
     priceFor,

@@ -22,10 +22,14 @@
 export type PlanGrain = 'product' | 'location';
 
 /** `decisionLockReason`'s own wording for the Product-grain case, exported so a caller that
- *  wants to say MORE than the flat sentence (fix-cluster, 2026-08-20: whether THIS row's
- *  product actually has a Product-sheet decision, per `PlanLinesGrid`'s read-only cell) can
- *  recognise it without duplicating the string. */
+ *  wants to say MORE than the flat sentence (the Order summary sheet's own product-grain
+ *  lock, `SummaryOrderReportView.tsx`) can recognise it without duplicating the string. NOT
+ *  used by the reorder plan row any more (S16, 21 Aug) - see `legacyLockReason` below. */
 export const DECIDED_AT_PRODUCT_GRAIN = 'Decided at Product grain';
+
+/** Shared wording for a run that predates the front-planning contract - its decisions are
+ *  history, and nothing here may rewrite them. */
+const LEGACY_LOCK_MESSAGE = 'Legacy run - read only. Create a new plan to decide.';
 
 /** The two run fields every grain question is answered from. */
 export interface RunGrainState {
@@ -75,9 +79,22 @@ export function decisionLockReason(
   surface: PlanGrain,
 ): string | null {
   if (!run) return null;
-  if (isLegacyRun(run)) return 'Legacy run - read only. Create a new plan to decide.';
+  if (isLegacyRun(run)) return LEGACY_LOCK_MESSAGE;
   if (run.decision_grain === surface) return null;
   return run.decision_grain === 'product'
     ? DECIDED_AT_PRODUCT_GRAIN
     : 'Decided at Location grain';
+}
+
+/**
+ * Why the reorder plan row's OWN decision control is locked (S16, captain 21 Aug, 3rd
+ * time requested: "I want the decision made here"). Unlike `decisionLockReason` above -
+ * still the Order summary sheet's own lock, and still genuinely grain-scoped there - the
+ * plan row is a decision surface at EVERY grain now, grouped included (a product-grain
+ * row fans the same decision out to its members). The only run this can never write for
+ * is one that predates the front-planning contract, whose decisions are history.
+ */
+export function legacyLockReason(run: RunGrainState | null | undefined): string | null {
+  if (!run) return null;
+  return isLegacyRun(run) ? LEGACY_LOCK_MESSAGE : null;
 }

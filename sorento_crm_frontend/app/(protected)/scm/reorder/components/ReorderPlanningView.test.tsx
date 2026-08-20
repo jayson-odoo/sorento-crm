@@ -53,9 +53,14 @@ vi.mock('../hooks/usePlanLines', () => ({
   usePlanLines: () => ({
     lines: [], decisions: {}, decide: vi.fn(), clear: vi.fn(),
     totals: { decided: 0, undecided: 0, buying: 0, usingStock: 0, usingPo: 0, skipped: 0, units: 0, cost: 0, unpriced: 0 },
+    // S16: the "N of Total made" header reads THESE (the server's own count) now, not
+    // `totals` above - see `PlanLinesSection`'s own `onDecisionProgressChange`.
+    decidedCount: 0,
+    totalDecidableCount: 0,
     levelSuggestions: {},
     isLoading: false, isError: false, error: null, refetch: vi.fn(),
   }),
+  planRowDecisionsKey: (runId: string | null) => ['plan-lines', runId, 'row-decisions'],
 }));
 vi.mock('./PlanAssistant', () => ({ PlanAssistant: () => <div>plan-assistant</div> }));
 vi.mock('./RunHistoryPanel', () => ({ RunHistoryPanel: () => <div>run-history</div> }));

@@ -1041,23 +1041,31 @@ describe('PlanLinesGrid - product-grain channel grouping (5.3 follow-up, 19-20 A
       { verdict: 'rising' | 'holding' | 'falling' | 'quiet' | 'no_history'; recent_qty: number;
         previous_qty: number; change_pct: number | null; window_months: number;
         avg_day: number | null } | undefined,
+    // S16 (captain, 21 Aug, 3rd time requested): a grouped row is a decision surface too
+    // now - `decisionsReadOnly` defaults OFF here, unlike the fixture's old default, which
+    // locked every grouped row unconditionally. Passed explicitly only by the tests that
+    // still exercise a genuine legacy-run lock.
+    options: { decisions?: PlanDecisionMap; decisionsReadOnly?: boolean; readOnlyReason?: string } = {},
   ) {
+    const onDecide = vi.fn();
+    const onClear = vi.fn();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
         <PlanLinesGrid
           lines={lines}
-          decisions={{}}
-          onDecide={vi.fn()}
-          onClear={vi.fn()}
+          decisions={options.decisions ?? {}}
+          onDecide={onDecide}
+          onClear={onClear}
           groupByChannel
-          decisionsReadOnly
-          readOnlyReason="Decided at Product grain"
+          decisionsReadOnly={options.decisionsReadOnly ?? false}
+          readOnlyReason={options.readOnlyReason ?? null}
           channelTrendFor={channelTrendFor}
           staleAfterDays={180}
         />
       </QueryClientProvider>,
     );
+    return { onDecide, onClear };
   }
 
   it('an ungrouped (Location-grain) plan renders the fixture exactly as before: 3 rows', () => {
@@ -1203,10 +1211,72 @@ describe('PlanLinesGrid - product-grain channel grouping (5.3 follow-up, 19-20 A
     expect(within(row).getByText('50')).toBeInTheDocument();
   });
 
-  it('a group row is always read-only', () => {
+  // S16 (captain, 21 Aug, 3rd time requested): "the decision is made ON the reorder plan
+  // row" - the "Decided on the Product sheet - open it" hyperlink (and the flat "Decided
+  // at Product grain" lock a group row used to carry unconditionally) is gone. Superseded
+  // test: 'a group row is always read-only' (pre-S16) asserted the opposite of this.
+  it('a group row is a decision surface by default - no "Decided on the Product sheet" link, no flat grain lock', () => {
     renderGroupedGrid([retail, projectIb, projectIr]);
-    expect(screen.getAllByTestId(/^decision-read-only-group:/)).toHaveLength(1);
-    expect(screen.getAllByText('Decided at Product grain')).toHaveLength(1);
+    expect(screen.queryByText(/Decided on the Product sheet/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Decided at Product grain')).not.toBeInTheDocument();
+    expect(screen.queryByTestId(/^decision-read-only-/)).not.toBeInTheDocument();
+    // The suggested mix sums the group's 3 members (3 + 4 + 5), same as the "sums order
+    // qty across the group's warehouses" test above - the button IS the decision surface.
+    expect(screen.getByRole('button', { name: /Buy 12/ })).toBeInTheDocument();
+  });
+
+  it('accepting a group row\'s suggestion hands the caller the GROUP line, not a per-member one - fan-out is `usePlanLines`\' own job', () => {
+    const { onDecide } = renderGroupedGrid([retail, projectIb, projectIr]);
+    fireEvent.click(screen.getByRole('button', { name: /Buy 12/ }));
+
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    const [calledLine, decision] = onDecide.mock.calls[0];
+    expect(calledLine.__group.members.map((m: PlanLine) => m.id)).toEqual(['a', 'b', 'c']);
+    expect(decision).toEqual({ buy: 12 });
+  });
+
+  it('clearing a decided group row hands the caller the GROUP line too', () => {
+    const decisions = {
+      a: { buy: 12 }, b: { buy: 12 }, c: { buy: 12 },
+    } as PlanDecisionMap;
+    const { onClear } = renderGroupedGrid([retail, projectIb, projectIr], undefined, { decisions });
+    fireEvent.click(screen.getByRole('button', { name: /Change/i }));
+
+    expect(onClear).toHaveBeenCalledTimes(1);
+    expect(onClear.mock.calls[0][0].__group.members.map((m: PlanLine) => m.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('shows the UNANIMOUS decision, past tense, once every member agrees', () => {
+    const decisions = {
+      a: { buy: 12 }, b: { buy: 12 }, c: { buy: 12 },
+    } as PlanDecisionMap;
+    renderGroupedGrid([retail, projectIb, projectIr], undefined, { decisions });
+    expect(screen.getByText('Bought 12')).toBeInTheDocument();
+  });
+
+  it('reads MIXED, not any one member\'s figure, when the group\'s members disagree', () => {
+    const decisions = {
+      a: { buy: 3 }, b: { buy: 4 },
+      // c is left undecided - some decided, some not is ALSO mixed, not undecided.
+    } as PlanDecisionMap;
+    renderGroupedGrid([retail, projectIb, projectIr], undefined, { decisions });
+    expect(screen.getByText(/Mixed across locations/)).toBeInTheDocument();
+    // Still the undecided controls underneath - mixed is a NOTICE, not a lock.
+    expect(screen.getByRole('button', { name: /Buy 12/ })).toBeInTheDocument();
+  });
+
+  it('reads undecided (not mixed) when nobody in the group has decided at all', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    expect(screen.queryByText(/Mixed across locations/)).not.toBeInTheDocument();
+  });
+
+  it('a LEGACY run still locks the group row - the one lock S16 keeps', () => {
+    renderGroupedGrid([retail, projectIb, projectIr], undefined, {
+      decisionsReadOnly: true,
+      readOnlyReason: 'Legacy run - read only. Create a new plan to decide.',
+    });
+    expect(screen.getByText('Legacy run - read only. Create a new plan to decide.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Buy 12/ })).not.toBeInTheDocument();
   });
 
   it('a warehouse with no persisted segment still folds into the SAME group row, adding an Unclassified column', () => {
@@ -1339,8 +1409,6 @@ describe('PlanLinesGrid - grouped-expand live location-stock cells (20 Aug live 
           onDecide={vi.fn()}
           onClear={vi.fn()}
           groupByChannel
-          decisionsReadOnly
-          readOnlyReason="Decided at Product grain"
           staleAfterDays={180}
         />
       </QueryClientProvider>,

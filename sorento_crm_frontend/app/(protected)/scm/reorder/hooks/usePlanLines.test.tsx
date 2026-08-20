@@ -27,6 +27,65 @@ const amendLevelSuggestion = vi.fn();
 const recordLifecycleDecision = vi.fn();
 const setMoqOverride = vi.fn();
 
+// S16: a tiny in-memory store standing in for the backend's own `plan_row_decision`
+// table - `recordPlanRowDecision`/`clearPlanRowDecision` write it, `getPlanRowDecisions`
+// (what `usePlanLines`' own query reads after every write invalidates it) reads it back,
+// the same round trip the real endpoints make.
+let planRowDecisionsStore: Array<{
+  recommendation_id: string;
+  kind: string;
+  buy_qty: number | null;
+  stock_takes: Array<{ location: string; location_name: string | null; qty: number }>;
+  po_qty: number | null;
+  po_refs: string[];
+  reason_text: string | null;
+  draft_po_number: string | null;
+  draft_po_id: string | null;
+}> = [];
+const recordPlanRowDecision = vi.fn(
+  async (
+    recId: string,
+    payload: {
+      kind: string;
+      buy_qty?: number;
+      stock_takes?: Array<{ location: string; qty: number }>;
+      po_qty?: number;
+      po_refs?: string[];
+      reason_text?: string;
+    },
+  ) => {
+    const entry = {
+      recommendation_id: recId,
+      kind: payload.kind,
+      buy_qty: payload.buy_qty ?? null,
+      stock_takes: (payload.stock_takes ?? []).map((t) => ({
+        location: t.location,
+        location_name: null,
+        qty: t.qty,
+      })),
+      po_qty: payload.po_qty ?? null,
+      po_refs: payload.po_refs ?? [],
+      reason_text: payload.reason_text ?? null,
+      draft_po_number: null,
+      draft_po_id: null,
+    };
+    planRowDecisionsStore = [
+      ...planRowDecisionsStore.filter((d) => d.recommendation_id !== recId),
+      entry,
+    ];
+    return entry;
+  },
+);
+const clearPlanRowDecision = vi.fn(async (recId: string) => {
+  planRowDecisionsStore = planRowDecisionsStore.filter((d) => d.recommendation_id !== recId);
+  return { cleared: true };
+});
+const getPlanRowDecisions = vi.fn(async () => ({
+  data: planRowDecisionsStore,
+  decided_count: planRowDecisionsStore.length,
+  total_count: planRowDecisionsStore.length,
+}));
+
 vi.mock('../services/reorderRunService', () => ({
   getBuyRecommendationsForCash: (...a: unknown[]) => getBuyRecommendationsForCash(...a),
   getCoveredRecommendations: (...a: unknown[]) => getCoveredRecommendations(...a),
@@ -43,6 +102,9 @@ vi.mock('../services/reorderRunService', () => ({
   amendLevelSuggestion: (...a: unknown[]) => amendLevelSuggestion(...a),
   recordLifecycleDecision: (...a: unknown[]) => recordLifecycleDecision(...a),
   setMoqOverride: (...a: unknown[]) => setMoqOverride(...a),
+  recordPlanRowDecision: (recId: string, payload: never) => recordPlanRowDecision(recId, payload),
+  clearPlanRowDecision: (recId: string) => clearPlanRowDecision(recId),
+  getPlanRowDecisions: () => getPlanRowDecisions(),
 }));
 
 import { usePlanLines } from './usePlanLines';
@@ -72,6 +134,10 @@ beforeEach(() => {
     recommendation_id: 'r1', moq: null, moq_is_override: false, master_moq: null,
     order_qty: null, recommended_qty: null, cash_impact: null,
   });
+  planRowDecisionsStore = [];
+  recordPlanRowDecision.mockClear();
+  clearPlanRowDecision.mockClear();
+  getPlanRowDecisions.mockClear();
 });
 
 describe('usePlanLines - purchase trend is lazy, not eager', () => {
@@ -164,8 +230,8 @@ describe('usePlanLines - one row cannot reserve stock it does not need', () => {
     // The buyer types 40 into a location holding 50, against a gap of 10.
     const edited = applySourceEdits(result.current.coverFor(first), { 'wh-BRW-IB': 40 });
     expect(edited.coverQty).toBe(10);
-    act(() =>
-      result.current.decide(first, {
+    await act(async () => {
+      await result.current.decide(first, {
         stock: {
           qty: edited.coverQty,
           sources: edited.sources.map((s) => ({
@@ -174,8 +240,9 @@ describe('usePlanLines - one row cannot reserve stock it does not need', () => {
             qty: s.qty,
           })),
         },
-      }),
-    );
+      });
+    });
+    await waitFor(() => expect(result.current.decisions.r1).toBeDefined());
 
     const second = result.current.lines.find((l) => l.id === 'r2')!;
     // 50 free less the 10 the first row actually took, never less the 40 it typed.
@@ -365,5 +432,151 @@ describe('usePlanLines - updateMoq (20 Aug live test)', () => {
     // The two that DID succeed are not held back by the one that failed.
     expect(setMoqOverride).toHaveBeenCalledTimes(3);
     await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalledTimes(2));
+  });
+});
+
+/**
+ * S16 (captain, 21 Aug, 3rd time requested): the row decision itself - buy / use stock /
+ * use PO / skip, or a mixture - recorded straight to the backend. `decide`/`clear` fan a
+ * grouped (product-grain) row's write out to every member recommendation id, the exact
+ * same `Promise.allSettled` doctrine `updateMoq` already uses (S8).
+ */
+describe('usePlanLines - S16 row decisions (decide/clear)', () => {
+  it('an ungrouped row records exactly one recommendation, derived to the right kind', async () => {
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalled());
+
+    const line = { rec: { id: 'r1' } } as never;
+    await act(async () => {
+      await result.current.decide(line, { buy: 23 });
+    });
+
+    expect(recordPlanRowDecision).toHaveBeenCalledTimes(1);
+    expect(recordPlanRowDecision).toHaveBeenCalledWith(
+      'r1',
+      expect.objectContaining({ kind: 'buy', buy_qty: 23 }),
+    );
+    // The server round trip lands back in `decisions`, keyed by the real rec id.
+    await waitFor(() => expect(result.current.decisions.r1).toEqual({ buy: 23 }));
+  });
+
+  it('a grouped product row fans the SAME decision out to every member, never the synthetic group id', async () => {
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalled());
+
+    const grouped = {
+      rec: { id: 'group-p1' },
+      __group: {
+        members: [{ rec: { id: 'r1' } }, { rec: { id: 'r2' } }, { rec: { id: 'r3' } }],
+      },
+    } as never;
+    await act(async () => {
+      await result.current.decide(grouped, { buy: 12 });
+    });
+
+    expect(recordPlanRowDecision).toHaveBeenCalledTimes(3);
+    for (const id of ['r1', 'r2', 'r3']) {
+      expect(recordPlanRowDecision).toHaveBeenCalledWith(
+        id,
+        expect.objectContaining({ kind: 'buy', buy_qty: 12 }),
+      );
+    }
+    expect(recordPlanRowDecision).not.toHaveBeenCalledWith('group-p1', expect.anything());
+  });
+
+  it('clear withdraws an ungrouped row, and refetches the decisions', async () => {
+    planRowDecisionsStore = [{
+      recommendation_id: 'r1', kind: 'buy', buy_qty: 23, stock_takes: [], po_qty: null,
+      po_refs: [], reason_text: null, draft_po_number: null, draft_po_id: null,
+    }];
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(result.current.decisions.r1).toEqual({ buy: 23 }));
+
+    const line = { rec: { id: 'r1' } } as never;
+    await act(async () => {
+      await result.current.clear(line);
+    });
+
+    expect(clearPlanRowDecision).toHaveBeenCalledWith('r1');
+    await waitFor(() => expect(result.current.decisions.r1).toBeUndefined());
+  });
+
+  it('clear fans out across a grouped row\'s members the same way decide does', async () => {
+    planRowDecisionsStore = [
+      { recommendation_id: 'r1', kind: 'buy', buy_qty: 12, stock_takes: [], po_qty: null, po_refs: [], reason_text: null, draft_po_number: null, draft_po_id: null },
+      { recommendation_id: 'r2', kind: 'buy', buy_qty: 12, stock_takes: [], po_qty: null, po_refs: [], reason_text: null, draft_po_number: null, draft_po_id: null },
+    ];
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(result.current.decisions.r1).toBeDefined());
+
+    const grouped = {
+      rec: { id: 'group-p1' },
+      __group: { members: [{ rec: { id: 'r1' } }, { rec: { id: 'r2' } }] },
+    } as never;
+    await act(async () => {
+      await result.current.clear(grouped);
+    });
+
+    expect(clearPlanRowDecision).toHaveBeenCalledWith('r1');
+    expect(clearPlanRowDecision).toHaveBeenCalledWith('r2');
+    await waitFor(() => expect(result.current.decisions.r1).toBeUndefined());
+    expect(result.current.decisions.r2).toBeUndefined();
+  });
+
+  it('a rejected write on an ungrouped row rejects for the caller to toast, after refreshing', async () => {
+    recordPlanRowDecision.mockRejectedValueOnce(new Error('Failed to record the decision.'));
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalled());
+
+    const line = { rec: { id: 'r1' } } as never;
+    await expect(
+      act(async () => {
+        await result.current.decide(line, { buy: 23 });
+      }),
+    ).rejects.toThrow('Failed to record the decision.');
+  });
+
+  it('a partial group failure is reported WITH the count, the successes are not held back', async () => {
+    recordPlanRowDecision
+      .mockImplementationOnce(async (recId: string) => {
+        const entry = { recommendation_id: recId, kind: 'buy', buy_qty: 12, stock_takes: [], po_qty: null, po_refs: [], reason_text: null, draft_po_number: null, draft_po_id: null };
+        planRowDecisionsStore = [...planRowDecisionsStore, entry];
+        return entry;
+      })
+      .mockRejectedValueOnce(new Error('Network error.'))
+      .mockImplementationOnce(async (recId: string) => {
+        const entry = { recommendation_id: recId, kind: 'buy', buy_qty: 12, stock_takes: [], po_qty: null, po_refs: [], reason_text: null, draft_po_number: null, draft_po_id: null };
+        planRowDecisionsStore = [...planRowDecisionsStore, entry];
+        return entry;
+      });
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalled());
+
+    const grouped = {
+      rec: { id: 'group-p1' },
+      __group: {
+        members: [{ rec: { id: 'r1' } }, { rec: { id: 'r2' } }, { rec: { id: 'r3' } }],
+      },
+    } as never;
+
+    let caught: Error | undefined;
+    await act(async () => {
+      try {
+        await result.current.decide(grouped, { buy: 12 });
+      } catch (err) {
+        caught = err as Error;
+      }
+    });
+
+    expect(caught?.message).toContain('1 of 3 locations did not save');
+    expect(recordPlanRowDecision).toHaveBeenCalledTimes(3);
+  });
+
+  it('decidedCount/totalDecidableCount come straight off the server list, not off client state', async () => {
+    getPlanRowDecisions.mockResolvedValue({ data: [], decided_count: 4, total_count: 9 });
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+
+    await waitFor(() => expect(result.current.decidedCount).toBe(4));
+    expect(result.current.totalDecidableCount).toBe(9);
   });
 });

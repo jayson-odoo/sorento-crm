@@ -39,7 +39,13 @@ import {
   type PlanLine,
   type PlanLineStatus,
 } from '../lib/planLine';
-import { decidedCost, decidedQty, type PlanDecision, type PlanDecisionMap } from '../lib/planDecisions';
+import {
+  decidedCost,
+  decidedQty,
+  groupDecisionState,
+  type PlanDecision,
+  type PlanDecisionMap,
+} from '../lib/planDecisions';
 import { NO_COVER, type CoverProposal } from '../lib/coverPlan';
 import {
   PRICE_ADVICE_LABEL,
@@ -86,7 +92,6 @@ import {
   type PlanChannelGroupMeta,
 } from '../lib/planLineGrouping';
 import type { ChannelTrendEntry } from '../lib/trajectory';
-import { DECIDED_AT_PRODUCT_GRAIN } from '../lib/planGrain';
 
 /**
  * ONE grid for every line of a plan.
@@ -486,17 +491,15 @@ export function PlanLinesGrid({
   runId,
   decisionsReadOnly = false,
   readOnlyReason = null,
-  belongsOnBookProductIds,
-  onOpenProductSheet,
   groupByChannel = false,
   isLoading,
 }: {
   lines: PlanLine[];
   decisions: PlanDecisionMap;
-  onDecide: (line: PlanLine, next: PlanDecision) => void;
+  onDecide: (line: PlanLine, next: PlanDecision) => Promise<void> | void;
   /** Return a line to undecided. Separate from `onDecide` because undecided is the absence
    *  of a decision, not a fourth kind of one. */
-  onClear: (line: PlanLine) => void;
+  onClear: (line: PlanLine) => Promise<void> | void;
   /** What the plan suggests for a line: buy, cover from elsewhere, or a split of the two. */
   coverFor?: (line: PlanLine) => CoverProposal;
   /** What we last paid this line's supplier, and how old that is. Undefined = no opinion. */
@@ -561,26 +564,17 @@ export function PlanLinesGrid({
   /** The run on screen, threaded to each row's demand drill so it can fetch its order lines. */
   runId?: string | null;
   /**
-   * The run is decided at the OTHER grain, or predates the contract, so this view is
-   * a read and drill view (AC-F02 / AC-F09). Every decision control is disabled and
-   * says which screen owns the decision; nothing is hidden, because the facts are the
-   * same facts and the buyer still has to be able to read them.
+   * S16 (captain, 21 Aug, 3rd time requested): the row IS the decision surface now, on
+   * every grain and every rec_type this can be decided over - the old grain-based lock
+   * ("Decided at Product grain - open the Product sheet") is gone; a grouped row decides
+   * by fanning the SAME decision out to its members (see `groupDecisionState` /
+   * `usePlanLines.decide`). The ONE thing that still genuinely cannot be recorded here is
+   * a run that predates the front-planning contract - its decisions are history, and
+   * `readOnlyReason` carries that sentence.
    */
   decisionsReadOnly?: boolean;
   /** What the disabled control says, in place of the decision cell's own controls. */
   readOnlyReason?: string | null;
-  /**
-   * Fix-cluster (2026-08-20): which products actually have a Summary Order Report row
-   * (`_belongs_on_the_book`, `summary_order_service.py`, mirrored client-side off the
-   * plan's own loaded lines - see `PlanLinesSection`). Only consulted when
-   * `readOnlyReason` is the "Decided at Product grain" message, to tell "a real decision
-   * lives on the Product sheet" apart from "no decision exists anywhere - this product is
-   * level-blocked", which the flat `readOnlyReason` string could not say on its own.
-   */
-  belongsOnBookProductIds?: Set<string>;
-  /** Switches the page to the Product sheet (Order summary). Powers the "open it" link
-   *  next to a row this run HAS decided at Product grain. Omit to render plain text. */
-  onOpenProductSheet?: () => void;
   /**
    * Product-grain runs only (5.3, follow-up 19-20 Aug): group the fetched per-warehouse
    * rows into one row per PRODUCT - "1 line of retail, 1 line of project" folded into ONE
@@ -1465,81 +1459,42 @@ export function PlanLinesGrid({
         header: ({ column }) => <DataGridColumnHeader title="Decision" visibility column={column} />,
         cell: ({ row }) => {
           const line = row.original;
-          // A group row is never a decision surface (5.3/5.4) - it is a summed READING,
-          // and its `id` names no real recommendation to write a decision against. Checked
-          // ahead of `decisionsReadOnly` so this holds even if a future caller groups
-          // without also passing the read-only flag; in practice grouping is only ever on
-          // for a Product-grain run, which already carries `decisionsReadOnly` from the
-          // caller (5.4: Location recommendations are read-only under Product grain too).
-          if (!decisionsReadOnly && !isGroupedLine(line)) {
-            return (
-              <StopClick>
-                <PlanLineDecisionCell
-                  line={line}
-                  decision={decisions[line.id]}
-                  cover={coverFor?.(line) ?? NO_COVER}
-                  poReceipts={poFor?.(line) ?? []}
-                  trend={trendFor?.(line)}
-                  economics={economicsFor?.(line)}
-                  healthThresholds={healthThresholds}
-                  onDecide={(next) => onDecide(line, next)}
-                  onClear={() => onClear(line)}
-                />
-              </StopClick>
-            );
-          }
-          // Fix-cluster (2026-08-20): "Decided at Product grain" used to be one flat
-          // sentence on every row, whether or not THIS product has a decision anywhere at
-          // all. `belongsOnBookProductIds` (mirrors `_belongs_on_the_book`,
-          // `summary_order_service.py`) tells "a real decision lives on the Product sheet"
-          // apart from "no decision exists anywhere - nobody set a level to plan it
-          // against" - the flat sentence could not say which, and the second case is not
-          // actually locked at all, it is just unreachable from here.
-          if (
-            readOnlyReason === DECIDED_AT_PRODUCT_GRAIN &&
-            belongsOnBookProductIds &&
-            line.product_id
-          ) {
-            const onBook = belongsOnBookProductIds.has(line.product_id);
-            if (onBook) {
-              return onOpenProductSheet ? (
-                <button
-                  type="button"
-                  className="text-2xs text-primary underline decoration-dotted underline-offset-2"
-                  data-testid={`decision-read-only-${line.id}`}
-                  onClick={onOpenProductSheet}
-                >
-                  Decided on the Product sheet - open it
-                </button>
-              ) : (
-                <span
-                  className="text-2xs text-muted-foreground"
-                  data-testid={`decision-read-only-${line.id}`}
-                >
-                  Decided on the Product sheet
-                </span>
-              );
-            }
+          // S16 (captain, 21 Aug, 3rd time requested): the row IS the decision surface, on
+          // every grain - grouped included. The ONE thing that still locks it is a legacy
+          // run (`decisionsReadOnly`, stamped by the caller off `isLegacyRun` - its
+          // decisions are history and nothing here may rewrite them).
+          if (decisionsReadOnly) {
             return (
               <span
                 className="text-2xs text-muted-foreground"
                 data-testid={`decision-read-only-${line.id}`}
-                title="No Summary Order Report row exists for this product - nobody has set the AutoCount level it would be planned against"
+                title={readOnlyReason ?? 'Read only.'}
               >
-                No product decision exists - level-blocked
+                {readOnlyReason ?? 'Read only.'}
               </span>
             );
           }
-          // Disabled and explained, never silently inert: the buyer needs to know
-          // WHICH screen owns this decision (AC-F02).
+          // A grouped (product-grain) row fans the SAME decision out to every member behind
+          // it (`usePlanLines.decide`, mirroring `updateMoq`'s own fan-out) - its cell shows
+          // the unanimous result, or `mixed` when the members disagree (5.3).
+          const { decision, mixed } = isGroupedLine(line)
+            ? groupDecisionState(line.__group.members.map((m) => m.id), decisions)
+            : { decision: decisions[line.id], mixed: false };
           return (
-            <span
-              className="text-2xs text-muted-foreground"
-              data-testid={`decision-read-only-${line.id}`}
-              title={readOnlyReason ?? 'Decided at another grain'}
-            >
-              {readOnlyReason ?? 'Decided at another grain'}
-            </span>
+            <StopClick>
+              <PlanLineDecisionCell
+                line={line}
+                decision={decision}
+                mixed={mixed}
+                cover={coverFor?.(line) ?? NO_COVER}
+                poReceipts={poFor?.(line) ?? []}
+                trend={trendFor?.(line)}
+                economics={economicsFor?.(line)}
+                healthThresholds={healthThresholds}
+                onDecide={(next) => onDecide(line, next)}
+                onClear={() => onClear(line)}
+              />
+            </StopClick>
           );
         },
         size: 340,
@@ -1549,7 +1504,6 @@ export function PlanLinesGrid({
       },
     ],
     [decisions, onDecide, onClear, runId, decisionsReadOnly, readOnlyReason,
-     belongsOnBookProductIds, onOpenProductSheet,
      coverFor, priceFor, cheaperFor, trendFor, channelTrendFor, groupByChannel, dynamicChannels,
      levelFor, onAmendLevel, onAmendMoq, poFor, purchaseTrendFor, purchaseTrendWindowMonths,
      onOpenPurchaseTrend, hasPhotoFor, photoStatus, onOpenPhoto, economicsFor, healthThresholds,

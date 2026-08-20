@@ -22,7 +22,7 @@ import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { resetRunDecisions } from '../services/reorderRunService';
-import { decisionLockReason, shouldGroupByChannel } from '../lib/planGrain';
+import { legacyLockReason, shouldGroupByChannel } from '../lib/planGrain';
 import { PlanExceptionsView } from './PlanExceptionsView';
 import { PoWorklistView } from './PoWorklistView';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
@@ -36,6 +36,7 @@ import {
 } from '../hooks/useReorderRun';
 import { useReorderPlan } from '../hooks/useReorderPlan';
 import { decisionsKey } from '../hooks/useDecisions';
+import { planRowDecisionsKey } from '../hooks/usePlanLines';
 import type { ReorderRunHistoryItem } from '../services/reorderRunService';
 import { PlanLinesSection } from './PlanLinesSection';
 import type { PlanTotals } from '../lib/planDecisions';
@@ -88,9 +89,15 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const [decidedFilter, setDecidedFilter] = useState<'all' | 'undecided' | 'decided'>('all');
   const toggleUndecidedFilter = () =>
     setDecidedFilter((f) => (f === 'undecided' ? 'all' : 'undecided'));
-  // Reported up from `PlanLinesSection` (which owns the actual decisions state) every time
-  // the decided/undecided split changes, so the tile can show it without a second copy.
+  // Reported up from `PlanLinesSection` every time the decided/undecided split changes, so
+  // the tile can show CASH figures without a second copy of `planTotals`.
   const [progressTotals, setProgressTotals] = useState<PlanTotals | null>(null);
+  // S16: the "N of Total made" COUNT, separately - the server's own figure
+  // (`GET .../plan-row-decisions`), not derived from `progressTotals` above (which counts
+  // whatever is currently filtered/grouped on screen, not what is actually persisted).
+  const [decisionProgress, setDecisionProgress] = useState<{ decided: number; total: number } | null>(
+    null,
+  );
 
   const selectView = (next: ReorderPlanView) => setView(next);
   // Order summary / Plan exceptions / PO worklist have no row in the one grid to filter
@@ -182,15 +189,13 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const plan = useReorderPlan(currentRunId, view === 'buy' && !!currentRunId);
 
   /**
-   * Whether THIS run's per-location decisions are actionable (AC-F02 / AC-F09).
-   *
-   * Read off the run's own stamped grain, not off the current policy setting: an
-   * existing run keeps the grain it was created with, so changing the policy must
-   * not make an old run's decisions suddenly writable (AC-F10). Under Product
-   * policy the per-location view stays open as a read and drill view - it is never
-   * retired - and only its decision controls go quiet.
+   * Whether the plan row's decision control is actionable (S16, captain 21 Aug, 3rd time
+   * requested: "I want the decision made here"). The row is a decision surface at every
+   * grain now - grouped included, via fan-out - so grain no longer locks it. The one run
+   * that genuinely cannot record here is one that predates the front-planning contract
+   * (`legacyLockReason`, `lib/planGrain.ts`); its decisions are history.
    */
-  const locationLockReason = decisionLockReason(currentItem, 'location');
+  const rowDecisionLockReason = legacyLockReason(currentItem);
   // 5.3: "1 line of retail, 1 line of project" - the Buy view groups its per-warehouse
   // rows into one row per (product, channel) whenever THIS run is stamped Product grain.
   const groupByChannel = shouldGroupByChannel(currentItem);
@@ -283,6 +288,11 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
       setResetOpen(false);
       plan.resetLocal(); // drop the FE decision overlay so stale pins/rejects clear too
       void queryClient.invalidateQueries({ queryKey: decisionsKey(currentRunId) });
+      // S16: the backend also drops every `plan_row_decision` on the run (see
+      // `reset_run_decisions`'s own `plan_row_decisions_cleared` count) - invalidate the
+      // cache this screen reads them through, or the header + row cells keep showing
+      // decisions the reset just cleared until an unrelated refetch happens to fire.
+      void queryClient.invalidateQueries({ queryKey: planRowDecisionsKey(currentRunId) });
       void queryClient.invalidateQueries({ queryKey: ['scm', 'reorder', 'cash-recs', currentRunId] });
       void queryClient.invalidateQueries({ queryKey: ['scm', 'reorder', 'dispositions', currentRunId] });
       void queryClient.invalidateQueries({ queryKey: todayRunKey });
@@ -388,8 +398,9 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             {isPastRun ? `Plan · ${dateLabel}, ${timeLabel}` : `Today's plan · ${dateLabel}`}
           </h2>
           {/* The plan-grain chip lived here until the captain removed it (20 Aug: "remove
-              these") - the grain still governs behavior via decisionLockReason /
-              shouldGroupByChannel; it is just not announced in the header any more. */}
+              these") - the grain still governs `shouldGroupByChannel`'s grouping (S16, 21
+              Aug: it no longer locks the row's own decision, only a legacy run does - see
+              `legacyLockReason`); it is just not announced in the header any more. */}
           {/* Planning horizon (captain, 20 Aug): only shown when this run was launched
               with one - an unhorizoned run (every run before this feature, and every
               scheduled daily one) says nothing extra. */}
@@ -572,8 +583,8 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
       ) : null}
 
       <ReorderStatTiles
-        decided={progressTotals?.decided ?? 0}
-        total={progressTotals ? progressTotals.decided + progressTotals.undecided : 0}
+        decided={decisionProgress?.decided ?? 0}
+        total={decisionProgress?.total ?? 0}
         cashCommitted={progressTotals?.cost ?? 0}
         cashTotal={summary?.total_cash_impact ?? 0}
         undecidedFilterActive={decidedFilter === 'undecided'}
@@ -608,10 +619,10 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             decidedFilter={decidedFilter}
             onDecidedFilterChange={setDecidedFilter}
             onTotalsChange={setProgressTotals}
+            onDecisionProgressChange={setDecisionProgress}
             secondaryActions={reportLinks}
-            decisionsReadOnly={!!locationLockReason}
-            readOnlyReason={locationLockReason}
-            onOpenProductSheet={() => selectView('order_summary')}
+            decisionsReadOnly={!!rowDecisionLockReason}
+            readOnlyReason={rowDecisionLockReason}
             groupByChannel={groupByChannel}
           />
         </>

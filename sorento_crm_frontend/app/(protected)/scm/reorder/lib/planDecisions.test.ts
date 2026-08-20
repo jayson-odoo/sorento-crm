@@ -12,8 +12,14 @@ import {
   budgetVerdict,
   decidedCost,
   decidedQty,
+  fromServerPlanDecision,
+  groupDecisionState,
+  planDecisionKind,
+  planDecisionsEqual,
   planTotals,
   proposeCuts,
+  serverDecisionsToMap,
+  toRecordPlanRowDecisionPayload,
   type PlanDecision,
   type PlanDecisionMap,
 } from './planDecisions';
@@ -234,5 +240,206 @@ describe('the use_po decision (S15)', () => {
     expect(planTotals([l], { [l.id]: d })).toMatchObject({
       decided: 1, usingPo: 1, buying: 0, units: 0, cost: 0,
     });
+  });
+});
+
+/**
+ * S16 (captain, 21 Aug, 3rd time requested): the decision is made ON the plan row,
+ * persisted server-side. These pin the two directions of translation between the FE's
+ * own `PlanDecision` and the backend's `POST/GET .../decision` wire shape, plus the
+ * grouped-row "unanimous or mixed" read.
+ */
+describe('planDecisionKind - derived from the parts, never stored separately', () => {
+  it('reads skip', () => {
+    expect(planDecisionKind({ skip: true })).toBe('skip');
+  });
+
+  it('reads a single buy', () => {
+    expect(planDecisionKind({ buy: 10 })).toBe('buy');
+  });
+
+  it('reads a single use_stock', () => {
+    expect(planDecisionKind({ stock: { qty: 5, sources: [] } })).toBe('use_stock');
+  });
+
+  it('reads a single use_po', () => {
+    expect(planDecisionKind({ po: 20 })).toBe('use_po');
+  });
+
+  it('reads a mixture once more than one part is nonzero', () => {
+    expect(planDecisionKind({ buy: 10, po: 5 })).toBe('mixture');
+    expect(planDecisionKind({ buy: 10, stock: { qty: 5, sources: [] }, po: 5 })).toBe('mixture');
+  });
+
+  it('ignores a zero part when deciding the kind', () => {
+    expect(planDecisionKind({ buy: 10, po: 0 })).toBe('buy');
+  });
+});
+
+describe('toRecordPlanRowDecisionPayload - the FE shape, as the backend wants it', () => {
+  it('carries the kind, quantities, and each stock take by warehouse CODE', () => {
+    const d: PlanDecision = {
+      buy: 182,
+      stock: {
+        qty: 6,
+        sources: [
+          { warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', qty: 5 },
+          { warehouse_id: 'wh-PJ-SR', warehouse_code: 'PJ-SR', qty: 1 },
+        ],
+      },
+      reason: 'Trend: orders rose 12%',
+    };
+    expect(toRecordPlanRowDecisionPayload(d)).toEqual({
+      kind: 'mixture',
+      buy_qty: 182,
+      stock_takes: [
+        { location: 'BRW-BB', qty: 5 },
+        { location: 'PJ-SR', qty: 1 },
+      ],
+      po_qty: undefined,
+      reason_text: 'Trend: orders rose 12%',
+    });
+  });
+
+  it('carries skip as skip, with no quantities', () => {
+    expect(toRecordPlanRowDecisionPayload({ skip: true })).toEqual({
+      kind: 'skip',
+      buy_qty: undefined,
+      stock_takes: [],
+      po_qty: undefined,
+      reason_text: undefined,
+    });
+  });
+});
+
+describe('fromServerPlanDecision - the persisted decision, folded back', () => {
+  it('resolves a stock take CODE back to the id the free pool named it by', () => {
+    const resolve = (code: string) => (code === 'BRW-BB' ? 'wh-BRW-BB' : undefined);
+    const d = fromServerPlanDecision(
+      {
+        recommendation_id: 'r1', kind: 'mixture', buy_qty: 182,
+        stock_takes: [{ location: 'BRW-BB', location_name: 'Butterworth', qty: 6 }],
+        po_qty: null, po_refs: [], reason_text: null,
+        draft_po_number: null, draft_po_id: null,
+      },
+      resolve,
+    );
+    expect(d).toEqual({
+      buy: 182,
+      stock: { qty: 6, sources: [{ warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', qty: 6 }] },
+    });
+  });
+
+  it('falls back to the code itself when the pool no longer names the location', () => {
+    const d = fromServerPlanDecision(
+      {
+        recommendation_id: 'r1', kind: 'use_stock', buy_qty: null,
+        stock_takes: [{ location: 'GONE', location_name: null, qty: 3 }],
+        po_qty: null, po_refs: [], reason_text: null,
+        draft_po_number: null, draft_po_id: null,
+      },
+      () => undefined,
+    );
+    expect(d.stock?.sources).toEqual([{ warehouse_id: 'GONE', warehouse_code: 'GONE', qty: 3 }]);
+  });
+
+  it('reads skip as skip, ignoring any stray quantities', () => {
+    const d = fromServerPlanDecision(
+      {
+        recommendation_id: 'r1', kind: 'skip', buy_qty: null, stock_takes: [], po_qty: null,
+        po_refs: [], reason_text: null, draft_po_number: null, draft_po_id: null,
+      },
+      () => undefined,
+    );
+    expect(d).toEqual({ skip: true });
+  });
+});
+
+describe('serverDecisionsToMap - every persisted row decision, folded into the map every cell reads', () => {
+  it("resolves a stock take against THAT recommendation's own product pool", () => {
+    const lines = [line({ id: 'r1', product_id: 'p1' })];
+    const coverSources = {
+      p1: [{ warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB' }],
+    };
+    const map = serverDecisionsToMap(
+      [{
+        recommendation_id: 'r1', kind: 'use_stock', buy_qty: null,
+        stock_takes: [{ location: 'BRW-BB', location_name: null, qty: 4 }],
+        po_qty: null, po_refs: [], reason_text: null,
+        draft_po_number: null, draft_po_id: null,
+      }],
+      lines,
+      coverSources,
+    );
+    expect(map.r1).toEqual({
+      stock: { qty: 4, sources: [{ warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', qty: 4 }] },
+    });
+  });
+});
+
+describe('planDecisionsEqual - the unanimous-vs-mixed comparison', () => {
+  it('is true for two identical buys', () => {
+    expect(planDecisionsEqual({ buy: 10 }, { buy: 10 })).toBe(true);
+  });
+
+  it('is false when the buy qty differs', () => {
+    expect(planDecisionsEqual({ buy: 10 }, { buy: 12 })).toBe(false);
+  });
+
+  it('is false between a decision and undecided', () => {
+    expect(planDecisionsEqual({ buy: 10 }, undefined)).toBe(false);
+  });
+
+  it('is true for two undecided (both undefined)', () => {
+    expect(planDecisionsEqual(undefined, undefined)).toBe(true);
+  });
+
+  it('ignores stock source ORDER but not which warehouses were drawn on', () => {
+    const a: PlanDecision = {
+      stock: {
+        qty: 6,
+        sources: [
+          { warehouse_id: 'w1', warehouse_code: 'BRW-BB', qty: 5 },
+          { warehouse_id: 'w2', warehouse_code: 'PJ-SR', qty: 1 },
+        ],
+      },
+    };
+    const b: PlanDecision = {
+      stock: {
+        qty: 6,
+        sources: [
+          { warehouse_id: 'w2', warehouse_code: 'PJ-SR', qty: 1 },
+          { warehouse_id: 'w1', warehouse_code: 'BRW-BB', qty: 5 },
+        ],
+      },
+    };
+    expect(planDecisionsEqual(a, b)).toBe(true);
+  });
+
+  it('is false when the SAME total is drawn from different warehouses', () => {
+    const a: PlanDecision = { stock: { qty: 6, sources: [{ warehouse_id: 'w1', warehouse_code: 'BRW-BB', qty: 6 }] } };
+    const b: PlanDecision = { stock: { qty: 6, sources: [{ warehouse_id: 'w2', warehouse_code: 'PJ-SR', qty: 6 }] } };
+    expect(planDecisionsEqual(a, b)).toBe(false);
+  });
+});
+
+describe('groupDecisionState - a grouped row reads the fan-out back', () => {
+  it('is undecided (not mixed) when nobody has decided', () => {
+    expect(groupDecisionState(['a', 'b'], {})).toEqual({ decision: undefined, mixed: false });
+  });
+
+  it('reads the unanimous decision when every member agrees', () => {
+    const decisions: PlanDecisionMap = { a: { buy: 10 }, b: { buy: 10 } };
+    expect(groupDecisionState(['a', 'b'], decisions)).toEqual({ decision: { buy: 10 }, mixed: false });
+  });
+
+  it('reads mixed when the members carry different decisions', () => {
+    const decisions: PlanDecisionMap = { a: { buy: 10 }, b: { buy: 12 } };
+    expect(groupDecisionState(['a', 'b'], decisions)).toEqual({ decision: undefined, mixed: true });
+  });
+
+  it('reads mixed when only SOME members have decided', () => {
+    const decisions: PlanDecisionMap = { a: { buy: 10 } };
+    expect(groupDecisionState(['a', 'b'], decisions)).toEqual({ decision: undefined, mixed: true });
   });
 });

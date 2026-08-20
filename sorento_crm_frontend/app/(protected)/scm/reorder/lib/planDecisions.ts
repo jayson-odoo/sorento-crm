@@ -20,6 +20,11 @@
  */
 import { m8CashImpact } from './planRow';
 import type { PlanLine } from './planLine';
+import type {
+  PlanRowDecision as ServerPlanDecision,
+  PlanRowDecisionKind,
+  RecordPlanRowDecisionPayload,
+} from '../types/decisions.types';
 
 export type PlanDecisionKind = 'buy' | 'use_stock' | 'use_po' | 'skip';
 
@@ -198,4 +203,139 @@ export function proposeCuts(
     total -= b.cost;
   }
   return cuts;
+}
+
+// ===========================================================================
+// S16 (captain, 21 Aug, 3rd time requested): the decision is made ON the plan row -
+// the backend persists it per recommendation (`POST/DELETE .../recommendations/
+// {rec_id}/decision`). The functions below translate between the FE's own shape
+// above and the wire shape at `types/decisions.types.ts`; nothing here is stored
+// locally any more - `usePlanLines` folds the server's own list back into a
+// `PlanDecisionMap` on every load (see `serverDecisionsToMap`).
+// ===========================================================================
+
+/**
+ * The `kind` a decision carries, derived from which parts it has rather than stored
+ * separately - it can never drift from the parts themselves. Mirrors the backend's own
+ * derivation (`decision_service._validate_plan_row_decision`).
+ */
+export function planDecisionKind(d: PlanDecision): PlanRowDecisionKind {
+  if (d.skip) return 'skip';
+  const parts = [d.buy, d.stock?.qty, d.po].filter((v) => (v ?? 0) > 0).length;
+  if (parts > 1) return 'mixture';
+  if ((d.buy ?? 0) > 0) return 'buy';
+  if ((d.stock?.qty ?? 0) > 0) return 'use_stock';
+  return 'use_po';
+}
+
+/** The FE decision, as `POST .../recommendations/{rec_id}/decision` wants it. */
+export function toRecordPlanRowDecisionPayload(d: PlanDecision): RecordPlanRowDecisionPayload {
+  return {
+    kind: planDecisionKind(d),
+    buy_qty: d.buy,
+    stock_takes: (d.stock?.sources ?? []).map((s) => ({ location: s.warehouse_code, qty: s.qty })),
+    po_qty: d.po,
+    reason_text: d.reason,
+  };
+}
+
+/**
+ * The server's persisted decision, folded back into the FE's own shape. The server
+ * only ever stores/returns a stock take's warehouse CODE (no UUIDs surface) -
+ * `resolveWarehouseId` recovers the id that code names, off the SAME free-pool source
+ * list the decision was built from; a code with no match (a location the pool no
+ * longer lists) falls back to the code itself, which keeps the take visible and still
+ * nets correctly, scoped by code instead of id for that one entry.
+ */
+export function fromServerPlanDecision(
+  sd: ServerPlanDecision,
+  resolveWarehouseId: (code: string) => string | undefined,
+): PlanDecision {
+  if (sd.kind === 'skip') return { skip: true };
+  const out: PlanDecision = {};
+  if ((sd.buy_qty ?? 0) > 0) out.buy = sd.buy_qty as number;
+  const takenSources = sd.stock_takes
+    .filter((t) => t.qty > 0)
+    .map((t) => ({
+      warehouse_id: resolveWarehouseId(t.location) ?? t.location,
+      warehouse_code: t.location,
+      qty: t.qty,
+    }));
+  const stockQty = takenSources.reduce((s, x) => s + x.qty, 0);
+  if (stockQty > 0) out.stock = { qty: stockQty, sources: takenSources };
+  if ((sd.po_qty ?? 0) > 0) out.po = sd.po_qty as number;
+  if (sd.reason_text) out.reason = sd.reason_text;
+  return out;
+}
+
+/**
+ * Every persisted row decision on a run, folded into the `PlanDecisionMap` every
+ * cell/tile on this screen already reads. `lines` names which product each
+ * recommendation id belongs to (so a stock take's location code can be resolved
+ * against that SAME product's free pool); `coverSources` is `usePlanLines`' own
+ * `cover.data.sources` map, keyed by product id.
+ */
+export function serverDecisionsToMap(
+  serverDecisions: ServerPlanDecision[],
+  lines: PlanLine[],
+  coverSources: Record<string, { warehouse_id: string; warehouse_code: string }[]>,
+): PlanDecisionMap {
+  const productOf = new Map<string, string | null>();
+  for (const l of lines) productOf.set(l.id, l.product_id);
+  const map: Record<string, PlanDecision> = {};
+  for (const sd of serverDecisions) {
+    const productId = productOf.get(sd.recommendation_id) ?? null;
+    const sources = productId ? coverSources[productId] : undefined;
+    const resolve = (code: string) => sources?.find((s) => s.warehouse_code === code)?.warehouse_id;
+    map[sd.recommendation_id] = fromServerPlanDecision(sd, resolve);
+  }
+  return map;
+}
+
+/**
+ * Whether two decisions describe the exact same mixture - same kind and quantities,
+ * and (for a stock take) the same warehouses at the same quantities each. Reason text
+ * and source ORDER are ignored: "5 from BRW + 1 from PJ" recorded in either order is
+ * one decision, but it is NOT the same decision as "6 from BRW" even though both total
+ * 6 - which bins were actually drawn on is part of what was decided.
+ */
+export function planDecisionsEqual(
+  a: PlanDecision | undefined,
+  b: PlanDecision | undefined,
+): boolean {
+  if (!a || !b) return a === b;
+  if (!!a.skip !== !!b.skip) return false;
+  if (a.skip) return true;
+  if ((a.buy ?? 0) !== (b.buy ?? 0)) return false;
+  if ((a.po ?? 0) !== (b.po ?? 0)) return false;
+  const sort = (s: { warehouse_code: string; qty: number }[]) =>
+    [...s].sort((x, y) => x.warehouse_code.localeCompare(y.warehouse_code));
+  const aSources = sort(a.stock?.sources ?? []);
+  const bSources = sort(b.stock?.sources ?? []);
+  if (aSources.length !== bSources.length) return false;
+  return aSources.every(
+    (s, i) => s.warehouse_code === bSources[i].warehouse_code && s.qty === bSources[i].qty,
+  );
+}
+
+/** What a GROUPED (product-grain) row's decision cell shows: the mixture every member
+ *  agrees on, or `mixed` when they do not (some decided differently, or some decided
+ *  and others have not). Nobody having decided at all is undecided, not mixed. */
+export interface GroupDecisionState {
+  decision: PlanDecision | undefined;
+  mixed: boolean;
+}
+
+/**
+ * S16: a group row is decided by fanning the SAME decision out to every member (the
+ * way `updateMoq` already fans a MOQ edit out) - so its own cell shows the unanimous
+ * result of that fan-out, or `mixed` when the members disagree (a fan-out that partly
+ * failed, or a run that carried per-location decisions from before grouping existed).
+ */
+export function groupDecisionState(memberIds: string[], decisions: PlanDecisionMap): GroupDecisionState {
+  const ds = memberIds.map((id) => decisions[id]);
+  if (ds.every((d) => d === undefined)) return { decision: undefined, mixed: false };
+  const first = ds[0];
+  const allSame = ds.every((d) => planDecisionsEqual(d, first));
+  return allSame ? { decision: first, mixed: false } : { decision: undefined, mixed: true };
 }

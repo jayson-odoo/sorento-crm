@@ -24,11 +24,16 @@
  *
  * This is a PRESENTATION grouping, not a new calculation: the per-warehouse rows stay the
  * stored facts, and grouping only sums or carries the shared display fields across a
- * product's warehouses. A group row's `rec` is a synthetic aggregate that exists purely so
- * the grid's existing per-rec cell renderers (`numCell`, the product-keyed popovers) work
- * unmodified on it; it is never sent anywhere and never decided over directly
- * (`decisionsReadOnly` is already true on every Product-grain run - 5.4 - so a group row is
- * read/drill only exactly like the rows it summarizes).
+ * product's warehouses. A group row's `rec` is a synthetic aggregate (`id: "group:<product>"`)
+ * that exists purely so the grid's existing per-rec cell renderers (`numCell`, the
+ * product-keyed popovers) work unmodified on it; it is never sent anywhere itself. S16
+ * (captain, 21 Aug): the group row IS decided over now - `usePlanLines.decide`/`.clear` fan
+ * the SAME decision out to every `__group.members` recommendation id underneath it, the same
+ * way `updateMoq` already fans a MOQ edit out, and the cell reads back the unanimous result
+ * (`groupDecisionState`, `lib/planDecisions.ts`) or `mixed` when the members disagree. The
+ * per-warehouse rows reached by EXPANDING the group (`GroupMembersPanel`, `PlanLinesGrid.tsx`)
+ * stay a read and drill panel - the decision is taken on the group row, never on an
+ * individually-expanded member.
  *
  * Supplier / price / MOQ are PRODUCT facts, not per-location facts (captain's ruling,
  * 20 Aug): supplier selection is per supplier-product and never varies by warehouse. Verified

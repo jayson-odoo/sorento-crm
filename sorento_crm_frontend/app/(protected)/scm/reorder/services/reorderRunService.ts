@@ -94,6 +94,11 @@ import type { TrajectoryPayload } from '../lib/trajectory';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { PlanGrain } from '../lib/planGrain';
 import type {
+  PlanRowDecision,
+  PlanRowDecisionListResponse,
+  RecordPlanRowDecisionPayload,
+} from '../types/decisions.types';
+import type {
   BuyScope,
   CreateReorderRunRequest,
   ReorderRecommendation,
@@ -358,13 +363,67 @@ export async function getReorderRun(runId: string): Promise<ReorderRun> {
  *  Confirmed (active) POs are untouched. Returns what was cleared. */
 export async function resetRunDecisions(
   runId: string,
-): Promise<{ run_id: string; decisions_cleared: number; overrides_cleared: number }> {
+): Promise<{
+  run_id: string;
+  decisions_cleared: number;
+  overrides_cleared: number;
+  /** S16: row decisions (accept/adjust/reject's own row-level cousin) reset alongside
+   *  everything else this clears. */
+  plan_row_decisions_cleared?: number;
+}> {
   const res = await apiFetch(
     `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/reset-decisions`,
     { method: 'POST' },
   );
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to reset the plan'));
   return res.json();
+}
+
+/**
+ * S16 (captain, 21 Aug, 3rd time requested): record the row decision directly on a
+ * recommendation - buy / use stock / use PO / skip, or a mixture. Works on any
+ * decidable rec_type (buy, covered, needs_level, disposition), and on a product-grain
+ * grouped row is called once per MEMBER recommendation id, exactly the way
+ * `setMoqOverride` already fans a MOQ edit out - this route never needs to know about
+ * grouping.
+ */
+export async function recordPlanRowDecision(
+  recId: string,
+  payload: RecordPlanRowDecisionPayload,
+): Promise<PlanRowDecision> {
+  const res = await apiFetch(`/api/v1/scm/recommendations/${recId}/decision`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to record the decision'));
+  return res.json();
+}
+
+/** Withdraw a row decision back to undecided. Idempotent - clearing an already-
+ *  undecided row is a no-op. */
+export async function clearPlanRowDecision(recId: string): Promise<{ cleared: boolean }> {
+  const res = await apiFetch(`/api/v1/scm/recommendations/${recId}/decision`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to clear the decision'));
+  return res.json();
+}
+
+/**
+ * Every persisted row decision on a run, plus the "N of Total made" header's own
+ * decided/total counts - computed server-side off what is actually persisted, never
+ * off client session state.
+ */
+export async function getPlanRowDecisions(runId: string): Promise<PlanRowDecisionListResponse> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/plan-row-decisions`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the decisions'));
+  const body = (await res.json()) as Partial<PlanRowDecisionListResponse>;
+  return {
+    data: body.data ?? [],
+    decided_count: body.decided_count ?? 0,
+    total_count: body.total_count ?? 0,
+  };
 }
 
 /** Paginated recommendations for the results grid (server-side page/sort/filter). */

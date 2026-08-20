@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Check, Pencil, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
@@ -44,11 +45,21 @@ import { marginOf, type ProductEconomics } from '../lib/productHealth';
  *
  * The composition math (stock, then the PO book, then a buy for the remainder) is untouched -
  * only where its words are printed moved.
+ *
+ * S16 (captain, 21 Aug, 3rd time requested): "I want the decision made here" - the cell IS
+ * the decision surface now, on every grain and every rec_type this can be decided over
+ * (buy, covered, needs_level, disposition). `onDecide`/`onClear` write straight to the
+ * backend (`POST`/`DELETE .../recommendations/{rec_id}/decision`); a rejected write is
+ * caught here and toasted, the same pattern `PlanMoqCell` already uses for its own save.
+ * On a GROUPED (product-grain) row the SAME decision is fanned out to every member behind
+ * it (`usePlanLines.decide`, mirroring `updateMoq`'s fan-out) - `mixed` says the members
+ * disagree, which reads differently from nobody having decided at all.
  */
 
 export function PlanLineDecisionCell({
   line,
   decision,
+  mixed = false,
   cover,
   poReceipts = [],
   trend,
@@ -59,6 +70,10 @@ export function PlanLineDecisionCell({
 }: {
   line: PlanLine;
   decision: PlanDecision | undefined;
+  /** A GROUPED row's members disagree on the decision - some decided differently, or
+   *  some decided and others have not. Distinct from `decision === undefined` alone,
+   *  which is ALSO true of a group nobody has touched: that is undecided, not mixed. */
+  mixed?: boolean;
   /** What the plan suggests: buy it, cover it from elsewhere, or both. */
   cover: CoverProposal;
   /** S15: the open PO lines already carrying this product here. */
@@ -71,11 +86,28 @@ export function PlanLineDecisionCell({
   economics?: ProductEconomics;
   /** The policy's lines for "thin margin". */
   healthThresholds?: { margin_floor_pct: number; dead_turnover_months: number };
-  onDecide: (next: PlanDecision) => void;
+  onDecide: (next: PlanDecision) => Promise<void> | void;
   /** Put the line back to undecided. Its own callback rather than a decision field,
    *  because undecided is the ABSENCE of a decision and must not become one. */
-  onClear: () => void;
+  onClear: () => Promise<void> | void;
 }) {
+  // Both writes go through here so a rejection always toasts, whichever control fired it
+  // (the Accept button, the advisory link, Adjust's own Record, or a grouped fan-out that
+  // partly failed).
+  const decide = async (next: PlanDecision) => {
+    try {
+      await onDecide(next);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not record the decision.');
+    }
+  };
+  const clear = async () => {
+    try {
+      await onClear();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not clear the decision.');
+    }
+  };
   // The engine's own composition. `order_qty` is frequently fractional on real data
   // (a demand rate times a horizon); rounded UP, never down - down is a deliberate
   // under-buy of a shortage we just calculated.
@@ -160,7 +192,7 @@ export function PlanLineDecisionCell({
             </HoverCardContent>
           </HoverCard>
         )}
-        <Button variant="ghost" size="sm" className="h-7 shrink-0 px-2 text-xs" onClick={onClear}>
+        <Button variant="ghost" size="sm" className="h-7 shrink-0 px-2 text-xs" onClick={() => void clear()}>
           Change
         </Button>
       </div>
@@ -168,6 +200,14 @@ export function PlanLineDecisionCell({
   }
 
   const canAccept = line.purchasable && (suggestedBuy > 0 || stockQty > 0 || suggestedPo > 0);
+  // S16: a grouped row whose members disagree - some decided differently, or some decided
+  // and others have not. Read only when nobody has already been read as decided above, so
+  // it never appears alongside the settled row it would otherwise contradict.
+  const mixedNotice = mixed ? (
+    <p className="text-2xs font-medium text-amber-600">
+      Mixed across locations - deciding here sets every one of them the same way.
+    </p>
+  ) : null;
 
   // What used to be the separate "Suggested action" column: the notes a buyer needs beyond
   // the mix itself. Quiet, underneath the button, never a second place to look for them.
@@ -194,6 +234,7 @@ export function PlanLineDecisionCell({
 
   return (
     <div className="min-w-0 space-y-1">
+      {mixedNotice}
       <div className="flex flex-wrap items-center gap-1.5">
         {/* The loudest thing in the row: this button IS the decision. Its detail lives in
             the hover table beside it, never in a `title` sentence. */}
@@ -202,7 +243,7 @@ export function PlanLineDecisionCell({
             <Button
               size="sm"
               className="h-8 px-2"
-              onClick={() => onDecide(suggested)}
+              onClick={() => void decide(suggested)}
               disabled={!canAccept}
               aria-label={`Accept for ${line.sku}: ${summary(suggested)}`}
             >
@@ -231,14 +272,14 @@ export function PlanLineDecisionCell({
             stockMax={stockQty}
             poMax={poQty}
             cover={cover}
-            onDecide={onDecide}
+            onDecide={decide}
           />
         ) : null}
         <Button
           variant="ghost"
           size="sm"
           className="h-8 px-2"
-          onClick={() => onDecide({ skip: true })}
+          onClick={() => void decide({ skip: true })}
           title={`Skip ${line.sku} this round`}
         >
           <X className="size-3.5" />
@@ -263,7 +304,7 @@ export function PlanLineDecisionCell({
               className="block truncate text-scm-incoming underline decoration-dotted underline-offset-2 hover:text-primary"
               title={`Apply: adjust the buy to ${fmtInt(advisedBuy)}`}
               onClick={() =>
-                onDecide({
+                void decide({
                   ...(stockQty > 0
                     ? {
                         stock: {
@@ -311,7 +352,7 @@ function AdjustMixture({
   stockMax: number;
   poMax: number;
   cover: CoverProposal;
-  onDecide: (next: PlanDecision) => void;
+  onDecide: (next: PlanDecision) => Promise<void> | void;
 }) {
   const [open, setOpen] = useState(false);
   const [buy, setBuy] = useState(String(suggested.buy ?? 0));
@@ -338,7 +379,7 @@ function AdjustMixture({
       warehouse_code: s.warehouse_code,
       qty: s.qty,
     }));
-    onDecide({
+    void onDecide({
       ...(buyQty > 0 ? { buy: buyQty } : {}),
       ...(edited.coverQty > 0 ? { stock: { qty: edited.coverQty, sources } } : {}),
       ...(poQty > 0 ? { po: poQty } : {}),
