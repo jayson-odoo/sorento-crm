@@ -14,10 +14,12 @@ import pytest
 from sqlalchemy import text
 
 from app.models.inventory import Stock, Warehouse
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
+    INQUIRY_PLACED,
     IV_ORDER,
     SO_STATUS_PUBLISHED,
     OrderInquiryRow,
@@ -26,6 +28,7 @@ from app.models.project_so import (
 )
 from app.models.user import User
 from app.services import planning_change_service, project_seed_service
+from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 from app.services.scm.outstanding_diff import (
     ADDED,
     CLOSED,
@@ -249,6 +252,34 @@ def _line_payload(project_line_id, *, timely_spo_qty="0", reserve=None, borrow=N
     if amend_reason is not None:
         body["amend_reason"] = amend_reason
     return body
+
+
+def _place_row_on_a_real_po(db, world, row: OrderInquiryRow, *, qty_ordered):
+    """Places `row` through the REAL section-G path (`ProjectOrderInquiryService.place_on_po`)
+    - never by hand-setting `row.state`. The 20 Aug regression only reproduces through this
+    path: every earlier green test that hand-set `INQUIRY_ACTIONED` never exercised the state
+    the live "Place on PO" workflow actually writes (`INQUIRY_PLACED`), which is why 145 live
+    placed rows sat invisible to this netting for as long as they did. Returns `(po, po_line)`."""
+    supplier = Supplier(
+        id=_uid(), company_id=world.company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} supplier",
+    )
+    po = PurchaseOrder(
+        id=_uid(), company_id=world.company_id, po_number=f"ZZT-PO-{_uid()[:8]}",
+        supplier_id=supplier.id,
+    )
+    db.add_all([supplier, po])
+    db.flush()
+    po_line = PurchaseOrderLine(
+        id=_uid(), company_id=world.company_id, purchase_order_id=po.id,
+        product_id=world.product.id, warehouse_id=world.own_wh.id,
+        qty_ordered=Decimal(str(qty_ordered)), qty_received=Decimal("0"), line_status="open",
+    )
+    db.add(po_line)
+    db.commit()
+    ProjectOrderInquiryService(db).place_on_po(row.id, po_line.id, actor_user_id=world.actor)
+    db.commit()
+    return po, po_line
 
 
 # ============================================================================
@@ -1780,3 +1811,227 @@ def test_apply_of_a_genuinely_unconfirmable_target_line_still_fails_with_its_rea
         .one()
     )
     assert decision.revision_no == 1
+
+
+# ============================================================================
+# The 20 Aug placed/actioned state-vocabulary regression (the captain, live-testing
+# section G). Every fixture below places its row through the REAL section-G path
+# (`_place_row_on_a_real_po`), never by hand-setting `INQUIRY_ACTIONED` - that hand-set
+# shortcut is exactly what let this regression through the existing suite for a day.
+# ============================================================================
+
+
+def test_apply_qty_up_after_a_real_place_on_po_raises_only_the_delta(api):
+    """Case A (the captain, 20 Aug): SO349754 WESERP10B - a line already covered by an
+    active decision, placed 5 on a real PO, then the book raised the qty to 10. Before the
+    fix, the netting predicate only recognised `INQUIRY_ACTIONED` (0 rows company-wide;
+    "Place on PO" writes `INQUIRY_PLACED`), so a reconfirm re-raised the FULL new need on
+    top of the untouched placed row - 15 against a 10 line. Expected: the placed 5 stays
+    exactly as it was, and only the 5-unit delta is freshly raised."""
+    client, world = api
+    db = world.db
+    # No pool stock: the board proposes the whole line as Buy, isolating this case from
+    # the Reserve-relabelling fix (Case B, covered separately below).
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5",
+                            required_date=date(2027, 2, 1))
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line.id, buy_qty="5", buy_reason="Nothing free elsewhere."),
+    ]})
+    placed_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    po, _po_line = _place_row_on_a_real_po(db, world, placed_row, qty_ordered="5")
+    db.expire_all()
+    placed_row = db.get(OrderInquiryRow, placed_row.id)
+    assert placed_row.state == INQUIRY_PLACED
+    assert placed_row.po_ref == po.po_number
+
+    core_line.qty_ordered = Decimal("10")
+    db.commit()
+    changed = _diff_change(
+        QTY_CHANGED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
+        location=world.own_wh.warehouse_code, old_date=date(2027, 2, 1),
+        new_date=date(2027, 2, 1), old_qty="5", new_qty="10",
+    )
+    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed])
+    batch = planning_change_service.build_batch(
+        db, diff, applied_line_ids={id(changed): str(core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    out = planning_change_service.get_batch(db, str(batch.id))
+    row = out["orders"][0]["rows"][0]
+    assert row["kind"] == "qty_up"
+    assert row["suggested"] == "replan"
+    assert row["proposal"]["qty_proposed_buy"] == "10"  # no stock - the whole new qty
+
+    put = client.put(
+        f"{BASE}/planning-changes/{batch.id}/rows/{row['id']}", json={"decision": "confirm"},
+    )
+    assert put.status_code == 200, put.text
+    assert Decimal(put.json()["composition"]["buy_qty"]) == Decimal("10")
+
+    apply_response = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
+    assert apply_response.status_code == 200, apply_response.text
+    assert apply_response.json()["applied_orders"] == [order.autocount_doc_no]
+
+    db.expire_all()
+    live_rows = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.state != INQUIRY_CANCELLED)
+        .all()
+    )
+    assert len(live_rows) == 2, "the placed row untouched, plus one new row for the delta"
+    still_placed = [r for r in live_rows if r.state == INQUIRY_PLACED]
+    raised = [r for r in live_rows if r.state == "raised"]
+    assert len(still_placed) == 1
+    assert still_placed[0].id == placed_row.id
+    assert still_placed[0].qty == Decimal("5")
+    assert still_placed[0].po_ref == po.po_number  # untouched, PO link intact
+    assert len(raised) == 1
+    assert raised[0].qty == Decimal("5")  # the delta only, not the full 10
+
+
+def test_apply_qty_up_with_no_decision_and_a_real_placed_row_composes_only_the_remainder(api):
+    """Case B (the captain, 20 Aug): SO349754 SRTWC287A-RL - a real placed 5 and NO active
+    decision at all. Before the fix, `buy_actioned` read false for this line (the same
+    `actioned`-only blindness as Case A), and the board - which has no visibility into
+    `order_inquiry_rows` either way - proposed Reserve for the WHOLE new quantity: 15
+    against a 10 line (10 reserved + 5 already placed). Expected: only the 5-unit
+    remainder the placed row does not already cover is freshly reserved, and nothing new
+    is raised for the rest."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=50)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5",
+                            required_date=date(2027, 2, 1))
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    from app.models.project_so import INQUIRY_RAISED, OrderInquiry
+
+    inquiry = OrderInquiry(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        amendment_id=None, state=INQUIRY_RAISED, raised_by=world.actor,
+    )
+    db.add(inquiry)
+    db.flush()
+    row = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=inquiry.id,
+        so_line_id=line.id, qty=Decimal("5"), verb=IV_ORDER, state=INQUIRY_RAISED,
+        supply_decision_id=None,
+    )
+    db.add(row)
+    db.commit()
+    po, _po_line = _place_row_on_a_real_po(db, world, row, qty_ordered="5")
+
+    core_line.qty_ordered = Decimal("10")
+    db.commit()
+    changed = _diff_change(
+        QTY_CHANGED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
+        location=world.own_wh.warehouse_code, old_date=date(2027, 2, 1),
+        new_date=date(2027, 2, 1), old_qty="5", new_qty="10",
+    )
+    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed])
+    batch = planning_change_service.build_batch(
+        db, diff, applied_line_ids={id(changed): str(core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    out = planning_change_service.get_batch(db, str(batch.id))
+    row_out = out["orders"][0]["rows"][0]
+    assert row_out["kind"] == "qty_up"
+    assert row_out["suggested"] == "replan"
+    assert row_out["held"] is None  # no active decision at all (AC-R03)
+    assert row_out["facts"]["buy_actioned"]["value"] is True
+    assert Decimal(row_out["facts"]["buy_actioned"]["qty"]) == Decimal("5")
+    assert row_out["facts"]["buy_actioned"]["po_number"] == po.po_number
+
+    proposal = row_out["proposal"]
+    assert Decimal(proposal["qty_proposed_reserve"]) == Decimal("5"), (
+        "trimmed from the board's own Reserve 10 by the placed 5"
+    )
+    assert Decimal(proposal["qty_proposed_buy"]) == Decimal("5"), (
+        "the placed portion relabelled onto Buy, where refresh_for_decision nets it"
+    )
+
+    put = client.put(
+        f"{BASE}/planning-changes/{batch.id}/rows/{row_out['id']}", json={"decision": "confirm"},
+    )
+    assert put.status_code == 200, put.text
+    composition = put.json()["composition"]
+    assert Decimal(composition["buy_qty"]) == Decimal("5")
+    reserve_total = sum((Decimal(c["qty"]) for c in composition["reserve"]), Decimal("0"))
+    assert reserve_total == Decimal("5")
+
+    apply_response = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
+    assert apply_response.status_code == 200, apply_response.text
+    assert apply_response.json()["applied_orders"] == [order.autocount_doc_no]
+
+    db.expire_all()
+    live_rows = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.state != INQUIRY_CANCELLED)
+        .all()
+    )
+    assert len(live_rows) == 1, "the placed row already covers the composed Buy - nothing new is raised"
+    assert live_rows[0].id == row.id
+    assert live_rows[0].state == INQUIRY_PLACED
+    assert live_rows[0].qty == Decimal("5")
+    assert live_rows[0].po_ref == po.po_number
+
+
+def test_build_batch_facts_read_buy_actioned_true_for_a_really_placed_row(api):
+    """`_inquiry_rows_and_buy_actioned` must read `INQUIRY_PLACED` as actioned, not only
+    `INQUIRY_ACTIONED` - proven through a row placed on a real PO, not a hand-set state."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20",
+                            required_date=date(2027, 2, 1))
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line.id, buy_qty="20", buy_reason="Nothing free elsewhere."),
+    ]})
+    placed_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    po, _po_line = _place_row_on_a_real_po(db, world, placed_row, qty_ordered="20")
+
+    changed = _diff_change(
+        DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
+        location=world.own_wh.warehouse_code, old_date=date(2027, 2, 1),
+        new_date=date(2027, 2, 11), old_qty="20", new_qty="20",
+    )
+    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed])
+    batch = planning_change_service.build_batch(
+        db, diff, applied_line_ids={id(changed): str(core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    out = planning_change_service.get_batch(db, str(batch.id))
+    row = out["orders"][0]["rows"][0]
+    assert row["kind"] == "delayed"
+    assert row["facts"]["buy_actioned"]["value"] is True
+    assert row["facts"]["buy_actioned"]["po_number"] == po.po_number
+    assert Decimal(row["facts"]["buy_actioned"]["qty"]) == Decimal("20")
+    assert row["suggested"] == "keep"
+    assert "already a placed purchase order" in row["why"]
+    assert po.po_number in row["why"]

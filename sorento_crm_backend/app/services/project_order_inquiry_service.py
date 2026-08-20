@@ -314,12 +314,21 @@ class ProjectOrderInquiryService:
             # A still-raised CANCEL_BALANCE exception is superseded like a raised ORDER
             # row, or every reconfirm at the same lower need would stack another copy.
             # `placed` sums ORDER rows only: the exception row is a message, not supply.
+            #
+            # `INQUIRY_PLACED` counts here too, and it is not a cosmetic addition: the
+            # live "Place on PO" path (section G) writes rows straight to `placed`, never
+            # to `actioned` - `mark_rows` is the only writer of `actioned`, and nothing on
+            # the real workflow calls it for an ORDER row anymore. A predicate that only
+            # recognised `actioned` was blind to every placed row in the company (145
+            # placed / 0 actioned, live, 20 Aug), so a qty-up reconfirm re-raised the FULL
+            # new need on top of supply that was already there (SO349754 WESERP10B: placed
+            # 5 untouched, a fresh 10 raised, 15 against a 10 line).
             placed = _ZERO
             for row in rows:
                 if row.state == INQUIRY_RAISED:
                     row.state = INQUIRY_CANCELLED
                     row.note = f"Superseded by revision {decision.revision_no}"
-                elif row.state == INQUIRY_ACTIONED and row.verb == IV_ORDER:
+                elif row.state in (INQUIRY_ACTIONED, INQUIRY_PLACED) and row.verb == IV_ORDER:
                     placed += _dec(row.qty)
 
             outstanding = need - placed
@@ -425,7 +434,13 @@ class ProjectOrderInquiryService:
             if row.state == INQUIRY_RAISED:
                 row.state = INQUIRY_CANCELLED
                 row.note = f"Superseded by revision {decision.revision_no}"
-            elif row.state == INQUIRY_ACTIONED:
+            # Same widening as the ORDER-row netting above, for the same reason: `placed`
+            # (section G) is a real, distinct state from `actioned` and a shortfall row
+            # purchasing already dealt with must net off just as an actioned one does. A
+            # borrow shortfall row is not one of `_PLACEABLE_VERBS` today, so this state
+            # is not reachable through the current UI - kept in step with the vocabulary
+            # rather than left to silently disagree with it.
+            elif row.state in (INQUIRY_ACTIONED, INQUIRY_PLACED):
                 key = (row.item_code or None, row.stock_location or None)
                 placed[key] = placed.get(key, _ZERO) + _dec(row.qty)
 

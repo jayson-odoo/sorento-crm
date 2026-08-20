@@ -37,6 +37,18 @@ fixed properly rather than rediscovered by reading a bug report:
 * **`DATE_AND_QTY_CHANGED`** (both moved in one upload) is classified by DATE first: this
   build's own tie-break, because the section-0 table has no combined row and the two single
   changes disagree on suggestion.
+
+**A line's already-`placed` Buy is invisible to the board's own ladder** (the captain, 20
+Aug, diagnosing two live double-counts): `_proposal_for` asks `FulfilmentBoardService` to
+walk the ladder for the line's FULL open quantity, and the board reads nothing off
+`order_inquiry_rows` - it has no way to know part of that quantity is already covered by a
+real purchase order tagged through section G's "Place on PO". `_apply_placed_offset`
+relabels that much of the proposal's own Reserve/incoming rungs onto its Buy figure before
+the row is stored, so the composition still balances the line's full open quantity but the
+portion already bought reads as Buy - which `ProjectOrderInquiryService.refresh_for_decision`
+then nets against the placed row itself, raising nothing further for it. See
+`_inquiry_rows_and_buy_actioned` (reads `INQUIRY_PLACED` as actioned, same as `INQUIRY_ACTIONED`)
+and `scripts/repair_20aug_placed_double_counts.py` for the two live rows this corrects.
 """
 from __future__ import annotations
 
@@ -64,6 +76,7 @@ from app.models.project_so import (
     ALLOC_SOURCE_OTHER_LOCATION,
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
+    INQUIRY_PLACED,
     IV_ORDER,
     IV_RESERVE_AND_ORDER,
     OrderInquiryRow,
@@ -556,8 +569,23 @@ def _held_from_frozen(frozen_entry: dict, revision_no: int) -> dict:
 def _inquiry_rows_and_buy_actioned(
     db: Session, project_line_id: Optional[str]
 ) -> Tuple[List[dict], dict]:
+    """`buy_actioned` reads `INQUIRY_PLACED` as actioned too, not `INQUIRY_ACTIONED` alone.
+
+    The live "Place on PO" path (section G) is what actually moves a Buy row off
+    `raised` today - `mark_rows` (the only writer of `INQUIRY_ACTIONED`) is not called
+    for an ORDER row on the real workflow anymore. A predicate that recognised only
+    `actioned` read every placed row's Buy as still-open, which is what let a `qty_up`
+    reconfirm run the FULL ladder for a line that already had real placed supply (Case B,
+    the captain, 20 Aug: SRTWC287A-RL, placed 5, no active decision, `buy_actioned=false`
+    let the board propose Reserve 10 - 15 against a 10 line).
+
+    `"qty"` is the SUM of every currently placed-or-actioned Buy on the line (there can be
+    more than one, e.g. a cascade split across several PO lines) - `_apply_placed_offset`
+    below is what actually spends it, netting the board's own fresh proposal down to the
+    uncovered remainder.
+    """
     if not project_line_id:
-        return [], {"value": False, "po_number": None}
+        return [], {"value": False, "po_number": None, "qty": qty_text(_ZERO)}
     rows = (
         db.query(OrderInquiryRow)
         .filter(
@@ -576,17 +604,20 @@ def _inquiry_rows_and_buy_actioned(
         }
         for r in rows
     ]
-    actioned_buy = next(
-        (
-            r
-            for r in rows
-            if r.state == INQUIRY_ACTIONED and r.verb in (IV_ORDER, IV_RESERVE_AND_ORDER)
-        ),
-        None,
-    )
+    committed = [
+        r
+        for r in rows
+        if r.state in (INQUIRY_ACTIONED, INQUIRY_PLACED)
+        and r.verb in (IV_ORDER, IV_RESERVE_AND_ORDER)
+    ]
+    actioned_buy = committed[0] if committed else None
+    placed_qty = sum((_dec(r.qty) for r in committed), _ZERO)
     return out, {
         "value": actioned_buy is not None,
-        "po_number": actioned_buy.spo_ref if actioned_buy else None,
+        # `po_ref` is the section-G placement tag (the modern field); `spo_ref` is kept as
+        # a fallback for whatever an older `actioned` row may have carried it in.
+        "po_number": (actioned_buy.po_ref or actioned_buy.spo_ref) if actioned_buy else None,
+        "qty": qty_text(placed_qty),
     }
 
 
@@ -630,6 +661,54 @@ def _proposal_for(
             ):
                 return contribution
     return None
+
+
+def _apply_placed_offset(proposal: dict, placed_qty: Decimal) -> dict:
+    """Recategorize already-placed Buy into the proposal's own Buy figure (Case B, the
+    captain, 20 Aug: a `qty_up` line with a placed 5 and no active decision had the board
+    propose Reserve 10 for the whole new quantity, stacking to 15 against a 10 line).
+
+    `_proposal_for` builds this proposal by asking the board to walk the ladder as if the
+    line held nothing (`exclude_covered_line_ids`), which is right for a line an ACTIVE
+    decision covers - but the board has no idea an `order_inquiry_rows` row already placed
+    part of that need on a real purchase order, because that ledger lives outside the
+    ladder entirely. Left alone, the board proposes fresh cover (usually Reserve, the
+    cheapest rung) for the FULL line, and the placed row's own quantity is real supply
+    sitting on top of it uncounted.
+
+    The fix stays a relabelling, not a subtraction, so the composition still balances the
+    line's full open quantity (`_validate_composition_shape`'s invariant): trimmed off
+    Reserve first, then incoming/timely SPO - the freshest, most reclaimable rungs the
+    ladder just proposed, so releasing them frees the same pool/SPO stock for another line
+    - and added onto Buy, which is where it belongs: this portion of the line already IS a
+    purchase, just one purchasing already placed. `refresh_for_decision`'s own netting
+    (this module's sibling fix) is what then recognises the placed row covers that Buy
+    figure and raises nothing further for it.
+
+    A pure relabelling, so it is safe to run on ANY replan proposal, whether or not an
+    active decision covers the line - the placed row is equally invisible to the board
+    either way.
+    """
+    if placed_qty <= _ZERO:
+        return proposal
+    out = dict(proposal)
+    reserve = _dec(out.get("qty_proposed_reserve"))
+    incoming = _dec(out.get("qty_proposed_incoming"))
+    buy = _dec(out.get("qty_proposed_buy"))
+    remaining = placed_qty
+    take = min(remaining, reserve)
+    reserve -= take
+    buy += take
+    remaining -= take
+    if remaining > _ZERO:
+        take = min(remaining, incoming)
+        incoming -= take
+        buy += take
+        remaining -= take
+    out["qty_proposed_reserve"] = qty_text(reserve)
+    out["qty_proposed_incoming"] = qty_text(incoming)
+    out["qty_proposed_buy"] = qty_text(buy)
+    return out
 
 
 def _build_row(
@@ -695,6 +774,8 @@ def _build_row(
         proposal = _json_safe(
             _proposal_for(db, board_cache, so_number, entry["core_line_id"], project_line_id)
         )
+        if proposal:
+            proposal = _apply_placed_offset(proposal, _dec(buy_actioned.get("qty")))
 
     board_link = _board_link(so_number, c.item_code, new_date or old_date)
 
@@ -1313,9 +1394,11 @@ def _release_note(so_number: str, line_no: Optional[int], from_date, to_date, po
 def _release_inquiry_rows(
     db: Session, project_line_id: Optional[str], note: str, pool_code: Optional[str]
 ) -> int:
-    """Every non-cancelled OI row the released line already raised: a non-`actioned` one
-    moves to the pool location (it is no longer bought for this line); an `actioned` one
-    (already bought) keeps its location and gets the note only."""
+    """Every non-cancelled OI row the released line already raised: a non-`actioned`,
+    non-`placed` one moves to the pool location (it is no longer bought for this line);
+    an `actioned` or `placed` one (already bought) keeps its location and gets the note
+    only - a placed row is tagged to a real PO line for a specific warehouse, and
+    relocating it would disagree with the purchase order it is actually tagged to."""
     if not project_line_id:
         return 0
     rows = (
@@ -1329,7 +1412,7 @@ def _release_inquiry_rows(
     count = 0
     for row in rows:
         row.note = f"{row.note}\n{note}" if row.note else note
-        if row.state != INQUIRY_ACTIONED and pool_code:
+        if row.state not in (INQUIRY_ACTIONED, INQUIRY_PLACED) and pool_code:
             row.stock_location = pool_code
         count += 1
     return count
@@ -1443,6 +1526,10 @@ def _oi_demand_rows(
 
 
 def _retire_inquiry_rows(db: Session, project_line_id: Optional[str], reason: str) -> int:
+    """`closed` (AC-R06): an `actioned` OR `placed` row is left alone bar a note - both are
+    real supply already bought, and cancelling a placed row would silently un-book it
+    while the purchase order it is tagged to (`po_ref`/`po_line_id`) still stands. Only a
+    still-raised row - nothing purchasing has acted on yet - is actually cancelled."""
     if not project_line_id:
         return 0
     rows = (
@@ -1456,7 +1543,7 @@ def _retire_inquiry_rows(db: Session, project_line_id: Optional[str], reason: st
     count = 0
     for row in rows:
         note = f"{row.note}\n{reason}" if row.note else reason
-        if row.state == INQUIRY_ACTIONED:
+        if row.state in (INQUIRY_ACTIONED, INQUIRY_PLACED):
             row.note = note
         else:
             row.state = INQUIRY_CANCELLED

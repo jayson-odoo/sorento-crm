@@ -21,9 +21,11 @@ import pytest
 from sqlalchemy import text
 
 from app.models.inventory import Stock, Warehouse
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
     INQUIRY_ACTIONED,
+    INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ORDER,
     SO_STATUS_PUBLISHED,
@@ -34,6 +36,7 @@ from app.models.project_so import (
 )
 from app.models.user import User
 from app.services import project_seed_service
+from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
 from ._pg_fixture import blank_session
 
@@ -439,6 +442,81 @@ def test_reconfirming_with_a_lower_need_cancels_unplaced_rows_and_flags_placed_o
     assert len(raised_exceptions) == 1, (
         "every reconfirm at the same lower need must leave one live exception, not stack"
     )
+
+
+def test_reconfirming_with_a_lower_need_after_a_real_place_on_po_flags_a_cancel_balance_exception(api):
+    """The same scenario as the test above, but the row reaches its committed state
+    through the REAL "Place on PO" path (section G, `ProjectOrderInquiryService.place_on_po`)
+    rather than a hand-set `INQUIRY_ACTIONED` - the live workflow purchasing actually
+    uses, and the one the 20 Aug regression hid behind: the netting predicate only
+    recognised `INQUIRY_ACTIONED` (0 rows company-wide), so every one of the 145 live
+    `INQUIRY_PLACED` rows was invisible to it and a lower reconfirm would have silently
+    shrunk the placed row's own quantity instead of raising a CANCEL_BALANCE exception."""
+    client, world = api
+    db = world.db
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="40")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    first = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, buy_qty="40")]},
+    )
+    assert first.status_code == 200, first.text
+
+    placed_row = db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line.id).one()
+
+    supplier = Supplier(
+        id=_uid(), company_id=world.company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} supplier",
+    )
+    po = PurchaseOrder(
+        id=_uid(), company_id=world.company_id, po_number=f"ZZT-PO-{_uid()[:8]}",
+        supplier_id=supplier.id,
+    )
+    db.add_all([supplier, po])
+    db.flush()
+    po_line = PurchaseOrderLine(
+        id=_uid(), company_id=world.company_id, purchase_order_id=po.id,
+        product_id=world.product.id, warehouse_id=world.own_wh.id,
+        qty_ordered=Decimal("40"), qty_received=Decimal("0"), line_status="open",
+    )
+    db.add(po_line)
+    db.commit()
+    ProjectOrderInquiryService(db).place_on_po(placed_row.id, po_line.id, actor_user_id=world.eling)
+    db.commit()
+    db.expire_all()
+    placed_row = db.get(OrderInquiryRow, placed_row.id)
+    assert placed_row.state == INQUIRY_PLACED
+    assert placed_row.po_ref == po.po_number
+
+    core_line.qty_ordered = Decimal("15")
+    db.commit()
+
+    second = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, buy_qty="15")]},
+    )
+    assert second.status_code == 200, second.text
+
+    db.expire_all()
+    still_placed = db.get(OrderInquiryRow, placed_row.id)
+    assert still_placed.state == INQUIRY_PLACED, (
+        "placed supply must stay in the ledger, never silently rewritten"
+    )
+    assert still_placed.qty == Decimal("40"), "the placed row's own quantity is untouched"
+    assert still_placed.po_ref == po.po_number, "the PO tag survives a reconfirm"
+
+    exceptions = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == "CANCEL_BALANCE")
+        .all()
+    )
+    assert len(exceptions) == 1
+    assert "40" in (exceptions[0].note or "")
+    assert "15" in (exceptions[0].note or "")
 
 
 # --------------------------------------------------------------------------- AC-D04
