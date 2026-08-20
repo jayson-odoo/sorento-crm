@@ -191,17 +191,15 @@ def test_neighbours_status_filter_respected(db: Session) -> None:
 def test_neighbours_out_of_filter_falls_back_to_unfiltered(db: Session) -> None:
     # The record exists but is NOT in the active filtered set. The service must
     # fall back to the unfiltered set so the pager is never dead (D2), and the
-    # total reflects the unfiltered count.
+    # total reflects the unfiltered count, not the filtered one.
     #
-    # This used to prove that second half by comparing two SEPARATELY fetched live
-    # totals of the real, shared `picking_headers` table for equality. That table
-    # is not this test's own - it is the whole suite's, and another xdist worker's
-    # file can insert/delete rows in the gap between those two reads, so "total at
-    # time A" can stop equalling "total at time B" on a run that never touched
-    # this file (BL-034 shape). What this test actually requires - that the
-    # fallback used the unfiltered scope, not the filtered one - is provable from
-    # this test's own marker rows alone, with no dependency on the ambient row
-    # count.
+    # This used to prove that second half by comparing two SEPARATELY fetched
+    # live totals of the real, shared `picking_headers` table for equality (one
+    # probe call, then `out["total"]` from the fallback). Another xdist
+    # worker's file can insert/delete rows in the gap between them (BL-034's
+    # exact shape, first found on `tests/test_complaint_neighbours.py`). What
+    # matters - that the fallback used the unfiltered scope, not the filtered
+    # one - is provable from this test's own marker rows alone.
     in_set = _seed_ordered_set(db, 3)  # match query=PREFIX
     outside = _seed(db, picking_number="GRNNBR-OUTSIDE-1")  # does NOT match PREFIX
     own_ids = {r.id for r in in_set} | {outside.id}
@@ -211,11 +209,8 @@ def test_neighbours_out_of_filter_falls_back_to_unfiltered(db: Session) -> None:
     assert out["index"] is not None, "D2 fallback must resolve the record"
     assert out["total"] > 3  # bigger than the filtered subset
 
-    # And dropped ENTIRELY, not just widened to some other partial filter: every
-    # one of this test's own rows must be reachable in the SAME unfiltered scope
-    # `neighbours()`'s own D2 branch reads.
-    unfiltered_q, _ = svc._build_grn_list_query()
-    fallback_ids = {str(row[0]) for row in unfiltered_q.with_entities(PickingHeader.id).all()}
+    fallback_q, _ = svc._build_grn_list_query()
+    fallback_ids = {str(row[0]) for row in fallback_q.with_entities(PickingHeader.id).all()}
     assert own_ids <= fallback_ids
 
 

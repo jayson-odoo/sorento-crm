@@ -12,6 +12,7 @@ throw away the one thing the sample exists to capture.
 """
 from __future__ import annotations
 
+import itertools
 import uuid
 from datetime import date
 from decimal import Decimal
@@ -33,6 +34,25 @@ def _uid() -> str:
     return str(uuid.uuid4())
 
 
+_TITLE_SEQ = itertools.count(1)
+
+
+def _title_suffix() -> str:
+    """A deterministic, always-digit-bearing per-call project-title suffix.
+
+    Replaces a `_uid()[:6]`-style random hex slice, which lands with no digit
+    about (6/16)**6 = ~0.3% of the time. `phase_designators`
+    (`app.services.project_clash_service`) tokenizes a title on a required
+    `\\d`, so a digit-free suffix leaves BOTH titles' designator sets empty,
+    the sibling-development exemption falls through, and the shared "zzt-
+    sample tower" prefix then clears the trigram-similarity block before the
+    test's own assertion runs (BL-038). A plain counter is always
+    digit-bearing, and since it only ever increases, two projects created in
+    the same test always get distinct designators too.
+    """
+    return str(next(_TITLE_SEQ))
+
+
 def _sorento(db) -> str:
     return db.execute(text("select id from companies where code = 'SRT'")).scalar()
 
@@ -52,7 +72,7 @@ def _project(db, company_id: str, owner: str):
         company_id=company_id,
         actor_user_id=owner,
         developer_party_id=None,
-        title=f"{MARKER} Tower {_uid()[:6]}",
+        title=f"{MARKER} Tower {_title_suffix()}",
     )
 
 
