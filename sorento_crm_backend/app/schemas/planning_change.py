@@ -24,7 +24,11 @@ PlanningChangeReaction = Literal["keep", "release", "replan", "reduce", "retire"
 #: no effect" - `accept` alone recorded a decision Apply never executed for such a row.
 PlanningChangeDecision = Optional[Literal["accept", "keep", "board", "confirm", "amend"]]
 PlanningChangeAppliedState = Literal["pending", "applied", "failed", "superseded"]
-PlanningChangeSourceKind = Literal["so_book_upload"]
+# Every value the batches table can carry. The model keeps this a plain string column so a
+# new trigger is a new constant, not a migration - but THIS literal must grow with it, or
+# the new source 500s the whole listing on response validation (hit live 20 Aug: the first
+# so_manual_edit batch made /planning-changes read as empty to the captain).
+PlanningChangeSourceKind = Literal["so_book_upload", "so_manual_edit"]
 
 
 class PlanningChangeFromTo(BaseModel):

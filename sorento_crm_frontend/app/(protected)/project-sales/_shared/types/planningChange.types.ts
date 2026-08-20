@@ -188,11 +188,13 @@ export interface PlanningChangeOrder {
   project_id?: string | null;
 }
 
-/** The kind of upload/event that raised a batch. One kind exists today; kept as a union. */
-export type PlanningChangeSourceKind = 'so_book_upload';
+/** The kind of upload/event that raised a batch. Must grow with the backend's
+ *  PlanningChangeSourceKind literal - a value missing there 500s the listing. */
+export type PlanningChangeSourceKind = 'so_book_upload' | 'so_manual_edit';
 
 export const PLANNING_CHANGE_SOURCE_KIND_LABEL: Record<PlanningChangeSourceKind, string> = {
   so_book_upload: 'SO book upload',
+  so_manual_edit: 'Manual SO edit',
 };
 
 /** What raised the batch - the trigger, said as data rather than left to be inferred. */

@@ -182,6 +182,45 @@ def _row_for(db, batch_id: str) -> PlanningChangeRow:
     return db.query(PlanningChangeRow).filter(PlanningChangeRow.batch_id == batch_id).one()
 
 
+def _api_client(db, user_id: str):
+    """A TestClient wired onto `db` and an authenticated `user_id`, mirroring
+    `tests/test_planning_changes.py::_client` - copied rather than imported (that file is
+    owned by a concurrent slice, see the module docstring). Only used by the route-level
+    regression test below; every other test in this file talks to the service directly."""
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from app.dependencies import get_current_user, get_current_user_or_api_key
+    from app.main import app
+    from app.services.company_scope_resolver import apply_company_scope
+    from app.services.user_service import UserPermissionService
+
+    actor = {"id": user_id, "email": f"{user_id}@zzt.test", "role": "user"}
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: dict(actor)
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(actor)
+    app.dependency_overrides[apply_company_scope] = lambda: None
+
+    originals = (
+        UserPermissionService.check_user_has_permission,
+        UserPermissionService.get_user_permission_slugs,
+    )
+    UserPermissionService.check_user_has_permission = lambda self, uid, slug: True
+    UserPermissionService.get_user_permission_slugs = (
+        lambda self, uid: ["projects.projects.view", "projects.projects.edit"]
+    )
+    return TestClient(app), originals
+
+
+def _restore_api_client(originals) -> None:
+    from app.main import app
+    from app.services.user_service import UserPermissionService
+
+    UserPermissionService.check_user_has_permission = originals[0]
+    UserPermissionService.get_user_permission_slugs = originals[1]
+    app.dependency_overrides.clear()
+
+
 # --------------------------------------------------------------------------- #
 # qty edit
 # --------------------------------------------------------------------------- #
@@ -209,6 +248,41 @@ def test_qty_up_raises_a_batch_with_source_kind_manual_edit(api):
     assert batch.source_kind == PLANNING_CHANGE_SOURCE_SO_MANUAL_EDIT
     row = _row_for(db, envelope["id"])
     assert row.kind == "qty_up"
+
+
+def test_manual_edit_batch_is_listed_by_the_planning_changes_route(api):
+    """Regression for the live 500 fixed 20 Aug 2026: `PlanningChangeSourceKind` on the
+    schema was pinned to `'so_book_upload'` alone, so the first `so_manual_edit` batch
+    failed response validation and `GET /planning-changes` 500'd (read by the caller as an
+    empty list). Drive the real route, not just the service, so a future narrowing of the
+    literal is caught the same way this one was missed - at the wire, not the model."""
+    world, project = api
+    db = world.db
+    core_so, core_line, product = _linked_line(world, project, qty_ordered=72)
+
+    result = SalesOrderService(db).update(
+        core_so.id,
+        SalesOrderUpdate(lines=[{
+            "id": core_line.id, "sku": product.product_code, "qty_ordered": 90,
+        }]),
+        user_id=world.actor,
+    )
+    db.commit()
+    envelope = result["planning_change_batch"]
+    assert envelope is not None
+    batch_id = envelope["id"]
+
+    client, originals = _api_client(db, world.actor)
+    try:
+        response = client.get("/api/v1/project-sales/planning-changes")
+    finally:
+        _restore_api_client(originals)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    batches_by_id = {b["id"]: b for b in body["data"]}
+    assert batch_id in batches_by_id
+    assert batches_by_id[batch_id]["source"]["kind"] == PLANNING_CHANGE_SOURCE_SO_MANUAL_EDIT
 
 
 def test_qty_down_raises_a_batch_kind_qty_down(api):
@@ -441,3 +515,30 @@ def test_explicit_null_uom_still_clears_the_override():
         db.expire_all()
         row = db.get(SalesOrderLine, line.id)
         assert row.uom is None
+
+
+# --------------------------------------------------------------------------- #
+# PlanningChangeSourceKind literal must cover every model source constant - the exact
+# defect fixed 20 Aug 2026 (see the route test above). The model's own docstring calls a
+# new source "a new constant, not a migration"; this test makes the schema literal part
+# of that contract, so adding a constant here without widening the Literal fails loud in
+# CI instead of 500ing the listing route in production.
+# --------------------------------------------------------------------------- #
+
+def test_schema_source_kind_literal_covers_every_model_source_constant():
+    import typing
+
+    from app import models
+    from app.schemas.planning_change import PlanningChangeSourceKind
+
+    model_constants = {
+        value for name, value in vars(models.planning_change).items()
+        if name.startswith("PLANNING_CHANGE_SOURCE_") and isinstance(value, str)
+    }
+    assert model_constants, "expected at least one PLANNING_CHANGE_SOURCE_* constant"
+    schema_literal_values = set(typing.get_args(PlanningChangeSourceKind))
+    assert model_constants <= schema_literal_values, (
+        f"model source constants {model_constants - schema_literal_values} are missing "
+        "from PlanningChangeSourceKind - a batch with that source_kind will 500 on "
+        "response validation the moment it is listed"
+    )
