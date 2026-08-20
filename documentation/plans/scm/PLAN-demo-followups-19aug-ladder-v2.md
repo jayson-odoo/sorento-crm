@@ -204,6 +204,39 @@ Per memory "follow-ups skip pipeline after first pass": fix + targeted tests + o
 merge-shaped push, CI gates, captain merges. Each workstream is its own PR off main so A-D land
 while E is confirmed. Coders on sonnet from exact briefs; file ownership per brief.
 
+### G. Tag an outstanding PO to an Order Inquiry (captain, 20 Aug: "identify which
+outstanding PO has quantity to fulfil this order inquiry, tag it, and the quantity to be
+ordered is deducted")
+
+Facts (scouted 20 Aug): outstanding supplier POs land in `purchase_orders` / `purchase_order_lines`
+(AutoCount book; line balance = `qty_ordered - qty_received` on `line_status='open'`, index on
+`(product_id, warehouse_id, line_status)`). A PO is NOT supply in any netting view - `on_order_v`
+reads `spo_allocations` only (migration 337; PLAN-scm-purchasing-fulfilment S9: "supply is the
+SPO allocation, never the purchase order"). This feature is a deliberate, evidence-carrying
+exception on the DEMAND side only: tagging does not make the PO supply, it retires the inquiry's
+claim on the reorder suggestion. The lever already exists: `committed_v`'s confirmed leg counts
+OI ORDER rows only in `state='raised'` (demand.py:296), so a new state removes the demand with
+no view change. Today "mark actioned" already does that silently with no record of what covered
+it - the new state replaces that hole with evidence.
+
+Design:
+- `order_inquiry_rows` gains `po_ref` (String(80)) and `po_line_id` (FK purchase_order_lines,
+  SET NULL); new state `placed` (vocabulary: raised | actioned | cancelled | placed).
+- Candidates for a raised ORDER row: open PO lines of the same product, balance minus qty
+  already tagged by other placed rows, soonest `expected_date` first; recommend the earliest
+  line whose remaining balance covers the row.
+- Tag verb "Place on PO" on the worklist row (and per-project page): sets po_ref / po_line_id /
+  state='placed', writes an OrderLinkClaim (source 'order_inquiry', resolved so_line_id +
+  po_line_id) for the audit trail; the note reads "Placed on <po> (<supplier>), expected <date>".
+  Untag returns the row to raised and clears the fields.
+- Netting effect: a placed row leaves `project_confirmed_committed`, so the next reorder run's
+  suggested qty drops by the placed quantity - the captain's deduction. A second row can never
+  tag the same PO quantity (the candidate query nets placed claims per po_line_id).
+- Worklist: PO no / Supplier columns show the tag (extend the `_PLACED_PO_ID` coalesce);
+  state filter gains Placed.
+- Known adjacent hole, logged not fixed here: `sales_order_lines.purchasing_status='ordered'`
+  is not excluded from `committed_v` (double-count risk independent of this feature).
+
 ## 8. Open questions (captain)
 
 1. Plain site pools (BRW 892k on hand, MWH, DC1, WH3): still a RESERVE source for a BRW-BB line,
