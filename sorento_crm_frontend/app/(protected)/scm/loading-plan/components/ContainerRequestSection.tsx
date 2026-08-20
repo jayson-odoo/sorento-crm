@@ -11,6 +11,7 @@ import {
 } from '@tanstack/react-table';
 import {
   Download,
+  Info,
   LayoutGrid,
   LoaderCircle,
   PackageSearch,
@@ -161,9 +162,21 @@ export function ContainerRequestSection({
     return map;
   }, [soLines]);
 
+  // The schedule matrix's product-axis rows follow the SAME rank the ranked demand table
+  // already shows - the two are two views of one order, not two independent sorts. Rows come
+  // back from the build already sorted by rank; this just carries that rank along by product_id
+  // for the matrix builder to key off.
+  const rankByProductId = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of rows) {
+      if (r.rank !== null) map.set(r.product_id, r.rank);
+    }
+    return map;
+  }, [rows]);
+
   const matrix = useMemo(
-    () => buildContainerRequestMatrix(soLines, matrixAxis, matrixGranularity),
-    [soLines, matrixAxis, matrixGranularity],
+    () => buildContainerRequestMatrix(soLines, matrixAxis, matrixGranularity, rankByProductId),
+    [soLines, matrixAxis, matrixGranularity, rankByProductId],
   );
 
   // A fresh suggestion replaces whatever she had edited into the previous one - "refresh" is
@@ -386,9 +399,11 @@ export function ContainerRequestSection({
               trigger={
                 <button
                   type="button"
-                  className="rounded-sm tabular-nums underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  title="View open SO lines"
+                  className="inline-flex items-center gap-1 rounded-sm tabular-nums underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                 >
                   {fmtInt(original.so_count)}
+                  <Info className="size-3.5 text-muted-foreground" aria-hidden />
                 </button>
               }
             />

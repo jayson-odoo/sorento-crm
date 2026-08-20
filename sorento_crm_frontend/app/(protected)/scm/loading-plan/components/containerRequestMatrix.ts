@@ -85,13 +85,22 @@ function axisKeyOf(
 }
 
 /** The whole matrix, built off the SO lines the build already returned. Columns are only the
- *  buckets somebody actually owes - never a full calendar grid. */
+ *  buckets somebody actually owes - never a full calendar grid.
+ *
+ *  `rankByProductId` (optional) mirrors the ranked demand table's own row order onto the
+ *  product axis, so the schedule view and the table never disagree about which product comes
+ *  first - a ranked product sorts by its rank, ascending; a product absent from the ranking
+ *  (should not happen, but a stock-list product can outrun the ranking build) sorts after every
+ *  ranked row, alphabetically among itself. The order axis (rows = SO numbers) has no rank to
+ *  borrow and keeps its existing alphabetical sort regardless of this argument. */
 export function buildContainerRequestMatrix(
   lines: ContainerRequestSoLine[],
   axis: ContainerRequestMatrixAxis,
   granularity: ContainerRequestMatrixGranularity,
+  rankByProductId?: Map<string, number>,
 ): ContainerRequestMatrix {
   const rowMap = new Map<string, ContainerRequestMatrixRow>();
+  const rowRank = new Map<string, number>();
   const bucketMap = new Map<string, ContainerRequestMatrixBucket>();
   const cellMap = new Map<
     string,
@@ -101,6 +110,10 @@ export function buildContainerRequestMatrix(
   for (const line of lines) {
     const { key: rowKey, label: rowLabel, description } = axisKeyOf(line, axis);
     if (!rowMap.has(rowKey)) rowMap.set(rowKey, { key: rowKey, label: rowLabel, description });
+    if (axis === 'product' && rankByProductId && !rowRank.has(rowKey)) {
+      const rank = rankByProductId.get(line.product_id);
+      if (rank !== undefined) rowRank.set(rowKey, rank);
+    }
 
     const bucket = bucketFor(line, granularity);
     if (!bucketMap.has(bucket.key)) bucketMap.set(bucket.key, bucket);
@@ -125,8 +138,19 @@ export function buildContainerRequestMatrix(
 
   const cells: ContainerRequestMatrixCell[] = [...cellMap.values()];
 
+  const rows = [...rowMap.values()].sort((a, b) => {
+    // Ranked rows lead, in rank order; a row with no rank on file sorts after every ranked
+    // one and falls back to alphabetical among the other unranked rows.
+    const rankA = rowRank.get(a.key);
+    const rankB = rowRank.get(b.key);
+    if (rankA !== undefined && rankB !== undefined) return rankA - rankB;
+    if (rankA !== undefined) return -1;
+    if (rankB !== undefined) return 1;
+    return a.label.localeCompare(b.label);
+  });
+
   return {
-    rows: [...rowMap.values()].sort((a, b) => a.label.localeCompare(b.label)),
+    rows,
     buckets,
     cells,
   };
