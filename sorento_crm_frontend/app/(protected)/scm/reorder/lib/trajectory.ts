@@ -9,7 +9,7 @@
  * turns them into words. Every sentence is a fact about OUR OWN order book - like the
  * price advice, nothing here claims to see the market.
  */
-import { fmtDecimal, fmtInt } from '../../lib/format';
+import { fmtInt } from '../../lib/format';
 import type { PlanChannel } from './planLineGrouping';
 
 export type TrajectoryVerdict = 'rising' | 'holding' | 'falling' | 'quiet' | 'no_history';
@@ -72,20 +72,6 @@ export interface TrajectoryPayload {
   /** Keyed by `product_id`, then channel. Absent (or a missing channel key) reads the same
    *  as `series` missing a key - no opinion, render nothing - never a flat/zero trend. */
   channel_trends?: Record<string, Partial<Record<PlanChannel, ChannelTrendEntry>>>;
-}
-
-/** The Trend subline for ONE channel column: the verdict in words, plus the rate behind
- *  it - the same two-line shape the SO column's own Trend + "avg N/day" already renders,
- *  narrowed to one channel's own orders. */
-export function channelTrendLine(t: ChannelTrendEntry | undefined): {
-  label: string;
-  rateLabel: string | null;
-} | null {
-  if (!t) return null;
-  return {
-    label: TRAJECTORY_ROW_LABEL[t.verdict],
-    rateLabel: t.avg_day && t.avg_day > 0 ? `avg ${fmtDecimal(t.avg_day)}/day` : null,
-  };
 }
 
 /**

@@ -17,6 +17,7 @@ import { PlanDemandPopover } from './PlanDemandPopover';
 const demand = (over: Record<string, unknown> = {}) => ({
   lines: [
     {
+      so_id: 'so-uuid-414050',
       so_number: 'SO414050',
       warehouse_code: 'BRW-IB',
       is_unlocated: false,
@@ -26,6 +27,7 @@ const demand = (over: Record<string, unknown> = {}) => ({
       required_date: '2026-10-12',
       qty: 2,
       customer_label: 'Vivo Homes Sdn Bhd',
+      agent_label: 'Jeremy',
       unit_price: 94.5,
     },
   ],
@@ -37,6 +39,9 @@ const demand = (over: Record<string, unknown> = {}) => ({
   scope: 'warehouse',
   pool_code: null,
   channel: null,
+  history_lines: [],
+  history_shown: 0,
+  history_total: 0,
   ...over,
 });
 
@@ -67,7 +72,9 @@ describe('PlanDemandPopover', () => {
     expect(useRecommendationDemand).not.toHaveBeenCalled();
 
     await open();
-    expect(useRecommendationDemand).toHaveBeenCalledWith('run-1', 'rec-1', true, undefined);
+    expect(useRecommendationDemand).toHaveBeenCalledWith(
+      'run-1', 'rec-1', true, undefined, undefined,
+    );
   });
 
   it('names the location the ORDER was for, which is the whole question', async () => {
@@ -117,12 +124,13 @@ describe('PlanDemandPopover', () => {
     expect(screen.getByText('No location')).toBeInTheDocument();
   });
 
-  it('names who ordered each line, and what they pay', async () => {
+  it('names who ordered each line, who sold it, and what they pay', async () => {
     stub(demand());
     render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
     await open();
 
-    expect(screen.getByText('Vivo Homes Sdn Bhd')).toBeInTheDocument();
+    expect(screen.getByText(/Vivo Homes Sdn Bhd/)).toBeInTheDocument();
+    expect(screen.getByText(/Jeremy/)).toBeInTheDocument();
     expect(screen.getByText('RM 94.50')).toBeInTheDocument();
   });
 
@@ -139,7 +147,7 @@ describe('PlanDemandPopover', () => {
     render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
     await open();
 
-    expect(screen.getByText('Debtor 300-R009')).toBeInTheDocument();
+    expect(screen.getByText(/Debtor 300-R009/)).toBeInTheDocument();
     expect(screen.queryByText(/^RM /)).not.toBeInTheDocument();
   });
 
@@ -157,6 +165,29 @@ describe('PlanDemandPopover', () => {
     await open();
 
     expect(screen.getByText(/raised from forecast demand/i)).toBeInTheDocument();
+  });
+
+  // 21 Aug follow-up: "SO numbers in both views become hyperlinks to the sales order's
+  // own record" - `/scm/sales-orders/{so_id}`, the same target `SalesOrdersList` itself
+  // links a row to.
+  describe('the SO number link', () => {
+    it('links to the sales order record when the line carries so_id', async () => {
+      stub(demand());
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+      await open();
+
+      const link = screen.getByRole('link', { name: 'SO414050' });
+      expect(link).toHaveAttribute('href', '/scm/sales-orders/so-uuid-414050');
+    });
+
+    it('falls back to plain text on a cached response predating so_id', async () => {
+      stub(demand({ lines: [{ ...demand().lines[0], so_id: undefined }] }));
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+      await open();
+
+      expect(screen.queryByRole('link', { name: 'SO414050' })).not.toBeInTheDocument();
+      expect(screen.getByText('SO414050')).toBeInTheDocument();
+    });
   });
 
   // SF-8: the source chip (SO / OI / OI confirmed) and its title, per line.
@@ -233,6 +264,8 @@ describe('PlanDemandPopover', () => {
   });
 
   // Defect B: the worklist click-through must not promise a screen that will be empty.
+  // 21 Aug follow-up: it is now a SEPARATE "OI worklist" link beside the chips, never on
+  // the SO number itself (which links to the sales order's own record instead).
   describe('the Order Inquiry worklist link', () => {
     it('links a sheet-leg line when a live inquiry row exists', async () => {
       stub(
@@ -243,7 +276,7 @@ describe('PlanDemandPopover', () => {
       render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
       await open();
 
-      expect(screen.getByRole('link', { name: 'SO414050' })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'OI worklist' })).toBeInTheDocument();
     });
 
     it('does not link a sheet-leg line when no inquiry row exists', async () => {
@@ -258,7 +291,7 @@ describe('PlanDemandPopover', () => {
       render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
       await open();
 
-      expect(screen.queryByRole('link', { name: 'SO414050' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'OI worklist' })).not.toBeInTheDocument();
       expect(screen.getByText('SO414050')).toBeInTheDocument();
     });
 
@@ -273,7 +306,7 @@ describe('PlanDemandPopover', () => {
       render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
       await open();
 
-      expect(screen.getByRole('link', { name: 'SO414050' })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'OI worklist' })).toBeInTheDocument();
     });
 
     it('does not link a direct sales-order line', async () => {
@@ -281,7 +314,7 @@ describe('PlanDemandPopover', () => {
       render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
       await open();
 
-      expect(screen.queryByRole('link', { name: 'SO414050' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'OI worklist' })).not.toBeInTheDocument();
     });
   });
 
@@ -293,7 +326,9 @@ describe('PlanDemandPopover', () => {
       fireEvent.click(screen.getByRole('button', { name: /project demand behind this row/i }));
       await screen.findByText('Project demand behind this row');
 
-      expect(useRecommendationDemand).toHaveBeenCalledWith('run-1', 'rec-1', true, 'project');
+      expect(useRecommendationDemand).toHaveBeenCalledWith(
+        'run-1', 'rec-1', true, 'project', undefined,
+      );
     });
 
     it('says which channel the header is showing', async () => {
@@ -322,6 +357,116 @@ describe('PlanDemandPopover', () => {
       expect(
         await screen.findByText(/No open retail order line sits behind this quantity/i),
       ).toBeInTheDocument();
+    });
+  });
+
+  // 21 Aug live-test follow-up: "on the product row you show me the history, not the
+  // demand" - `scope="product"` switches the WHOLE body to the order-history section,
+  // never stacking it with the open-demand list.
+  describe('a product-wide trigger (scope="product") opens the HISTORY view, not the demand list', () => {
+    const history = (over: Record<string, unknown> = {}) =>
+      demand({
+        channel: 'project',
+        project_window_months: 12,
+        project_12m_qty: 40,
+        history_lines: [
+          {
+            so_id: 'so-uuid-hist-1',
+            so_number: 'SOHIST-1',
+            order_date: '2026-06-01',
+            demand_class: 'project',
+            qty: 20,
+            delivered: true,
+            customer_label: 'Vivo Homes Sdn Bhd',
+            agent_label: 'Jeremy',
+            unit_price: 45,
+          },
+        ],
+        history_shown: 1,
+        history_total: 1,
+        ...over,
+      });
+
+    it('labels the trigger as order history, not demand', () => {
+      stub(history());
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" channel="project" scope="product" />);
+
+      expect(
+        screen.getByRole('button', { name: 'Project order history' }),
+      ).toBeInTheDocument();
+    });
+
+    it('fetches with scope="product", keyed for its own cache entry', async () => {
+      stub(history());
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" channel="project" scope="product" />);
+      fireEvent.click(screen.getByRole('button', { name: 'Project order history' }));
+      await screen.findByText('Project order history');
+
+      expect(useRecommendationDemand).toHaveBeenCalledWith(
+        'run-1', 'rec-1', true, 'project', 'product',
+      );
+    });
+
+    it('renders the history lines - SO, delivered marker, date, customer, agent, price, qty', async () => {
+      stub(history());
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" channel="project" scope="product" />);
+      fireEvent.click(screen.getByRole('button', { name: 'Project order history' }));
+      await screen.findByText('Project order history');
+
+      expect(screen.getByRole('link', { name: 'SOHIST-1' })).toHaveAttribute(
+        'href', '/scm/sales-orders/so-uuid-hist-1',
+      );
+      expect(screen.getByText('Delivered')).toBeInTheDocument();
+      expect(screen.getByText('2026-06-01')).toBeInTheDocument();
+      expect(screen.getByText(/Vivo Homes Sdn Bhd/)).toBeInTheDocument();
+      expect(screen.getByText(/Jeremy/)).toBeInTheDocument();
+      expect(screen.getByText('RM 45.00')).toBeInTheDocument();
+      expect(screen.getByText('20')).toBeInTheDocument();
+    });
+
+    it('never renders the open-demand list under a product-wide trigger', async () => {
+      // `history()` carries no `lines` override, so the demand fixture's own
+      // "SO414050"/"Vivo Homes" line would show up here if the demand body leaked in.
+      stub(history());
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" channel="project" scope="product" />);
+      fireEvent.click(screen.getByRole('button', { name: 'Project order history' }));
+      await screen.findByText('Project order history');
+
+      expect(screen.queryByText('SO414050')).not.toBeInTheDocument();
+      expect(screen.queryByText(/committed at/)).not.toBeInTheDocument();
+    });
+
+    it('shows an open (not delivered) badge for a still-open history order', async () => {
+      const baseHistoryLine = history().history_lines as Record<string, unknown>[];
+      stub(
+        history({
+          history_lines: [{ ...baseHistoryLine[0], delivered: false }],
+        }),
+      );
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" channel="project" scope="product" />);
+      fireEvent.click(screen.getByRole('button', { name: 'Project order history' }));
+      await screen.findByText('Project order history');
+
+      expect(screen.getByText('Open')).toBeInTheDocument();
+      expect(screen.queryByText('Delivered')).not.toBeInTheDocument();
+    });
+
+    it('names the window in the empty state when there is no history', async () => {
+      stub(history({ history_lines: [], history_shown: 0, history_total: 0 }));
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" channel="project" scope="product" />);
+      fireEvent.click(screen.getByRole('button', { name: 'Project order history' }));
+
+      expect(
+        await screen.findByText(/No project orders in the last 12 full months/i),
+      ).toBeInTheDocument();
+    });
+
+    it('shows "showing X of Y" only when the uncapped total exceeds what is shown', async () => {
+      stub(history({ history_shown: 1, history_total: 3 }));
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" channel="project" scope="product" />);
+      fireEvent.click(screen.getByRole('button', { name: 'Project order history' }));
+
+      expect(await screen.findByText('Showing 1 of 3 orders.')).toBeInTheDocument();
     });
   });
 });

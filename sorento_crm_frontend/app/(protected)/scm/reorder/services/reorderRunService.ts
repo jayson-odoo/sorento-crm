@@ -589,6 +589,11 @@ export async function decideCoveredRow(
 
 /** One order line behind a planned quantity. */
 export interface PlanDemandLine {
+  /** The core sales order's own id - never displayed, only powers the link to its record
+   *  on the SCM sales-order book (`/scm/sales-orders/{so_id}`, the same target a row of
+   *  `SalesOrdersList` itself links to). Optional - absent on a cached response predating
+   *  the field, in which case the SO number renders as plain text. */
+  so_id?: string | null;
   so_number: string;
   /** The location the ORDER named, or null when it named none. */
   warehouse_code: string | null;
@@ -602,6 +607,11 @@ export interface PlanDemandLine {
    *  nobody, or `No customer on order` when the order names neither. Never null - the
    *  backend's COALESCE always lands on one of the three. */
   customer_label: string;
+  /** Who SOLD it - the salesperson master's `person_label` (or the raw agent code when
+   *  nobody has grouped it), resolved off `sales_orders.sales_agent_id`. Null when the
+   *  order carries no agent at all - never invented (captain, 21 Aug: "who is the
+   *  customer and agent"). Optional - absent on a cached response predating the field. */
+  agent_label?: string | null;
   /** What they pay for it, when the order line carries a price. */
   unit_price: number | null;
   /**
@@ -633,9 +643,13 @@ export interface PlanDemand {
   /** Distinct locations the demand actually sits at - the answer to "why this warehouse". */
   locations: string[];
   /** Which set of locations this list is drawn from: the row's OWN warehouse (the
-   *  default), or every member of its pool when the plan netted them together. */
-  scope: 'warehouse' | 'pool';
-  /** The pool root's code, when the scope is the pool. Null otherwise. */
+   *  default), every member of its pool when the plan netted them together, or
+   *  (`scope: 'product'` request, 21 Aug) the union across every recommendation this run
+   *  wrote for the same product - the set the grouped Buy view's top product-grain row
+   *  sums across. */
+  scope: 'warehouse' | 'pool' | 'product';
+  /** The pool root's code, when the scope is the pool. Null otherwise (including the
+   *  product-wide union, which is not one pool). */
   pool_code: string | null;
   /**
    * The channel split of `committed_total` (captain follow-up, 20 Aug). Optional - a
@@ -666,6 +680,39 @@ export interface PlanDemand {
    * always has.
    */
   channel?: 'project' | 'retail' | 'unclassified' | null;
+  /**
+   * The trailing-window order-HISTORY section (captain, 21 Aug: "for project, what's the
+   * sales order for the past year, who is the customer and agent... for retail, past 3
+   * months, same"). Distinct from `lines` above: this is every order PLACED in the
+   * window (`project_window_months`/`retail_window_months`, the SAME window
+   * `project_12m_qty`/`retail_3m_qty` already total), whatever its status today -
+   * delivered orders included, marked via `delivered`. `lines` stays scoped to this
+   * row's own location(s) and to still-OPEN demand; this section is the whole product's
+   * order flow, matching `project_12m_qty`/`retail_3m_qty`. Empty when the request was
+   * not narrowed to `project`/`retail` (unclassified has no configured window), or the
+   * window carries nothing. Optional - absent on a cached response predating the field.
+   */
+  history_lines?: PlanDemandHistoryLine[];
+  history_shown?: number;
+  /** The UNCAPPED count behind `history_lines` (`history_shown` stays capped) - so a
+   *  silent cap on a busy product never reads as "the whole window". */
+  history_total?: number;
+}
+
+/** One order in the trailing-window history section (see `PlanDemand.history_lines`). */
+export interface PlanDemandHistoryLine {
+  /** See `PlanDemandLine.so_id` - same purpose, same optionality. */
+  so_id?: string | null;
+  so_number: string;
+  order_date: string | null;
+  demand_class: string | null;
+  qty: number;
+  /** Whether this order has already been delivered in full - the window includes both,
+   *  so this is how the popover tells them apart at a glance. */
+  delivered: boolean;
+  customer_label: string;
+  agent_label: string | null;
+  unit_price: number | null;
 }
 
 /** One warehouse's LIVE stock position for a product (captain: "fulfilment planning" style
@@ -704,17 +751,27 @@ export async function getLocationStock(productId: string): Promise<LocationStock
   return res.json();
 }
 
-/** GET /api/v1/scm/reorder-runs/{run}/recommendations/{rec}/demand?channel=<channel>
+/** GET /api/v1/scm/reorder-runs/{run}/recommendations/{rec}/demand?channel=<channel>&scope=product
  *
  *  `channel` narrows the response to ONE of `project`/`retail`/`unclassified` (captain's
  *  own preferred fix, 20 Aug: separate drill icons per channel cell instead of one on
- *  Project carrying everything). Omitted keeps the endpoint's existing unfiltered shape. */
+ *  Project carrying everything). Omitted keeps the endpoint's existing unfiltered shape.
+ *
+ *  `scope: 'product'` (21 Aug follow-up) widens the drill to every recommendation this
+ *  run wrote for the SAME product as `recId` - the grouped Buy view's top product-grain
+ *  row's own trigger, since that row's channel cells already sum across the product's
+ *  whole location set. Omitted keeps the single-row scope every other caller already
+ *  gets (the per-location group panel, the ungrouped grid's own row). */
 export async function getRecommendationDemand(
   runId: string,
   recId: string,
   channel?: 'project' | 'retail' | 'unclassified',
+  scope?: 'product',
 ): Promise<PlanDemand> {
-  const qs = channel ? `?channel=${encodeURIComponent(channel)}` : '';
+  const params = new URLSearchParams();
+  if (channel) params.set('channel', channel);
+  if (scope) params.set('scope', scope);
+  const qs = params.toString() ? `?${params.toString()}` : '';
   const res = await apiFetch(
     `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/recommendations/${encodeURIComponent(recId)}/demand${qs}`,
   );

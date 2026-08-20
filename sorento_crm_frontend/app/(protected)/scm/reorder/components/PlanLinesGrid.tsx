@@ -85,7 +85,7 @@ import {
   type PlanChannel,
   type PlanChannelGroupMeta,
 } from '../lib/planLineGrouping';
-import { channelTrendLine, type ChannelTrendEntry } from '../lib/trajectory';
+import type { ChannelTrendEntry } from '../lib/trajectory';
 import { DECIDED_AT_PRODUCT_GRAIN } from '../lib/planGrain';
 
 /**
@@ -167,18 +167,31 @@ function ChannelNeed({
 /**
  * One channel COLUMN cell on the grouped (product-grain) grid (5.3 follow-up, 19-20 Aug):
  * the channel's whole open demand (`committed_v`'s split, summed across the product's
- * locations) - never `project_need`, the confirmed-for-buy SUBSET - plus a trend subline
- * scoped to that channel's own orders. `confirmedNote` is the Project cell's own aside
- * ("N confirmed for buy"), passed only for the Project column and only when > 0.
+ * locations) - never `project_need`, the confirmed-for-buy SUBSET. `confirmedNote` is the
+ * Project cell's own aside ("N confirmed for buy"), passed only for the Project column
+ * and only when > 0.
+ *
+ * The trend subline this cell used to carry ("Orders rising - consider more - avg N/day")
+ * is gone (captain, 21 Aug: "i don't think we need the orders rising thingy") - the
+ * number plus the drill trigger (`drill`, below) replace it: the buyer opens the actual
+ * orders rather than reading a verdict about them. Its wording helper, `channelTrendLine`,
+ * had no other caller and is deleted with it (`lib/trajectory.ts`); `TRAJECTORY_ROW_LABEL`
+ * stays - `PlanTrendPopover`'s own row-level trend still reads it. `channelTrendFor` /
+ * `ChannelTrendEntry` / `channel_trends` still flow from `usePlanLines.ts` through
+ * `PlanLinesSection.tsx` into this component's own props with no call site left inside
+ * it - a follow-up outside this file's scope to remove that plumbing too.
  */
 function ChannelColumnCell({
   value,
   confirmedNote,
-  trend,
+  drill,
 }: {
   value: number | null | undefined;
   confirmedNote?: string | null;
-  trend: ChannelTrendEntry | undefined;
+  /** The demand drill trigger for this cell (21 Aug follow-up: "where is the tooltip for
+   *  me to open at project and retail" - the TOP product-grain row had none). `undefined`
+   *  when no member recommendation exists to open one against. */
+  drill?: React.ReactNode;
 }) {
   if (value === null || value === undefined) {
     return (
@@ -187,27 +200,16 @@ function ChannelColumnCell({
       </span>
     );
   }
-  const line = channelTrendLine(trend);
   return (
-    <div className="min-w-0">
-      <span className="inline-flex items-center gap-1 tabular-nums">
-        {fmtInt(value)}
-        {confirmedNote ? (
-          <span title={confirmedNote} className="text-muted-foreground/70">
-            <Info className="size-3" aria-hidden />
-          </span>
-        ) : null}
-      </span>
-      {line ? (
-        <span
-          className="block truncate text-2xs text-muted-foreground"
-          title={line.rateLabel ? `${line.label} - ${line.rateLabel}` : line.label}
-        >
-          {line.label}
-          {line.rateLabel ? ` - ${line.rateLabel}` : ''}
+    <span className="inline-flex items-center gap-0.5 tabular-nums">
+      {fmtInt(value)}
+      {confirmedNote ? (
+        <span title={confirmedNote} className="text-muted-foreground/70">
+          <Info className="size-3" aria-hidden />
         </span>
       ) : null}
-    </div>
+      {drill}
+    </span>
   );
 }
 
@@ -976,10 +978,18 @@ export function PlanLinesGrid({
           <DataGridColumnHeader title="Project" visibility column={column} />
         ),
         cell: ({ row }) => (
-          <ChannelNeed
-            value={row.original.rec.project_need}
-            title="Confirmed unplaced Project Buy. Firm: Retail netting never reduces it"
-          />
+          <span className="inline-flex items-center gap-0.5">
+            <ChannelNeed
+              value={row.original.rec.project_need}
+              title="Confirmed unplaced Project Buy. Firm: Retail netting never reduces it"
+            />
+            {/* Same drill the per-location group panel already has (21 Aug follow-up:
+                "where is the tooltip for me to open at project and retail") - the row
+                IS one location at this grain, so no `scope` widening is needed. */}
+            <StopClick>
+              <PlanDemandPopover runId={runId ?? null} recId={row.original.id} channel="project" />
+            </StopClick>
+          </span>
         ),
         size: 90,
         enableSorting: true,
@@ -992,10 +1002,15 @@ export function PlanLinesGrid({
           <DataGridColumnHeader title="Retail" visibility column={column} />
         ),
         cell: ({ row }) => (
-          <ChannelNeed
-            value={row.original.rec.retail_need}
-            title="Retail-class need, after the normal netting of free supply"
-          />
+          <span className="inline-flex items-center gap-0.5">
+            <ChannelNeed
+              value={row.original.rec.retail_need}
+              title="Retail-class need, after the normal netting of free supply"
+            />
+            <StopClick>
+              <PlanDemandPopover runId={runId ?? null} recId={row.original.id} channel="retail" />
+            </StopClick>
+          </span>
         ),
         size: 90,
         enableSorting: true,
@@ -1008,11 +1023,20 @@ export function PlanLinesGrid({
           <DataGridColumnHeader title="Unclass." visibility column={column} />
         ),
         cell: ({ row }) => (
-          <ChannelNeed
-            value={row.original.rec.unclassified_need}
-            title="Demand whose sales order carries no demand class. Not in the actionable need"
-            tone="exception"
-          />
+          <span className="inline-flex items-center gap-0.5">
+            <ChannelNeed
+              value={row.original.rec.unclassified_need}
+              title="Demand whose sales order carries no demand class. Not in the actionable need"
+              tone="exception"
+            />
+            <StopClick>
+              <PlanDemandPopover
+                runId={runId ?? null}
+                recId={row.original.id}
+                channel="unclassified"
+              />
+            </StopClick>
+          </span>
         ),
         size: 90,
         enableSorting: true,
@@ -1020,10 +1044,13 @@ export function PlanLinesGrid({
       } satisfies ColumnDef<PlanLine>] : []),
       // The dynamic channel columns (5.3 follow-up, 19-20 Aug): one per channel present in
       // the run (`dynamicChannels`), each showing that channel's WHOLE open demand
-      // (`committed_v`'s split, summed across the product's locations) plus a trend
-      // subline scoped to that channel's own orders. The Project column carries the
-      // confirmed-for-buy subset as an info aside, never as its own figure - the columns
-      // sum to the product's SO total the same way `committed_v` sums per location.
+      // (`committed_v`'s split, summed across the product's locations), plus the SAME
+      // demand-drill trigger the per-location group panel already carries (21 Aug
+      // follow-up), scoped to the WHOLE product (`scope="product"`) since this cell's own
+      // number is the union across every one of the product's recommendations. The
+      // Project column carries the confirmed-for-buy subset as an info aside, never as
+      // its own figure - the columns sum to the product's SO total the same way
+      // `committed_v` sums per location.
       ...(groupByChannel
         ? dynamicChannels.map((channel): ColumnDef<PlanLine> => ({
             id: `channel_${channel}`,
@@ -1054,11 +1081,27 @@ export function PlanLinesGrid({
                 channel === 'project' && (line.__group.projectConfirmedQty ?? 0) > 0
                   ? `${fmtInt(line.__group.projectConfirmedQty as number)} confirmed for buy`
                   : null;
+              // Any one member's recommendation id opens the drill - the backend
+              // resolves the product+run off it and unions every sibling recommendation
+              // itself (`scope="product"`), so which member is "first" here is not a
+              // decision that changes what the drill shows.
+              const anyMemberId = line.__group.members[0]?.id;
               return (
                 <ChannelColumnCell
                   value={value}
                   confirmedNote={confirmed}
-                  trend={channelTrendFor?.(line.product_id, channel)}
+                  drill={
+                    anyMemberId ? (
+                      <StopClick>
+                        <PlanDemandPopover
+                          runId={runId ?? null}
+                          recId={anyMemberId}
+                          channel={channel}
+                          scope="product"
+                        />
+                      </StopClick>
+                    ) : undefined
+                  }
                 />
               );
             },

@@ -214,7 +214,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
                 "unclassified_total": 0.0, "project_12m_qty": 0.0, "retail_3m_qty": 0.0,
                 "project_window_months": None, "retail_window_months": None,
                 "demand_context_as_of": None, "channel": channel,
-                "history_lines": [], "history_shown": 0}
+                "history_lines": [], "history_shown": 0, "history_total": 0}
 
     # The run's own "Plan until" cutoff (captain, 20 Aug), so this drill speaks the SAME
     # window `inputs.committed` was frozen against. Without it the scope test compares a
@@ -331,8 +331,8 @@ def demand_for_recommendation(db: Session, rec_id: str,
 
     def _sql_for(pred: str) -> str:
         return f"""
-            SELECT so.so_number, so.order_type, so.demand_class, so.order_date,
-                   so.demand_origin,
+            SELECT so.id::text AS so_id, so.so_number, so.order_type, so.demand_class,
+                   so.order_date, so.demand_origin,
                    sol.required_date, w.warehouse_code, sol.unit_price,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
                    {AGENT_LABEL_SQL} AS agent_label,
@@ -385,6 +385,11 @@ def demand_for_recommendation(db: Session, rec_id: str,
 
     lines = [
         {
+            # The core sales order's own id - never displayed, only used to build the
+            # link to its record on the SCM sales-order book (`/scm/sales-orders/{id}`,
+            # the same target `SalesOrdersList` itself links a row to). 21 Aug follow-up:
+            # "SO numbers in both views become hyperlinks to the sales order's own record".
+            "so_id": r["so_id"],
             "so_number": r["so_number"],
             # The location the ORDER named, or the fact that it named none. "-" would read
             # as missing data; this is a fact about the order.
@@ -435,7 +440,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
         # sheet leg: a base query with no ORDER BY/LIMIT, a capped fetch for the lines the
         # FE renders, and a separate uncapped count/sum for the totals.
         confirmed_base_sql = f"""
-            SELECT so.so_number, so.order_type, so.order_date,
+            SELECT so.id::text AS so_id, so.so_number, so.order_type, so.order_date,
                    oir.delivery_date AS required_date, w.warehouse_code,
                    psl.unit_price AS unit_price,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
@@ -478,6 +483,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
 
     confirmed_lines = [
         {
+            "so_id": r["so_id"],
             "so_number": r["so_number"],
             "warehouse_code": r["warehouse_code"],
             "is_unlocated": r["warehouse_code"] is None,
@@ -521,6 +527,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
     # response is cheaper than a second endpoint/hook, and honest about which one each
     # section answers. Unclassified has no configured window (S13d), so it stays empty.
     history_lines: list[dict[str, Any]] = []
+    history_total = 0
     if channel in ("project", "retail"):
         as_of = date.today()
         months = context["project_months"] if channel == "project" else context["retail_months"]
@@ -530,8 +537,8 @@ def demand_for_recommendation(db: Session, rec_id: str,
             "so.demand_class = :hist_project_class" if channel == "project"
             else "so.demand_class IS DISTINCT FROM :hist_project_class"
         )
-        hist_rows = db.execute(text(f"""
-            SELECT so.so_number, so.order_date, so.demand_class,
+        hist_base_sql = f"""
+            SELECT so.id::text AS so_id, so.so_number, so.order_date, so.demand_class,
                    sol.qty_ordered AS qty, sol.qty_delivered, sol.unit_price,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
                    {AGENT_LABEL_SQL} AS agent_label
@@ -543,13 +550,21 @@ def demand_for_recommendation(db: Session, rec_id: str,
               AND so.order_date >= :since AND so.order_date < :until
               AND {hist_pred}
               {("AND " + co) if co else ""}
-            ORDER BY so.order_date DESC, so.so_number
-            LIMIT :limit
-        """), {"pid": rec["product_id"], "since": since, "until": until,
-               "hist_project_class": PROJECT_CLASS, "limit": limit_n,
-               **co_params}).mappings().all()
+        """
+        hist_params = {"pid": rec["product_id"], "since": since, "until": until,
+                       "hist_project_class": PROJECT_CLASS, **co_params}
+        hist_rows = db.execute(text(
+            hist_base_sql + " ORDER BY so.order_date DESC, so.so_number LIMIT :limit"
+        ), {**hist_params, "limit": limit_n}).mappings().all()
+        # Same SF-1 shape as the sheet/confirmed legs above: the CAPPED fetch feeds the
+        # list, an UNCAPPED count says how many exist so a silent cap never reads as "the
+        # whole year".
+        history_total = int(db.execute(
+            text(f"SELECT count(*) FROM ({hist_base_sql}) t"), hist_params
+        ).scalar() or 0)
         history_lines = [
             {
+                "so_id": r["so_id"],
                 "so_number": r["so_number"],
                 "order_date": r["order_date"].isoformat() if r["order_date"] else None,
                 "demand_class": r["demand_class"],
@@ -604,7 +619,9 @@ def demand_for_recommendation(db: Session, rec_id: str,
         "channel": channel,
         # The trailing-window order-history section (see the comment above) - every order
         # PLACED in the window, whatever its status today. Empty when `channel` was not
-        # project/retail, or the window carries nothing.
+        # project/retail, or the window carries nothing. `history_total` is the UNCAPPED
+        # count (SF-1 shape) - `history_shown` stays capped at `limit`.
         "history_lines": history_lines,
         "history_shown": len(history_lines),
+        "history_total": history_total,
     }

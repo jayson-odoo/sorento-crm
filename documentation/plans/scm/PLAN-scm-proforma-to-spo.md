@@ -1,13 +1,22 @@
 # PLAN - a proforma invoice becomes an SPO: convert, match, net, hand to AutoCount
 
-**Status:** BOTH halves BUILT (20-21 Aug 2026). Journey + three shaping decisions approved
-by the captain, 20 Aug 2026 (live session, while testing the new proforma screen). AMENDED
-the same evening: the flow now bends through the packing list (see the Amendment section -
-it supersedes parts of the original decisions and journey below). Still open: reconciling a
-REAL packing-list upload onto an existing DRAFT shipment row (unstarted since the first
-half - see the "STILL NOT built" note at the end of the second half's write-up), and
-AutoCount book-import reconciliation of a CRM SPO by number (explicitly out of scope both
-halves, noted where each is relevant).
+**Status:** BOTH halves BUILT (20-21 Aug 2026), PLUS the second amendment's planner
+(21 Aug, same day). Journey + three shaping decisions approved by the captain, 20 Aug 2026
+(live session, while testing the new proforma screen). AMENDED the same evening: the flow
+now bends through the packing list (see the Amendment section - it supersedes parts of the
+original decisions and journey below). AMENDED AGAIN 21 Aug 00:40 (surface + shape - see the
+"Second amendment" section) - BUILT the same day: `spo_conversion_service.suggest` now
+returns `po_takes` (earliest-first PO breakdown) and `location_options` +
+`suggested_warehouse_id` (ranked destination warehouses); `create` writes the chosen
+warehouse's `spo_allocations` row in the same confirm when one is given. FE: the planner
+table (`SpoPlannerTable.tsx`) lives on the packing-list detail page's own "SPO Planner" tab
+(`/procurement-management/packing-lists/{id}`); the proforma convert hand-off and every
+"where did this go" link now route there by id. `scm/incoming`'s `CreateSpoPanel.tsx` is
+unmounted (kept, unreferenced) - see that section for the full write-up. Still open:
+reconciling a REAL packing-list upload onto an existing DRAFT shipment row (unstarted since
+the first half - see the "STILL NOT built" note at the end of the second half's write-up),
+and AutoCount book-import reconciliation of a CRM SPO by number (explicitly out of scope
+both halves, noted where each is relevant).
 
 **First half BUILT, 20 Aug 2026 (same evening):** the PI -> DRAFT INBOUND SHIPMENT convert
 from the Amendment's first decision. What shipped:
@@ -149,25 +158,54 @@ from the Amendment's first decision. What shipped:
   prices are shown side by side on the suggestion, no gate).
 
 **Second amendment (captain, 21 Aug 00:40, live on the shipped Create SPO panel):** the
-surface and the shape both move.
+surface and the shape both move. **BUILT 21 Aug 2026, same day.**
 
-- **Surface:** the packing-list-to-SPO journey lives on `/procurement-management/packing-lists`
-  (the procurement packing-list book over the same `inbound_shipments` table), not on
-  `/scm/incoming?shipment=`. The convert handoff should land there.
-- **Shape:** not a checkbox list of products. A LOADING-PLAN-STYLE TABLE: one row per packed
-  product with its quantity, and the columns answer, in his words, "instead of looking at SO
-  for loading plan, now I look at PO":
-  1. **Which PO covers this quantity** - take from the EARLIEST PO first (the same
-     earliest-first cascade Place-on-PO uses), with the per-PO takes visible.
-  2. **Which location the SPO should go to** - driven by demand at each location: outstanding
-     SO, on hand, SPO already incoming, and **what the location's available becomes if we SPO
-     this quantity there** (the after figure shown, not implied).
-  3. Allocation priority mirrors the loading plan's ranking: project with the earlier
-     delivery first, then retail - the existing priority policy, not a second sort.
-- Existing machinery to reuse, not re-implement: the earliest-first PO cascade
-  (`project_order_inquiry_service._cascade_take`), `priority.factors_for_demand_rows`,
-  `allocation_suggestion_service` (already links an SPO to its PO line and writes
-  `spo_allocations` on approve), and the container-request table UI as the visual precedent.
+- **Surface - BUILT.** The journey moved to `/procurement-management/packing-lists/{id}`'s
+  own "SPO Planner" tab (`SpoPlannerTable.tsx`) - the procurement packing-list book over the
+  same `inbound_shipments` table `scm/incoming` already used, reached the normal way (sidebar
+  Procurement -> Packing Lists -> a row -> the tab), never a query-string deep link. The PI
+  convert hand-off (`ProformaInvoicesView.tsx` / `ProformaInvoiceDetail.tsx`) and every
+  "where did this line go" link now route there BY ID (`result.shipment_id`, never the number
+  in a query string - the id was already on every one of those response shapes). `scm/
+  incoming`'s `CreateSpoPanel.tsx` is UNMOUNTED from `IncomingContainersView` (the file and
+  its own test stay, deliberately unreferenced) so there is one surface, not two.
+- **Shape - BUILT.** Not a checkbox list. `SpoPlannerTable` is a `DataGrid`/`DataGridTable`
+  ranked table (visual precedent `ContainerRequestSection`), one row per packed product, no
+  checkbox column - the SPO-qty input IS the include/exclude decision, edited to 0 drops the
+  line off the confirm without hiding the row (`ContainerRequestSection.renderQtyCell`'s own
+  rule). Per the three asks:
+  1. **Which PO covers this quantity - BUILT.** `spo_conversion_service.suggest` now returns
+     `po_takes` (earliest-first per-PO breakdown) alongside the unchanged `po_covered_qty`
+     total, behind a drill popover on the "PO covers" cell.
+  2. **Which location the SPO should go to - BUILT.** `location_options` +
+     `suggested_warehouse_id` on each line: outstanding SO / on hand / incoming SPO per
+     candidate warehouse, behind a drill popover on the "Location" cell; the AFTER figure
+     (`available + qty`) is computed on screen against the LIVE edited qty, never sent stale.
+  3. **Ranking - BUILT.** The shared `priority.factors_for_demand_rows` policy, project
+     earlier delivery first then retail - never a second sort.
+- **Reuse, not reinvention - as built:** the earliest-first PO cascade discipline is COPIED
+  from `project_order_inquiry_service._cascade_take` (not imported - that class is a large
+  stateful order-inquiry service; importing it for one pure algorithm would drag its whole
+  graph in, the same call this file's own `_stock_context` already made about
+  `container_request_service`). `priority.factors_for_demand_rows` is called directly, as
+  planned. `location_stock_service.location_stock_for_product` (the reorder Buy-row popup's
+  own per-location reader) supplies the candidate pool + figures, rather than reinventing a
+  sibling query. `allocation_suggestion_service` is reused for its WRITE
+  (`SPOAllocationService.create_allocation`, identical to what `approve()` calls) - its READ
+  side (`suggest`/`_candidates`) was NOT reusable as-is: that ranks EXISTING open PO lines
+  already tied to a shipment, whereas this planner ranks WAREHOUSES for a not-yet-created
+  SPO, a different question - see "One confirm, two writes" below for the resulting design.
+- **One confirm, two writes - not a second approve step (captain's stated preference,
+  honoured).** `create`'s `lines` payload gained an OPTIONAL `warehouse_id`. When a line
+  carries one, the SAME action that mints the SPO also writes its `spo_allocations` row
+  (`forward_match=False` per row, one forward-match sweep per distinct SPO number after -
+  `approve()`'s own pattern, for the same "several warehouses can share one SPO number"
+  reason). When absent (every caller before this amendment), nothing is allocated - the
+  pre-existing `test_created_spo_lines_are_absent_from_on_order_v_until_allocated` invariant
+  is untouched: allocation was always a decision, not a default, and still is - it is simply
+  made on the SAME screen now, because this plan puts it there. No side effect of
+  `create_allocation` (cost capture, shipment-line status refresh, forward match) needed to
+  be separated out to make this work.
 
 **Serves:** the proforma UAC's own named "next task" (the PI-vs-PO verification screen this
 plan absorbs) - `scm-proforma-invoice-acceptance-criteria.md`. Depends on the proforma FE

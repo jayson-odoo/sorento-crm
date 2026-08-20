@@ -302,7 +302,10 @@ describe('PlanLinesGrid - the explanations are still there', () => {
   // faith, so they are pinned here.
   it('offers the demand and checklist drills beside the product', () => {
     renderGrid([line()]);
-    expect(screen.getByRole('button', { name: /Demand behind this row/i })).toBeInTheDocument();
+    // Exact match: the ungrouped grid's Project/Retail/Unclass. cells (21 Aug follow-up)
+    // carry their OWN "<Channel> demand behind this row" triggers, which a substring
+    // match against "Demand behind this row" would also catch.
+    expect(screen.getByRole('button', { name: 'Demand behind this row' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /What the plan checked/i })).toBeInTheDocument();
   });
 
@@ -1113,7 +1116,10 @@ describe('PlanLinesGrid - product-grain channel grouping (5.3 follow-up, 19-20 A
     expect(within(row).getByText('6')).toBeInTheDocument(); // retail: 6 + 0 + 0
   });
 
-  it('the channel column carries a trend subline sourced from channelTrendFor, per channel', () => {
+  // 21 Aug follow-up: the "Orders rising" trend subline is gone from this cell (captain:
+  // "i don't think we need the orders rising thingy") - it never renders even when a
+  // caller still supplies `channelTrendFor` (legacy prop, no longer read by this cell).
+  it('the channel column no longer carries a trend subline, even when channelTrendFor is supplied', () => {
     const channelTrendFor = vi.fn((productId: string | null, channel: string) =>
       channel === 'project'
         ? { verdict: 'rising' as const, recent_qty: 10, previous_qty: 5, change_pct: 100,
@@ -1121,9 +1127,23 @@ describe('PlanLinesGrid - product-grain channel grouping (5.3 follow-up, 19-20 A
         : undefined,
     );
     renderGroupedGrid([retail, projectIb, projectIr], channelTrendFor);
-    expect(channelTrendFor).toHaveBeenCalledWith('p1', 'project');
-    expect(screen.getByText(/Orders rising - consider more/)).toBeInTheDocument();
-    expect(screen.getByText(/avg 2.5\/day/)).toBeInTheDocument();
+    expect(screen.queryByText(/Orders rising - consider more/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/avg 2.5\/day/)).not.toBeInTheDocument();
+  });
+
+  // 21 Aug follow-up: "where is the tooltip for me to open at project and retail... on
+  // the TOP row" - the per-channel drill the group panel already had, now on the top
+  // product-grain row's own channel cells too. Live-tested the same day: "you show me
+  // the history, not the demand" for THIS row specifically (the demand list stays the
+  // location member rows' own answer) - so the trigger's own label says "order history".
+  it('the top product-grain row carries its own Project and Retail order-history drill triggers', () => {
+    renderGroupedGrid([retail, projectIb, projectIr]);
+    expect(
+      screen.getByRole('button', { name: 'Project order history' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Retail order history' }),
+    ).toBeInTheDocument();
   });
 
   it('sums order qty across the group\'s warehouses', () => {

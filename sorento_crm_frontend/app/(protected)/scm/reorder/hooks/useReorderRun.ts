@@ -319,16 +319,22 @@ export function useNeedsLevelRecommendations(runId: string | null, enabled: bool
  * preferred fix, 20 Aug) - it is part of the query key so opening the Project trigger and
  * the Retail trigger on the same row are two independently cached fetches, never one
  * clobbering the other's cache entry.
+ *
+ * `scope: 'product'` (21 Aug follow-up) is the top product-grain row's own trigger -
+ * widens the fetch to every recommendation the run wrote for the same product, matching
+ * the union the row's own channel columns already sum. Also part of the query key, for
+ * the same reason `channel` is.
  */
 export function useRecommendationDemand(
   runId: string | null,
   recId: string | null,
   enabled: boolean,
   channel?: 'project' | 'retail' | 'unclassified',
+  scope?: 'product',
 ) {
   return useQuery({
-    queryKey: ['scm', 'reorder', 'rec-demand', runId, recId, channel ?? null],
-    queryFn: () => getRecommendationDemand(runId as string, recId as string, channel),
+    queryKey: ['scm', 'reorder', 'rec-demand', runId, recId, channel ?? null, scope ?? null],
+    queryFn: () => getRecommendationDemand(runId as string, recId as string, channel, scope),
     enabled: enabled && !!runId && !!recId,
     staleTime: 60_000,
     refetchOnWindowFocus: false,

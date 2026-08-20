@@ -451,6 +451,35 @@ def test_every_line_names_who_ordered_it_however_little_the_order_says(scm_app):
     assert price["ZZTSO-WHO-DEBTOR"] is None, "a line with no price says nothing, not 0"
 
 
+def test_every_line_carries_the_core_sos_own_id_for_the_record_link(scm_app):
+    """21 Aug follow-up: "SO numbers in both views become hyperlinks to the sales
+    order's own record" - `so_id` is the CORE `sales_orders.id`, the same id
+    `/scm/sales-orders/{id}` (and `SalesOrdersList`'s own row link) already keys on -
+    never the recommendation id, the product id, or any other uuid on the row."""
+    from tests.scm.test_channel_read_model import _confirmed_leg
+
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-SOID")
+    pid = _mk_product(db, f"ZZTP-SOID-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _so(db, pid, wid, 5, number="ZZTSO-SOID-SHEET")
+    _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=8)
+    _link(db, pid, _mk_supplier(db, "ZZT Soid Supplier"), moq=None, mult=None)
+    db.flush()
+
+    real_so_id = db.execute(text(
+        "SELECT id FROM sales_orders WHERE so_number = 'ZZTSO-SOID-SHEET'"
+    )).scalar()
+    out = dbs.demand_for_recommendation(db, _rec(db, ["ZZTW-SOID"], pid))
+
+    by_number = {l["so_number"]: l for l in out["lines"]}
+    assert by_number["ZZTSO-SOID-SHEET"]["so_id"] == str(real_so_id)
+    confirmed = [l for l in out["lines"] if l["source"] == "order_inquiry_confirmed"][0]
+    assert confirmed["so_id"] is not None
+    assert confirmed["so_id"] != confirmed.get("so_number")
+
+
 def test_a_customer_row_of_another_company_never_names_this_order(scm_app):
     """The label join is a raw `LEFT JOIN customers`, so it crosses the company boundary
     unless the join says otherwise - and naming another company's buyer on this company's
@@ -1078,19 +1107,26 @@ def test_history_lines_include_delivered_orders_within_the_window(scm_app):
         "created_at, updated_at) "
         "VALUES (:i, :so, :p, :w, 20, 20, 45.0, 'closed', 'covered', now(), now())"
     ), {"i": str(uuid.uuid4()), "so": so_id, "p": pid, "w": wid})
+    # A separate, still-OPEN line so the run actually writes a recommendation for this
+    # product - the delivered order above carries zero open demand on its own.
+    _so(db, pid, wid, 1, order_type="project", number="ZZTSO-HIST1-OPEN")
     _link(db, pid, _mk_supplier(db, "ZZT Hist1 Supplier"), moq=None, mult=None)
     db.flush()
 
     out = dbs.demand_for_recommendation(db, _rec(db, ["ZZTW-HIST1"], pid), channel="project")
 
-    assert out["lines"] == [], "the delivered order is not OPEN demand"
+    assert [l["so_number"] for l in out["lines"]] == ["ZZTSO-HIST1-OPEN"], (
+        "the delivered order is not OPEN demand"
+    )
     hist = {l["so_number"]: l for l in out["history_lines"]}
     assert "ZZTSO-HIST1-DELIVERED" in hist
     assert hist["ZZTSO-HIST1-DELIVERED"]["delivered"] is True
     assert hist["ZZTSO-HIST1-DELIVERED"]["qty"] == 20.0
     assert hist["ZZTSO-HIST1-DELIVERED"]["unit_price"] == 45.0
     assert hist["ZZTSO-HIST1-DELIVERED"]["agent_label"] is not None
+    assert hist["ZZTSO-HIST1-DELIVERED"]["so_id"] == str(so_id)
     assert out["history_shown"] == len(out["history_lines"])
+    assert out["history_total"] == out["history_shown"], "uncapped == capped, well under limit"
 
 
 def test_history_lines_are_empty_off_the_window_and_off_unclassified(scm_app):
@@ -1114,6 +1150,9 @@ def test_history_lines_are_empty_off_the_window_and_off_unclassified(scm_app):
         "qty_ordered, qty_delivered, line_status, purchasing_status, created_at, updated_at) "
         "VALUES (:i, :so, :p, :w, 20, 20, 'closed', 'covered', now(), now())"
     ), {"i": str(uuid.uuid4()), "so": so_id, "p": pid, "w": wid})
+    # A separate, still-OPEN line so the run actually writes a recommendation for this
+    # product - the 3-year-old order above carries zero open demand on its own.
+    _so(db, pid, wid, 1, order_type="project", number="ZZTSO-HIST2-OPEN")
     _link(db, pid, _mk_supplier(db, "ZZT Hist2 Supplier"), moq=None, mult=None)
     db.flush()
     rec_id = _rec(db, ["ZZTW-HIST2"], pid)
