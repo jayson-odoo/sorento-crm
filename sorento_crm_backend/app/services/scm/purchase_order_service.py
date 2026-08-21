@@ -15,6 +15,7 @@ po_number + supplier / warehouse codes are surfaced (never UUIDs).
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date
 from typing import Optional
@@ -51,6 +52,8 @@ _REC_SOURCE = "scm_recommendation"
 #: writes shipping orders under their own stamp (`po_history_service.SPO_SOURCE_SYSTEM`), and
 #: an unlisted stamp would read as "somebody keyed this by hand".
 _IMPORT_SOURCES = (PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE)
+
+log = logging.getLogger(__name__)
 
 
 def _source_label(source_system: Optional[str]) -> str:
@@ -291,10 +294,34 @@ class PurchaseOrderService:
     # -- M4 Slice B writes ---------------------------------------------------
 
     def bulk_confirm(self, ids: list[str], actor: Optional[str] = None) -> dict:
-        """Confirm draft POs → active + canonical number (M4-D6). Idempotent: a PO not
-        in ``draft_recommendation`` is skipped, so re-confirming is a no-op."""
+        """Confirm draft POs -> active + canonical number (M4-D6). Idempotent: a PO not
+        in ``draft_recommendation`` is skipped, so re-confirming is a no-op.
+
+        Confirming is also one of the moments the order-inquiry auto-place cascade
+        runs (captain, 21 Aug): a line an internal draft PO just opened may already
+        have a RAISED buy row waiting on exactly this product, so placement should not
+        wait on someone clicking a separate button - the same idempotent cascade
+        ``project_supply_service._auto_place_after_confirm`` runs on a decision
+        confirm, a THIRD trigger of it rather than a mirror of that function's own
+        shape: it runs a SAVEPOINT (``begin_nested``) inside the SAME transaction as
+        its caller's writes, because that caller has not committed yet; this one runs
+        commit-then-try, its own separate best-effort transaction AFTER the confirm's
+        own commit, because the confirm here already IS the commit point - the confirm
+        itself has already succeeded by the time this runs, so a failure here must not
+        turn that success into a 500 the retry cannot repair (CLAUDE.md - post-commit
+        side effects are best-effort, never raise).
+
+        ``actor`` (a real user id) is REQUIRED for the auto-place pass, never
+        substituted: ``OrderInquiryRow.actioned_by`` is a genuine FK to ``users.id``,
+        so a placeholder like ``"system"`` would violate the constraint, the
+        IntegrityError would be swallowed by the very try/except that makes this
+        best-effort, and the whole placement batch would silently roll back (code
+        review, 21 Aug, S1). A confirm with no real actor (the API-key/system
+        principal) simply skips the pass and logs why - the confirm itself is
+        unaffected either way."""
         confirmed = 0
         numbering = NumberingService(self.db)
+        product_ids: set[str] = set()
         for pid in ids or []:
             po = (
                 self._base_query()
@@ -312,8 +339,37 @@ class PurchaseOrderService:
                 po.expected_date = max(dates) if dates else None
             for ln in po.lines:
                 ln.line_status = "open"
+                if ln.product_id:
+                    product_ids.add(str(ln.product_id))
             confirmed += 1
         self.db.commit()
+
+        if not product_ids:
+            return {"confirmed_count": confirmed}
+
+        if not actor:
+            log.warning(
+                "purchase order(s) confirmed, but auto-place was skipped: no real "
+                "actor to attribute the placement to",
+            )
+            return {"confirmed_count": confirmed}
+
+        try:
+            from app.services.project_order_inquiry_service import (
+                ProjectOrderInquiryService,
+            )
+
+            ProjectOrderInquiryService(self.db).auto_place_for_products(
+                list(product_ids), actor_user_id=actor, trigger="po_confirm",
+            )
+            self.db.commit()
+        except Exception as exc:  # noqa: BLE001
+            self.db.rollback()
+            log.warning(
+                "purchase order(s) confirmed, but the order-inquiry auto-place "
+                "pass failed (%s)", exc,
+            )
+
         return {"confirmed_count": confirmed}
 
     def create_gr(self, po_id: str, actor: Optional[str] = None) -> dict:

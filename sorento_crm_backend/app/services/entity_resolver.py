@@ -46,6 +46,12 @@ from app.models.procurement import (
 from app.models.certificate import Certificate, CertificateRevision
 from app.models.product import Product
 from app.models.resources import Attachment, AttachmentType
+# Imported rather than redefined, so the value cannot drift between the two modules. A
+# draft (proforma-created) shipment must not be resolvable by container/BOL/invoice number
+# here either - `incoming_stock_service` already excludes it from every list read, and an
+# assistant that could still NAME the draft via this resolver would ask incoming_list about
+# it and get told "nothing incoming for container X" instead of never hearing of it.
+from app.services.scm.proforma_invoice_service import _DRAFT_SHIPMENT_STATUS
 
 
 logger = logging.getLogger(__name__)
@@ -1103,7 +1109,8 @@ def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[Re
                 _ws_insensitive_lower(InboundShipment.shipping_container_number).in_(normalized),
                 _ws_insensitive_lower(InboundShipment.bill_of_lading_number).in_(normalized),
                 _ws_insensitive_lower(InboundShipment.invoice_number).in_(normalized),
-            )
+            ),
+            InboundShipment.shipment_status != _DRAFT_SHIPMENT_STATUS,
         )
         .all()
     )
@@ -1601,7 +1608,8 @@ def _prefix_probe_inbound_shipment(db: Session, token: str) -> list[ResolvedEnti
                 InboundShipment.shipping_container_number.ilike(prefix),
                 InboundShipment.bill_of_lading_number.ilike(prefix),
                 InboundShipment.invoice_number.ilike(prefix),
-            )
+            ),
+            InboundShipment.shipment_status != _DRAFT_SHIPMENT_STATUS,
         )
         .limit(PREFIX_LIMIT)
         .all()

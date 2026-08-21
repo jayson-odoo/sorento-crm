@@ -11,7 +11,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { AlertCircle, ArrowLeft, ClipboardList, Search, X } from 'lucide-react';
+import { AlertCircle, ArrowLeft, CheckCircle2, ClipboardList, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -27,7 +27,11 @@ import { EM_DASH, fmtInt } from '../../lib/format';
 import { computedAtLabel, dayLabel } from '../lib/coverageTimeline';
 import { decisionLockReason, isLegacyRun, planGrainLabel } from '../lib/planGrain';
 import { decimalPlacesOf, fmtQty } from '../lib/qtyPrecision';
-import { useOrderSummary, useRecordOrderDecision } from '../hooks/useSummaryOrder';
+import {
+  useConfirmOrderDecisions,
+  useOrderSummary,
+  useRecordOrderDecision,
+} from '../hooks/useSummaryOrder';
 import type {
   OrderSummaryDecisionResult,
   OrderSummaryRow,
@@ -132,6 +136,7 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
   const query = { run_id: runId };
   const { data, isLoading, isError, error, refetch } = useOrderSummary(query);
   const decide = useRecordOrderDecision(query);
+  const confirmDecisionsMutation = useConfirmOrderDecisions(data?.run_id ?? runId ?? null);
 
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -157,6 +162,15 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
       }
     : null;
   const lockReason = decisionLockReason(runGrain, 'product');
+  // How many rows Confirm decisions is actually about to materialise into draft POs
+  // (AC-C2.8) - `chosen_qty > 0`, not merely decided: a zero decision ("use the pool")
+  // is a real answer but confirm skips it (code review, 21 Aug, N6), so counting it
+  // here would show a number the toast then contradicts. Zero disables the button
+  // rather than hiding it, so the buyer always sees where the action lives.
+  const decidedCount = useMemo(
+    () => rows.filter((r) => (r.chosen_qty ?? 0) > 0).length,
+    [rows],
+  );
 
   const columns = useMemo<ColumnDef<OrderSummaryRow>[]>(
     () => [
@@ -595,6 +609,23 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
             </p>
           ) : null}
         </div>
+        {/* Product-grain only (AC-F09): decide-on-the-row here, Confirm decisions
+            materialises every chosen quantity into a consolidated draft PO the same
+            way the location-grain "buy" tab already does (captain, 21 Aug). Disabled
+            rather than hidden with nothing decided, so the action's home is always
+            visible. */}
+        {!lockReason && data ? (
+          <Button
+            size="sm"
+            className="shrink-0"
+            data-testid="confirm-order-decisions"
+            disabled={decidedCount === 0 || confirmDecisionsMutation.isPending}
+            onClick={() => confirmDecisionsMutation.mutate()}
+          >
+            <CheckCircle2 className="size-4" />
+            Confirm decisions{decidedCount > 0 ? ` (${decidedCount})` : ''}
+          </Button>
+        ) : null}
       </div>
 
       <DataGrid

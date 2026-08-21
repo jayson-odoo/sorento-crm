@@ -20,6 +20,25 @@ the decision state (and its PO number) survives a confirm renumber without a sch
 change. ``confirm_decisions`` is idempotent — re-running it reconciles every line
 to the rec's CURRENT decision (re-adjusted qty updated, rejected rec's line pulled).
 No UUIDs surface — suppliers/POs resolve to codes/numbers.
+
+**Both plan grains reach a draft PO here now** (captain, 21 Aug - reverses the
+original doctrine that a product-grain run never drafted an internal
+``purchase_orders`` row and only ever produced the AutoCount keying worklist).
+``confirm_decisions`` dispatches on the run's own stamped grain: a LOCATION run
+reconciles recommendation-level decisions (accept/adjust/reject, or the newer S16
+``plan_row_decision``) via ``_confirm_location_grain``; a PRODUCT run reconciles via
+``_confirm_product_grain``, which itself has TWO decision surfaces and a strict
+precedence between them - the results grid's Decision pills (``PlanRowDecision`` on
+the run's member recs, S16, the captain's actual screen: "I need the confirm decision
+to be in reorder planning, not in another page called order summary") are
+AUTHORITATIVE; the Summary Order Report's own ``OrderSummaryRow.chosen_qty`` /
+``chosen_supplier_id`` (``summary_order_service.record_decision``) is the fallback for
+a product the grid has no decision for. See that function's own docstring for why
+(the fan-out shape, the consolidation-per-product, the precedence). Confirming that
+draft (``purchase_order_service.bulk_confirm``) then triggers the order-inquiry
+auto-place cascade the same way a project-supply decision confirm does - placement
+never waits on a person clicking a separate button. The po_worklist AutoCount path is
+unchanged and unaffected either way.
 """
 from __future__ import annotations
 
@@ -39,10 +58,16 @@ from app.models.scm import (
 )
 from app.services.error_handler import AppException
 from app.services.scm import plan_grain
+from app.services.scm.reorder_engine import allocate as eng_allocate
 from app.services.numbering_service import NumberingService
 
 DRAFT_STATUS = "draft_recommendation"
 _SRC = "scm_recommendation"
+#: The draft-PO-line stamp for a PRODUCT-grain decision (`OrderSummaryRow.chosen_qty`,
+#: captain 21 Aug - reverses the old "product grain never drafts a PO" doctrine below).
+#: Kept distinct from `_SRC` so a location-grain rec id and a product-grain row id can
+#: never collide inside the same lookup, even though both are UUIDs.
+_SRC_PRODUCT = "scm_order_summary_row"
 
 
 # ---------------------------------------------------------------------------
@@ -216,16 +241,19 @@ def _draft_po_for_supplier(
     return po
 
 
-def _remove_rec_line(db: Session, rec_id: str) -> None:
-    """Drop a rec's line from whatever DRAFT PO it currently sits in (a prior
-    accept/adjust that is being redirected or rejected). Deletes the draft if it
-    empties. Only draft POs are touched — a confirmed (active) PO is never mutated."""
+def _remove_source_line(db: Session, source_ref: str, source_system: str = _SRC) -> None:
+    """Drop a `(source_system, source_ref)` line from whatever DRAFT PO it currently
+    sits in (a prior decision being redirected, cleared, or rejected). Deletes the
+    draft if it empties. Only draft POs are touched - a confirmed (active) PO is never
+    mutated. Shared by both grains - `_remove_rec_line` is the location-grain (rec id)
+    alias every existing caller uses. A product-grain caller drafts more than one line
+    per product (B2, `_remove_product_lines` below), so it does not call this directly."""
     line = (
         db.query(PurchaseOrderLine)
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
         .filter(
-            PurchaseOrderLine.source_ref == rec_id,
-            PurchaseOrderLine.source_system == _SRC,
+            PurchaseOrderLine.source_ref == source_ref,
+            PurchaseOrderLine.source_system == source_system,
             PurchaseOrder.status == DRAFT_STATUS,
         )
         .first()
@@ -247,14 +275,37 @@ def _remove_rec_line(db: Session, rec_id: str) -> None:
             db.flush()
 
 
+def _remove_rec_line(db: Session, rec_id: str) -> None:
+    """Location-grain alias of `_remove_source_line` - every existing (rec-id-keyed)
+    call site is unchanged."""
+    _remove_source_line(db, rec_id, _SRC)
+
+
 def _upsert_line(
     db: Session,
     po: PurchaseOrder,
-    rec: ReorderRecommendation,
+    *,
+    product_id: str,
+    warehouse_id: Optional[str],
+    source_ref: str,
     qty: float,
     unit_cost: Optional[float],
     lead_days: Optional[float],
+    source_system: str = _SRC,
 ) -> None:
+    """Upsert ONE draft-PO line keyed by `(source_system, source_ref)`.
+
+    Shared by both grains: a location-grain caller passes a recommendation's own id
+    under `_SRC` (one line per warehouse rec, or None for a network-wide buy that names
+    no single location). A product-grain caller (`_SRC_PRODUCT`) always passes a REAL
+    `warehouse_id` too (B2, code review 21 Aug) - either the deciding member
+    recommendation's own one (grid path) or a persisted location allocation's one
+    (Summary Order Report fallback) - never None: `scm.po_ordered_v` and
+    `CoverageService` both filter/join on `warehouse_id`, so a NULL one is invisible to
+    the next run's supply and gets re-suggested. Either grain re-confirms onto the SAME
+    line rather than duplicating one, as long as the caller passes the SAME
+    `source_ref` it used last time.
+    """
     expected = (
         date.today() + timedelta(days=int(lead_days))
         if lead_days is not None else None
@@ -263,7 +314,8 @@ def _upsert_line(
         db.query(PurchaseOrderLine)
         .filter(
             PurchaseOrderLine.purchase_order_id == po.id,
-            PurchaseOrderLine.source_ref == rec.id,
+            PurchaseOrderLine.source_ref == source_ref,
+            PurchaseOrderLine.source_system == source_system,
         )
         .first()
     )
@@ -276,16 +328,16 @@ def _upsert_line(
             PurchaseOrderLine(
                 id=str(uuid.uuid4()),
                 purchase_order_id=po.id,
-                product_id=rec.product_id,
-                warehouse_id=rec.warehouse_id,
+                product_id=product_id,
+                warehouse_id=warehouse_id,
                 qty_ordered=qty,
                 qty_received=0,
                 unit_cost=unit_cost,
                 currency=po.currency,
                 expected_date=expected,
                 line_status="open",
-                source_system=_SRC,
-                source_ref=rec.id,
+                source_system=source_system,
+                source_ref=source_ref,
             )
         )
     db.flush()
@@ -439,20 +491,41 @@ def confirm_decisions(
 ) -> dict:
     """Materialise the staged decisions of a run into consolidated draft POs (M4-D4).
 
+    Dispatches on the run's own stamped grain (AC-F09): a legacy run holds no
+    actionable decision at all and is refused outright; a LOCATION run reconciles its
+    recommendation-level decisions (``_confirm_location_grain``, unchanged since M4);
+    a PRODUCT run reconciles via ``_confirm_product_grain``, which is itself decided
+    from the results grid's Decision pills first and the Summary Order Report's own
+    quantity-sheet decision only as a fallback (see that function's docstring).
+    Reversed doctrine (captain, 21 Aug): a product-grain run used to hand Joey a
+    worklist to key in AutoCount and NOTHING ELSE - now "decide buy on the row" also
+    drafts an internal PO the same way a location decision does, so confirming it can
+    in turn trigger the order-inquiry auto-place cascade
+    (``purchase_order_service.bulk_confirm``). The worklist is untouched either way -
+    it is a read of the same decisions, not the only route to a PO any more."""
+    run = _run_or_404(db, run_id)
+    plan_grain.assert_not_legacy(run)
+    if plan_grain.decision_grain_of(run) == plan_grain.PRODUCT_GRAIN:
+        return _confirm_product_grain(db, run_id, ids, actor)
+    return _confirm_location_grain(db, run_id, ids, actor)
+
+
+def _confirm_location_grain(
+    db: Session, run_id: str, ids: Optional[list[str]], actor: Optional[str]
+) -> dict:
+    """The LOCATION-grain half of ``confirm_decisions`` (M4-D4).
+
     Idempotent reconciler: for every decided rec (optionally narrowed to ``ids``)
     — accepted/adjusted → upsert its line into the supplier's draft PO (latest
     override qty/supplier honoured); dismissed → pull its line back out. Re-running
     after a re-adjust just updates the line. Returns how many decisions were
     confirmed and how many distinct draft POs were touched.
 
-    Guarded like the decisions it materialises (AC-F09): confirming is the step that turns
-    staged location decisions into draft purchase orders, so a run that may not hold those
-    decisions may not have them materialised either - otherwise the grain guard on Accept /
-    Adjust / Reject is bypassed by whatever staged status a run happens to carry. Unchanged
-    by S16 (the row decision, below): a product-grain run never drafts an internal
-    ``purchase_orders`` row at all - it hands Joey a worklist to key in AutoCount instead -
-    so ``plan_row_decision``'s buy portion only ever reaches a draft PO here, on a run
-    already proven to be location-grain.
+    Guarded like the decisions it materialises (AC-F09): confirming is the step that
+    turns staged location decisions into draft purchase orders, so a run that may not
+    hold those decisions may not have them materialised either - otherwise the grain
+    guard on Accept / Adjust / Reject is bypassed by whatever staged status a run
+    happens to carry.
 
     S16 (captain 21 Aug): a rec that carries a ``plan_row_decision`` is reconciled from
     THAT record instead of the legacy accepted/adjusted/dismissed status - it is the
@@ -494,7 +567,10 @@ def confirm_decisions(
         # supplier), then consolidate into the current supplier's draft.
         _remove_rec_line(db, rec.id)
         po = _draft_po_for_supplier(db, supplier_id, rec.currency)
-        _upsert_line(db, po, rec, qty, unit_cost, lead)
+        _upsert_line(
+            db, po, product_id=rec.product_id, warehouse_id=rec.warehouse_id,
+            source_ref=rec.id, qty=qty, unit_cost=unit_cost, lead_days=lead,
+        )
         touched.add(po.id)
         confirmed += 1
 
@@ -506,8 +582,259 @@ def confirm_decisions(
             continue  # use_stock / use_po / skip / an all-non-buy mixture — nothing to draft
         choice = _resolve_choice(db, rec, None)
         po = _draft_po_for_supplier(db, choice["supplier_id"], rec.currency)
-        _upsert_line(db, po, rec, buy_qty, choice["unit_cost"], choice["lead_time_days"])
+        _upsert_line(
+            db, po, product_id=rec.product_id, warehouse_id=rec.warehouse_id,
+            source_ref=rec.id, qty=buy_qty, unit_cost=choice["unit_cost"],
+            lead_days=choice["lead_time_days"],
+        )
         touched.add(po.id)
+        confirmed += 1
+
+    db.flush()
+    return {"confirmed_count": confirmed, "po_count": len(touched)}
+
+
+def _remove_product_lines(db: Session, product_id: str) -> None:
+    """Drop EVERY product-grain draft line for this product, from whatever draft PO(s)
+    they sit in (code review, 21 Aug, B2: a product-grain draft is now split across its
+    real member warehouses, so a product can hold more than one line - reconciling it
+    means clearing the whole set before redrafting, not one key). Deletes a draft PO
+    that empties out. Only draft POs are touched."""
+    lines = (
+        db.query(PurchaseOrderLine)
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .filter(
+            PurchaseOrderLine.product_id == product_id,
+            PurchaseOrderLine.source_system == _SRC_PRODUCT,
+            PurchaseOrder.status == DRAFT_STATUS,
+        )
+        .all()
+    )
+    if not lines:
+        return
+    po_ids = {line.purchase_order_id for line in lines}
+    for line in lines:
+        db.delete(line)
+    db.flush()
+    for po_id in po_ids:
+        remaining = (
+            db.query(PurchaseOrderLine)
+            .filter(PurchaseOrderLine.purchase_order_id == po_id)
+            .count()
+        )
+        if remaining == 0:
+            po = db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).first()
+            if po is not None:
+                db.delete(po)
+    db.flush()
+
+
+def _grid_member_split(
+    members: list[ReorderRecommendation], qty: float
+) -> dict[str, float]:
+    """Apportion ONE product-grain decided quantity across its REAL member warehouses
+    (code review, 21 Aug, B2). ``usePlanLines.decide`` fans the SAME ``buy_qty`` onto
+    every member of a grouped product row rather than splitting it, so drafting each
+    member's own value as-is would order the total once per member instead of once for
+    the product. This apportions it instead - the SAME weighting
+    (``summary_order_service._persist_location_split``) uses for the Summary Order
+    Report's own ``chosen_qty`` (each member's frozen deficit as the weight) - so every
+    drafted line names a REAL warehouse. A NULL one is invisible to the views the next
+    run's shortfall is computed from (``scm.po_ordered_v`` groups by
+    ``(product_id, warehouse_id)``; ``CoverageService._supply_events_many`` filters
+    ``PurchaseOrderLine.warehouse_id.in_(wh_ids)``, and a NULL warehouse matches
+    neither) - so a NULL-warehouse line would leave the buy invisible to the next
+    run's supply and get re-suggested, the double-order both of those already guard
+    against for a genuine warehouse.
+    """
+    inputs = []
+    for rec in members:
+        deficit = float(rec.rounded_qty or 0)
+        if deficit <= 0:
+            net_position = float(rec.net_position) if rec.net_position is not None else 0.0
+            deficit = max(-net_position, 0.0)
+        inputs.append({
+            "warehouse_id": str(rec.warehouse_id),
+            "deficit": deficit,
+            "demand_rate": float(rec.forecast_daily_demand or 0.0),
+        })
+    return eng_allocate(qty, inputs, decimal_places=0)
+
+
+def _confirm_product_grain(
+    db: Session, run_id: str, ids: Optional[list[str]], actor: Optional[str]
+) -> dict:
+    """The PRODUCT-grain half of ``confirm_decisions`` (captain, 21 Aug; corrected the
+    same day once the captain named the actual screen: "I need the confirm decision to
+    be in reorder planning, not in another page called order summary").
+
+    A product-grain run carries the SAME decision on TWO surfaces, and this reconciles
+    them with a strict precedence:
+
+    1. **The results grid's Decision pills** (``PlanRowDecision``, S16) - the
+       AUTHORITATIVE source. The grid decides on the run's per-warehouse member
+       recommendations, grouped into one row per product (``planLineGrouping.ts``):
+       ``usePlanLines.decide`` fans the SAME decision out to EVERY member rec of that
+       group (mirrors ``updateMoq``'s own fan-out) - it does NOT split the quantity
+       across members, so a product with three warehouse members gets the identical
+       ``buy_qty`` written three times, once per member. Consolidating this therefore
+       means picking ONE representative member for the QUANTITY and SUPPLIER (not
+       summing, which would triple-count a 3-location product), then splitting that
+       one quantity back across the group's real member warehouses
+       (``_grid_member_split``, B2) so every drafted line names a real one. The
+       representative is the most-recently-decided member (ties broken by rec id for a
+       deterministic pick), which only matters when a partial fan-out failure left
+       members disagreeing - the ordinary case has every member identical by
+       construction. Only the BUY portion of a mixture drafts, exactly like the
+       location-grain plan-row loop above: use_stock / use_po / skip portions never do.
+    2. **The Summary Order Report's Set-quantity sheet** (``OrderSummaryRow.
+       chosen_qty`` / ``chosen_supplier_id``, ``summary_order_service.record_decision``)
+       - the FALLBACK, read only for a product the grid has no decision for. This
+       mirrors S16's own doctrine that a row decision is authoritative over the older
+       mechanism it supersedes (see ``confirm_decisions``' docstring on
+       ``PlanRowDecision`` vs. legacy rec status) - here it is the grid decision that
+       is the newer, row-level mechanism, and the Summary Order Report's own decision
+       predates it. Its own location split is already persisted
+       (``OrderSummaryLocationAllocation``, written by ``record_decision`` ->
+       ``_persist_location_split``) so this reads it rather than re-deriving one.
+
+    Both surfaces draft into the SAME set of lines for a product - one draft PO per
+    chosen supplier, one line per REAL warehouse the quantity actually lands in. A
+    product can therefore hold more than one line; reconciling it clears the whole set
+    first (``_remove_product_lines``) rather than one key, so a re-decision (or a
+    precedence flip between the two surfaces) never leaves an orphaned line from the
+    other shape. Line identity is the deciding recommendation/allocation, never the
+    product alone: the grid path keys each line by its OWN member recommendation id
+    (stable across re-decisions of that member, the same shape the location-grain loop
+    above uses); the fallback path keys each line by ``"{row_id}:{warehouse_id}"``
+    (stable across a re-split, which always replaces ``OrderSummaryLocationAllocation``
+    wholesale and would hand out fresh row ids of its own otherwise). ``ids``
+    (optional) narrows to specific product, ``OrderSummaryRow``, or
+    member-recommendation ids; empty confirms every decided product.
+
+    Price and lead time are read exactly the way the PO worklist already resolves them
+    per (product, supplier) (``summary_order_service.lead_times_for_pairs``) rather
+    than a second lookup, so the drafted lines and the worklist a buyer already saw can
+    never disagree.
+    """
+    from app.models.scm import OrderSummaryLocationAllocation, OrderSummaryRow
+    from app.services.scm.summary_order_service import lead_times_for_pairs
+
+    # 1) the grid's own decisions - every (rec, decision) pair for this run's member
+    # recs, grouped by product. Every member with a decision stays in the group (used
+    # both to pick the representative below and as the split's own weights).
+    plan_row_pairs = (
+        db.query(ReorderRecommendation, PlanRowDecision)
+        .join(PlanRowDecision, PlanRowDecision.recommendation_id == ReorderRecommendation.id)
+        .filter(ReorderRecommendation.run_id == run_id)
+        .all()
+    )
+    by_product: dict[str, list] = {}
+    for rec, decision in plan_row_pairs:
+        by_product.setdefault(str(rec.product_id), []).append((rec, decision))
+    grid_repr_for_product: dict[str, tuple] = {}
+    for pid, entries in by_product.items():
+        entries_sorted = sorted(
+            entries, key=lambda e: (e[1].decided_at or datetime.min, str(e[0].id)),
+            reverse=True,
+        )
+        grid_repr_for_product[pid] = entries_sorted[0]
+
+    # 2) the Summary Order Report's own decisions - fallback only, for a product the
+    # grid never decided.
+    summary_rows = {
+        str(r.product_id): r
+        for r in db.query(OrderSummaryRow).filter(
+            OrderSummaryRow.run_id == run_id, OrderSummaryRow.chosen_qty.isnot(None),
+        ).all()
+    }
+
+    product_ids = set(grid_repr_for_product) | set(summary_rows)
+    if ids:
+        wanted = set(ids)
+
+        def _matches(pid: str) -> bool:
+            if pid in wanted:
+                return True
+            row = summary_rows.get(pid)
+            if row is not None and row.id in wanted:
+                return True
+            gd = grid_repr_for_product.get(pid)
+            return gd is not None and gd[0].id in wanted
+
+        product_ids = {pid for pid in product_ids if _matches(pid)}
+
+    leads = lead_times_for_pairs(
+        db,
+        [
+            (pid, str(row.chosen_supplier_id))
+            for pid, row in summary_rows.items()
+            if pid in product_ids and pid not in grid_repr_for_product
+            and row.chosen_supplier_id
+        ],
+    )
+
+    touched: set[str] = set()
+    confirmed = 0
+    for pid in product_ids:
+        # Clear the WHOLE stale line set first (e.g. a prior confirm under a
+        # since-switched supplier, a re-decided qty, or a precedence flip between the
+        # grid and the summary sheet), same shape as location grain.
+        _remove_product_lines(db, pid)
+
+        grid = grid_repr_for_product.get(pid)
+        if grid is not None:
+            rec, decision = grid
+            qty = float(decision.buy_qty or 0)
+            if qty <= 0:
+                continue  # use_stock / use_po / skip / a non-buy mixture - nothing to draft
+            choice = _resolve_choice(db, rec, None)
+            po = _draft_po_for_supplier(db, choice["supplier_id"], rec.currency)
+            members = [r for r, _d in by_product[pid]]
+            split = _grid_member_split(members, qty)
+            members_by_wh = {str(r.warehouse_id): r for r in members}
+            for wid, share_qty in split.items():
+                if share_qty <= 0:
+                    continue
+                member_rec = members_by_wh.get(wid)
+                if member_rec is None:
+                    continue  # defensive - every split key comes from `members` itself
+                _upsert_line(
+                    db, po, product_id=member_rec.product_id,
+                    warehouse_id=member_rec.warehouse_id, source_ref=member_rec.id,
+                    qty=share_qty, unit_cost=choice["unit_cost"],
+                    lead_days=choice["lead_time_days"], source_system=_SRC_PRODUCT,
+                )
+                touched.add(po.id)
+            confirmed += 1
+            continue
+
+        row = summary_rows[pid]  # ids narrowing guarantees this exists when grid is None
+        qty = float(row.chosen_qty or 0)
+        if qty <= 0:
+            continue  # "use the pool" - nothing to draft
+        allocations = (
+            db.query(OrderSummaryLocationAllocation)
+            .filter(OrderSummaryLocationAllocation.order_summary_row_id == row.id)
+            .all()
+        )
+        if not allocations:
+            continue  # no real location to name - nothing safe to draft (AC-F08 gap)
+        key = (pid, str(row.chosen_supplier_id or ""))
+        unit_cost = leads.get(("cost",) + key)
+        lead_days = leads.get(key)
+        currency = leads.get(("ccy",) + key)
+        po = _draft_po_for_supplier(db, row.chosen_supplier_id, currency)
+        for alloc in allocations:
+            alloc_qty = float(alloc.allocated_qty or 0)
+            if alloc_qty <= 0:
+                continue
+            _upsert_line(
+                db, po, product_id=row.product_id, warehouse_id=alloc.warehouse_id,
+                source_ref=f"{row.id}:{alloc.warehouse_id}", qty=alloc_qty,
+                unit_cost=unit_cost, lead_days=lead_days, source_system=_SRC_PRODUCT,
+            )
+            touched.add(po.id)
         confirmed += 1
 
     db.flush()
@@ -844,9 +1171,17 @@ def record_plan_row_decision(
 
 
 def clear_plan_row_decision(db: Session, rec_id: str, actor: Optional[str]) -> dict:
-    """Withdraw a row decision back to undecided. Idempotent — clearing an already-
-    undecided row is a no-op. Also retracts any draft-PO line a prior Confirm decisions
-    raised off it immediately, rather than waiting for the next confirm to notice."""
+    """Withdraw a row decision back to undecided. Idempotent - clearing an already-
+    undecided row is a no-op. Also retracts any draft-PO line(s) a prior Confirm
+    decisions raised off it immediately, rather than waiting for the next confirm to
+    notice - on BOTH the location-grain line this rec's own id might key (``_SRC``)
+    and the WHOLE product-grain line set this rec's PRODUCT might key
+    (``_SRC_PRODUCT``, ``_confirm_product_grain`` - possibly more than one line, split
+    across the group's real member warehouses, B2). A product-grain group's clear fans
+    out one call per member (``usePlanLines.clear``, same shape as ``decide``), so
+    every member is a valid place to notice the group's draft should go - removing it
+    here is harmless even before every member has been cleared, since the next confirm
+    reconciles against whichever members are still decided."""
     rec = _get_decidable_rec(db, rec_id)
     _assert_not_legacy(db, str(rec.run_id))
     deleted = (
@@ -855,6 +1190,7 @@ def clear_plan_row_decision(db: Session, rec_id: str, actor: Optional[str]) -> d
         .delete(synchronize_session=False)
     )
     _remove_rec_line(db, rec.id)
+    _remove_product_lines(db, str(rec.product_id))
     db.flush()
     return {"cleared": bool(deleted)}
 

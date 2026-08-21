@@ -52,6 +52,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 const hooks = vi.hoisted(() => ({
   useOrderSummary: vi.fn(),
   useRecordOrderDecision: vi.fn(),
+  useConfirmOrderDecisions: vi.fn(),
   useOrderSummaryDemand: vi.fn(),
   useOrderSummaryLocations: vi.fn(),
   useOrderSummarySuppliers: vi.fn(),
@@ -94,6 +95,7 @@ function rowFor(productCode: string): HTMLElement {
 beforeEach(() => {
   vi.clearAllMocks();
   hooks.useRecordOrderDecision.mockReturnValue({ mutate, isPending: false });
+  hooks.useConfirmOrderDecisions.mockReturnValue({ mutate: vi.fn(), isPending: false });
   hooks.useOrderSummaryDemand.mockReturnValue(state());
   hooks.useOrderSummaryLocations.mockReturnValue(state());
   hooks.useOrderSummarySuppliers.mockReturnValue(state());
@@ -295,6 +297,63 @@ describe('SummaryOrderReportView - the run states its stamped plan grain (AC-F01
   it('renders no grain chip before the report has arrived', () => {
     renderView(state({ isLoading: true }));
     expect(screen.queryByTestId('plan-grain-chip')).not.toBeInTheDocument();
+  });
+});
+
+describe('SummaryOrderReportView - Confirm decisions (product grain, code review 21 Aug)', () => {
+  it('renders enabled with the decided count on a product-grain run', () => {
+    renderView(state({ data: REPORT }));
+    const button = screen.getByTestId('confirm-order-decisions');
+    // REPORT's fixture rows carry two positive chosen_qty decisions.
+    expect(button).toHaveTextContent('Confirm decisions (2)');
+    expect(button).toBeEnabled();
+  });
+
+  it('renders disabled when no row has a positive chosen quantity', () => {
+    const noneDecided = {
+      ...REPORT,
+      rows: REPORT.rows.map((r) => ({ ...r, chosen_qty: null })),
+    };
+    renderView(state({ data: noneDecided }));
+    const button = screen.getByTestId('confirm-order-decisions');
+    expect(button).toHaveTextContent('Confirm decisions');
+    expect(button).not.toHaveTextContent('(0)');
+    expect(button).toBeDisabled();
+  });
+
+  it('does not count a zero ("use the pool") decision - confirm skips it too', () => {
+    const zeroDecided = {
+      ...REPORT,
+      rows: REPORT.rows.map((r) => ({ ...r, chosen_qty: 0 })),
+    };
+    renderView(state({ data: zeroDecided }));
+    expect(screen.getByTestId('confirm-order-decisions')).toBeDisabled();
+  });
+
+  it('is absent when the run is decided at the other grain', () => {
+    renderView(state({ data: SUMMARY_ORDER_FIXTURES.locationGrainReport() }));
+    expect(screen.queryByTestId('confirm-order-decisions')).not.toBeInTheDocument();
+  });
+
+  it('is absent on a legacy run', () => {
+    renderView(state({ data: SUMMARY_ORDER_FIXTURES.legacyReport() }));
+    expect(screen.queryByTestId('confirm-order-decisions')).not.toBeInTheDocument();
+  });
+
+  it('fires the confirm mutation on click', () => {
+    const mutate = vi.fn();
+    hooks.useConfirmOrderDecisions.mockReturnValue({ mutate, isPending: false });
+    renderView(state({ data: REPORT }));
+
+    fireEvent.click(screen.getByTestId('confirm-order-decisions'));
+
+    expect(mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables the button while a confirm is already in flight', () => {
+    hooks.useConfirmOrderDecisions.mockReturnValue({ mutate: vi.fn(), isPending: true });
+    renderView(state({ data: REPORT }));
+    expect(screen.getByTestId('confirm-order-decisions')).toBeDisabled();
   });
 });
 

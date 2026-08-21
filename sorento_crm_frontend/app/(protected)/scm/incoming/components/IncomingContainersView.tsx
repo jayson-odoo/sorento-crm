@@ -4,9 +4,11 @@ import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Boxes, Upload } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { formatStatusLabel, getStatusBadgeVariant } from '@/lib/status-badge';
 import { fmtInt } from '../../lib/format';
 import { useFulfilmentSuppliers } from '../../hooks/useFulfilment';
 import { getIncomingShipments, type IncomingShipment } from '../../services/fulfilmentService';
@@ -126,10 +128,19 @@ export function IncomingContainersView() {
               }`}
             >
               <div className="min-w-0">
-                <div className="truncate text-xs font-medium">
+                <div className="flex min-w-0 items-center gap-2 text-xs font-medium">
                   {/* A read that named neither still has to be clickable and tellable
                       apart from the next one - a blank row reads as a broken screen. */}
-                  {s.container_no || s.shipment_number || 'Unnumbered container'}
+                  <span className="truncate">
+                    {s.container_no || s.shipment_number || 'Unnumbered container'}
+                  </span>
+                  {/* Draft = proforma-created, not a real container read yet - must not be
+                      mistaken for one, especially while testing against production data. */}
+                  {s.status ? (
+                    <Badge variant={getStatusBadgeVariant(s.status)} size="sm" className="shrink-0">
+                      {formatStatusLabel(s.status)}
+                    </Badge>
+                  ) : null}
                 </div>
                 <div className="truncate text-2xs text-muted-foreground">{subLine(s)}</div>
               </div>

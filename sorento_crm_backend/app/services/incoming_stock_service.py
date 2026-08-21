@@ -56,6 +56,8 @@ from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 # Header OR any line: a container filled by two factories has no header supplier,
 # so the header alone would hide it from both of them.
 from app.services.procurement_service import shipment_supplier_predicate
+# Imported rather than redefined, so the value cannot drift between the two modules.
+from app.services.scm.proforma_invoice_service import _DRAFT_SHIPMENT_STATUS
 
 
 # Line statuses considered "received" and therefore excluded from incoming-stock results.
@@ -75,6 +77,19 @@ def _still_incoming_filter():
         ~InboundShipmentLine.line_status.in_(_RECEIVED_STATUSES),
         remaining > 0,
     )
+
+
+def _not_draft_shipment_filter():
+    """Filter clause: shipment is not a draft.
+
+    A draft shipment is proforma-created (see `proforma_invoice_service.
+    _DRAFT_SHIPMENT_STATUS`) and stays that way until someone actually places or confirms
+    it. This whole service is the MCP/AI-assistant-facing surface (see module docstring),
+    so a draft must never leak into a salesperson's answer as if it were a real incoming
+    container. Applied everywhere in this service except `grn_records`, which needs no
+    equivalent guard - see the note there.
+    """
+    return InboundShipment.shipment_status != _DRAFT_SHIPMENT_STATUS
 
 
 def _unallocated_quantity(
@@ -289,7 +304,12 @@ class IncomingStockService:
             )
             .join(InboundShipment, InboundShipment.id == InboundShipmentLine.shipment_id)
             .join(Product, Product.id == InboundShipmentLine.product_id)
-            .filter(_still_incoming_filter(), *product_filters, *date_filters)
+            .filter(
+                _still_incoming_filter(),
+                _not_draft_shipment_filter(),
+                *product_filters,
+                *date_filters,
+            )
             .order_by(
                 Product.product_code.asc(),
                 InboundShipment.estimated_arrival_date.asc().nulls_last(),
@@ -401,8 +421,10 @@ class IncomingStockService:
                 return set()
             rows = (
                 self.db.query(InboundShipmentLine.product_id)
+                .join(InboundShipment, InboundShipment.id == InboundShipmentLine.shipment_id)
                 .filter(
                     _still_incoming_filter(),
+                    _not_draft_shipment_filter(),
                     InboundShipmentLine.product_id.in_(candidate_ids),
                 )
                 .distinct()
@@ -457,6 +479,7 @@ class IncomingStockService:
                 incoming_lines.c.total_remaining,
             )
             .join(incoming_lines, incoming_lines.c.sid == InboundShipment.id)
+            .filter(_not_draft_shipment_filter())
         )
 
         if shipment_ids:
@@ -611,7 +634,7 @@ class IncomingStockService:
                 InboundShipmentLine,
                 InboundShipmentLine.shipment_id == InboundShipment.id,
             )
-            .filter(*line_filters, *shipment_filters)
+            .filter(_not_draft_shipment_filter(), *line_filters, *shipment_filters)
             .distinct()
         )
         total = ship_q.count()
@@ -742,7 +765,9 @@ class IncomingStockService:
         shipment_uuid = resolved[0]
 
         shipment = (
-            self.db.query(InboundShipment).filter(InboundShipment.id == shipment_uuid).first()
+            self.db.query(InboundShipment)
+            .filter(InboundShipment.id == shipment_uuid, _not_draft_shipment_filter())
+            .first()
         )
         if not shipment:
             return {"data": None, "empty": True}
@@ -834,7 +859,7 @@ class IncomingStockService:
         row = (
             self.db.query(InboundShipment.shipment_number, Attachment)
             .outerjoin(Attachment, Attachment.id == InboundShipment.attachment_id)
-            .filter(InboundShipment.id == resolved[0])
+            .filter(InboundShipment.id == resolved[0], _not_draft_shipment_filter())
             .first()
         )
         if not row:
@@ -867,6 +892,12 @@ class IncomingStockService:
         Callers may pass either single string ids (legacy: resolved via `resolve_identifier`)
         or pre-resolved UUID lists (`shipment_uuids` / `product_uuids` from entity buckets).
         UUID lists take precedence when both are supplied.
+
+        Deliberately NOT filtered by `_not_draft_shipment_filter()`: a draft shipment has
+        no SPOAllocation and no picked GRN (nothing has been physically received against a
+        proforma-created draft), so path (1) can never match one, and path (2) is keyed on
+        product only, which is not shipment-scoped at all. There is nothing here for the
+        filter to exclude.
         """
         limit = max(1, min(limit, 50))
 

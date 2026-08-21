@@ -49,19 +49,24 @@ vi.mock('./PlanLinesGrid', () => ({
   },
 }));
 vi.mock('./PlanBudgetReview', () => ({ PlanBudgetReview: () => <div>budget-review</div> }));
+// A `vi.fn()` (not a fixed object) so the Confirm-decisions-button tests can override
+// `decidedCount` for a product-grain run - `beforeEach` resets it to the SAME shape
+// every other describe block in this file already relies on.
+const usePlanLines = vi.fn();
 vi.mock('../hooks/usePlanLines', () => ({
-  usePlanLines: () => ({
-    lines: [], decisions: {}, decide: vi.fn(), clear: vi.fn(),
-    totals: { decided: 0, undecided: 0, buying: 0, usingStock: 0, usingPo: 0, skipped: 0, units: 0, cost: 0, unpriced: 0 },
-    // S16: the "N of Total made" header reads THESE (the server's own count) now, not
-    // `totals` above - see `PlanLinesSection`'s own `onDecisionProgressChange`.
-    decidedCount: 0,
-    totalDecidableCount: 0,
-    levelSuggestions: {},
-    isLoading: false, isError: false, error: null, refetch: vi.fn(),
-  }),
+  usePlanLines: (...a: unknown[]) => usePlanLines(...a),
   planRowDecisionsKey: (runId: string | null) => ['plan-lines', runId, 'row-decisions'],
 }));
+const defaultUsePlanLines = () => ({
+  lines: [], decisions: {}, decide: vi.fn(), clear: vi.fn(),
+  totals: { decided: 0, undecided: 0, buying: 0, usingStock: 0, usingPo: 0, skipped: 0, units: 0, cost: 0, unpriced: 0 },
+  // S16: the "N of Total made" header reads THESE (the server's own count) now, not
+  // `totals` above - see `PlanLinesSection`'s own `onDecisionProgressChange`.
+  decidedCount: 0,
+  totalDecidableCount: 0,
+  levelSuggestions: {},
+  isLoading: false, isError: false, error: null, refetch: vi.fn(),
+});
 vi.mock('./PlanAssistant', () => ({ PlanAssistant: () => <div>plan-assistant</div> }));
 vi.mock('./RunHistoryPanel', () => ({ RunHistoryPanel: () => <div>run-history</div> }));
 vi.mock('./RunPlanningModal', () => ({ RunPlanningModal: ({ open }: { open: boolean }) => (open ? <div>manual-plan-modal</div> : null) }));
@@ -131,6 +136,7 @@ beforeEach(() => {
   useUnlocatedDemand.mockReset().mockReturnValue({ data: undefined, isLoading: false });
   useSetAsideDemand.mockReset().mockReturnValue({ data: undefined, isLoading: false });
   useReorderPlan.mockReset().mockReturnValue({ isLoading: false, isError: false, error: null, refetch: vi.fn(), applyProposalLine: vi.fn(), rows: [] });
+  usePlanLines.mockReset().mockReturnValue(defaultUsePlanLines());
   planLinesGridProps.mockReset();
 });
 
@@ -506,5 +512,64 @@ describe('ReorderPlanningView - Order summary / Plan exceptions / PO worklist mo
 
     fireEvent.click(screen.getByText('worklist-back-to-plan'));
     expect(screen.getByText('plan-lines-grid')).toBeInTheDocument();
+  });
+});
+
+describe('ReorderPlanningView - Confirm decisions on the results grid (product grain, code review 21 Aug)', () => {
+  // "I need the confirm decision to be in reorder planning, not in another page
+  // called order summary" - the button lives on THIS screen's header now, reusing
+  // `useReorderPlan`'s existing (until now unwired) `confirm` mutation.
+  const productGrainRun = () =>
+    todayRun({ decision_grain: 'product', front_planning_contract_version: 1 });
+
+  it('is absent for a location-grain run', () => {
+    stubToday(todayRun({ decision_grain: 'location', front_planning_contract_version: 1 }));
+    renderView();
+    expect(screen.queryByRole('button', { name: /confirm decisions/i })).not.toBeInTheDocument();
+  });
+
+  it('is absent on a legacy run (no stamped grain)', () => {
+    stubToday(todayRun());
+    renderView();
+    expect(screen.queryByRole('button', { name: /confirm decisions/i })).not.toBeInTheDocument();
+  });
+
+  it('renders on a product-grain run, disabled while nothing is decided', () => {
+    stubToday(productGrainRun());
+    renderView();
+    const button = screen.getByRole('button', { name: /confirm decisions/i });
+    expect(button).toBeDisabled();
+  });
+
+  it('is enabled with the decided count once the grid has decisions, and fires the confirm mutation', async () => {
+    const confirm = vi.fn().mockResolvedValue({ confirmed_count: 2, po_count: 1 });
+    useReorderPlan.mockReturnValue({
+      isLoading: false, isError: false, error: null, refetch: vi.fn(),
+      applyProposalLine: vi.fn(), rows: [], confirm, isConfirming: false,
+    });
+    usePlanLines.mockReturnValue({ ...defaultUsePlanLines(), decidedCount: 2, totalDecidableCount: 5 });
+    stubToday(productGrainRun());
+    renderView();
+
+    const button = screen.getByRole('button', { name: /confirm decisions \(2\)/i });
+    expect(button).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables the button while a confirm is already in flight', () => {
+    useReorderPlan.mockReturnValue({
+      isLoading: false, isError: false, error: null, refetch: vi.fn(),
+      applyProposalLine: vi.fn(), rows: [], confirm: vi.fn(), isConfirming: true,
+    });
+    usePlanLines.mockReturnValue({ ...defaultUsePlanLines(), decidedCount: 2, totalDecidableCount: 5 });
+    stubToday(productGrainRun());
+    renderView();
+
+    expect(screen.getByRole('button', { name: /confirm decisions/i })).toBeDisabled();
   });
 });

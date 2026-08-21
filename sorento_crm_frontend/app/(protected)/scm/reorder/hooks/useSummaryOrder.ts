@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { fmtQty } from '../lib/qtyPrecision';
+import { confirmDecisions } from '../services/decisionService';
 import {
   getOrderSummary,
   getOrderSummaryDemand,
@@ -15,6 +16,10 @@ import type {
   OrderSummaryDecisionInput,
   OrderSummaryDemandKind,
 } from '../types/summaryOrder.types';
+
+/** Prefix key for the Purchase Orders list - invalidated whenever a draft PO changes
+ *  (mirrors `useDecisions.ts`'s own copy for the location-grain confirm). */
+const purchaseOrdersKey = ['scm', 'purchase-orders'];
 
 /** Query key for one week's report. Exported so a decision can bust it. */
 export function orderSummaryKey(q: OrderSummaryQuery = {}) {
@@ -127,6 +132,37 @@ export function useRecordOrderDecision(q: OrderSummaryQuery = {}) {
           result.chosen_qty,
           variables.decimalPlaces ?? 0,
         )} from ${result.chosen_supplier_name}`,
+      );
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/**
+ * Confirm decisions on a PRODUCT-grain run (captain, 21 Aug): materialises every
+ * decided row's `chosen_qty` into a consolidated draft PO, exactly the way the
+ * location-grain "buy" tab's own confirm does (`useDecisions.ts`'s `confirm`) - same
+ * endpoint, same result shape, the service dispatches on the run's stamped grain.
+ *
+ * Invalidates the report (so a re-confirm's reconciled qty is visible) and the
+ * Purchase Orders list (so the freshly-drafted PO appears there).
+ */
+export function useConfirmOrderDecisions(runId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => {
+      if (!runId) return Promise.reject(new Error('No plan is open to confirm decisions on.'));
+      return confirmDecisions(runId);
+    },
+    onSuccess: (result) => {
+      void qc.invalidateQueries({ queryKey: orderSummaryKey({ run_id: runId }) });
+      void qc.invalidateQueries({ queryKey: purchaseOrdersKey });
+      toast.success(
+        result.confirmed_count > 0
+          ? `Confirmed ${result.confirmed_count} decision${
+              result.confirmed_count === 1 ? '' : 's'
+            } into ${result.po_count} draft purchase order${result.po_count === 1 ? '' : 's'}`
+          : 'Nothing to confirm - no order quantity has been decided yet',
       );
     },
     onError: (e: Error) => toast.error(e.message),

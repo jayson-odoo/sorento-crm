@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   CalendarClock,
   CalendarDays,
+  CheckCircle2,
   ClipboardList,
   FileSpreadsheet,
   History,
@@ -307,6 +308,33 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
     }
   };
 
+  /**
+   * Confirm decisions on the results grid (captain, 21 Aug follow-up: "I need the
+   * confirm decision to be in reorder planning, not in another page called order
+   * summary"). `plan.confirm` (`useReorderPlan`, wrapping `useDecisionMutations`'
+   * `confirm`) already hits the SAME endpoint the Order summary screen's own button
+   * does - the service dispatches by grain, so this materialises the grid's own
+   * Decision pills (`PlanRowDecision`) for a product-grain run. Neither `confirm` nor
+   * the mutation it wraps toasts on its own, so the toast + invalidation live here,
+   * mirroring `doReset` right above.
+   */
+  const doConfirmDecisions = async () => {
+    try {
+      const res = await plan.confirm();
+      if (!res) return;
+      void queryClient.invalidateQueries({ queryKey: decisionsKey(currentRunId) });
+      void queryClient.invalidateQueries({ queryKey: planRowDecisionsKey(currentRunId) });
+      void queryClient.invalidateQueries({ queryKey: ['scm', 'purchase-orders'] });
+      toast.success(
+        res.confirmed_count > 0
+          ? `Confirmed ${res.confirmed_count} decision${res.confirmed_count === 1 ? '' : 's'} into ${res.po_count} draft purchase order${res.po_count === 1 ? '' : 's'}`
+          : 'Nothing to confirm - no product has a buy decision yet',
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to confirm decisions');
+    }
+  };
+
   // ---- loading / empty --------------------------------------------------------
   if (today.isLoading) {
     return (
@@ -436,6 +464,22 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             >
               <RotateCcw className="size-3.5" aria-hidden />
             </button>
+          ) : null}
+          {/* The results grid IS where a product-grain buyer decides (S16's Decision
+              column) - Confirm decisions lives right here, not only on the Order
+              summary screen's own copy of the same button (captain, 21 Aug follow-up).
+              Location-grain runs decide differently (Accept/Adjust on the recommendation
+              itself), so this stays product-grain only. */}
+          {view === 'buy' && groupByChannel && currentRunId ? (
+            <Button
+              variant="outline"
+              onClick={() => void doConfirmDecisions()}
+              disabled={plan.isConfirming || !decisionProgress?.decided}
+              title="Materialise every decided product's buy into a draft purchase order"
+            >
+              <CheckCircle2 className="size-4" />
+              Confirm decisions{decisionProgress?.decided ? ` (${decisionProgress.decided})` : ''}
+            </Button>
           ) : null}
           <UploadDataMenu onQueued={uploadQueued} />
           <Button onClick={() => setModalOpen(true)}>

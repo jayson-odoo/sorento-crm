@@ -1651,7 +1651,7 @@ def po_worklist(db: Session, *, run_id: Optional[str] = None) -> dict:
         )
         .all()
     )
-    leads = _lead_times(
+    leads = lead_times_for_pairs(
         db,
         [(str(r.product_id), str(r.chosen_supplier_id)) for r, _p, _s in rows
          if r.chosen_supplier_id],
@@ -1774,7 +1774,7 @@ def _location_grain_worklist(db: Session, run: ReorderRun) -> dict:
         .filter(OrderSummaryRow.run_id == str(run.id))
         .all()
     }
-    leads = _lead_times(
+    leads = lead_times_for_pairs(
         db, [(str(rec.product_id), str(rec.supplier_id)) for rec, _p, _w, _s in recs
              if rec.supplier_id])
     today = _today()
@@ -1841,7 +1841,7 @@ def _location_grain_worklist(db: Session, run: ReorderRun) -> dict:
     }
 
 
-def _lead_times(
+def lead_times_for_pairs(
     db: Session, pairs: list[tuple[str, str]]
 ) -> dict:
     """Lead time and last cost per (product, supplier), keyed for `po_worklist`.

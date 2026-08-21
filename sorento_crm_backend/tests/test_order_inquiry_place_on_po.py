@@ -125,9 +125,15 @@ def _supplier(db, company_id: str, name: str) -> Supplier:
 
 
 def _po(db, company_id: str, supplier: Supplier, po_number: str) -> PurchaseOrder:
+    """An OUTSTANDING purchase order - ``status="active"``, never the model's own bare
+    ``"draft"`` default. Code review, 21 Aug (B3): ``_open_po_lines_for_product`` now
+    gates candidates to ``active``/``partial`` (a draft is not yet a real order - the
+    same M4-D5 doctrine that keeps a draft outside ``scm.on_order_v``), so every
+    fixture in this file that means "a real PO a row can be placed against" has to say
+    so explicitly."""
     row = PurchaseOrder(
         id=_uid(), company_id=company_id, po_number=po_number,
-        supplier_id=supplier.id if supplier else None,
+        supplier_id=supplier.id if supplier else None, status="active",
     )
     db.add(row)
     db.flush()
