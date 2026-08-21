@@ -118,7 +118,11 @@ describe('ReorderLevelUploadDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: /confirm upload/i }));
 
     await waitFor(() => expect(applyLevelImport).toHaveBeenCalledTimes(1));
-    // The flow is over: nothing left to confirm, only to close.
-    expect(screen.queryByRole('button', { name: /confirm upload/i })).not.toBeInTheDocument();
+    // The flow is over: nothing left to confirm, only to close. Wait for the
+    // mutation to settle - right after the call the button is still there,
+    // mid-way through its own loading state.
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /confirm upload/i })).not.toBeInTheDocument(),
+    );
   });
 });
