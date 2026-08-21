@@ -2,13 +2,16 @@
 
 `proforma_invoice_service` creates a draft `InboundShipment` (`shipment_status = "draft"`,
 numbered `SHIP-DRAFT-...`) while an SPO Planner session is still in progress. Nothing about it
-is a real container yet, so it must be invisible to `IncomingStockService` — the service behind
+is a real container yet, so it must be invisible to `IncomingStockService` - the service behind
 `/api/v1/incoming-stock/*`, which is what the MCP tools (`crm_incoming_stock_list`,
-`crm_incoming_stock_by_product`, `crm_incoming_stock_shipments`) expose to salespeople.
+`crm_incoming_stock_by_product`, `crm_incoming_stock_shipments`) expose to salespeople. It must
+also be unresolvable by container/BOL/invoice number in `entity_resolver`'s inbound-shipment
+probes, or the assistant can still name a draft container and then get told "nothing incoming
+for it" instead of never hearing of it in the first place.
 
 The INTERNAL screen (`/scm/incoming`, and the packing-list detail page's own tabs including SPO
-Planner) reads a *different* backend surface — `GET /api/v1/scm/inbound-shipments` in
-`app/api/v1/scm/fulfilment.py` — which this change does not touch and must keep showing drafts:
+Planner) reads a *different* backend surface - `GET /api/v1/scm/inbound-shipments` in
+`app/api/v1/scm/fulfilment.py` - which this change does not touch and must keep showing drafts:
 the captain navigates to a draft's packing list and SPO Planner from that very list. The last
 test in this file proves that path is untouched.
 """
@@ -16,11 +19,16 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
+from typing import Any
 
 import pytest
 
 from app.models.procurement import InboundShipment, InboundShipmentLine
 from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.services.entity_resolver import (
+    _prefix_probe_inbound_shipment,
+    _probe_inbound_shipment,
+)
 from app.services.incoming_stock_service import IncomingStockService
 from tests._pg_fixture import blank_session
 
@@ -165,8 +173,97 @@ def test_incoming_shipments_excludes_draft_shipment_but_keeps_a_real_one(db):
     assert f"{MARKER}-SHIP-REAL-5" in numbers
 
 
+def test_shipment_attachment_returns_none_for_a_draft_shipment(db):
+    draft = _shipment(db, number=f"{MARKER}-SHIP-DRAFT-6", status="draft")
+    db.commit()
+
+    res = IncomingStockService(db).shipment_attachment(draft)
+
+    assert res is None
+
+
+def test_shipment_attachment_still_returns_for_a_real_shipment(db):
+    real = _shipment(db, number=f"{MARKER}-SHIP-REAL-6", status="in_transit")
+    db.commit()
+
+    res = IncomingStockService(db).shipment_attachment(real)
+
+    assert res is not None
+    assert res["shipment_number"] == f"{MARKER}-SHIP-REAL-6"
+    assert res["attachment"] is None  # no attachment linked, but the shipment itself resolves
+
+
+def test_incoming_entity_alternatives_has_incoming_excludes_draft_only_neighbour(db, monkeypatch):
+    """`_has_incoming` (the batch predicate `_incoming_entity_alternatives` hands to
+    `find_entity_neighbours_with_data`) must not call a neighbour "data-bearing" on the
+    strength of a draft-only shipment line.
+
+    The full neighbour walk needs pg_trgm, which is not on the search_path of the scratch
+    schema `blank_session` builds - so `find_entity_neighbours_with_data` itself is stubbed
+    here to capture the `has_data` callback `_incoming_entity_alternatives` constructs, and
+    that callback is exercised directly against a draft-only candidate and a real-incoming
+    one. This is what changed; the ranking/gating logic downstream of it is untouched.
+    """
+    target = _product(db, f"{MARKER}-SKU-7")
+    draft_only = _product(db, f"{MARKER}-SKU-7B")
+    real_incoming = _product(db, f"{MARKER}-SKU-7C")
+    draft = _shipment(db, number=f"{MARKER}-SHIP-DRAFT-7", status="draft")
+    real = _shipment(db, number=f"{MARKER}-SHIP-REAL-7", status="in_transit")
+    _line(db, draft, draft_only, shipped=5)
+    _line(db, real, real_incoming, shipped=5)
+    db.commit()
+
+    captured: dict[str, Any] = {}
+
+    def fake_find_neighbours(db_, code, *, has_data, **kwargs):
+        captured["has_data"] = has_data
+        return []
+
+    monkeypatch.setattr(
+        "app.services.entity_resolver.find_entity_neighbours_with_data",
+        fake_find_neighbours,
+    )
+
+    IncomingStockService(db)._incoming_entity_alternatives([target])
+
+    assert "has_data" in captured
+    with_data = captured["has_data"]([draft_only, real_incoming])
+    assert with_data == {real_incoming}
+
+
 # --------------------------------------------------------------------------- #
-# Internal path: /api/v1/scm/inbound-shipments must keep showing drafts —
+# entity_resolver: the same draft must not be NAMEABLE by container/BOL/invoice
+# --------------------------------------------------------------------------- #
+
+
+def test_probe_inbound_shipment_excludes_draft_but_keeps_a_real_one(db):
+    draft_number = f"{MARKER}-SHIP-DRAFT-8"
+    real_number = f"{MARKER}-SHIP-REAL-8"
+    _shipment(db, number=draft_number, status="draft")
+    _shipment(db, number=real_number, status="in_transit")
+    db.commit()
+
+    res = _probe_inbound_shipment(db, [draft_number, real_number])
+
+    assert res[draft_number] == []
+    assert [m.canonical_code for m in res[real_number]] == [real_number]
+
+
+def test_prefix_probe_inbound_shipment_excludes_draft_but_keeps_a_real_one(db):
+    prefix = f"{MARKER}-SHIP-PFX8"
+    _shipment(db, number=f"{prefix}-DRAFT", status="draft")
+    _shipment(db, number=f"{prefix}-REAL", status="in_transit")
+    db.commit()
+
+    res = _prefix_probe_inbound_shipment(db, prefix)
+
+    codes = [m.canonical_code for m in res]
+    assert f"{prefix}-DRAFT" not in codes
+    assert f"{prefix}-REAL" in codes
+
+
+# --------------------------------------------------------------------------- #
+# Internal path: /api/v1/scm/inbound-shipments must keep showing drafts -
 # the captain opens a draft's packing list / SPO Planner from this very list.
 # --------------------------------------------------------------------------- #
 

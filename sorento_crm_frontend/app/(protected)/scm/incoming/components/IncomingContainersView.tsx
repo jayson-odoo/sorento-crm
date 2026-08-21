@@ -128,7 +128,7 @@ export function IncomingContainersView() {
               }`}
             >
               <div className="min-w-0">
-                <div className="flex min-w-0 items-center gap-2 truncate text-xs font-medium">
+                <div className="flex min-w-0 items-center gap-2 text-xs font-medium">
                   {/* A read that named neither still has to be clickable and tellable
                       apart from the next one - a blank row reads as a broken screen. */}
                   <span className="truncate">

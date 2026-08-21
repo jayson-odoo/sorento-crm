@@ -241,12 +241,12 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           const ln = row.original;
           return (
             <div className={ln.cannot_convert ? 'flex min-w-0 flex-col opacity-60' : 'flex min-w-0 flex-col'}>
-              <span className="flex items-center gap-1 truncate font-medium">
+              <span className="flex items-center gap-1 font-medium">
                 <span className="truncate" title={ln.item_code ?? ''}>
                   {ln.item_code ?? EM_DASH}
                 </span>
                 {ln.reason ? (
-                  <span className="shrink-0" title={ln.reason}>
+                  <span className="shrink-0" title={ln.reason} aria-label={ln.reason}>
                     <Info className="size-3.5 text-muted-foreground" aria-hidden />
                   </span>
                 ) : null}

@@ -56,16 +56,12 @@ from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 # Header OR any line: a container filled by two factories has no header supplier,
 # so the header alone would hide it from both of them.
 from app.services.procurement_service import shipment_supplier_predicate
+# Imported rather than redefined, so the value cannot drift between the two modules.
+from app.services.scm.proforma_invoice_service import _DRAFT_SHIPMENT_STATUS
 
 
 # Line statuses considered "received" and therefore excluded from incoming-stock results.
 _RECEIVED_STATUSES = ("received",)
-
-# `proforma_invoice_service._DRAFT_SHIPMENT_STATUS` — a proforma-created shipment stays
-# 'draft' until someone actually places/confirms it. This whole service is the
-# MCP/AI-assistant-facing surface (see module docstring), so a draft must never
-# leak into a salesperson's answer as if it were a real incoming container.
-_DRAFT_SHIPMENT_STATUS = "draft"
 
 
 def _remaining_expr():
@@ -84,7 +80,15 @@ def _still_incoming_filter():
 
 
 def _not_draft_shipment_filter():
-    """Filter clause: shipment is not a draft (proforma-created, not yet placed)."""
+    """Filter clause: shipment is not a draft.
+
+    A draft shipment is proforma-created (see `proforma_invoice_service.
+    _DRAFT_SHIPMENT_STATUS`) and stays that way until someone actually places or confirms
+    it. This whole service is the MCP/AI-assistant-facing surface (see module docstring),
+    so a draft must never leak into a salesperson's answer as if it were a real incoming
+    container. Applied everywhere in this service except `grn_records`, which needs no
+    equivalent guard - see the note there.
+    """
     return InboundShipment.shipment_status != _DRAFT_SHIPMENT_STATUS
 
 
@@ -888,6 +892,12 @@ class IncomingStockService:
         Callers may pass either single string ids (legacy: resolved via `resolve_identifier`)
         or pre-resolved UUID lists (`shipment_uuids` / `product_uuids` from entity buckets).
         UUID lists take precedence when both are supplied.
+
+        Deliberately NOT filtered by `_not_draft_shipment_filter()`: a draft shipment has
+        no SPOAllocation and no picked GRN (nothing has been physically received against a
+        proforma-created draft), so path (1) can never match one, and path (2) is keyed on
+        product only, which is not shipment-scoped at all. There is nothing here for the
+        filter to exclude.
         """
         limit = max(1, min(limit, 50))
 
