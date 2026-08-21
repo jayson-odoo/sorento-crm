@@ -1254,6 +1254,132 @@ def _record_rows_never_written(read: ReadResult, resolved: _Resolved,
                      value=issue.value or None)
 
 
+def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
+                              outcome: ImportOutcome) -> tuple[int, list[dict]]:
+    """Close the CRM's own recommendation once AutoCount confirms the same order.
+
+    The captain's ruling of 21 Aug: the CRM can raise its own purchase order from a
+    reorder-plan confirm (`source_system == "scm_recommendation"`, active after
+    `bulk_confirm`). When Joey keys the SAME physical order into AutoCount and this
+    outstanding-PO book is uploaded, the two must not both count as on-order for the
+    same (product, supplier) - AutoCount is the book of record (the same doctrine the
+    `adopted` handover above and `_closed_line`'s history guard already follow), so
+    ITS import is what retires the CRM's own draft-turned-order, never the reverse.
+
+    Matched on (product, supplier), never on document number: the CRM's own number
+    and AutoCount's number for the same physical order are never the same string, so
+    a document-number match would never fire. Only an ACTIVE, OPEN CRM line
+    qualifies - a `draft_recommendation` PO is not on-order at all yet (M4-D5) and has
+    nothing to supersede, and an already-closed line is left alone, which is what
+    makes re-running the same upload a no-op rather than a second attempt at
+    something already done.
+
+    Any order-inquiry row PLACED on a line this closes is untagged FIRST, through
+    `ProjectOrderInquiryService.unplace_rows` rather than reimplemented here, so it
+    reads `raised` again before this SAME import's own auto-place cascade (one of
+    its three triggers, PLAN-demo-followups-19aug-ladder-v2.md section G.4) runs
+    against the freshly-written AutoCount lines - untagging AFTER that pass would
+    miss the very cascade this upload is about to feed, and leave the row `placed`
+    on a line that is about to disappear.
+
+    Recorded through the SAME `LINE_CLOSED` code the diff's own closes use above -
+    this module invents no new outcome vocabulary - with the `message` naming which
+    AutoCount document is the reason, so the job detail is where an operator finds
+    out a CRM-raised PO disappeared either way.
+
+    Never called from `preview()`: like every other write in this module, a
+    supersession only happens on `apply`.
+    """
+    pairs: dict[tuple[str, str], tuple[str, str]] = {}
+    for l in resolved.lines:
+        supplier_id = resolved.party_by_doc.get(l.doc_number)
+        product_id = resolved.product_by_code.get(_norm(l.item_code))
+        if supplier_id and product_id:
+            pairs.setdefault((product_id, supplier_id), (l.doc_number, l.item_code))
+    if not pairs:
+        return 0, []
+
+    product_ids = {product_id for product_id, _supplier_id in pairs}
+    candidates = (
+        db.query(PurchaseOrderLine, PurchaseOrder)
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .filter(
+            PurchaseOrder.source_system == "scm_recommendation",
+            PurchaseOrder.status == "active",
+            PurchaseOrderLine.line_status == "open",
+            PurchaseOrderLine.product_id.in_(list(product_ids)),
+        )
+        .all()
+    )
+    to_close: list[tuple] = []
+    for line, header in candidates:
+        supplier_id = str(header.supplier_id) if header.supplier_id else None
+        if supplier_id is None:
+            continue
+        match = pairs.get((str(line.product_id), supplier_id))
+        if match:
+            to_close.append((line, header, match[0], match[1]))
+    if not to_close:
+        return 0, []
+
+    # Untagged BEFORE the close, so the rows this frees are `raised` in time for
+    # THIS SAME import's own auto-place pass to pick them up again.
+    line_ids = [str(line.id) for line, _h, _n, _c in to_close]
+    from app.models.project_so import INQUIRY_PLACED, OrderInquiryRow
+
+    placed_row_ids = [
+        row_id for (row_id,) in
+        db.query(OrderInquiryRow.id)
+        .filter(OrderInquiryRow.po_line_id.in_(line_ids),
+                OrderInquiryRow.state == INQUIRY_PLACED)
+        .all()
+    ]
+    if placed_row_ids:
+        from app.services.project_order_inquiry_service import (
+            ProjectOrderInquiryService,
+        )
+
+        ProjectOrderInquiryService(db).unplace_rows(placed_row_ids)
+
+    touched_headers: dict[str, PurchaseOrder] = {}
+    superseded_documents: list[dict] = []
+    for line, header, ac_number, item_code in to_close:
+        line.line_status = "closed"
+        touched_headers[str(header.id)] = header
+        outcome.updated(
+            code=oc.LINE_CLOSED,
+            identity=_identity(header.po_number, item_code, ""),
+            value=header.po_number,
+            message=f"{header.po_number} superseded by AutoCount PO {ac_number}",
+            entity_type="order_line",
+            entity_id=line.id,
+        )
+        superseded_documents.append({
+            "po_number": header.po_number,
+            "superseded_by": ac_number,
+        })
+        logger.info(
+            "outstanding import: CRM-raised PO %s line %s (product %s) superseded "
+            "by AutoCount PO %s", header.po_number, line.id, line.product_id, ac_number,
+        )
+    db.flush()
+
+    # A PO whose every line just closed is itself closed - the header's status is a
+    # summary of its lines, not a separate fact somebody has to notice went stale.
+    for header in touched_headers.values():
+        still_open = (
+            db.query(PurchaseOrderLine.id)
+            .filter(PurchaseOrderLine.purchase_order_id == header.id,
+                    PurchaseOrderLine.line_status == "open")
+            .first()
+        )
+        if still_open is None:
+            header.status = "closed"
+    db.flush()
+
+    return len(to_close), superseded_documents
+
+
 def apply(db: Session, file_data: bytes, doc_type: str = SO,
           actor: Optional[str] = None, outcome: Optional[ImportOutcome] = None,
           on_total_rows: Optional[Callable[[int], None]] = None,
@@ -1644,6 +1770,17 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
 
     db.flush()
 
+    # CRM<->AutoCount supersession (captain, 21 Aug): PO book only, and never wrapped in
+    # a best-effort guard like the two batches below - a failure here must fail the whole
+    # upload rather than let AutoCount lines land while the CRM's own duplicate stays open.
+    superseded_lines, superseded_documents = (
+        _supersede_crm_raised_pos(db, resolved, outcome) if doc_type == PO else (0, [])
+    )
+    # This job's own count, exactly like `closed_rows` above: a line closed here carries
+    # an outcome and no source row either, so the total has to grow with it or `processed`
+    # runs past `total_rows` on the progress bar.
+    total_rows += superseded_lines
+
     # AC-D2a: exceptions are a BATCH produced on confirmation, not ad-hoc signals arriving
     # one at a time. Best-effort, because the upload itself has already succeeded: a failure
     # to diff the plan must not fail the write and send the operator back to re-upload a book
@@ -1720,6 +1857,9 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         "scope_documents": list(diff.scope_documents),
         "activated_documents": activated,
         "adopted_documents": adopted,
+        # CRM-raised purchase orders this same upload retired because AutoCount now
+        # states the identical (product, supplier) - see `_supersede_crm_raised_pos`.
+        "superseded_documents": superseded_documents,
         "resolution_issues": [asdict(i) for i in plan.issues],
         "row_problems": [asdict(p) for p in read.problems + plan.problems],
         # Reported by the commit as well as by the preview, and stated as it was BEFORE the
