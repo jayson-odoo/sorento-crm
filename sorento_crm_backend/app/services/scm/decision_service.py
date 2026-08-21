@@ -20,6 +20,19 @@ the decision state (and its PO number) survives a confirm renumber without a sch
 change. ``confirm_decisions`` is idempotent — re-running it reconciles every line
 to the rec's CURRENT decision (re-adjusted qty updated, rejected rec's line pulled).
 No UUIDs surface — suppliers/POs resolve to codes/numbers.
+
+**Both plan grains reach a draft PO here now** (captain, 21 Aug — reverses the
+original doctrine that a product-grain run never drafted an internal
+``purchase_orders`` row and only ever produced the AutoCount keying worklist).
+``confirm_decisions`` dispatches on the run's own stamped grain: a LOCATION run
+reconciles recommendation-level decisions (accept/adjust/reject, or the newer S16
+``plan_row_decision``) via ``_confirm_location_grain``; a PRODUCT run reconciles
+``OrderSummaryRow.chosen_qty`` decisions (``summary_order_service.record_decision``)
+via ``_confirm_product_grain``. Confirming that draft
+(``purchase_order_service.bulk_confirm``) then triggers the order-inquiry
+auto-place cascade the same way a project-supply decision confirm does — placement
+never waits on a person clicking a separate button. The po_worklist AutoCount path is
+unchanged and unaffected either way.
 """
 from __future__ import annotations
 
@@ -43,6 +56,11 @@ from app.services.numbering_service import NumberingService
 
 DRAFT_STATUS = "draft_recommendation"
 _SRC = "scm_recommendation"
+#: The draft-PO-line stamp for a PRODUCT-grain decision (`OrderSummaryRow.chosen_qty`,
+#: captain 21 Aug — reverses the old "product grain never drafts a PO" doctrine below).
+#: Kept distinct from `_SRC` so a location-grain rec id and a product-grain row id can
+#: never collide inside the same lookup, even though both are UUIDs.
+_SRC_PRODUCT = "scm_order_summary_row"
 
 
 # ---------------------------------------------------------------------------
@@ -216,16 +234,18 @@ def _draft_po_for_supplier(
     return po
 
 
-def _remove_rec_line(db: Session, rec_id: str) -> None:
-    """Drop a rec's line from whatever DRAFT PO it currently sits in (a prior
-    accept/adjust that is being redirected or rejected). Deletes the draft if it
-    empties. Only draft POs are touched — a confirmed (active) PO is never mutated."""
+def _remove_source_line(db: Session, source_ref: str, source_system: str = _SRC) -> None:
+    """Drop a `(source_system, source_ref)` line from whatever DRAFT PO it currently
+    sits in (a prior decision being redirected, cleared, or rejected). Deletes the
+    draft if it empties. Only draft POs are touched — a confirmed (active) PO is never
+    mutated. Shared by both grains — `_remove_rec_line` is the location-grain (rec id)
+    alias every existing caller uses; a product-grain caller passes `_SRC_PRODUCT`."""
     line = (
         db.query(PurchaseOrderLine)
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
         .filter(
-            PurchaseOrderLine.source_ref == rec_id,
-            PurchaseOrderLine.source_system == _SRC,
+            PurchaseOrderLine.source_ref == source_ref,
+            PurchaseOrderLine.source_system == source_system,
             PurchaseOrder.status == DRAFT_STATUS,
         )
         .first()
@@ -247,14 +267,32 @@ def _remove_rec_line(db: Session, rec_id: str) -> None:
             db.flush()
 
 
+def _remove_rec_line(db: Session, rec_id: str) -> None:
+    """Location-grain alias of `_remove_source_line` — every existing (rec-id-keyed)
+    call site is unchanged."""
+    _remove_source_line(db, rec_id, _SRC)
+
+
 def _upsert_line(
     db: Session,
     po: PurchaseOrder,
-    rec: ReorderRecommendation,
+    *,
+    product_id: str,
+    warehouse_id: Optional[str],
+    source_ref: str,
     qty: float,
     unit_cost: Optional[float],
     lead_days: Optional[float],
+    source_system: str = _SRC,
 ) -> None:
+    """Upsert ONE draft-PO line keyed by `(source_system, source_ref)`.
+
+    Shared by both grains: a location-grain caller passes a recommendation's own id
+    under `_SRC` (one line per warehouse rec); a product-grain caller passes an
+    `OrderSummaryRow` id under `_SRC_PRODUCT` (one line per product, `warehouse_id`
+    None — the network-buy shape existing rec lines already tolerate) so a re-confirm
+    reconciles the same line instead of duplicating one.
+    """
     expected = (
         date.today() + timedelta(days=int(lead_days))
         if lead_days is not None else None
@@ -263,7 +301,8 @@ def _upsert_line(
         db.query(PurchaseOrderLine)
         .filter(
             PurchaseOrderLine.purchase_order_id == po.id,
-            PurchaseOrderLine.source_ref == rec.id,
+            PurchaseOrderLine.source_ref == source_ref,
+            PurchaseOrderLine.source_system == source_system,
         )
         .first()
     )
@@ -276,16 +315,16 @@ def _upsert_line(
             PurchaseOrderLine(
                 id=str(uuid.uuid4()),
                 purchase_order_id=po.id,
-                product_id=rec.product_id,
-                warehouse_id=rec.warehouse_id,
+                product_id=product_id,
+                warehouse_id=warehouse_id,
                 qty_ordered=qty,
                 qty_received=0,
                 unit_cost=unit_cost,
                 currency=po.currency,
                 expected_date=expected,
                 line_status="open",
-                source_system=_SRC,
-                source_ref=rec.id,
+                source_system=source_system,
+                source_ref=source_ref,
             )
         )
     db.flush()
@@ -439,20 +478,39 @@ def confirm_decisions(
 ) -> dict:
     """Materialise the staged decisions of a run into consolidated draft POs (M4-D4).
 
+    Dispatches on the run's own stamped grain (AC-F09): a legacy run holds no
+    actionable decision at all and is refused outright; a LOCATION run reconciles its
+    recommendation-level decisions (``_confirm_location_grain``, unchanged since M4);
+    a PRODUCT run reconciles its ``OrderSummaryRow.chosen_qty`` decisions instead
+    (``_confirm_product_grain``). Reversed doctrine (captain, 21 Aug): a product-grain
+    run used to hand Joey a worklist to key in AutoCount and NOTHING ELSE — now
+    "decide buy on the row" also drafts an internal PO the same way a location decision
+    does, so confirming it can in turn trigger the order-inquiry auto-place cascade
+    (``purchase_order_service.bulk_confirm``). The worklist is untouched either way —
+    it is a read of the same decisions, not the only route to a PO any more."""
+    run = _run_or_404(db, run_id)
+    plan_grain.assert_not_legacy(run)
+    if plan_grain.decision_grain_of(run) == plan_grain.PRODUCT_GRAIN:
+        return _confirm_product_grain(db, run_id, ids, actor)
+    return _confirm_location_grain(db, run_id, ids, actor)
+
+
+def _confirm_location_grain(
+    db: Session, run_id: str, ids: Optional[list[str]], actor: Optional[str]
+) -> dict:
+    """The LOCATION-grain half of ``confirm_decisions`` (M4-D4).
+
     Idempotent reconciler: for every decided rec (optionally narrowed to ``ids``)
     — accepted/adjusted → upsert its line into the supplier's draft PO (latest
     override qty/supplier honoured); dismissed → pull its line back out. Re-running
     after a re-adjust just updates the line. Returns how many decisions were
     confirmed and how many distinct draft POs were touched.
 
-    Guarded like the decisions it materialises (AC-F09): confirming is the step that turns
-    staged location decisions into draft purchase orders, so a run that may not hold those
-    decisions may not have them materialised either - otherwise the grain guard on Accept /
-    Adjust / Reject is bypassed by whatever staged status a run happens to carry. Unchanged
-    by S16 (the row decision, below): a product-grain run never drafts an internal
-    ``purchase_orders`` row at all - it hands Joey a worklist to key in AutoCount instead -
-    so ``plan_row_decision``'s buy portion only ever reaches a draft PO here, on a run
-    already proven to be location-grain.
+    Guarded like the decisions it materialises (AC-F09): confirming is the step that
+    turns staged location decisions into draft purchase orders, so a run that may not
+    hold those decisions may not have them materialised either - otherwise the grain
+    guard on Accept / Adjust / Reject is bypassed by whatever staged status a run
+    happens to carry.
 
     S16 (captain 21 Aug): a rec that carries a ``plan_row_decision`` is reconciled from
     THAT record instead of the legacy accepted/adjusted/dismissed status - it is the
@@ -494,7 +552,10 @@ def confirm_decisions(
         # supplier), then consolidate into the current supplier's draft.
         _remove_rec_line(db, rec.id)
         po = _draft_po_for_supplier(db, supplier_id, rec.currency)
-        _upsert_line(db, po, rec, qty, unit_cost, lead)
+        _upsert_line(
+            db, po, product_id=rec.product_id, warehouse_id=rec.warehouse_id,
+            source_ref=rec.id, qty=qty, unit_cost=unit_cost, lead_days=lead,
+        )
         touched.add(po.id)
         confirmed += 1
 
@@ -506,7 +567,84 @@ def confirm_decisions(
             continue  # use_stock / use_po / skip / an all-non-buy mixture — nothing to draft
         choice = _resolve_choice(db, rec, None)
         po = _draft_po_for_supplier(db, choice["supplier_id"], rec.currency)
-        _upsert_line(db, po, rec, buy_qty, choice["unit_cost"], choice["lead_time_days"])
+        _upsert_line(
+            db, po, product_id=rec.product_id, warehouse_id=rec.warehouse_id,
+            source_ref=rec.id, qty=buy_qty, unit_cost=choice["unit_cost"],
+            lead_days=choice["lead_time_days"],
+        )
+        touched.add(po.id)
+        confirmed += 1
+
+    db.flush()
+    return {"confirmed_count": confirmed, "po_count": len(touched)}
+
+
+def _confirm_product_grain(
+    db: Session, run_id: str, ids: Optional[list[str]], actor: Optional[str]
+) -> dict:
+    """The PRODUCT-grain half of ``confirm_decisions`` (captain, 21 Aug).
+
+    The decision this reconciles is ``OrderSummaryRow.chosen_qty`` /
+    ``chosen_supplier_id`` (``summary_order_service.record_decision``) — not
+    ``PlanRowDecision``, which is the location-grain mechanism (see module docstring
+    for where each grain's decision actually lives). Consolidated into ONE draft PO
+    per chosen supplier, ONE line per product, keyed by the row's own id under
+    ``_SRC_PRODUCT`` so re-confirming after a re-decision reconciles the same line
+    instead of duplicating one — the exact same idempotent shape
+    ``_confirm_location_grain`` uses, just keyed off the row instead of the rec.
+
+    ``ids`` (optional) narrows to specific ``OrderSummaryRow`` ids, mirroring how the
+    location half narrows to specific rec ids; empty confirms every decided row.
+
+    A row not yet decided (``chosen_qty IS NULL``) is skipped — nothing to draft. A
+    decision of ZERO ("use the pool, do not buy") pulls any stale line back out and is
+    NOT counted as confirmed, mirroring a dismissed rec on the location side.
+
+    Price and lead time are read exactly the way the PO worklist already resolves them
+    per (product, supplier) (``summary_order_service._lead_times``) rather than a
+    second lookup, so the drafted line and the worklist a buyer already saw can never
+    disagree. A product-level draft line names no single warehouse — the location
+    split lives on ``OrderSummaryLocationAllocation``, the same shape a network-wide
+    recommendation (no `warehouse_id`) already uses on the location side.
+    """
+    from app.models.scm import OrderSummaryRow
+    from app.services.scm.summary_order_service import _lead_times
+
+    q = db.query(OrderSummaryRow).filter(
+        OrderSummaryRow.run_id == run_id,
+        OrderSummaryRow.chosen_qty.isnot(None),
+    )
+    if ids:
+        q = q.filter(OrderSummaryRow.id.in_(ids))
+    rows = q.all()
+
+    leads = _lead_times(
+        db,
+        [
+            (str(r.product_id), str(r.chosen_supplier_id))
+            for r in rows if r.chosen_supplier_id
+        ],
+    )
+
+    touched: set[str] = set()
+    confirmed = 0
+    for row in rows:
+        # Clear any stale draft line first (e.g. a prior confirm under a
+        # since-switched supplier or a re-decided qty), same shape as location grain.
+        _remove_source_line(db, row.id, _SRC_PRODUCT)
+        qty = float(row.chosen_qty or 0)
+        if qty <= 0:
+            continue  # "use the pool" — nothing to draft
+        key = (str(row.product_id), str(row.chosen_supplier_id or ""))
+        unit_cost = leads.get(("cost",) + key)
+        lead_days = leads.get(key)
+        currency = leads.get(("ccy",) + key)
+        po = _draft_po_for_supplier(db, row.chosen_supplier_id, currency)
+        _upsert_line(
+            db, po, product_id=row.product_id, warehouse_id=None,
+            source_ref=row.id, qty=qty, unit_cost=unit_cost, lead_days=lead_days,
+            source_system=_SRC_PRODUCT,
+        )
         touched.add(po.id)
         confirmed += 1
 

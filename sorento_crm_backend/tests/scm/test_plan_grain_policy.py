@@ -678,10 +678,16 @@ def test_confirm_decisions_over_http_refuses_a_legacy_run(decision_api):
     assert res.json()["code"] == "legacy_run_read_only"
 
 
-def test_confirm_decisions_over_http_refuses_a_product_grain_run(decision_api):
-    """Confirm is the step that turns staged LOCATION decisions into draft POs, so a
-    product-grain run refuses it - otherwise the guard on Accept is bypassed by whatever
-    status a recommendation happens to carry."""
+def test_confirm_decisions_over_http_reaches_a_product_grain_run_but_ignores_rec_status(
+    decision_api,
+):
+    """Reversed doctrine (captain, 21 Aug): confirming is no longer refused outright on
+    a product-grain run - it dispatches to `_confirm_product_grain`, which reconciles
+    `OrderSummaryRow.chosen_qty`, NEVER a recommendation's own `status`. So a product-
+    grain run's recommendation carrying a stray LOCATION-shaped `status="accepted"`
+    (the other grain's decision surface, set directly here rather than through the
+    guarded Accept endpoint) is still not what confirm reads - it succeeds with
+    nothing to confirm, exactly as if no decision had been made at all."""
     f = decision_api
     run = _run(f["db"], decision_grain="product", contract_version=1)
     rec = _recommendation(f["db"], run, f["product"], f["warehouse"])
@@ -691,8 +697,10 @@ def test_confirm_decisions_over_http_refuses_a_product_grain_run(decision_api):
     res = f["client"].post(
         f"/api/v1/scm/reorder-runs/{run.id}/confirm-decisions", json={"ids": []})
 
-    assert res.status_code == 409, res.text
-    assert res.json()["code"] == "decision_grain_mismatch"
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["confirmed_count"] == 0
+    assert body["po_count"] == 0
 
 
 def test_reset_decisions_over_http_refuses_a_legacy_run(decision_api):

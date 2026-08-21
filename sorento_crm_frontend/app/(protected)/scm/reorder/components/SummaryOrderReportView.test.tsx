@@ -52,6 +52,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 const hooks = vi.hoisted(() => ({
   useOrderSummary: vi.fn(),
   useRecordOrderDecision: vi.fn(),
+  useConfirmOrderDecisions: vi.fn(),
   useOrderSummaryDemand: vi.fn(),
   useOrderSummaryLocations: vi.fn(),
   useOrderSummarySuppliers: vi.fn(),
@@ -94,6 +95,7 @@ function rowFor(productCode: string): HTMLElement {
 beforeEach(() => {
   vi.clearAllMocks();
   hooks.useRecordOrderDecision.mockReturnValue({ mutate, isPending: false });
+  hooks.useConfirmOrderDecisions.mockReturnValue({ mutate: vi.fn(), isPending: false });
   hooks.useOrderSummaryDemand.mockReturnValue(state());
   hooks.useOrderSummaryLocations.mockReturnValue(state());
   hooks.useOrderSummarySuppliers.mockReturnValue(state());

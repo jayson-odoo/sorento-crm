@@ -434,10 +434,14 @@ class PlanRowDecision(Base, CompanyScopedMixin):
     product fans this write out one member recommendation id at a time, the same way
     ``reorder_run_service.set_moq_override`` already fans a MoQ edit out to every
     member — the write itself does not need to know which grain it landed on.
-    ``confirm_decisions`` stays LOCATION-grain gated (unchanged): a product-grain run
-    never drafts an internal ``purchase_orders`` row at all — it hands Joey a worklist
-    to key in AutoCount instead — so this table's buy portion only ever reaches a
-    draft PO on a location-grain run.
+    A row written HERE still only ever reaches a draft PO on a location-grain run
+    (``decision_service._confirm_location_grain``): the product-grain decision that
+    ``confirm_decisions`` drafts from is a DIFFERENT record — ``OrderSummaryRow.
+    chosen_qty`` (``summary_order_service.record_decision``), reconciled by
+    ``_confirm_product_grain``. What changed (captain, 21 Aug) is that a product-grain
+    run's OWN decision now also drafts an internal PO instead of only feeding the
+    AutoCount worklist; this table's fan-out on a product-grain run's grouped rows is
+    unaffected and still does not, by itself, reach a PO.
 
     ``use_stock`` records the buyer's INTENTION only - no stock is reserved or held by
     writing this row. An actual hold would collide with the project-sales ladder's own

@@ -15,6 +15,7 @@ po_number + supplier / warehouse codes are surfaced (never UUIDs).
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date
 from typing import Optional
@@ -51,6 +52,8 @@ _REC_SOURCE = "scm_recommendation"
 #: writes shipping orders under their own stamp (`po_history_service.SPO_SOURCE_SYSTEM`), and
 #: an unlisted stamp would read as "somebody keyed this by hand".
 _IMPORT_SOURCES = (PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE)
+
+log = logging.getLogger(__name__)
 
 
 def _source_label(source_system: Optional[str]) -> str:
@@ -292,9 +295,20 @@ class PurchaseOrderService:
 
     def bulk_confirm(self, ids: list[str], actor: Optional[str] = None) -> dict:
         """Confirm draft POs → active + canonical number (M4-D6). Idempotent: a PO not
-        in ``draft_recommendation`` is skipped, so re-confirming is a no-op."""
+        in ``draft_recommendation`` is skipped, so re-confirming is a no-op.
+
+        Confirming is also one of the moments the order-inquiry auto-place cascade
+        runs (captain, 21 Aug): a line an internal draft PO just opened may already
+        have a RAISED buy row waiting on exactly this product, so placement should not
+        wait on someone clicking a separate button — mirrors
+        ``project_supply_service._auto_place_after_confirm``. Run AFTER the confirm
+        commit and best-effort: the confirm itself has already succeeded by the time
+        this runs, so a failure here must not turn that success into a 500 the retry
+        cannot repair (CLAUDE.md — post-commit side effects are best-effort, never
+        raise)."""
         confirmed = 0
         numbering = NumberingService(self.db)
+        product_ids: set[str] = set()
         for pid in ids or []:
             po = (
                 self._base_query()
@@ -312,8 +326,29 @@ class PurchaseOrderService:
                 po.expected_date = max(dates) if dates else None
             for ln in po.lines:
                 ln.line_status = "open"
+                if ln.product_id:
+                    product_ids.add(str(ln.product_id))
             confirmed += 1
         self.db.commit()
+
+        if product_ids:
+            try:
+                from app.services.project_order_inquiry_service import (
+                    ProjectOrderInquiryService,
+                )
+
+                ProjectOrderInquiryService(self.db).auto_place_for_products(
+                    list(product_ids), actor_user_id=actor or "system",
+                    trigger="po_confirm",
+                )
+                self.db.commit()
+            except Exception as exc:  # noqa: BLE001
+                self.db.rollback()
+                log.warning(
+                    "purchase order(s) confirmed, but the order-inquiry auto-place "
+                    "pass failed (%s)", exc,
+                )
+
         return {"confirmed_count": confirmed}
 
     def create_gr(self, po_id: str, actor: Optional[str] = None) -> dict:
