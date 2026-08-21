@@ -150,7 +150,10 @@ export function useRecordOrderDecision(q: OrderSummaryQuery = {}) {
 export function useConfirmOrderDecisions(runId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => confirmDecisions(runId as string),
+    mutationFn: () => {
+      if (!runId) return Promise.reject(new Error('No plan is open to confirm decisions on.'));
+      return confirmDecisions(runId);
+    },
     onSuccess: (result) => {
       void qc.invalidateQueries({ queryKey: orderSummaryKey({ run_id: runId }) });
       void qc.invalidateQueries({ queryKey: purchaseOrdersKey });

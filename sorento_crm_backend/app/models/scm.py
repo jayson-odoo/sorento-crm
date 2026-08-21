@@ -434,14 +434,21 @@ class PlanRowDecision(Base, CompanyScopedMixin):
     product fans this write out one member recommendation id at a time, the same way
     ``reorder_run_service.set_moq_override`` already fans a MoQ edit out to every
     member — the write itself does not need to know which grain it landed on.
-    A row written HERE still only ever reaches a draft PO on a location-grain run
-    (``decision_service._confirm_location_grain``): the product-grain decision that
-    ``confirm_decisions`` drafts from is a DIFFERENT record — ``OrderSummaryRow.
-    chosen_qty`` (``summary_order_service.record_decision``), reconciled by
-    ``_confirm_product_grain``. What changed (captain, 21 Aug) is that a product-grain
-    run's OWN decision now also drafts an internal PO instead of only feeding the
-    AutoCount worklist; this table's fan-out on a product-grain run's grouped rows is
-    unaffected and still does not, by itself, reach a PO.
+    A row written HERE DOES reach a draft PO on a product-grain run too, as of the
+    captain's same-day correction (21 Aug): "I need the confirm decision to be in
+    reorder planning, not in another page called order summary" - the results grid IS
+    where a product-grain buyer decides, so ``decision_service._confirm_product_grain``
+    reads THIS table first (grouped one row per product, since ``usePlanLines.decide``
+    fans the SAME decision out to every member rec of a grouped row rather than
+    splitting it - consolidated ONCE per product on confirm, then split back across
+    the group's REAL member warehouses so every drafted line names one, never summed
+    per member and never a NULL one, B2). ``OrderSummaryRow.chosen_qty``
+    (``summary_order_service.record_decision``, the Summary Order Report's own older
+    quantity sheet) is read only as a FALLBACK, for a product this table holds no
+    decision for - mirrors this same table's own precedence over the legacy
+    accepted/adjusted/dismissed status on the location side. On a LOCATION-grain run
+    this table still reaches a PO the way it always has, via
+    ``_confirm_location_grain``.
 
     ``use_stock`` records the buyer's INTENTION only - no stock is reserved or held by
     writing this row. An actual hold would collide with the project-sales ladder's own

@@ -74,7 +74,7 @@ def db():
 
 
 # =========================================================================== #
-# (a) fixture chain — product, warehouse, one buy rec, one frozen order-summary
+# (a) fixture chain - product, warehouse, one buy rec, one frozen order-summary
 # row, stamped at PRODUCT grain (mirrors test_plan_grain_policy.py).
 # =========================================================================== #
 
@@ -123,22 +123,38 @@ def _run(db):
     return run
 
 
-def _recommendation(db, run, product, wh, qty=50):
+def _recommendation(db, run, product, wh, qty=50, supplier=None):
     rec = ReorderRecommendation(
         id=_u(), run_id=run.id, rec_type="buy", product_id=product.id,
         warehouse_id=wh.id, rounded_qty=qty, status="proposed",
+        supplier_id=(supplier.id if supplier else None),
     )
     db.add(rec)
     db.flush()
     return rec
 
 
-def _line_for_row(db, row_id):
+def _lines_for_product(db, product_id):
+    """Every product-grain draft line for a product (B2, code review 21 Aug: a
+    product-grain draft is split across its REAL member warehouses, so a product can
+    hold more than one line - never a single NULL-warehouse one). Queried by the
+    product itself, not by a single ``source_ref``, since the grid path keys each
+    line by its own member recommendation id and the summary-fallback path keys each
+    by ``"{row_id}:{warehouse_id}"`` - two different key shapes that both still name
+    THIS product."""
     return db.execute(text(
-        "SELECT purchase_order_id::text AS po_id, qty_ordered, warehouse_id "
+        "SELECT purchase_order_id::text AS po_id, qty_ordered, warehouse_id::text AS warehouse_id "
         "FROM purchase_order_lines "
-        "WHERE source_ref = :r AND source_system = 'scm_order_summary_row'"
-    ), {"r": row_id}).mappings().first()
+        "WHERE product_id = :p AND source_system = 'scm_order_summary_row' "
+        "ORDER BY warehouse_id"
+    ), {"p": product_id}).mappings().all()
+
+
+def _line_for_product(db, product_id):
+    """The single line, for a test scenario with exactly one real member warehouse."""
+    lines = _lines_for_product(db, product_id)
+    assert len(lines) <= 1, f"expected at most one line, got {len(lines)}"
+    return lines[0] if lines else None
 
 
 # =========================================================================== #
@@ -170,12 +186,12 @@ def test_product_grain_confirm_drafts_a_line_with_the_right_supplier_and_qty(db)
     assert out["confirmed_count"] == 1
     assert out["po_count"] == 1
 
-    line = _line_for_row(db, row.id)
+    line = _line_for_product(db, product.id)
     assert line is not None, "product-grain confirm must draft a PO line"
     assert float(line["qty_ordered"]) == 40
-    # a product-level draft names no single location — the split lives on
-    # OrderSummaryLocationAllocation, not on the PO line's own warehouse_id.
-    assert line["warehouse_id"] is None
+    # the ONE real member warehouse this product's split names (B2) - never NULL,
+    # or the line is invisible to the next run's on-order figures.
+    assert line["warehouse_id"] == wh.id
 
     po = db.execute(text(
         "SELECT status, supplier_id::text AS supplier_id FROM purchase_orders WHERE id = :id"
@@ -204,9 +220,9 @@ def test_product_grain_reconfirm_after_a_requalify_reconciles_the_same_line(db):
         chosen_qty=40, supplier_code=supplier_a.supplier_code, actor="tester",
     )
     dsvc.confirm_decisions(db, run.id, ids=None, actor="tester")
-    first_po_id = _line_for_row(db, row.id)["po_id"]
+    first_po_id = _line_for_product(db, product.id)["po_id"]
 
-    # a re-decision changing BOTH qty and supplier, then re-confirm — the SAME row
+    # a re-decision changing BOTH qty and supplier, then re-confirm - the SAME row
     # id is the line's key, so this reconciles a line, never duplicates one.
     svc.record_decision(
         db, product.product_code, run_id=run.id,
@@ -218,11 +234,11 @@ def test_product_grain_reconfirm_after_a_requalify_reconciles_the_same_line(db):
 
     line_count = db.execute(text(
         "SELECT count(*) FROM purchase_order_lines "
-        "WHERE source_ref = :r AND source_system = 'scm_order_summary_row'"
-    ), {"r": row.id}).scalar()
+        "WHERE product_id = :p AND source_system = 'scm_order_summary_row'"
+    ), {"p": product.id}).scalar()
     assert line_count == 1, "a re-confirm must reconcile the existing line, not add one"
 
-    line2 = _line_for_row(db, row.id)
+    line2 = _line_for_product(db, product.id)
     assert float(line2["qty_ordered"]) == 70
     assert line2["po_id"] != first_po_id, "a supplier switch drafts under the new supplier"
 
@@ -252,9 +268,9 @@ def test_product_grain_chosen_qty_zero_pulls_the_line_and_is_not_confirmed(db):
         chosen_qty=40, supplier_code=supplier.supplier_code, actor="tester",
     )
     dsvc.confirm_decisions(db, run.id, ids=None, actor="tester")
-    assert _line_for_row(db, row.id) is not None
+    assert _line_for_product(db, product.id) is not None
 
-    # "use the pool, do not buy" — zero is a valid decision (record_decision's own
+    # "use the pool, do not buy" - zero is a valid decision (record_decision's own
     # doctrine), and confirming it pulls the stale draft line back out.
     svc.record_decision(
         db, product.product_code, run_id=run.id,
@@ -263,11 +279,11 @@ def test_product_grain_chosen_qty_zero_pulls_the_line_and_is_not_confirmed(db):
     out = dsvc.confirm_decisions(db, run.id, ids=None, actor="tester")
     assert out["confirmed_count"] == 0
     assert out["po_count"] == 0
-    assert _line_for_row(db, row.id) is None
+    assert _line_for_product(db, product.id) is None
 
 
 def test_confirm_decisions_endpoint_reaches_product_grain(db):
-    """The route dispatches by the run's own stamped grain (S16 follow-up, 21 Aug) —
+    """The route dispatches by the run's own stamped grain (S16 follow-up, 21 Aug)  - 
     a product-grain run is no longer refused by the blanket location-grain gate."""
     from app.database import get_db
     from app.dependencies import get_current_user_or_api_key
@@ -316,6 +332,141 @@ def test_confirm_decisions_endpoint_reaches_product_grain(db):
 
 
 # =========================================================================== #
+# (a2) grid-decided (PlanRowDecision on member recs) - the ACTUAL Reorder Planning
+# results grid the captain meant ("I need the confirm decision to be in reorder
+# planning, not in another page called order summary"). `usePlanLines.decide` fans
+# the SAME decision out to every member rec of a grouped product row (never split),
+# so confirming must consolidate ONCE per product, never once per member.
+# =========================================================================== #
+
+
+def test_grid_decided_group_confirm_drafts_once_with_the_right_qty(db):
+    cat, uom = _category_and_uom(db)
+    product = _product(db, cat, uom)
+    wh_a = _warehouse(db)
+    wh_b = _warehouse(db)
+    supplier = _supplier(db, f"{MARKER} Supplier A")
+    run = _run(db)
+    # TWO member recs for the SAME product (two warehouses), exactly what a grouped
+    # product row fans a decision out to.
+    rec_a = _recommendation(db, run, product, wh_a, qty=30, supplier=supplier)
+    rec_b = _recommendation(db, run, product, wh_b, qty=20, supplier=supplier)
+
+    # the FE fan-out: the IDENTICAL decision written onto EVERY member, never split.
+    for rec in (rec_a, rec_b):
+        dsvc.record_plan_row_decision(
+            db, rec.id, kind="buy", buy_qty=298, stock_takes=None,
+            po_qty=None, po_refs=None, reason_text=None, actor="tester",
+        )
+
+    out = dsvc.confirm_decisions(db, run.id, ids=None, actor="tester")
+    assert out["confirmed_count"] == 1, "one PRODUCT, not one per member"
+    assert out["po_count"] == 1
+
+    # the fanned 298 is split back across the group's REAL member warehouses (B2),
+    # never once per member (894) and never on a NULL warehouse.
+    lines = _lines_for_product(db, product.id)
+    assert lines, "product-grain confirm must draft at least one PO line"
+    assert len(lines) <= 2, "never more than the group's own member warehouses"
+    total_qty = sum(float(l["qty_ordered"]) for l in lines)
+    assert total_qty == 298, "the fanned qty, never summed/tripled across members"
+    member_warehouse_ids = {wh_a.id, wh_b.id}
+    for l in lines:
+        assert l["warehouse_id"] is not None, "no line may carry a NULL warehouse"
+        assert l["warehouse_id"] in member_warehouse_ids
+
+
+def test_grid_decided_mixture_only_the_buy_portion_drafts(db):
+    """A mixture like the captain's own example ('PO 1,191 + Buy 1,626') only drafts
+    its buy portion - the po_qty leg is already-ordered stock, nothing to purchase."""
+    cat, uom = _category_and_uom(db)
+    product = _product(db, cat, uom)
+    wh = _warehouse(db)
+    supplier = _supplier(db, f"{MARKER} Supplier A")
+    run = _run(db)
+    rec = _recommendation(db, run, product, wh, qty=50, supplier=supplier)
+
+    dsvc.record_plan_row_decision(
+        db, rec.id, kind="mixture", buy_qty=1626, stock_takes=None,
+        po_qty=1191, po_refs=["PO-1"], reason_text="mixed cover", actor="tester",
+    )
+
+    out = dsvc.confirm_decisions(db, run.id, ids=None, actor="tester")
+    assert out["confirmed_count"] == 1
+    line = _line_for_product(db, product.id)
+    assert line is not None
+    assert float(line["qty_ordered"]) == 1626, "only the buy leg drafts, never the PO leg"
+    assert line["warehouse_id"] == wh.id
+
+
+def test_grid_decision_wins_over_a_summary_screen_decision_no_double_line(db):
+    """Both surfaces can hold a decision for the same product - the grid is
+    AUTHORITATIVE (mirrors S16's row-decision-wins doctrine on the location side)."""
+    cat, uom = _category_and_uom(db)
+    product = _product(db, cat, uom)
+    wh = _warehouse(db)
+    grid_supplier = _supplier(db, f"{MARKER} Grid Supplier")
+    summary_supplier = _supplier(db, f"{MARKER} Summary Supplier")
+    run = _run(db)
+    rec = _recommendation(db, run, product, wh, qty=50, supplier=grid_supplier)
+    svc.write_rows(db, run.id)
+
+    # the OLDER surface decides first...
+    svc.record_decision(
+        db, product.product_code, run_id=run.id,
+        chosen_qty=999, supplier_code=summary_supplier.supplier_code, actor="tester",
+    )
+    # ...then the grid decides too, on the member rec.
+    dsvc.record_plan_row_decision(
+        db, rec.id, kind="buy", buy_qty=40, stock_takes=None,
+        po_qty=None, po_refs=None, reason_text=None, actor="tester",
+    )
+
+    out = dsvc.confirm_decisions(db, run.id, ids=None, actor="tester")
+    assert out["confirmed_count"] == 1, "one line, not one per decision surface"
+    assert out["po_count"] == 1
+
+    line_count = db.execute(text(
+        "SELECT count(*) FROM purchase_order_lines "
+        "WHERE product_id = :p AND source_system = 'scm_order_summary_row'"
+    ), {"p": product.id}).scalar()
+    assert line_count == 1
+
+    line = _line_for_product(db, product.id)
+    assert float(line["qty_ordered"]) == 40, "the grid's qty wins"
+    assert line["warehouse_id"] == wh.id
+    po = db.execute(text(
+        "SELECT supplier_id::text AS supplier_id FROM purchase_orders WHERE id = :id"
+    ), {"id": line["po_id"]}).mappings().first()
+    assert po["supplier_id"] == grid_supplier.id, "the grid's supplier wins"
+
+
+def test_clear_plan_row_decision_then_confirm_line_gone(db):
+    cat, uom = _category_and_uom(db)
+    product = _product(db, cat, uom)
+    wh = _warehouse(db)
+    supplier = _supplier(db, f"{MARKER} Supplier A")
+    run = _run(db)
+    rec = _recommendation(db, run, product, wh, qty=50, supplier=supplier)
+
+    dsvc.record_plan_row_decision(
+        db, rec.id, kind="buy", buy_qty=40, stock_takes=None,
+        po_qty=None, po_refs=None, reason_text=None, actor="tester",
+    )
+    dsvc.confirm_decisions(db, run.id, ids=None, actor="tester")
+    assert _line_for_product(db, product.id) is not None
+
+    dsvc.clear_plan_row_decision(db, rec.id, actor="tester")
+    # clear retracts the line immediately - the next confirm has nothing left to undo,
+    # and the "then confirm" in the name proves that re-running finds it already gone.
+    assert _line_for_product(db, product.id) is None
+    out = dsvc.confirm_decisions(db, run.id, ids=None, actor="tester")
+    assert out["confirmed_count"] == 0
+    assert out["po_count"] == 0
+    assert _line_for_product(db, product.id) is None
+
+
+# =========================================================================== #
 # (b) bulk_confirm -> order-inquiry auto-place cascade (captain, 21 Aug)
 # =========================================================================== #
 
@@ -323,7 +474,7 @@ def test_confirm_decisions_endpoint_reaches_product_grain(db):
 def test_bulk_confirm_auto_places_a_raised_order_inquiry_buy_row():
     """Confirming a draft PO (either grain) is now a THIRD trigger of the same
     idempotent cascade `project_supply_service._auto_place_after_confirm` already
-    runs on decision confirm — a RAISED buy row for the same product claims the
+    runs on decision confirm - a RAISED buy row for the same product claims the
     line the confirm just opened, in the same run, best-effort."""
     with blank_session() as db:
         company_id = _oi_sorento(db)

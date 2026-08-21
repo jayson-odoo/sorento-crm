@@ -162,11 +162,13 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
       }
     : null;
   const lockReason = decisionLockReason(runGrain, 'product');
-  // How many rows have an order quantity decided (AC-C2.8) - what "Confirm decisions"
-  // is about to materialise into draft POs. Zero disables the button rather than
-  // hiding it, so the buyer always sees where the action lives.
+  // How many rows Confirm decisions is actually about to materialise into draft POs
+  // (AC-C2.8) - `chosen_qty > 0`, not merely decided: a zero decision ("use the pool")
+  // is a real answer but confirm skips it (code review, 21 Aug, N6), so counting it
+  // here would show a number the toast then contradicts. Zero disables the button
+  // rather than hiding it, so the buyer always sees where the action lives.
   const decidedCount = useMemo(
-    () => rows.filter((r) => r.chosen_qty !== null).length,
+    () => rows.filter((r) => (r.chosen_qty ?? 0) > 0).length,
     [rows],
   );
 

@@ -1424,6 +1424,17 @@ class ProjectOrderInquiryService:
         not PO" - the captain, live-testing): "Place on PO" tags an outstanding PURCHASE
         ORDER, never a scheduled purchase order. SPO coverage stays the ladder engine's
         job (`net_demand` / `_pools` above), untouched by this feature.
+
+        ``PurchaseOrder.status`` is also gated to active/partial (code review, 21 Aug,
+        B3, same family as G2 rule 3 above): a ``draft_recommendation`` PO is not yet an
+        outstanding order - it is OUTSIDE `scm.on_order_v` for exactly that reason
+        (M4-D5) - and its lines are also not the ones a re-decision at
+        ``decision_service._remove_product_lines`` may delete out from under a tag
+        without ceremony. Without this gate, auto-place could tag an order-inquiry row
+        onto an unconfirmed draft's line; the buyer edits the decision before
+        confirming; the draft line is deleted; and the row is left ``state='placed'``
+        with a NULL ``po_line_id`` - the exact stranding
+        ``purchase_order_service.bulk_delete`` already guards a PO's own delete against.
         """
         tagged = self._tagged_by_po_line()
         rows = (
@@ -1433,6 +1444,7 @@ class ProjectOrderInquiryService:
             .filter(
                 PurchaseOrderLine.product_id == product_id,
                 PurchaseOrderLine.line_status == "open",
+                PurchaseOrder.status.in_(("active", "partial")),
                 PurchaseOrder.po_number.notlike("SPO-%"),
             )
             .order_by(

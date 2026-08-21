@@ -24,7 +24,7 @@ vi.mock('sonner', () => ({
   },
 }));
 
-import { useRecordOrderDecision } from './useSummaryOrder';
+import { useConfirmOrderDecisions, useRecordOrderDecision } from './useSummaryOrder';
 
 function ok(body: unknown) {
   return {
@@ -95,5 +95,66 @@ describe('useRecordOrderDecision - the toast renders at the row precision (AC-F1
     expect(message).toContain('CW-BASIN-450');
     expect(message).toContain('3');
     expect(message).toContain('Alpha Supplies');
+  });
+});
+
+describe('useConfirmOrderDecisions - product-grain Confirm decisions', () => {
+  it('hits the confirm-decisions endpoint and toasts the confirmed/PO counts', async () => {
+    apiFetch.mockResolvedValue(ok({ confirmed_count: 3, po_count: 2 }));
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useConfirmOrderDecisions('run-1'), { wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync();
+    });
+
+    expect(apiFetch).toHaveBeenCalledWith(
+      '/api/v1/scm/reorder-runs/run-1/confirm-decisions',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(toastSuccess).toHaveBeenCalledWith(
+      expect.stringContaining('Confirmed 3 decisions into 2 draft purchase orders'),
+    );
+  });
+
+  it('toasts "nothing to confirm" when no product had a buy decision', async () => {
+    apiFetch.mockResolvedValue(ok({ confirmed_count: 0, po_count: 0 }));
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useConfirmOrderDecisions('run-1'), { wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync();
+    });
+
+    expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('Nothing to confirm'));
+  });
+
+  it('toasts the backend error on failure', async () => {
+    apiFetch.mockResolvedValue({
+      ok: false,
+      status: 409,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ message: 'This plan is decided at Location grain.' }),
+    } as unknown as Response);
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useConfirmOrderDecisions('run-1'), { wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync().catch(() => {});
+    });
+
+    expect(toastError).toHaveBeenCalledWith(expect.stringContaining('Location grain'));
+  });
+
+  it('never calls the API when no plan is open (null runId)', async () => {
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useConfirmOrderDecisions(null), { wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync().catch(() => {});
+    });
+
+    expect(apiFetch).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledWith(expect.stringContaining('No plan is open'));
   });
 });
