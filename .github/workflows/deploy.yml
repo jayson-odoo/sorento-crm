@@ -373,8 +373,9 @@ jobs:
         run: |
           # One -c per statement: a multi-statement -c runs in one transaction
           # and ALTER SYSTEM refuses to run inside a transaction block.
-          export PGPASSWORD=sorento
-          PSQL="psql -h localhost -U sorento -d sorento_ci -v ON_ERROR_STOP=1"
+          # $DATABASE_URL carries the job's own database name (the two backend
+          # jobs use different ones), so target that rather than a literal.
+          PSQL="psql $DATABASE_URL -v ON_ERROR_STOP=1"
           $PSQL -c "ALTER SYSTEM SET fsync = off" \
                 -c "ALTER SYSTEM SET synchronous_commit = off" \
                 -c "ALTER SYSTEM SET full_page_writes = off" \
@@ -489,8 +490,9 @@ jobs:
         run: |
           # One -c per statement: a multi-statement -c runs in one transaction
           # and ALTER SYSTEM refuses to run inside a transaction block.
-          export PGPASSWORD=sorento
-          PSQL="psql -h localhost -U sorento -d sorento_ci -v ON_ERROR_STOP=1"
+          # $DATABASE_URL carries the job's own database name (the two backend
+          # jobs use different ones), so target that rather than a literal.
+          PSQL="psql $DATABASE_URL -v ON_ERROR_STOP=1"
           $PSQL -c "ALTER SYSTEM SET fsync = off" \
                 -c "ALTER SYSTEM SET synchronous_commit = off" \
                 -c "ALTER SYSTEM SET full_page_writes = off" \
