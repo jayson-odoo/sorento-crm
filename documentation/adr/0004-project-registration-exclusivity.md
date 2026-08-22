@@ -9,6 +9,16 @@ title**, with Location as tiebreak. `developer_party_id` and `normalised_title` 
 a `pg_trgm` similarity check (GIN `gin_trgm_ops`, threshold a system setting) run at create
 time.
 
+Developer is **optional on the form**, and an unstated developer must not weaken the lock.
+The check was originally scoped to `developer_party_id == <the value given>`, which meant a
+blank Developer field compared the title only against other developer-less projects — in
+practice against nothing, so re-registering a claimed title sailed through and the lock became
+opt-out with an optional field as the opt-out. A blank developer now searches **every**
+developer, and a title at or above the blocking bar (or one containing an existing title)
+blocks. The verdict is "sameness cannot be ruled out", not "these are the same": naming a
+different developer clears it immediately, so the block is self-correcting as the form is
+filled in, and the panel says so rather than only offering join / dispute.
+
 Only projects whose derived outcome is **open** block a new registration. A lost or dormant
 match is surfaced as context — "previously pursued by Ali, lost on price, Mar 2024" — and the
 registration proceeds. A re-tender three years later must not be blocked by an old loss.

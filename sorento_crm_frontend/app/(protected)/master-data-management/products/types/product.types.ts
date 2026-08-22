@@ -18,6 +18,18 @@ export interface ProductVariantRef {
   product_name: string;
 }
 
+/**
+ * A product as a line editor needs it: the identity, plus everything picking it decides for
+ * the line (its wording, its brand, its unit, its price). Money stays a STRING, as the API
+ * sends it and as every line endpoint expects it back.
+ */
+export interface ProductLineRef extends ProductVariantRef {
+  description?: string | null;
+  brand_id?: string | null;
+  base_uom_id?: string | null;
+  list_price?: string | null;
+}
+
 // Product Interface (matches database schema)
 export interface Product {
   id: string;
@@ -131,6 +143,16 @@ export interface UnitOfMeasure {
   description?: string | null;
   base_uom_id?: string | null;
   conversion_factor?: number | null;
+  /**
+   * How finely this unit can be counted, `0..4` (AC-F12).
+   *
+   * Canonical UOM divisibility, not SCM arithmetic precision and not a planning
+   * knob: `EA` is 0 and a quantity of `2.5 EA` is refused, `kg` at 3 accepts
+   * `2.5`. Never inferred from `conversion_factor`. A missing value during rollout
+   * resolves to 0, and each SCM run freezes the product's value onto its own rows
+   * so a later edit here cannot change a run that has already been calculated.
+   */
+  decimal_places?: number | null;
   is_active: boolean;
   created_at: Date;
   updated_at: Date;

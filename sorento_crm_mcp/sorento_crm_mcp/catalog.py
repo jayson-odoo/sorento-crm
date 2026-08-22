@@ -55,6 +55,11 @@ CATALOG: tuple[ToolSpec, ...] = (
             "ATTACHMENTS: pass `attachment_type_ids` (canonical AttachmentType UUIDs, csv / JSON / repeated) "
             "to nest each product's files of those types under `attachments[]` (e.g. Product Photos, "
             "Technical Specifications). Omit it for a plain price/spec listing with NO attachments.\n\n"
+            "DERIVED SPECIFICATIONS: pass `include_specifications=true` to add `specifications` to every "
+            "row - `values` (the spec block as key -> value, e.g. thickness 1.2), `rendered_text` (the "
+            "spec sentence) and `sources` (per key: derived | human | category, i.e. where the "
+            "value came from). Null on a product with no derived specs, which means 'not recorded', never "
+            "'does not have it'. Default false; omit it for a plain price/dimension listing.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -66,6 +71,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "length_min", "length_max", "width_min", "width_max",
             "height_min", "height_max", "any_dimension_min", "any_dimension_max",
             "attachment_type_ids",
+            # Declared, not passed through: the compiled tool builds its signature
+            # from THIS tuple, so a param missing here never reaches the backend
+            # however well the description documents it.
+            "include_specifications",
             "sort", "dir",
             "contact_id", "space_id",
         ),
@@ -205,19 +214,32 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_marketing_promotions_list",
         (
             "List promotions (summary fields + linked attachments inline; no product lines). Each row carries "
-            "its `attachments` array. Default returns ACTIVE promotions (is_active=true AND today within "
-            "start/end); when a narrowing filter yields zero active matches it falls back to INACTIVE and sets "
-            "fallback_used=true. Every row carries `is_expired` (true = not currently live: flag off or today "
-            "outside start/end) — when true, tell the user the promotion was FOUND but is EXPIRED; never "
-            "present an is_expired row as live. Pass active=false when the user explicitly asks for "
-            "inactive / expired / historical promotions. period_from / period_to (YYYY-MM-DD) "
-            "scope by date; `date_mode` picks which promotion date the window tests:\n"
-            "  • `overlap` (default) — promo active any time during window ('valid/running during X')\n"
-            "  • `started` — start_date within window ('released/launched/new in last X days')\n"
-            "  • `ended` — end_date within window ('ended/expired in X')\n"
-            "  started/ended automatically include BOTH active and historical rows (no active gate); "
-            "do not pass `active` with them unless the user explicitly narrows to one state.\n\n"
-            "OPTIONAL narrowing filters (call without any to get the latest 10 active promotions):\n"
+            "its `attachments` array.\n\n"
+            "WHICH PROMOTIONS COME BACK is decided by the backend, per promotion TYPE — a live promotion "
+            "always wins, and a type with no live promotion may still contribute the one that just ended. "
+            "Every row carries `promotion_type_name`, `is_expired` and `expired_but_usable`:\n"
+            "  • `is_expired=false` — live. Present it normally.\n"
+            "  • `is_expired=true` AND `expired_but_usable=true` — say the promotion HAS EXPIRED (give its "
+            "end_date) BUT STILL APPLIES, e.g. \"the July promotion ended on 31/07 and can still be used\". "
+            "Never hide it and never present it as live.\n"
+            "  • `is_expired=true` and `expired_but_usable=false` — FOUND but EXPIRED; never present it as "
+            "usable.\n"
+            "A promotion type that cannot be honoured after its end date (a special) is not returned at all "
+            "once it ends, so there is nothing to explain away.\n\n"
+            "NO HISTORY THROUGH THIS TOOL. It only ever returns the promotions Sorento currently serves — "
+            "the live ones, plus per type config at most the latest ended one that is still honoured, and "
+            "never an expired special. Inactive, superseded and no-longer-honoured promotions cannot be "
+            "retrieved here at all. If the user asks for past promotions (\"every promo that ended in "
+            "July\", \"show me the expired ones\"), say that list is not available from this tool rather "
+            "than presenting the served set as if it were the history.\n"
+            "  • DO NOT PASS `active`. The backend discards it; `active=false` does NOT return inactive "
+            "promotions, it returns the same served set.\n"
+            "  • `period_from` / `period_to` (YYYY-MM-DD) and `date_mode` only NARROW the served set — they "
+            "never reach past it. `date_mode` picks which date the window tests: `overlap` (default, promo "
+            "running during the window), `started` (start_date in window), `ended` (end_date in window). "
+            "`ended` is therefore not an archive query: it can only return served promotions that happen to "
+            "have ended in the window, so never answer \"what ended in July\" from it.\n\n"
+            "OPTIONAL narrowing filters (call without any to get the latest 10 currently-served promotions):\n"
             "  • `promotion_ids` (canonical promotion UUIDs, csv / JSON / repeated)\n"
             "  • `product_ids` (canonical product UUIDs — promotions containing any)\n"
             "  When BOTH `promotion_ids` and `product_ids` are supplied, they combine\n"
@@ -242,10 +264,11 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_marketing_promotion_products_list",
         (
             "Promotion product lines (paginated). Each row carries the parent promotion's "
-            "`promotion_attachments` inline, plus `is_expired` — true when the parent promotion "
-            "is NOT currently live (is_active off OR today outside its start/end window). When "
-            "is_expired is true, tell the user the line was FOUND but its promotion is EXPIRED; "
-            "never present an is_expired row as a live promotion.\n\n"
+            "`promotion_attachments` inline, plus `promotion_type_name`, `is_expired` — true when the parent "
+            "promotion is NOT currently live (is_active off OR today outside its start/end window) — and "
+            "`expired_but_usable`. When `expired_but_usable` is true, say the promotion HAS EXPIRED (give the "
+            "end date) BUT STILL APPLIES. When is_expired is true without it, the line was FOUND but its "
+            "promotion is EXPIRED; never present an is_expired row as a live promotion.\n\n"
             "REQUIRED — at least ONE narrowing filter or the tool returns an empty page:\n"
             "  • `promotion_ids` (canonical promotion UUIDs)\n"
             "  • `product_ids` (canonical product UUIDs)\n\n"
@@ -253,11 +276,12 @@ CATALOG: tuple[ToolSpec, ...] = (
             "height_min/max; axis-agnostic any_dimension_min/max; item_type; status=active|inactive|all. "
             "EXACT vs FUZZY: bare number is EXACT (min == max == value); hedge words apply ±5 mm. "
             "ACCESS LEVELS: `access_levels` filters by parent promotion access overlap.\n\n"
-            "PARENT-PROMOTION ACTIVITY (`active`, NOT product status): default returns lines whose "
-            "promotion is currently active, falling back to inactive-promotion lines (fallback_used=true) "
-            "when a narrowing filter yields zero active matches — same active-first behavior as "
-            "crm_marketing_promotions_list. Pass active=false for inactive / expired / historical "
-            "promotion lines only.\n\n"
+            "PARENT-PROMOTION ACTIVITY (NOT product status): lines come back only for the promotions "
+            "Sorento currently serves — live promotions, plus per type config at most the latest ended one "
+            "that is still honoured, and never an expired special. Lines under an inactive, superseded or "
+            "no-longer-honoured promotion cannot be retrieved here at all, so never present a result as the "
+            "full history of a product's promotions. DO NOT PASS `active`: the backend discards it, and "
+            "`active=false` returns the same served set rather than the archive.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -283,19 +307,23 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_marketing_promotion_attachments_list",
         (
             "List / filter promotion-attachment links (BROCHURE / FLYER documents). Each row carries "
-            "`is_expired` — true when the parent promotion is NOT currently live (is_active off OR today "
-            "outside its start/end window). When is_expired is true, tell the user the document was FOUND but "
-            "its promotion is EXPIRED; never present an is_expired row as a live promotion.\n\n"
+            "`promotion_type_name`, `is_expired` — true when the parent promotion is NOT currently live "
+            "(is_active off OR today outside its start/end window) — and `expired_but_usable`. When "
+            "`expired_but_usable` is true, say the promotion HAS EXPIRED (give the end date) BUT STILL "
+            "APPLIES. When is_expired is true without it, the document was FOUND but its promotion is "
+            "EXPIRED; never present an is_expired row as a live promotion.\n\n"
             "REQUIRED — at least ONE narrowing filter or the tool returns an empty page:\n"
             "  • `promotion_ids` (canonical promotion UUIDs)\n"
             "  • `attachment_ids` (canonical attachment UUIDs)\n\n"
             "ACCESS LEVELS: `access_levels` filters by parent promotion access overlap. Pass a single name "
             "(e.g. \"Sorento Dealer\") or a JSON array. Phrases like `sorento dealer`, `mocha office`, "
             "`end user` are `access_levels` ONLY — never `*_ids` values.\n\n"
-            "PARENT-PROMOTION ACTIVITY (`active`): default returns attachments whose promotion is currently "
-            "active, falling back to inactive-promotion attachments (fallback_used=true) when a narrowing "
-            "filter yields zero active matches — same active-first behavior as crm_marketing_promotions_list. "
-            "Pass active=false for inactive / expired / historical promotion attachments only.\n\n"
+            "PARENT-PROMOTION ACTIVITY: documents come back only for the promotions Sorento currently "
+            "serves — live promotions, plus per type config at most the latest ended one that is still "
+            "honoured, and never an expired special. Documents of an inactive, superseded or "
+            "no-longer-honoured promotion cannot be retrieved here at all, so never offer a result as the "
+            "full set of past promotion flyers. DO NOT PASS `active`: the backend discards it, and "
+            "`active=false` returns the same served set rather than the archive.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -901,5 +929,128 @@ CATALOG: tuple[ToolSpec, ...] = (
         module="procurement",
         external=True,
         domain="procurement",
+    ),
+    # --- project sales (read-only; AC-K1 / AC-K2) ---
+    ToolSpec(
+        "crm_projects_list",
+        (
+            "List PROJECT SALES pursuits (property developments, hotels, fitouts we are trying to win) "
+            "with UUID filters, stage filter and pagination. "
+            "PRIMARY TOOL for 'which projects are we chasing', 'my pipeline', 'projects for "
+            "<developer>', 'projects at tendering stage', 'critical projects', 'what is <salesperson> "
+            "working on'. NOT for delivery orders or purchase orders -- a project is a pursuit, not a "
+            "transaction.\n\n"
+            "Each row returns project_code, title, developer_name, type_name, status_label, outcome "
+            "(open / won / lost / partial), owner_name, estimated_sales_value, launch_date, "
+            "days_since_last_activity, next_action_date, next_action_overdue, stale_level (0 fine, "
+            "1 nudged, 2 warned, 3 unattended) and is_unattended.\n\n"
+            "ALL FILTERS OPTIONAL. FILTER BY UUID: `project_ids`, `owner_user_ids`, "
+            "`developer_party_ids` each accept csv / JSON list / repeated canonical UUIDs -- resolve a "
+            "project code, salesperson or developer NAME to its UUID first; a non-UUID value is "
+            "rejected with 400 rather than silently ignored.\n"
+            "  * `owner_user_ids` IS 'my pipeline'. Rows carry `owner_name`, never an owner UUID, so "
+            "the salesperson's FULL NAME or work email has to be resolved to a user UUID first (the "
+            "CRM assistant does that automatically for this param); an unresolved name is rejected "
+            "rather than answered about the wrong person.\n"
+            "  * `status_key` -- funnel rung by stable key: identified, registered, specified, quoted, "
+            "tendering, po_received, lost, dormant. An unknown key returns 422 naming the valid ones.\n"
+            "  * `outcome` -- open | won | lost | partial. Commercial result, DERIVED from the "
+            "quotations; a project can sit at 'tendering' with outcome 'partial' when one scope is won.\n"
+            "  * `only_critical=true` -- the Final Negotiation flag, not a stage.\n"
+            "SORT KEYS: created_at, updated_at, title, project_code, estimated_sales_value, "
+            "last_meaningful_activity_at; combine with dir=asc|desc.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
+        ),
+        "/api/v1/project-sales/projects/",
+        (),
+        (
+            "page",
+            "limit",
+            "project_ids",
+            "owner_user_ids",
+            "developer_party_ids",
+            "status_key",
+            "outcome",
+            "only_critical",
+            "sort",
+            "dir",
+            "contact_id",
+            "space_id",
+        ),
+        module="projects",
+        domain="projects",
+        escalation_team="sales",
+        related_tools=("crm_project_detail", "crm_project_quotations_list", "crm_project_forecast"),
+    ),
+    ToolSpec(
+        "crm_project_detail",
+        (
+            "Full detail for ONE project sales pursuit: registration facts (developer, registered "
+            "company / SPV, location, architect, main contractor, brands, estimated value, launch date, "
+            "expected delivery window), the funnel stage and derived outcome, the owner, the critical "
+            "flag with its management notes, activity recency and the derived next action, plus the "
+            "staleness rung. "
+            "USE after crm_projects_list when the user asks about one named project ('what is the status "
+            "of Residensi Damai', 'who owns PRJ-000142', 'when does <project> launch'). "
+            "INVOCATION: `project_id` is the canonical project UUID -- resolve the project code or title "
+            "first. For what we quoted on it, call crm_project_quotations_list.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
+        ),
+        "/api/v1/project-sales/projects/{project_id}",
+        ("project_id",),
+        ("contact_id", "space_id"),
+        module="projects",
+        domain="projects",
+        escalation_team="sales",
+        related_tools=("crm_projects_list", "crm_project_quotations_list"),
+    ),
+    ToolSpec(
+        "crm_project_quotations_list",
+        (
+            "List the QUOTATION SCOPES on one project (e.g. House Units, Common Area) with each scope's "
+            "current version number, current total, outcome (open / won / lost) and loss reason. "
+            "USE for 'what did we quote on <project>', 'how much is <project> worth', 'did we win the "
+            "common area', 'why did we lose <project>'. "
+            "A project has MANY quotations, one per scope, and each quotation has versions -- the total "
+            "returned is the CURRENT version's, which is the only figure that should be quoted back. "
+            "INVOCATION: `project_id` is the canonical project UUID.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
+        ),
+        "/api/v1/project-sales/projects/{project_id}/quotations",
+        ("project_id",),
+        ("contact_id", "space_id"),
+        module="projects",
+        domain="projects",
+        escalation_team="sales",
+        related_tools=("crm_project_detail", "crm_projects_list"),
+    ),
+    ToolSpec(
+        "crm_project_forecast",
+        (
+            "AGGREGATE project-sales forecast: THREE NUMBERS THAT MUST NEVER BE ADDED TOGETHER.\n"
+            "  * committed -- purchase orders on record. The only banked figure.\n"
+            "  * pipeline -- open quotations at their current version, or the registration estimate "
+            "where nothing is priced yet. SPECULATIVE.\n"
+            "  * weighted -- pipeline times the probability configured on each project's stage. "
+            "SPECULATIVE.\n"
+            "There is deliberately NO total: a single figure mixing a signed PO with a 10%-probability "
+            "rumour is the number this module exists to stop producing. When answering, report the "
+            "three separately and say which are speculative.\n\n"
+            "Also returns `by_year` (the same three per delivery year, derived from launch date plus the "
+            "configured lag unless a project states its own window) and `undated` for projects with no "
+            "derivable year -- report `undated` rather than dropping it, or the years will not "
+            "reconcile with the totals. `project_count` counts live pursuits only; lost projects "
+            "contribute nothing. No filters: it is the whole company's forecast."
+        ),
+        "/api/v1/project-sales/reports/forecast",
+        (),
+        (),
+        module="projects",
+        domain="projects",
+        escalation_team="sales",
+        related_tools=("crm_projects_list",),
     ),
 )

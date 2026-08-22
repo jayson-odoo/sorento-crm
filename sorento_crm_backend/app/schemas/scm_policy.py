@@ -17,14 +17,23 @@ rendered: ``scope_label`` is always human-readable (AC-NAV-4).
 """
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from datetime import date
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, model_validator
 
 ScopeType = Literal["sku", "product_class", "abc_xyz_cell", "global"]
-PolicyType = Literal["reorder_point", "periodic_review", "min_max"]
+# "reorder_level" is the manual-planning basis (`app.services.scm.reorder_policy`'s
+# `_MANUAL_POLICY_TYPE`, migration 356) - the GLOBAL row carries it whenever S1's
+# planning-mode switch is set to "manual". Missing here is the AC-3025 bug: the seeded
+# global row can legitimately hold it, and `GET /scm/policies` 500'd serializing that
+# row through this Literal.
+PolicyType = Literal["reorder_point", "periodic_review", "min_max", "reorder_level"]
 SafetyStockMethod = Literal["fixed_days", "statistical", "manual"]
 SupplierSelection = Literal["primary", "best_score", "lowest_cost"]
+# Where a plan row may cover a shortage from before it buys. `own_pool` is the default
+# everywhere (captain: "either I use stock from BRW, or buy"); anything else is a 422.
+CoverScope = Literal["own_pool", "all_locations"]
 ResolutionReason = Literal["most-specific-active", "priority-tiebreak", "no-match", "inactive"]
 
 
@@ -51,6 +60,13 @@ class ReorderPolicyWrite(BaseModel):
     is_active: bool = True
     supplier_selection: SupplierSelection = "primary"
     lead_time_default_days: Optional[int] = None
+    # S13d trajectory windows: months of orders deciding sustaining vs dying off.
+    # None = code default (retail 3, project 12). Config from day 1.
+    trajectory_window_retail_months: Optional[int] = None
+    trajectory_window_project_months: Optional[int] = None
+    # S13e price-advice thresholds. None = code default (180 days, 5%).
+    price_stale_after_days: Optional[int] = None
+    price_movement_threshold_pct: Optional[float] = None
 
     @model_validator(mode="after")
     def _coherence(self) -> "ReorderPolicyWrite":
@@ -67,7 +83,9 @@ class ReorderPolicyWrite(BaseModel):
 
         # AC-VAL-4 — day fields must be > 0 when provided.
         for name in ("safety_days", "review_period_days", "forecast_window_days",
-                     "dead_stock_days", "overstock_days", "lead_time_default_days"):
+                     "dead_stock_days", "overstock_days", "lead_time_default_days",
+                     "trajectory_window_retail_months", "trajectory_window_project_months",
+                     "price_stale_after_days", "price_movement_threshold_pct"):
             val = getattr(self, name)
             if val is not None and val <= 0:
                 raise ValueError(f"{name} must be greater than 0")
@@ -83,6 +101,12 @@ class ReorderPolicyRow(ReorderPolicyWrite):
     """One reorder-policy row as returned by list / create / update / resolve."""
     id: str
     scope_label: str  # human-readable target, no UUID; "—" for global
+    # READ-ONLY here. `cover_scope` is a GLOBAL setting with exactly one writer
+    # (PUT /scm/config/cover-scope): it is deliberately absent from the write schema above,
+    # because a grid save that omitted it would otherwise reset the global value to the
+    # field default. Declared explicitly all the same - a field the response model does not
+    # declare is dropped, so inheriting it was never an option.
+    cover_scope: CoverScope = "own_pool"
 
 
 class ReorderPolicyPage(BaseModel):
@@ -145,6 +169,57 @@ class SupplierScoringWrite(BaseModel):
 
 
 class SupplierScoringPolicy(SupplierScoringWrite):
+    exists: bool
+
+
+# --- fulfilment priority (single active `scm.priority_policy` row) ----------
+#
+# PLAN-demo-followups-19aug-ladder-v2.md workstream C1/C2. Same shape as classification /
+# supplier scoring - a single "the active row" GET/PUT - with one difference: a PUT here
+# NEVER updates the row in place. `app.services.scm.priority.create_revision` writes a NEW
+# row and activates it, so the ranking history a planner is judged against is never quietly
+# rewritten (`app/models/scm.py::PriorityPolicy` docstring).
+
+class FulfilmentPriorityWrite(BaseModel):
+    """PUT body - the whole active policy, saved as one new revision.
+
+    ``factors`` keys are the ranking factors `app.services.scm.priority.FACTOR_KEYS` knows
+    (``po_document_sequence``, ``demand_class``, ``need_by_date``, ``document_age``,
+    ``customer_credit``); an unrecognised key is stored and simply never scores anything,
+    the same "a factor with no value is dropped" tolerance the engine already has for a
+    factor no candidate carries. ``demand_class_weights`` is keyed by market-segment code
+    (``project``, ``retail`` today).
+    """
+    factors: Dict[str, float]
+    demand_class_weights: Dict[str, float]
+    # Ladder v2 (E) settings this slice stores but does not yet wire into scoring.
+    # A CALENDAR DATE (19 Aug follow-up, replacing the rolling `buy_all_horizon_days`
+    # day count): a line required after this date is proposed as `Buy now`, untouched.
+    # None clears the setting - no coverage limit is in force.
+    reorder_coverage_until: Optional[date] = None
+    cross_group_borrow_max_qty: int
+    cross_group_borrow_max_pct: float
+
+    @model_validator(mode="after")
+    def _check(self) -> "FulfilmentPriorityWrite":
+        for key, value in self.factors.items():
+            if value < 0:
+                raise ValueError(f"the weight for {key!r} must be >= 0")
+        for key, value in self.demand_class_weights.items():
+            if value < 0:
+                raise ValueError(f"the demand-class weight for {key!r} must be >= 0")
+        if self.cross_group_borrow_max_qty < 0:
+            raise ValueError("cross_group_borrow_max_qty must be >= 0")
+        if not (0 <= self.cross_group_borrow_max_pct <= 100):
+            raise ValueError("cross_group_borrow_max_pct must be between 0 and 100")
+        return self
+
+
+class FulfilmentPriorityPolicy(FulfilmentPriorityWrite):
+    """GET/PUT response - the active policy, or a documented default when none exists yet."""
+    name: str
+    #: False only on a database that has never activated a fulfilment-priority policy at
+    #: all - every seeded/migrated database (migration 385) has one.
     exists: bool
 
 

@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
 import StockInquiryDetail from '../components/StockInquiryDetail';
-import FormDetailWithSLATabs from '@/app/(protected)/sla-management/_shared/FormDetailWithSLATabs';
+import FormDetailTabsWithRevisions from '@/app/(protected)/sla-management/_shared/FormDetailTabsWithRevisions';
 import RecordEntityRegistrar from '@/components/common/RecordEntityRegistrar';
 
 export const metadata: Metadata = {
@@ -59,9 +59,13 @@ async function StockInquiryDetailWrapper({
 }) {
   const { id } = await params;
   return (
-    <FormDetailWithSLATabs sourceEntityType="stock_inquiry" sourceEntityId={id}>
+    <FormDetailTabsWithRevisions
+      sourceEntityType="stock_inquiry"
+      sourceEntityId={id}
+      revisionsKind="stock_inquiry"
+    >
       <RecordEntityRegistrar entityType="stock_inquiry" id={id} />
       <StockInquiryDetail inquiryId={id} />
-    </FormDetailWithSLATabs>
+    </FormDetailTabsWithRevisions>
   );
 }

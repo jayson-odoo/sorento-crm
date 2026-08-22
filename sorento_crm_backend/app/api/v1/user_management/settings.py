@@ -2,10 +2,10 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_permission
 from app.models.user import SystemSetting, User, UserRole
 from app.services.error_handler import handle_internal_error
 
@@ -60,6 +60,10 @@ class SystemSettingUpdate(BaseModel):
     default_product_standard_lead_time_days: Optional[int] = Field(None, ge=0, le=10950)
     # Takeover cooldown window in seconds (0 = instant). Cap at 1 hour.
     takeover_cooldown_seconds: Optional[int] = Field(None, ge=0, le=3600)
+    # Project registration clash bars (AC-C5). Bounded to (0, 1] because a trigram
+    # score is a ratio, and 0 would make every project clash with every other.
+    project_clash_surface_threshold: Optional[float] = Field(None, gt=0, le=1)
+    project_clash_block_threshold: Optional[float] = Field(None, gt=0, le=1)
     # Global default grace window for form-SLA actions. 0 = nothing defers, which is
     # what ships; a stage may override it (form_sla_configs.grace_seconds).
     form_sla_grace_seconds: Optional[int] = Field(None, ge=0, le=600)
@@ -91,6 +95,46 @@ class SystemSettingUpdate(BaseModel):
     chat_latency_ceiling_multiplier: Optional[int] = Field(None, ge=1, le=100)
     chat_latency_no_reply_minutes: Optional[int] = Field(None, ge=1, le=1440)
     chat_latency_min_sample: Optional[int] = Field(None, ge=1, le=100000)
+    # Portal submission revisions: global kill switch + fallback cap. Per-type
+    # overrides live in portal_revision_configs. Same rule as the latency block above -
+    # must appear here AND in the GET dict.
+    portal_revisions_enabled: Optional[bool] = None
+    portal_max_revisions: Optional[int] = Field(None, ge=0, le=50)
+    # SCM front planning: the admin plan-grain policy (plan 5.1, AC-F01). A Literal, so
+    # anything but the two grains is a 422 before it can reach the column. Same rule as
+    # the blocks above - it must appear HERE and in the GET dict, because both are manual.
+    plan_grain: Optional[Literal["product", "location"]] = None
+    # Chatbot media endpoint (PLAN-chatbot-media-endpoint section 2.4). Same rule
+    # again - every one of these must ALSO appear in the GET dict below.
+    #
+    # The two wait bounds are enforced HERE, not only in the settings form: a
+    # number that only the UI refuses is not a constraint. The 110 ceiling exists
+    # so even a maximally misconfigured pair cannot exceed the dispatcher's 120
+    # second lock TTL, and the >= relationship between them is checked below so a
+    # job that outlives the sync wait still finishes rather than being killed
+    # mid-flight.
+    media_image_monthly_limit: Optional[int] = Field(None, ge=0, le=100000)
+    media_voice_monthly_limit: Optional[int] = Field(None, ge=0, le=100000)
+    media_voice_max_seconds: Optional[int] = Field(None, ge=1, le=3600)
+    media_burst_limit: Optional[int] = Field(None, ge=1, le=1000)
+    media_burst_window_seconds: Optional[int] = Field(None, ge=1, le=3600)
+    media_warn_threshold_percent: Optional[int] = Field(None, ge=1, le=100)
+    media_image_provider: Optional[str] = None
+    media_image_model: Optional[str] = None
+    media_image_degraded_model: Optional[str] = None
+    media_transcribe_model: Optional[str] = None
+    # Voice's own degraded tier. NULL means the voice quota is a hard refusal
+    # rather than a degrade - image was measured and is seeded, voice was not.
+    media_voice_degraded_model: Optional[str] = None
+    # Three modes and no others: `language_strategy()` builds a different request
+    # shape per mode and silently treats anything unrecognised as `pinned`, so a
+    # typo would look like the setting had been ignored rather than refused.
+    media_language_mode: Optional[str] = Field(None, pattern="^(pinned|hints|auto)$")
+    media_language_pinned: Optional[str] = None
+    media_language_hints: Optional[str] = None
+    media_sync_wait_seconds: Optional[int] = Field(None, ge=5, le=90)
+    media_extraction_timeout_seconds: Optional[int] = Field(None, ge=5, le=110)
+    media_max_entities: Optional[int] = Field(None, ge=1, le=100)
 
 
 class SmtpTestResult(BaseModel):
@@ -98,9 +142,25 @@ class SmtpTestResult(BaseModel):
     message: str
 
 
+class AppConfigResponse(BaseModel):
+    """The non-sensitive slice of the system settings singleton.
+
+    Six fields, and the model is what makes "and nothing else" enforceable:
+    anything not declared here is dropped on serialization rather than leaking
+    because a dict builder grew a line. Do NOT extend it - see the route below.
+    """
+
+    currency: Optional[str] = None
+    currency_format: Optional[str] = None
+    purchase_request_default_approver_user_id: Optional[str] = None
+    purchase_request_default_approver_email: Optional[str] = None
+    sponsorship_form_default_approver_user_id: Optional[str] = None
+    sponsorship_form_default_approver_email: Optional[str] = None
+
+
 @router.get("/")
 async def get_settings(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.settings.view")),
     db: Session = Depends(get_db)
 ):
     """Get system settings and roles."""
@@ -145,6 +205,18 @@ async def get_settings(
                 ),
                 "takeover_cooldown_seconds": (
                     getattr(settings, "takeover_cooldown_seconds", 60) if settings else None
+                ),
+                # float() because the column is NUMERIC, which psycopg2 hands back as
+                # Decimal -- and Decimal is not JSON-serialisable.
+                "project_clash_surface_threshold": (
+                    float(getattr(settings, "project_clash_surface_threshold", 0.55) or 0.55)
+                    if settings
+                    else None
+                ),
+                "project_clash_block_threshold": (
+                    float(getattr(settings, "project_clash_block_threshold", 0.70) or 0.70)
+                    if settings
+                    else None
                 ),
                 "purchase_request_default_approver_user_id": pr_uid,
                 "purchase_request_default_approver_name": user_pr.name if user_pr else None,
@@ -199,10 +271,78 @@ async def get_settings(
                 "chat_latency_ceiling_multiplier": getattr(settings, "chat_latency_ceiling_multiplier", 3) if settings else None,
                 "chat_latency_no_reply_minutes": getattr(settings, "chat_latency_no_reply_minutes", 5) if settings else None,
                 "chat_latency_min_sample": getattr(settings, "chat_latency_min_sample", 30) if settings else None,
+                "portal_revisions_enabled": getattr(settings, "portal_revisions_enabled", True) if settings else None,
+                "portal_max_revisions": getattr(settings, "portal_max_revisions", 2) if settings else None,
+                # Rollout default (plan 5.1): a row saved before the column existed reads
+                # as Product rather than as "no policy", which has no meaning here.
+                "plan_grain": (getattr(settings, "plan_grain", None) or "product") if settings else None,
+                # Chatbot media. NULL is meaningful for the three model columns:
+                # provider/model inherit the AIAssistantConfig row, and a NULL
+                # degraded model means the monthly quota is a hard stop rather
+                # than an accepted-but-degraded read.
+                "media_image_monthly_limit": getattr(settings, "media_image_monthly_limit", 50) if settings else None,
+                "media_voice_monthly_limit": getattr(settings, "media_voice_monthly_limit", 100) if settings else None,
+                "media_voice_max_seconds": getattr(settings, "media_voice_max_seconds", 120) if settings else None,
+                "media_burst_limit": getattr(settings, "media_burst_limit", 5) if settings else None,
+                "media_burst_window_seconds": getattr(settings, "media_burst_window_seconds", 60) if settings else None,
+                "media_warn_threshold_percent": getattr(settings, "media_warn_threshold_percent", 80) if settings else None,
+                "media_image_provider": getattr(settings, "media_image_provider", None) if settings else None,
+                "media_image_model": getattr(settings, "media_image_model", None) if settings else None,
+                "media_image_degraded_model": getattr(settings, "media_image_degraded_model", None) if settings else None,
+                "media_transcribe_model": getattr(settings, "media_transcribe_model", "whisper-1") if settings else None,
+                "media_voice_degraded_model": getattr(settings, "media_voice_degraded_model", None) if settings else None,
+                "media_language_mode": getattr(settings, "media_language_mode", "pinned") if settings else None,
+                "media_language_pinned": getattr(settings, "media_language_pinned", "en") if settings else None,
+                "media_language_hints": getattr(settings, "media_language_hints", "en,ms,zh") if settings else None,
+                "media_sync_wait_seconds": getattr(settings, "media_sync_wait_seconds", 30) if settings else None,
+                "media_extraction_timeout_seconds": getattr(settings, "media_extraction_timeout_seconds", 45) if settings else None,
+                "media_max_entities": getattr(settings, "media_max_entities", 10) if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]
         }
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+# Declared immediately after `GET /` and ahead of every other GET in this file so a
+# path-parameter route added later (e.g. `/{section}`) cannot shadow this static path.
+@router.get("/app-config", response_model=AppConfigResponse)
+async def get_app_config(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The narrow, non-sensitive projection of system settings that any authenticated
+    user may read.
+
+    It exists because `GET /settings/` is gated on `user_management.settings.view` -
+    that is where the full blob lives, and it stays there - while three consumers on
+    screens outside user-management legitimately need a handful of harmless fields:
+    `useCurrencyFormat` (currency format string), `use-excel-accept`, and
+    `PurchaseRequestDetail` (the configured default approver it falls back to when
+    sending an approval link, which is why the two approver EMAILS are here).
+
+    NOTHING SENSITIVE MAY EVER BE ADDED TO THIS ROUTE. Not SMTP config, not the n8n
+    webhook URLs (they are bearer-capability URLs), not the tenant roles list, not
+    `health_notify_role_ids` / `health_notify_user_ids`, not the AI trace config. If a
+    caller needs any of those, it needs `user_management.settings.view` and the full
+    blob - do not widen this projection. The approver NAMES are deliberately absent
+    too: nothing reads them.
+    """
+    try:
+        settings = db.query(SystemSetting).first()
+        pr_uid = getattr(settings, "purchase_request_default_approver_user_id", None) if settings else None
+        sf_uid = getattr(settings, "sponsorship_form_default_approver_user_id", None) if settings else None
+        user_pr = db.query(User).filter(User.id == pr_uid).first() if pr_uid else None
+        user_sf = db.query(User).filter(User.id == sf_uid).first() if sf_uid else None
+        return AppConfigResponse(
+            currency=settings.currency if settings else None,
+            currency_format=settings.currency_format if settings else None,
+            purchase_request_default_approver_user_id=pr_uid,
+            purchase_request_default_approver_email=user_pr.email if user_pr else None,
+            sponsorship_form_default_approver_user_id=sf_uid,
+            sponsorship_form_default_approver_email=user_sf.email if user_sf else None,
+        )
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -254,6 +394,72 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
             if t in FORM_SLA_TYPES and t not in seen:
                 seen.append(t)
         update_data["handling_lock_enabled_types"] = ",".join(seen)
+
+    # A block bar below the surface bar means every surfaced candidate also blocks,
+    # which silently turns the two-bar design back into one aggressive bar. Reject it
+    # here rather than let an admin discover it through false blocks in the field.
+    if "project_clash_surface_threshold" in update_data or (
+        "project_clash_block_threshold" in update_data
+    ):
+        effective_surface = float(
+            update_data.get(
+                "project_clash_surface_threshold",
+                getattr(settings, "project_clash_surface_threshold", 0.55) or 0.55,
+            )
+        )
+        effective_block = float(
+            update_data.get(
+                "project_clash_block_threshold",
+                getattr(settings, "project_clash_block_threshold", 0.70) or 0.70,
+            )
+        )
+        if effective_block < effective_surface:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "The project clash blocking threshold must be at or above the "
+                    "surfacing threshold."
+                ),
+            )
+
+    # Chatbot media: a model id belongs to the provider it was picked from, so a
+    # provider change that does not also name the models clears them rather than
+    # sending the previous provider's ids to the new provider. The FE does the
+    # same clear-on-change; this is the backstop for a direct PUT, where a kept
+    # stale degraded model would fail only for over-quota contacts - the hardest
+    # failure to attribute.
+    if "media_image_provider" in update_data:
+        new_provider = (update_data["media_image_provider"] or "").strip() or None
+        update_data["media_image_provider"] = new_provider
+        old_provider = (
+            getattr(settings, "media_image_provider", None) or ""
+        ).strip() or None
+        if new_provider != old_provider:
+            for model_col in ("media_image_model", "media_image_degraded_model"):
+                if model_col not in update_data:
+                    update_data[model_col] = None
+
+    # Chatbot media: the pair has to hold together, and the per-field ge/le on
+    # SystemSettingUpdate cannot express a relationship between two fields. An
+    # extraction ceiling below the synchronous wait would kill a job mid-flight at
+    # exactly the moment the endpoint degrades to `pending` - the result would be
+    # neither returned inline nor retrievable afterwards (PLAN 2.4 / UAC S3-01d).
+    if "media_sync_wait_seconds" in update_data or "media_extraction_timeout_seconds" in update_data:
+        wait = update_data.get(
+            "media_sync_wait_seconds", getattr(settings, "media_sync_wait_seconds", 30)
+        )
+        ceiling = update_data.get(
+            "media_extraction_timeout_seconds",
+            getattr(settings, "media_extraction_timeout_seconds", 45),
+        )
+        if wait is not None and ceiling is not None and int(ceiling) < int(wait):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Extraction timeout must be at least the synchronous wait, "
+                    "or a job that outlives the wait is killed instead of degrading."
+                ),
+            )
 
     for key, value in update_data.items():
         setattr(settings, key, value)

@@ -5,10 +5,12 @@ from app.models.company import Company, UserCompany, RespondContactCompany
 from app.models.user import User, UserRole, UserRoleAssignment, UserPermission, UserRolePermission, SystemLog, SystemSetting, UserQuickAccess, UserListColumnConfig
 from app.models.auth import VerificationToken
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
-from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, ProductSpecException
+from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, ProductSpecException, ProductSpecVerification, ProductSpecFlyerBatch, ProductSpecFlyerProposal
 from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine, SalesOrder, SalesOrderLine
+from app.models.sales_agent import SalesAgent
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine, PurchaseOrder, PurchaseOrderLine
+from app.models.supplier_notice import SupplierNotice, SupplierNoticeLine
 from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, CampaignType, MarketingCampaign
 from app.models.forms import Form, FormSection, FormField, FormVersion, FormSubmission
 from app.models.workflow_forms import (
@@ -23,9 +25,11 @@ from app.models.complaint_master_data import ComplaintRootCause, ComplaintResolu
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.attachment_field_link import AttachmentFieldLink
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog, FormSLAConfig
+from app.models.ticket_comment import ConversationTicketComment
+from app.models.message_snippet import MessageSnippet
 from app.models.resources import Attachment, AttachmentType
 from app.models.certificate import Certificate, CertificateRevision, CertificateProduct
-from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondContact, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments
+from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondContact, RespondContactCustomer, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments, team_member_brands
 from app.models.respond_workspace import RespondWorkspace
 from app.models.respond_template import (
     RespondChannel,
@@ -33,10 +37,25 @@ from app.models.respond_template import (
     RespondTemplateDefault,
 )
 from app.models.status import Status, StatusTransition
+from app.models.projects import (
+    Project,
+    ProjectTask,
+    ProjectTemplateTask,
+    ProjectBrand,
+    ProjectCollaborator,
+    ProjectParty,
+    ProjectSalesProfile,
+    ProjectStakeholder,
+    ProjectTakeoverRequest,
+    ProjectTemplate,
+    ProjectTemplateRole,
+    ProjectType,
+)
 from app.models.entity_conversation import EntityConversationMessage
 from app.models.integration import Integration, IntegrationApiKey, IntegrationLog
 from app.models.integration_reference import IntegrationReference
 from app.models.import_log import ImportLog
+from app.models.import_alias import ImportFieldAlias
 from app.models.calendar import PublicHoliday, WorkCalendarConfig
 from app.models.job import ImportJob, ImportJobRow
 from app.models.download import UserDownload, DownloadStatus
@@ -61,7 +80,17 @@ from app.models.ai_prompt import AIPromptVersion, AIPromptLabel
 from app.models.chat_history import ChatHistory
 from app.models.conversation_frame import ConversationFrame
 from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
-from app.models.portal import PortalToken, PortalOtpCode
+from app.models.portal import (
+    PortalToken,
+    PortalOtpCode,
+    PortalFormRevision,
+    PortalRevisionConfig,
+)
+from app.models.media import (
+    ContactMediaLimit,
+    ContactMediaUsage,
+    MediaExtractionJob,
+)
 from app.models.user_session import UserSession
 from app.models.activities import ActivityEvent, InternalNote, ActivityMention
 from app.models.tickets import Ticket, TicketWatcher, TicketRespondContactLink
@@ -69,6 +98,24 @@ from app.models.email_template import EmailTemplate
 from app.models.automation import Automation, AutomationRun
 from app.models.impersonation import ImpersonationSession, ContactImpersonationSession
 from app.models.email_outbox import EmailOutbox, EmailEventConfig
+from app.models.dealer_kit import (
+    Page,
+    PageVersion,
+    PageLabel,
+    TileTemplate,
+    Asset,
+    Collection,
+    Bundle,
+    BundleComponent,
+    FlyerReadingRecord,
+    Selection,
+    SelectionLine,
+)
+from app.models.onboarding import (
+    OnboardingTemplate,
+    OnboardingRequest,
+    OnboardingPerson,
+)
 from app.models.scm import (
     ReorderPolicy,
     ItemClassification,
@@ -88,9 +135,30 @@ from app.models.scm import (
     MarketSignal,
     ScmAnalyticsRun,
     MarketResearchRun,
+    PriorityPolicy,
 )
+from app.models.project_so import (  # noqa: F401
+    ProjectPOVersion,
+    ProjectPOLine,
+    ProjectPOAnnotation,
+    DeliverySchedule,
+    DeliveryScheduleVersion,
+    ProjectDeliveryPhase,
+    DeliveryScheduleCell,
+    CustomerItemCodeMap,
+    ProjectSalesOrder,
+    ProjectSalesOrderLine,
+    SODraftFinding,
+    OrderChangeNotice,
+    SOAmendment,
+    OrderInquiry,
+    OrderInquiryRow,
+)
+from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow  # noqa: F401
 
 __all__ = [
+    "ImportFieldAlias",
+    "PriorityPolicy",
     "Company",
     "UserCompany",
     "RespondContactCompany",
@@ -114,12 +182,15 @@ __all__ = [
     "OrderLine",
     "SalesOrder",
     "SalesOrderLine",
+    "SalesAgent",
     "Warehouse",
     "StorageZone",
     "Stock",
     "StockBatch",
     "StockLedger",
     "Supplier",
+    "SupplierNotice",
+    "SupplierNoticeLine",
     "ProductSupplier",
     "InboundShipment",
     "InboundShipmentLine",
@@ -156,6 +227,8 @@ __all__ = [
     "SLAPolicyTier",
     "ConversationSLATracking",
     "ConversationSLAEventLog",
+    "ConversationTicketComment",
+    "MessageSnippet",
     "FormSLAConfig",
     "Attachment",
     "AttachmentType",
@@ -166,6 +239,7 @@ __all__ = [
     "ContactAgentAccess",
     "ContactAccessType",
     "RespondContact",
+    "RespondContactCustomer",
     "respond_contact_access_types",
     "RespondWorkspace",
     "RespondChannel",
@@ -173,6 +247,18 @@ __all__ = [
     "RespondTemplateDefault",
     "Status",
     "StatusTransition",
+    "Project",
+    "ProjectTask",
+    "ProjectTemplateTask",
+    "ProjectBrand",
+    "ProjectCollaborator",
+    "ProjectParty",
+    "ProjectSalesProfile",
+    "ProjectStakeholder",
+    "ProjectTakeoverRequest",
+    "ProjectTemplate",
+    "ProjectTemplateRole",
+    "ProjectType",
     "EntityConversationMessage",
     "IntegrationLog",
     "ImportLog",
@@ -216,6 +302,11 @@ __all__ = [
     "LookupBinding",
     "PortalToken",
     "PortalOtpCode",
+    "PortalFormRevision",
+    "PortalRevisionConfig",
+    "ContactMediaLimit",
+    "ContactMediaUsage",
+    "MediaExtractionJob",
     "UserSession",
     "ActivityEvent",
     "InternalNote",
@@ -248,6 +339,22 @@ __all__ = [
     "MarketSignal",
     "ScmAnalyticsRun",
     "MarketResearchRun",
+    # Dealer Kit (schema: dealer_kit)
+    "Page",
+    "PageVersion",
+    "PageLabel",
+    "TileTemplate",
+    "Asset",
+    "Collection",
+    "Bundle",
+    "Selection",
+    "SelectionLine",
+    "BundleComponent",
+    "FlyerReadingRecord",
+    # Onboarding intake / review / provisioning
+    "OnboardingTemplate",
+    "OnboardingRequest",
+    "OnboardingPerson",
 ]
 
 # Auto-discovery: import models.py from each app/modules/<key>/ so Alembic + SQLAlchemy

@@ -1,12 +1,12 @@
 /**
- * SCM M4 Slice B — AdjustRecommendationModal (AC-M4.7).
+ * SCM M4 Slice B - AdjustRecommendationModal (AC-M4.7).
  * Override qty and/or switch supplier from the run's ranked alternatives;
  * switching recomputes the live preview; a reason is REQUIRED (blocks submit
  * when empty); submit emits the override payload. The modal must still render
  * when the rec has NO alternatives (empty-alternatives case).
  *
  * SearchableSelect is mocked to a native <select> (the real one is a Radix
- * popover + cmdk list, non-deterministic in jsdom) — same pattern as the
+ * popover + cmdk list, non-deterministic in jsdom) - same pattern as the
  * policies modal test.
  */
 import React from 'react';
@@ -29,14 +29,17 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   }: {
     value: string;
     onChange: (v: string) => void;
-    options: { value: string; label: string }[];
+    options: { value: string; label: string; description?: string }[];
     placeholder?: string;
   }) => (
     <select aria-label={placeholder ?? 'Supplier'} value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">{placeholder ?? ''}</option>
       {options.map((o) => (
+        // The description carries the price and lead time, which is most of what the
+        // buyer picks on, so the stand-in has to render it or the tests can only see
+        // half the control.
         <option key={o.value} value={o.value}>
-          {o.label}
+          {o.description ? `${o.label} - ${o.description}` : o.label}
         </option>
       ))}
     </select>
@@ -164,6 +167,74 @@ describe('AdjustRecommendationModal (AC-M4.7)', () => {
   });
 
   it('renders nothing when there is no rec', () => {
+    const { container } = render(
+      <AdjustRecommendationModal
+        rec={null}
+        open
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        isSubmitting={false}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe('AdjustRecommendationModal - money says which money it is (AC-2.2)', () => {
+  const usd: SupplierChoice = {
+    supplier_code: 'SUP-USD',
+    supplier_name: 'Guangdong Wares',
+    unit_cost: 8,
+    currency: 'USD',
+    unit_cost_base: 36,
+    base_currency: 'MYR',
+    lead_time_days: 30,
+    composite_score: 70,
+    is_primary: false,
+  };
+
+  it('names the currency of an alternative in the supplier picker', () => {
+    // `fmtMoney` hard-codes RM, so a USD 8.00 option was offered as "RM 8" and read as
+    // a quarter of the ringgit price rather than roughly four times it.
+    renderModal({ rec: rec({ alternatives: [primary, usd] }) });
+
+    expect(screen.getByRole('option', { name: /Guangdong Wares - USD 8\.00 · 30d lead/ })).toBeInTheDocument();
+    // And the ringgit supplier keeps reading as ringgit.
+    expect(screen.getByRole('option', { name: /Acme Sanitary - RM 42\.00/ })).toBeInTheDocument();
+  });
+
+  it('previews the cash impact in the base currency when the choice carries one', () => {
+    // The "from" figure is rec.cash_impact, which IS base currency. A preview computed
+    // off a USD unit cost and labelled RM would sit beside it as a comparison of two
+    // different currencies pretending to be one.
+    renderModal({ rec: rec({ alternatives: [primary, usd] }) });
+    fireEvent.change(screen.getByLabelText('Select a supplier'), { target: { value: 'SUP-USD' } });
+
+    // 320 x RM 36 restated, not 320 x USD 8.
+    expect(screen.getByText('RM 11,520')).toBeInTheDocument();
+    expect(screen.queryByText('RM 2,560')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the supplier currency when the choice has no restated price', () => {
+    // No rate on file for that currency, so there is no base figure to quote. The honest
+    // answer is the amount in the money it is actually in, never an RM label on it.
+    const noRate: SupplierChoice = { ...usd, unit_cost_base: null };
+    renderModal({ rec: rec({ alternatives: [primary, noRate] }) });
+    fireEvent.change(screen.getByLabelText('Select a supplier'), { target: { value: 'SUP-USD' } });
+
+    expect(screen.getByText('USD 2,560')).toBeInTheDocument();
+  });
+
+  it('still previews a ringgit supplier in ringgit', () => {
+    renderModal();
+    fireEvent.change(screen.getByLabelText('Select a supplier'), { target: { value: 'SUP-BETA' } });
+
+    expect(screen.getByText('RM 12,160')).toBeInTheDocument();
+  });
+});
+
+describe('AdjustRecommendationModal - unchanged behaviour', () => {
+  it('renders nothing when there is no rec (guard kept)', () => {
     const { container } = render(
       <AdjustRecommendationModal
         rec={null}

@@ -1,9 +1,19 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
-import { MoreVertical, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { MoreVertical, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -12,46 +22,38 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  clearSpecValueByHand,
-  getProductSpecDetail,
-  rederiveProduct,
-  setFlyerText,
-} from '../../../product-specifications/services/productSpecService';
-import { readable, readableValue } from '../../../product-specifications/lib/readable';
-import AddSpecByHand from './AddSpecByHand';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { readableEntry } from '@/lib/spec-readable';
+import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+import { AddSpecificationDialog, SpecTable, type SpecKeyDefinition } from '@/components/spec-table';
+import { usePermissions } from '@/hooks/usePermissions';
+import { useProductSpecTable } from '../../hooks/useProductSpecTable';
+import SpecExtractPanel from './SpecExtractPanel';
+import { rederiveProduct } from '../../../product-specifications/services/productSpecService';
 import type {
   ProductSpecDetail,
   SpecDiagnosisReason,
 } from '../../../product-specifications/types/productSpec.types';
+import type {
+  VerificationBlock,
+  VerificationState,
+} from '../../../spec-verification/types/specVerification.types';
 
 /**
- * What the machine read out of THIS product, and what search will do with it.
+ * What this product's specifications are, and where each one came from.
  *
- * Opened while looking at one product, so it answers the question asked there: can a
- * customer find this by describing it, and if not, what is stopping it. Every value
- * carries the exact substring it came from, because the only way to trust a derived
- * spec is to see the words it was derived from sitting next to it.
+ * Opened while looking at one product, so it answers the question asked there: is this
+ * what the product actually is, and if not, put it right. Every value carries the
+ * source it came from with the words behind it, because the only way to trust a
+ * derived spec is to be able to see what it was derived from.
+ *
+ * The table itself is `components/spec-table`, props-driven and shared: the same
+ * component renders here and, in milestone 2, inside the supplier portal. Everything
+ * it needs comes from `useProductSpecTable`, so this file holds no fetching of its own
+ * and the two surfaces cannot drift apart.
  */
-
-/** Where a value came from, named the way the person reading it would name it. */
-const SOURCE_LABEL: Record<string, string> = {
-  derived: 'Description',
-  flyer: 'Flyer',
-  code: 'Product code',
-  category: 'Category',
-  human: 'Set by hand',
-};
-
-const EXCEPTION_LABELS: Record<string, string> = {
-  shape_mismatch: 'Stored dimensions describe a round or square product',
-  column_conflict: 'Description disagrees with the stored dimensions',
-  implausible_dimension: 'Dimension too large to be real',
-  low_confidence: 'Derived below the review threshold',
-};
 
 /** Each silence gets its own sentence and its own fix. */
 function diagnosisCopy(
@@ -109,130 +111,124 @@ function diagnosisCopy(
   }
 }
 
-/**
- * The flyer card this product's specs are read from, correctable in place.
- *
- * The card text is a machine reading of the printed flyer and it is not complete — a
- * card split across a column break, or one whose code the reading could not place,
- * leaves the product with no dimensions, no seat material, no flush type and nothing on
- * screen explaining the hole. Correcting it here re-reads the product on save, so the
- * specs move in the same click.
- */
-function FlyerCard({
-  productId,
-  text,
-  onSaved,
-}: {
-  productId: string;
-  text: string | null;
-  onSaved: () => Promise<void> | void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(text ?? '');
-  const [saving, setSaving] = useState(false);
+const VERIFICATION_LABEL: Record<VerificationState, string> = {
+  verified: 'Verified',
+  needs_reverify: 'Needs re-verify',
+  unverified: 'Unverified',
+};
 
-  const save = async () => {
-    setSaving(true);
-    try {
-      await setFlyerText(productId, draft);
-      toast.success('Flyer card saved', { description: 'This product was read again.' });
-      setEditing(false);
-      await onSaved();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not save the flyer text', {
-        duration: 10_000,
-      });
-    } finally {
-      setSaving(false);
-    }
-  };
+/**
+ * Whether a person has vouched for this product's specifications, and what moved since.
+ *
+ * Rendered whatever the state, next to the statuses in the header, because "nobody has
+ * checked this yet" is an answer somebody came for as much as "verified". The pill is
+ * the shared one, so a code reads the same here as it does in the worklist (AC-C.1).
+ */
+function VerificationStrip({
+  block,
+  registry,
+  canEdit,
+  busy,
+  onVerify,
+  onUnverify,
+}: {
+  block: VerificationBlock;
+  registry: SpecKeyDefinition[];
+  canEdit: boolean;
+  busy: boolean;
+  onVerify: () => void;
+  onUnverify: () => void;
+}) {
+  const stamp =
+    block.verified_by_name && block.verified_at
+      ? `by ${block.verified_by_name}, ${formatDateTimeInMalaysia(block.verified_at)}`
+      : null;
+  // A withdrawal, as opposed to values moving under the stamp. Both facts are kept, so
+  // the line names who took it back without losing who vouched for it (AC-D.20).
+  const withdrawnBy =
+    block.invalidated_reason === 'manual_unverify' && block.invalidated_by_name
+      ? `Withdrawn by ${block.invalidated_by_name}${
+          block.invalidated_at ? `, ${formatDateTimeInMalaysia(block.invalidated_at)}` : ''
+        }`
+      : null;
+  const changed = block.state === 'needs_reverify' ? block.invalidated_diff?.changed ?? [] : [];
+  const labelFor = (specKey: string) =>
+    registry.find((key) => key.spec_key === specKey)?.label ?? specKey;
 
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-xs uppercase tracking-wide text-muted-foreground">
-          Flyer card for this code
-        </div>
-        {!editing && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setDraft(text ?? '');
-              setEditing(true);
-            }}
+    <div className="flex flex-col gap-2 rounded-md border p-3" data-spec-verification>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span
+            className={`${STATUS_PILL_BASE} ${statusPillClass(block.state)}`}
+            data-spec-verification-state
           >
-            {text ? 'Edit' : 'Add the card text'}
-          </Button>
+            {VERIFICATION_LABEL[block.state]}
+          </span>
+          {stamp && <span className="text-sm text-muted-foreground">{stamp}</span>}
+        </div>
+        {canEdit && (
+          <div className="flex flex-wrap items-center gap-2">
+            {block.state === 'verified' ? (
+              <Button size="sm" variant="outline" disabled={busy} onClick={onUnverify}>
+                Unverify
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" disabled={busy} onClick={onVerify}>
+                Verify
+              </Button>
+            )}
+          </div>
         )}
       </div>
 
-      {editing ? (
-        <div className="flex flex-col gap-2">
-          <textarea
-            className="min-h-[6rem] w-full rounded-md border border-input bg-background p-3 font-mono text-sm"
-            value={draft}
-            placeholder="e.g. Washdown With Rimless. D: L680xW375xH770mm. *PP Seat Cover"
-            onChange={(e) => setDraft(e.target.value)}
-          />
-          <div className="flex items-center gap-2">
-            <Button size="sm" onClick={save} disabled={saving}>
-              {saving ? 'Saving…' : 'Save and read again'}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setEditing(false)}
-              disabled={saving}
-            >
-              Cancel
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              Emptying the box means this product has no flyer card.
-            </span>
+      {withdrawnBy && <p className="text-sm text-muted-foreground">{withdrawnBy}</p>}
+
+      {changed.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">
+            What moved since it was verified
           </div>
+          <ul className="flex flex-col gap-0.5">
+            {changed.map((entry) => (
+              <li key={entry.spec_key} className="text-sm break-words">
+                <span className="font-medium">{labelFor(entry.spec_key)}</span>: was{' '}
+                <span className="text-muted-foreground">
+                  {readableEntry(entry.was) || 'nothing'}
+                </span>
+                , now{' '}
+                <span className="font-medium">{readableEntry(entry.now) || 'nothing'}</span>
+              </li>
+            ))}
+          </ul>
         </div>
-      ) : text ? (
-        <p className="rounded-md border bg-muted/30 p-3 font-mono text-sm break-words whitespace-pre-wrap">
-          {text}
-        </p>
-      ) : (
-        <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-          No flyer card for this code. Anything the flyer prints but the description does
-          not — dimensions, seat material, flush type — cannot be read until one is here.
-        </p>
       )}
     </div>
   );
 }
 
 export default function ProductSpecificationsTab({ productId }: { productId: string }) {
-  const [detail, setDetail] = useState<ProductSpecDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** A key just picked from the dialog, so the table opens its editor on that row. */
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
+  const [confirmingUnverify, setConfirmingUnverify] = useState(false);
+  const spec = useProductSpecTable(productId);
+  const { detail, rows, registry, applicableKeys, otherKeys, heldKeys, isLoading, error } = spec;
 
-  const load = useCallback(async () => {
-    try {
-      setDetail(await getProductSpecDetail(productId));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load');
-    } finally {
-      setLoading(false);
-    }
-  }, [productId]);
-
-  useEffect(() => {
-    setLoading(true);
-    load();
-  }, [load]);
+  // The server is the guard; these only decide what to SHOW. A user without the grant
+  // gets no affordance that would 403 at submit - the same rule the dialog's own
+  // denied state documents (AC-A.9). Slugs mirror the routes: the value writes need
+  // products.edit, add-a-value takes either grant, creating a key needs the add grant.
+  const { permissionSet } = usePermissions();
+  const canEdit = permissionSet.has('master_data.products.edit');
+  const canCreateKey = permissionSet.has('master_data.spec_registry.add');
 
   const rederive = async () => {
     setBusy(true);
     try {
       await rederiveProduct(productId);
-      await load();
+      spec.refetch();
       toast.success('Read again with the current rules');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not read this product again', {
@@ -243,17 +239,7 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
     }
   };
 
-  const clearByHand = async (key: string) => {
-    try {
-      await clearSpecValueByHand(productId, key);
-      await load();
-      toast.success(`${readable(key)} is back to what the rules read`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not clear the value');
-    }
-  };
-
-  if (loading) {
+  if (isLoading) {
     return (
       <Card>
         <CardContent className="flex flex-col gap-2 pt-6">
@@ -276,31 +262,34 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
 
   if (!detail) return null;
 
-  const values = detail.spec?.values ?? {};
-  const provenance = detail.spec?.provenance ?? {};
-  const entries = Object.entries(values).sort(([a], [b]) => a.localeCompare(b));
   const copy = detail.searchable ? null : diagnosisCopy(detail);
+  // The row's own status, which the backend already computes with the same
+  // precedence (needs_review > authored > derived). Read rather than recomputed.
+  const specStatus = detail.spec?.status ?? 'derived';
 
   return (
     <div className="flex flex-col gap-5">
       <Card>
-        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-          <CardTitle>Derived specifications</CardTitle>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <CardTitle className="min-w-0 break-words">Specifications</CardTitle>
           <div className="flex flex-wrap items-center gap-2">
-            {detail.searchable ? (
-              <Badge variant="success" size="sm">
-                Findable by description
-              </Badge>
-            ) : (
-              <Badge variant="secondary" size="sm">
-                Not findable by description
-              </Badge>
-            )}
-            {detail.spec?.status && (
-              <Badge variant="outline" size="sm">
-                {detail.spec.status.replace(/_/g, ' ')}
-              </Badge>
-            )}
+            {/* The shared pill, not a Badge variant: "findable" and "authored" are
+                statuses, and a status that renders differently here than on every
+                other screen is a second vocabulary to learn (AC-C.1). */}
+            <span
+              className={`${STATUS_PILL_BASE} ${statusPillClass(
+                detail.searchable ? 'findable' : 'not_findable',
+              )}`}
+              data-spec-findability
+            >
+              {detail.searchable ? 'Findable by description' : 'Not findable by description'}
+            </span>
+            <span
+              className={`${STATUS_PILL_BASE} ${statusPillClass(specStatus)}`}
+              data-spec-status
+            >
+              {specStatus.replace(/_/g, ' ')}
+            </span>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" aria-label="Specification actions">
@@ -312,25 +301,21 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
                   <RefreshCw className="size-4" />
                   Read this product again
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setAdding(true)}>
-                  <Plus className="size-4" />
-                  Set a value by hand
-                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
-          {adding && (
-            <AddSpecByHand
-              productId={productId}
-              onCancel={() => setAdding(false)}
-              onSaved={() => {
-                setAdding(false);
-                load();
-              }}
-            />
-          )}
+          {/* Rendered in every state, verified or not (AC-D.13). It sits first because
+              it is the question the worklist sent the reviewer here to answer. */}
+          <VerificationStrip
+            block={detail.verification}
+            registry={registry}
+            canEdit={canEdit}
+            busy={spec.verificationBusy}
+            onVerify={spec.verify}
+            onUnverify={() => setConfirmingUnverify(true)}
+          />
 
           {copy && (
             <Alert variant={copy.tone}>
@@ -351,17 +336,16 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
             </p>
           </div>
 
-          {/* The second text. A value marked Flyer was read from here and appears
-              nowhere on the product master, so without it there is no way to check it.
-              Editable, and shown even when empty: the flyer reading missed cards, and a
-              product with no card silently loses its dimensions with nothing on screen
-              to say why or to put it right. */}
-          <FlyerCard
+          {/* Where the stored flyer card used to be, in the same place on the tab.
+              The card was a copy of a printed document kept beside the values it
+              produced and going stale against a flyer that had already been
+              reprinted. This reads a text and proposes; nothing is stored but the
+              values a person accepts. */}
+          <SpecExtractPanel
             productId={productId}
-            text={detail.flyer_text}
-            onSaved={load}
+            productCode={detail.product_code}
+            canEdit={canEdit}
           />
-
 
           {detail.spec?.rendered_text && (
             <div className="flex flex-col gap-1.5">
@@ -374,101 +358,71 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
             </div>
           )}
 
-          {entries.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                Every value, and the text it was read from
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className="pb-2 pr-4">Spec</th>
-                      <th className="pb-2 pr-4">Value</th>
-                      <th className="pb-2 pr-4">Read from</th>
-                      <th className="pb-2">Words it was read from</th>
-                      <th className="pb-2" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {entries.map(([key, value]) => (
-                      <tr key={key} className="border-b last:border-0">
-                        <td className="py-2 pr-4 whitespace-nowrap">{readable(key)}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">
-                          {readableValue(value.value, value.unit)}
-                        </td>
-                        <td className="py-2 pr-4 whitespace-nowrap">
-                          {provenance[key]?.source ? (
-                            <Badge
-                              variant={provenance[key]?.source === 'flyer' ? 'info' : 'secondary'}
-                              size="sm"
-                              appearance="light"
-                              shape="circle"
-                            >
-                              {SOURCE_LABEL[provenance[key]!.source] ?? provenance[key]!.source}
-                            </Badge>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                        </td>
-                        <td className="py-2 font-mono text-xs text-muted-foreground break-all">
-                          {provenance[key]?.evidence ?? '-'}
-                        </td>
-                        <td className="py-2 text-right">
-                          {provenance[key]?.source === 'human' && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label={`Clear ${readable(key)}`}
-                              onClick={() => clearByHand(key)}
-                            >
-                              <Trash2 className="size-4 text-muted-foreground" />
-                            </Button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+          {/* Rendered unconditionally, empty or not (AC-A.14). Hiding the block on a
+              product with no specs is what made "this product has none" and "this
+              screen is broken" look identical, and it is the one thing a person
+              arriving to ADD a specification most needs to see. */}
+          <div className="flex flex-col gap-1.5">
+            <div className="text-xs uppercase tracking-wide text-muted-foreground">
+              Every value, and where it came from
             </div>
-          )}
+            <SpecTable
+              rows={rows}
+              registry={registry}
+              canEdit={canEdit}
+              openEditorFor={pendingKey}
+              onEditorOpened={() => setPendingKey(null)}
+              callbacks={{
+                onSetValue: spec.setValue,
+                onTombstone: spec.tombstone,
+                onRevert: spec.revert,
+                onAddValueToKey: canEdit ? spec.addValue : undefined,
+                onAddSpecification: () => setAdding(true),
+              }}
+            />
+          </div>
         </CardContent>
       </Card>
 
-      {detail.exceptions.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Needs a human ({detail.exceptions.length})</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="pb-2 pr-4">Spec</th>
-                    <th className="pb-2 pr-4">Why</th>
-                    <th className="pb-2">Stored</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {detail.exceptions.map((row) => (
-                    <tr key={row.id} className="border-b last:border-0">
-                      <td className="py-2 pr-4">{row.spec_key}</td>
-                      <td className="py-2 pr-4">
-                        {EXCEPTION_LABELS[row.reason] ?? row.reason}
-                      </td>
-                      <td className="py-2 font-mono text-xs text-muted-foreground">
-                        {row.stored ? JSON.stringify(row.stored) : '-'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      <AddSpecificationDialog
+        open={adding}
+        onOpenChange={setAdding}
+        applicableKeys={applicableKeys}
+        otherKeys={otherKeys}
+        heldKeys={heldKeys}
+        canCreateKey={canCreateKey}
+        // Picking a key opens its editor on the row rather than writing a blank value:
+        // an empty value is not a value, and the API refuses one for the same reason -
+        // stored, it would raise the same conflict on every derivation run forever.
+        onPick={setPendingKey}
+        onCreateKey={spec.createKey}
+        onCheckSimilar={spec.checkSimilarKey}
+      />
+
+      <AlertDialog open={confirmingUnverify} onOpenChange={setConfirmingUnverify}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm unverify</AlertDialogTitle>
+            <AlertDialogDescription>
+              This withdraws the verification for {detail.product_code}. It reads Unverified
+              again; the history keeps who vouched for it and who withdrew it.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={spec.verificationBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                spec.unverify();
+                setConfirmingUnverify(false);
+              }}
+              disabled={spec.verificationBusy}
+            >
+              Unverify
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <p className="text-sm text-muted-foreground">
         To try a customer phrase against the whole catalog, use{' '}

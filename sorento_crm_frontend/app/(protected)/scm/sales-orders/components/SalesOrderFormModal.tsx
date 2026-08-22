@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { LoaderCircleIcon, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -19,11 +19,14 @@ import {
   useOrderTypeOptions,
   useProductOptions,
 } from '../../hooks/useScmOptions';
-import type {
-  SalesOrder,
-  SalesOrderFormData,
-  SalesOrderPriority,
-} from '../../types/scm.types';
+import type { SalesOrderFormData, SalesOrderPriority } from '../../types/scm.types';
+
+/**
+ * CREATE only. Editing a sales order happens in place on the detail page (A5) - the same
+ * shape as the project sales order screen - so this modal no longer takes an `editing` row
+ * or writes a PUT; the list's Pencil action navigates to `/scm/sales-orders/{id}?edit=1`
+ * instead of opening this dialog.
+ */
 
 const PRIORITY_OPTIONS = [
   { value: 'low', label: 'Low' },
@@ -32,8 +35,8 @@ const PRIORITY_OPTIONS = [
   { value: 'urgent', label: 'Urgent' },
 ];
 
-// `uom` is display-only (product base UOM, stamped by the BE) — it is carried
-// for existing lines but never sent on write.
+// `uom` is display-only (product base UOM, stamped by the BE) - carried through the draft
+// but never sent on write.
 type LineDraft = { sku: string; qty_ordered: string; uom: string };
 
 const emptyLine = (): LineDraft => ({ sku: '', qty_ordered: '', uom: '' });
@@ -41,13 +44,11 @@ const emptyLine = (): LineDraft => ({ sku: '', qty_ordered: '', uom: '' });
 export function SalesOrderFormModal({
   open,
   onOpenChange,
-  editing,
   onSubmit,
   isPending,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  editing: SalesOrder | null;
   onSubmit: (data: SalesOrderFormData) => Promise<void>;
   isPending: boolean;
 }) {
@@ -64,32 +65,15 @@ export function SalesOrderFormModal({
 
   useEffect(() => {
     if (!open) return;
-    if (editing) {
-      setOrderType(editing.order_type);
-      setCustomer(editing.customer_code);
-      setPriority(editing.priority);
-      setRequestedDate(editing.requested_delivery_date?.slice(0, 10) ?? '');
-      setLines(
-        editing.lines.map((l) => ({
-          sku: l.sku,
-          qty_ordered: String(l.qty_ordered),
-          uom: l.uom,
-        })),
-      );
-    } else {
-      setOrderType('');
-      setCustomer('');
-      setPriority('normal');
-      setRequestedDate('');
-      setLines([emptyLine()]);
-    }
+    setOrderType('');
+    setCustomer('');
+    setPriority('normal');
+    setRequestedDate('');
+    setLines([emptyLine()]);
     setError(null);
-  }, [open, editing]);
+  }, [open]);
 
-  const segment = useMemo(
-    () => customerOptions.data?.find((c) => c.value === customer)?.description ?? null,
-    [customer, customerOptions.data],
-  );
+  const segment = customerOptions.data?.find((c) => c.value === customer)?.description ?? null;
 
   const updateLine = (idx: number, patch: Partial<LineDraft>) => {
     setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
@@ -120,7 +104,7 @@ export function SalesOrderFormModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{editing ? 'Edit sales order' : 'Add sales order'}</DialogTitle>
+          <DialogTitle>Add sales order</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           {error ? (
@@ -218,7 +202,7 @@ export function SalesOrderFormModal({
                       className="flex h-9 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground"
                       title="Set automatically from the product's base unit of measure"
                     >
-                      {line.uom || '—'}
+                      {line.uom || '-'}
                     </div>
                   </div>
                   <Button
@@ -244,7 +228,7 @@ export function SalesOrderFormModal({
             </Button>
             <Button type="submit" disabled={isPending}>
               {isPending ? <LoaderCircleIcon className="me-2 size-4 animate-spin" /> : null}
-              {editing ? 'Save changes' : 'Create sales order'}
+              Create sales order
             </Button>
           </DialogFooter>
         </form>

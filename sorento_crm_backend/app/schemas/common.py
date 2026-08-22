@@ -54,6 +54,12 @@ class ListResponse(BaseModel, Generic[T]):
     # entity_resolver). Mirrors the resolver's matched/ambiguous/unresolved buckets
     # so the agent can surface "what did we actually filter on" back to the user.
     resolved_entities: Optional[Dict[str, Any]] = None
+    # Every company this lookup actually searched, `{"id", "name"}` sorted by name.
+    # Set ONLY when the lookup spans more than one company (see
+    # `company_scope.stamp_lookup_companies`), so a single-company reply is
+    # unchanged - and an empty two-company result can still say which companies
+    # were checked.
+    lookup_companies: Optional[List[Dict[str, Any]]] = None
 
 
 class ErrorResponse(BaseModel):

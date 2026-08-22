@@ -158,17 +158,28 @@ def test_neighbours_last_record_next_wraps_to_first(db: Session) -> None:
 def test_neighbours_out_of_filter_falls_back_to_unfiltered(db: Session) -> None:
     # The record exists but is NOT in the active filtered set (filtered out by the
     # query). The service must fall back to the unfiltered set so the pager is
-    # never dead, and the total reflects the unfiltered count.
-    _seed_ordered_set(db, 3)  # match query=PREFIX
+    # never dead, and the total reflects the unfiltered count, not the filtered
+    # one.
+    #
+    # This used to prove that second half by comparing two SEPARATELY fetched
+    # live totals of the real, shared `attachments` table for equality (one
+    # probe call, then `out["total"]` from the fallback). Another xdist
+    # worker's file can insert/delete rows in the gap between them (BL-034's
+    # exact shape, first found on `tests/test_complaint_neighbours.py`). What
+    # matters - that the fallback used the unfiltered scope, not the filtered
+    # one - is provable from this test's own marker rows alone.
+    in_set = _seed_ordered_set(db, 3)  # match query=PREFIX
     outside = _seed(db, original_filename="NBRATT-OUTSIDE-001")
+    own_ids = {r.id for r in in_set} | {outside.id}
 
     svc = AttachmentService(db)
-    unfiltered_total = svc.neighbours(outside.id)["total"]
-
     out = svc.neighbours(outside.id, query=PREFIX, sort="name")
     assert out["index"] is not None, "D2 fallback must resolve the record"
-    assert out["total"] == unfiltered_total
     assert out["total"] > 3  # bigger than the filtered subset
+
+    fallback_q, _ = svc._build_list_query()
+    fallback_ids = {str(row[0]) for row in fallback_q.with_entities(Attachment.id).all()}
+    assert own_ids <= fallback_ids
 
 
 def test_neighbours_no_filter_uses_full_set(db: Session) -> None:

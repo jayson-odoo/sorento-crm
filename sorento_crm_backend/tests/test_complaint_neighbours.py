@@ -179,20 +179,43 @@ def test_neighbours_last_record_next_wraps_to_first(db: Session) -> None:
 def test_neighbours_out_of_filter_falls_back_to_unfiltered(db: Session) -> None:
     # UAC-8: the record exists but is NOT in the active filtered set. The service
     # must fall back to the unfiltered set so the pager is never dead, and the
-    # total reflects the unfiltered count.
+    # total reflects the unfiltered count, not the filtered one.
+    #
+    # This used to prove that second half by comparing two SEPARATELY fetched
+    # live totals of the real, shared `complaints` table (one probe call, then
+    # `out["total"]` from the fallback) for equality. `complaints` is not this
+    # test's own table - it is the whole suite's, and another xdist worker's
+    # file can insert/delete rows in the gap between those two reads, so "total
+    # at time A" stopped equalling "total at time B" on a run that never
+    # touched this file (BL-034, `assert 4 == 8` / `assert 4 == 6`). What UAC-8
+    # actually requires - that the fallback used the unfiltered scope, not the
+    # filtered one - is provable from this test's own marker rows alone, with
+    # no dependency on the ambient row count.
     in_set = _seed_ordered_set(db, 3)  # match query=PREFIX
     # A row that does NOT match query=PREFIX.
     outside = _seed(db, complaint_number="NBR-OUTSIDE-1", customer_name="ZZZ-out")
+    own_ids = {r.id for r in in_set} | {outside.id}
 
     svc = ComplaintService(db)
-    # Compute the true unfiltered total to compare against.
-    unfiltered_total = svc.neighbours(outside.id)["total"]
-
     out = svc.neighbours(outside.id, query=PREFIX, sort_field="customer_name")
-    # Fell back: index resolved against the unfiltered set, total == unfiltered.
+    # Fell back: not found in the filtered 3-row set, so index resolved against
+    # the wider one instead of staying None.
     assert out["index"] is not None, "D2 fallback must resolve the record"
-    assert out["total"] == unfiltered_total
-    assert out["total"] > 3  # bigger than the filtered subset
+    # Strictly bigger than the filtered subset (3): the filter was genuinely
+    # dropped, not narrowly re-applied.
+    assert out["total"] > 3
+
+    # And dropped ENTIRELY, not just widened to some other partial filter: every
+    # one of this test's own rows - marker rows nothing else in the suite
+    # writes - must be reachable in the SAME unfiltered scope `neighbours()`'s
+    # own D2 branch reads (`_build_list_query()` with no filter args). If a
+    # regression left some other filter (assigned_to, status, ...) narrower
+    # than "everything" in place, `out["total"]` could still clear 3 for the
+    # wrong reason while one of ours went missing.
+    fallback_ids = {
+        str(row[0]) for row in svc._build_list_query().with_entities(Complaint.id).all()
+    }
+    assert own_ids <= fallback_ids
 
 
 def test_neighbours_no_filter_uses_full_set(db: Session) -> None:

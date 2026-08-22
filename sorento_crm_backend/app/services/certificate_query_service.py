@@ -62,6 +62,7 @@ from app.services.certificate_service import (
     today_malaysia,
 )
 from app.services.error_handler import handle_validation_error
+from app.services.company_scope import stamp_lookup_companies
 
 logger = logging.getLogger(__name__)
 
@@ -283,11 +284,26 @@ class CertificateQueryService:
         if resolve_signed_urls:
             self._attach_signed_urls(rows, data)
 
-        return {
+        payload = {
             "data": data,
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
+        # Per-company labelling when the lookup spans more than one company - on the
+        # empty path too, so an empty answer can name the companies searched. The
+        # serialized rows carry no company of their own, so it is read off the ORM
+        # rows they were built from, in the same order.
+        companies_by_certificate = {
+            str(row.id): getattr(row, "company_id", None) for row in rows
+        }
+        stamp_lookup_companies(
+            self.db,
+            payload,
+            data,
+            product_ids=product_ids,
+            row_company_id=lambda row: companies_by_certificate.get(str(row.id)),
+        )
+        return payload
 
     # ---------------------------------------------------------------- detail
     def get_detail(

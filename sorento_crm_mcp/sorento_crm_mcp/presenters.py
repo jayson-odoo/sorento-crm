@@ -95,6 +95,10 @@ _PASSTHROUGH_KEYS = (
     "fallback_used",
     "alternatives",
     "relaxed_axis",
+    # Every company the backend actually searched, present only when the lookup
+    # spanned more than one (see `stamp_lookup_companies` backend-side). A
+    # single-company reply never carries it, so it stays byte-identical.
+    "lookup_companies",
     # Which fields were withheld from this caller and why. Without it, `render`
     # drops a denied field silently and the agent cannot tell "you may not see
     # this" from "it has not happened yet" - so it guesses, and it guesses the
@@ -301,6 +305,7 @@ def _orders_list(rows: list[dict], b: _Builder) -> None:
         b.item(
             o.get("order_number"),
             [
+                ("company_name", "Company", o.get("company_name")),
                 ("Order Number", o.get("order_number")),
                 ("Customer", o.get("debtor_name")),
                 ("Order Date", o.get("order_date")),
@@ -326,6 +331,7 @@ def _orders_by_product(rows: list[dict], b: _Builder) -> None:
         b.item(
             o.get("order_number"),
             [
+                ("company_name", "Company", o.get("company_name")),
                 ("Order Number", o.get("order_number")),
                 ("Customer", o.get("debtor_name")),
                 ("Order Date", o.get("order_date")),
@@ -340,9 +346,11 @@ def _orders_by_product(rows: list[dict], b: _Builder) -> None:
 #: is simply ABSENT when this caller may not see it - and `b.item` drops empty
 #: pairs, so a denied field renders as nothing rather than as a blank row.
 #:
-#: These sit AFTER the identity/quantity pairs above them, which are never gated:
-#: product, container, shipment and quantity are the answer itself, and a contact
-#: who may not see a gatepass date must still be told what is arriving.
+#: These sit AFTER the identity pairs (company, product, shipment, container - what
+#: the row IS) and BEFORE the quantity pairs. The journey is what a contact asks
+#: about, so it leads; quantity and allocation close the row. Nothing is lost when a
+#: field is denied: the key is absent and `b.item` skips it, so a contact entitled to
+#: none of these reads identity straight into quantity, exactly as before.
 #:
 #: ETA is the exception that proves the rule - it IS gateable (an admin can revoke
 #: it) but ships allowed, so it lives in this list rather than the identity block.
@@ -377,6 +385,7 @@ def _incoming_list(rows: list[dict], b: _Builder) -> None:
             b.item(
                 l.get("product_code"),
                 [
+                    ("company_name", "Company", s.get("company_name")),
                     ("product_code", "Product Code", l.get("product_code")),
                     (
                         "product_name",
@@ -385,7 +394,7 @@ def _incoming_list(rows: list[dict], b: _Builder) -> None:
                     ),
                     ("shipment_number", "Shipment", s.get("shipment_number")),
                     ("shipping_container_number", "Container", s.get("shipping_container_number")),
-                    ("batch_number", "Batch", l.get("batch_number")),
+                    *((key, label, s.get(key)) for key, label in _CLEARANCE_PAIRS),
                     (
                         "remaining_incoming_quantity",
                         "Incoming Quantity",
@@ -397,7 +406,6 @@ def _incoming_list(rows: list[dict], b: _Builder) -> None:
                         _wh_alloc(l.get("warehouse_allocations")),
                     ),
                     ("unallocated_quantity", "Unallocated Quantity", gap),
-                    *((key, label, s.get(key)) for key, label in _CLEARANCE_PAIRS),
                 ],
                 unallocated=unallocated,
                 partially_allocated=partial,
@@ -413,6 +421,7 @@ def _incoming_by_product(rows: list[dict], b: _Builder) -> None:
             b.item(
                 p.get("product_code"),
                 [
+                    ("company_name", "Company", p.get("company_name")),
                     ("product_code", "Product Code", p.get("product_code")),
                     (
                         "product_name",
@@ -454,6 +463,7 @@ def _incoming_shipments(rows: list[dict], b: _Builder) -> None:
         b.item(
             s.get("shipment_number"),
             [
+                ("company_name", "Company", s.get("company_name")),
                 ("Shipment", s.get("shipment_number")),
                 ("Container", s.get("shipping_container_number")),
                 ("Estimated Arrival Date", s.get("estimated_arrival_date")),
@@ -481,6 +491,7 @@ def _promotions(rows: list[dict], b: _Builder) -> None:
         b.item(
             name,
             [
+                ("company_name", "Company", promo.get("company_name")),
                 ("Promotion", name),
                 ("Start Date", promo.get("start_date")),
                 ("End Date", promo.get("end_date")),
@@ -498,6 +509,7 @@ def _promotion_products(rows: list[dict], b: _Builder) -> None:
         b.item(
             prod.get("product_code"),
             [
+                ("company_name", "Company", pp.get("company_name")),
                 ("Product Code", prod.get("product_code")),
                 ("Product Name", _distinct_name(prod.get("product_code"), prod.get("product_name"))),
                 ("Promotion", promo.get("description")),
@@ -518,6 +530,7 @@ def _products(rows: list[dict], b: _Builder) -> None:
         b.item(
             p.get("product_code"),
             [
+                ("company_name", "Company", p.get("company_name")),
                 ("Product Code", p.get("product_code")),
                 ("Product Name", _distinct_name(p.get("product_code"), p.get("product_name"))),
                 ("Description", desc if _filled(desc) and desc != p.get("product_name") else None),
@@ -547,6 +560,7 @@ def _product_attachments(rows: list[dict], b: _Builder) -> None:
         b.item(
             prod.get("product_code"),
             [
+                ("company_name", "Company", r.get("company_name")),
                 ("Product Code", prod.get("product_code")),
                 ("Product Name", _distinct_name(prod.get("product_code"), prod.get("product_name"))),
                 ("Description", prod.get("description")),
@@ -639,6 +653,7 @@ def _certificates(rows: list[dict], b: _Builder) -> None:
         b.item(
             title,
             [
+                ("company_name", "Company", c.get("company_name")),
                 ("Scheme", scheme),
                 ("Certificate Number", number),
                 ("Certifying Body", c.get("certifying_body")),
@@ -727,7 +742,20 @@ def _resource_attachments(rows: list[dict], b: _Builder) -> None:
         # on every resource-attachment answer, next to the file itself. The uuid
         # is still on the raw (non-render) response and in the CRM UI, which is
         # where someone debugging is looking anyway.
-        b.item(name, [("original_filename", "File Name", name), ("uploaded_at", "Uploaded", day)])
+        # Company, because a contact who buys from both Mocha and Sorento gets a
+        # current workbook from EACH, and each company names its sheet the same
+        # thing. This render deliberately withholds the File ID (above), so the
+        # company name is the only handle left to tell the two apart. Absent /
+        # shared files (company_id NULL) render no line at all: `b.item` drops any
+        # pair whose value is not `_filled`, so nothing empty reaches the reader.
+        b.item(
+            name,
+            [
+                ("original_filename", "File Name", name),
+                ("company_name", "Company", att.get("company_name")),
+                ("uploaded_at", "Uploaded", day),
+            ],
+        )
         # Strip the type so the delivered attachment carries no "Direct Access" label.
         no_type = {k: v for k, v in att.items() if k != "attachment_type"} if isinstance(att, dict) else att
         b.attach(no_type)
@@ -782,6 +810,7 @@ def _stock(rows: list[dict], b: _Builder) -> None:
         b.item(
             product_code,
             [
+                ("company_name", "Company", s.get("company_name")),
                 ("product_code", "Product Code", product_code),
                 ("product_name", "Product Name", _distinct_name(product_code, product_name)),
                 ("warehouse", "Warehouse", wh_name if _filled(wh_name) else "—"),
@@ -864,6 +893,28 @@ def _latest_updated(node: Any, depth: int = 0) -> str | None:
     return best
 
 
+def _company_names(lookup_companies: Any) -> str | None:
+    """Join the backend's `lookup_companies` names: Mocha or Sorento; A, B or C.
+
+    Order is the backend's (already sorted by name); this only joins.
+
+    Returns None unless EVERY entry has a name. Naming only the companies we
+    happen to have a name for would turn "I checked your two companies" into a
+    confident, wrong "I checked Sorento" - so an entry with a missing name
+    drops the whole clause and the reply falls back to the plain intro.
+    """
+    if not isinstance(lookup_companies, list) or not lookup_companies:
+        return None
+    if not all(
+        isinstance(c, dict) and _filled(c.get("name")) for c in lookup_companies
+    ):
+        return None
+    names = [str(c.get("name")).strip() for c in lookup_companies]
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + " or " + names[-1]
+
+
 # --------------------------------------------------------------------------
 # dispatcher
 # --------------------------------------------------------------------------
@@ -910,7 +961,15 @@ def present_response(tool_name: str, raw: str) -> str:
     if attachments:
         intro = "I have attached the file(s) below."
     elif not has_result:
-        intro = "No matching results found."
+        # An empty answer over more than one company has to name the companies it
+        # searched, or the reader cannot tell "not stocked anywhere" from "I only
+        # looked at one of your two companies".
+        searched = _company_names(data.get("lookup_companies"))
+        intro = (
+            f"No matching results found for {searched}."
+            if searched
+            else "No matching results found."
+        )
     else:
         intro = _DEFAULT_INTRO.get(tool_name, "Here are the results I found.")
 

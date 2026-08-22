@@ -12,7 +12,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight } from 'lucide-react';
+import { Plus, Search, Upload, X, ChevronRight } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -27,12 +27,20 @@ import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useImportJobDrawer } from '@/components/upload-activity';
 import { useCustomers } from '../hooks/useCustomers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import type { Customer } from '../types/customer.types';
+import { CustomerImportDialog } from './CustomerImportDialog';
+import {
+  importCustomers,
+  validateCustomerImport,
+} from '../services/customerImportService';
 
 export default function CustomersList() {
   const router = useRouter();
+  const { notifyImportQueued } = useImportJobDrawer();
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -210,6 +218,14 @@ export default function CustomersList() {
             exportConfig={{ filename: 'customers_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
+            secondaryActions={[
+              {
+                key: 'import',
+                label: 'Import',
+                icon: Upload,
+                onClick: () => setImportDialogOpen(true),
+              },
+            ]}
             primaryAction={
               <Button onClick={() => router.push('/order-management/customers/new')}>
                 <Plus />
@@ -218,6 +234,19 @@ export default function CustomersList() {
             }
           />
         </CardHeader>
+        <CustomerImportDialog
+          open={importDialogOpen}
+          onOpenChange={setImportDialogOpen}
+          onTest={validateCustomerImport}
+          onUpload={async (file) => {
+            const queued = await importCustomers(file);
+            // Opens the upload drawer and refetches the feed; the job then drives its
+            // own 5s polling until terminal, so the user can leave the page.
+            notifyImportQueued();
+            void refetch();
+            return queued;
+          }}
+        />
         <CardTable>
           <ScrollArea>
             <DataGridTable />

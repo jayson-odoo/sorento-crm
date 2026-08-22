@@ -3,40 +3,144 @@
 Every test runs against Postgres -- either the live DB (rolled back) or an empty
 scratch schema built from the real DDL, both via tests/_pg_fixture.py. There is
 no sqlite anywhere in the suite. This file now holds only real cross-test
-hygiene: sweeping/dropping the scratch schema, restoring any in-place model
-metadata edits, and resetting leak-prone process globals between tests.
+hygiene: sweeping/dropping the scratch schema and resetting leak-prone
+process globals between tests.
 """
+import os
+
 import pytest
 
 
+# Holds the session-long advisory lock. Kept on a module global because the lock lives on the
+# CONNECTION: closing it would release the lock and let a concurrent run start sweeping.
+_SWEEP_LOCK: dict = {}
+
+# Arbitrary but fixed. Every pytest session in every worktree against this database competes for
+# this one key, which is exactly the point.
+_SWEEP_LOCK_KEY = 727327001
+
+
+def _owner_pid(schema_name: str):
+    """The PID embedded in a scratch schema name, if it carries one.
+
+    ``zzs_blank_<pid>_<rand>`` (see tests/_pg_fixture.py). A hand made schema
+    under the same prefix has no PID and reads as ownerless.
+    """
+    parts = schema_name.split("_")
+    for part in parts:
+        if part.isdigit():
+            return int(part)
+    return None
+
+
+def _process_is_alive(pid: int) -> bool:
+    import os
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Somebody else's process, but a RUNNING one. Not ours to drop.
+        return True
+    return True
+
+
 def _sweep_orphan_scratch_schemas():
-    """Drop every ``zzt_*`` scratch schema left by a prior run.
+    """Drop scratch schemas left behind by a run that is no longer alive.
 
     The end-of-session drop below only fires if the process exits cleanly. A
     killed run -- a timeout, an interrupted agent, a crash -- leaves its ~199
     table schema behind, and those pile up (105 had accumulated across this
-    migration's many interrupted runs). Sweeping at session START, before any
-    test builds a new one, keeps the shared database from filling with them
-    regardless of how the previous run died.
+    migration's many interrupted runs). Sweeping at session START keeps the
+    shared database from filling with them regardless of how the previous run
+    died.
+
+    ORPHAN IS THE OPERATIVE WORD, and it did not used to be. This dropped every
+    ``zzt_%`` schema it could see, which is correct exactly when no other pytest
+    is running and destructive whenever one is: the newcomer deleted the tables
+    out from under a live run in another checkout of this repository, and the
+    victim reported dozens of "relation ... does not exist" errors at fixture
+    setup that belonged to no change anybody had made. Postgres words a dropped
+    SCHEMA identically to a missing TABLE, so it does not even read as deletion.
+    That has cost hours of bisecting an innocent diff, and it is the worst kind
+    of noise: a false failure is indistinguishable from a real one until
+    somebody re-runs the suite and happens to see it pass.
+
+    Two guards now, because they cover different attackers:
+
+    * this sweep only ever considers schemas under ``SCRATCH_SCHEMA_PREFIX``,
+      which is this checkout's own namespace. A ``zzt_`` schema belongs to a
+      checkout still running the older code and is none of our business -- we
+      cannot prove it is dead, so we do not touch it;
+    * within our own namespace, a schema whose owning PID is still running is
+      left alone, which covers two runs of THIS checkout.
+
+    Two pytest runs on one database remain a bad idea -- they share the real
+    tables -- but they no longer sabotage each other's scratch schema, and the
+    failures a developer sees are their own.
+
+    A third guard sits in front of both: a Postgres advisory lock held for the
+    WHOLE session rather than just across the sweep. The first session in takes
+    it and cleans up; any session that starts while that one is still running
+    fails to take it and touches nothing. Failing to acquire is therefore not an
+    error, it is the signal that somebody else is working. It buys what the PID
+    check cannot: a schema is not swept between the moment its owner picked the
+    name and the moment it created it.
     """
     try:
         from sqlalchemy import text
         from app.database import engine
+        from tests._pg_fixture import SCRATCH_SCHEMA_PREFIX
 
         admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
-        try:
-            names = [
-                r[0]
-                for r in admin.execute(
-                    text("SELECT nspname FROM pg_namespace WHERE nspname LIKE 'zzt_%'")
-                )
-            ]
-            for name in names:
-                admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
-        finally:
+        got = admin.execute(
+            text("SELECT pg_try_advisory_lock(:key)"), {"key": _SWEEP_LOCK_KEY}
+        ).scalar()
+        if not got:
+            # Another run owns the database. Leave its schemas alone.
             admin.close()
+            return
+
+        # Held until _release_sweep_lock, so nobody else sweeps underneath us.
+        _SWEEP_LOCK["connection"] = admin
+
+        names = [
+            r[0]
+            for r in admin.execute(
+                text("SELECT nspname FROM pg_namespace WHERE nspname LIKE :pattern"),
+                {"pattern": f"{SCRATCH_SCHEMA_PREFIX}\\_%"},
+            )
+        ]
+        for name in names:
+            pid = _owner_pid(name)
+            # Never our own, whatever the ordering: this runs at session start,
+            # but a module-scoped fixture that builds the schema first would
+            # otherwise have it swept from under itself.
+            if pid is not None and (pid == os.getpid() or _process_is_alive(pid)):
+                continue
+            admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
     except Exception:
         pass
+
+
+def _release_sweep_lock():
+    connection = _SWEEP_LOCK.pop("connection", None)
+    if connection is None:
+        return
+    try:
+        from sqlalchemy import text
+
+        connection.execute(
+            text("SELECT pg_advisory_unlock(:key)"), {"key": _SWEEP_LOCK_KEY}
+        )
+    except Exception:
+        pass
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -55,73 +159,55 @@ def _blank_schema_lifecycle():
         drop_blank_schema()
     except Exception:
         pass
+    # Last, so the lock outlives this run's own schema and a queued run finds the DB tidy.
+    _release_sweep_lock()
 
 
-_ORIGINAL_COLUMN_TYPES: dict = {}
+# The per-test metadata-restore backstop that used to live here is gone. It
+# re-applied a snapshot of every model column's declared type before each test,
+# to undo an in-place rewrite of ``Model.__table__`` by a sqlite shim fixture.
+# No fixture mutates model metadata any more, and CLAUDE.md's "Tests run on
+# Postgres ONLY, NEVER sqlite" rule forbids the mutation that made it necessary,
+# so all it bought was a walk over ~2,500 columns on every single test.
 
 
-def _snapshot_column_types():
-    """Record every model column's declared type, once, before any test runs."""
-    if _ORIGINAL_COLUMN_TYPES:
-        return
-    try:
-        from app.database import Base
-        from app import models  # noqa: F401  register every table
-
-        for table in Base.metadata.tables.values():
-            for column in table.columns:
-                _ORIGINAL_COLUMN_TYPES[(table.key, column.key)] = (
-                    column.type,
-                    column.server_default,
-                )
-    except Exception:
-        pass
+# Module-level function symbols that tests stub. Same family as the column-type
+# backstop above: a bare ``svc_module.resolve_references = lambda ...`` in a fixture is
+# never undone, so it stayed installed for every test that ran later in the session.
+# Four fixtures did exactly that, and the visible damage was the reverse of a stub's
+# intent -- a WORKING resolution path failed with "lambda() got an unexpected keyword
+# argument", in a file that stubs nothing, only in a full-suite run.
+_STUBBABLE_SYMBOLS: tuple[tuple[str, str], ...] = (
+    ("app.services.ai_assistant_service", "resolve_references"),
+)
 
 
 @pytest.fixture(autouse=True)
-def _restore_column_types():
-    """Undo any test's in-place rewrite of the shared model metadata.
+def _restore_stubbed_module_symbols():
+    """Restore module-level symbols a test rebound without undoing it.
 
-    A guard, now that no test does this. It used to matter a great deal: several
-    sqlite fixtures rewrote columns in their setup --
+    Every current site uses ``monkeypatch``, which restores itself; this is the backstop
+    for the next one, because the failure it causes lands in somebody else's file and
+    reads as a production bug rather than as a leaked stub.
 
-        if isinstance(col.type, (JSONB, ARRAY)):
-            col.type = JSON()
-
-    -- on ``Model.__table__``, which is process-global, and never undid it.
-    While the whole suite ran on sqlite that was invisible; once tests ran on
-    Postgres in the same process, one such module left later tests binding JSON
-    into columns Postgres types as ``varchar[]``:
-
-        column "notify_stock_role_ids" is of type character varying[]
-        but expression is of type json
-
-    All those fixtures are gone, so this restores nothing today. It is kept as a
-    cheap backstop -- one dict walk per test -- so a future in-place edit cannot
-    silently corrupt its neighbours again.
-
-    The symptom lands in files that contain no sqlite at all and only in
-    full-suite runs -- test_sla_takeover_cooldown and test_sla_kpi both failed
-    this way, from a shim in test_chat_latency.
-
-    Restoring before each test makes the two substrates coexist: a shimming
-    fixture still re-applies its rewrite for its own test, and the next test
-    starts from the real schema. Once no shims remain this becomes a no-op that
-    costs one dict walk per test, and it keeps a future one from silently
-    corrupting its neighbours.
+    Reads ``sys.modules`` and never IMPORTS. Importing the module here instead cost 149
+    errors across the suite: the assistant service pulls a large chain in with it, and doing
+    that from a fixture loaded it far earlier than the suite otherwise would, in tests that
+    never touch it. A module that was never imported cannot be holding a leaked stub, so
+    there is nothing to restore anyway.
     """
-    _snapshot_column_types()
-    for (table_key, column_key), (col_type, server_default) in _ORIGINAL_COLUMN_TYPES.items():
-        try:
-            from app.database import Base
+    import sys
 
-            column = Base.metadata.tables[table_key].columns[column_key]
-            if column.type is not col_type:
-                column.type = col_type
-                column.server_default = server_default
-        except Exception:
-            pass
+    originals = [
+        (module, attr, getattr(module, attr))
+        for module_path, attr in _STUBBABLE_SYMBOLS
+        if (module := sys.modules.get(module_path)) is not None
+        and hasattr(module, attr)
+    ]
     yield
+    for module, attr, original in originals:
+        if getattr(module, attr, None) is not original:
+            setattr(module, attr, original)
 
 # ---------------------------------------------------------------------------
 # Company-scope test default (multi-company isolation).
@@ -214,6 +300,16 @@ def _reset_global_state():
     except Exception:
         pass
     try:
+        # The 24h-window lookup keeps a short per-identifier TTL cache. Tests
+        # reuse identifiers ("id:123", "437264483") across files with different
+        # mocked message lists, so a surviving entry would answer the next test
+        # with the previous one's window.
+        from app.services.respond_messaging_service import reset_window_cache
+
+        reset_window_cache()
+    except Exception:
+        pass
+    try:
         # The RBAC permission cache (`_rbac_cache`, 30s TTL) is a process global.
         # Tests reuse user ids (e.g. a superadmin seeded under a fixed id) across
         # files; a stale non-superadmin `role_slugs`/`perm` entry cached by an
@@ -240,6 +336,18 @@ def _reset_global_state():
             _keys = list(_r.scan_iter(match="idemp:*", count=500))
             if _keys:
                 _r.delete(*_keys)
+    except Exception:
+        pass
+    try:
+        # `app.services.storage_router` memoises signed URLs (including signing
+        # FAILURES, cached as None) in a process-global `_signed_cache` keyed by
+        # (provider, key, expires_in). Without a reset, an earlier test's cached
+        # failure for the same key silently short-circuits a later test's
+        # working backend and it gets the stale `None` back instead of a real
+        # signature. Clear per test so ordering can't leak a cached result.
+        from app.services.storage_router import clear_signed_url_cache
+
+        clear_signed_url_cache()
     except Exception:
         pass
 

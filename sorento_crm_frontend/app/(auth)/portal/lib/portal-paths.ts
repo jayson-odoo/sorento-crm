@@ -82,6 +82,15 @@ export function portalDetailPath(kind: string, id: string, slug?: string | null)
   return `${portalBase(slug)}/${kind}/${encodeURIComponent(id)}`;
 }
 
+/**
+ * Detail page with the revise composer already open. The long-press preview
+ * card acts through this so both surfaces end up on the SAME form, rather than
+ * a second copy of it living in the dialog.
+ */
+export function portalRevisePath(kind: string, id: string, slug?: string | null): string {
+  return `${portalDetailPath(kind, id, slug)}?revise=1`;
+}
+
 /** Build a WhatsApp click-to-chat URL with prefilled text. */
 export function waMeUrl(phoneNumber: string, text: string): string {
   const digits = phoneNumber.replace(/\D/g, '');

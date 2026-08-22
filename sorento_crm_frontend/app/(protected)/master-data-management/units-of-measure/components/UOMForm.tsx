@@ -45,6 +45,9 @@ export default function UOMForm({ uomId, onSuccess }: UOMFormProps) {
       uom_name: '',
       base_uom_id: null,
       conversion_factor: null,
+      // Whole units unless the unit is a measure. Same fallback the backend takes
+      // for a create that omits the field, and for a rollout row that has none.
+      decimal_places: 0,
       description: null,
       is_active: true,
     },
@@ -59,6 +62,7 @@ export default function UOMForm({ uomId, onSuccess }: UOMFormProps) {
         uom_name: uom.uom_name,
         base_uom_id: uom.base_uom_id || null,
         conversion_factor: uom.conversion_factor || null,
+        decimal_places: uom.decimal_places ?? 0,
         description: uom.description || null,
         is_active: uom.is_active ?? true,
       });
@@ -74,6 +78,7 @@ export default function UOMForm({ uomId, onSuccess }: UOMFormProps) {
         description: data.description ?? undefined,
         base_uom_id: data.base_uom_id ?? undefined,
         conversion_factor: data.conversion_factor ?? undefined,
+        decimal_places: data.decimal_places,
         is_active: data.is_active,
       };
       
@@ -194,6 +199,33 @@ export default function UOMForm({ uomId, onSuccess }: UOMFormProps) {
                     </FormControl>
                     <FormDescription>
                       Conversion factor relative to base UOM (e.g., 1 kg = 1000 g, factor = 1000)
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="decimal_places"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Decimal Places</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={4}
+                        step="1"
+                        {...field}
+                        value={field.value ?? 0}
+                        onChange={(e) =>
+                          field.onChange(e.target.value === '' ? 0 : parseInt(e.target.value, 10))
+                        }
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      How finely this unit can be counted, 0 to 4. 0 allows whole units only.
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

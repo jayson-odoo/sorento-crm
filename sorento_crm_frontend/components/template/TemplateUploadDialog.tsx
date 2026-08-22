@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Upload, X, FileSpreadsheet, TestTube } from 'lucide-react';
+import { Upload, TestTube } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -15,8 +15,7 @@ import { parseExcelFile } from '@/lib/excel-utils';
 import { useExcelAccept } from '@/hooks/use-excel-accept';
 import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
-import { Label } from '@/components/ui/label';
-import { cn } from '@/lib/utils';
+import { FileDropzone } from '@/components/common/FileDropzone';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AlertCircle, AlertTriangle, CheckCircle } from 'lucide-react';
@@ -64,52 +63,11 @@ export function TemplateUploadDialog({
   const [isTesting, setIsTesting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [statusLabel, setStatusLabel] = useState<string>('');
-  const [isDragging, setIsDragging] = useState(false);
   const [testResult, setTestResult] = useState<ValidateImportResult | null>(null);
 
-  const validExtensions = accept.split(',').map((ext) => ext.trim().replace(/^\./, ''));
-  const validateFile = (f: File): boolean => {
-    const fileExtension = f.name.split('.').pop()?.toLowerCase();
-    if (!fileExtension || !validExtensions.includes(fileExtension)) {
-      toast.error(`Invalid file type. Please use: ${accept}`);
-      return false;
-    }
-    return true;
-  };
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile && validateFile(selectedFile)) {
-      setFile(selectedFile);
-      setTestResult(null);
-    }
-    e.target.value = '';
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!isUploading) setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-    if (isUploading) return;
-    const droppedFiles = e.dataTransfer?.files;
-    if (!droppedFiles?.length) return;
-    const droppedFile = droppedFiles[0];
-    if (validateFile(droppedFile)) {
-      setFile(droppedFile);
-      setTestResult(null);
-    }
+  const handleFilesChange = (files: File[]) => {
+    setFile(files[0] ?? null);
+    setTestResult(null);
   };
 
   const handleUpload = async () => {
@@ -161,11 +119,6 @@ export function TemplateUploadDialog({
     }
   };
 
-  const handleRemoveFile = () => {
-    setFile(null);
-    setTestResult(null);
-  };
-
   const handleTest = async () => {
     if (!file || !onTest) return;
     setIsTesting(true);
@@ -202,72 +155,17 @@ export function TemplateUploadDialog({
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 min-h-0 flex-1 overflow-y-auto">
-          {!file ? (
-            <div
-              role="button"
-              tabIndex={0}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              className={cn(
-                'border-2 border-dashed rounded-lg p-8 text-center transition-colors',
-                isDragging
-                  ? 'border-primary bg-primary/5'
-                  : 'border-muted-foreground/25 hover:border-muted-foreground/40'
-              )}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  document.getElementById('file-upload')?.click();
-                }
-              }}
-            >
-              <FileSpreadsheet className="size-12 mx-auto mb-4 text-muted-foreground" />
-              <Label htmlFor="file-upload" className="cursor-pointer">
-                <Button variant="outline" asChild>
-                  <span>
-                    <Upload className="size-4 mr-2" />
-                    Choose File
-                  </span>
-                </Button>
-              </Label>
-              <input
-                id="file-upload"
-                type="file"
-                accept={accept}
-                onChange={handleFileSelect}
-                className="hidden"
-              />
-              <p className="text-sm text-muted-foreground mt-2">
-                {isDragging ? 'Drop your file here' : 'or drag and drop your file here'}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Accepted formats: {accept}
-              </p>
-            </div>
-          ) : (
-            <div className="border rounded-lg p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <FileSpreadsheet className="size-5 text-muted-foreground" />
-                  <div>
-                    <p className="text-sm font-medium">{file.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {(file.size / 1024).toFixed(2)} KB
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleRemoveFile}
-                  disabled={isUploading}
-                >
-                  <X className="size-4" />
-                </Button>
-              </div>
-            </div>
-          )}
+          <FileDropzone
+            id="file-upload"
+            accept={accept}
+            disabled={isUploading}
+            files={file ? [file] : []}
+            onFilesChange={handleFilesChange}
+            onReject={() => toast.error(`Invalid file type. Please use: ${accept}`)}
+            title="Drop the Excel file here, or click to browse"
+            hint={`Accepted formats: ${accept}`}
+            aria-label="Excel file"
+          />
           {isUploading && (
             <div className="space-y-2">
               <Progress value={progress} />

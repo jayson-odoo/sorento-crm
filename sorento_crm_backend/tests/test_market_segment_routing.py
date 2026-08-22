@@ -316,7 +316,22 @@ def test_next_assignee_preferred_unchanged(client, db):
 
 # ---------------------------------------------------------------- B/C/F: assignment + catalog
 
-def test_catalog_crud(client):
+def test_catalog_crud(client, monkeypatch):
+    # GET /market-segments/ now requires user_management.reference_data.view, the
+    # deliberately low-privilege slug from Q3 of
+    # documentation/plans/security/PLAN-user-management-read-gates.md. The catalog
+    # WRITES below are out of scope for that read-gates PR and stay on
+    # get_current_user, so only the list call needs the grant. Granted here rather
+    # than in the shared `client` fixture, and scoped to exactly this slug, so it
+    # cannot mask the pre-existing external-router failures in this file.
+    from app.services.user_service import UserPermissionService
+
+    monkeypatch.setattr(
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: slug == "user_management.reference_data.view",
+    )
+
     # F1 list seed
     r = client.get("/api/v1/user-management/market-segments/")
     assert r.status_code == 200
@@ -342,7 +357,20 @@ def test_catalog_delete_blocked_when_in_use(client, db):
     assert r.status_code == 409  # F4 in-use guard
 
 
-def test_contact_segment_assignment_endpoints(client, db):
+def test_contact_segment_assignment_endpoints(client, db, monkeypatch):
+    # GET /contacts/{id}/market-segments now requires user_management.contacts.view
+    # (Q1 of PLAN-user-management-read-gates.md). The sibling PUT is a write and is
+    # out of scope for that PR, so it stays on get_current_user. Same scoping as
+    # test_member_segment_assignment_endpoints below: exactly the one slug the read
+    # needs, on the function-scoped monkeypatch, never the shared client fixture.
+    from app.services.user_service import UserPermissionService
+
+    monkeypatch.setattr(
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: slug == "user_management.contacts.view",
+    )
+
     c = _contact(db, "R", [])
     # B1 empty
     r = client.get(f"/api/v1/user-management/contacts/{c.id}/market-segments")
@@ -355,10 +383,46 @@ def test_contact_segment_assignment_endpoints(client, db):
     assert r.status_code == 200 and r.json()["codes"] == []
 
 
-def test_member_segment_assignment_endpoints(client, db):
+def _grant(monkeypatch, *slugs: str) -> None:
+    """Hold exactly these permission slugs, and nothing else.
+
+    Scoped per test via the function-scoped monkeypatch fixture, not the shared
+    `client` fixture, so it does not mask the pre-existing external-router failures
+    elsewhere in this file.
+    """
+    from app.services.user_service import UserPermissionService
+
+    monkeypatch.setattr(
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: slug in set(slugs),
+    )
+
+
+def test_member_segment_assignment_endpoints(client, db, monkeypatch):
+    # GET .../teams/{team_id}/members/{user_id}/market-segments requires
+    # user_management.teams.view (PLAN-user-management-read-gates.md row 4); the
+    # sibling PUT requires user_management.teams.edit.
+    _grant(monkeypatch, "user_management.teams.view", "user_management.teams.edit")
+
     _, team_id, m = _scenario(db, {"A": []})
     uid = m["A"]
     r = client.get(f"/api/v1/user-management/teams/{team_id}/members/{uid}/market-segments")
     assert r.status_code == 200 and r.json()["codes"] == []
     r = client.put(f"/api/v1/user-management/teams/{team_id}/members/{uid}/market-segments", json={"codes": ["retail"]})
     assert r.status_code == 200 and r.json()["codes"] == ["retail"]
+
+
+def test_member_assignment_writes_need_the_edit_permission(client, db, monkeypatch):
+    """A member's segments and brands decide who a conversation reaches, so a
+    view-only role must not be able to re-route the team."""
+    _grant(monkeypatch, "user_management.teams.view")
+
+    _, team_id, m = _scenario(db, {"A": []})
+    uid = m["A"]
+    base = f"/api/v1/user-management/teams/{team_id}/members/{uid}"
+
+    assert client.get(f"{base}/market-segments").status_code == 200
+    assert client.get(f"{base}/brands").status_code == 200
+    assert client.put(f"{base}/market-segments", json={"codes": ["retail"]}).status_code == 403
+    assert client.put(f"{base}/brands", json={"codes": []}).status_code == 403

@@ -10,6 +10,7 @@ import { STOCK_INQUIRY_NEIGHBOURS_PATH } from '../services/stockInquiryService';
 import {
   getStockInquiries,
   getStockInquiry,
+  getStockInquiryRevisions,
   createStockInquiry,
   updateStockInquiry,
   updateStockInquiryAndReply,
@@ -29,6 +30,7 @@ import {
   type ResponseAttachmentUploadResult,
 } from '../services/stockInquiryService';
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
+import type { FormPdfExportOptions } from '@/lib/revision-export';
 import { isDeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
 
 export type StockInquiriesListParams = DataGridApiFetchParams & {
@@ -52,17 +54,26 @@ export function useStockInquiryNeighbours(
   return useRecordNeighbours(STOCK_INQUIRY_NEIGHBOURS_PATH, inquiryId, params);
 }
 
-export function useStockInquiries(params: DataGridApiFetchParams & { statuses?: string[] }) {
+/**
+ * `enabled` lets the list hold the fetch until the user's remembered sort and filter
+ * have resolved, so the grid is fetched ONCE with the view already applied instead of
+ * fetching the defaults and immediately refetching (PLAN-listing-view-memory, AC-B3).
+ */
+export function useStockInquiries(
+  params: DataGridApiFetchParams & { statuses?: string[]; enabled?: boolean },
+) {
+  const { enabled = true, ...listParams } = params;
   return useQuery({
     queryKey: [
       'stock-inquiries',
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-      params.statuses,
+      listParams.pageIndex,
+      listParams.pageSize,
+      listParams.sorting,
+      listParams.searchQuery,
+      listParams.statuses,
     ],
-    queryFn: () => getStockInquiries(params),
+    queryFn: () => getStockInquiries(listParams),
+    enabled,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,
@@ -76,6 +87,26 @@ export function useStockInquiry(id: string | null) {
     queryFn: () => {
       if (!id) throw new Error('Stock inquiry ID is required');
       return getStockInquiry(id);
+    },
+    enabled: !!id,
+    retry: 1,
+  });
+}
+
+/**
+ * Revision lineage for the office Revisions panel. Keyed on `revisionNo` so a
+ * revision landing while the page is open refetches the timeline instead of
+ * serving the pre-revision lineage until a manual reload.
+ */
+export function useStockInquiryRevisions(
+  id: string | null,
+  revisionNo?: number | null,
+) {
+  return useQuery({
+    queryKey: ['stock-inquiry-revisions', id, revisionNo ?? 0],
+    queryFn: () => {
+      if (!id) throw new Error('Stock inquiry ID is required');
+      return getStockInquiryRevisions(id);
     },
     enabled: !!id,
     retry: 1,
@@ -327,12 +358,27 @@ export function useReopenStockInquiry() {
  * Queue the printable Stock Inquiry Form PDF. The render happens on the worker,
  * so success only means "queued" - invalidate the downloads feeds (drawer + the
  * per-entity chip) and the list, whose Print Count column just changed.
+ *
+ * `mutate('si-1')` stays the current-form export. The object form carries the
+ * round-6 options: one stored revision, or the form plus its whole lineage.
  */
+export type ExportStockInquiryPdfVariables =
+  | string
+  | { id: string; options?: FormPdfExportOptions | null };
+
+function exportPdfId(variables: ExportStockInquiryPdfVariables): string {
+  return typeof variables === 'string' ? variables : variables.id;
+}
+
 export function useExportStockInquiryPdf() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => exportStockInquiryPdf(id),
-    onSuccess: (_, id) => {
+    mutationFn: (variables: ExportStockInquiryPdfVariables) =>
+      typeof variables === 'string'
+        ? exportStockInquiryPdf(variables)
+        : exportStockInquiryPdf(variables.id, variables.options),
+    onSuccess: (_, variables) => {
+      const id = exportPdfId(variables);
       queryClient.invalidateQueries({ queryKey: ['my-downloads'] });
       queryClient.invalidateQueries({
         queryKey: ['entity-downloads', 'stock_inquiry', id],

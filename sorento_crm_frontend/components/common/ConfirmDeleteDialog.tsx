@@ -85,7 +85,10 @@ export function ConfirmDeleteDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
-        <DialogDescription>{description}</DialogDescription>
+        {/* `break-words` is load-bearing: descriptions quote the record's own name, and a
+            long unbroken filename (an exported CSV, say) has no spaces to wrap at, so it
+            ran past the dialog and pushed a horizontal scrollbar under the buttons. */}
+        <DialogDescription className="break-words">{description}</DialogDescription>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel

@@ -83,12 +83,17 @@ async def download_latest_container_status(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """A signed link to the most recently imported Container Status workbook.
+    """A signed link to the CALLER'S ACTIVE COMPANY's latest Container Status workbook.
 
     The import retains the original upload, but only on the job row - reachable
     through Import Job Details, and owner-only, so a colleague who did not run the
     import could not get the sheet. This serves the latest one to anyone who can
     see packing lists, which is who needs it.
+
+    Each company keeps its own current workbook, so "latest" means latest for the
+    company the caller is standing in. No extra parameter for it: the router-level
+    `apply_company_scope` dependency has already pinned the session to that
+    company, which is how the rest of procurement scopes its reads.
 
     404 when nothing has been imported yet: an empty answer is honest, and the
     caller can say "no workbook has been uploaded" rather than showing a dead link.
@@ -119,6 +124,10 @@ async def download_latest_container_status(
             "filename": doc["filename"],
             "size": doc["size"],
             "uploaded_at": doc["uploaded_at"],
+            # Which company's workbook this is. Two companies hold sheets with the
+            # same filename, so the name alone cannot say whose it is.
+            "company_id": doc.get("company_id"),
+            "company_name": doc.get("company_name"),
         }
     except HTTPException:
         raise

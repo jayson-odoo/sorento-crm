@@ -36,6 +36,10 @@ import type { ListQueryFilterGroup, ListQueryResourceKey } from '@/lib/list-quer
  *   [Search] [Filters?] [Columns] [Export]   ·····   [Secondary ▾] [Primary +Add]
  * When >=1 row is selected, the LEFT cluster is replaced by a bulk strip:
  *   [n selected] [bulk actions…] [Clear]
+ * `keepSearchWhileSelected` keeps the search in front of that strip, for a list where the
+ * selection is BUILT by searching (tick one order, search for the next, tick that too) and
+ * losing the box on the first tick would leave no way to reach the second row. On such a
+ * list the strip counts the accumulated selection, not just the loaded page's share.
  *
  * Rules baked in (so pages cannot diverge):
  *  - Filters renders ONLY when `filters` is supplied (no dead "no filters" popover). (D3)
@@ -80,6 +84,15 @@ export type ListToolbarFilters =
       /** Whether any custom filter is currently active (drives the "On" badge + count). */
       active?: boolean;
       activeCount?: number;
+      /**
+       * When supplied AND `active`, the toolbar states the filter on screen as a chip
+       * with a clear affordance, above the grid and without opening the filter menu.
+       * A sticky filter the user did not set this session is otherwise indistinguishable
+       * from missing data (PLAN-listing-view-memory, AC-C1/AC-C2).
+       *
+       * The PAGE owns `label`: only it can put its own filter values into words.
+       */
+      activeSummary?: { label: string; onClear: () => void };
       content: ReactNode;
     };
 
@@ -133,6 +146,15 @@ export type DataGridListToolbarProps<TData extends object> = {
   table: Table<TData>;
   /** Search input (already wired to state by the page). */
   searchSlot?: ReactNode;
+  /**
+   * Keep `searchSlot` visible while the bulk strip is up (default false, so every other
+   * listing is unchanged). Opt in on a list where the selection is assembled ACROSS
+   * searches - the fulfilment worklist's "Plan together", where the two orders to plan are
+   * found by two different needles and the first tick would otherwise remove the box.
+   * It also makes the strip's count the WHOLE selection rather than the loaded page's share
+   * of it, so "1 selected" cannot sit beside a "Plan together (2)".
+   */
+  keepSearchWhileSelected?: boolean;
   /** Omit to hide the Filters button entirely (D3). */
   filters?: ListToolbarFilters;
   /** Export config, or `false` to hide Export. Default: selection-gated client export;
@@ -212,6 +234,7 @@ function ActionButton({ action }: { action: ToolbarAction }) {
 export function DataGridListToolbar<TData extends object>({
   table,
   searchSlot,
+  keepSearchWhileSelected = false,
   filters,
   exportConfig,
   showColumns = true,
@@ -230,6 +253,18 @@ export function DataGridListToolbar<TData extends object>({
   const selectedRows = table.getSelectedRowModel().rows;
   const selectedCount = selectedRows.length;
   const hasSelection = selectedCount > 0;
+  /**
+   * What the strip SAYS is selected.
+   *
+   * Page-scoped by default, because that is what a bulk action here operates on and a
+   * count that promised more would be a footgun on a destructive one. A page that opted
+   * into building its selection across searches is counting the SET instead, so the strip
+   * agrees with its own action button rather than reporting the last search's share of it.
+   * Export is deliberately NOT moved onto this: it still builds rows from the loaded ones.
+   */
+  const stripSelectionCount = keepSearchWhileSelected
+    ? Object.values(table.getState().rowSelection).filter(Boolean).length
+    : selectedCount;
 
   const isListQueryExport =
     exportConfig !== false && exportConfig != null && 'kind' in exportConfig && exportConfig.kind === 'listQuery';
@@ -315,6 +350,11 @@ export function DataGridListToolbar<TData extends object>({
     selectAllMatching?.onClear();
   };
 
+  // Rendered only for a custom filter that is BOTH active and self-describing, so a
+  // listing that supplies no summary keeps exactly today's layout (AC-C3).
+  const activeFilterSummary =
+    filters?.kind === 'custom' && filters.active ? filters.activeSummary : undefined;
+
   const exportButtonEl =
     exportConfig === false ? null : exportEnabled ? (
       <Button
@@ -347,10 +387,13 @@ export function DataGridListToolbar<TData extends object>({
         {/* LEFT cluster — replaced by the bulk strip while rows are selected (D2/H). */}
         {bulkStripActive ? (
           <div className="flex flex-wrap items-center gap-2">
+            {/* Where the box already sits when nothing is selected, so it does not move
+                under the cursor the moment a row is ticked. */}
+            {keepSearchWhileSelected ? searchSlot : null}
             <Badge variant="secondary" className="h-8 gap-1 px-2.5 text-sm">
               {allRecordsActive && selectAllMatching
                 ? `All ${selectAllMatching.total} selected`
-                : `${selectedCount} selected`}
+                : `${stripSelectionCount} selected`}
             </Badge>
             {bulkActionsSlot == null && exportButtonEl}
             {/* Bulk destructive actions operate on the loaded selection only; hide
@@ -454,6 +497,10 @@ export function DataGridListToolbar<TData extends object>({
                       className={action.destructive ? 'text-destructive' : undefined}
                       asChild={Boolean(action.href && !action.disabled)}
                       data-guide-target={action.href && !action.disabled ? undefined : action.dataGuideTarget}
+                      // The collapsed-into-"Actions" path has no room for the single-button
+                      // path's `Tooltip` wrapper, so a disabled item's reason travels as a
+                      // native `title` instead - still a tooltip, just the browser's own.
+                      title={action.disabled ? action.disabledReason : undefined}
                     >
                       {action.href && !action.disabled ? (
                         <Link href={action.href} data-guide-target={action.dataGuideTarget}>
@@ -476,6 +523,32 @@ export function DataGridListToolbar<TData extends object>({
           {primaryAction}
         </div>
       </div>
+
+      {/* Active-filter chip (AC-C1). Its own row, so it neither competes with the
+          toolbar buttons for width at 375px nor disappears behind the bulk strip. */}
+      {activeFilterSummary ? (
+        <div className="flex w-full flex-wrap items-center gap-2">
+          <span className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-full border border-border bg-muted/50 ps-3 pe-1 text-xs font-medium">
+            <Filter className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate" title={activeFilterSummary.label}>
+              {activeFilterSummary.label}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              mode="icon"
+              shape="circle"
+              className="size-6 shrink-0 p-0"
+              onClick={activeFilterSummary.onClear}
+              aria-label={`Clear filter: ${activeFilterSummary.label}`}
+              title="Clear filter"
+            >
+              <X className="size-3.5" />
+            </Button>
+          </span>
+        </div>
+      ) : null}
 
       {/* "Select all N records" banner (Odoo pattern, D4/F). */}
       {showSelectAllBanner && selectAllMatching ? (

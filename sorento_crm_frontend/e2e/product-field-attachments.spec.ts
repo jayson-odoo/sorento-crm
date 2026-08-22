@@ -82,7 +82,8 @@ test('upload tech-spec → link to product → field badges → AI Extract → c
   await page.getByTestId('upload-field-link-key-weight').click();
 
   // 5. Upload the real fixture.
-  await page.locator('#file-upload').setInputFiles(FIXTURE);
+  // The shared FileDropzone owns the hidden input; it carries no id of its own.
+  await page.locator('[role="dialog"] input[type="file"]').setInputFiles(FIXTURE);
 
   await page.getByRole('button', { name: /^Upload \d+ Attachments?$/ }).click();
   await expect(page.getByText('Create Attachment')).not.toBeVisible({ timeout: 30_000 });

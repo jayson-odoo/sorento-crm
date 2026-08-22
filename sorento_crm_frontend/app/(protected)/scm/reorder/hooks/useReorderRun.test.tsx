@@ -9,7 +9,7 @@ vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 const toastError = vi.fn();
 vi.mock('sonner', () => ({ toast: { error: (...a: unknown[]) => toastError(...a) } }));
 
-import { useReorderRun, useTodayRun } from './useReorderRun';
+import { useCustomerOrders, useLocationStock, useReorderRun, useTodayRun } from './useReorderRun';
 
 function jsonRes(body: unknown, ok = true, status = 200) {
   return {
@@ -70,7 +70,7 @@ beforeEach(() => {
   toastError.mockReset();
 });
 
-describe('useReorderRun — lifecycle', () => {
+describe('useReorderRun - lifecycle', () => {
   it('POSTs then polls to completion, exposing the summary', async () => {
     routeApi([RUNNING, COMPLETED]);
     const { result } = renderHook(() => useReorderRun(), { wrapper });
@@ -128,7 +128,7 @@ describe('useReorderRun — lifecycle', () => {
   it('stops polling and surfaces a stalled state once the poll cap elapses', async () => {
     vi.useFakeTimers();
     try {
-      routeApi([RUNNING]); // never terminates — simulates an orphaned run
+      routeApi([RUNNING]); // never terminates - simulates an orphaned run
       const { result } = renderHook(() => useReorderRun(), { wrapper });
       await act(async () => {
         await result.current.start({ warehouse_codes: ['WH-KL'] });
@@ -146,7 +146,7 @@ describe('useReorderRun — lifecycle', () => {
       expect(result.current.isStalled).toBe(true);
       expect(result.current.isRunning).toBe(false);
 
-      // polling has stopped — no further GETs beyond what already fired
+      // polling has stopped - no further GETs beyond what already fired
       const getsBefore = apiFetch.mock.calls.filter(
         (c) => (c[1] as RequestInit | undefined)?.method !== 'POST',
       ).length;
@@ -186,10 +186,11 @@ const TODAY_RUN = {
   started_at: '2026-07-17T06:00:00',
   finished_at: '2026-07-17T06:00:08',
   is_today: true,
+  in_progress: false,
   summary: { buy_count: 4, disposition_count: 1, exception_count: 0, total_cash_impact: 9000, recommendation_count: 5 },
 };
 
-describe('useTodayRun — the page default run (M8-D3/D4)', () => {
+describe('useTodayRun - the page default run (M8-D3/D4)', () => {
   it('GETs /reorder-runs/today and exposes today’s snapshot', async () => {
     apiFetch.mockResolvedValue(jsonRes(TODAY_RUN));
     const { result } = renderHook(() => useTodayRun(), { wrapper });
@@ -211,5 +212,95 @@ describe('useTodayRun — the page default run (M8-D3/D4)', () => {
     const { result } = renderHook(() => useTodayRun(), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data?.is_today).toBe(false);
+  });
+});
+
+describe('useCustomerOrders - the orders behind one Who-bought-it row', () => {
+  it('does not fetch until the row is expanded', async () => {
+    apiFetch.mockResolvedValue(jsonRes({ lines: [], total: 0, shown: 0 }));
+    renderHook(() => useCustomerOrders('run-1', 'prod-1', 'project', 'cust-1', false), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(apiFetch).not.toHaveBeenCalled());
+  });
+
+  it('fetches the run + product + side + key once it is', async () => {
+    apiFetch.mockResolvedValue(
+      jsonRes({
+        lines: [
+          { so_number: 'SO1', order_date: '2026-07-12', qty: 60, unit_price: 0.94, warehouse_code: 'BRW-BB' },
+        ],
+        total: 1,
+        shown: 1,
+      }),
+    );
+    const { result } = renderHook(
+      () => useCustomerOrders('run-1', 'prod-1', 'project', 'cust-1', true),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.data?.lines).toHaveLength(1));
+    const url = String(apiFetch.mock.calls[0][0]);
+    expect(url).toContain('/api/v1/scm/reorder-runs/run-1/customer-orders');
+    expect(url).toContain('customer_key=cust-1');
+  });
+
+  it('stays idle while the row carries no key at all', async () => {
+    apiFetch.mockResolvedValue(jsonRes({ lines: [], total: 0, shown: 0 }));
+    renderHook(() => useCustomerOrders('run-1', 'prod-1', 'project', null, true), { wrapper });
+
+    await waitFor(() => expect(apiFetch).not.toHaveBeenCalled());
+  });
+});
+
+describe('useLocationStock - live per-location stock for the grouped Buy view\'s expand panel', () => {
+  it('does not fetch while the caller marks it disabled, even with a product id on hand', async () => {
+    apiFetch.mockResolvedValue(jsonRes({ product_id: 'p1', as_of: '2026-08-20', locations: [] }));
+    renderHook(() => useLocationStock('p1', false), { wrapper });
+
+    await waitFor(() => expect(apiFetch).not.toHaveBeenCalled());
+  });
+
+  it('does not fetch with no product id, even when enabled', async () => {
+    apiFetch.mockResolvedValue(jsonRes({ product_id: null, as_of: '2026-08-20', locations: [] }));
+    renderHook(() => useLocationStock(null, true), { wrapper });
+
+    await waitFor(() => expect(apiFetch).not.toHaveBeenCalled());
+  });
+
+  it('fetches the location-stock endpoint for this product once enabled with an id', async () => {
+    apiFetch.mockResolvedValue(
+      jsonRes({
+        product_id: 'p1',
+        as_of: '2026-08-20T09:00:00',
+        locations: [{ warehouse_id: 'w1', warehouse_code: 'BRW', on_hand: 10, reserved: 0,
+                      held_by_decisions: 0, free: 10, so_qty: 0, spo_qty: 0, available: 10 }],
+      }),
+    );
+    const { result } = renderHook(() => useLocationStock('p1', true), { wrapper });
+
+    await waitFor(() => expect(result.current.data?.locations).toHaveLength(1));
+    const url = String(apiFetch.mock.calls[0][0]);
+    expect(url).toContain('/api/v1/scm/reorder-runs/location-stock');
+    expect(url).toContain('product_id=p1');
+  });
+
+  it('keys the query on the product id - a different product is a fresh fetch, not a stale cache hit', async () => {
+    apiFetch.mockImplementation((url: string) =>
+      Promise.resolve(jsonRes({ product_id: url.includes('p2') ? 'p2' : 'p1', as_of: '2026-08-20', locations: [] })),
+    );
+    const { result, rerender } = renderHook(
+      ({ productId }: { productId: string }) => useLocationStock(productId, true),
+      { wrapper, initialProps: { productId: 'p1' } },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+
+    rerender({ productId: 'p2' });
+
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(2));
+    const secondUrl = String(apiFetch.mock.calls[1][0]);
+    expect(secondUrl).toContain('product_id=p2');
   });
 });

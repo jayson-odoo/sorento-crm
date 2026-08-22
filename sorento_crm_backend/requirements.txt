@@ -8,7 +8,7 @@ fastapi==0.128.0
 starlette==0.50.0
 uvicorn[standard]>=0.24.0
 gunicorn>=21.2.0
-sqlalchemy>=2.0.23
+sqlalchemy>=2.0.31
 psycopg2-binary>=2.9.9
 pydantic>=2.9.0
 pydantic-settings>=2.1.0
@@ -22,10 +22,19 @@ apscheduler>=3.10.4
 httpx>=0.25.0
 bcrypt>=4.1.0
 openpyxl>=3.1.2
+# Direct dependency since S21: product photographs are downscaled before they are embedded in a
+# quotation PDF or workbook (product_image_service). It already arrived transitively via
+# weasyprint, but a transitive pin is not a contract - openpyxl's own image support needs it too.
+pillow>=10.0.0
 redis>=5.0.0
-rq>=1.15.0
+rq>=2.0
 pywebpush>=1.14.0
 pytest>=7.0.0
+# Parallel test execution. Powers the blocking `test-backend` CI gate, which
+# runs the suite as `-n auto --dist loadfile`. The loadfile part is required,
+# not tuning: the shared-database fixtures assume the tests of one file run
+# serially (see the job comment in .github/workflows/deploy.yml).
+pytest-xdist>=3.6
 pgvector
 PyMuPDF>=1.24
 opencv-python-headless>=4.9
@@ -37,6 +46,17 @@ html2text>=2024.2.26
 # Native deps required at runtime: libcairo2, libpango-1.0-0, libpangocairo-1.0-0,
 # libgdk-pixbuf-2.0-0 (add to the backend Docker image / brew install pango gdk-pixbuf on macOS).
 weasyprint>=66
+# Headless Chromium for the Dealer Kit catalogue PDF export. The print page is
+# the same React tree the screen renders, so the PDF matches it; a second
+# HTML-to-PDF engine would drift. The browser binary is installed in the
+# Dockerfile, not by pip.
+playwright>=1.40
 # Anthropic SDK — SCM market-research live web search (web_search_20250305, key-gated).
 # Optional at runtime (local import), but must ship in the image or the search no-ops.
 anthropic>=0.96.0
+xlrd>=2.0.1
+# Reads the real length of a chatbot voice note (OGG/Opus, MP4/M4A, MP3, WAV) so
+# the per-contact clip cap is enforced against measured audio instead of the
+# duration the caller claimed. Pure Python, so it needs no ffprobe/ffmpeg binary
+# in the image, and nothing else in this repo can measure audio.
+mutagen>=1.47

@@ -9,8 +9,13 @@ from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
 from app.services.marketing_service import PromotionProductService, _resolve_promotion_id_for_filter
 from app.services.uuid_list_param import parse_uuid_list
-from app.schemas.marketing import PromotionProductCreate, PromotionProductUpdate, PromotionProductResponse
-from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
+from app.schemas.marketing import (
+    PromotionProductCreate,
+    PromotionProductUpdate,
+    PromotionProductResponse,
+    PromotionServingListResponse,
+)
+from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -200,7 +205,7 @@ def _comma_separated_promotion_uuids(q: Optional[str]) -> Optional[List[str]]:
 
 
 # Standalone endpoint for listing all promotion products
-@router.get("/", response_model=ListResponse[PromotionProductResponse])
+@router.get("/", response_model=PromotionServingListResponse[PromotionProductResponse])
 async def list_all_promotion_products(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
@@ -265,6 +270,16 @@ async def list_all_promotion_products(
         description=(
             "Optional access-level NAMES filter (translated to codes via "
             "contact_access_types.name; intersection with promotion.access_levels)."
+        ),
+    ),
+    serving_policy: bool = Query(
+        False,
+        description=(
+            "Answer as the chatbot: gate lines on the per-type promotion policy "
+            "of their PARENT promotion instead of the plain active gate. Lines "
+            "whose parent has expired and whose type still honours it come back "
+            "with `expired_but_usable: true`; lines under an expired special do "
+            "not come back at all."
         ),
     ),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -395,6 +410,7 @@ async def list_all_promotion_products(
             any_dimension_min=filter_state["any_dimension_min"],
             any_dimension_max=filter_state["any_dimension_max"],
             contact_access_codes=contact_codes,
+            serving_policy=serving_policy,
         )
         # Map promo_selling_price to promotion_price for each product
         products = result.get("data", [])

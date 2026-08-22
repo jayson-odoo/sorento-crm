@@ -51,7 +51,13 @@ from app.services.field_access import GATED_FIELDS
 #: than a crash. That bug shipped for one build.
 CLEARANCE_KEYS = tuple(GATED_FIELDS["incoming_stock"])
 from app.services.identifier_resolver import resolve_identifier
+from app.services.company_scope import stamp_lookup_companies
 from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
+# Header OR any line: a container filled by two factories has no header supplier,
+# so the header alone would hide it from both of them.
+from app.services.procurement_service import shipment_supplier_predicate
+# Imported rather than redefined, so the value cannot drift between the two modules.
+from app.services.scm.proforma_invoice_service import _DRAFT_SHIPMENT_STATUS
 
 
 # Line statuses considered "received" and therefore excluded from incoming-stock results.
@@ -71,6 +77,19 @@ def _still_incoming_filter():
         ~InboundShipmentLine.line_status.in_(_RECEIVED_STATUSES),
         remaining > 0,
     )
+
+
+def _not_draft_shipment_filter():
+    """Filter clause: shipment is not a draft.
+
+    A draft shipment is proforma-created (see `proforma_invoice_service.
+    _DRAFT_SHIPMENT_STATUS`) and stays that way until someone actually places or confirms
+    it. This whole service is the MCP/AI-assistant-facing surface (see module docstring),
+    so a draft must never leak into a salesperson's answer as if it were a real incoming
+    container. Applied everywhere in this service except `grn_records`, which needs no
+    equivalent guard - see the note there.
+    """
+    return InboundShipment.shipment_status != _DRAFT_SHIPMENT_STATUS
 
 
 def _unallocated_quantity(
@@ -226,6 +245,11 @@ class IncomingStockService:
                     resolved_ids.extend(ids)
             resolved_ids = list(dict.fromkeys(resolved_ids))
             if not resolved_ids:
+                # No `stamp_lookup_companies` here (nor on the two guards below):
+                # this exit is reached only when NOTHING the caller asked for
+                # resolved, so the requested product set is empty and there is no
+                # company to name. The labelled empty path is the one at the end
+                # of the method, where the products did resolve.
                 return {"data": [], "empty": True, "matched_candidates": []}
             product_filters.append(Product.id.in_(resolved_ids))
         if query and query.strip():
@@ -274,10 +298,18 @@ class IncomingStockService:
                 InboundShipment.estimated_arrival_date,
                 Product.product_code,
                 Product.product_name,
+                # The row is rooted on the product, so the product's company is the
+                # row's company for per-company labelling.
+                Product.company_id,
             )
             .join(InboundShipment, InboundShipment.id == InboundShipmentLine.shipment_id)
             .join(Product, Product.id == InboundShipmentLine.product_id)
-            .filter(_still_incoming_filter(), *product_filters, *date_filters)
+            .filter(
+                _still_incoming_filter(),
+                _not_draft_shipment_filter(),
+                *product_filters,
+                *date_filters,
+            )
             .order_by(
                 Product.product_code.asc(),
                 InboundShipment.estimated_arrival_date.asc().nulls_last(),
@@ -292,6 +324,9 @@ class IncomingStockService:
                 "empty": True,
                 "matched_candidates": matched_candidates,
             }
+            # Nothing incoming anywhere, but the caller still deserves to know
+            # which companies were searched.
+            stamp_lookup_companies(self.db, result, [], product_ids=resolved_ids)
             # Data-miss (§3.3): the product resolved but has no incoming rows. Offer
             # data-bearing variant/neighbour alternatives on the empty path only.
             # Best-effort: never turn an empty result into a 500 (AC-R1).
@@ -322,6 +357,7 @@ class IncomingStockService:
                 {
                     "product_code": r.product_code,
                     "product_name": r.product_name,
+                    "company_id": str(r.company_id) if r.company_id else None,
                     "nearest_estimated_arrival_date": None,
                     "shipments": [],
                 },
@@ -351,12 +387,15 @@ class IncomingStockService:
         data: list[dict[str, Any]] = list(grouped.values())
 
         data.sort(key=lambda d: (d["product_code"] or "").lower())
-        return {
-            "data": data[:limit],
+        page_rows = data[:limit]
+        result = {
+            "data": page_rows,
             "empty": False,
             "pagination": {"total": len(data), "page": 1, "limit": limit},
             "matched_candidates": matched_candidates,
         }
+        stamp_lookup_companies(self.db, result, page_rows, product_ids=resolved_ids)
+        return result
 
     def _incoming_entity_alternatives(self, product_ids: list[str]) -> list[dict]:
         """Data-bearing variant/neighbour alternatives for an empty incoming result.
@@ -382,8 +421,10 @@ class IncomingStockService:
                 return set()
             rows = (
                 self.db.query(InboundShipmentLine.product_id)
+                .join(InboundShipment, InboundShipment.id == InboundShipmentLine.shipment_id)
                 .filter(
                     _still_incoming_filter(),
+                    _not_draft_shipment_filter(),
                     InboundShipmentLine.product_id.in_(candidate_ids),
                 )
                 .distinct()
@@ -432,16 +473,19 @@ class IncomingStockService:
                 InboundShipment.shipment_number,
                 InboundShipment.shipping_container_number,
                 InboundShipment.estimated_arrival_date,
+                # Selected only so a two-company page can be labelled per company.
+                InboundShipment.company_id,
                 incoming_lines.c.distinct_products,
                 incoming_lines.c.total_remaining,
             )
             .join(incoming_lines, incoming_lines.c.sid == InboundShipment.id)
+            .filter(_not_draft_shipment_filter())
         )
 
         if shipment_ids:
             q = q.filter(InboundShipment.id.in_(shipment_ids))
         if supplier_ids:
-            q = q.filter(InboundShipment.supplier_id.in_(supplier_ids))
+            q = q.filter(shipment_supplier_predicate(supplier_ids))
         if query:
             term = f"%{query.strip()}%"
             q = q.filter(
@@ -479,11 +523,15 @@ class IncomingStockService:
                 "estimated_arrival_date": r.estimated_arrival_date,
                 "total_remaining_incoming_quantity": int(r.total_remaining or 0),
                 "distinct_products_incoming": int(r.distinct_products or 0),
+                "company_id": str(r.company_id) if r.company_id else None,
                 "attachment": attachment_map.get(str(r.id)),
             }
             for r in rows
         ]
-        return {"data": data, "empty": False, "pagination": {"total": total, "page": page, "limit": limit}}
+        result = {"data": data, "empty": False, "pagination": {"total": total, "page": page, "limit": limit}}
+        # No product input on this tool: the company set is the returned rows' own.
+        stamp_lookup_companies(self.db, result, data)
+        return result
 
     # ------------------------------------------------------------------
     # Unified: shipment-rooted with nested product lines (MCP consolidation)
@@ -525,6 +573,8 @@ class IncomingStockService:
         resolved_pids = list(dict.fromkeys(resolved_pids))
         if (product_ids or []) and not resolved_pids:
             # Caller asked for products that don't resolve → nothing incoming.
+            # Nothing resolved means no company to name either, so this exit
+            # carries no `lookup_companies` (see incoming_for_product).
             return {
                 "data": [],
                 "empty": True,
@@ -539,7 +589,7 @@ class IncomingStockService:
         if shipment_ids:
             shipment_filters.append(InboundShipment.id.in_(shipment_ids))
         if supplier_ids:
-            shipment_filters.append(InboundShipment.supplier_id.in_(supplier_ids))
+            shipment_filters.append(shipment_supplier_predicate(supplier_ids))
         if eta_from is not None:
             shipment_filters.append(InboundShipment.estimated_arrival_date >= eta_from)
         if eta_to is not None:
@@ -571,6 +621,9 @@ class IncomingStockService:
                 InboundShipment.shipment_number,
                 InboundShipment.shipping_container_number,
                 InboundShipment.estimated_arrival_date,
+                # The row is rooted on the shipment, so the shipment's company is
+                # the row's company for per-company labelling.
+                InboundShipment.company_id,
                 # Clearance columns are selected explicitly. This query returns
                 # column tuples, not ORM instances, so a getattr on a column that
                 # was not selected reads as None - which the entitlement gate would
@@ -581,7 +634,7 @@ class IncomingStockService:
                 InboundShipmentLine,
                 InboundShipmentLine.shipment_id == InboundShipment.id,
             )
-            .filter(*line_filters, *shipment_filters)
+            .filter(_not_draft_shipment_filter(), *line_filters, *shipment_filters)
             .distinct()
         )
         total = ship_q.count()
@@ -600,6 +653,9 @@ class IncomingStockService:
                 "empty": True,
                 "pagination": {"total": 0, "page": page, "limit": limit},
             }
+            # Nothing incoming anywhere, but the caller still deserves to know
+            # which companies were searched.
+            stamp_lookup_companies(self.db, result, [], product_ids=resolved_pids)
             # Data-miss (§3.3): a product resolved but nothing is incoming for it.
             # Offer data-bearing variant/neighbour alternatives — same probe the
             # by-product tool uses. Product-driven query only; best-effort (AC-R1:
@@ -673,16 +729,19 @@ class IncomingStockService:
                 # by the entitlement gate at the route, so the gate has exactly one
                 # implementation instead of one per query path.
                 **{key: getattr(s, key, None) for key in CLEARANCE_KEYS},
+                "company_id": str(s.company_id) if s.company_id else None,
                 "attachment": attachment_map.get(str(s.id)),
                 "lines": lines_by_ship.get(str(s.id), []),
             }
             for s in ship_rows
         ]
-        return {
+        result = {
             "data": data,
             "empty": False,
             "pagination": {"total": total, "page": page, "limit": limit},
         }
+        stamp_lookup_companies(self.db, result, data, product_ids=resolved_pids)
+        return result
 
     # ------------------------------------------------------------------
     # Layer 1 + 2: products in a shipment (T3)
@@ -706,7 +765,9 @@ class IncomingStockService:
         shipment_uuid = resolved[0]
 
         shipment = (
-            self.db.query(InboundShipment).filter(InboundShipment.id == shipment_uuid).first()
+            self.db.query(InboundShipment)
+            .filter(InboundShipment.id == shipment_uuid, _not_draft_shipment_filter())
+            .first()
         )
         if not shipment:
             return {"data": None, "empty": True}
@@ -798,7 +859,7 @@ class IncomingStockService:
         row = (
             self.db.query(InboundShipment.shipment_number, Attachment)
             .outerjoin(Attachment, Attachment.id == InboundShipment.attachment_id)
-            .filter(InboundShipment.id == resolved[0])
+            .filter(InboundShipment.id == resolved[0], _not_draft_shipment_filter())
             .first()
         )
         if not row:
@@ -831,6 +892,12 @@ class IncomingStockService:
         Callers may pass either single string ids (legacy: resolved via `resolve_identifier`)
         or pre-resolved UUID lists (`shipment_uuids` / `product_uuids` from entity buckets).
         UUID lists take precedence when both are supplied.
+
+        Deliberately NOT filtered by `_not_draft_shipment_filter()`: a draft shipment has
+        no SPOAllocation and no picked GRN (nothing has been physically received against a
+        proforma-created draft), so path (1) can never match one, and path (2) is keyed on
+        product only, which is not shipment-scoped at all. There is nothing here for the
+        filter to exclude.
         """
         limit = max(1, min(limit, 50))
 

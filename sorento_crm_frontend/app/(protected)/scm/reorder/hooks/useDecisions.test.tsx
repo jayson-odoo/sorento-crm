@@ -1,5 +1,5 @@
 /**
- * SCM M4 Slice B — useDecisions hook (accept / adjust / reject / bulk mutations).
+ * SCM M4 Slice B - useDecisions hook (accept / adjust / reject / bulk mutations).
  * Each mutation must invalidate BOTH the decisions cache AND the PO-list cache
  * (so a freshly-drafted PO appears), and expose the extracted error on failure.
  *   AC-M4.5/M4.7/M4.8/M4.9 (decision mutations) · AC-M4.14 (decisions query → byId)
@@ -70,7 +70,7 @@ describe('useRecommendationDecisions (AC-M4.14)', () => {
   });
 });
 
-describe('useDecisionMutations — invalidation (AC-M4.5/M4.7/M4.8/M4.9)', () => {
+describe('useDecisionMutations - invalidation (AC-M4.5/M4.7/M4.8/M4.9)', () => {
   it('accept invalidates BOTH the decisions cache and the PO list', async () => {
     apiFetch.mockResolvedValue(ok({ draft_po_number: 'PO-DRAFT-1', draft_po_id: 'po-1', supplier_name: 'Acme' }));
     const { spy, wrapper } = makeWrapper();
@@ -122,7 +122,7 @@ describe('useDecisionMutations — invalidation (AC-M4.5/M4.7/M4.8/M4.9)', () =>
   });
 });
 
-describe('useDecisionMutations — error propagation', () => {
+describe('useDecisionMutations - error propagation', () => {
   it('rejects with the extracted backend message so the caller can toast it', async () => {
     apiFetch.mockResolvedValue(fail('Recommendation already decided'));
     const { wrapper } = makeWrapper();

@@ -16,6 +16,7 @@ class NumberingService:
         doc_type: str,
         reference_date: Optional[date] = None,
         *,
+        company_id: Optional[str] = None,
         commit_rule: bool = True,
     ) -> Optional[str]:
         """
@@ -23,19 +24,40 @@ class NumberingService:
         Uses row-level lock (FOR UPDATE) for safe concurrent generation.
         reference_date is used for reset policy (yearly/monthly); defaults to today.
         When commit_rule is False, only flush() so the caller's transaction can commit/rollback atomically.
+
+        `company_id` scopes the rule. Pass it for any document a customer sees: without it this
+        query matched on doc_type alone and took `.first()` with no ORDER BY, so once a second
+        company had a rule for the same doc_type the counter picked was whichever row Postgres
+        happened to return - the same non-determinism that made `system_settings` saves vanish.
+        The ORDER BY below keeps the unscoped legacy path at least repeatable.
         """
         if reference_date is None:
             reference_date = date.today()
 
-        rule = (
-            self.db.query(DocumentNumberingRule)
-            .filter(
+        def _rule(scoped_to: Optional[str], *, unscoped_only: bool = False):
+            query = self.db.query(DocumentNumberingRule).filter(
                 DocumentNumberingRule.doc_type == doc_type,
                 DocumentNumberingRule.enabled.is_(True),
             )
-            .with_for_update()
-            .first()
-        )
+            if unscoped_only:
+                query = query.filter(DocumentNumberingRule.company_id.is_(None))
+            elif scoped_to is not None:
+                query = query.filter(DocumentNumberingRule.company_id == scoped_to)
+            return (
+                query.order_by(
+                    DocumentNumberingRule.company_id.nulls_last(),
+                    DocumentNumberingRule.id,
+                )
+                .with_for_update()
+                .first()
+            )
+
+        rule = _rule(company_id)
+        if rule is None and company_id is not None:
+            # A rule predating the company column applies to everybody, so an install that has not
+            # had its rules split per company keeps numbering instead of silently falling back to
+            # whatever the caller does when this returns None.
+            rule = _rule(None, unscoped_only=True)
         if not rule:
             return None
 

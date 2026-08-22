@@ -144,11 +144,24 @@ class ListQueryResourceResponse(BaseModel):
     description: Optional[str] = None
 
 
+class ListSortEntry(BaseModel):
+    """One TanStack sort entry, as persisted."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    desc: bool = False
+
+
 class UserListColumnConfigPayload(BaseModel):
     """
-    Per-user per-listing column preferences.
+    Per-user per-listing view preferences: columns, sort and filter.
 
     Stored as JSONB and merged with each listing's default column definitions on the frontend.
+
+    The write is a PARTIAL update. Two independent writers share this one row (see the
+    merge in `upsert_list_column_config`), so a key absent from the body is left alone
+    and a key present and null is cleared.
     """
 
     version: int = 1
@@ -157,6 +170,15 @@ class UserListColumnConfigPayload(BaseModel):
     # TanStack stores per-column widths in its columnSizing state.
     # Persisted as { [columnId]: width } in JSONB.
     columnSizing: Optional[Dict[str, float]] = None
+    # Sort IS validated: it becomes an ORDER BY on the listing's next request.
+    sorting: Optional[List[ListSortEntry]] = None
+    # Filters are deliberately opaque. The shape belongs to the page that wrote it
+    # (Stock Inquiries stores {"statuses": [...]}), so typing it here would defeat the
+    # point and couple this endpoint to all 37 bespoke filter shapes.
+    filters: Optional[Dict[str, Any]] = None
+    # The page's own filter-shape version, so a page can detect and discard the blobs
+    # its own previous shape wrote.
+    filtersVersion: Optional[int] = None
 
 
 class UserListColumnConfigResponse(BaseModel):

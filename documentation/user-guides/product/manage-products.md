@@ -14,7 +14,7 @@ The list is a DataGrid with these columns: **Product Code**, **Product Name**, *
 * **Export** — downloads the current filtered/searched list to `products_export.xlsx`.
 * Clicking a row opens that product's detail page. Per-row icons: **Edit**, **Duplicate**, **Delete**.
 
-> A banner "Showing only the products from a recent "products discontinued" notification." appears when you arrive via a discontinued-products notification deep link. Click **Clear filter** to see all products again.
+> A banner "Showing only the products from a recent "products discontinued" notification." appears when you arrive via a discontinued-products notification deep link. Click **Clear filter** to see all products again. If your discontinued subscription covers only some brands, the link opens on just those brands (`brand_id` alongside the batch): a link naming several brands leaves the **Brand** dropdown on **All brands** while its own filter narrows the grid, a link naming one selects that brand in the dropdown, and **Clear filter** drops the batch and the brand filter together.
 
 ## Create a product
 
@@ -56,12 +56,15 @@ Open a product, then **Edit** (or the **Edit** icon on the list row). The same t
 
 The detail page (`/master-data-management/products/{id}`) shows the product name as the title, a **Quick Info** sidebar (including **List Price**), and these tabs:
 
-* **Overview** — **Basic Information**, **Pricing Summary** (List / Cost / Invoice price), **Specifications**, and **Tracking Flags** (including **Discontinued: Yes/No**).
-* **Stock** — on-hand / reserved / available by warehouse.
-* **Attachments** — files linked to this product.
-* **Suppliers** — linked suppliers.
-* **Promotions** — promotions covering this product.
-* **Audit Trail** — change history (the product model is audit-tracked).
+* **Overview** - **Basic Information**, **Pricing Summary** (List / Cost / Invoice price), **Specifications**, and **Tracking Flags** (including **Discontinued: Yes/No**).
+* **Stock** - on-hand / reserved / available by warehouse.
+* **Purchase History** - past purchases of this product.
+* **Attachments** - files linked to this product.
+* **Suppliers** - linked suppliers.
+* **Promotions** - promotions covering this product.
+* **Variants** - linked product variants.
+* **Audit Trail** - change history (the product model is audit-tracked).
+* **Specifications** - the product's structured specification values: every value with where it came from, editable in place, **AI Extract** to propose values from an attached document, and the verification block. See [Verify product specifications](verify-product-specifications.md).
 
 Every section renders even when empty.
 
@@ -83,6 +86,7 @@ To create or update many products at once from Excel, see [Upload the product ma
 * [Product categories & brands](product-categories-and-brands.md)
 * [Units of measure](units-of-measure.md)
 * [Product attachments](product-attachments.md)
+* [Verify product specifications](verify-product-specifications.md)
 * [Upload the product master](../purchasing/upload-product-master.md)
 * [Upload product attachments](../purchasing/upload-product-attachments.md)
 * [Product Management — Data analysis for the AI assistant](data-analysis.md)

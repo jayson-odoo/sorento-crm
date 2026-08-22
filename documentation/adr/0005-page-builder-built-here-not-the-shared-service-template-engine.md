@@ -2,7 +2,8 @@
 
 `foundryx-shared-service/service_backend/app/template_engine` already renders documents from
 a block model, has a canvas editor, merge tokens, contexts and a WeasyPrint PDF path. We are
-not reusing it for the Dealer Kit's web pages. It stays where it is, for email and print.
+not reusing it for the Dealer Kit's web pages. It stays where it is, serving the shared
+service's own products. (Amended below: email moves here too.)
 
 The engine is print-first, and the Kit's pages are screen-first. That is not a preference —
 it is the coordinate system:
@@ -31,8 +32,32 @@ not. That is why the new engine is web-first even though the first artefact it p
 catalogue.
 
 The print path does not fork the renderer: PDF is headless Chromium printing the same React
-runtime, so what marketing designs is byte-for-byte what exports. The shared-service engine
-keeps email, where its MJML output is correct and ours would not be.
+runtime, so what marketing designs is byte-for-byte what exports.
 
 If the two engines ever converge, the merge direction is the web model gaining a print
 profile — not the print model gaining breakpoints.
+
+## Amendment (2026-07-25) — email comes here too
+
+This ADR originally left email with the shared service, on the grounds that its MJML output is
+correct and ours would not be. That is reversed: **Sorento gets its own email templating in
+this engine**, so a marketer authors screen, print and email in one place against one asset
+library.
+
+The technical objection stands and is not being waved away — email is not a browser. Outlook
+renders through Word, so CSS Grid, flexbox and free positioning are unavailable, and the
+emitter must produce nested tables with inline styles. So this is **three emitters over one
+document model**, not one renderer with three settings: screen keeps the full grid, print goes
+through Chromium at paper geometry, and email degrades to stacked table rows with a
+constrained block set. A template declares which emitters it targets, and the editor hides the
+blocks the chosen emitters cannot express, rather than letting someone design something that
+silently breaks in Outlook.
+
+What genuinely carries across all three is the asset library, the tile designs, tokens, and
+the product binding. What does not is artboard positioning, fine-grained grid spans and
+anything interactive.
+
+The consequence accepted deliberately: the shared service keeps its MJML engine for its own
+products, so two email engines exist in the estate. They serve different products with
+different lifecycles, and one authoring surface per product beats one engine across products
+that never share a template.

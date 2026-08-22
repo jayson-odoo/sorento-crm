@@ -70,6 +70,79 @@ def _rr_user_id_key(value: Optional[object]) -> str:
     return str(value).strip()
 
 
+# --------------------------------------------------------------- brand routing
+#
+# Brand is the second routing axis, orthogonal to company: Cabana and Mocha are
+# brands INSIDE the Sorento company. ONE team set per function with ONE team per
+# tier; the brand narrows the MEMBER POOL inside that team, exactly the way market
+# segments already do. A member tagged with no brand serves every brand, and when
+# no member carries the resolved brand the whole team round-robins - so routing
+# never dead-ends on a brand nobody tagged.
+
+
+# The suffixed team-set codes that used to encode the brand. One release of
+# compatibility for an n8n workflow that has not been updated yet - migration 371
+# rewrites the stored trackers, this map keeps the WIRE working while it rolls out.
+LEGACY_BRAND_TEAM_SET_CODES = {
+    "marketing_promotion_sorento": ("marketing_promotion", "sorento"),
+    "marketing_promotion_mocha": ("marketing_promotion", "mocha"),
+    "marketing_promotion_cabana": ("marketing_promotion", "cabana"),
+}
+
+
+def normalise_brand_code(value: Optional[object]) -> Optional[str]:
+    """Canonical brand handle: trimmed lower-case, blank -> None (= all brands).
+
+    Every read and write goes through this, so a row saved as "Mocha" and a
+    request carrying "MOCHA" are the same brand.
+    """
+    if value is None:
+        return None
+    s = str(value).strip().lower()
+    return s or None
+
+
+def split_legacy_team_set_code(code: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """``("marketing_promotion_mocha")`` -> ``("marketing_promotion", "mocha")``.
+
+    Anything not in the legacy map is returned unchanged with no brand, so this is
+    safe to call on every incoming team-set code.
+    """
+    if code is None:
+        return None, None
+    c = str(code).strip()
+    # Matched case-insensitively: the suffix is a handle typed into an n8n workflow,
+    # and "Marketing_Promotion_Mocha" is the same routing key as the lower-case one.
+    if c.lower() in LEGACY_BRAND_TEAM_SET_CODES:
+        return LEGACY_BRAND_TEAM_SET_CODES[c.lower()]
+    return c, None
+
+
+def brand_pool_key(brand_code: Optional[str]) -> str:
+    """Round-robin cursor suffix for a brand-narrowed pool ('' when it did not narrow).
+
+    Appended to the market-segment key so the two axes compose into ONE cursor key:
+    a mocha pool and a retail pool and a mocha+retail pool each rotate on their own
+    cursor, and the legacy '' cursor is untouched when neither filter applied.
+    """
+    code = normalise_brand_code(brand_code)
+    return f"~b:{code}" if code else ""
+
+
+def member_serves_brand(member_brand_codes, brand_code: Optional[str]) -> bool:
+    """The member-level matching rule: tagged with this brand, or tagged with nothing.
+
+    Mirrors the market-segment rule one-for-one - an untagged member serves every
+    brand, which is what keeps a minimally-configured team routable.
+    """
+    wanted = normalise_brand_code(brand_code)
+    if not wanted:
+        return True
+    codes = {normalise_brand_code(c) for c in (member_brand_codes or [])}
+    codes.discard(None)
+    return not codes or wanted in codes
+
+
 class UserService:
     """Service for user operations."""
     
@@ -465,6 +538,12 @@ class UserService:
         update_data = user_data.model_dump(exclude_unset=True)
         logger.info(f"Updating user {user_id} with data: {update_data}")
 
+        # Product-discontinued scopes are rows, not a column: pulled out of the
+        # field loop below and replaced wholesale. Omitted leaves them untouched;
+        # an empty list clears them (and the user then hears nothing).
+        scopes_provided = "product_discontinued_scopes" in update_data
+        scope_items = update_data.pop("product_discontinued_scopes", None)
+
         old_email_for_notification: Optional[str] = None
         email_changed = False
         if "email" in update_data:
@@ -524,6 +603,11 @@ class UserService:
                 setattr(user, key, value)
                 logger.info(f"✓ Set {key} = {repr(value)}")
         
+        if scopes_provided:
+            from app.services.product_discontinued_scope_service import replace_scopes
+
+            replace_scopes(self.db, user_id, scope_items or [])
+
         logger.info(f"Before commit - respond_user_id: {user.respond_user_id}, superior_id: {user.superior_id}")
         self.db.commit()
         self.db.refresh(user)
@@ -1313,10 +1397,18 @@ class AccessAgentService:
         sort_dir: str = "asc"
     ):
         """List all contact access entries with filtering."""
+        from sqlalchemy.orm import joinedload
+
         from app.schemas.common import ListResponse, PaginationResponse
         from app.schemas.user import ContactAgentAccessResponse
-        
-        q = self.db.query(ContactAgentAccess).join(AccessAgent)
+
+        # The contact is eager-loaded because every row reports its outbound
+        # switch; lazy loading would be one extra SELECT per grant.
+        q = (
+            self.db.query(ContactAgentAccess)
+            .join(AccessAgent)
+            .options(joinedload(ContactAgentAccess.contact))
+        )
         
         # Filter by respond_contact_id if provided
         if respond_contact_id:
@@ -1329,7 +1421,11 @@ class AccessAgentService:
             q = q.filter(ContactAgentAccess.respond_contact_phone.ilike(f"%{contact_id}%"))
         
         if query:
-            q = q.join(AccessAgent).filter(
+            # The agent is already joined above. Joining it a second time here
+            # emitted the same table twice and Postgres refused the statement
+            # ("table name access_agents specified more than once"), so ANY
+            # search on this list was a 500.
+            q = q.filter(
                 or_(
                     ContactAgentAccess.respond_contact_phone.ilike(f"%{query}%"),
                     ContactAgentAccess.respond_contact_name.ilike(f"%{query}%"),
@@ -1380,6 +1476,13 @@ class AccessAgentService:
                 'updated_at': access.updated_at,
                 'agent_code': access.agent.code if access.agent else None,
                 'agent_name': access.agent.name if access.agent else None,
+                # The CONTACT's kill switch, repeated on each of that contact's
+                # grant rows. None when the row predates the respond_contacts FK.
+                'outbound_enabled': (
+                    bool(access.contact.outbound_enabled)
+                    if access.contact is not None
+                    else None
+                ),
             }
             result_data.append(ContactAgentAccessResponse.model_validate(access_dict))
         
@@ -1481,11 +1584,35 @@ class AccessAgentService:
         self.db.refresh(access)
         return access
     
+    def _brand_codes_by_member(self, member_ids) -> dict[str, set[str]]:
+        """``{team_member_id: {brand codes}}`` for the members given, tags only.
+
+        One query, and only ever called when a brand was actually requested: the
+        no-brand path must never touch ``team_member_brands``, exactly as the
+        no-segment path never touches ``team_member_market_segments``.
+        """
+        ids = [str(m) for m in (member_ids or [])]
+        if not ids:
+            return {}
+        from app.models.access import team_member_brands
+
+        rows = self.db.query(
+            team_member_brands.c.team_member_id, team_member_brands.c.brand_code
+        ).filter(team_member_brands.c.team_member_id.in_(ids)).all()
+        out: dict[str, set[str]] = {}
+        for member_id, code in rows:
+            normalised = normalise_brand_code(code)
+            if normalised:
+                out.setdefault(str(member_id), set()).add(normalised)
+        return out
+
     def get_next_assignee(
         self,
         agent_id: str,
         team_id: str,
         contact_segments: Optional[set[str]] = None,
+        *,
+        brand_code: Optional[str] = None,
     ) -> Optional[dict]:
         """
         Return the next assignee for (agent_id, team_id) using round-robin.
@@ -1499,6 +1626,17 @@ class AccessAgentService:
         When ``None`` / empty (the normal path, incl. every non-CS agent), the pool and
         the ``segment_key=''`` cursor are exactly as before — no behaviour change.
         An empty filtered pool falls back to the full team on the '' cursor.
+
+        ``brand_code`` (opt-in): the SECOND axis, same rule and ANDed with the first -
+        members tagged with that brand plus members tagged with none of them. The
+        returned dict carries ``brand_matched``, true only when the member DRAWN is
+        tagged with that brand, so n8n can tell the specialist taking it from an
+        untagged serve-all member taking it.
+
+        The two filters fall back ONE AXIS AT A TIME: a brand nobody serves drops the
+        brand and keeps whatever the segment left, and only a segment nobody serves
+        goes back to the whole team. Dropping straight to the team would hand a retail
+        conversation to a project-only member because of an unrelated brand.
         """
         from sqlalchemy import and_
         from sqlalchemy.orm import selectinload
@@ -1542,18 +1680,43 @@ class AccessAgentService:
         members = members_q.all()
         if not members:
             return None
-        # Opt-in segment scoping. Empty/absent -> '' cursor + full pool (unchanged).
+        wanted_brand = normalise_brand_code(brand_code)
+        brands_by_member = (
+            self._brand_codes_by_member([m.id for m in members]) if wanted_brand else {}
+        )
+        # Opt-in scoping on both axes, ANDed, each dropped on its own when it empties
+        # the pool - the rule market segments already established, applied to the brand
+        # as well and composed rather than collapsed.
         segment_key = ""
+        brand_matched = False
+        pool = members
         if contact_segments:
-            pool = [
+            segment_pool = [
                 m
-                for m in members
+                for m in pool
                 if not m.market_segments
                 or {str(s.code) for s in m.market_segments} & contact_segments
             ]
-            if pool:  # empty pool -> fall back to full team on the '' cursor
-                members = pool
+            # Nobody serves this segment -> the whole team on the legacy '' cursor.
+            if segment_pool:
+                pool = segment_pool
                 segment_key = segment_key_for(contact_segments)
+        if wanted_brand:
+            brand_pool = [
+                m
+                for m in pool
+                if member_serves_brand(brands_by_member.get(str(m.id)), wanted_brand)
+            ]
+            if brand_pool:
+                # The cursor splits whenever the brand actually NARROWED the pool, match
+                # or no match: a brand nobody carries still rotates over the untagged
+                # members alone, and writing that draw onto the shared cursor would park
+                # the unfiltered rotation on them and starve everybody else. A brand that
+                # excluded nobody keeps the cursor it always had.
+                if len(brand_pool) != len(pool):
+                    segment_key = f"{segment_key}{brand_pool_key(wanted_brand)}"
+                pool = brand_pool
+        members = pool
         user_ids = [_rr_user_id_key(m.user_id) for m in members]
         # Get or create cursor and lock it (scoped by segment_key)
         cursor = (
@@ -1587,20 +1750,37 @@ class AccessAgentService:
         next_idx = (idx + 1) % len(user_ids)
         next_user_id = user_ids[next_idx]
         setattr(cursor, "last_assigned_user_id", next_user_id)
+        # Per assignee, not per pool: the drawn member carrying the tag is what makes
+        # this a BRAND routing. An untagged serve-all member drawn from the same pool
+        # reports false, which is what n8n needs to tell the specialist taking it from
+        # the fallback taking it.
+        if wanted_brand:
+            drawn = members[next_idx]
+            brand_matched = wanted_brand in (brands_by_member.get(str(drawn.id)) or set())
         self.db.commit()
         # Load user for response
         user = self.db.query(User).filter(User.id == next_user_id).first()
         if not user:
-            return {"id": next_user_id, "email": None, "name": None}
+            return {
+                "id": next_user_id,
+                "email": None,
+                "name": None,
+                "brand_matched": brand_matched,
+            }
         return {
             "id": user.id,
             "email": user.email,
             "name": user.name or user.email,
             "respond_user_id": user.respond_user_id,
+            "brand_matched": brand_matched,
         }
 
     def list_active_team_members_detail(
-        self, team_id: str, contact_segments: Optional[set[str]] = None
+        self,
+        team_id: str,
+        contact_segments: Optional[set[str]] = None,
+        *,
+        brand_code: Optional[str] = None,
     ) -> list[dict]:
         """
         Active members of a team joined to User, ordered by sort_order, user_id.
@@ -1612,6 +1792,10 @@ class AccessAgentService:
         serves all). If that filter yields nobody, fall back to the full active roster so
         a conversation always resolves to someone. ``None`` / empty set = no filter
         (byte-identical to the pre-segment behaviour).
+
+        ``brand_code`` applies the same rule on the brand axis and is ANDed with the
+        segment one, so this roster is exactly the pool ``get_next_assignee`` draws
+        from - an id returned here is always one next-assignee could return.
         """
         from sqlalchemy.orm import selectinload
 
@@ -1630,15 +1814,32 @@ class AccessAgentService:
         if contact_segments:
             query = query.options(selectinload(TeamMember.market_segments))
         rows = query.all()
+        wanted_brand = normalise_brand_code(brand_code)
+        brands_by_member = (
+            self._brand_codes_by_member([m.id for m, _u in rows]) if wanted_brand else {}
+        )
+        # One axis at a time, exactly as get_next_assignee narrows the pool: an empty
+        # brand match drops the brand and keeps the segment rows, and only an empty
+        # segment match goes back to the full roster (never return nobody).
         if contact_segments:
-            filtered = [
+            segment_rows = [
                 (member, user)
                 for member, user in rows
                 if not member.market_segments
                 or {str(s.code) for s in member.market_segments} & contact_segments
             ]
-            if filtered:  # empty -> fall back to the full roster (never return nobody)
-                rows = filtered
+            if segment_rows:
+                rows = segment_rows
+        if wanted_brand:
+            brand_rows = [
+                (member, user)
+                for member, user in rows
+                if member_serves_brand(
+                    brands_by_member.get(str(member.id)), wanted_brand
+                )
+            ]
+            if brand_rows:
+                rows = brand_rows
         return [
             {
                 "user_id": user.id,
@@ -1650,11 +1851,16 @@ class AccessAgentService:
             for member, user in rows
         ]
 
-    def get_member_assignee(self, team_id: str, user_id: str) -> Optional[dict]:
+    def get_member_assignee(
+        self, team_id: str, user_id: str, *, brand_code: Optional[str] = None
+    ) -> Optional[dict]:
         """
         Return a specific team member as an assignee dict (same shape as get_next_assignee),
         WITHOUT advancing the round-robin cursor. None if the user is not a member of the team.
         Used by the preferred_assignee_id override path.
+
+        ``brand_matched`` follows the same per-assignee rule as the round-robin draw:
+        true only when a brand was requested and this member is tagged with it.
         """
         member = (
             self.db.query(TeamMember)
@@ -1663,14 +1869,26 @@ class AccessAgentService:
         )
         if not member:
             return None
+        wanted_brand = normalise_brand_code(brand_code)
+        brand_matched = False
+        if wanted_brand:
+            tags = self._brand_codes_by_member([member.id]).get(str(member.id)) or set()
+            brand_matched = wanted_brand in tags
         user = self.db.query(User).filter(User.id == user_id).first()
         if not user:
-            return {"id": user_id, "email": None, "name": None, "respond_user_id": None}
+            return {
+                "id": user_id,
+                "email": None,
+                "name": None,
+                "respond_user_id": None,
+                "brand_matched": brand_matched,
+            }
         return {
             "id": user.id,
             "email": user.email,
             "name": user.name or user.email,
             "respond_user_id": user.respond_user_id,
+            "brand_matched": brand_matched,
         }
 
     def get_next_assignee_after(
@@ -1881,11 +2099,13 @@ class AccessAgentService:
 
     def _validate_tier1_invariant_for_assignments(self, agent_id: str, assignments: list[dict]) -> None:
         """
-        Tier-1 membership invariant (PLAN-sla-assignee-team-derivation), TEAM-level: linking
+        Tier-1 membership invariant (PLAN-tier1-teamset-invariant), TEAM-level: linking
         teams at tier 1 must not leave any user a member of two DIFFERENT tier-1-linked
-        teams. The same team linked at tier 1 under many agents is fine (shared executive
-        pools). Cross-tier reuse of a tier-1 team (same team at tier 2/3 elsewhere) does not
-        break routing derivation — warn only.
+        teams WITHIN THE SAME TEAM SET (AgentTeam.code). Tier-1 membership in two different
+        team sets is legal: the tracking's team_set_code tells derivation which one applies.
+        The same team linked at tier 1 under many agents is fine (shared executive pools).
+        Cross-tier reuse of a tier-1 team (same team at tier 2/3 elsewhere) does not break
+        routing derivation, so it is warn only.
         """
         import logging
 
@@ -1953,34 +2173,45 @@ class AccessAgentService:
             if form_codes:
                 other_links_q = other_links_q.filter(AccessAgent.code.notin_(form_codes))
             other_links = other_links_q.all()
-        conflict_by_user: dict[str, tuple[str, str, str]] = {}
-        for uid, other_agent_id, code, _tid, team_name in other_links:
-            conflict_by_user.setdefault(str(uid), (str(other_agent_id), str(code), str(team_name)))
 
-        # Teams each user belongs to within this payload's tier-1 assignments.
-        local_teams_by_user: dict[str, set[str]] = {}
-        for _code, tid in tier1_assignments:
+        # Teams each user belongs to within this payload's tier-1 assignments, keyed
+        # per team set: the invariant is scoped per code, so the same user leading two
+        # teams in two DIFFERENT sets is legal.
+        local_teams_by_user_code: dict[tuple[str, str], set[str]] = {}
+        for code, tid in tier1_assignments:
             for uid in members_by_team.get(tid, set()):
-                local_teams_by_user.setdefault(uid, set()).add(tid)
+                local_teams_by_user_code.setdefault((uid, str(code)), set()).add(tid)
 
-        for uid, local_teams in local_teams_by_user.items():
-            other = conflict_by_user.get(uid)
+        # An existing tier-1 link only conflicts when it sits in a team set this
+        # payload also puts the user at tier 1 in. That filtering is the lookup below:
+        # the map is keyed per (user, code) and only ever read at the keys the payload
+        # produced, so entries for other team sets are simply never consulted. The
+        # tuple carries only what the key does not.
+        conflict_by_user_code: dict[tuple[str, str], tuple[str, str]] = {}
+        for uid, other_agent_id, code, _tid, team_name in other_links:
+            conflict_by_user_code.setdefault(
+                (str(uid), str(code)), (str(other_agent_id), str(team_name))
+            )
+
+        for (uid, code), local_teams in local_teams_by_user_code.items():
+            other = conflict_by_user_code.get((uid, code))
             if len(local_teams) <= 1 and not other:
                 continue
             user = self.db.query(User).filter(User.id == uid).first()
             user_label = (user.name or user.email) if user else uid
             if other:
-                other_agent_id, other_code, other_team = other
+                other_agent_id, other_team = other
                 agent = self.db.query(AccessAgent).filter(AccessAgent.id == other_agent_id).first()
                 agent_label = agent.code if agent else other_agent_id
                 raise handle_validation_error(
                     f"User '{user_label}' is already in tier-1 team '{other_team}' "
-                    f"(agent '{agent_label}', team set '{other_code}'). "
-                    "A user may only belong to one tier-1 team."
+                    f"(agent '{agent_label}', team set '{code}'). "
+                    "A user may only belong to one tier-1 team per team set."
                 )
             raise handle_validation_error(
                 f"User '{user_label}' would belong to multiple tier-1 teams "
-                f"({sorted(local_teams)}). A user may only belong to one tier-1 team."
+                f"({sorted(local_teams)}) in team set '{code}'. "
+                "A user may only belong to one tier-1 team per team set."
             )
 
         # Warn-only: tier-1 team reused at other tiers (here or under other agents).
@@ -2757,21 +2988,24 @@ class TeamService:
 
     def _validate_tier1_membership_invariant(self, team_id: str, user_id: str) -> None:
         """
-        Tier-1 membership invariant (PLAN-sla-assignee-team-derivation), TEAM-level: a user
-        may belong to at most ONE team that is linked at tier 1 under a CONVERSATION-SLA
-        agent, so assignee-driven routing derivation is unambiguous. FORM-SLA agents
-        (their code owns rows in form_sla_configs) route via FormSLAConfig stages, not
-        membership derivation, so their tier-1 teams do NOT count — a user may sit in many
-        form-SLA tier-1 teams plus at most one conversation-SLA tier-1 team. The same team
-        linked at tier 1 under many agents is fine (shared executive pools) — derivation
-        prefers the tracking's current agent and falls back to the deterministic first link.
+        Tier-1 membership invariant (PLAN-tier1-teamset-invariant), TEAM-level: a user may
+        belong to at most ONE team that is linked at tier 1 under a CONVERSATION-SLA agent
+        PER TEAM SET (AgentTeam.code), so assignee-driven routing derivation is unambiguous
+        once the tracking's team_set_code is known. Tier-1 membership in two DIFFERENT team
+        sets is legal (e.g. Marketing - Promotion and Marketing - Product under the same
+        agent). FORM-SLA agents (their code owns rows in form_sla_configs) route via
+        FormSLAConfig stages, not membership derivation, so their tier-1 teams do NOT count
+        (a user may sit in many form-SLA tier-1 teams plus one conversation-SLA tier-1 team
+        per team set). The same team linked at tier 1 under many agents is fine (shared
+        executive pools); derivation prefers the tracking's current agent and falls back to
+        the deterministic first link.
         """
         from app.services.form_sla_service import form_sla_agent_codes
 
         form_codes = form_sla_agent_codes(self.db)
 
-        # Does the target team have a CONVERSATION-SLA tier-1 link? A team linked
-        # at tier 1 ONLY under form-SLA agents can never conflict.
+        # Which team SETS does the target team carry a CONVERSATION-SLA tier-1 link
+        # under? A team linked at tier 1 ONLY under form-SLA agents can never conflict.
         new_links_q = (
             self.db.query(AgentTeam)
             .join(AccessAgent, AccessAgent.id == AgentTeam.agent_id)
@@ -2779,10 +3013,14 @@ class TeamService:
         )
         if form_codes:
             new_links_q = new_links_q.filter(AccessAgent.code.notin_(form_codes))
-        if not new_links_q.first():
+        new_links = new_links_q.all()
+        new_codes = {str(l.code) for l in new_links if getattr(l, "code", None) is not None}
+        if not new_codes:
             return
 
-        # Other tier-1 teams the user is in that carry a CONVERSATION-SLA link.
+        # Other tier-1 teams the user is in that carry a CONVERSATION-SLA link UNDER
+        # ONE OF THOSE TEAM SETS. A tier-1 team in a different set is not a conflict:
+        # the tracking's team_set_code tells derivation which one applies.
         existing_q = (
             self.db.query(AgentTeam, Team.name)
             .join(TeamMember, TeamMember.team_id == AgentTeam.team_id)
@@ -2792,6 +3030,7 @@ class TeamService:
                 TeamMember.user_id == user_id,
                 AgentTeam.tier == 1,
                 AgentTeam.team_id != team_id,
+                AgentTeam.code.in_(sorted(new_codes)),
             )
         )
         if form_codes:
@@ -2810,7 +3049,7 @@ class TeamService:
         raise handle_validation_error(
             f"User '{user_label}' is already in tier-1 team '{team_name}' "
             f"(agent '{agent_label}', team set '{link.code}'). "
-            "A user may only belong to one tier-1 team."
+            "A user may only belong to one tier-1 team per team set."
         )
 
     def add_team_member(

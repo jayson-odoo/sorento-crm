@@ -162,10 +162,34 @@ EMAIL_EVENT_REGISTRY: list[EventDef] = [
         priority=20,
     ),
     EventDef(
+        "supplier_loading_notice",
+        "Supplier loading notice",
+        "Bilingual pack-and-ship notice sent to a supplier when a Loading Plan is approved, "
+        "carrying the plan document as an attachment.",
+        priority=5,
+    ),
+    EventDef(
         "notification_delivery",
         "Generic notification delivery",
         "Fallback event_key for legacy NotificationDelivery rows whose event_type does not "
         "map to a more specific registry entry.",
+    ),
+    EventDef(
+        "onboarding_intake_link",
+        "Onboarding intake link",
+        "Sends a requester the link they submit their team's details through. "
+        "Priority 0: nothing else in the flow can start until they have it.",
+        priority=0,
+    ),
+    EventDef(
+        "onboarding_submitted",
+        "Onboarding submission received",
+        "Confirms to the requester that their batch reached the review queue.",
+    ),
+    EventDef(
+        "onboarding_completed",
+        "Onboarding batch complete",
+        "Tells the requester what was created, what already existed, and what failed.",
     ),
 ]
 

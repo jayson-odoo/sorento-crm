@@ -1,13 +1,13 @@
 /**
- * SCM M1 — shared types (net-position dashboard + sales orders).
+ * SCM M1 - shared types (net-position dashboard + sales orders).
  *
  * M1 "real" fields carry live numbers. M1 "deferred" fields are typed `| null`
- * and MUST render as "—" in the UI (never a fabricated number) — they light up
+ * and MUST render as "-" in the UI (never a fabricated number) - they light up
  * in M2/M3 (avg-daily-demand, days-of-cover, ROP, low/overstock composition).
  */
 
 /** Health-state vocabulary. Backend-real: stockout (rendered "Out of stock"), dead,
- *  low (rendered "Low stock" — stocked but net <= demand-aware reorder point, M8-B),
+ *  low (rendered "Low stock" - stocked but net <= demand-aware reorder point, M8-B),
  *  healthy, incoming, overstock (days-of-cover over the ceiling, server-computed). */
 export type HealthState =
   | 'stockout'
@@ -35,18 +35,18 @@ export type XyzFilterValue = XyzClass | 'unknown';
 export type ActiveStatusFilter = 'active' | 'inactive' | 'all';
 export type LifecycleFilter = 'ongoing' | 'discontinued' | 'all';
 
-/** Supplier performance scorecard (M2 — supplier×product rolled to supplier for
+/** Supplier performance scorecard (M2 - supplier×product rolled to supplier for
  *  display). `confidence` gates how loudly the score is shown; `low` = thin
  *  sample, render visually distinct and never oversell it. */
 export interface SupplierPerformance {
-  /** Share of receipts on/before expected + grace, 0–1. null = not derivable. */
+  /** Share of receipts on/before expected + grace, 0-1. null = not derivable. */
   on_time_rate: number | null;
   avg_lead_time_days: number | null;
-  /** Σ rejected ÷ Σ received, 0–1. */
+  /** Σ rejected ÷ Σ received, 0-1. */
   reject_rate: number | null;
-  /** Σ received ÷ Σ ordered, 0–1. */
+  /** Σ received ÷ Σ ordered, 0-1. */
   fill_rate: number | null;
-  /** Composite 0–100. */
+  /** Composite 0-100. */
   composite_score: number | null;
   /** PO→GR completed lines behind the score. */
   sample_size: number;
@@ -61,12 +61,12 @@ export interface ScmRollups {
   incoming_po_count: number;
   /** ISO date of the nearest incoming PO ETA, or null if none open. */
   incoming_po_next_eta: string | null;
-  /** SKUs missing cost_price — valuation excludes them; surfaced as a coverage note. */
+  /** SKUs missing cost_price - valuation excludes them; surfaced as a coverage note. */
   valuation_missing_cost_count: number;
-  // M2 — real: Σ stock_valuation / count where days_of_cover > overstock_days.
+  // M2 - real: Σ stock_valuation / count where days_of_cover > overstock_days.
   overstock_valuation: number | null;
   overstock_count: number | null;
-  // Deferred (M3) — render "—": needs a real reorder point.
+  // Deferred (M3) - render "-": needs a real reorder point.
   below_rop_count: number | null;
 }
 
@@ -87,7 +87,7 @@ export interface DemandExplainDO {
   qty_out: number;
 }
 
-/** `GET /analytics/explain/demand` — the demand working behind a SKU's avg daily
+/** `GET /analytics/explain/demand` - the demand working behind a SKU's avg daily
  *  demand: the delivery orders that drove outflow, the rate, and the variability
  *  (Coefficient of variation). Proves the number is fact-based, not fabricated. */
 export interface DemandExplain {
@@ -113,7 +113,7 @@ export interface DemandSeries {
 export interface WarehouseHealth {
   warehouse_code: string;
   warehouse_name: string;
-  /** The single worst health state in the warehouse — drives the accent bar. */
+  /** The single worst health state in the warehouse - drives the accent bar. */
   worst_state: HealthState;
   /** on_hand × cost_price summed; null when no SKU in the warehouse has a cost. */
   stock_valuation: number | null;
@@ -146,7 +146,7 @@ export interface WarehouseBreakdown {
 
 /** Product perspective: SKU aggregated across the selected warehouse set. */
 export interface NetPositionRow {
-  /** Human-readable SKU code — shown in the UI (never a UUID). */
+  /** Human-readable SKU code - shown in the UI (never a UUID). */
   sku: string;
   product_name: string;
   product_class: string | null;
@@ -167,12 +167,12 @@ export interface NetPositionRow {
   /** Server-side attention sort key (lower = more urgent). */
   attention_rank: number;
   warehouses: WarehouseBreakdown[];
-  // M2 — real analytics (demand_stat + item_classification), server-fed.
+  // M2 - real analytics (demand_stat + item_classification), server-fed.
   avg_daily_demand: number | null;
   days_of_cover: number | null;
   abc_class: AbcClass | null;
   xyz_class: XyzClass | null;
-  // Deferred (M3) — render "—".
+  // Deferred (M3) - render "-".
   reorder_point: number | null;
 }
 
@@ -183,7 +183,7 @@ export interface ProductSummary {
   sku: string;
   product_name: string;
   /** UUIDs carried ONLY for the avg-daily-demand explain fetch (M8-B9); never
-   *  displayed — the drill resolves them to human-readable DO numbers. */
+   *  displayed - the drill resolves them to human-readable DO numbers. */
   product_id?: string | null;
   warehouse_id?: string | null;
   warehouse_code: string;
@@ -196,17 +196,17 @@ export interface ProductSummary {
   /** on_hand × cost_price; null when the SKU has no cost on file. */
   stock_valuation: number | null;
   status: HealthState;
-  /** Stocked out WITH open committed demand — the attention badge. */
+  /** Stocked out WITH open committed demand - the attention badge. */
   stockout_with_committed: boolean;
-  // M2 — real analytics (demand_stat + item_classification), server-fed.
+  // M2 - real analytics (demand_stat + item_classification), server-fed.
   avg_daily_demand: number | null;
   days_of_cover: number | null;
   abc_class: AbcClass | null;
   xyz_class: XyzClass | null;
-  // M8-B — engine reorder point (latest completed run); null when the SKU was never
+  // M8-B - engine reorder point (latest completed run); null when the SKU was never
   // planned. Surfaced as a column in the "Low stock" drill so net <= ROP is visible.
   reorder_point?: number | null;
-  // M8-F10 — the ROP inputs from the SAME latest-run rec that sourced reorder_point
+  // M8-F10 - the ROP inputs from the SAME latest-run rec that sourced reorder_point
   // (rec.inputs JSONB): safety_stock + supplier lead-time days. Null when un-planned.
   // Shown with a one-line plain definition in the Low-stock reorder-point (i).
   safety_stock?: number | null;
@@ -247,13 +247,17 @@ export interface SupplierGroup {
 // Sales orders (M1-D14)
 // ---------------------------------------------------------------------------
 
-// `medium` is what the seed / back-end emits; `normal` is the FE-form default —
+// `medium` is what the seed / back-end emits; `normal` is the FE-form default -
 // both are supported. Any unknown value still renders via a neutral fallback.
 export type SalesOrderPriority = 'low' | 'medium' | 'normal' | 'high' | 'urgent';
 export type SalesOrderStatus =
   | 'open'
   | 'partially_delivered'
   | 'fulfilled'
+  // 11,006 orders absorbed from the AutoCount export land here: read as delivered off a
+  // spreadsheet rather than delivered by this system. The status exists in the data, so it
+  // belongs in the type; `statusBadge` title-cases anything it does not recognise anyway.
+  | 'closed'
   | 'cancelled';
 
 export interface SalesOrderLine {
@@ -264,11 +268,17 @@ export interface SalesOrderLine {
   /** Stamped by create-DO-from-SO (soft link, no hard FK). */
   qty_delivered: number;
   uom: string;
+  /** Where this line ships from. Per line: one order can land in two locations. */
+  warehouse_code?: string;
+  /** `open` or `closed`. A closed line is not a commitment however much it still shows. */
+  line_status?: string;
+  /** When this line's quantity is due. Per line, for the same reason as the location. */
+  required_date?: string | null;
 }
 
 export interface SalesOrder {
   id: string;
-  /** Human-readable SO number — shown in the UI (never a UUID). */
+  /** Human-readable SO number - shown in the UI (never a UUID). */
   so_number: string;
   order_type: string;
   order_type_label: string;
@@ -280,11 +290,43 @@ export interface SalesOrder {
   status: SalesOrderStatus;
   order_date: string;
   requested_delivery_date: string | null;
+  /** Who sold it - the `sales_agents` master. The id rides along only so an edit select
+   *  can pre-select the current agent; a person reads `sales_agent_code` / `_label`,
+   *  never the id. Absent (all three null) when the order names no agent. */
+  sales_agent_id?: string | null;
+  sales_agent_code?: string | null;
+  /** `sales_agents.person_label` - the human the code belongs to, when set. */
+  sales_agent_label?: string | null;
   total_qty: number;
   /** Undelivered qty = committed demand contributed to the dashboard. */
   committed_qty: number;
+  /** What the order says, and how much of it is still open. */
+  line_count?: number;
+  open_line_count?: number;
   lines: SalesOrderLine[];
+  /** Where the order came from - it decides who may edit its figures. `inquiry` = the Order
+   *  Inquiry sheet created it, `upload` = CS's outstanding extract, `manual` = keyed in. */
+  source?: SalesOrderSource;
+  /** The project the Order Inquiry sheet named when no customer of that name existed. */
+  internal_note?: string | null;
+  /** Every distinct location its lines ship from. Plural: one order can land in two. */
+  stock_locations?: string[];
+  /** The planning class this order was classified into, or `null` when nobody has ever
+   *  said. Distinct from `order_type_label` - see `lib/demandClass.ts`. */
+  demand_class?: 'project' | 'retail' | null;
+  /** The purchase orders its lines wait on. Present on the LIST, absent on a single read. */
+  linked_purchase_orders?: LinkedPurchaseOrder[];
+  awaiting_purchase_orders?: number;
   created_at: string;
+}
+
+export type SalesOrderSource = 'inquiry' | 'upload' | 'history' | 'manual';
+
+/** A pairing this order's lines claim, and whether both sides are present. */
+export interface LinkedPurchaseOrder {
+  po_number: string;
+  item_code: string | null;
+  resolved: boolean;
 }
 
 export interface SalesOrderFormData {
@@ -292,18 +334,47 @@ export interface SalesOrderFormData {
   customer_code: string;
   priority: SalesOrderPriority;
   requested_delivery_date?: string | null;
-  lines: { sku: string; qty_ordered: number; uom: string }[];
+  /**
+   * `undefined` leaves the stored agent alone (the field was never sent); `null` or `''`
+   * explicitly CLEARS it; an id sets it. Always sent on the detail page's save, so the
+   * "leave alone" case in practice only applies to a payload that never sets this key -
+   * see `toWritePayload`.
+   */
+  sales_agent_id?: string | null;
+  /**
+   * Omitted entirely on an update where the person never touched a line - a header-only
+   * edit (order type, customer, dates) must not resend lines: the BE upserts by `id` (or
+   * SKU when no `id` is given), and a KEY left off a sent line (`warehouse_code` /
+   * `required_date` / `uom`) leaves that line's stored value alone rather than clearing
+   * it. Always present (non-empty) on create.
+   */
+  lines?: {
+    /** The existing line's id, carried on an edit so the BE matches by id rather than
+     *  falling back to SKU. Absent on create, where the line does not exist yet. */
+    id?: string;
+    sku: string;
+    qty_ordered: number;
+    /** Omitted leaves the line's stored UoM alone; `null`/`''` clears it (falls back to
+     *  the product's base UoM); a value sets an override. */
+    uom?: string | null;
+    /** Warehouse CODE, never the UUID. Omitted leaves the line's warehouse alone; `null`/
+     *  `''` clears it; a code sets it. */
+    warehouse_code?: string | null;
+    /** ISO `yyyy-mm-dd`. Same omitted/clear/set semantics as `warehouse_code`. Shown on
+     *  the detail page as "Delivery date". */
+    required_date?: string | null;
+  }[];
 }
 
 // ---------------------------------------------------------------------------
-// Purchase orders (read-only at M1 — create/confirm lands in M4)
+// Purchase orders (read-only at M1 - create/confirm lands in M4)
 // ---------------------------------------------------------------------------
 
 // `active` is the seed / back-end value for a confirmed-but-not-fully-received
 // PO. Any unknown value still renders via a neutral fallback.
 //
 // `draft_recommendation` (M4-D4) is a PO drafted from an accepted reorder
-// recommendation. It is deliberately OUTSIDE the on-order set — `scm.on_order_v`
+// recommendation. It is deliberately OUTSIDE the on-order set - `scm.on_order_v`
 // counts only status IN ('active','received','partial','closed'), so a draft is
 // NOT counted as incoming supply until it is confirmed (M4-D5). Confirming a
 // draft flips it to `active` and it then counts as on-order (M4-D6).
@@ -314,6 +385,10 @@ export type PurchaseOrderStatus =
   | 'confirmed'
   | 'partially_received'
   | 'received'
+  // Imported purchase history is written closed and fully received (it is history, not
+  // incoming supply). The union omitted it, so every historical order was typed as
+  // something it is not and only rendered by the title-case fallback.
+  | 'closed'
   | 'cancelled';
 
 export interface PurchaseOrderLine {
@@ -323,11 +398,13 @@ export interface PurchaseOrderLine {
   qty_ordered: number;
   qty_received: number;
   uom: string;
+  /** The line's own destination - location is a line fact, never a header one. */
+  warehouse_code?: string | null;
 }
 
 export interface PurchaseOrder {
   id: string;
-  /** Human-readable PO number — shown in the UI (never a UUID). */
+  /** Human-readable PO number - shown in the UI (never a UUID). */
   po_number: string;
   supplier_code: string;
   supplier_name: string;
@@ -337,16 +414,23 @@ export interface PurchaseOrder {
   order_date: string;
   /** Expected delivery / ETA; null when not committed yet. */
   expected_date: string | null;
+  /** What the ORDER says: every line of it. Not what is still coming - see `open_qty`. */
   total_qty: number;
   line_count: number;
+  /** What the PO still contributes as incoming supply. Zero on a received or historical
+   *  order, which is why it is a separate figure rather than a narrowing of `total_qty`. */
+  open_qty?: number;
+  open_line_count?: number;
   lines: PurchaseOrderLine[];
   created_at: string;
-  /** True when this PO counts as incoming supply (on-order) — false for a draft
+  /** True when this PO counts as incoming supply (on-order) - false for a draft
    *  or cancelled PO. Mirrors `scm.on_order_v`'s status filter (M4-D5/D6). */
   is_on_order?: boolean;
-  /** How the PO originated — `recommendation` = drafted from an accepted reorder
-   *  recommendation (Slice B); `manual` = created directly. */
-  source?: 'recommendation' | 'manual';
+  /** How the PO originated - `recommendation` = drafted from an accepted reorder
+   *  recommendation (Slice B); `import` = arrived through the purchase-history upload;
+   *  `crm` = created by "Create SPO" off an inbound shipment (PLAN-scm-proforma-to-spo.md);
+   *  `manual` = created directly. */
+  source?: 'recommendation' | 'import' | 'crm' | 'manual';
   /** Goods-receipt reference once a GR has been created from this PO (M4-D6). */
   gr_reference?: string | null;
 }

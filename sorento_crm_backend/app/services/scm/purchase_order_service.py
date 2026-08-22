@@ -15,11 +15,12 @@ po_number + supplier / warehouse codes are surfaced (never UUIDs).
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.procurement import (
@@ -27,15 +28,46 @@ from app.models.procurement import (
     PickingLine,
     PurchaseOrder,
     PurchaseOrderLine,
+    Supplier,
 )
+from app.models.product import Product
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
+from app.services.scm.history_sources import PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE
+from app.services.scm.spo_conversion_service import SOURCE_SYSTEM as CRM_SPO_SOURCE
 
 # Mirror of ``scm.on_order_v``'s status filter (M4-D5/D6): a PO counts as incoming
-# supply only in these statuses AND while it still has an unreceived line.
+# supply only in these statuses AND while it still has an unreceived OPEN line.
 _ON_ORDER_STATUSES = {"active", "received", "partial", "closed"}
+# The other half of that view's predicate. A line whose status is not ``open`` has left the
+# order book (cancelled, or dropped from the outstanding extract) and is no longer incoming,
+# so it must not appear in this PO's own totals either - two readers disagreeing about "on
+# order" is what makes a planning report untrustworthy.
+_OPEN_LINE_STATUS = "open"
 _DRAFT_STATUS = "draft_recommendation"
 _REC_SOURCE = "scm_recommendation"
+#: Orders that arrived through the purchase-history upload. Reported as `import` rather than
+#: folded into `manual`: nobody keyed 1,586 orders by hand, and a buyer asking where a 2020
+#: order came from is owed the real answer. Both document families are listed - the channel
+#: writes shipping orders under their own stamp (`po_history_service.SPO_SOURCE_SYSTEM`), and
+#: an unlisted stamp would read as "somebody keyed this by hand".
+_IMPORT_SOURCES = (PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE)
+
+log = logging.getLogger(__name__)
+
+
+def _source_label(source_system: Optional[str]) -> str:
+    if source_system == _REC_SOURCE:
+        return "recommendation"
+    if source_system == CRM_SPO_SOURCE:
+        return "crm"
+    if source_system in _IMPORT_SOURCES:
+        return "import"
+    return "manual"
+
+
+def _is_open_line(line) -> bool:
+    return (line.line_status or "") == _OPEN_LINE_STATUS
 
 
 class PurchaseOrderService:
@@ -48,7 +80,8 @@ class PurchaseOrderService:
         if po.status not in _ON_ORDER_STATUSES:
             return False
         return any(
-            float(ln.qty_ordered or 0) > float(ln.qty_received or 0) for ln in po.lines
+            _is_open_line(ln) and float(ln.qty_ordered or 0) > float(ln.qty_received or 0)
+            for ln in po.lines
         )
 
     def serialize(self, po: PurchaseOrder, gr_reference: Optional[str] = None) -> dict:
@@ -57,9 +90,26 @@ class PurchaseOrderService:
         wh_code = None
         wh_name = None
         total_qty = 0.0
+        open_qty = 0.0
+        open_lines = 0
         lines = []
         for ln in po.lines:
+            # TWO figures, because there are two questions and one number cannot answer both.
+            #
+            # ``total_qty`` / ``line_count`` are what the ORDER SAYS - every line of it. The
+            # columns are labelled "Total qty" and "Lines", and a 2020 order for 450 units
+            # reading 0 because its lines are closed is the label lying about the row. That
+            # is what the imported purchase history made visible: 1,586 orders, every one of
+            # them showing an empty order.
+            #
+            # ``open_qty`` / ``open_line_count`` are what the PO contributes as SUPPLY, and
+            # count open lines only, exactly as ``scm.on_order_v`` does. Every line is listed
+            # either way, each carrying its ``line_status``, so the screen can show a closed
+            # line as closed instead of rendering it as one still coming.
             total_qty += float(ln.qty_ordered or 0)
+            if _is_open_line(ln):
+                open_qty += float(ln.qty_ordered or 0)
+                open_lines += 1
             if wh_code is None and ln.warehouse is not None:
                 wh_code = ln.warehouse.warehouse_code
                 wh_name = ln.warehouse.warehouse_name or ln.warehouse.warehouse_code
@@ -69,7 +119,11 @@ class PurchaseOrderService:
                 "product_name": ln.product.product_name if ln.product else "",
                 "qty_ordered": float(ln.qty_ordered or 0),
                 "qty_received": float(ln.qty_received or 0),
+                "line_status": ln.line_status,
                 "uom": ln.product.base_uom.uom_code if (ln.product and ln.product.base_uom) else "",
+                # Location is a LINE fact (captain, 20 Aug) - the header field is gone
+                # from the detail page, so each line states its own destination.
+                "warehouse_code": ln.warehouse.warehouse_code if ln.warehouse else None,
             })
         return {
             "id": po.id,
@@ -85,10 +139,12 @@ class PurchaseOrderService:
             "expected_date": po.expected_date.isoformat() if po.expected_date else None,
             "total_qty": total_qty,
             "line_count": len(po.lines),
+            "open_qty": open_qty,
+            "open_line_count": open_lines,
             "lines": lines,
             "created_at": po.created_at.isoformat() if po.created_at else "",
             "is_on_order": self._is_on_order(po),
-            "source": "recommendation" if po.source_system == _REC_SOURCE else "manual",
+            "source": _source_label(po.source_system),
             "gr_reference": gr_reference,
         }
 
@@ -116,12 +172,40 @@ class PurchaseOrderService:
         )
 
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,
-             query: Optional[str], status: Optional[str], supplier: Optional[str]) -> dict:
-        from app.models.procurement import Supplier
-
+             query: Optional[str], status: Optional[str], supplier: Optional[str],
+             *, product_code: Optional[str] = None,
+             outstanding: Optional[bool] = None) -> dict:
         q = self._base_query()
         if status:
             q = q.filter(PurchaseOrder.status == status)
+        if outstanding is not None:
+            # The buyer's "at a glance" question (the captain, 20 Aug). The EXACT
+            # predicate `_is_on_order` answers per row, so this filter and that row's own
+            # badge can never disagree - mirrors `scm.po_ordered_v` (mig 337).
+            still_open = (
+                self.db.query(PurchaseOrderLine.id)
+                .filter(
+                    PurchaseOrderLine.purchase_order_id == PurchaseOrder.id,
+                    PurchaseOrderLine.line_status == _OPEN_LINE_STATUS,
+                    PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
+                )
+                .exists()
+            )
+            is_outstanding = PurchaseOrder.status.in_(_ON_ORDER_STATUSES) & still_open
+            q = q.filter(is_outstanding if outstanding else ~is_outstanding)
+        if product_code:
+            # EXISTS, not a join: an order that carries the item on two lines is one order,
+            # and a join would list it twice and count it twice.
+            code = product_code.strip().lower()
+            q = q.filter(
+                self.db.query(PurchaseOrderLine.id)
+                .join(Product, Product.id == PurchaseOrderLine.product_id)
+                .filter(
+                    PurchaseOrderLine.purchase_order_id == PurchaseOrder.id,
+                    func.lower(func.btrim(Product.product_code)) == code,
+                )
+                .exists()
+            )
         if supplier:
             q = q.filter(PurchaseOrder.supplier.has(Supplier.supplier_code == supplier))
         if query:
@@ -138,8 +222,17 @@ class PurchaseOrderService:
             "expected_date": PurchaseOrder.expected_date,
             "created_at": PurchaseOrder.created_at,
         }
-        col = sort_cols.get(sort or "", PurchaseOrder.created_at)
-        q = q.order_by(col.desc() if direction != "asc" else col.asc())
+        # Default surfaces the currently RELEVANT orders (the captain, 20 Aug), not the
+        # most recently IMPORTED ones: `created_at` is the upload timestamp, and a bulk
+        # outstanding-book upload stamps hundreds of historical orders with the same
+        # minute, burying today's real activity under them. The order's own document
+        # date - `issue_date`, falling back to `expected_date` for the rare order missing
+        # one - is what "current" means to the buyer reading this list.
+        col = sort_cols.get(sort) if sort else None
+        if col is None:
+            col = func.coalesce(PurchaseOrder.issue_date, PurchaseOrder.expected_date)
+        ordering = col.desc().nulls_last() if direction != "asc" else col.asc().nulls_last()
+        q = q.order_by(ordering)
         total = q.count()
         rows = q.offset((page - 1) * limit).limit(limit).all()
         gr_refs = self._gr_refs_for([po.id for po in rows])
@@ -147,6 +240,48 @@ class PurchaseOrderService:
             "data": [self.serialize(po, gr_refs.get(po.id)) for po in rows],
             "empty": total == 0,
             "pagination": {"total": total, "page": page},
+            # "which orders" and "what did we pay" are one question. Answered beside the
+            # list rather than left for the reader to work out from the rows, which they
+            # cannot do anyway once the orders spill past the first page.
+            "product_cost": self._last_purchase(product_code) if product_code else None,
+        }
+
+    def _last_purchase(self, product_code: str) -> Optional[dict]:
+        """The most recent priced line for this SKU, from any supplier.
+
+        A recorded 0 is a price and is returned as 0. Only the absence of a line is
+        unknown, and unknown is None - the two are different answers and this screen is
+        where a buyer tells them apart.
+        """
+        row = (
+            self.db.query(
+                PurchaseOrderLine.unit_cost,
+                PurchaseOrderLine.currency,
+                PurchaseOrder.po_number,
+                PurchaseOrder.issue_date,
+                Supplier.supplier_name,
+            )
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .join(Product, Product.id == PurchaseOrderLine.product_id)
+            .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
+            .filter(
+                func.lower(func.btrim(Product.product_code)) == product_code.strip().lower(),
+                PurchaseOrderLine.unit_cost.isnot(None),
+            )
+            .order_by(
+                PurchaseOrder.issue_date.desc().nullslast(),
+                PurchaseOrderLine.created_at.desc(),
+            )
+            .first()
+        )
+        if row is None:
+            return None
+        return {
+            "unit_cost": float(row.unit_cost),
+            "currency": row.currency,
+            "po_number": row.po_number,
+            "issue_date": row.issue_date.isoformat() if row.issue_date else None,
+            "supplier_name": row.supplier_name,
         }
 
     def get_one(self, po_id: str) -> Optional[dict]:
@@ -159,10 +294,34 @@ class PurchaseOrderService:
     # -- M4 Slice B writes ---------------------------------------------------
 
     def bulk_confirm(self, ids: list[str], actor: Optional[str] = None) -> dict:
-        """Confirm draft POs → active + canonical number (M4-D6). Idempotent: a PO not
-        in ``draft_recommendation`` is skipped, so re-confirming is a no-op."""
+        """Confirm draft POs -> active + canonical number (M4-D6). Idempotent: a PO not
+        in ``draft_recommendation`` is skipped, so re-confirming is a no-op.
+
+        Confirming is also one of the moments the order-inquiry auto-place cascade
+        runs (captain, 21 Aug): a line an internal draft PO just opened may already
+        have a RAISED buy row waiting on exactly this product, so placement should not
+        wait on someone clicking a separate button - the same idempotent cascade
+        ``project_supply_service._auto_place_after_confirm`` runs on a decision
+        confirm, a THIRD trigger of it rather than a mirror of that function's own
+        shape: it runs a SAVEPOINT (``begin_nested``) inside the SAME transaction as
+        its caller's writes, because that caller has not committed yet; this one runs
+        commit-then-try, its own separate best-effort transaction AFTER the confirm's
+        own commit, because the confirm here already IS the commit point - the confirm
+        itself has already succeeded by the time this runs, so a failure here must not
+        turn that success into a 500 the retry cannot repair (CLAUDE.md - post-commit
+        side effects are best-effort, never raise).
+
+        ``actor`` (a real user id) is REQUIRED for the auto-place pass, never
+        substituted: ``OrderInquiryRow.actioned_by`` is a genuine FK to ``users.id``,
+        so a placeholder like ``"system"`` would violate the constraint, the
+        IntegrityError would be swallowed by the very try/except that makes this
+        best-effort, and the whole placement batch would silently roll back (code
+        review, 21 Aug, S1). A confirm with no real actor (the API-key/system
+        principal) simply skips the pass and logs why - the confirm itself is
+        unaffected either way."""
         confirmed = 0
         numbering = NumberingService(self.db)
+        product_ids: set[str] = set()
         for pid in ids or []:
             po = (
                 self._base_query()
@@ -180,8 +339,37 @@ class PurchaseOrderService:
                 po.expected_date = max(dates) if dates else None
             for ln in po.lines:
                 ln.line_status = "open"
+                if ln.product_id:
+                    product_ids.add(str(ln.product_id))
             confirmed += 1
         self.db.commit()
+
+        if not product_ids:
+            return {"confirmed_count": confirmed}
+
+        if not actor:
+            log.warning(
+                "purchase order(s) confirmed, but auto-place was skipped: no real "
+                "actor to attribute the placement to",
+            )
+            return {"confirmed_count": confirmed}
+
+        try:
+            from app.services.project_order_inquiry_service import (
+                ProjectOrderInquiryService,
+            )
+
+            ProjectOrderInquiryService(self.db).auto_place_for_products(
+                list(product_ids), actor_user_id=actor, trigger="po_confirm",
+            )
+            self.db.commit()
+        except Exception as exc:  # noqa: BLE001
+            self.db.rollback()
+            log.warning(
+                "purchase order(s) confirmed, but the order-inquiry auto-place "
+                "pass failed (%s)", exc,
+            )
+
         return {"confirmed_count": confirmed}
 
     def create_gr(self, po_id: str, actor: Optional[str] = None) -> dict:
@@ -216,6 +404,13 @@ class PurchaseOrderService:
         self.db.flush()
 
         for ln in po.lines:
+            if ln.line_status == "closed":
+                # Goods that were cancelled never arrive, so receiving them invents inventory
+                # AND hands ``scm.receipt_lead_v`` a fabricated lead-time observation, which
+                # then skews the supplier's measured lead time and every safety stock and
+                # reorder point computed from it. A wrong lead time is worse than none,
+                # because it is trusted.
+                continue
             ordered = float(ln.qty_ordered or 0)
             received = float(ln.qty_received or 0)
             remaining = ordered - received
@@ -239,3 +434,80 @@ class PurchaseOrderService:
         po.status = "received"
         self.db.commit()
         return {"gr_reference": gr_number}
+
+    def bulk_delete(self, ids: list[str], actor: Optional[str] = None) -> dict:
+        """Hard delete purchase orders (captain, 20 Aug: "give me an option to bulk
+        delete purchase orders ... maybe need to recreate").
+
+        ``purchase_order_lines`` cascades with its header (``ondelete="CASCADE"``), and
+        every OTHER dependent on a line either cascades too (loading-plan lines) or is
+        ``SET NULL`` (picking lines, plan exceptions, the SO<->PO audit claim). Only one
+        of those needs more than the FK: ``projects.order_inquiry_rows.po_line_id`` is
+        ``SET NULL`` as well, but a row still carrying ``state = 'placed'`` after that
+        would silently point at nothing while staying OUT of the reorder engine - the
+        exact supply it was placed against just vanished. So every row placed on one of
+        these POs' lines is explicitly UNPLACED first, the same way "Untag" does it
+        (``project_order_inquiry_service.unplace`` - `state` back to `raised`, `po_ref`
+        / `po_line_id` cleared, the SO<->PO audit claim removed), except the note it
+        appends: "Unplaced" reads like a person did it, and this was the purchase order
+        disappearing out from under the row, not a person changing their mind. The
+        prior note is preserved and re-stamped with what actually happened.
+
+        Ids not found (already deleted, or another company's) are skipped rather than
+        failing the batch - a stale row in the caller's selection must not block the
+        rest of a genuinely-selected batch.
+        """
+        if not ids:
+            raise AppException(
+                status_code=422, message="Select at least one purchase order to delete."
+            )
+
+        pos = self._base_query().filter(PurchaseOrder.id.in_(ids)).all()
+        if not pos:
+            return {"deleted": 0, "unplaced_rows": 0}
+
+        po_ids = [po.id for po in pos]
+        line_ids = [
+            str(r[0])
+            for r in (
+                self.db.query(PurchaseOrderLine.id)
+                .filter(PurchaseOrderLine.purchase_order_id.in_(po_ids))
+                .all()
+            )
+        ]
+
+        unplaced_rows = 0
+        if line_ids:
+            # Local import: this is the one write path in this service that reaches
+            # into project-sales territory, and keeping it here instead of a
+            # module-level import keeps that visible to whoever reads this method.
+            from app.models.project_so import INQUIRY_PLACED, OrderInquiryRow
+            from app.services.project_order_inquiry_service import (
+                ProjectOrderInquiryService,
+            )
+
+            placed_rows = (
+                self.db.query(OrderInquiryRow)
+                .filter(
+                    OrderInquiryRow.po_line_id.in_(line_ids),
+                    OrderInquiryRow.state == INQUIRY_PLACED,
+                )
+                .all()
+            )
+            if placed_rows:
+                inquiry_service = ProjectOrderInquiryService(self.db)
+                stamp = "PO deleted - back on the board"
+                for row in placed_rows:
+                    prior_note = row.note
+                    # Does everything Untag does - clears po_ref/po_line_id, resets
+                    # state to `raised`, drops the audit claim, refreshes the parent
+                    # inquiry's state - and its own "Unplaced from ..." note, which is
+                    # overwritten below with the note this deletion actually earns.
+                    inquiry_service.unplace(str(row.id), actor_user_id=actor)
+                    row.note = f"{prior_note}; {stamp}" if prior_note else stamp
+                    unplaced_rows += 1
+
+        for po in pos:
+            self.db.delete(po)
+        self.db.commit()
+        return {"deleted": len(pos), "unplaced_rows": unplaced_rows}

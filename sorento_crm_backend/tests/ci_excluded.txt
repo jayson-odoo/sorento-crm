@@ -10,8 +10,9 @@
 #
 # Run them against a seeded environment, not as a deploy gate.
 #
-# Everything NOT listed here is gated: ~1960 tests, deterministic across 13
-# consecutive runs on a freshly bootstrapped database.
+# Everything NOT listed here is gated: ~7800 tests on a freshly bootstrapped
+# database, split across two parallel CI jobs - `test-backend` (everything
+# except tests/scm) and `test-backend-scm` (tests/scm only).
 #
 # To shrink this list, make the test create the data it needs instead of
 # assuming it exists — then delete its line.

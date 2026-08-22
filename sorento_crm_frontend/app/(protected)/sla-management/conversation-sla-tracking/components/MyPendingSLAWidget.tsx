@@ -1,16 +1,19 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   AlertCircle,
   Ban,
+  CalendarPlus,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock,
   ExternalLink,
+  History,
   Search,
   TrendingUp,
   UserRoundCog,
@@ -61,9 +64,13 @@ import {
   useRejectTakeover,
   useTakeoverSLATracking,
 } from '../hooks/useTeamPendingSLA';
+import type { InterventionTicketListItem } from '../services/interventionTicketService';
 import ReassignDialog from './ReassignDialog';
 import { TakeoverCountdown } from './TakeoverCountdown';
 import ExtendDueButton from './ExtendDueButton';
+import { myResolvedHistoryHref } from '../lib/historyLinks';
+import InterventionTicketDrawer from './InterventionTicketDrawer';
+import TicketSlaChips, { AT_RISK_MS } from './TicketSlaChips';
 import { CoverageManager } from '@/app/(protected)/account/notifications/components';
 
 // Same inbox base used by the SLA detail page; conversation rows deep-link here
@@ -84,6 +91,15 @@ type AnyTask = MyPendingSLAItem | TeamPendingItem;
  * silently fall through to the conversation branch. */
 function isFormTask(item: AnyTask): boolean {
   return item.is_form_sla;
+}
+
+/** Intervention-ticket rows are flagged by the backend (`is_intervention_ticket`),
+ * never re-derived - a pre-migration conversation row keeps its old behaviour of
+ * opening the Respond inbox. */
+function asTicket(item: AnyTask): InterventionTicketListItem | null {
+  return (item as InterventionTicketListItem).is_intervention_ticket
+    ? (item as InterventionTicketListItem)
+    : null;
 }
 
 /** The pending takeover on a row, if any (null otherwise). */
@@ -115,25 +131,46 @@ function respondId(item: AnyTask): string | null {
   return (item as MyPendingSLAItem).respond_io_id ?? null;
 }
 
-function dueLabel(due: string | null): { text: string; overdue: boolean } {
-  if (!due) return { text: 'No due date', overdue: false };
+function dueLabel(due: string | null): {
+  text: string;
+  overdue: boolean;
+  /** Same three-step urgency the ticket chips use, on the same threshold. */
+  urgency: 'none' | 'normal' | 'soon' | 'overdue';
+} {
+  if (!due) return { text: 'No due date', overdue: false, urgency: 'none' };
   // Backend emits naive-UTC deadlines; parse as UTC and render in Malaysia wall-clock.
-  const d = parseDateTimeAsUTC(due);
-  const overdue = d.getTime() < Date.now();
-  return { text: formatDateTimeInMalaysia(due), overdue };
+  const msLeft = parseDateTimeAsUTC(due).getTime() - Date.now();
+  return {
+    text: formatDateTimeInMalaysia(due),
+    overdue: msLeft < 0,
+    urgency: msLeft < 0 ? 'overdue' : msLeft < AT_RISK_MS ? 'soon' : 'normal',
+  };
 }
+
+/** Text colour for a row's deadline. Red is already the overdue signal; amber
+ *  is the one that was missing, and it is the whole point of item (a): an
+ *  extended deadline must start warning before the day it breaches. */
+const DUE_URGENCY_CLASS: Record<'none' | 'normal' | 'soon' | 'overdue', string> = {
+  none: 'text-muted-foreground',
+  normal: 'text-muted-foreground',
+  soon: 'font-medium text-amber-700 dark:text-amber-400',
+  overdue: 'font-medium text-destructive',
+};
 
 /** Free-text haystack for the search box: entity number (reference) for form rows,
  * contact name (reference) for conversation rows, plus type + assignee/team. */
 function matchesQuery(item: AnyTask, typeLabel: string, q: string): boolean {
   if (!q) return true;
   const t = item as TeamPendingItem;
+  const ticket = asTicket(item);
   const hay = [
     typeLabel,
     item.reference ?? '',
     t.assignee_name ?? '',
     t.team_label ?? '',
     item.source_entity_type ?? '',
+    ticket?.contact_name ?? '',
+    ticket?.enquiry_snippet ?? '',
   ]
     .join(' ')
     .toLowerCase();
@@ -168,6 +205,10 @@ export default function MyPendingSLAWidget() {
   const [escalating, setEscalating] = useState(false);
   const [reassignTarget, setReassignTarget] = useState<{ id: string; label: string } | null>(null);
   const [takeoverTarget, setTakeoverTarget] = useState<TeamPendingItem | null>(null);
+  // Intervention tickets: own enquiry per row, answered in an in-place drawer.
+  // Ticket rows arrive already merged into `/my-pending` (flagged
+  // `is_intervention_ticket`), so there is no separate ticket list to load here.
+  const [openTicketId, setOpenTicketId] = useState<string | null>(null);
 
   const takeoverMutation = useTakeoverSLATracking();
   const reassignMutation = useReassignSLATracking();
@@ -180,6 +221,9 @@ export default function MyPendingSLAWidget() {
   // Coverage deep link ?team_task=<tracking_id>: open My Team + highlight the row so the
   // coverer can take it over (the colleague's task surfaces in My Team).
   const teamTaskParam = searchParams.get('team_task');
+  // Ticket assignment-notify deep link ?ticket=<tracking_id> (UAC AC-G1): open the
+  // drawer directly, no navigation, no page to land on first.
+  const ticketParam = searchParams.get('ticket');
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [banner, setBanner] = useState<TakeoverStateRow | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
@@ -251,6 +295,31 @@ export default function MyPendingSLAWidget() {
     return () => clearTimeout(t);
   }, [teamTaskParam]);
 
+  // Ticket assignment-notify deep link ?ticket=<tracking_id> (UAC AC-G1): open the
+  // drawer directly (no navigation, no row lookup needed - the drawer fetches its
+  // own detail by id) and strip the param once consumed so a later refresh doesn't
+  // reopen it.
+  useEffect(() => {
+    if (!ticketParam) return;
+    setMode('mine');
+    setOpenTicketId(ticketParam);
+    router.replace('/', { scroll: false });
+  }, [ticketParam, router]);
+
+  // Ticket rows arrive already flagged on `/my-pending` - no separate ticket fetch
+  // or merge (Phase 1's mock-only merge was removed in S2.7).
+  const mineItems = items;
+
+  // AC-K3 stays on polling, deliberately. The live stream (slice S4.2) filters
+  // server-side on `?contacts=` and caps that list at 25, but this worklist
+  // shows every pending ticket the user holds across an unbounded number of
+  // contacts - so subscribing it would either truncate silently or need a
+  // user-keyed stream this component cannot express. The ticket pokes it would
+  // want (`ticket_created` / `ticket_updated`) do reach the OPEN drawer, which
+  // is where the numbers that matter are read, and the drawer's callbacks
+  // (`onSent` / `onResolved` / `onReassigned`) already reload this list on every
+  // action taken from it.
+  //
   // Light polling while any pending takeover is on screen (bar / banner transitions).
   const hasPending = useMemo(() => {
     const a = (items ?? []).some((it) => pendingTakeover(it));
@@ -324,6 +393,12 @@ export default function MyPendingSLAWidget() {
   // inbox (or the SLA detail when the contact has no resolvable Respond id).
   const openTask = useCallback(
     (item: AnyTask) => {
+      // An intervention ticket is answered in place - no navigation, no Respond.
+      const ticket = asTicket(item);
+      if (ticket) {
+        setOpenTicketId(ticket.id);
+        return;
+      }
       const record = entityHref(item);
       if (record) {
         router.push(record);
@@ -375,8 +450,8 @@ export default function MyPendingSLAWidget() {
   const q = search.trim().toLowerCase();
 
   const filteredMine = useMemo(
-    () => (items ?? []).filter((it) => matchesQuery(it, humanizeType(it), q)),
-    [items, q],
+    () => (mineItems ?? []).filter((it) => matchesQuery(it, humanizeType(it), q)),
+    [mineItems, q],
   );
   const filteredTeam = useMemo(
     () => (teamItems ?? []).filter((it) => matchesQuery(it, humanizeType(it), q)),
@@ -433,11 +508,19 @@ export default function MyPendingSLAWidget() {
     const teamItem = item as TeamPendingItem;
     const mineItem = item as MyPendingSLAItem;
     const tk = pendingTakeover(item);
+    const ticket = isTeam ? null : asTicket(item);
     const subline = isTeam
       ? `${teamItem.assignee_name ?? '—'} · ${teamItem.team_label ?? '—'} · Tier ${item.current_tier}`
-      : `Tier ${item.current_tier} · ${form ? mineItem.next_action ?? 'Action required' : 'Reply'}`;
+      : ticket
+        ? // AC-E7: a snippet the n8n spine never mapped arrives blank or as
+          // whitespace, not null - trim before falling back so the row always
+          // says something.
+          ticket.enquiry_snippet?.trim() || 'Enquiry from this contact'
+        : `Tier ${item.current_tier} · ${form ? mineItem.next_action ?? 'Action required' : 'Reply'}`;
     const atMaxTier = item.current_tier >= MAX_TIER;
     const highlighted = !!highlightId && item.id === highlightId;
+    // A row whose resolution deadline was pushed out says so, on both tabs.
+    const extensionCount = item.extension_count ?? 0;
 
     return (
       <li
@@ -474,15 +557,44 @@ export default function MyPendingSLAWidget() {
               <p className="truncate text-xs text-muted-foreground" title={subline}>
                 {subline}
               </p>
+              {/* A ticket races two clocks at once, so both are shown inline
+                  rather than only the active one. */}
+              {ticket && (
+                <TicketSlaChips
+                  className="mt-1.5"
+                  dueAt={ticket.due_at}
+                  dueAtResolution={ticket.due_at_resolution ?? null}
+                  isResponded={ticket.is_responded}
+                  respondedAt={ticket.responded_at}
+                  currentTier={ticket.current_tier}
+                  escalatedAt={ticket.escalated_at}
+                  extensionCount={ticket.extension_count}
+                />
+              )}
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
-              <span
-                className={`text-xs ${due.overdue ? 'font-medium text-destructive' : 'text-muted-foreground'}`}
-                title={due.text}
-              >
-                {primaryLabel}: {due.text}
-              </span>
-              {!entityHref(item) && respondId(item) ? (
+              {!ticket && (extensionCount ?? 0) > 0 && (
+                <span
+                  data-testid="row-extended-marker"
+                  className="inline-flex items-center gap-1 rounded-full border border-sky-400/50 bg-sky-50 px-2 py-0.5 text-[11px] leading-4 text-sky-700 dark:bg-sky-950/30 dark:text-sky-400"
+                  title={`Deadline extended to ${due.text}`}
+                >
+                  <CalendarPlus className="size-3" />
+                  Extended
+                  {extensionCount > 1 ? ` ×${extensionCount}` : ''}
+                </span>
+              )}
+              {!ticket && (
+                <span
+                  className={`text-xs ${DUE_URGENCY_CLASS[due.urgency]}`}
+                  title={due.text}
+                >
+                  {primaryLabel}: {due.text}
+                </span>
+              )}
+              {ticket ? (
+                <ChevronRight className="size-4 text-muted-foreground" />
+              ) : !entityHref(item) && respondId(item) ? (
                 <ExternalLink className="size-3.5 text-muted-foreground" />
               ) : (
                 <ChevronRight className="size-4 text-muted-foreground" />
@@ -541,8 +653,14 @@ export default function MyPendingSLAWidget() {
               </div>
             )}
 
+            {/* An intervention ticket is answered and resolved in its drawer, so
+                the row offers no Escalate/Resolve. Reassign and Extend are a
+                different matter: they are worklist decisions ("this is not mine"
+                / "this needs longer"), and making someone open a chat drawer to
+                hand a ticket over is the wrong place to ask. Both endpoints are
+                already entity-agnostic. */}
             <div className="flex flex-wrap items-center gap-2">
-              {isTeam ? (
+              {ticket ? null : isTeam ? (
                 !tk && canTakeover && (
                   <Button
                     size="sm"
@@ -684,15 +802,27 @@ export default function MyPendingSLAWidget() {
         <h2 className="text-sm font-semibold">
           {mode === 'mine' ? 'My pending tasks' : mode === 'team' ? 'My team tasks' : 'Coverage'}
         </h2>
-        {mode === 'mine' && items !== null && (
+        {mode === 'mine' && mineItems !== null && (
           <Badge variant="secondary" className="ml-1">
-            {items.length}
+            {mineItems.length}
           </Badge>
         )}
         {mode === 'team' && teamItems !== null && (
           <Badge variant="secondary" className="ml-1">
             {teamItems.length}
           </Badge>
+        )}
+        {/* AC-M2: a resolved row leaves this list, which is right - but the trail
+            must stay one click away, or "where did it go" is the next question. */}
+        {mode === 'mine' && (
+          <Link
+            href={myResolvedHistoryHref()}
+            data-testid="recently-resolved-link"
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline"
+          >
+            <History className="size-3.5" />
+            Recently resolved
+          </Link>
         )}
         <div className="ml-auto inline-flex rounded-md border p-0.5">
           <Button
@@ -827,9 +957,9 @@ export default function MyPendingSLAWidget() {
         <p className="flex items-center gap-2 text-sm text-destructive">
           <AlertCircle className="size-4" /> {error}
         </p>
-      ) : items === null ? (
+      ) : mineItems === null ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
-      ) : items.length === 0 ? (
+      ) : mineItems.length === 0 ? (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <CheckCircle2 className="size-4 text-emerald-600" />
           Nothing pending — you&apos;re all caught up.
@@ -943,6 +1073,27 @@ export default function MyPendingSLAWidget() {
         taskLabel={reassignTarget?.label}
         submitting={reassignMutation.isPending}
         onConfirm={handleReassignConfirm}
+      />
+
+      {/* The enquiry is answered here, in place - no navigation, no Respond inbox. */}
+      <InterventionTicketDrawer
+        ticketId={openTicketId}
+        open={!!openTicketId}
+        onOpenChange={(o) => {
+          if (o) return;
+          setOpenTicketId(null);
+          // A reply in the drawer stops this ticket's response clock: re-read the
+          // row so the chips agree with what just happened.
+          void load();
+        }}
+        onResolved={() => void load()}
+        // A reassign hands the enquiry to someone else: this list is no longer
+        // the owner's, so it has to re-read for the same reason a send does.
+        onReassigned={() => void Promise.all([load(), loadTeam()])}
+        // This list is loaded imperatively, so a react-query invalidation in
+        // the send mutation would refresh nothing here: a reply must reload it
+        // explicitly or the row keeps its pre-reply countdown chips.
+        onSent={() => void load()}
       />
     </div>
   );

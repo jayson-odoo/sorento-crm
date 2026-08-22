@@ -5,7 +5,7 @@ from typing import Optional
 from datetime import datetime
 from pydantic import BaseModel
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import require_permission
 from app.models.user import SystemLog, User
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
@@ -34,7 +34,7 @@ async def get_system_logs(
     createdAtTo: Optional[str] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("desc"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.logs.view")),
     db: Session = Depends(get_db)
 ):
     """Get system logs with pagination and filtering."""
@@ -125,7 +125,7 @@ async def get_user_system_logs(
     createdAtTo: Optional[str] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("desc"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.logs.view")),
     db: Session = Depends(get_db)
 ):
     """Get system logs for a specific user."""

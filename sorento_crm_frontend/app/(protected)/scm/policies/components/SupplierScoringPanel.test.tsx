@@ -1,5 +1,5 @@
 /**
- * SupplierScoringPanel — loading / empty / error / data + live weight-total.
+ * SupplierScoringPanel - loading / empty / error / data + live weight-total.
  *   AC-SUP-1 (renders the single row, empty state, "next analytics run" copy),
  *   AC-SUP-2 (weights must total 100%; save upserts fractional weights), AC-STD-4.
  */

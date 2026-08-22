@@ -33,6 +33,7 @@ from app.models.sla import ConversationSLATracking, FormSLAConfig
 from app.services.error_handler import AppException, handle_not_found, handle_validation_error
 from app.services.form_sla_service import emit_form_event
 from app.services.form_skip_registry import FormSkipAdapter, get_skip_adapter
+from app.services.sla_scope import open_tracker_scope
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,8 @@ class FormSkipService:
             .filter(
                 ConversationSLATracking.source_entity_type == source_entity_type,
                 ConversationSLATracking.source_entity_id == str(source_entity_id),
-                ConversationSLATracking.is_resolved.is_(False),
+                # A voided stage cannot be skipped - it is already gone.
+                *open_tracker_scope(),
             )
             .order_by(ConversationSLATracking.initiated_at.desc())
             .first()

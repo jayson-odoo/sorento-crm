@@ -53,9 +53,13 @@ def _mk_warehouse(db, code):
 
 
 def _mk_stock(db, pid, wid, qty):
+    # `synced_to_excel` is NOT NULL with only a Python-side ORM default (no
+    # server_default) - a raw INSERT that omits it violates the constraint on a
+    # from-zero database (a real one already has every row backfilled).
     db.execute(text(
-        "INSERT INTO stock (id, product_id, warehouse_id, quantity_on_hand, created_at, updated_at) "
-        "VALUES (:id, :p, :w, :q, now(), now())"
+        "INSERT INTO stock (id, product_id, warehouse_id, quantity_on_hand, "
+        "synced_to_excel, created_at, updated_at) "
+        "VALUES (:id, :p, :w, :q, false, now(), now())"
     ), {"id": str(uuid.uuid4()), "p": pid, "w": wid, "q": qty})
 
 
@@ -80,9 +84,15 @@ def _mk_movement(db, pid, wid, qty, days_ago):
     """A stale sales movement so scm.consumption_v reports a last-movement date
     ``days_ago`` in the past (drives the dead-stock disposition)."""
     oid = str(uuid.uuid4())
+    # kpi_warning/subtotal_amount/discount_amount/tax_amount/total_amount/synced_to_excel
+    # are all NOT NULL with only a Python-side ORM default (no server_default) - a raw
+    # INSERT that omits them violates the constraint on a from-zero database.
     db.execute(text(
-        "INSERT INTO orders (id, order_number, order_date, is_cancelled, created_at, updated_at) "
-        "VALUES (:id, :num, (now() - make_interval(days => :d)), false, now(), now())"
+        "INSERT INTO orders (id, order_number, order_date, is_cancelled, kpi_warning, "
+        "subtotal_amount, discount_amount, tax_amount, total_amount, synced_to_excel, "
+        "created_at, updated_at) "
+        "VALUES (:id, :num, (now() - make_interval(days => :d)), false, false, "
+        "0, 0, 0, 0, false, now(), now())"
     ), {"id": oid, "num": f"M3ORD-{oid[:8]}", "d": days_ago})
     db.execute(text(
         "INSERT INTO order_lines (id, line_sequence, order_id, product_id, warehouse_id, "

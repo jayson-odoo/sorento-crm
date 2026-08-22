@@ -17,12 +17,19 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { EM_DASH, fmtInt, fmtMoney } from '../../lib/format';
+import {
+  EM_DASH,
+  fmtInt,
+  fmtMoney,
+  fmtMoneyIn,
+  fmtSupplierCost,
+  isBaseCurrency,
+} from '../../lib/format';
 import type { AdjustPayload } from '../types/decisions.types';
 import type { ReorderRecommendation, SupplierChoice } from '../types/reorder.types';
 
 /**
- * M4-D7 — Adjust a recommendation before it drafts a PO: override the buy qty
+ * M4-D7 - Adjust a recommendation before it drafts a PO: override the buy qty
  * and/or switch supplier (from the run's ranked alternatives). Switching
  * supplier recomputes a live preview of the resulting lead time + cash impact
  * off the chosen supplier's cost. A reason is REQUIRED (captured raw here;
@@ -63,7 +70,10 @@ export function AdjustRecommendationModal({
     for (const s of rec.alternatives) {
       if (seen.has(s.supplier_code)) continue;
       seen.add(s.supplier_code);
-      const cost = s.unit_cost !== null ? fmtMoney(s.unit_cost) : 'no cost';
+      // The supplier's own price, in the supplier's own money. `fmtMoney` hard-codes RM,
+      // so a USD 8.00 alternative was offered as "RM 8" - a quarter of the ringgit price
+      // instead of roughly four times it.
+      const cost = s.unit_cost !== null ? fmtSupplierCost(s.unit_cost, s.currency) : 'no cost';
       const lead = s.lead_time_days !== null ? `${s.lead_time_days}d lead` : 'lead n/a';
       opts.push({
         value: s.supplier_code,
@@ -83,9 +93,26 @@ export function AdjustRecommendationModal({
   const qtyNum = Number(qty);
   const qtyValid = Number.isFinite(qtyNum) && qtyNum > 0;
 
-  // Live recompute preview off the chosen supplier (mocked arithmetic in Phase 1).
-  const previewCash =
-    chosenSupplier?.unit_cost != null && qtyValid ? qtyNum * chosenSupplier.unit_cost : null;
+  /**
+   * Live recompute preview off the chosen supplier.
+   *
+   * It sits beside `rec.cash_impact`, which is in the BASE currency, so the preview has to
+   * be comparable to it: quantity times the restated price when the choice carries one.
+   * When the currency has no rate on file there is nothing to restate, and the honest
+   * answer is the amount in the supplier's own money, labelled as that money - never a
+   * foreign total wearing an RM.
+   */
+  const previewCash = useMemo(() => {
+    if (!chosenSupplier || !qtyValid) return null;
+    if (chosenSupplier.unit_cost_base != null) {
+      return { text: fmtMoney(qtyNum * chosenSupplier.unit_cost_base), inBase: true };
+    }
+    if (chosenSupplier.unit_cost == null) return null;
+    return {
+      text: fmtMoneyIn(qtyNum * chosenSupplier.unit_cost, chosenSupplier.currency),
+      inBase: isBaseCurrency(chosenSupplier.currency),
+    };
+  }, [chosenSupplier, qtyNum, qtyValid]);
   const supplierChanged = !!rec && chosenSupplier?.supplier_code !== rec.supplier?.supplier_code;
   const qtyChanged = !!rec && qtyValid && qtyNum !== (rec.order_qty ?? 0);
 
@@ -117,7 +144,7 @@ export function AdjustRecommendationModal({
         <DialogHeader>
           <DialogTitle>Adjust {rec.sku}</DialogTitle>
           <DialogDescription>
-            Override the buy quantity or switch supplier. This stages the change — no PO is
+            Override the buy quantity or switch supplier. This stages the change - no PO is
             drafted until you Confirm decisions.
           </DialogDescription>
         </DialogHeader>
@@ -182,13 +209,13 @@ export function AdjustRecommendationModal({
                 <PreviewCell
                   label="Cash impact"
                   from={fmtMoney(rec.cash_impact)}
-                  to={fmtMoney(previewCash)}
+                  to={previewCash?.text ?? EM_DASH}
                   changed={qtyChanged || supplierChanged}
                 />
               </div>
               {chosenSupplier.unit_cost == null ? (
                 <p className="mt-2 text-2xs text-scm-overstock">
-                  This supplier has no cost on file — the buy can&apos;t be cash-ranked until a cost is added.
+                  This supplier has no cost on file - the buy can&apos;t be cash-ranked until a cost is added.
                 </p>
               ) : null}
             </div>

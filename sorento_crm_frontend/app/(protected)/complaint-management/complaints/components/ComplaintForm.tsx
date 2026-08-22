@@ -1,12 +1,12 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm, useFieldArray } from 'react-hook-form';
-import { Plus, Trash2 } from 'lucide-react';
-import { useRouter } from 'next/navigation';
-import { LoaderCircleIcon, Save, Send } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { useEffect, useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm, useFieldArray } from "react-hook-form";
+import { Plus, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { LoaderCircleIcon, Save, Send } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Form,
   FormControl,
@@ -14,26 +14,38 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
-import LookupBoundField from '@/components/common/LookupBoundField';
-import { useCreateComplaint, useUpdateComplaint, useUpdateComplaintAndReply, useComplaint } from '../hooks/useComplaints';
-import { useComplaintRootCausesSelect } from '@/app/(protected)/complaint-management/complaint-root-causes/hooks/useComplaintRootCauses';
-import { useComplaintResolutionsSelect } from '@/app/(protected)/complaint-management/complaint-resolutions/hooks/useComplaintResolutions';
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { SearchableSelect } from "@/components/common/SearchableSelect";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import LookupBoundField from "@/components/common/LookupBoundField";
+import {
+  useCreateComplaint,
+  useUpdateComplaint,
+  useUpdateComplaintAndReply,
+  useComplaint,
+} from "../hooks/useComplaints";
+import { useComplaintRootCausesSelect } from "@/app/(protected)/complaint-management/complaint-root-causes/hooks/useComplaintRootCauses";
+import { useComplaintResolutionsSelect } from "@/app/(protected)/complaint-management/complaint-resolutions/hooks/useComplaintResolutions";
 import {
   getOrCreateComplaintViewLink,
   displayComplaintTechnicalResponse,
-} from '../services/complaintService';
-import { toast } from 'sonner';
-import { ComplaintSchema, type ComplaintSchemaType } from '../forms/complaint-schema';
-import type { ComplaintFormData, ComplaintAttachment } from '../types/complaint.types';
-import ComplaintNavigation from './ComplaintNavigation';
-import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
-import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
+  searchProjectsForLink,
+} from "../services/complaintService";
+import { toast } from "sonner";
+import {
+  ComplaintSchema,
+  type ComplaintSchemaType,
+} from "../forms/complaint-schema";
+import type {
+  ComplaintFormData,
+  ComplaintAttachment,
+} from "../types/complaint.types";
+import ComplaintNavigation from "./ComplaintNavigation";
+import ComplaintManualAttachmentsSection from "./ComplaintManualAttachmentsSection";
+import { usePublicViewLinksEnabled } from "@/hooks/usePublicViewLinksEnabled";
 
 interface ComplaintFormProps {
   complaintId?: string;
@@ -49,7 +61,13 @@ type ProductLineForm = {
 /** Prefer structured product_lines; fall back to splitting the legacy
  * product_code CSV (pairing type/quantity by position) for older rows. */
 function deriveProductLines(complaint: {
-  product_lines?: { product_code: string; product_type?: string | null; quantity?: string | null }[] | null;
+  product_lines?:
+    | {
+        product_code: string;
+        product_type?: string | null;
+        quantity?: string | null;
+      }[]
+    | null;
   product_code?: string | null;
   product_type?: string | null;
   quantity?: string | null;
@@ -57,33 +75,42 @@ function deriveProductLines(complaint: {
   if (complaint.product_lines && complaint.product_lines.length > 0) {
     return complaint.product_lines.map((l) => ({
       product_code: l.product_code,
-      product_type: l.product_type ?? '',
-      quantity: l.quantity ?? '',
+      product_type: l.product_type ?? "",
+      quantity: l.quantity ?? "",
     }));
   }
-  const codes = (complaint.product_code || '').split(',').map((s) => s.trim());
-  const types = (complaint.product_type || '').split(',').map((s) => s.trim());
-  const qtys = (complaint.quantity || '').split(',').map((s) => s.trim());
+  const codes = (complaint.product_code || "").split(",").map((s) => s.trim());
+  const types = (complaint.product_type || "").split(",").map((s) => s.trim());
+  const qtys = (complaint.quantity || "").split(",").map((s) => s.trim());
   return codes
-    .map((code, i) => ({ product_code: code, product_type: types[i] ?? '', quantity: qtys[i] ?? '' }))
+    .map((code, i) => ({
+      product_code: code,
+      product_type: types[i] ?? "",
+      quantity: qtys[i] ?? "",
+    }))
     .filter((l) => l.product_code);
 }
 
 /** Drop blank rows; trim. Returns undefined when no valid rows. */
 function cleanProductLines(
   lines: ProductLineForm[] | undefined,
-): { product_code: string; product_type?: string; quantity?: string }[] | undefined {
+):
+  | { product_code: string; product_type?: string; quantity?: string }[]
+  | undefined {
   const cleaned = (lines || [])
     .map((l) => ({
-      product_code: (l.product_code || '').trim(),
-      product_type: (l.product_type ?? '').trim() || undefined,
-      quantity: (l.quantity ?? '').trim() || undefined,
+      product_code: (l.product_code || "").trim(),
+      product_type: (l.product_type ?? "").trim() || undefined,
+      quantity: (l.quantity ?? "").trim() || undefined,
     }))
     .filter((l) => l.product_code);
   return cleaned.length > 0 ? cleaned : undefined;
 }
 
-export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormProps) {
+export default function ComplaintForm({
+  complaintId,
+  onSuccess,
+}: ComplaintFormProps) {
   const router = useRouter();
   const isEditMode = !!complaintId;
   const { data: complaint, isLoading: isLoadingComplaint } = useComplaint(
@@ -113,6 +140,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       contact_number: null,
       customer_address: null,
       project_title: null,
+      project_id: null,
       contact_id: null,
       space_id: null,
       technical_team_response: null,
@@ -121,10 +149,13 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       required_on_site_support: false,
       attachments: [],
     },
-    mode: 'onSubmit',
+    mode: "onSubmit",
   });
 
-  const productLines = useFieldArray({ control: form.control, name: 'product_lines' });
+  const productLines = useFieldArray({
+    control: form.control,
+    name: "product_lines",
+  });
 
   const [formInitialized, setFormInitialized] = useState(false);
   const updateAndReplyMutation = useUpdateComplaintAndReply();
@@ -142,8 +173,9 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         return Number.isNaN(d.getTime()) ? undefined : d;
       };
       const toNum = (v: unknown): number | null | undefined => {
-        if (v === null || v === undefined || v === '') return v as null | undefined;
-        const n = typeof v === 'number' ? v : Number(v);
+        if (v === null || v === undefined || v === "")
+          return v as null | undefined;
+        const n = typeof v === "number" ? v : Number(v);
         return Number.isFinite(n) ? n : null;
       };
       const attachments = (complaint.attachments || []).map((att) => ({
@@ -175,10 +207,13 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         contact_number: complaint.contact_number || null,
         customer_address: complaint.customer_address || null,
         project_title: complaint.project_title || null,
+        project_id: complaint.project_id || null,
         contact_id: complaint.contact_id ?? null,
         space_id: complaint.space_id ?? null,
         technical_team_response:
-          displayComplaintTechnicalResponse(complaint.technical_team_response) || null,
+          displayComplaintTechnicalResponse(
+            complaint.technical_team_response,
+          ) || null,
         root_cause_id: complaint.root_cause_id ?? null,
         resolution_id: complaint.resolution_id ?? null,
         required_on_site_support: complaint.required_on_site_support ?? false,
@@ -197,8 +232,9 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       // Transform attachments to match ComplaintAttachment type
       // Filter out attachments that don't have required fields (id, complaint_id, uploaded_at)
       const validAttachments = (data.attachments || [])
-        .filter((att): att is ComplaintAttachment => 
-          !!att.id && !!att.complaint_id && !!att.uploaded_at
+        .filter(
+          (att): att is ComplaintAttachment =>
+            !!att.id && !!att.complaint_id && !!att.uploaded_at,
         )
         .map((att) => ({
           id: att.id!,
@@ -225,7 +261,13 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         contact_number: data.contact_number || undefined,
         customer_address: data.customer_address || undefined,
         project_title: data.project_title || undefined,
-        ...(isEditMode ? {} : { contact_id: data.contact_id || undefined, space_id: data.space_id || undefined }),
+        project_id: data.project_id || null,
+        ...(isEditMode
+          ? {}
+          : {
+              contact_id: data.contact_id || undefined,
+              space_id: data.space_id || undefined,
+            }),
         technical_team_response: data.technical_team_response || undefined,
         root_cause_id: data.root_cause_id || null,
         resolution_id: data.resolution_id || null,
@@ -239,10 +281,16 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         const created = await createMutation.mutateAsync(formData);
         if (created?.id && publicViewLinksEnabled) {
           try {
-            const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-            const { view_url } = await getOrCreateComplaintViewLink(created.id, baseUrl);
+            const baseUrl =
+              typeof window !== "undefined"
+                ? window.location.origin
+                : undefined;
+            const { view_url } = await getOrCreateComplaintViewLink(
+              created.id,
+              baseUrl,
+            );
             await navigator.clipboard.writeText(view_url);
-            toast.success('Complaint created. View link copied to clipboard.');
+            toast.success("Complaint created. View link copied to clipboard.");
           } catch {
             // view link optional
           }
@@ -252,7 +300,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       onSuccess?.();
     } catch (error) {
       // Error is handled by the mutation
-      console.error('Error submitting form:', error);
+      console.error("Error submitting form:", error);
     }
   };
 
@@ -261,19 +309,25 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
     const valid = await form.trigger();
     if (!valid) {
       const firstError = Object.values(form.formState.errors)[0];
-      toast.error(firstError?.message ?? 'Please fix the errors in the form before updating.');
+      toast.error(
+        firstError?.message ??
+          "Please fix the errors in the form before updating.",
+      );
       return;
     }
     const data = form.getValues();
     const technicalResponse = displayComplaintTechnicalResponse(
-      (data.technical_team_response ?? '').trim(),
+      (data.technical_team_response ?? "").trim(),
     ).trim();
     if (!technicalResponse) {
-      toast.error('Enter a technical team response before sending.');
+      toast.error("Enter a technical team response before sending.");
       return;
     }
     const validAttachments = (data.attachments || [])
-      .filter((att): att is ComplaintAttachment => !!att.id && !!att.complaint_id && !!att.uploaded_at)
+      .filter(
+        (att): att is ComplaintAttachment =>
+          !!att.id && !!att.complaint_id && !!att.uploaded_at,
+      )
       .map((att) => ({
         id: att.id!,
         complaint_id: att.complaint_id!,
@@ -298,12 +352,16 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       contact_number: data.contact_number || undefined,
       customer_address: data.customer_address || undefined,
       project_title: data.project_title || undefined,
+      project_id: data.project_id || null,
       technical_team_response: technicalResponse,
       required_on_site_support: data.required_on_site_support ?? true,
       attachments: validAttachments.length > 0 ? validAttachments : undefined,
     };
     try {
-      await updateAndReplyMutation.mutateAsync({ id: complaintId, data: formData });
+      await updateAndReplyMutation.mutateAsync({
+        id: complaintId,
+        data: formData,
+      });
       onSuccess?.();
     } catch {
       // Error toast from mutation
@@ -318,32 +376,39 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
     );
   }
 
-  const isLoading = createMutation.isPending || updateMutation.isPending || updateAndReplyMutation.isPending;
+  const isLoading =
+    createMutation.isPending ||
+    updateMutation.isPending ||
+    updateAndReplyMutation.isPending;
 
   const onFormSubmit = form.handleSubmit(onSubmit, (errors) => {
     // eslint-disable-next-line no-console
-    console.error('[ComplaintForm] validation errors', errors);
+    console.error("[ComplaintForm] validation errors", errors);
     const flat: string[] = [];
     const walk = (node: unknown, path: string) => {
-      if (!node || typeof node !== 'object') return;
+      if (!node || typeof node !== "object") return;
       const obj = node as Record<string, unknown>;
       const msg = obj.message;
-      if (typeof msg === 'string' && msg.trim()) {
-        flat.push(`${path || 'form'}: ${msg}`);
+      if (typeof msg === "string" && msg.trim()) {
+        flat.push(`${path || "form"}: ${msg}`);
         return;
       }
       for (const [k, v] of Object.entries(obj)) {
-        if (k === 'ref' || k === 'type') continue;
+        if (k === "ref" || k === "type") continue;
         walk(v, path ? `${path}.${k}` : k);
       }
     };
-    walk(errors, '');
-    const summary = flat.length ? flat.slice(0, 5).join('; ') : 'See console for details';
+    walk(errors, "");
+    const summary = flat.length
+      ? flat.slice(0, 5).join("; ")
+      : "See console for details";
     toast.error(`Please fix: ${summary}`);
     const firstField = Object.keys(errors)[0];
-    if (firstField && typeof window !== 'undefined') {
-      const el = document.querySelector(`[name="${firstField}"]`) as HTMLElement | null;
-      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (firstField && typeof window !== "undefined") {
+      const el = document.querySelector(
+        `[name="${firstField}"]`,
+      ) as HTMLElement | null;
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
       el?.focus?.();
     }
   });
@@ -371,7 +436,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                     <Input
                       placeholder="Enter DO number"
                       {...field}
-                      value={field.value || ''}
+                      value={field.value || ""}
                     />
                   </FormControl>
                   <FormMessage />
@@ -389,7 +454,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                     <Input
                       placeholder="Enter customer name"
                       {...field}
-                      value={field.value || ''}
+                      value={field.value || ""}
                     />
                   </FormControl>
                   <FormMessage />
@@ -407,7 +472,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                     <Input
                       placeholder="Enter contact person name"
                       {...field}
-                      value={field.value || ''}
+                      value={field.value || ""}
                     />
                   </FormControl>
                   <FormMessage />
@@ -425,7 +490,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                     <Input
                       placeholder="Enter contact number"
                       {...field}
-                      value={field.value || ''}
+                      value={field.value || ""}
                     />
                   </FormControl>
                   <FormMessage />
@@ -443,7 +508,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                     <Textarea
                       placeholder="Enter delivery address"
                       {...field}
-                      value={field.value || ''}
+                      value={field.value || ""}
                       rows={3}
                     />
                   </FormControl>
@@ -467,15 +532,15 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                       placeholder="Select customer type"
                       renderFallback={() => (
                         <SearchableSelect
-                          key={field.value || 'empty'}
+                          key={field.value || "empty"}
                           onChange={field.onChange}
-                          value={field.value || ''}
+                          value={field.value || ""}
                           options={[
-                            { value: 'Individual', label: 'Individual' },
-                            { value: 'Dealer', label: 'Dealer' },
-                            { value: 'Corporate', label: 'Corporate' },
-                            { value: 'Government', label: 'Government' },
-                            { value: 'Other', label: 'Other' },
+                            { value: "Individual", label: "Individual" },
+                            { value: "Dealer", label: "Dealer" },
+                            { value: "Corporate", label: "Corporate" },
+                            { value: "Government", label: "Government" },
+                            { value: "Other", label: "Other" },
                           ]}
                           placeholder="Select customer type"
                         />
@@ -487,7 +552,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
               )}
             />
 
-            {form.watch('customer_type')?.toLowerCase() === 'other' && (
+            {form.watch("customer_type")?.toLowerCase() === "other" && (
               <FormField
                 control={form.control}
                 name="customer_type_others"
@@ -498,7 +563,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                       <Input
                         placeholder="Specify customer type"
                         {...field}
-                        value={field.value || ''}
+                        value={field.value || ""}
                       />
                     </FormControl>
                     <FormMessage />
@@ -519,8 +584,8 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                       {...field}
                       value={
                         field.value
-                          ? new Date(field.value).toISOString().split('T')[0]
-                          : ''
+                          ? new Date(field.value).toISOString().split("T")[0]
+                          : ""
                       }
                       onChange={(e) => {
                         const date = e.target.value
@@ -542,8 +607,12 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                   <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
                     <tr>
                       <th className="w-10 px-2 py-2 text-left">#</th>
-                      <th className="min-w-[200px] px-2 py-2 text-left">Product code</th>
-                      <th className="min-w-[160px] px-2 py-2 text-left">Product type</th>
+                      <th className="min-w-[200px] px-2 py-2 text-left">
+                        Product code
+                      </th>
+                      <th className="min-w-[160px] px-2 py-2 text-left">
+                        Product type
+                      </th>
                       <th className="w-24 px-2 py-2 text-left">Qty</th>
                       <th className="w-10 px-2 py-2"></th>
                     </tr>
@@ -551,14 +620,19 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                   <tbody>
                     {productLines.fields.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">
+                        <td
+                          colSpan={5}
+                          className="px-3 py-4 text-center text-muted-foreground"
+                        >
                           No products yet. Click “Add product”.
                         </td>
                       </tr>
                     )}
                     {productLines.fields.map((row, index) => (
                       <tr key={row.id} className="border-t align-top">
-                        <td className="px-2 py-2 text-muted-foreground">{index + 1}</td>
+                        <td className="px-2 py-2 text-muted-foreground">
+                          {index + 1}
+                        </td>
                         <td className="px-2 py-2">
                           <FormField
                             control={form.control}
@@ -566,7 +640,11 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                             render={({ field }) => (
                               <FormItem>
                                 <FormControl>
-                                  <Input placeholder="Product code" {...field} value={field.value || ''} />
+                                  <Input
+                                    placeholder="Product code"
+                                    {...field}
+                                    value={field.value || ""}
+                                  />
                                 </FormControl>
                                 <FormMessage />
                               </FormItem>
@@ -580,7 +658,11 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                             render={({ field }) => (
                               <FormItem>
                                 <FormControl>
-                                  <Input placeholder="Type" {...field} value={field.value || ''} />
+                                  <Input
+                                    placeholder="Type"
+                                    {...field}
+                                    value={field.value || ""}
+                                  />
                                 </FormControl>
                                 <FormMessage />
                               </FormItem>
@@ -594,7 +676,14 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                             render={({ field }) => (
                               <FormItem>
                                 <FormControl>
-                                  <Input type="number" inputMode="numeric" min="0" placeholder="Qty" {...field} value={field.value || ''} />
+                                  <Input
+                                    type="number"
+                                    inputMode="numeric"
+                                    min="0"
+                                    placeholder="Qty"
+                                    {...field}
+                                    value={field.value || ""}
+                                  />
                                 </FormControl>
                                 <FormMessage />
                               </FormItem>
@@ -622,7 +711,13 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                 variant="outline"
                 size="sm"
                 className="mt-2"
-                onClick={() => productLines.append({ product_code: '', product_type: '', quantity: '' })}
+                onClick={() =>
+                  productLines.append({
+                    product_code: "",
+                    product_type: "",
+                    quantity: "",
+                  })
+                }
               >
                 <Plus className="size-4 mr-1" />
                 Add product
@@ -644,13 +739,13 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                       placeholder="Select warranty status"
                       renderFallback={() => (
                         <SearchableSelect
-                          key={field.value || 'empty'}
+                          key={field.value || "empty"}
                           onChange={field.onChange}
-                          value={field.value || ''}
+                          value={field.value || ""}
                           options={[
-                            { value: 'Yes', label: 'Yes' },
-                            { value: 'No', label: 'No' },
-                            { value: 'Unknown', label: 'Unknown' },
+                            { value: "Yes", label: "Yes" },
+                            { value: "No", label: "No" },
+                            { value: "Unknown", label: "Unknown" },
                           ]}
                           placeholder="Select warranty status"
                         />
@@ -679,7 +774,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                         <Input
                           placeholder="Enter defects discovered"
                           {...field}
-                          value={field.value || ''}
+                          value={field.value || ""}
                         />
                       )}
                     />
@@ -706,7 +801,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                         <Input
                           placeholder="Enter complaint type"
                           {...field}
-                          value={field.value || ''}
+                          value={field.value || ""}
                         />
                       )}
                     />
@@ -726,7 +821,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                     <Textarea
                       placeholder="Enter detailed defect description"
                       {...field}
-                      value={field.value || ''}
+                      value={field.value || ""}
                       rows={4}
                     />
                   </FormControl>
@@ -745,7 +840,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                     <Input
                       placeholder="Enter salesperson name"
                       {...field}
-                      value={field.value || ''}
+                      value={field.value || ""}
                     />
                   </FormControl>
                   <FormMessage />
@@ -763,9 +858,47 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                     <Input
                       placeholder="Enter project title"
                       {...field}
-                      value={field.value || ''}
+                      value={field.value || ""}
                     />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {/* AC-L3. The link sits next to the free-text title rather than replacing it: the
+                text is what thousands of historical complaints have, and typing a development
+                name is still faster than picking when the project was never registered. */}
+            <FormField
+              control={form.control}
+              name="project_id"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Registered project (optional)</FormLabel>
+                  {/* No FormControl wrapper: it is a Radix Slot and needs exactly one element
+                      child, while SearchableSelect renders a trigger plus its popover. Found in
+                      the browser -- "React.Children.only expected to receive a single React
+                      element child" took the whole card down, so the field never appeared. */}
+                  <SearchableSelect
+                    value={field.value || ""}
+                    onChange={(next) => field.onChange(next || null)}
+                    fetchOptions={(query, pageIndex) =>
+                      searchProjectsForLink(query, pageIndex + 1)
+                    }
+                    paginated
+                    pageSize={25}
+                    clearable
+                    selectedOption={
+                      field.value && complaint?.project_code
+                        ? {
+                            value: field.value,
+                            label: `${complaint.project_code} - ${complaint.project_name ?? ""}`,
+                          }
+                        : undefined
+                    }
+                    placeholder="Search a project by code or title"
+                    emptyMessage="No project matches that. Leave it empty if it was never registered."
+                  />
                   <FormMessage />
                 </FormItem>
               )}
@@ -790,7 +923,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                         <Input
                           placeholder="Respond.io contact ID"
                           {...field}
-                          value={field.value ?? ''}
+                          value={field.value ?? ""}
                         />
                       </FormControl>
                       <FormMessage />
@@ -807,7 +940,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                         <Input
                           placeholder="Respond.io space ID"
                           {...field}
-                          value={field.value ?? ''}
+                          value={field.value ?? ""}
                         />
                       </FormControl>
                       <FormMessage />
@@ -824,12 +957,17 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                   <FormLabel>Root Cause</FormLabel>
                   <FormControl>
                     <SearchableSelect
-                      key={`root-${field.value ?? 'unset'}-${rootCauseOptions.length}`}
-                      value={field.value ?? '__unset__'}
-                      onChange={(v) => field.onChange(v === '__unset__' ? null : v)}
+                      key={`root-${field.value ?? "unset"}-${rootCauseOptions.length}`}
+                      value={field.value ?? "__unset__"}
+                      onChange={(v) =>
+                        field.onChange(v === "__unset__" ? null : v)
+                      }
                       options={[
-                        { value: '__unset__', label: '— None —' },
-                        ...rootCauseOptions.map((opt) => ({ value: opt.id, label: opt.name })),
+                        { value: "__unset__", label: "— None —" },
+                        ...rootCauseOptions.map((opt) => ({
+                          value: opt.id,
+                          label: opt.name,
+                        })),
                       ]}
                       placeholder="Select root cause (optional)"
                     />
@@ -846,12 +984,17 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                   <FormLabel>Resolution</FormLabel>
                   <FormControl>
                     <SearchableSelect
-                      key={`res-${field.value ?? 'unset'}-${resolutionOptions.length}`}
-                      value={field.value ?? '__unset__'}
-                      onChange={(v) => field.onChange(v === '__unset__' ? null : v)}
+                      key={`res-${field.value ?? "unset"}-${resolutionOptions.length}`}
+                      value={field.value ?? "__unset__"}
+                      onChange={(v) =>
+                        field.onChange(v === "__unset__" ? null : v)
+                      }
                       options={[
-                        { value: '__unset__', label: '— None —' },
-                        ...resolutionOptions.map((opt) => ({ value: opt.id, label: opt.name })),
+                        { value: "__unset__", label: "— None —" },
+                        ...resolutionOptions.map((opt) => ({
+                          value: opt.id,
+                          label: opt.name,
+                        })),
                       ]}
                       placeholder="Select resolution (optional)"
                     />
@@ -870,7 +1013,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                     <Textarea
                       placeholder="Enter technical team response to send to customer"
                       {...field}
-                      value={field.value ?? ''}
+                      value={field.value ?? ""}
                       rows={4}
                     />
                   </FormControl>
@@ -921,12 +1064,12 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
             {isLoading ? (
               <>
                 <LoaderCircleIcon className="size-4 animate-spin" />
-                {isEditMode ? 'Updating...' : 'Creating...'}
+                {isEditMode ? "Updating..." : "Creating..."}
               </>
             ) : (
               <>
                 <Save className="size-4" />
-                {isEditMode ? 'Update Complaint' : 'Create Complaint'}
+                {isEditMode ? "Update Complaint" : "Create Complaint"}
               </>
             )}
           </Button>

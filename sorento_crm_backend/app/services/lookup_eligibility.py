@@ -4,6 +4,15 @@ Source of truth: SQLAlchemy ``Base.metadata`` introspection. Any string/integer
 column on a non-system table is bindable. The legacy ``register_lookup_eligible``
 hook is preserved as an in-memory override (also used by tests): when ``_REGISTRY``
 is non-empty it short-circuits the metadata path.
+
+``table_name`` here, in ``lookup_bindings.table_name`` and in the write listener is the
+SCHEMA-QUALIFIED name (``Table.key``): the bare name for a default-schema table, and
+``schema.name`` for the rest. Since ADR-0011 the bare name no longer identifies a table -
+`purchase_orders`, `sales_orders`, `brands`, `quotations` and three more each exist as a
+core `public` table AND as a `projects` one - so a bare key would let a binding made for
+core validate writes to the module's table, and would drop one table of each colliding
+pair from the picker. Core bindings are unaffected: for a table with no schema the key IS
+the bare name.
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -93,6 +102,18 @@ def _humanize(name: str) -> str:
     return " ".join(p.capitalize() for p in name.split("_") if p)
 
 
+def _table_label(tbl) -> str:
+    """What the admin picker and the bindings list show for a table.
+
+    A schema-qualified table is labelled with its schema, because the bare label is
+    ambiguous for the seven names that exist in both `public` and `projects`: an operator
+    choosing "Purchase Orders" would have no way to tell which of the two they are binding.
+    """
+    if tbl.schema:
+        return f"{_humanize(tbl.schema)} / {_humanize(tbl.name)}"
+    return _humanize(tbl.name)
+
+
 def _is_blacklisted_table(name: str) -> bool:
     if name in _BLACKLIST_TABLE_NAMES:
         return True
@@ -132,14 +153,18 @@ def _from_metadata() -> list[LookupEligibility]:
             data_type = _classify_column(col)
             if data_type is None:
                 continue
-            key = (tbl.name, cname)
+            # Keyed (and deduped) on the SCHEMA-QUALIFIED name. On the bare name the
+            # second table of a colliding pair - `projects.purchase_orders` beside core
+            # `purchase_orders` - is silently dropped, and which one survives depends on
+            # model import order.
+            key = (tbl.key, cname)
             if key in seen:
                 continue
             seen.add(key)
             out.append(LookupEligibility(
-                table_name=tbl.name,
+                table_name=tbl.key,
                 column_name=cname,
-                table_label=_humanize(tbl.name),
+                table_label=_table_label(tbl),
                 column_label=_humanize(cname),
                 data_type=data_type,
                 nullable=bool(col.nullable),
@@ -149,6 +174,11 @@ def _from_metadata() -> list[LookupEligibility]:
 
 
 def _eligibility_from_metadata(table: str, column: str) -> Optional[LookupEligibility]:
+    """``table`` is a ``Table.key``: `complaints`, or `projects.leads`.
+
+    ``Base.metadata.tables`` is keyed that way, so a bare `leads` misses outright and the
+    caller reports the column as not lookup-eligible.
+    """
     from app.database import Base
     tbl = Base.metadata.tables.get(table)
     if tbl is None or _is_blacklisted_table(tbl.name):
@@ -166,9 +196,9 @@ def _eligibility_from_metadata(table: str, column: str) -> Optional[LookupEligib
     if data_type is None:
         return None
     return LookupEligibility(
-        table_name=table,
+        table_name=tbl.key,
         column_name=column,
-        table_label=_humanize(table),
+        table_label=_table_label(tbl),
         column_label=_humanize(column),
         data_type=data_type,
         nullable=bool(col.nullable),
@@ -194,7 +224,10 @@ def register_lookup_eligible(
     SQLAlchemy metadata. Kept for tests that need synthetic (table, column)
     pairs without polluting ``Base.metadata``.
     """
-    table_name = getattr(model, "__tablename__", None)
+    # Same key as the metadata path: ``Table.key``, which is the bare name for a
+    # default-schema table. Synthetic test models often declare only ``__tablename__``.
+    table = getattr(model, "__table__", None)
+    table_name = getattr(table, "key", None) or getattr(model, "__tablename__", None)
     if not table_name:
         raise RuntimeError("model must have __tablename__")
     key = (table_name, column)

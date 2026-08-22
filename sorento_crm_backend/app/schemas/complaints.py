@@ -152,6 +152,9 @@ class ComplaintBase(BaseModel):
     contact_number: Optional[str] = None
     customer_address: Optional[str] = None
     project_title: Optional[str] = None
+    # AC-L3. The link is a UUID on the wire; `project_code` / `project_name` are the
+    # read-only resolved display values the UI actually shows.
+    project_id: Optional[str] = None
     contact_id: Optional[str] = None
     space_id: Optional[str] = None
     technical_team_response: Optional[str] = None
@@ -205,6 +208,9 @@ class ComplaintUpdate(BaseModel):
     contact_number: Optional[str] = None
     customer_address: Optional[str] = None
     project_title: Optional[str] = None
+    # AC-L3. The link is a UUID on the wire; `project_code` / `project_name` are the
+    # read-only resolved display values the UI actually shows.
+    project_id: Optional[str] = None
     contact_id: Optional[str] = None
     space_id: Optional[str] = None
     technical_team_response: Optional[str] = None
@@ -219,6 +225,10 @@ class ComplaintUpdate(BaseModel):
 
 class ComplaintResponse(ComplaintBase):
     id: str
+    # Resolved display values for the project link (AC-L3). Read-only: the client sends
+    # `project_id` and gets these back, so no screen has to render a UUID.
+    project_code: Optional[str] = None
+    project_name: Optional[str] = None
     system_id: Optional[str] = None
     form_type: Optional[str] = None
     view_url: Optional[str] = None
@@ -249,6 +259,12 @@ class ComplaintResponse(ComplaintBase):
     resolution_name: Optional[str] = None
     root_cause_notified_at: Optional[datetime] = None
     resolution_notified_at: Optional[datetime] = None
+    # Whether `technical_team_response` may be written at this status (UAC O1).
+    # Computed from `response_gate`, the same module the write path raises from, so
+    # the client gating an affordance and the server enforcing the rule read ONE
+    # source instead of two status lists that drift. Declared here because a
+    # response_model silently drops any field it does not name.
+    response_write_allowed: Optional[bool] = None
     attachments: Optional[list[ComplaintAttachmentResponse]] = []
     product_lines: Optional[list[ComplaintProductLineResponse]] = []
 

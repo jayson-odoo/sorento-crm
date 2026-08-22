@@ -16,6 +16,7 @@ import { createPromotionAttachment as createPromotionAttachmentApi } from '../..
 import { usePromotion } from '../hooks/usePromotions';
 import { useDownloadAttachment, useAttachments, useUploadAttachment, useDirectoryTree } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 import { useUploadConflict } from '@/hooks/use-upload-conflict';
+import { FileDropzone } from '@/components/common/FileDropzone';
 import { toast } from 'sonner';
 import type { PromotionAttachment } from '../../promotion-attachments/types/promotionAttachment.types';
 import { formatDate } from '@/lib/helpers';
@@ -592,27 +593,12 @@ function AddPromotionAttachmentDialog({
             <Label>
               File <span className="text-destructive">*</span>
             </Label>
-            <div className="flex items-center gap-2">
-              <Input
-                type="file"
-                onChange={(e) => {
-                  const chosen = e.target.files?.[0] ?? null;
-                  if (chosen && chosen.name.trim().startsWith('._')) {
-                    toast.error('Files starting with ._ are macOS metadata and cannot be uploaded.');
-                    setFile(null);
-                    e.target.value = '';
-                    return;
-                  }
-                  setFile(chosen);
-                }}
-                className="flex-1"
-              />
-              {file && (
-                <span className="text-sm text-muted-foreground truncate max-w-[180px]" title={file.name}>
-                  {file.name}
-                </span>
-              )}
-            </div>
+            <FileDropzone
+              files={file ? [file] : []}
+              onFilesChange={(files) => setFile(files[0] ?? null)}
+              title="Drop the file here, or click to browse"
+              aria-label="Promotion attachment"
+            />
           </div>
         </div>
         <DialogFooter>

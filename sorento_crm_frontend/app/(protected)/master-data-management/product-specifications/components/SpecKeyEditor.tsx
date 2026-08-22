@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { updateSpecKey } from '../services/productSpecService';
 import SpecRuleEditor from './SpecRuleEditor';
 import TokenInput from './TokenInput';
-import { readable } from '../lib/readable';
+import { readable } from '@/lib/spec-readable';
 import { ruleSentence } from '../lib/ruleSentence';
 import { seedValuesFor, seedWordsFor, valuePayload, wordPayload } from '../lib/vocabularyEdit';
 import type { SpecDerivationRule, SpecRegistryKey } from '../types/productSpec.types';
@@ -106,9 +106,17 @@ export default function SpecKeyEditor({
   // `allowed_values` at all, yet ships words for 1, 2 and 3 — reading the rows off the
   // value list alone rendered an empty section for exactly the keys whose wording
   // matters most. Open vocabularies (brand, class) are the same story.
+  //
+  // `user_synonyms` is read RAW, beside the merged `synonyms`, because a suppressed
+  // value has no merged entry at all - the published vocabulary must not advertise
+  // words for a value it reports as not allowed. Without the raw column the staff words
+  // for that value would be absent from this form, and the next save of this key would
+  // send a `user_synonyms` that no longer mentions them, deleting them. Suppression is
+  // meant to be reversible.
   const wordedValues = dedupe([
     ...(isBoolean ? ['true'] : liveValues),
     ...Object.keys(specKey.synonyms ?? {}),
+    ...Object.keys(specKey.user_synonyms ?? {}),
     ...Object.keys(specKey.suppressed_synonyms ?? {}),
   ]);
   const [extraWordRows, setExtraWordRows] = useState<string[]>([]);
@@ -118,7 +126,10 @@ export default function SpecKeyEditor({
   // reason as the values: suppression has to survive a save it was not part of.
   const [words, setWords] = useState<Record<string, string[]>>(() =>
     Object.fromEntries(
-      dedupe([...wordedValues]).map((v) => [v, [...(specKey.synonyms?.[v] ?? [])]]),
+      dedupe([...wordedValues]).map((v) => [
+        v,
+        dedupe([...(specKey.synonyms?.[v] ?? []), ...(specKey.user_synonyms?.[v] ?? [])]),
+      ]),
     ),
   );
   const [droppedWords, setDroppedWords] = useState<Record<string, string[]>>(() =>
@@ -431,7 +442,17 @@ export default function SpecKeyEditor({
           {rowValues.map((value) => (
             <div key={value} className="flex flex-wrap items-start gap-2">
               <span className="flex w-40 shrink-0 items-center gap-1 pt-2 text-sm">
-                <span className="truncate">
+                {/* Struck through exactly as the value itself is in the values section
+                    above: the words are kept and stay editable, but until the value is
+                    put back the vocabulary carries none of them, and a row that read as
+                    live had the two halves of this form disagreeing about one value. */}
+                <span
+                  className={
+                    droppedValues.includes(value)
+                      ? 'truncate text-muted-foreground line-through decoration-muted-foreground/60'
+                      : 'truncate'
+                  }
+                >
                   {value === 'true' && isBoolean ? 'When true' : readable(value)}
                 </span>
                 {/* Clearing a row is the only way to retire a value on a key with no

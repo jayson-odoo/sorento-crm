@@ -44,6 +44,11 @@ export interface Complaint {
   contact_number?: string | null;
   customer_address?: string | null;
   project_title?: string | null;
+  /** AC-L3: the reportable link to a registered project. `project_code` / `project_name` are
+   *  the resolved display values -- never render the UUID. */
+  project_id?: string | null;
+  project_code?: string | null;
+  project_name?: string | null;
   contact_id?: string | null;
   space_id?: string | null;
   respond_inbox_url?: string | null;
@@ -70,6 +75,16 @@ export interface Complaint {
   resolution_notified_at?: string | null;
   required_on_site_support?: boolean | null;
   print_count?: number | null;
+  /**
+   * Whether the backend will accept a `technical_team_response` write at this
+   * record's current status (UAC O1). Server-owned: the allowed statuses live in
+   * `app/services/response_gate.py` and are deliberately NOT mirrored on this
+   * side, so the affordance can never disagree with the endpoint that 422s.
+   *
+   * Absent means not gated, matching the backend's own fail-open for a type it
+   * has no rule for.
+   */
+  response_write_allowed?: boolean | null;
   product_lines?: ComplaintProductLine[];
   attachments: ComplaintAttachment[];
 }
@@ -93,6 +108,7 @@ export interface ComplaintFormData {
   contact_number?: string;
   customer_address?: string;
   project_title?: string;
+  project_id?: string | null;
   contact_id?: string | null;
   space_id?: string | null;
   technical_team_response?: string;

@@ -46,6 +46,12 @@ from app.models.procurement import (
 from app.models.certificate import Certificate, CertificateRevision
 from app.models.product import Product
 from app.models.resources import Attachment, AttachmentType
+# Imported rather than redefined, so the value cannot drift between the two modules. A
+# draft (proforma-created) shipment must not be resolvable by container/BOL/invoice number
+# here either - `incoming_stock_service` already excludes it from every list read, and an
+# assistant that could still NAME the draft via this resolver would ask incoming_list about
+# it and get told "nothing incoming for container X" instead of never hearing of it.
+from app.services.scm.proforma_invoice_service import _DRAFT_SHIPMENT_STATUS
 
 
 logger = logging.getLogger(__name__)
@@ -1176,7 +1182,8 @@ def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[Re
                 _ws_insensitive_lower(InboundShipment.shipping_container_number).in_(normalized),
                 _ws_insensitive_lower(InboundShipment.bill_of_lading_number).in_(normalized),
                 _ws_insensitive_lower(InboundShipment.invoice_number).in_(normalized),
-            )
+            ),
+            InboundShipment.shipment_status != _DRAFT_SHIPMENT_STATUS,
         )
         .all()
     )
@@ -1688,7 +1695,8 @@ def _prefix_probe_inbound_shipment(db: Session, token: str) -> list[ResolvedEnti
                 _norm_prefix(InboundShipment.shipping_container_number, token),
                 _norm_prefix(InboundShipment.bill_of_lading_number, token),
                 _norm_prefix(InboundShipment.invoice_number, token),
-            )
+            ),
+            InboundShipment.shipment_status != _DRAFT_SHIPMENT_STATUS,
         )
         .limit(PREFIX_LIMIT)
         .all()
@@ -2476,7 +2484,11 @@ def _tier3_embedding_lookup(
         """
     )
     try:
-        rows = db.execute(sql, {"vec": list(query_vec), "types": list(allowed_types)}).all()
+        # SAVEPOINT: this lookup is best-effort, and a failed statement
+        # otherwise leaves the whole transaction aborted - every later
+        # query in the request would die on InFailedSqlTransaction.
+        with db.begin_nested():
+            rows = db.execute(sql, {"vec": list(query_vec), "types": list(allowed_types)}).all()
     except Exception:
         logger.exception("Tier-3 vector query failed for token=%s", token)
         return []
@@ -2564,25 +2576,29 @@ def _trgm_lookup(
             # curated-looking variants (SRTKT71SS, -BL/-GM) beat digit-neighbours
             # (SRTKT72SS) even when raw similarity ties (§3.2). Self is excluded.
             scope_sql, scope_params = _company_scope_sql(db)
-            rows = db.execute(
-                text(
-                    f"""
-                    SELECT id, product_code, product_name,
-                           similarity(product_code, :p) AS sim,
-                           (left(lower(regexp_replace(product_code, '[-\\s]', '', 'g')),
-                                 length(lower(regexp_replace(:p, '[-\\s]', '', 'g'))))
-                              = lower(regexp_replace(:p, '[-\\s]', '', 'g')))
-                             AS is_variant
-                    FROM products
-                    WHERE product_code % :p
-                      AND lower(regexp_replace(product_code, '[-\\s]', '', 'g'))
-                          <> lower(regexp_replace(:p, '[-\\s]', '', 'g')){scope_sql}
-                    ORDER BY is_variant DESC, sim DESC, product_code
-                    LIMIT :n
-                    """
-                ),
-                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
-            ).all()
+            # SAVEPOINT: this lookup is best-effort, and a failed statement
+            # otherwise leaves the whole transaction aborted - every later
+            # query in the request would die on InFailedSqlTransaction.
+            with db.begin_nested():
+                rows = db.execute(
+                    text(
+                        f"""
+                        SELECT id, product_code, product_name,
+                               similarity(product_code, :p) AS sim,
+                               (left(lower(regexp_replace(product_code, '[-\\s]', '', 'g')),
+                                     length(lower(regexp_replace(:p, '[-\\s]', '', 'g'))))
+                                  = lower(regexp_replace(:p, '[-\\s]', '', 'g')))
+                                 AS is_variant
+                        FROM products
+                        WHERE product_code % :p
+                          AND lower(regexp_replace(product_code, '[-\\s]', '', 'g'))
+                              <> lower(regexp_replace(:p, '[-\\s]', '', 'g')){scope_sql}
+                        ORDER BY is_variant DESC, sim DESC, product_code
+                        LIMIT :n
+                        """
+                    ),
+                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
                 if sim < TRGM_THRESHOLD:
@@ -2614,27 +2630,31 @@ def _trgm_lookup(
                 if scope_params
                 else ""
             )
-            rows = db.execute(
-                text(
-                    f"""
-                    SELECT o.debtor_name, o.debtor_code,
-                           c.id AS customer_id,
-                           GREATEST(
-                               similarity(COALESCE(o.debtor_name, ''), :p),
-                               similarity(COALESCE(o.debtor_code, ''), :p)
-                           ) AS sim
-                    FROM orders o
-                    LEFT JOIN customers c ON lower(btrim(c.customer_name)) = lower(btrim(o.debtor_name))
-                    WHERE o.deleted_at IS NULL
-                      AND o.debtor_name IS NOT NULL
-                      AND (o.debtor_name % :p OR o.debtor_code % :p){order_scope_sql}{cust_scope_sql}
-                    GROUP BY o.debtor_name, o.debtor_code, c.id
-                    ORDER BY sim DESC
-                    LIMIT :n
-                    """
-                ),
-                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
-            ).all()
+            # SAVEPOINT: this lookup is best-effort, and a failed statement
+            # otherwise leaves the whole transaction aborted - every later
+            # query in the request would die on InFailedSqlTransaction.
+            with db.begin_nested():
+                rows = db.execute(
+                    text(
+                        f"""
+                        SELECT o.debtor_name, o.debtor_code,
+                               c.id AS customer_id,
+                               GREATEST(
+                                   similarity(COALESCE(o.debtor_name, ''), :p),
+                                   similarity(COALESCE(o.debtor_code, ''), :p)
+                               ) AS sim
+                        FROM orders o
+                        LEFT JOIN customers c ON lower(btrim(c.customer_name)) = lower(btrim(o.debtor_name))
+                        WHERE o.deleted_at IS NULL
+                          AND o.debtor_name IS NOT NULL
+                          AND (o.debtor_name % :p OR o.debtor_code % :p){order_scope_sql}{cust_scope_sql}
+                        GROUP BY o.debtor_name, o.debtor_code, c.id
+                        ORDER BY sim DESC
+                        LIMIT :n
+                        """
+                    ),
+                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
                 if sim < TRGM_THRESHOLD:
@@ -2651,22 +2671,26 @@ def _trgm_lookup(
                     )
                 )
             scope_sql, scope_params = _company_scope_sql(db)
-            rows = db.execute(
-                text(
-                    f"""
-                    SELECT id, customer_code, customer_name,
-                           GREATEST(
-                               similarity(customer_code, :p),
-                               similarity(customer_name, :p)
-                           ) AS sim
-                    FROM customers
-                    WHERE (customer_code % :p OR customer_name % :p){scope_sql}
-                    ORDER BY sim DESC
-                    LIMIT :n
-                    """
-                ),
-                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
-            ).all()
+            # SAVEPOINT: this lookup is best-effort, and a failed statement
+            # otherwise leaves the whole transaction aborted - every later
+            # query in the request would die on InFailedSqlTransaction.
+            with db.begin_nested():
+                rows = db.execute(
+                    text(
+                        f"""
+                        SELECT id, customer_code, customer_name,
+                               GREATEST(
+                                   similarity(customer_code, :p),
+                                   similarity(customer_name, :p)
+                               ) AS sim
+                        FROM customers
+                        WHERE (customer_code % :p OR customer_name % :p){scope_sql}
+                        ORDER BY sim DESC
+                        LIMIT :n
+                        """
+                    ),
+                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
                 if sim < TRGM_THRESHOLD:
@@ -2688,18 +2712,22 @@ def _trgm_lookup(
     if "customer_order" in allowed_entity_types:
         try:
             scope_sql, scope_params = _company_scope_sql(db)
-            rows = db.execute(
-                text(
-                    f"""
-                    SELECT id, order_number, similarity(order_number, :p) AS sim
-                    FROM orders
-                    WHERE deleted_at IS NULL AND order_number % :p{scope_sql}
-                    ORDER BY sim DESC
-                    LIMIT :n
-                    """
-                ),
-                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
-            ).all()
+            # SAVEPOINT: this lookup is best-effort, and a failed statement
+            # otherwise leaves the whole transaction aborted - every later
+            # query in the request would die on InFailedSqlTransaction.
+            with db.begin_nested():
+                rows = db.execute(
+                    text(
+                        f"""
+                        SELECT id, order_number, similarity(order_number, :p) AS sim
+                        FROM orders
+                        WHERE deleted_at IS NULL AND order_number % :p{scope_sql}
+                        ORDER BY sim DESC
+                        LIMIT :n
+                        """
+                    ),
+                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
                 if sim < TRGM_THRESHOLD:
@@ -2721,19 +2749,23 @@ def _trgm_lookup(
     if "promotion" in allowed_entity_types:
         try:
             scope_sql, scope_params = _company_scope_sql(db)
-            rows = db.execute(
-                text(
-                    f"""
-                    SELECT id, description,
-                           similarity(COALESCE(description, ''), :p) AS sim
-                    FROM promotions
-                    WHERE description % :p{scope_sql}
-                    ORDER BY sim DESC
-                    LIMIT :n
-                    """
-                ),
-                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
-            ).all()
+            # SAVEPOINT: this lookup is best-effort, and a failed statement
+            # otherwise leaves the whole transaction aborted - every later
+            # query in the request would die on InFailedSqlTransaction.
+            with db.begin_nested():
+                rows = db.execute(
+                    text(
+                        f"""
+                        SELECT id, description,
+                               similarity(COALESCE(description, ''), :p) AS sim
+                        FROM promotions
+                        WHERE description % :p{scope_sql}
+                        ORDER BY sim DESC
+                        LIMIT :n
+                        """
+                    ),
+                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
                 if sim < TRGM_THRESHOLD:
@@ -2755,23 +2787,27 @@ def _trgm_lookup(
     if "transporter" in allowed_entity_types:
         try:
             scope_sql, scope_params = _company_scope_sql(db)
-            rows = db.execute(
-                text(
-                    f"""
-                    SELECT id, code, name, normalized_name,
-                           GREATEST(
-                               similarity(COALESCE(code, ''), :p),
-                               similarity(COALESCE(name, ''), :p),
-                               similarity(COALESCE(normalized_name, ''), :p)
-                           ) AS sim
-                    FROM transporters
-                    WHERE (code % :p OR name % :p OR normalized_name % :p){scope_sql}
-                    ORDER BY sim DESC
-                    LIMIT :n
-                    """
-                ),
-                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
-            ).all()
+            # SAVEPOINT: this lookup is best-effort, and a failed statement
+            # otherwise leaves the whole transaction aborted - every later
+            # query in the request would die on InFailedSqlTransaction.
+            with db.begin_nested():
+                rows = db.execute(
+                    text(
+                        f"""
+                        SELECT id, code, name, normalized_name,
+                               GREATEST(
+                                   similarity(COALESCE(code, ''), :p),
+                                   similarity(COALESCE(name, ''), :p),
+                                   similarity(COALESCE(normalized_name, ''), :p)
+                               ) AS sim
+                        FROM transporters
+                        WHERE (code % :p OR name % :p OR normalized_name % :p){scope_sql}
+                        ORDER BY sim DESC
+                        LIMIT :n
+                        """
+                    ),
+                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
                 if sim < TRGM_THRESHOLD:
@@ -3854,13 +3890,21 @@ def _attach_company_info(db: Session, matches: list[ResolvedEntity]) -> set[tupl
             continue  # global / unpartitioned type — leave company_id None, never gate
         shared = bool(getattr(model, "__company_shared__", False))
         try:
-            rows = db.execute(
-                text(
-                    f"SELECT id::text AS id, company_id::text AS company_id "  # noqa: S608 - table name from the model registry
-                    f"FROM {model.__tablename__} WHERE id::text = ANY(:ids)"
-                ),
-                {"ids": [str(m.uuid) for m in group]},
-            ).all()
+            # SAVEPOINT: this lookup is best-effort, and a failed statement
+            # otherwise leaves the whole transaction aborted - every later
+            # query in the request would die on InFailedSqlTransaction.
+            with db.begin_nested():
+                rows = db.execute(
+                    text(
+                        f"SELECT id::text AS id, company_id::text AS company_id "  # noqa: S608 - table name from the model registry
+                        # `fullname`, not `__tablename__`: a schema-qualified model would
+                        # otherwise emit its bare name, and seven of those name a CORE table
+                        # too (ADR-0011). No projects model reaches here today; the day one
+                        # does, this reads the right rows rather than another module's.
+                        f"FROM {model.__table__.fullname} WHERE id::text = ANY(:ids)"
+                    ),
+                    {"ids": [str(m.uuid) for m in group]},
+                ).all()
         except Exception:  # noqa: BLE001 — attribution is additive, never fatal
             logger.exception("company attribution lookup failed for %s", entity_type)
             if not _scope_allows(scope, None, shared=shared):
@@ -3994,6 +4038,173 @@ def _apply_company_scope(db: Session, resolutions: list[TokenResolution]) -> Non
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
+def _probe_project(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Resolve a project by its CODE or its exact title (AC-K1).
+
+    Both, because people refer to a pursuit either way: office staff say "PRJ-000142", a
+    salesperson says "Residensi Damai Phase 1". The code is the canonical_code either way, so
+    whatever the caller typed, the agent gets back the identifier the tools accept.
+
+    Exact (whitespace-insensitive, case-insensitive) only. Tier 2 owns partial matching, and
+    a project list is exactly where a loose match is dangerous: two phases of one masterplan
+    have near-identical titles, and silently picking one would answer a question about the
+    wrong pursuit.
+    """
+    from app.models.projects import Project
+
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    norm_to_token = {_strip_all_ws(t.lower()): t for t in tokens}
+    keys = list(norm_to_token.keys())
+
+    rows = (
+        db.query(
+            Project.id,
+            Project.project_code,
+            Project.title,
+            Project.outcome,
+            Project.owner_user_id,
+        )
+        .filter(
+            or_(
+                _ws_insensitive_lower(Project.project_code).in_(keys),
+                _ws_insensitive_lower(Project.title).in_(keys),
+            )
+        )
+        .all()
+    )
+    for pid, code, title, outcome, owner_user_id in rows:
+        by_code = _strip_all_ws(str(code or "").lower())
+        by_title = _strip_all_ws(str(title or "").lower())
+        token = norm_to_token.get(by_code) or norm_to_token.get(by_title)
+        if not token:
+            continue
+        result[token].append(
+            ResolvedEntity(
+                entity_type="project",
+                canonical_code=code,
+                uuid=str(pid) if pid else None,
+                match_field="project_code" if norm_to_token.get(by_code) else "title",
+                display={
+                    "title": title,
+                    "outcome": outcome,
+                    "owner_user_id": owner_user_id,
+                },
+            )
+        )
+    return result
+
+
+def _probe_project_party(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Resolve a developer / architect / main contractor by name (AC-K1).
+
+    One probe for all party types rather than three: they share a table and a naming style,
+    and the party TYPE is returned in the display so the caller can tell "Damai Land the
+    developer" from a contractor of the same group. Filtering by type here would mean three
+    near-identical probes and a caller that has to know which one to ask.
+
+    The party name IS the canonical code -- these rows have no business code, which is the
+    honest answer for a record that exists because somebody typed a company name.
+    """
+    from app.models.projects import ProjectParty
+
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    norm_to_token = {_strip_all_ws(t.lower()): t for t in tokens}
+
+    rows = (
+        db.query(
+            ProjectParty.id,
+            ProjectParty.name,
+            ProjectParty.party_type,
+            ProjectParty.is_active,
+        )
+        .filter(_ws_insensitive_lower(ProjectParty.name).in_(list(norm_to_token.keys())))
+        .all()
+    )
+    for party_id, name, party_type, is_active in rows:
+        token = norm_to_token.get(_strip_all_ws(str(name or "").lower()))
+        if not token:
+            continue
+        result[token].append(
+            ResolvedEntity(
+                entity_type="project_party",
+                canonical_code=name,
+                uuid=str(party_id) if party_id else None,
+                match_field="name",
+                display={
+                    "party_type": party_type,
+                    "is_active": bool(is_active) if is_active is not None else True,
+                },
+            )
+        )
+    return result
+
+
+def _probe_user(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Resolve a colleague by full name or work email.
+
+    This exists because several tools filter on a USER uuid -- `owner_user_ids` on the project
+    list is the first, and "what is Ali working on" is the most natural way anyone asks for it.
+    Without a probe the model has no path from the name it was given to the uuid the filter
+    wants, so the filter is advertised in the tool description and unreachable in practice.
+
+    Deliberately EXACT (whitespace and case insensitive) and active-only:
+
+    * exact, because a fuzzy staff-name match is how one salesperson's numbers get reported as
+      another's, and there is no code on a user row to disambiguate with afterwards;
+    * active-only, because answering "Ali has 12 live projects" about somebody who left the
+      company is worse than answering "I could not find Ali".
+
+    Names are not unique, so several matches for one token is a normal outcome; the caller
+    decides (the dispatcher passes every uuid, which reads as "either of the two Alis").
+    """
+    from app.models.user import User, UserStatus
+
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    # A 1-2 character token is never a person; it is an initial or a unit, and matching it
+    # would put a user candidate on half the tokens in a sentence.
+    norm_to_token = {
+        _strip_all_ws(t.lower()): t for t in tokens if len(_strip_all_ws(t)) >= 3
+    }
+    if not norm_to_token:
+        return result
+    keys = list(norm_to_token.keys())
+
+    rows = (
+        db.query(User.id, User.name, User.email)
+        .filter(
+            # Plain equality, never `upper(status)`: the live column is a Postgres ENUM while
+            # the model declares String, so a function call on it fails on the real database
+            # and passes nowhere else.
+            User.status == UserStatus.ACTIVE.value,
+            or_(
+                _ws_insensitive_lower(User.name).in_(keys),
+                _ws_insensitive_lower(User.email).in_(keys),
+            ),
+        )
+        .all()
+    )
+    for user_id, name, email in rows:
+        norm_name = _strip_all_ws(str(name or "").lower())
+        norm_email = _strip_all_ws(str(email or "").lower())
+        token = norm_to_token.get(norm_name) or norm_to_token.get(norm_email)
+        if not token:
+            continue
+        result[token].append(
+            ResolvedEntity(
+                entity_type="user",
+                canonical_code=name or email,
+                uuid=str(user_id) if user_id else None,
+                match_field="name" if norm_to_token.get(norm_name) == token else "email",
+                display={"name": name, "email": email},
+            )
+        )
+    return result
+
+
 _TIER1_PROBES: tuple[tuple[Callable[[Session, list[str]], dict[str, list[ResolvedEntity]]], frozenset[str]], ...] = (
     (_probe_product, frozenset({"product"})),
     (_probe_customer_order, frozenset({"customer_order"})),
@@ -4008,6 +4219,9 @@ _TIER1_PROBES: tuple[tuple[Callable[[Session, list[str]], dict[str, list[Resolve
     (_probe_customer_debtor_name, frozenset({"customer"})),
     (_probe_attachment, frozenset({"attachment"})),
     (_probe_attachment_type, frozenset({"attachment_type"})),
+    (_probe_project, frozenset({"project"})),
+    (_probe_project_party, frozenset({"project_party"})),
+    (_probe_user, frozenset({"user"})),
     (_probe_certificate, frozenset({"certificate"})),
 )
 
@@ -4432,10 +4646,14 @@ def _rag_resolve_phrase(
         """
     )
     try:
-        rows = db.execute(
-            sql,
-            {"vec": list(query_vec), "types": allowed_source_types, "k": top_k},
-        ).all()
+        # SAVEPOINT: this lookup is best-effort, and a failed statement
+        # otherwise leaves the whole transaction aborted - every later
+        # query in the request would die on InFailedSqlTransaction.
+        with db.begin_nested():
+            rows = db.execute(
+                sql,
+                {"vec": list(query_vec), "types": allowed_source_types, "k": top_k},
+            ).all()
     except Exception:
         logger.exception("RAG vector query failed for phrase=%s", phrase)
         try:

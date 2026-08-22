@@ -1,3 +1,5 @@
+import type { VerificationBlock } from '../../spec-verification/types/specVerification.types';
+
 export interface SpecValue {
   value: string | number | boolean;
   unit?: string;
@@ -72,10 +74,16 @@ export interface ProductSpecDetail {
   /** The description the derivation read. Shown so a wrong value can be traced. */
   source_text: string;
   /**
-   * The flyer card for this code, where there is one. A value whose provenance says
-   * `flyer` was read from here and appears nowhere on the product master.
+   * Who vouched for this code and when, derived server-side (AC-D.2). Carried on this
+   * response rather than fetched separately, so the tab costs no second round trip and
+   * both company copies of a code read the same badge (AC-D.14).
    */
-  flyer_text: string | null;
+  verification: VerificationBlock;
+  /**
+   * The hash of the values on screen. Echoed back on verify, so a code whose values
+   * moved while it was being reviewed is refused rather than silently stamped (AC-D.4).
+   */
+  values_hash: string;
 }
 
 export interface SpecCandidate {
@@ -200,29 +208,4 @@ export interface SpecUnderstanding {
   exclusions: { key: string; value: string | number | boolean }[];
   free_terms: string[];
   notes: string;
-}
-
-export interface FindabilityRun {
-  id: string;
-  run_id?: string;
-  source_label: string | null;
-  window?: number;
-  cards: number;
-  found_by_card: number;
-  found_by_specs: number;
-  not_found: number;
-  /** running | complete | failed — a full flyer takes about half an hour. */
-  status?: string;
-  error?: string | null;
-  created_at?: string | null;
-}
-
-export interface FindabilityResult {
-  product_code: string;
-  is_discontinued: boolean;
-  phrase: string;
-  /** The easiest question that finds it: "one:product_type", "card", "all", "none". */
-  boundary: string;
-  /** Every angle tried, and where the product landed. Null means it never came back. */
-  ranks: Record<string, number | null>;
 }

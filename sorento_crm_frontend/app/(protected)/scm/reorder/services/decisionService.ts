@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * SCM M4 Slice B — DECISION feature service  (Accept / Adjust / Reject)
+ * SCM M4 Slice B - DECISION feature service  (Accept / Adjust / Reject)
  * ============================================================================
  * Layering: hooks (useDecisions) → THIS service → lib/api-client → backend.
  *

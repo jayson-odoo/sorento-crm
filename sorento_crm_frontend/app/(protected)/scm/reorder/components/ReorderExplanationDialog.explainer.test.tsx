@@ -25,6 +25,20 @@ vi.mock('../hooks/useExplainer', () => ({
   useAskRecommendation: (...a: unknown[]) => hAsk(...a),
 }));
 
+// Same reason for the Coverage Timeline panel: react-query-backed, and its own
+// states belong to CoverageTimelinePanel.test.tsx. Inert here.
+const coverage = vi.hoisted(() => ({
+  useCoverageTimeline: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  })),
+  useAcceptCoverageTransfer: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+}));
+vi.mock('../hooks/useCoverage', () => coverage);
+
 // jsdom polyfills for Radix Dialog / Popover.
 class ResizeObserverStub {
   observe() {}
@@ -148,18 +162,37 @@ const dispositionRec = () =>
     disposition_action: 'hold',
   });
 
-describe('ReorderExplanationDialog — M5 semantic layer', () => {
+/** The AI summary is on demand now: two model calls per open, spent 460 times while
+ *  stepping through 230 rows, bought a sentence that restates the numbers below it. Every
+ *  test that wants the block has to ask for it, which is the contract. */
+function askForTheSummary() {
+  // Tolerant on purpose: stepping to another rec resets the ask, but a rerender of the SAME
+  // rec keeps it, and a test should not care which of the two it is looking at.
+  const trigger = screen.queryByTestId('explain-in-words');
+  if (trigger) fireEvent.click(trigger);
+}
+
+describe('ReorderExplanationDialog - M5 semantic layer', () => {
+  it('costs nothing until it is asked for', () => {
+    setHooks({ explanation: { data: { explanation: 'You should order 4 units now.' } } });
+    render(<ReorderExplanationDialog rec={rec({})} open onOpenChange={() => {}} />);
+
+    expect(screen.queryByText('AI summary')).toBeNull();
+    expect(screen.getByTestId('explain-in-words')).toBeInTheDocument();
+  });
+
   it('renders a skeleton while the explanation is generating, then the sentence', () => {
     setHooks({ explanation: { data: undefined, isLoading: true } });
     const { rerender } = render(
       <ReorderExplanationDialog rec={rec({})} open onOpenChange={() => {}} />,
     );
 
+    askForTheSummary();
     // AI-summary block is present and shows a loading skeleton (no prose yet)
     expect(screen.getByText('AI summary')).toBeInTheDocument();
     expect(document.querySelector('[aria-label="Generating explanation"]')).not.toBeNull();
 
-    // Flip to loaded — the generated sentence renders in place of the skeleton
+    // Flip to loaded - the generated sentence renders in place of the skeleton
     setHooks({ explanation: { data: { explanation: 'You should order 4 units now.' } } });
     rerender(<ReorderExplanationDialog rec={rec({})} open onOpenChange={() => {}} />);
     expect(screen.getByText('You should order 4 units now.')).toBeInTheDocument();
@@ -169,6 +202,7 @@ describe('ReorderExplanationDialog — M5 semantic layer', () => {
   it('shows an error fallback (not a fabricated sentence) when generation fails', () => {
     setHooks({ explanation: { data: undefined, isLoading: false, isError: true } });
     render(<ReorderExplanationDialog rec={rec({})} open onOpenChange={() => {}} />);
+    askForTheSummary();
     expect(screen.getByText('AI summary')).toBeInTheDocument();
     expect(
       screen.getByText(/Couldn.t generate a plain-language summary/i),
@@ -179,6 +213,7 @@ describe('ReorderExplanationDialog — M5 semantic layer', () => {
     const { rerender } = render(
       <ReorderExplanationDialog rec={rec({})} open onOpenChange={() => {}} />,
     );
+    askForTheSummary();
     expect(screen.getByText('AI summary')).toBeInTheDocument();
     // buy recs get the bounded Ask box
     expect(screen.getByText('Ask about this recommendation')).toBeInTheDocument();
@@ -188,15 +223,18 @@ describe('ReorderExplanationDialog — M5 semantic layer', () => {
     rerender(
       <ReorderExplanationDialog rec={dispositionRec()} open onOpenChange={() => {}} />,
     );
+    askForTheSummary();
     expect(screen.getByText('AI summary')).toBeInTheDocument();
     expect(screen.getByText('Ask about this recommendation')).toBeInTheDocument();
   });
 
   it('shows the market-advisory callout only when an advisory is present', () => {
-    setHooks({ advisory: { data: { advisory: 'Tile prices trending +8% — order sooner.' } } });
+    setHooks({ advisory: { data: { advisory: 'Tile prices trending +8% - order sooner.' } } });
     const { rerender } = render(
       <ReorderExplanationDialog rec={rec({})} open onOpenChange={() => {}} />,
     );
+    // The advisory is a market-search call, so it rides the same ask as the summary.
+    askForTheSummary();
     expect(screen.getByText('Market signal')).toBeInTheDocument();
     expect(screen.getByText(/Tile prices trending \+8%/i)).toBeInTheDocument();
 

@@ -35,6 +35,9 @@ export const PurchaseRequestSchema = z.object({
   // Optional by design: many forms have no named site contact.
   pic: z.string().max(500).optional().nullable(),
   project_title: z.string().max(500).optional().nullable(),
+  // AC-L3. The portal already offers this picker to contacts (AC-F4); this is the office-side
+  // half, so a form typed in by CS can carry the same reportable link.
+  project_id: z.string().uuid().optional().nullable(),
   purpose: z.string().max(500).optional().nullable(),
   delivery_address: z.string().max(2000).optional().nullable(),
   total_project_value: projectValueSchema,

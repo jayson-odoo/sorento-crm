@@ -9,6 +9,7 @@ from app.api.v1 import (
     procurement,
     incoming_stock,
     marketing,
+    projects,
     forms,
     complaints,
     sla,
@@ -26,6 +27,7 @@ from app.api.v1 import (
     activities,
     tickets,
     downloads,
+    dealer_kit,
     scm,
 )
 from app.api.v1.system import modules_runtime, rule_facts, companies as system_companies
@@ -82,6 +84,12 @@ api_router.include_router(
     prefix="/marketing",
     tags=["marketing"],
     dependencies=[Depends(require_module_enabled_with_api_key("marketing"))],
+)
+api_router.include_router(
+    projects.router,
+    prefix="/project-sales",
+    tags=["project-sales"],
+    dependencies=[Depends(require_module_enabled_with_api_key("projects"))],
 )
 api_router.include_router(
     forms.router,
@@ -215,6 +223,14 @@ api_router.include_router(
     prefix="/scm",
     tags=["scm"],
     dependencies=[Depends(require_module_enabled_with_api_key("scm"))],
+)
+
+# Dealer Sales Kit — catalogue page builder, collections, brochure export.
+api_router.include_router(
+    dealer_kit.router,
+    prefix="/dealer-kit",
+    tags=["dealer-kit"],
+    dependencies=[Depends(require_module_enabled_with_api_key("dealer_kit"))],
 )
 
 # Auto-discovery of self-contained modules under app/modules/<key>/.

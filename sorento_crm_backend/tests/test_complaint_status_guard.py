@@ -3,6 +3,12 @@
 Lifecycle: submitted -> responded -> approved|rejected ; approved -> processed_by_cs|closed.
 'Save only' (update_complaint) may move new/submitted/updated -> 'updated', but must
 leave a decided/terminal complaint (approved/rejected/processed_by_cs/closed) untouched.
+
+Superseded in part by the response gate (UAC-portal-submission-revisions O1): on a
+decided/terminal complaint the response can no longer be edited at all, so
+"the save does not regress the status" became "the save is refused". The status
+is still untouched, which is what this file exists to protect. See
+tests/test_response_status_gate.py for the full gate.
 """
 from __future__ import annotations
 
@@ -17,6 +23,7 @@ from app.database import SessionLocal, engine
 from app.models.complaints import Complaint
 from app.schemas.complaints import ComplaintUpdate
 from app.services.complaints_service import ComplaintService
+from app.services.error_handler import AppException
 
 
 @pytest.fixture(autouse=True)
@@ -55,11 +62,18 @@ def _edit_response(db: Session, cid: str, text_value: str) -> Complaint:
 
 
 @pytest.mark.parametrize("terminal", ["approved", "rejected", "processed_by_cs", "closed"])
-def test_edit_response_does_not_regress_decided_status(db: Session, terminal: str) -> None:
+def test_edit_response_refused_on_decided_status(db: Session, terminal: str) -> None:
+    """The response is stage output, so a decided complaint refuses the edit (422)
+    rather than accepting it without a status move. The status stays put either way."""
     c = _seed(db, terminal)
-    out = _edit_response(db, c.id, "edited note after decision")
-    assert out.status == terminal  # unchanged
-    assert (out.technical_team_response or "").strip() != ""
+    with pytest.raises(AppException) as ei:
+        _edit_response(db, c.id, "edited note after decision")
+    assert ei.value.status_code == 422
+
+    db.rollback()
+    db.refresh(c)
+    assert c.status == terminal  # unchanged
+    assert c.technical_team_response is None  # the edit never landed
 
 
 def test_edit_response_moves_submitted_to_updated(db: Session) -> None:

@@ -78,6 +78,9 @@ def db() -> Iterator[Session]:
         s.close()
 
 
+SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
+
+
 def _seed_policy(db: Session) -> SLAPolicy:
     existing = db.query(SLAPolicy).filter(SLAPolicy.code == POLICY_CODE).first()
     if existing:
@@ -87,6 +90,12 @@ def _seed_policy(db: Session) -> SLAPolicy:
         code=POLICY_CODE,
         name="NBR Conversation Policy",
         is_active=True,
+        # sla_policies.company_id is NOT NULL at the DB level (migration 320) even
+        # though the model still declares it nullable=True for callers with no
+        # company context; this test runs against the real (non-blank) schema so
+        # the constraint applies. Sorento is the incumbent company for all
+        # pre-multi-company data.
+        company_id=SORENTO_COMPANY_ID,
     )
     db.add(p)
     db.commit()
@@ -97,7 +106,12 @@ def _seed_policy(db: Session) -> SLAPolicy:
 def _seed_contact(db: Session, idx: int, *, name_marker: str = NAME_MARKER) -> RespondContact:
     c = RespondContact(
         id=str(uuid.uuid4()),
-        phone_number=f"{PHONE_PREFIX}{idx:04d}",
+        # Unique per row, not just per index. `phone_number` is UNIQUE and the
+        # cleanup below deletes by NAME, so any contact this file leaves behind -
+        # a run killed mid-test, or a wipe that rolled back on someone else's FK -
+        # made every later test in the file die on a duplicate key rather than on
+        # anything it was testing.
+        phone_number=f"{PHONE_PREFIX}{idx:04d}-{uuid.uuid4().hex[:8]}",
         name=f"{name_marker}-{idx:03d}",
     )
     db.add(c)
@@ -148,12 +162,27 @@ def _seed_ordered_set(
 # --------------------------------------------------------------------------- #
 # Service-level: ConversationSLATrackingService.neighbours                      #
 # --------------------------------------------------------------------------- #
+#
+# Every test below that checks an EXACT total, an absolute wrap index, or a
+# fixed prev/next also passes `tracking_ids=[our own ids]` to `neighbours()`.
+# `neighbours()` ANDs that onto the query (`ConversationSLATracking.id.in_
+# (tracking_ids)`), so the filtered set this test's assertions describe is
+# LITERALLY only the rows this test just seeded - no marker text, no ambient
+# row count, and no other xdist worker's `conversation_sla_tracking` writes
+# can change what that query returns. `query=NAME_MARKER` is kept alongside
+# where it was already there so the marker-based filtering it exercises is
+# still covered, not replaced.
+
 
 def test_neighbours_middle_record_happy_path(db: Session) -> None:
     rows = _seed_ordered_set(db, 5)
     svc = ConversationSLATrackingService(db)
     out = svc.neighbours(
-        rows[2].id, query=NAME_MARKER, sort_field="current_tier", sort_dir="asc"
+        rows[2].id,
+        query=NAME_MARKER,
+        tracking_ids=[r.id for r in rows],
+        sort_field="current_tier",
+        sort_dir="asc",
     )
     assert out["total"] == 5
     assert out["index"] == 3  # 1-based position of the 3rd row
@@ -163,7 +192,10 @@ def test_neighbours_middle_record_happy_path(db: Session) -> None:
 
 def test_neighbours_filter_respected_total_equals_filtered_count(db: Session) -> None:
     # Seed a filtered subset plus extra non-matching rows; the neighbours total
-    # must equal the filtered count, not the unfiltered total.
+    # must equal the filtered count, not the unfiltered total. The "unfiltered"
+    # side only needs `!=` against a small known number (3), never an exact
+    # match to a separately-fetched live count, so it stays safe even though it
+    # is a genuinely unscoped read.
     target = _seed_ordered_set(db, 3)
     # Noise: conversation rows whose contact name does NOT contain "NBRCONV-"
     # (no hyphen after the prefix) so query="NBRCONV-" excludes them, while the
@@ -189,8 +221,15 @@ def test_neighbours_filter_respected_total_equals_filtered_count(db: Session) ->
 def test_neighbours_sort_dir_reorders_neighbours(db: Session) -> None:
     rows = _seed_ordered_set(db, 5)  # current_tier 0..4
     svc = ConversationSLATrackingService(db)
-    asc = svc.neighbours(rows[2].id, query=NAME_MARKER, sort_field="current_tier", sort_dir="asc")
-    desc = svc.neighbours(rows[2].id, query=NAME_MARKER, sort_field="current_tier", sort_dir="desc")
+    ids = [r.id for r in rows]
+    asc = svc.neighbours(
+        rows[2].id, query=NAME_MARKER, tracking_ids=ids,
+        sort_field="current_tier", sort_dir="asc",
+    )
+    desc = svc.neighbours(
+        rows[2].id, query=NAME_MARKER, tracking_ids=ids,
+        sort_field="current_tier", sort_dir="desc",
+    )
     assert asc["prev_id"] == rows[1].id and asc["next_id"] == rows[3].id
     assert desc["prev_id"] == rows[3].id and desc["next_id"] == rows[1].id
     assert asc["total"] == desc["total"] == 5
@@ -199,7 +238,10 @@ def test_neighbours_sort_dir_reorders_neighbours(db: Session) -> None:
 def test_neighbours_first_record_prev_wraps_to_last(db: Session) -> None:
     rows = _seed_ordered_set(db, 4)
     svc = ConversationSLATrackingService(db)
-    out = svc.neighbours(rows[0].id, query=NAME_MARKER, sort_field="current_tier", sort_dir="asc")
+    out = svc.neighbours(
+        rows[0].id, query=NAME_MARKER, tracking_ids=[r.id for r in rows],
+        sort_field="current_tier", sort_dir="asc",
+    )
     assert out["index"] == 1
     assert out["prev_id"] == rows[3].id  # wraps to last
     assert out["next_id"] == rows[1].id
@@ -208,28 +250,58 @@ def test_neighbours_first_record_prev_wraps_to_last(db: Session) -> None:
 def test_neighbours_last_record_next_wraps_to_first(db: Session) -> None:
     rows = _seed_ordered_set(db, 4)
     svc = ConversationSLATrackingService(db)
-    out = svc.neighbours(rows[3].id, query=NAME_MARKER, sort_field="current_tier", sort_dir="asc")
+    out = svc.neighbours(
+        rows[3].id, query=NAME_MARKER, tracking_ids=[r.id for r in rows],
+        sort_field="current_tier", sort_dir="asc",
+    )
     assert out["index"] == 4
     assert out["next_id"] == rows[0].id  # wraps to first
     assert out["prev_id"] == rows[2].id
 
 
 def test_neighbours_out_of_filter_falls_back_to_unfiltered(db: Session) -> None:
-    # The record exists but is NOT in the active filtered set. The service must fall
-    # back to the unfiltered conversation set so the pager is never dead, and the
-    # total reflects the unfiltered count.
-    _seed_ordered_set(db, 3)  # match query=NAME_MARKER
+    # The record exists but is NOT in the active filtered set. The service must
+    # fall back to the unfiltered conversation set so the pager is never dead,
+    # and the total reflects the unfiltered count, not the filtered one.
+    #
+    # This used to prove that second half by comparing two SEPARATELY fetched
+    # live totals of the real, shared `conversation_sla_tracking` table (one
+    # probe call, then `out["total"]` from the fallback) for equality - the
+    # same shape as `test_complaint_neighbours.py`'s BL-034 flake, and for the
+    # same reason: `conversation_sla_tracking` is not this test's own table,
+    # another xdist worker's file can insert/delete rows between the two
+    # reads, and D2's own fallback is INTENTIONALLY unscoped (`tracking_ids`
+    # cannot narrow it - that would defeat the point of "fall back to the
+    # whole set"). What matters - that the fallback used the unfiltered scope,
+    # not the filtered one - is provable from this test's own marker rows
+    # alone.
+    in_set = _seed_ordered_set(db, 3)  # match query=NAME_MARKER
     policy = _seed_policy(db)
     outside_contact = _seed_contact(db, 200, name_marker="NBRCONVOUTSIDE")
     outside = _seed_tracking(db, policy, outside_contact, current_tier=9)
+    own_ids = {r.id for r in in_set} | {outside.id}
 
     svc = ConversationSLATrackingService(db)
-    unfiltered_total = svc.neighbours(outside.id)["total"]
-
     out = svc.neighbours(outside.id, query=NAME_MARKER + "-", sort_field="current_tier")
+    # Fell back: not found in the filtered 3-row set, so index resolved against
+    # the wider one instead of staying None.
     assert out["index"] is not None, "D2 fallback must resolve the record"
-    assert out["total"] == unfiltered_total
-    assert out["total"] > 3  # bigger than the filtered subset
+    # Strictly bigger than the filtered subset (3): the filter was genuinely
+    # dropped, not narrowly re-applied.
+    assert out["total"] > 3
+
+    # And dropped ENTIRELY: every one of this test's own rows - marker rows
+    # nothing else in the suite writes - must be reachable in the SAME
+    # unfiltered scope `neighbours()`'s own D2 branch reads.
+    from app.models.sla import ConversationSLATracking as _Tracking
+
+    fallback_ids = {
+        str(row[0])
+        for row in svc._build_conversation_list_query(db.query(_Tracking))
+        .with_entities(_Tracking.id)
+        .all()
+    }
+    assert own_ids <= fallback_ids
 
 
 def test_neighbours_excludes_form_sla_rows(db: Session) -> None:
@@ -241,13 +313,22 @@ def test_neighbours_excludes_form_sla_rows(db: Session) -> None:
     form_row = _seed_tracking(
         db, policy, form_contact, current_tier=5, source_entity_type="complaint"
     )
+    all_ids = [r.id for r in conv] + [form_row.id]
 
     svc = ConversationSLATrackingService(db)
-    out = svc.neighbours(conv[0].id, query=NAME_MARKER, sort_field="current_tier")
+    # `tracking_ids=all_ids` scopes the SQL itself to exactly these 4 known
+    # rows, so "3, not 4" can only come from `conversation_tracking_scope()`
+    # excluding form_row - never from an ambient row elsewhere inflating or
+    # deflating the count.
+    out = svc.neighbours(
+        conv[0].id, query=NAME_MARKER, tracking_ids=all_ids, sort_field="current_tier"
+    )
     assert out["total"] == 3, "form rows must not inflate the conversation total"
 
     # The form row is not in the conversation scope -> resolved only via the D2
-    # unfiltered fallback, which is ALSO conversation-scoped, so it stays absent.
+    # unfiltered fallback, which is ALSO conversation-scoped, so it stays
+    # absent regardless of what else is in the table (an absence, so nothing
+    # ambient can make it wrongly present).
     form_out = svc.neighbours(form_row.id, query=NAME_MARKER, sort_field="current_tier")
     assert form_out["index"] is None
     assert form_out["prev_id"] is None and form_out["next_id"] is None

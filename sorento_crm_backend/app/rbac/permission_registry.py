@@ -42,9 +42,42 @@ PERMISSION_REGISTRY.extend([
     {"slug": "user_management.account.view", "name": "View Account", "description": "Permission to view own account."},
 ])
 PERMISSION_REGISTRY.append({
+    "slug": "user_management.contacts.view",
+    "name": "View Contacts",
+    "description": "Permission to view respond contacts and their routing, segments and access grants.",
+})
+PERMISSION_REGISTRY.append({
     "slug": "user_management.contacts.portal_link",
     "name": "Get contact portal link",
     "description": "Generate or send a user-submission portal link for a respond contact.",
+})
+# Contact editing had no slug at all - every contact write is `get_current_user`
+# only, so today any authenticated user may change one. This names that authority
+# so the media gate can be enforced against something, and migration 357 grants it
+# to every existing role, which reproduces today's reach exactly rather than
+# silently narrowing it. Revoking it per role is now possible; it was not before.
+PERMISSION_REGISTRY.append({
+    "slug": "user_management.contacts.edit",
+    "name": "Edit Contacts",
+    "description": "Edit a respond contact, including its chatbot media access and monthly limits.",
+})
+# Onboarding intake / review / provisioning. `.approve` is deliberately its own
+# slug rather than riding `.edit`: approving is what creates real users with real
+# access, so who reviews and who signs off can be different people (the
+# Edition-approval convention).
+PERMISSION_REGISTRY.extend(_crud("user_management", "onboarding", "Onboarding Requests"))
+PERMISSION_REGISTRY.append({
+    "slug": "user_management.onboarding.approve",
+    "name": "Approve Onboarding Requests",
+    "description": (
+        "Approve a reviewed onboarding request, which queues provisioning for every "
+        "approved person."
+    ),
+})
+PERMISSION_REGISTRY.append({
+    "slug": "user_management.reference_data.view",
+    "name": "View Reference Data",
+    "description": "Permission to read shared reference catalogs (contact access types, market segments) used by pickers across modules.",
 })
 
 # Delivery Order Management
@@ -54,6 +87,13 @@ PERMISSION_REGISTRY.append({"slug": "order_management.orders.export", "name": "E
 PERMISSION_REGISTRY.append({"slug": "order_management.orders.bulk_delete", "name": "Bulk Delete Delivery Orders", "description": "Permission to bulk delete delivery orders."})
 PERMISSION_REGISTRY.extend(_crud("order_management", "order_statuses", "Delivery Order Statuses"))
 PERMISSION_REGISTRY.extend(_crud("order_management", "customers", "Customers"))
+PERMISSION_REGISTRY.append({
+    "slug": "order_management.customers.import",
+    "name": "Import Customers",
+    "description": (
+        "Upload a debtor listing to create and update customers for the active company."
+    ),
+})
 
 # Complaint Management
 PERMISSION_REGISTRY.extend(_crud("complaint_management", "complaints", "Complaints"))
@@ -111,6 +151,20 @@ PERMISSION_REGISTRY.extend([
     {"slug": "sla_management.conversation_sla_tracking.takeover", "name": "Takeover SLA task", "description": "Take over a teammate's conversation SLA task (and cancel/reject pending takeovers)."},
 ])
 PERMISSION_REGISTRY.extend(_crud("sla_management", "escalation_logs", "SLA Event Logs"))
+# Conversations inbox (UAC AC-N2). READ access to a contact thread is a
+# PERMISSION, deliberately not ticket assignment: a reassigned-away previous
+# assignee, a mentioned colleague and a manager all have to be able to read.
+# `.reply` is the separate act gate for sending from the inbox - the ticket
+# drawer's own send keeps its assignee-or-manager rule and needs neither slug.
+PERMISSION_REGISTRY.extend([
+    {"slug": "sla_management.conversations.view", "name": "View Conversations", "description": "Read any contact's conversation thread, its notes and its media from the Conversations inbox (read access is a permission, not ticket assignment)."},
+    {"slug": "sla_management.conversations.reply", "name": "Reply in Conversations", "description": "Send a WhatsApp reply to a contact from the Conversations inbox. Stamped onto the sender's own open ticket for that contact when they hold exactly one."},
+])
+# Composer snippets (UAC AC-L4). `.view` is what the ticket composer's "/" picker
+# reads, so it is granted to everyone who works tickets (migration 329 copies the
+# grants from `sla_management.conversation_sla_tracking.view`); add/edit/delete
+# are the admin CRUD page.
+PERMISSION_REGISTRY.extend(_crud("sla_management", "message_snippets", "Message Snippets"))
 PERMISSION_REGISTRY.extend([
     {"slug": "sla_management.form_sla_config.view", "name": "View Form SLA Configurations", "description": "View per-form SLA stage configurations (start / respond / resolve trigger transitions, agent + chain)."},
     {"slug": "sla_management.form_sla_config.manage", "name": "Manage Form SLA Configurations", "description": "Create, update, delete per-form SLA stage configurations."},
@@ -140,6 +194,10 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
 PERMISSION_REGISTRY.extend(_with_import_export("master_data", "certificates", "Certificates"))
+# The salesperson master. `.edit` gates the annotation (who a code belongs to, and what
+# its orders count as); there is no add/delete surface, but the four slugs ship together
+# so the slug set matches the AutoCount branch's mirror pages exactly.
+PERMISSION_REGISTRY.extend(_crud("master_data", "sales_agents", "Sales Agents"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_root_causes", "Complaint Root Causes"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_resolutions", "Complaint Resolutions"))
 
@@ -257,6 +315,11 @@ PERMISSION_REGISTRY.extend([
     {"slug": "integration.contacts.sync", "name": "Sync contacts", "description": "Create or update Respond.io contact records from an external system."},
     {"slug": "integration.semantic_search.use", "name": "Use semantic search", "description": "Run embedding and tool retrieval searches."},
     {"slug": "integration.ideation.submit", "name": "Submit ideation turns", "description": "Post ideation capture turns from an external channel."},
+    # Chatbot media (PLAN-chatbot-media-endpoint). Its own slug because this one
+    # spends extraction budget: an integration allowed to sync contacts is not
+    # automatically allowed to charge a photo read to a dealer's allowance.
+    # Granted to already-provisioned roles by migration 357.
+    {"slug": "integration.chatbot_media.process", "name": "Process chatbot media", "description": "Submit an inbound WhatsApp photo or voice note for gating, metering and extraction."},
 ])
 
 # System
@@ -406,6 +469,127 @@ PERMISSION_REGISTRY.extend([
             "Create, edit, and delete statuses and transitions, and migrate records "
             "between statuses."
         ),
+    },
+])
+
+# Project Sales (UAC Group J). Every salesperson sees every project read-only, by
+# design: the module exists to stop two people unknowingly working one tender, and
+# hiding other people's projects would recreate exactly that blindness. Editing is
+# restricted to the owner and approved collaborators, enforced in the service.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "projects.projects.view",
+        "name": "View Projects",
+        "description": "View the project pipeline, project detail, and forecasts.",
+    },
+    {
+        "slug": "projects.projects.edit",
+        "name": "Edit Projects",
+        "description": (
+            "Register projects, edit projects you own or collaborate on, and move "
+            "them through the funnel."
+        ),
+    },
+    {
+        "slug": "projects.projects.delete",
+        "name": "Delete Projects",
+        "description": "Hard-delete a project that has no Project PO recorded.",
+    },
+    {
+        "slug": "projects.projects.manage",
+        "name": "Manage Any Project",
+        "description": (
+            "Sales-manager grant: reassign owners, decide join requests and disputes, "
+            "and edit any project regardless of ownership."
+        ),
+    },
+    {
+        "slug": "projects.quotations.approve",
+        "name": "Approve Below-Floor Quotations",
+        "description": (
+            "Sales-manager grant: approve or reject a quotation carrying a line priced "
+            "below its price floor, which is what lets it be issued to the customer. The "
+            "whole access control on that decision - there is no team-tier resolution "
+            "behind it - so it is deliberately narrow."
+        ),
+    },
+    {
+        "slug": "projects.parties.view",
+        "name": "View Project Parties",
+        "description": (
+            "View the organisation master of developers, architects, main contractors, "
+            "trading houses and consultants."
+        ),
+    },
+    {
+        "slug": "projects.parties.edit",
+        "name": "Edit Project Parties",
+        "description": "Create, edit and delete project party organisations.",
+    },
+    {
+        "slug": "projects.order_inquiry.action",
+        "name": "Action Order Inquiry Rows",
+        "description": (
+            "Purchasing grant: mark an order inquiry row actioned or cancelled. Held by "
+            "purchasing rather than by the project's salesperson, because the row is "
+            "purchasing's work and they do not own the project it came from."
+        ),
+    },
+    {
+        "slug": "projects.types.view",
+        "name": "View Project Types and Templates",
+        "description": "View configurable project types, templates and stakeholder roles.",
+    },
+    {
+        "slug": "projects.types.edit",
+        "name": "Edit Project Types and Templates",
+        "description": (
+            "Create and edit project types, templates and the stakeholder roles a "
+            "template offers."
+        ),
+    },
+])
+
+
+# SCM (supply chain) — these five were previously created ONLY by migration 274's data
+# seed. Any database built the way CI and `scripts/bootstrap_env` build one (create_all
+# from the ORM, seed reference data, stamp alembic at head) never executes that seed, so
+# the slugs did not exist and every SCM route answered 403 "Permission required:
+# scm.dashboard.view". Declaring them here is what makes them real on a fresh database;
+# migration 274 stays as the path for databases that were already migrated. `sync_permissions`
+# skips slugs that exist, so the two paths cannot conflict.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "scm.dashboard.view",
+        "name": "View SCM dashboard",
+        "description": "View the supply-chain / reorder dashboard and position views.",
+    },
+    {
+        "slug": "scm.reorder.run",
+        "name": "Run reorder engine",
+        "description": "Trigger a reorder run that produces recommendations.",
+    },
+    {
+        "slug": "scm.recommendation.manage",
+        "name": "Manage reorder recommendations",
+        "description": "Review, override, approve, or reject reorder recommendations.",
+    },
+    {
+        "slug": "scm.policy.manage",
+        "name": "Manage reorder policies",
+        "description": "Create, update, and delete reorder / scoring / demand policies.",
+    },
+    {
+        "slug": "scm.config.manage",
+        "name": "Manage SCM configuration",
+        "description": "Manage SCM module configuration, budgets, and reason vocabularies.",
+    },
+    # Migration 375 creates this one and sweeps it onto whoever holds `scm.reorder.run`;
+    # declared here so a create_all database (CI, `scripts/bootstrap_env`) has it at all.
+    {
+        "slug": "scm.proforma_invoice.upload",
+        "name": "Upload proforma invoices",
+        "description": "Upload, apply and delete supplier proforma invoices.",
     },
 ])
 

@@ -18,8 +18,14 @@ from app.models.order import Order, OrderLine
 from app.models.product import Product
 from app.models.procurement import ViewToken
 from app.models.sla import ConversationSLATracking
+from app.services.sla_scope import open_tracker_scope
 from app.schemas.complaints import ComplaintCreate, ComplaintUpdate
 from app.services.error_handler import handle_not_found
+from app.services.response_gate import (
+    ALLOWED_RESPONSE_STATUSES,
+    assert_response_write_allowed,
+    response_text_changed,
+)
 from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.banner_person_service import wa_phone_for_respond_user_id
 
@@ -253,7 +259,7 @@ class ComplaintService:
             .filter(
                 ConversationSLATracking.source_entity_type == "complaint",
                 ConversationSLATracking.source_entity_id == complaint_id,
-                ConversationSLATracking.is_resolved.is_(False),
+                *open_tracker_scope(),
             )
             .order_by(ConversationSLATracking.initiated_at.desc())
             .first()
@@ -296,6 +302,7 @@ class ComplaintService:
         handled_by_wa_phone_override=_UNSET,
         rejected_by_wa_phone_override=_UNSET,
         last_responded_by_name_override=_UNSET,
+        project_display_override=_UNSET,
     ) -> dict:
         """Serialize complaint with attachments from generic entity_attachment_links table.
 
@@ -308,6 +315,33 @@ class ComplaintService:
         data["system_id"] = str(complaint.id)
         data["print_count"] = int(print_count or 0)
         data["form_type"] = "complaint"
+        # A python property, so column_attrs skips it. The detail page gates its
+        # response affordances on this rather than mirroring the allowed-status list
+        # (UAC O1) - one source for the rule, on both sides of the wire.
+        data["response_write_allowed"] = complaint.response_write_allowed
+        # AC-L3 + the no-UUIDs-in-the-UI rule: the FE renders this dict, so a bare
+        # `project_id` would put a UUID on screen. Resolved here rather than in the FE so
+        # every surface (detail, list, PDF, webhook) shows the same identifier.
+        data["project_code"] = None
+        data["project_name"] = None
+        if project_display_override is not _UNSET:
+            # The list path resolved every linked project in one query. Batched for the same
+            # reason as the view tokens and user names above: this lookup fired once per linked
+            # row, which is the N+1 this serializer's whole override convention exists to avoid.
+            code, name = project_display_override or (None, None)
+            data["project_code"] = code
+            data["project_name"] = name
+        elif complaint.project_id:
+            from app.models.projects import Project
+
+            project = (
+                self.db.query(Project.project_code, Project.title)
+                .filter(Project.id == str(complaint.project_id))
+                .first()
+            )
+            if project:
+                data["project_code"] = project[0]
+                data["project_name"] = project[1]
         data["view_url"] = (
             view_url_override
             if view_url_override is not None
@@ -751,6 +785,7 @@ class ComplaintService:
         # Batch the per-row enrichment that previously fired O(rows) queries:
         # view tokens, SLA assignee trackers, and user display names.
         view_url_map = self._batch_complaint_view_urls(complaint_ids)
+        project_display_map = self._batch_project_display(complaints)
         sla_tracker_map = self._batch_latest_unresolved_sla_trackers(complaint_ids)
         wanted_user_ids: set[str] = set()
         for c in complaints:
@@ -792,6 +827,11 @@ class ComplaintService:
                 links_override=links_map.get(str(complaint.id), []),
                 print_count=print_map.get(str(complaint.id), 0),
                 view_url_override=view_url_map.get(str(complaint.id)),
+                project_display_override=(
+                    project_display_map.get(str(complaint.project_id))
+                    if getattr(complaint, "project_id", None)
+                    else None
+                ),
                 assigned_to_name_override=_assigned_name(complaint),
                 handled_by_name_override=_handled_name(complaint),
                 # Banners (handling-lock / rejection) render on the DETAIL page only,
@@ -1033,6 +1073,26 @@ class ComplaintService:
         path = f"/complaint-management/complaints/{complaint_id}"
         return f"{base_url}{path}" if base_url else path
 
+    def _batch_project_display(self, complaints) -> dict:
+        """`{project_id: (project_code, title)}` for the linked projects on one page.
+
+        One query for the page instead of one per linked complaint. Returns `{}` when nothing
+        on the page carries a link, which is the common case.
+        """
+        project_ids = {
+            str(c.project_id) for c in complaints if getattr(c, "project_id", None)
+        }
+        if not project_ids:
+            return {}
+        from app.models.projects import Project
+
+        return {
+            str(row[0]): (row[1], row[2])
+            for row in self.db.query(Project.id, Project.project_code, Project.title)
+            .filter(Project.id.in_(list(project_ids)))
+            .all()
+        }
+
     def _batch_complaint_view_urls(self, complaint_ids: List[str]) -> dict:
         """Resolve view URLs for many complaints with O(1) queries instead of O(rows).
 
@@ -1109,7 +1169,7 @@ class ComplaintService:
             .filter(
                 ConversationSLATracking.source_entity_type == "complaint",
                 ConversationSLATracking.source_entity_id.in_(ids),
-                ConversationSLATracking.is_resolved.is_(False),
+                *open_tracker_scope(),
             )
             .order_by(ConversationSLATracking.initiated_at.desc())
             .all()
@@ -1711,7 +1771,12 @@ class ComplaintService:
     # regress the status - the lifecycle is:
     #   submitted -> responded -> approved | rejected
     #   approved  -> processed_by_cs | closed
-    _RESPONSE_STAGE_STATUSES: tuple[str, ...] = ("new", "submitted", "updated", "responded")
+    #
+    # The same tuple now also GATES the response write (UAC O1): outside these
+    # states the technical team response cannot be rewritten at all, not merely
+    # written without a status move. It lives in response_gate so the gate and
+    # the status flip can never disagree about what the response stage is.
+    _RESPONSE_STAGE_STATUSES: tuple[str, ...] = ALLOWED_RESPONSE_STATUSES["complaint"]
 
     def update_complaint(self, complaint_id: str, complaint_data: ComplaintUpdate):
         """Update a complaint."""
@@ -1731,6 +1796,28 @@ class ComplaintService:
             update_data["technical_team_response"] = self._normalize_complaint_reply_body_for_storage(
                 str(update_data["technical_team_response"])
             )
+
+        # Response gate (UAC O1): the technical team response is stage output, so
+        # it may only be REWRITTEN while the complaint is still waiting for one.
+        # Every other field stays editable at any status, and a save that posts
+        # the response back unchanged (the edit form posts the whole complaint)
+        # is not a response write. Compared post-normalization so a whitespace or
+        # preamble difference alone does not read as an edit.
+        #
+        # BOTH sides go through the normalizer, never just the incoming one. The
+        # legacy-preamble strip only ever ran on WRITE, so every row stored before
+        # it landed still carries "There has been an update regarding your
+        # complaint ...: " - while the detail page and the edit form render (and
+        # therefore post back) the stripped body. Comparing bare-incoming against
+        # raw-stored read as a rewrite and 422'd an office save that only touched
+        # the customer's address.
+        if "technical_team_response" in update_data and response_text_changed(
+            self._normalize_complaint_reply_body_for_storage(
+                getattr(complaint, "technical_team_response", None)
+            ),
+            update_data.get("technical_team_response"),
+        ):
+            assert_response_write_allowed("complaint", complaint.status)
 
         # NOTE: a plain save must NOT auto-transition the status. Editing fields
         # (incl. technical_team_response) keeps whatever state the complaint is
@@ -1778,8 +1865,13 @@ class ComplaintService:
         crm_sender_user_id: Optional[str] = None,
     ):
         """
-        Update complaint, set status=responded, mark SLA tracking as responded,
-        and queue the Respond.io technical-team message via RQ.
+        Deliver the technical team response: set status=responded, mark SLA tracking
+        as responded, record ``last_responded_*`` and queue the Respond.io message.
+
+        This is the RESPONSE path, not the chat path, so it is gated on status
+        (UAC O1): outside the response stage it raises 422. Plain messaging is a
+        different endpoint (``/conversation/send-message``) and stays open at any
+        status, including approved, rejected and closed complaints (UAC O2).
 
         DB writes commit synchronously; the external Respond.io call is decoupled
         through the ``respond_io`` queue so a downstream 4xx/5xx no longer rolls
@@ -1796,6 +1888,10 @@ class ComplaintService:
         log_service = IntegrationLogService(self.db)
 
         complaint = self.get_complaint(complaint_id)
+        # The whole call is a response write (it rewrites technical_team_response,
+        # stamps last_responded_* and fires the technical_team_response SLA event),
+        # so refuse it outside the response stage rather than gating one field.
+        assert_response_write_allowed("complaint", complaint.status)
         update_data = complaint_data.model_dump(exclude_unset=True)
         # Same handling as update_complaint: `product_lines` dumps to a list of plain
         # dicts, and the setattr loop below would assign them straight onto the ORM

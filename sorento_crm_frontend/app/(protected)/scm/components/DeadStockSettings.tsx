@@ -14,7 +14,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useDeadStockDays, useSaveDeadStockDays } from '../hooks/useScmDashboard';
 
 /**
- * Small, discoverable quick setting for the GLOBAL dead-stock threshold (days) —
+ * Small, discoverable quick setting for the GLOBAL dead-stock threshold (days) -
  * the window that drives the dashboard's "Dead" status. Reads / writes
  * `/api/v1/scm/config/dead-stock-days`; saving invalidates the dashboard queries
  * so statuses and counts recompute. Writes require `scm.config.manage`.

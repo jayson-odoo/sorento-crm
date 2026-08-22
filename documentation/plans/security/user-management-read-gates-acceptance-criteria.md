@@ -1,0 +1,216 @@
+# UAC - user-management read gates
+
+**Status:** Acceptance contract for `PLAN-user-management-read-gates.md`. Written BEFORE
+implementation. Follow-up to PR #168 (`GET /users/respond-users`), which fixed one route of
+the same defect class.
+
+Legend: each criterion is **Given / When / Then**, testable. **REG** = explicit regression guard.
+
+There is no `Journey` section here on purpose. This is not a feature: no screen changes, no new
+user-facing step, no data model. It is a permission dependency added to routes that already
+exist and already serve the same screens. PRINCIPLES.md step 0 asks the journey to precede the
+schema so the schema serves the user; nothing here proposes either. The equivalent framing is
+the threat statement below, and every AC traces to it.
+
+**Threat statement.** Every GET in the seven routers listed in the plan is `Depends(get_current_user)`
+only. `config/menu.config.tsx` `permission:` keys hide sidebar links but do not guard routes -
+there is no `middleware.ts` and no `RequireAccess` anywhere under `app/(protected)/user-management/`
+- so the backend dependency is the only real gate. Any authenticated session, including a role
+holding zero `user_management.*` permissions, can read the full contact directory (names, phone
+numbers), the staff team rosters, the agent-to-contact access matrix, per-field ACL rows, and the
+system settings blob (n8n webhook URLs, SMTP host/username, every role id and name).
+
+---
+
+## Item 1 - teams router read gates
+
+UAC1.1 - **Given** a caller WITHOUT `user_management.teams.view`, **when** it calls
+`GET /api/v1/user-management/teams/`, **then** the response is 403 and the detail names the slug.
+UAC1.2 - **Given** a caller WITH `user_management.teams.view`, **when** it calls the same route,
+**then** the response is 200 and carries the team list.
+UAC1.3 - UAC1.1 and UAC1.2 hold identically for `GET /teams/{team_id}`,
+`GET /teams/{team_id}/members`, and `GET /teams/{team_id}/members/{user_id}/market-segments`.
+UAC1.4 (REG) - **Given** the live role grants, **then** every role that holds
+`user_management.access_agents.view` also holds `user_management.teams.view` - so the team
+dropdown on `/user-management/access-agents` and `MemberMarketSegmentEditor` on
+`/user-management/access-agents/[id]`, both of which read teams data, keep working. A test
+asserts the two slugs are registered so the pairing is checkable, not assumed.
+
+## Item 2 - access-agents router read gates
+
+UAC2.1 - **Given** a caller WITHOUT `user_management.access_agents.view`, **when** it calls any of
+`GET /access-agents/`, `/access-agents/contact-access`, `/access-agents/neighbours`,
+`/access-agents/{agent_id}`, `/access-agents/{agent_id}/teams`,
+`/access-agents/{agent_id}/field-access`, `/access-agents/{agent_id}/contact-access`,
+**then** each returns 403 naming the slug.
+UAC2.2 - **Given** a caller WITH the slug, **when** it calls each of those seven routes, **then**
+each returns 200 with its documented body.
+UAC2.3 - **Given** `GET /access-agents/{agent_id}/field-access`, **then** the 403 fires BEFORE any
+field-access row is read, so a denied caller learns nothing about which fields exist.
+
+## Item 3 - contact-access-types admin reads
+
+UAC3.1 - **Given** a caller WITHOUT `user_management.access_agents.view`, **when** it calls
+`GET /contact-access-types/all` or `GET /contact-access-types/{code}`, **then** 403.
+UAC3.2 - **Given** a caller WITH the slug, **then** both return 200.
+UAC3.3 (REG) - `GET /contact-access-types/` (the active-only catalog) is NOT gated by this item -
+see the documented exceptions. A test asserts it still answers 200 for a caller holding no
+`user_management.*` permission at all, so the exception cannot rot into an accidental gate.
+
+## Item 4 - structural coverage
+
+UAC4.1 - **Given** the mounted user-management router, **when** the coverage test enumerates every
+GET route in the seven files in scope, **then** each either carries a `require_permission` /
+`require_any_permission` dependency, or appears in an explicit, commented exception allowlist.
+UAC4.2 - **Given** a new ungated GET added to any of those routers tomorrow, **then** UAC4.1 fails.
+This is the point of the item: a per-route test only covers routes someone remembered.
+UAC4.3 - **Given** the exception allowlist, **then** each entry carries the reason inline, and the
+list is short enough to read.
+
+## Item 5 - documented exceptions (no code change, must stay true)
+
+UAC5.1 - `GET /quick-access/` stays `Depends(get_current_user)`. **Given** any authenticated user,
+**then** it returns only that user's own rows (`user_id == current_user["id"]`) - same self-scoped
+family as `GET /users/me`. A test asserts user A's pins are not visible to user B.
+UAC5.2 - `GET /contacts/{contact_id}/companies` needs no new dependency: it already calls
+`_require_superadmin` in the handler body. A test asserts a non-superadmin gets denied.
+
+## Item 6 - escalated groups Q1-Q3, decided and now IN this PR
+
+The four route groups below were escalated rather than guessed, because each had a frontend caller
+under a role holding no candidate slug. The decision came back "gate them", with the grant sets
+recorded in the plan. These ACs cover that second wave.
+
+### Item 6a - Q1, the contacts directory
+
+UAC6a.1 - `user_management.contacts.view` is registered in `app/rbac/permission_registry.py`.
+UAC6a.2 - **Given** a caller WITHOUT it, **when** it calls any of the 8 contacts GETs (`/`,
+`/{id}`, `/cs-routing/candidates`, `/cs-routing/fields`, `/{id}/cs-routing`,
+`/{id}/market-segments`, `/{id}/attachment-types`, `/{id}/access-agents`), **then** each returns
+403 naming the slug; **with** it, each returns 200.
+UAC6a.3 - A migration registers the slug AND explicitly grants it to `admin`, `superadmin`,
+`director`, `warehouse_manager` and the three `integration_*` roles. Registering without granting
+is the failure mode migration 298's docstring warns about, so the grant is the AC, not the
+registration.
+UAC6a.4 - The migration is idempotent, skips a role absent from the database with a log line rather
+than crashing, and leaves `alembic heads` reporting exactly ONE head. Revision id is <= 32 chars.
+UAC6a.5 - `GET /contacts/{contact_id}/companies` is NOT given a dependency; it keeps its in-body
+`_require_superadmin` gate (UAC5.2 still holds).
+UAC6a.6 - The orphan `user_management.contacts.edit` row in the prod DB is **not deleted** and is
+flagged in the PR body.
+
+### Item 6b - Q2, settings
+
+UAC6b.1 - **Given** a caller WITHOUT `user_management.settings.view`, **then** `GET /settings/`
+returns 403; **with** it, 200 and the body is unchanged from today.
+UAC6b.2 - `GET /settings/app-config` returns 200 for a caller holding ZERO permissions.
+UAC6b.3 (REG - SECURITY) - **Given** a `system_settings` row seeded with recognisable non-null
+values in `smtp_*`, the three `n8n_*` webhook URLs and the health notify id fields, **when**
+`/app-config` is read, **then** the response keys are EXACTLY the six documented fields and none of
+those sensitive keys appear. Seeding the sensitive values first is what makes this prove
+suppression rather than pass on an empty row.
+UAC6b.4 - `/app-config` answers correctly when no `system_settings` row exists.
+UAC6b.5 (REG) - The three procurement consumers move onto `/app-config` and keep working for
+`purchasing_manager` / `project_sales_manager`: currency formatting still renders, the PR-detail
+default approver is still offered when sending an approval link, and the Excel accept hook still
+yields its default. No silent degradation.
+UAC6b.6 - Every moved consumer is **rekeyed** off `['system-settings']`. That key is shared with
+the settings admin layout, which still fetches the full blob; leaving a moved consumer on it would
+let react-query serve one shape where the other is expected.
+UAC6b.7 - `hooks/use-excel-accept.ts` behaviour is byte-identical: it reads a field that is not a
+column on `SystemSetting` and never has been, so it has always returned `DEFAULT_ACCEPT`. The field
+is NOT added to the projection or the model.
+
+### Item 6c - Q3, reference data
+
+UAC6c.1 - `user_management.reference_data.view` is registered.
+UAC6c.2 - **Given** a caller WITHOUT it, **then** `GET /contact-access-types/` and
+`GET /market-segments/` return 403; **with** it, 200.
+UAC6c.3 - The same migration grants it to every role holding at least one of
+`forms.forms.view`, `marketing.promotions.view`, `master_data.brands.view`,
+`master_data.products.view`, `resource.attachments.view`, `resource.attachment_directories.view`,
+`resource.attachment_types.view` - **derived in SQL from those slugs**, not hardcoded by role name.
+Review added three more consuming slugs after this was written, so the shipped derivation reads
+TEN: the seven above plus `user_management.contacts.view` and
+`user_management.access_agents.view` (the in-package screens read the same two catalogs) and
+`master_data.certificates.view` (the fourth and last mount point of `AttachmentDetailModal`).
+`contacts.view` is granted by this same migration, so the derivation runs after that grant and in
+the same transaction. Reasoning in the plan; the migration docstring is the owner of the list.
+UAC6c.4 (REG) - The ~10 consuming screens outside user-management (promotions, forms, files, trash,
+attachments, brands, products) keep working for `marketing_manager` and `marketing_executive`, who
+hold zero `user_management.*` grants otherwise. This is the whole reason the slug is new and
+low-privilege rather than reusing `access_agents.view`.
+
+### Item 6d - coverage stays honest
+
+UAC6d.1 - `_EXCEPTION_ALLOWLIST` in the structural test ends as exactly three entries -
+`GET /quick-access/`, `GET /contacts/{contact_id}/companies` and `GET /settings/app-config` - and
+the gated-path assertion is updated from 13 to the new exact set of 24. No assertion is weakened to
+make it pass. (Drafted as two entries before the Q2 projection route existed; `app-config` is the
+third by UAC6d.2.) The allowlist is pinned by asserting each entry is a mounted, ungated GET, and
+by the exact gated-path set which is its complement - an entry that quietly joins the allowlist
+therefore has to have left the gated set, where it fails. A set-equality assertion over the
+allowlist literal was drafted here as well and is deliberately NOT shipped: it restated a literal
+declared in the same test file, so it proved nothing about the application.
+UAC6d.2 - `GET /settings/app-config` is either gated or allowlisted with its reason, like every
+other GET in scope - a new ungated route must not be introduced by the fix for an ungated route.
+
+UAC6.1 (superseded) - the four groups above are no longer deferred; they are gated here.
+UAC6.2 - The 40 ungated WRITE routes in the same seven files are recorded as a follow-up issue,
+with the list, and referenced from the PR body. This PR is read-gates only. **Filed as issue #174.**
+
+## Item 7 - the system-logs reads, and the scope hole that hid them
+
+Added after implementation, from an independent review. It found two more GETs of the same defect
+class, and the reason the sweep in Item 4 did not: `_IN_SCOPE_MODULES` was a hardcoded set of the
+seven module names the plan's audit table walked, and `system_logs.py` is an eighth. A coverage
+test that only looks where someone remembered to point it has the same failure mode as the per-route
+tests it exists to backstop.
+
+UAC7.1 - **Given** a caller WITHOUT `user_management.logs.view`, **when** it calls
+`GET /api/v1/user-management/system-logs/` or `GET /api/v1/user-management/system-logs/users/{user_id}`,
+**then** the response is 403 and the detail names the slug.
+UAC7.2 - **Given** a caller WITH the slug, **then** both return 200. No new slug and no migration:
+`user_management.logs.view` is already registered and is already the `permission:` on the
+`/user-management/logs` menu entry, so the gate matches what the UI already advertises.
+UAC7.3 - `POST /system-logs/` is untouched. Writes are out of scope for this PR and are tracked in
+issue #174.
+UAC7.4 (supersedes UAC4.1) - **Given** the mounted user-management router, **when** the coverage
+test enumerates GET routes, **then** its scope is EVERY module in the `app.api.v1.user_management`
+package, matched on the module path prefix, so a router file added tomorrow is in scope without
+anyone editing a list. UAC4.2 and UAC4.3 are unchanged and now bite over the whole package.
+UAC7.5 (supersedes UAC6d.1's counts) - the widened scope brings in GETs that are legitimately
+ungated, so `_EXCEPTION_ALLOWLIST` ends at exactly SEVEN entries: the three of UAC6d.1 plus four
+self-scoped reads of the caller's own row - `GET /users/me`, `GET /users/me/permissions`
+(`current_user["id"]`), `GET /impersonation/current` and `GET /contact-impersonation/current` (both
+filter `admin_user_id == real_user["id"]` with `ended_at IS NULL`). Each carries its inline reason.
+The mounted-and-ungated pin plus the exact gated set stand as the guard; see UAC6d.1 on why the
+allowlist literal is not additionally restated as a set-equality assertion.
+UAC7.6 - the gated-path exact set goes from 24 to THIRTY-EIGHT: 24 + the 2 system-logs reads + the
+12 `users.py` / `roles.py` / `permissions.py` reads that were already correctly gated and that the
+seven-name scope never saw. Nothing about those 12 changed; they are new to the assertion, not to
+the codebase. No assertion is weakened to reach green.
+UAC7.7 (REG) - the widened sweep is proven non-vacuous by mutation: reverting ONE of the two
+system-logs gates makes the coverage test fail naming that exact route path.
+
+---
+
+## Cross-cutting
+
+- **Tests are Postgres-only** (`tests/_pg_fixture.py`), never sqlite, per PRINCIPLES.md. Each test
+  seeds its own chain with a marker prefix; nothing is borrowed with `LIMIT 1` off an existing
+  table, because CI's database is empty.
+- **Superseded: "no frontend change in this PR" did not survive the Q1-Q3 decisions.** It was
+  written when the gates were expected to leave every screen on a menu entry that already carried
+  the matching slug. Gating `GET /settings/` forced the three consumers onto `/settings/app-config`
+  (UAC6b.5-6b.7), and closing the permission-free doors of Q1 forced the menu / Apps-dropdown /
+  tab alignment. The shipped frontend surface is listed in the plan's Status line; the plan is the
+  owner of that list. What is unchanged is the mapping below.
+- Every gated route's live callers were mapped caller-by-caller
+  (see the plan's audit table). All sit on screens whose menu entry already carries the matching
+  slug, with two deliberate exceptions - `GET /access-agents/` and
+  `GET /access-agents/{id}/field-access` are also called from the permission-free
+  `/user-management/contacts/[id]` screen. Those two are gated anyway, because they return the
+  access-control matrix; the ungated screen is Q1 in the plan, not a reason to leave ACL rows
+  world-readable.
+- Full `pytest` green in CI. `alembic heads` stays at a single head.

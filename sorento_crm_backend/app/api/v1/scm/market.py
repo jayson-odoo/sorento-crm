@@ -29,6 +29,7 @@ from app.schemas.scm_market import (
     MarketTopicResult,
 )
 from app.services.scm import market_proposal_service as proposal_svc
+from app.services.scm import reorder_run_service
 from app.services.scm import market_research_service as svc
 
 router = APIRouter()
@@ -83,6 +84,7 @@ def market_proposal(
     """M8-E11 — map a market signal to a per-line qty-uplift PROPOSAL on the run's
     matching buy recs. Writes NOTHING to any recommendation column and never re-runs
     the engine (M8-E7); the user confirms each line via /recommendations/{id}/adjust."""
+    reorder_run_service.assert_run_visible(db, run_id)
     return proposal_svc.build_market_proposal(
         db,
         run_id,

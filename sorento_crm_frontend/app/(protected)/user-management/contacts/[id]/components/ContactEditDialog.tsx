@@ -37,6 +37,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { LoaderCircleIcon } from 'lucide-react';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { Switch } from '@/components/ui/switch';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { listRespondWorkspaceSelect } from '@/app/(protected)/system-management/respond-workspaces/services/respondWorkspaceService';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
@@ -88,6 +89,7 @@ export default function ContactEditDialog({
       workspace_id: contact?.workspace_id || '',
       access_type_codes: contact?.access_type_codes ?? [],
       company_ids: [],
+      requires_registered_project: contact?.requires_registered_project ?? false,
     },
     mode: 'onSubmit',
   });
@@ -101,6 +103,7 @@ export default function ContactEditDialog({
         workspace_id: contact.workspace_id || '',
         access_type_codes: contact.access_type_codes ?? [],
         company_ids: [],
+        requires_registered_project: contact.requires_registered_project ?? false,
       });
     }
     if (!open) {
@@ -148,6 +151,7 @@ export default function ContactEditDialog({
           name: values.name || null,
           workspace_id: values.workspace_id ? values.workspace_id : null,
           access_type_codes: values.access_type_codes ?? [],
+          requires_registered_project: values.requires_registered_project ?? false,
         }),
       });
 
@@ -355,6 +359,29 @@ export default function ContactEditDialog({
 
             <FormField
               control={form.control}
+              name="requires_registered_project"
+              render={({ field }) => (
+                <FormItem className="flex items-start justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
+                  <div className="min-w-0 space-y-0.5">
+                    <FormLabel>Sponsorship must name a registered project</FormLabel>
+                    <FormDescription>
+                      When on, this contact&apos;s sponsorship form shows a project picker
+                      and cannot be submitted without one. Off keeps today&apos;s
+                      free-text project title.
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={Boolean(field.value)}
+                      onCheckedChange={(next) => field.onChange(next)}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
               name="workspace_id"
               render={({ field }) => (
                 <FormItem>
@@ -370,6 +397,7 @@ export default function ContactEditDialog({
                           : 'Select workspace…'
                       }
                       emptyMessage="No matching workspaces"
+                      clearable
                       disabled={mutation.isPending || workspaceOptions.length === 0}
                     />
                   </FormControl>

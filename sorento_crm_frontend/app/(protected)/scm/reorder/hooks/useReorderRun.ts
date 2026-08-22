@@ -7,9 +7,17 @@ import {
   createReorderRun,
   getAllDispositionRecommendations,
   getBuyRecommendationsForCash,
+  getCoveredRecommendations,
+  getNeedsLevelRecommendations,
+  getCustomerOrders,
+  getLocationStock,
+  getProductImage,
+  getRecommendationDemand,
   getReorderRun,
   getRecommendations,
   getTodayRun,
+  getSetAsideDemand,
+  getUnlocatedDemand,
   listReorderRuns,
   type RecommendationQuery,
 } from '../services/reorderRunService';
@@ -51,7 +59,7 @@ export interface ReorderRunController {
   isRunning: boolean;
   isComplete: boolean;
   isFailed: boolean;
-  /** Still `running` past MAX_POLL_MS — polling stopped, run may have stalled/failed. */
+  /** Still `running` past MAX_POLL_MS - polling stopped, run may have stalled/failed. */
   isStalled: boolean;
   error: string | null;
   start: (req: CreateReorderRunRequest) => Promise<void>;
@@ -91,7 +99,7 @@ export function useReorderRun(): ReorderRunController {
     retry: 2,
   });
 
-  // A failed POST has no run to poll — synthesize a failed record so the view can
+  // A failed POST has no run to poll - synthesize a failed record so the view can
   // render the retry card (not just a toast).
   const syntheticFailed: ReorderRun | null = startError
     ? {
@@ -187,6 +195,44 @@ export function useTodayRun() {
     refetchOnWindowFocus: false,
     staleTime: 10_000,
     retry: 1,
+    // A plan is built by a background worker, so the page that opened while one was
+    // running has no other way to learn it finished. Poll only while that is true, and
+    // stop the moment nothing is in flight.
+    refetchInterval: (query) => (query.state.data?.in_progress ? 5_000 : false),
+  });
+}
+
+/** React-query cache key for the unlocated-demand signal. */
+export const unlocatedDemandKey = ['scm', 'reorder', 'unlocated-demand'];
+
+/** React-query cache key for the set-aside project demand signal. */
+export const setAsideDemandKey = ['scm', 'reorder', 'set-aside-demand'];
+
+/**
+ * Project demand no Order Inquiry names, so the plan set it aside (S13b). Like unlocated
+ * demand, a property of the demand book rather than of any one run.
+ */
+export function useSetAsideDemand() {
+  return useQuery({
+    queryKey: setAsideDemandKey,
+    queryFn: () => getSetAsideDemand(),
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+    retry: 1,
+  });
+}
+
+/**
+ * Demand the plan cannot net because the sales-order line names no warehouse. A property
+ * of the demand book, not of any one run, so it is keyed on its own and survives a re-plan.
+ */
+export function useUnlocatedDemand() {
+  return useQuery({
+    queryKey: unlocatedDemandKey,
+    queryFn: () => getUnlocatedDemand(),
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+    retry: 1,
   });
 }
 
@@ -209,7 +255,7 @@ export function useReorderRunHistory(page: number, limit: number, enabled = true
 
 /**
  * Load a PAST run's summary (status + roll-up counts) so the tiles + grid can
- * render it WITHOUT re-running. Reuses the poll cache key — revisiting the live
+ * render it WITHOUT re-running. Reuses the poll cache key - revisiting the live
  * run is a cache hit. Only enabled for a completed/failed run being viewed.
  */
 export function useReorderRunDetail(runId: string | null, enabled: boolean) {
@@ -224,11 +270,130 @@ export function useReorderRunDetail(runId: string | null, enabled: boolean) {
 }
 
 /**
- * The FULL buy recommendation set for the M4 cash co-pilot (not paginated —
+ * The FULL buy recommendation set for the M4 cash co-pilot (not paginated -
  * greedy funding runs across the whole ranked list). Fetched once; the budget
  * slider then recomputes funded/deferred live client-side via `computeFunding`,
  * so this does NOT refetch per slider tick.
  */
+/**
+ * Every `covered` row for a run: demand the location's own stock already covers.
+ *
+ * Its own query, never merged into the cash set. A covered row is not a purchase, and
+ * letting it into the funding split would spend budget on something nobody agreed to buy.
+ */
+export function useCoveredRecommendations(runId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'covered-recs', runId],
+    queryFn: () => getCoveredRecommendations(runId as string),
+    enabled: enabled && !!runId,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+/**
+ * Items the plan could not size because nobody has set a reorder level for them.
+ *
+ * Fetched separately from the buys for the same reason covered rows are: they are not
+ * purchases and must not reach the cash split. They still have to be VISIBLE, though - a
+ * plan that drops them reports "nothing to do" for stock that was never set up.
+ */
+export function useNeedsLevelRecommendations(runId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'needs-level-recs', runId],
+    queryFn: () => getNeedsLevelRecommendations(runId as string),
+    enabled: enabled && !!runId,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+/**
+ * The open order lines a planned quantity was built from. Fetched only when the drill is
+ * opened: the row carries the total, and pulling every contributing line for every row on
+ * load is a cost nobody asked for.
+ *
+ * `channel` narrows the fetch to one of `project`/`retail`/`unclassified` (captain's own
+ * preferred fix, 20 Aug) - it is part of the query key so opening the Project trigger and
+ * the Retail trigger on the same row are two independently cached fetches, never one
+ * clobbering the other's cache entry.
+ *
+ * `scope: 'product'` (21 Aug follow-up) is the top product-grain row's own trigger -
+ * widens the fetch to every recommendation the run wrote for the same product, matching
+ * the union the row's own channel columns already sum. Also part of the query key, for
+ * the same reason `channel` is.
+ */
+export function useRecommendationDemand(
+  runId: string | null,
+  recId: string | null,
+  enabled: boolean,
+  channel?: 'project' | 'retail' | 'unclassified',
+  scope?: 'product',
+) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'rec-demand', runId, recId, channel ?? null, scope ?? null],
+    queryFn: () => getRecommendationDemand(runId as string, recId as string, channel, scope),
+    enabled: enabled && !!runId && !!recId,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+/**
+ * The sales orders behind ONE customer row of the trend popover.
+ *
+ * Fetched only while that row is expanded, for the same reason the demand drill is:
+ * a popover holding five customers would otherwise issue five requests nobody asked
+ * for, on every row of the plan.
+ */
+export function useCustomerOrders(
+  runId: string | null,
+  productId: string | null,
+  segment: string,
+  customerKey: string | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'customer-orders', runId, productId, segment, customerKey],
+    queryFn: () =>
+      getCustomerOrders(runId as string, productId as string, segment, customerKey as string),
+    enabled: enabled && !!runId && !!productId && !!customerKey,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+/**
+ * The photo of one product, fetched when its popover opens (AC-7).
+ *
+ * Per product rather than per run because the URL is signed: the run-wide call answers only
+ * which icons are lit, and the signature is bought here, once, for the row the buyer asked
+ * about. Cached for ten minutes - a signed URL outlives that comfortably, and re-opening the
+ * same row must not re-sign.
+ *
+ * `meta.silent` keeps a failed photo out of the global error toast. A picture is context, not
+ * an input to a decision, and the popover says so in place.
+ */
+export function useProductPhoto(
+  runId: string | null,
+  productId: string | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'product-image', runId, productId],
+    queryFn: () => getProductImage(runId as string, productId as string),
+    enabled: enabled && !!runId && !!productId,
+    staleTime: 600_000,
+    refetchOnWindowFocus: false,
+    retry: false,
+    meta: { silent: true },
+  });
+}
+
 export function useBuyRecommendationsForCash(runId: string | null, enabled: boolean) {
   return useQuery({
     queryKey: ['scm', 'reorder', 'cash-recs', runId],
@@ -243,7 +408,7 @@ export function useBuyRecommendationsForCash(runId: string | null, enabled: bool
 /**
  * The FULL disposition (Stock allocation) recommendation set for a run. The M8-F18
  * view needs every row to split actionable (Discontinue / Promote) from FYI hold
- * and to count only the actionable subset on the tile — so it is fetched whole
+ * and to count only the actionable subset on the tile - so it is fetched whole
  * (paged internally past the 1000-row cap) and cached per run, not paginated. Kept
  * enabled in the buy view too so the tile's actionable count is always live.
  */
@@ -253,6 +418,26 @@ export function useAllDispositionRecommendations(runId: string | null, enabled: 
     queryFn: () => getAllDispositionRecommendations(runId as string),
     enabled: enabled && !!runId,
     staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+/**
+ * The LIVE per-warehouse stock position for one product (the grouped Buy view's expand
+ * panel - captain: "we should show something like fulfilment planning"). Fetched ON EXPAND,
+ * per product, never for the whole plan: hundreds of collapsed group rows must not each
+ * carry a subscription for a panel nobody opened, the same reasoning as the demand drill
+ * and the product photo above. A short 15s `staleTime` (well under the 60s+ used elsewhere
+ * in this file) reflects that this is a live-book read, not a frozen plan fact - re-opening
+ * the same product a minute later should see the book move.
+ */
+export function useLocationStock(productId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'location-stock', productId],
+    queryFn: () => getLocationStock(productId as string),
+    enabled: enabled && !!productId,
+    staleTime: 15_000,
     refetchOnWindowFocus: false,
     retry: 1,
   });

@@ -18,7 +18,7 @@ import SalesOrdersList from './components/SalesOrdersList';
 
 export const metadata: Metadata = {
   title: 'Sales Orders',
-  description: 'Manage sales orders — the committed-demand business record.',
+  description: 'Manage sales orders - the committed-demand business record.',
 };
 
 export default function SalesOrdersPage() {

@@ -1,11 +1,13 @@
 # PLAN - SCM Purchasing and Fulfilment
 
-> Status: **IN BUILD 2026-08-04** on `feat/scm-purchasing-base` (worktree `.claude/worktrees/scm-base`,
+> Status: **IN BUILD 2026-08-05** on `feat/scm-purchasing-base` (worktree `.claude/worktrees/scm-base`,
 > unpushed). Done and committed: **S0** shared base, **S2** dated Coverage Timeline plus pooled
-> netting wired into the planner, **S1** the outstanding SO/PO upload channel, and the warehouse
-> screen exposing pool + planning availability. Remaining: **S3/S3b/S4** planning UI on the existing
-> `/scm/reorder` page, **S5** plan exceptions, **S7-S9** fulfilment (loading plan, supplier notice,
-> SPO allocation).
+> netting wired into the planner, **S1** the outstanding SO/PO upload channel, the warehouse
+> screen exposing pool + planning availability, **S3/S3b/S4** the planning UI on `/scm/reorder`,
+> **S5** plan exceptions, the two curation feeds (purchase history and the Order Inquiry sheet,
+> which now CREATES sales orders), and **S7** the supplier stock list plus the container Loading
+> Plan on `/scm/loading-plan` (migration 336). Remaining: **S8** supplier notice, **S9** packing
+> list and SPO allocation, and the transfer-proposal accept endpoint that belongs with them.
 >
 > Verified against a database bootstrapped from EMPTY the way CI builds one, not against the
 > prod-copy. Zero new test failures versus `origin/main`; 62 previously-failing tests now pass
@@ -59,14 +61,14 @@ Checked against `main` and the dev database on 2026-08-03, not assumed.
 | `respond_channels` | one `whatsapp_business` row | No WeChat. Suppliers are not Respond contacts. |
 | SCM M0-M8 | merged to `main` via PR #13, 2026-07-18 | Engine, policies, cash stage, decisions, overrides all present and tested. |
 | Import machinery | `validate_*` / `process_*` pairs for stock, product, order tracking, SPO, GRN listing, GRN lines, DO detail | New importers follow an established pattern. |
-| project-sales | `order_inquiries`, `so_amendments`, `order_change_notices`, `so_line_allocations` exist on an **unmerged** worktree branch | Do not duplicate. See "Interlock" below. |
+| project-sales | `order_inquiries`, `so_amendments`, `order_change_notices`, `so_line_allocations` exist on an **unmerged** worktree branch (all four now in the `projects` schema) | Do not duplicate. See "Interlock" below. |
 
 ## Interlock with project-sales
 
 The project-sales worktree already models the Project CS side of the flow: `order_inquiries`
 and `order_inquiry_rows` (with verbs and a `covered_by` field), `so_amendments`,
 `order_change_notices`, `so_line_allocations`, `allocation_claims`. It also already declares
-`project_sales_orders.so_id -> sales_orders.id`, described in its own source as "the CORE
+`projects.sales_orders.so_id -> public.sales_orders.id`, described in its own source as "the CORE
 `sales_orders` row created on publish, which is what SCM reads as committed demand".
 
 That is the same bridge this plan depends on. So:
@@ -274,6 +276,31 @@ before commit.
 - Bilingual document generator in the supplier's own layout, plus download.
 - Integration log per attempt, success or failure, mirroring `_send_and_log`.
 
+> **Two decisions S8 forces, settled here so a builder does not have to.**
+>
+> **1. The notice snapshots the plan; the plan stays re-runnable.** `scm.loading_plan` has no
+> plan-level status at all today, and `PATCH /loading-plans/{id}` deliberately rewrites its lines
+> in place so a different container count is one decision rather than a second plan (AC-E6). The
+> obvious move - freeze the plan on approval - would take that away and leave a dead row behind
+> every time Ms Tee changes her mind after sending. So approval does not lock anything: the
+> notice copies the lines it was built from into `supplier_notice_lines`. What was sent stays
+> readable however the plan moves afterwards, which is the property `LoadingPlan`'s own docstring
+> asks for and nothing currently provides. Re-running a plan after a notice went out is allowed,
+> and the notice history is what says the two now differ.
+>
+> **2. Email keeps ONE producer, so the outbox learns to carry an attachment.**
+> `app/tasks/email_outbox_tasks.py` declares itself the single producer of SMTP traffic, and it
+> owns the backoff, the rate limiter and the per-event enable switch. `send_mime_email` already
+> accepts attachments; the outbox is the only path that cannot pass them. Sending the notice
+> directly would fork SMTP into two producers to gain one attachment. Instead `email_outbox`
+> gains a nullable attachment reference (provider, storage key, filename) and `_attempt_send`
+> resolves the bytes at drain time. Generic, so the next document-bearing email needs no second
+> mechanism, and the notice PDF is stored exactly once whether it is emailed, downloaded, or both.
+>
+> Consequence worth stating: the document is generated and stored BEFORE the send is queued. A
+> notice with no document is never sent, and a supplier with no email address still gets a
+> notice record and a downloadable document (AC-F3) rather than a failure.
+
 **S9. Packing list and SPO allocation** (UAC G) - the `po_line_id` migration moved into S0
 - Multi-block workbook importer: one inbound shipment per container block. Blank container
   number and bill of lading are valid. Duplicate identity must not depend on container number
@@ -281,6 +308,43 @@ before commit.
 - Allocation suggestion per shipment line to (PO line, warehouse) ranked by the S0 policy, with
   alternatives. Approve advances `qty_received`; split across PO lines must sum to shipped
   quantity.
+
+> **S9 under the 6 Aug supply decision.** Supply is the SPO allocation, never the purchase order
+> (migration 337). That makes this slice the one that WRITES supply, not merely a bookkeeping
+> step after it. Approving an allocation moves quantity from the Ordered tile to the Incoming
+> tile in one action: the allocation raises `scm.on_order_v`, and the `qty_received` it advances
+> lowers `scm.po_ordered_v`.
+>
+> Linking `po_line_id` is therefore worth doing even though nothing nets the two views: a LINKED
+> allocation stops being counted as ordered the moment it is approved, so the Ordered figure
+> sharpens from "everything placed" toward "placed and not yet shipped against". Historical
+> unlinked rows keep the old, overstated reading. The progression is monotonic and safe because
+> supply never includes ordered - see AC-G6a.
+
+> **Most of S9's plumbing already exists outside SCM. Adopt it; do not re-port.** Surveyed
+> 6 Aug 2026:
+>
+> - `InboundShipmentService.create_shipment` (`procurement_service.py`) already creates or
+>   updates a shipment in place, resolving by `shipment_number`, then the container triple
+>   (`shipping_container_number` + `estimated_arrival_date` + `shipment_date`, field-wise
+>   `IS NOT DISTINCT FROM`), then `attachment_id`. That is **AC-G3** already satisfied, and
+>   blank container / bill of lading already work, which is **AC-G2**. See
+>   `documentation/plans/PLAN-packing-list-duplicate-detection.md`.
+> - `SPOAllocationService` and `/api/v1/procurement/spo-allocations` already do allocation
+>   CRUD.
+> - `IncomingStockService` already reads shipments, allocations and per-warehouse
+>   `unallocated_quantity`.
+>
+> So S9's genuinely new work is three things, not six:
+>
+> 1. **The multi-block WORKBOOK reader** (AC-G1). The existing path is n8n PDF extraction
+>    posting one shipment at a time; nothing reads an Excel file carrying several container
+>    blocks. This is the only new importer.
+> 2. **The allocation SUGGESTION** (AC-G4, AC-H5): per shipment line, a ranked (PO line,
+>    warehouse) with its reason and alternatives, scored by the SAME S0 Fulfilment Priority
+>    policy the Loading Plan uses.
+> 3. **Approve** (AC-G6/G6a/G7): write the allocations, advance `qty_received`, enforce that a
+>    split sums to the shipped quantity.
 
 ## Holes closed during the plan grill
 
@@ -389,7 +453,8 @@ stated fallback if it slips.
 3. **WeChat Official Account in Respond.io.** Not procured. Chat stays dark by design; email
    ships. No rework when it lands.
 4. **Ms Tee's manual answer for one real shipment**, to check the seeded priority default
-   reproduces it (AC-H2). Without this the day-one validation claim is untested.
+   against it (AC-H2). Since 2026-08-17 the seed ranks demand owed first and document sequence
+   within each band, so her answer is the within-band check, not the whole order.
 5. **Mr Loo on the cost basis** (latest, average, landed). Parked in UAC Group K, but the buy row
    shows last purchase cost regardless, which answers his usual question.
 
@@ -536,6 +601,14 @@ sales-order export. Until then the classification only covers orders the CRM alr
 
 ## Amendment: incoming cost has no source, so C3 splits in two (4 Aug 2026)
 
+> Superseded on 17 Aug 2026 by `PLAN-scm-proforma-invoice.md` (gap G3c). The source this
+> section says does not exist now does: the Excel packing-list channel parses `unit_price` and
+> `packing_list_service.apply` writes it to `inbound_shipment_lines.unit_cost` with its resolved
+> currency, so the stamp and the variance below are live rather than inert. The "ask for the
+> business" it ends on is answered inside the CRM, not by n8n. The n8n ingest still cannot
+> supply a price, so a packing list arriving that way is unchanged. Contract:
+> `scm-proforma-invoice-acceptance-criteria.md` AC-P5.
+
 AC-C3.2 says incoming cost is captured from the packing list when an SPO allocation is
 approved. Traced end to end before implementing, the slot exists at every point and is empty
 at every point:
@@ -648,7 +721,7 @@ must not re-derive a need from the shortfall.
 
 AC-C2.3 asks the project drill to show a project name per contributing line. `sales_orders` holds
 customer, order type, priority, status and two dates, and nothing else; the project-sales module's
-`project_sales_orders` is a separate book with no link to this one. So there is no project name to
+`projects.sales_orders` is a separate book with no link to this one. So there is no project name to
 read.
 
 The drill labels the line with its **customer**, which on a project order is the main contractor

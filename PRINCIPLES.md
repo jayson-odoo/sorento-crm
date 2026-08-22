@@ -53,7 +53,7 @@ opinion. Running a step in the wrong seat is a process violation.
    `userSelectService`, `ConfirmDeleteDialog`, `DataGrid`, mutation-hook factories.)
 3. **Phase 1 — Frontend-first (mock).** UI → hook → service → **mock**. Tune every state
    (loading / empty / error / partial / success) with no backend running. Verify in a real
-   browser (Playwright MCP, sidebar-click nav). Document the expected API contract. NO tests yet
+   browser (agent-browser headless, sidebar-click nav). Document the expected API contract. NO tests yet
    (shape may still shift), NO backend code. When the open question is "which of these designs",
    run `/prototype` BEFORE this phase and throw the result away — it is not built to the layering
    rules below and must never become the shipped FE.
@@ -66,7 +66,9 @@ opinion. Running a step in the wrong seat is a process violation.
    and, above all, **deterministic engines** (e.g. the SCM reorder maths): the golden-set expected
    numbers are written as failing tests first, and the code is built to satisfy them. FE hook/logic
    tests (vitest) are likewise test-first; FE component-state tests may follow once the prototype
-   shape settles. One Playwright E2E per user flow (real clicks, FE→BE→DB). Tests are **never
+   shape settles. Per user flow, real clicks FE→BE→DB, but **no new Playwright spec**: a
+   recorded agent-browser evidence run stands in, per CLAUDE.md "Persisted Playwright spec".
+   Tests are **never
    deferred** to Phase 3. Re-verify live. `/tdd` drives the loop; `/implement` may drive a whole
    ticket **at this phase only** (it calls `/tdd` internally and knows nothing of Phase 1).
 5. **Phase 3 — Code review.** `/code-review` (or `ultra` for big diffs) → address via `--fix` /
@@ -150,6 +152,20 @@ the same axis as the module decision — not a separate schema axis.
   soft-delete endpoint is **Archive**, never named "delete".
 - **Confirm before every destructive OR detach action** — including Unlink, not just delete. Never
   one-click.
+- **View and Edit are the SAME layout.** Same tabs in the same order, same fields in the same order
+  within each tab; editing swaps a read-only value for an input **in place**. Nothing moves,
+  appears or disappears between the two views. The read view is what teaches the user where things
+  are, so if Edit reshuffles them every edit starts with re-finding the field, and a value that was
+  visible but is now missing reads as data loss. Group a record's concerns into **tabs once** and
+  reuse that tab set on both views. Read-only metadata (Created, Last Updated, ids) goes in the
+  page header or a meta strip, **never inside a tab body**, because it has no edit counterpart and
+  would otherwise force the two views to differ.
+- **Detail pages carry prev/next record navigation** (`components/common/RecordNavigation`).
+  Reviewing records one by one is the normal case; sending the user back to the list between each
+  is what makes a screen feel half-built. Established usage: `user-management/users/[id]`,
+  `order-management/customers`.
+- **An optional select MUST be clearable.** `SearchableSelect` takes `clearable` — set it on every
+  non-required select, or the user can change the value but never unset it.
 - **Responsive** — every surface usable + non-clipped at 375px AND 1280px. Detail headers use
   `flex flex-col gap-3 sm:flex-row ...` (plain `justify-between` overlaps on mobile); modals are
   scrollable (`max-h` + `overflow`) so the submit button is reachable at phone width.
@@ -185,7 +201,9 @@ Raw SQL / DB query in a router · a React component calling axios/fetch directly
 soft-delete named "delete" · a hidden empty section on a detail page · a hand-rolled
 `<table className="table-fixed">` (use shared `DataGrid`) · a "done" slice still serving a mock ·
 a new column/engine with no backfill for existing rows · a new permission with no existing-role
-grant path · a new DB column missing from a manual dict builder · a non-searchable dropdown —
+grant path · a new DB column missing from a manual dict builder · a write to `spec.values` /
+`spec.provenance` / `spec.rendered_text` outside `app/services/product_spec_write.py` · a
+non-searchable dropdown —
 `@/components/ui/select`, raw `<select>`, or a hand-rolled `CommandInput` picker (every
 dropdown-select MUST use `SearchableSelect`/`SearchableMultiSelect` from `@/components/common`; see
 `ADR-PRODUCT-STANDARDS.md`).
@@ -202,4 +220,6 @@ dropdown-select MUST use `SearchableSelect`/`SearchableMultiSelect` from `@/comp
 - Deploy: `DEPLOY.md` (blue/green via CI + `scripts/blue_green_deploy.sh`). Prod server
   `/opt/sorento-crm2/` has **no git repo** — CI scp's the deploy script; compose is edited by hand.
 - New Alembic `down_revision` must chain onto a **committed** main head (not an uncommitted WIP
-  migration); revision ids ≤ 32 chars. A branch merge forks two heads → fix with `alembic merge`.
+  migration); revision ids ≤ 32 chars. Immediately before merging, re-check `alembic heads`
+  against the latest default branch. Concurrent migrations can leave multiple heads despite a
+  clean rebase; rejoin every current head with an empty `alembic merge` revision.

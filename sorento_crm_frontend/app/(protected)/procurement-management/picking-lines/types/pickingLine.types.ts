@@ -2,6 +2,11 @@ export interface PickingLineListItem {
   id: string;
   picking_header_id: string;
   spo_allocation_id?: string | null;
+  /**
+   * The SPO number the imported sheet stated for this line. See the same field
+   * on `grn/types/grn.types.ts`'s `PickingLine`.
+   */
+  spo_number_raw?: string | null;
   product_id: string;
   quantity_expected: number;
   quantity_picked: number;

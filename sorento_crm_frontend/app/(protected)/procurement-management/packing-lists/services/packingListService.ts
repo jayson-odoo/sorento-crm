@@ -255,6 +255,12 @@ export interface LatestContainerStatusDocument {
   filename: string;
   size: number | null;
   uploaded_at: string | null;
+  /** The company that owns this workbook. Each company keeps its own current
+   * sheet, so the endpoint answers for the caller's active company. Nothing
+   * renders these today (a staff session is always one company, so the value
+   * would be a constant), they are here so the type matches the response. */
+  company_id: string | null;
+  company_name: string | null;
 }
 
 export async function getLatestContainerStatusDocument(): Promise<LatestContainerStatusDocument> {

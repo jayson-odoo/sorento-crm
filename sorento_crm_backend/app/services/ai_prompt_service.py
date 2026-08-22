@@ -118,6 +118,10 @@ class AIPromptService:
                     "active": spec.active,
                     "activates_in": spec.activates_in,
                     "variables": list(spec.variables),
+                    # Whether the dry-run button means anything for this key: the
+                    # dry-run runs one whole assistant turn, so a key no turn reads
+                    # would report an answer the edit had no part in.
+                    "dry_runnable": spec.dry_runnable,
                     "production_version": labels.get("production"),
                     # Which LLM this agent runs on in production. None = the global
                     # assistant model, which is what every agent used before this.

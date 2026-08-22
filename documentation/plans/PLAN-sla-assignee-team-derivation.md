@@ -1,6 +1,12 @@
 # PLAN: SLA assignee-driven team/agent derivation
 
 **Status:** Implemented on branch `feat/sla-assignee-team-derivation` — pending review/PR. n8n escalate-flow switch (signal-only) still to do on n8n side.
+
+> **Superseded in part (2026-08-18):** the tier-1 membership invariant described here
+> (decision 3: at most ONE tier-1-linked team per user) has been relaxed to at most one
+> per TEAM SET, and derivation no longer returns None on multi-team membership - it
+> disambiguates via the tracking's `team_set_code` with a logged deterministic fallback.
+> See `PLAN-tier1-teamset-invariant.md` for the current contract.
 **Date:** 2026-06-05
 **Owner:** Jayson
 
@@ -74,7 +80,9 @@ Applied by the caller when result ≠ current state:
 3. New `event_type` value `reassignment` in `ConversationSLAEventLog` (Text column — no
    migration needed; confirm no enum/check constraint).
 4. `scripts/amend_tier1_membership_violations.py` — auto-fix: keep latest membership,
-   delete older, print removals. Idempotent.
+   delete older, print removals. Idempotent. **Retired (deleted) 2026-08-18**: it enforced
+   the superseded global per-user invariant and a rerun would have deleted now-legal
+   cross-team-set memberships (see `PLAN-tier1-teamset-invariant.md`).
 5. `scripts/backfill_tracking_team_from_assignee.py` — open trackings, JOIN-based
    set-where-mismatch, routing fields only. Idempotent.
 

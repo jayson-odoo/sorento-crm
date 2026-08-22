@@ -1,0 +1,93 @@
+'use client';
+
+import { useCallback } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import {
+  bulkDeleteProformaInvoices,
+  convertProformaInvoicesToDraftShipment,
+  deleteProformaInvoice,
+  getProformaInvoice,
+  listProformaInvoices,
+  type ListProformaInvoicesOptions,
+} from '../services/proformaInvoiceService';
+
+const KEY = ['scm', 'proforma-invoices'] as const;
+
+export function useProformaInvoices(
+  supplierId: string | null,
+  opts: { limit?: number; offset?: number } = {},
+) {
+  const options: ListProformaInvoicesOptions = { supplierId, ...opts };
+  return useQuery({
+    queryKey: [...KEY, 'list', supplierId, opts.limit ?? 25, opts.offset ?? 0],
+    queryFn: () => listProformaInvoices(options),
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useProformaInvoice(id: string | null) {
+  return useQuery({
+    queryKey: [...KEY, 'detail', id],
+    queryFn: () => getProformaInvoice(id as string),
+    enabled: !!id,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** Invalidate every proforma-invoice list, so a fresh upload shows up wherever it is being
+ *  read - the upload dialog does not know which supplier filter the list is currently on. */
+export function useProformaInvoicesApplied() {
+  const qc = useQueryClient();
+  // Stable across renders, so a caller can put it in a `useEffect`/`useCallback` dependency
+  // list (e.g. the upload dialog's `onApplied`) without a fresh closure re-triggering it
+  // every render.
+  return useCallback(() => {
+    void qc.invalidateQueries({ queryKey: [...KEY, 'list'] });
+  }, [qc]);
+}
+
+/**
+ * No success toast here: this mutation is used behind `ConfirmDeleteDialog`, which already
+ * shows one on success (`successMessage`) - the same split `useDeletePolicy` / `useDeleteTopic`
+ * use elsewhere in this module, so a delete never announces itself twice.
+ */
+export function useDeleteProformaInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => deleteProformaInvoice(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: [...KEY, 'list'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/** Same "no success toast here" shape as the single delete above - the caller's own
+ *  AlertDialog reports the outcome (deleted count + any blocked/converted invoices). */
+export function useBulkDeleteProformaInvoices() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkDeleteProformaInvoices(ids),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: [...KEY, 'list'] });
+    },
+  });
+}
+
+/** Draft a shipment from one or more selected invoices. Invalidates both the proforma list
+ *  (their trail now shows where they went) and the invoice detail (converted_shipments +
+ *  per-line shipment_number) for every invoice just converted. The caller navigates to
+ *  `/scm/incoming` on success - this hook only owns the write + cache invalidation. */
+export function useConvertProformaInvoicesToDraftShipment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (invoiceIds: string[]) => convertProformaInvoicesToDraftShipment(invoiceIds),
+    onSuccess: (result) => {
+      void qc.invalidateQueries({ queryKey: [...KEY, 'list'] });
+      result.invoices.forEach((inv) => {
+        void qc.invalidateQueries({ queryKey: [...KEY, 'detail', inv.id] });
+      });
+    },
+  });
+}

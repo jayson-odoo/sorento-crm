@@ -20,7 +20,7 @@ from sqlalchemy import text
 from app.services.scm import decision_service as dsvc
 from app.services.scm import reorder_run_service as run_svc
 from app.services.scm.purchase_order_service import PurchaseOrderService
-from tests.scm.conftest import as_user, requires_pg, seed_user
+from tests.scm.conftest import as_user, requires_pg, seed_user, set_plan_grain
 from tests.scm.test_m4_cash import (
     _client,
     _link,
@@ -41,6 +41,8 @@ _PO_CANONICAL = re.compile(r"^PO-\d{4}/\d{2}-\d{4}$")
 # ===========================================================================
 
 def _run_buys(db, wid_code) -> str:
+    # These are LOCATION-grain decisions, so the run must be created under that policy.
+    set_plan_grain(db, "location")
     created = run_svc.create_run(db, [wid_code], "warehouse", enqueue=False)
     assert run_svc.run_reorder(created["run_id"], db=db)["status"] == "completed"
     return created["run_id"]
@@ -124,6 +126,56 @@ def test_accept_stages_no_po_until_confirm(scm_app):
 
 
 # ===========================================================================
+# B1 (review fix) - a MoQ override reaches the draft PO at Confirm, not just the grid
+# ===========================================================================
+
+def test_moq_override_reaches_the_draft_po_at_confirm(scm_app):
+    """Before the fix, `_line_inputs` built the draft PO line off the STALE `rounded_qty`
+    column: a buyer's MoQ override recalculated the grid but Accept + Confirm still raised
+    the PO at the OLD master rounding. `set_moq_override` now persists the recalculated
+    `rounded_qty` (and `cash_impact`), so Confirm reads the SAME figure the buyer saw and
+    agreed to. The override is set well ABOVE the engine's own master rounding (never
+    assumed - the engine's sizing is independent of this test) so the two can never
+    coincide by chance and the pin is discriminating."""
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "M4W-MOQOV")
+    p = _mk_product(db, "M4P-MOQOV")
+    _mk_stock(db, p, wid, 5)
+    _mk_demand(db, p, wid, 10.0)
+    _link(db, p, _mk_supplier(db, "M4 MoQ Override Supplier"), moq=500, mult=1, cost=60)
+    db.flush()
+
+    run_id = _run_buys(db, "M4W-MOQOV")
+    recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
+    assert p in recs
+    rec = recs[p]
+    master_rounded = float(rec["rounded_qty"])
+
+    # A MoQ well above whatever the engine sized, so the override is unmistakably a
+    # DIFFERENT figure from the master rounding, however the engine happened to size it.
+    override_moq = master_rounded + 5000
+    override = run_svc.set_moq_override(db, rec["id"], override_moq)
+    overridden_qty = override["order_qty"]
+    assert overridden_qty == override_moq, "need floors up to the (huge) override MoQ"
+    assert overridden_qty != master_rounded, "the override must actually change the order"
+
+    dsvc.accept_recommendation(db, rec["id"], actor="tester")
+    dsvc.confirm_decisions(db, run_id, ids=None, actor="tester")
+
+    po_id = _po_id_for_rec(db, rec["id"])
+    assert po_id is not None, "accept + confirm must still raise a draft PO"
+    line_qty = db.execute(text(
+        "SELECT qty_ordered FROM purchase_order_lines WHERE source_ref = :r"
+    ), {"r": rec["id"]}).scalar()
+    assert float(line_qty) == overridden_qty, (
+        "the draft PO line must raise at the buyer's overridden quantity"
+    )
+    assert float(line_qty) != master_rounded, (
+        "the draft PO line must NOT raise at the stale master rounding"
+    )
+
+
+# ===========================================================================
 # AC-M4.5 — Confirm decisions consolidates a draft PO per supplier
 # ===========================================================================
 
@@ -168,9 +220,12 @@ def test_confirm_consolidates_one_draft_po_per_supplier(scm_app):
 # AC-M4.6 — on_order excludes a draft; includes it once confirmed (BOTH directions)
 # ===========================================================================
 
-def _on_order(db, product_id, warehouse_id) -> float:
+def _ordered(db, product_id, warehouse_id) -> float:
+    """The PLACED-order figure. `on_order_v` is the SPO allocation now (migration 337), and
+    a PO the decision flow raises has nothing shipped against it, so it would read 0 there
+    whether the flow worked or not."""
     v = db.execute(text(
-        "SELECT on_order FROM scm.on_order_v WHERE product_id = :p AND warehouse_id = :w"
+        "SELECT ordered FROM scm.po_ordered_v WHERE product_id = :p AND warehouse_id = :w"
     ), {"p": product_id, "w": warehouse_id}).scalar()
     return float(v) if v is not None else 0.0
 
@@ -183,17 +238,17 @@ def test_draft_excluded_from_on_order_until_confirmed(scm_app):
     run_id = _run_buys(db, wid_code)
     rec_a = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}[a]
 
-    before = _on_order(db, a, wid)
+    before = _ordered(db, a, wid)
     dsvc.accept_recommendation(db, rec_a["id"], actor="tester")
     db.flush()
     # accept alone stages nothing on-order (no PO yet)
-    assert _on_order(db, a, wid) == before, "a staged accept must NOT appear in on_order_v"
+    assert _ordered(db, a, wid) == before, "a staged accept must NOT appear as ordered"
 
     # confirm decisions → draft PO exists but is still OUTSIDE on_order (M4-D5)
     dsvc.confirm_decisions(db, run_id, ids=None, actor="tester")
     po_id = _po_id_for_rec(db, rec_a["id"])
     assert po_id is not None
-    assert _on_order(db, a, wid) == before, "a draft PO must NOT appear in on_order_v"
+    assert _ordered(db, a, wid) == before, "a draft PO must NOT appear as ordered"
 
     ordered_qty = float(db.execute(text(
         "SELECT qty_ordered FROM purchase_order_lines WHERE purchase_order_id = :id"
@@ -203,7 +258,7 @@ def test_draft_excluded_from_on_order_until_confirmed(scm_app):
     # confirm the DRAFT → active → NOW counts as on_order (M4-D6)
     out = PurchaseOrderService(db).bulk_confirm([po_id], actor="tester")
     assert out["confirmed_count"] == 1
-    assert _on_order(db, a, wid) == before + ordered_qty
+    assert _ordered(db, a, wid) == before + ordered_qty
 
 
 def test_confirm_renumbers_draft_to_canonical_sequential(scm_app):

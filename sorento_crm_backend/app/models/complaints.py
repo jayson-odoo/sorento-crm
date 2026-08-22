@@ -36,6 +36,13 @@ class Complaint(Base):
     contact_number = Column(Text, nullable=True)
     customer_address = Column(Text, nullable=True)
     project_title = Column(Text, nullable=True)
+    # AC-L3: the reportable link to a registered project, added WITHOUT removing the text
+    # above -- every historical complaint has only the text, and SET NULL rather than CASCADE
+    # because a complaint is a customer's problem and a legal record that must outlive the
+    # pursuit it was attached to.
+    project_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="SET NULL"), nullable=True
+    )
     contact_id = Column(Text, nullable=True)
     space_id = Column(Text, nullable=True)
     respond_inbox_url = Column(Text, nullable=True)
@@ -74,6 +81,18 @@ class Complaint(Base):
         cascade="all, delete-orphan",
         order_by="ComplaintProductLine.sort_order",
     )
+
+    @property
+    def response_write_allowed(self) -> bool:
+        """Whether ``technical_team_response`` may be written at this status (UAC O1).
+
+        Read straight off ``response_gate`` - the same module the write path raises
+        from - so the flag the UI gates on and the rule the server enforces cannot
+        disagree. Derived live; never a column, nothing to backfill.
+        """
+        from app.services.response_gate import COMPLAINT, is_response_status_allowed
+
+        return is_response_status_allowed(COMPLAINT, self.status)
 
     __table_args__ = (
         Index("ix_complaints_delivery_order_number", "delivery_order_number"),

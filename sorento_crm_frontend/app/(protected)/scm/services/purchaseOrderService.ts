@@ -1,16 +1,16 @@
 /**
  * ============================================================================
- * PURCHASE ORDERS — real API binding + M4 Slice B draft→confirm→GR flow
+ * PURCHASE ORDERS - real API binding + M4 Slice B draft→confirm→GR flow
  * ============================================================================
  * Mounted under `require_module_enabled_with_api_key("scm")` at
  * `/api/v1/scm/purchase-orders`, gated on `scm.dashboard.view` (writes use
  * `scm.reorder.run`). The PO feeds "on-order" / "incoming" into the
- * net-position views. No UUIDs surfaced — PO by po_number.
+ * net-position views. No UUIDs surfaced - PO by po_number.
  *
  * At M1 the list was READ-ONLY. M4 Slice B adds the draft→confirm→GR flow:
  *   - draft POs (status `draft_recommendation`) are drafted from accepted
  *     recommendations and are NOT on-order (M4-D5);
- *   - bulk Confirm flips them to `active` — only then do they count as on-order;
+ *   - bulk Confirm flips them to `active` - only then do they count as on-order;
  *   - create-GR stamps received qty on an active PO (GR = `picking_headers`,
  *     `picking_type='goods_received'`).
  *
@@ -31,6 +31,13 @@
  *   POST /purchase-orders/{id}/create-gr
  *        → 200 { gr_reference } · creates a goods receipt from an active PO,
  *          stamping received qty (M4-D6). Not available on drafts.
+ *   POST /purchase-orders/bulk-delete   body { ids: string[] }
+ *        → 200 { deleted, unplaced_rows } · hard delete (captain, 20 Aug: "give
+ *          me an option to bulk delete purchase orders ... maybe need to
+ *          recreate"). `unplaced_rows` is how many order-inquiry rows had been
+ *          placed on one of the deleted POs' lines and were put back on the
+ *          board (`state` back to `raised`) rather than left pointing at supply
+ *          that no longer exists.
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
@@ -55,6 +62,28 @@ export interface PurchaseOrderListQuery {
   searchQuery?: string;
   status?: string | null;
   supplier?: string | null;
+  /**
+   * Keep only orders carrying this SKU. The response then also carries `product_cost`:
+   * what we last paid for it, on which order. That is where a buyer checks why a plan
+   * line shows no cost, since the plan now reads its cost from this book.
+   */
+  productCode?: string | null;
+  /**
+   * true = still expecting delivery; false = the complement (drafts, cancelled, fully
+   * received); omitted/null = every status. The buyer's "at a glance" question (the
+   * captain, 20 Aug: "how do i know the open PO / outstanding PO") - mirrors each row's
+   * own `is_on_order` flag, so the filter and the badge can never disagree.
+   */
+  outstanding?: boolean | null;
+}
+
+/** What we last paid for a SKU. `null` when we have never bought it; a recorded 0 is 0. */
+export interface ProductLastCost {
+  unit_cost: number;
+  currency: string | null;
+  po_number: string;
+  issue_date: string | null;
+  supplier_name: string | null;
 }
 
 /** Client-side list slice over the mock store (search + status filter + paging). */
@@ -80,9 +109,14 @@ function mockPurchaseOrderList(
   };
 }
 
+/** The list, plus the last-paid block when the caller narrowed it to one product. */
+export type PurchaseOrderListResponse = DataGridApiResponse<PurchaseOrder> & {
+  product_cost?: ProductLastCost | null;
+};
+
 export async function getPurchaseOrders(
   params: PurchaseOrderListQuery,
-): Promise<DataGridApiResponse<PurchaseOrder>> {
+): Promise<PurchaseOrderListResponse> {
   if (USE_SLICE_B_MOCKS) return mockPurchaseOrderList(params);
   const sorting = params.sortField
     ? [{ id: params.sortField, desc: params.sortDir === 'desc' }]
@@ -94,14 +128,19 @@ export async function getPurchaseOrders(
       sorting,
       searchQuery: params.searchQuery,
     },
-    { status: params.status ?? undefined, supplier: params.supplier ?? undefined },
+    {
+      status: params.status ?? undefined,
+      supplier: params.supplier ?? undefined,
+      product_code: params.productCode || undefined,
+      outstanding: params.outstanding ?? undefined,
+    },
   );
   const res = await apiFetch(`${BASE}?${sp.toString()}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load purchase orders'));
   return res.json();
 }
 
-/** Single PO by stable id — drives the detail page. GET /purchase-orders/{id}. */
+/** Single PO by stable id - drives the detail page. GET /purchase-orders/{id}. */
 export async function getPurchaseOrder(id: string): Promise<PurchaseOrder | null> {
   if (USE_SLICE_B_MOCKS) return mockGetPurchaseOrder(id);
   const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}`);
@@ -120,6 +159,26 @@ export async function bulkConfirmPurchaseOrders(ids: string[]): Promise<{ confir
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to confirm purchase orders'));
   return (await res.json()) as { confirmed_count: number };
+}
+
+/** How many order-inquiry rows had to be unplaced because the PO they were placed on
+ * was deleted out from under them. */
+export interface BulkDeletePurchaseOrdersResult {
+  deleted: number;
+  unplaced_rows: number;
+}
+
+/** Hard delete purchase orders. POST /purchase-orders/bulk-delete. */
+export async function bulkDeletePurchaseOrders(
+  ids: string[],
+): Promise<BulkDeletePurchaseOrdersResult> {
+  const res = await apiFetch(`${BASE}/bulk-delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete purchase orders'));
+  return (await res.json()) as BulkDeletePurchaseOrdersResult;
 }
 
 /** Create a goods receipt from an active PO (M4-D6). Returns the GR reference. */

@@ -18,6 +18,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { usePackingList, useDeletePackingList, useUpdatePackingList } from '../hooks/usePackingLists';
+import { useSupplierSelectQuery } from '../../suppliers/hooks/useSupplierSelectQuery';
 import { formatDate } from '@/lib/helpers';
 import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
 import PackingListDeleteDialog from './packing-list-delete-dialog';
@@ -28,9 +29,10 @@ import { Input } from '@/components/ui/input';
 import { useDownloadAttachment } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import { toast } from 'sonner';
-import ComplaintLinkAttachmentBrowserDialog from '@/app/(protected)/complaint-management/complaints/components/ComplaintLinkAttachmentBrowserDialog';
+import LinkAttachmentBrowserDialog from '@/components/common/LinkAttachmentBrowserDialog';
 import ClearanceDeliveryCard from './ClearanceDeliveryCard';
 import { CLEARANCE_ATTRIBUTE_FIELDS } from '../forms/packing-list-schema';
+import SpoPlannerTable from './SpoPlannerTable';
 
 interface PackingListDetailProps {
   packingListId: string;
@@ -45,7 +47,7 @@ export default function PackingListDetail({
 
   // `?tab=` so a tab survives a refresh and can be linked to directly. Written
   // with replace() so tab switching does not fill the back button with history.
-  const TABS = ['timeline', 'details', 'documents', 'lines'] as const;
+  const TABS = ['timeline', 'details', 'documents', 'lines', 'spo'] as const;
   const requestedTab = searchParams.get('tab');
   const activeTab = TABS.includes(requestedTab as (typeof TABS)[number])
     ? (requestedTab as string)
@@ -87,6 +89,39 @@ export default function PackingListDetail({
     () => (packingList?.attachment_id ? new Set([packingList.attachment_id]) : new Set<string>()),
     [packingList?.attachment_id]
   );
+
+  // The line response carries `supplier_id` and nothing else, and a UUID is not something
+  // anyone reads. Same cached select every other procurement screen resolves suppliers with.
+  const { data: suppliers = [] } = useSupplierSelectQuery();
+
+  const supplierNameById = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const s of suppliers) byId.set(s.id, s.supplier_name);
+    // The header's own supplier is already resolved on the payload, so it stays readable
+    // even before the select answers.
+    if (packingList?.supplier) byId.set(packingList.supplier.id, packingList.supplier.supplier_name);
+    return byId;
+  }, [suppliers, packingList?.supplier]);
+
+  const lineSupplierName = (supplierId?: string | null): string | null =>
+    (supplierId ? supplierNameById.get(supplierId) : null) ?? null;
+
+  /**
+   * Every factory named on the lines, in the order they appear.
+   *
+   * One container is routinely loaded by two or three of them, and the header supplier is
+   * null once it is mixed - the lines are then the only record of who loaded it, so a page
+   * reading the header alone would say "No supplier" about a full container.
+   */
+  const lineSupplierNames = useMemo(() => {
+    const names: string[] = [];
+    for (const line of packingList?.shipment_lines ?? []) {
+      if (!line.supplier_id) continue;
+      const name = supplierNameById.get(line.supplier_id);
+      if (name && !names.includes(name)) names.push(name);
+    }
+    return names.join(', ');
+  }, [packingList?.shipment_lines, supplierNameById]);
 
   /** Line-level status from quantity shipped, allocated, and received. */
   const getLineStatus = (
@@ -271,7 +306,7 @@ export default function PackingListDetail({
             {packingList.shipping_container_number || packingList.shipment_number || `Packing list ${packingList.id.slice(0, 8)}`}
           </h1>
           <p className="text-sm text-muted-foreground">
-            {packingList.supplier?.supplier_name || 'No supplier'} • Shipment
+            {packingList.supplier?.supplier_name || lineSupplierNames || 'No supplier'} • Shipment
             Date:{' '}
             {packingList.shipment_date
               ? formatDate(new Date(packingList.shipment_date))
@@ -328,6 +363,7 @@ export default function PackingListDetail({
               </Badge>
             )}
           </TabsTrigger>
+          <TabsTrigger value="spo">SPO Planner</TabsTrigger>
         </TabsList>
 
         <TabsContent value="timeline" className="mt-6">
@@ -355,7 +391,7 @@ export default function PackingListDetail({
               <div>
                 <p className="text-sm text-muted-foreground">Supplier</p>
                 <p className="font-medium">
-                  {packingList.supplier?.supplier_name || '-'}
+                  {packingList.supplier?.supplier_name || lineSupplierNames || '-'}
                 </p>
               </div>
               <div>
@@ -530,7 +566,7 @@ export default function PackingListDetail({
                 </Button>
               </div>
             )}
-            <ComplaintLinkAttachmentBrowserDialog
+            <LinkAttachmentBrowserDialog
               open={linkAttachmentDialogOpen}
               onOpenChange={setLinkAttachmentDialogOpen}
               entityId={packingListId}
@@ -608,6 +644,9 @@ export default function PackingListDetail({
                           <SortIcon field="product" />
                         </button>
                       </TableHead>
+                      {/* Whose line this is. Not sortable: the lines arrive grouped by the
+                          packing list they were read from, and re-ordering them loses that. */}
+                      <TableHead>Supplier</TableHead>
                       <TableHead>
                         <button
                           onClick={() => handleSort('quantity_shipped')}
@@ -668,6 +707,14 @@ export default function PackingListDetail({
                             ) : (
                               line.product?.product_code || '-'
                             )}
+                          </TableCell>
+                          <TableCell>
+                            <span
+                              className="block max-w-[180px] truncate"
+                              title={lineSupplierName(line.supplier_id) ?? undefined}
+                            >
+                              {lineSupplierName(line.supplier_id) ?? '-'}
+                            </span>
                           </TableCell>
                           <TableCell>{line.quantity_shipped}</TableCell>
                           <TableCell>
@@ -815,6 +862,10 @@ export default function PackingListDetail({
             </CardContent>
           </Card>
         )}
+        </TabsContent>
+
+        <TabsContent value="spo" className="mt-6">
+          <SpoPlannerTable shipmentId={packingListId} />
         </TabsContent>
       </Tabs>
     </div>

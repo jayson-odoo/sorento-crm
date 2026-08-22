@@ -18,6 +18,9 @@ class RespondContactBase(BaseModel):
     last_name: Optional[str] = None
     respond_io_id: Optional[str] = None  # Respond.io contact id for inbox URL
     workspace_id: Optional[str] = None  # FK to respond_workspaces.id
+    # AC-F4: when true, this contact's sponsorship form demands a registered project.
+    # Per contact so the requirement can be rolled out one team at a time.
+    requires_registered_project: bool = False
 
 
 class RespondContactCreate(RespondContactBase):
@@ -31,6 +34,7 @@ class RespondContactUpdate(BaseModel):
     last_name: Optional[str] = None
     respond_io_id: Optional[str] = None
     workspace_id: Optional[str] = None
+    requires_registered_project: Optional[bool] = None
     access_type_codes: Optional[List[str]] = None  # When set, replaces the contact's M2M assignment
 
 
@@ -44,6 +48,11 @@ class RespondContactResponse(RespondContactBase):
     access_types: List[RespondContactAccessTypeRef] = []
     workspace_name: Optional[str] = None
     workspace_space_id: Optional[str] = None
+    # Read-only mirror of respond_contacts.outbound_enabled so the contacts grid
+    # can show, and flip, who may receive a WhatsApp message. Writes go through
+    # POST /api/v1/system/respond-contacts/{id}/outbound, never through a contact
+    # update, so this is deliberately absent from RespondContactUpdate.
+    outbound_enabled: bool = True
 
     class Config:
         from_attributes = True
@@ -144,6 +153,26 @@ class UserPermissionResponse(UserPermissionBase):
         from_attributes = True
 
 
+class ProductDiscontinuedScopeIn(BaseModel):
+    """One (company, brand) slice on a user's product-discontinued subscription.
+
+    ``company_id`` null = every company (which forces ``brand_id`` null);
+    ``brand_id`` null = every brand in that company.
+    """
+
+    company_id: Optional[str] = None
+    brand_id: Optional[str] = None
+
+
+class ProductDiscontinuedScopeOut(ProductDiscontinuedScopeIn):
+    """A saved scope, resolved to names so the UI never renders a UUID."""
+
+    id: str
+    company_name: Optional[str] = None
+    brand_code: Optional[str] = None
+    brand_name: Optional[str] = None
+
+
 class UserBase(BaseModel):
     email: str
     name: Optional[str] = None
@@ -210,6 +239,9 @@ class UserUpdate(BaseModel):
     notify_whatsapp_on_deadline_extended: Optional[bool] = None
     notify_email_on_handling: Optional[bool] = None
     notify_whatsapp_on_handling: Optional[bool] = None
+    # Replace-all when provided (an empty list clears every scope, i.e. the user
+    # hears nothing); untouched when omitted.
+    product_discontinued_scopes: Optional[List[ProductDiscontinuedScopeIn]] = None
 
     @field_validator("email", mode="before")
     @classmethod
@@ -239,6 +271,10 @@ class UserResponse(UserBase):
     is_protected: Optional[bool] = False
     roles: Optional[List[UserRoleSimple]] = None  # Assigned roles from user_role_assignments
     superior_name: Optional[str] = None  # Superior's name for display
+    # Which slice of the catalogue the product-discontinued notice reports to this
+    # user. Populated by every manual UserResponse builder (see users.py) - the
+    # field is not an ORM attribute, so inheritance alone would never fill it.
+    product_discontinued_scopes: List[ProductDiscontinuedScopeOut] = []
 
     class Config:
         from_attributes = True
@@ -304,6 +340,12 @@ class ContactAgentAccessResponse(ContactAgentAccessBase):
     updated_at: Optional[datetime] = None
     agent_code: Optional[str] = None  # Added for frontend display
     agent_name: Optional[str] = None  # Added for frontend display
+    # The CONTACT's outbound kill switch (respond_contacts.outbound_enabled), not
+    # the grant's. Every grant row for the same contact reports the same value, so
+    # the grid can show it per row and de-duplicate by respond_contact_id before
+    # writing. None = the row is not linked to a respond_contacts row (legacy,
+    # phone-only), which is "unknown", never "reachable".
+    outbound_enabled: Optional[bool] = None
 
     class Config:
         from_attributes = True
@@ -358,6 +400,11 @@ class TeamMemberResponse(BaseModel):
     created_at: datetime
     class Config:
         from_attributes = True
+
+
+class BrandCodesUpdate(BaseModel):
+    """Replace a team member's brand tags with this exact set (empty = serves all)."""
+    codes: list[str] = []
 
 
 class AgentTeamAssignment(BaseModel):

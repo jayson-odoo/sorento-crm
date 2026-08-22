@@ -3,44 +3,66 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertCircle, CalendarClock, CalendarDays, History, PlayCircle, RotateCcw } from 'lucide-react';
+import {
+  AlertCircle,
+  AlertTriangle,
+  CalendarClock,
+  CalendarDays,
+  CheckCircle2,
+  ClipboardList,
+  FileSpreadsheet,
+  History,
+  Info,
+  Loader2,
+  PlayCircle,
+  RotateCcw,
+} from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { recToDispositionRow, splitDispositionRows } from '../lib/planRow';
+import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { resetRunDecisions } from '../services/reorderRunService';
+import { legacyLockReason, shouldGroupByChannel } from '../lib/planGrain';
+import { PlanExceptionsView } from './PlanExceptionsView';
+import { PoWorklistView } from './PoWorklistView';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import {
   todayRunKey,
   runHistoryKey,
-  useAllDispositionRecommendations,
   useReorderRun,
   useTodayRun,
+  useSetAsideDemand,
+  useUnlocatedDemand,
 } from '../hooks/useReorderRun';
 import { useReorderPlan } from '../hooks/useReorderPlan';
 import { decisionsKey } from '../hooks/useDecisions';
+import { planRowDecisionsKey } from '../hooks/usePlanLines';
 import type { ReorderRunHistoryItem } from '../services/reorderRunService';
-import { CashCopilotResults } from './CashCopilotResults';
-import { DispositionResultsGrid } from './DispositionResultsGrid';
-import { PlanAssistant } from './PlanAssistant';
+import { PlanLinesSection } from './PlanLinesSection';
+import type { PlanTotals } from '../lib/planDecisions';
+import { UploadDataMenu } from './UploadDataMenu';
 import { PlanMethodologySheet } from './PlanMethodologySheet';
 import { ReorderStatTiles, type ReorderPlanView } from './ReorderStatTiles';
 import { RunHistoryPanel } from './RunHistoryPanel';
 import { RunPlanningModal, type ManualPlanInputs } from './RunPlanningModal';
+import { SummaryOrderReportView } from './SummaryOrderReportView';
+import { DATE_LOCALE, DATE_PARTS, fmtDate, fmtInt } from '../../lib/format';
 
-/** Parse a naive-UTC ISO string as UTC, then format date / time in Malaysia. */
+/** Parse a naive-UTC ISO string as UTC, then format date / time in Malaysia.
+ *
+ *  Date parts come from `lib/format` rather than being restated, so the plan header cannot
+ *  drift from the dd/mm/yyyy every other screen uses. */
 function labelsFor(startedAt: string | null): { date: string; time: string } {
   if (!startedAt) return { date: '', time: '' };
   const hasTz = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(startedAt);
   const d = new Date(hasTz ? startedAt : `${startedAt}Z`);
   if (Number.isNaN(d.getTime())) return { date: startedAt, time: '' };
-  const date = new Intl.DateTimeFormat('en-MY', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
+  const date = new Intl.DateTimeFormat(DATE_LOCALE, {
+    ...DATE_PARTS,
     timeZone: 'Asia/Kuala_Lumpur',
   }).format(d);
-  const time = new Intl.DateTimeFormat('en-MY', {
+  const time = new Intl.DateTimeFormat('en-GB', {
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
@@ -61,11 +83,76 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(autoOpenRun);
   const [view, setView] = useState<ReorderPlanView>('buy');
+  /**
+   * The decision-progress tile's own filter (user markup, 2026-08-12): "so they can decide
+   * until all outstanding decisions are cleared."
+   */
+  const [decidedFilter, setDecidedFilter] = useState<'all' | 'undecided' | 'decided'>('all');
+  const toggleUndecidedFilter = () =>
+    setDecidedFilter((f) => (f === 'undecided' ? 'all' : 'undecided'));
+  // Reported up from `PlanLinesSection` every time the decided/undecided split changes, so
+  // the tile can show CASH figures without a second copy of `planTotals`.
+  const [progressTotals, setProgressTotals] = useState<PlanTotals | null>(null);
+  // S16: the "N of Total made" COUNT, separately - the server's own figure
+  // (`GET .../plan-row-decisions`), not derived from `progressTotals` above (which counts
+  // whatever is currently filtered/grouped on screen, not what is actually persisted).
+  const [decisionProgress, setDecisionProgress] = useState<{ decided: number; total: number } | null>(
+    null,
+  );
+
+  const selectView = (next: ReorderPlanView) => setView(next);
+  // Order summary / Plan exceptions / PO worklist have no row in the one grid to filter
+  // to (unlike Needs a level / Stock allocation, which are Status values on it), so their
+  // entry point lives here instead of a removed tile: quiet links in the grid's own
+  // toolbar, next to Filters / Columns / Export (user feedback, 2026-08-12: "I don't
+  // really need these" - the tile row, not the reports themselves).
+  const reportLinks: ToolbarAction[] = useMemo(
+    () => [
+      {
+        key: 'order_summary',
+        label: 'Order summary',
+        icon: FileSpreadsheet,
+        onClick: () => selectView('order_summary'),
+      },
+      {
+        key: 'plan_exceptions',
+        label: 'Plan exceptions',
+        icon: AlertTriangle,
+        onClick: () => selectView('plan_exceptions'),
+      },
+      {
+        key: 'po_worklist',
+        label: 'PO worklist',
+        icon: ClipboardList,
+        onClick: () => selectView('po_worklist'),
+      },
+    ],
+    [],
+  );
   // A history-selected run overrides today's; null = show today's default run.
   const [selectedRun, setSelectedRun] = useState<ReorderRunHistoryItem | null>(null);
 
+  // The run on screen belongs in the URL (captain, 2026-08-20: "the URL better show the
+  // plan that I am looking at now for better reference"). `?plan=` - NOT `?run=`, which
+  // this page already reads (`?run=1` auto-opens the Manual plan modal via `autoOpenRun`,
+  // see page.tsx). Read once on mount - this component sits too deep for a Suspense
+  // boundary to be worth adding just for `useSearchParams`, and reading `window.location`
+  // once is the simplest thing that answers this. `RunHistoryPanel` resolves the id
+  // against the runs it has loaded and reports the match back via `onSelect`; an unknown
+  // id just leaves the default showing.
+  const [initialRunIdFromUrl, setInitialRunIdFromUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const plan = new URLSearchParams(window.location.search).get('plan');
+    if (plan) setInitialRunIdFromUrl(plan);
+  }, []);
+
   const today = useTodayRun();
   const todayData = today.data ?? null;
+  // A property of the demand book, not of the run on screen, so it is read once here and
+  // shown whichever run the page is looking at.
+  const unlocated = useUnlocatedDemand();
+  const setAside = useSetAsideDemand();
 
   // Manual re-plan runs a live run then swaps the page to today's fresh snapshot.
   const manual = useReorderRun();
@@ -73,26 +160,46 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
 
   const currentItem = selectedRun ?? todayData;
   const currentRunId = currentItem?.run_id ?? null;
+
+  // Keep `?plan=<id>` in step with what's on screen via `replaceState` - no navigation,
+  // no remount, HMR state survives. The default (today's) run stamps it too, not only an
+  // explicit history pick, so a copied URL is always specific to the plan being looked at.
+  useEffect(() => {
+    if (!currentRunId || typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('plan') === currentRunId) return;
+    url.searchParams.set('plan', currentRunId);
+    window.history.replaceState(window.history.state, '', url);
+  }, [currentRunId]);
+
   const isToday =
     !!todayData && currentRunId === todayData.run_id && todayData.is_today;
+
   const isPastRun = !!currentItem && !isToday;
+  // Whether a run has actually happened today, which is what decides if there is anywhere
+  // for "Back to today's plan" to go. Distinct from `isToday`, which asks whether the run
+  // ON SCREEN is today's.
+  const hasTodayRun = !!todayData?.is_today && todayData.status === 'completed';
+  // A plan is being built in the background. Independent of what is on screen: the run
+  // shown is a completed one whenever one exists, so this is only ever an addition to the
+  // page, never a reason to empty it.
+  const planInProgress = !!todayData?.in_progress;
+  // The one case where there is nothing to show: the first plan ever is still running.
+  const buildingFirstPlan = planInProgress && !!todayData && todayData.status !== 'completed';
 
   const plan = useReorderPlan(currentRunId, view === 'buy' && !!currentRunId);
 
-  // Disposition (Stock allocation) rows come from the same run (type=disposition).
-  // Fetched WHOLE (M8-F18) - kept enabled in the buy view too so the tile's
-  // actionable-only count is always live, and so the grid can split actionable
-  // (Discontinue / Promote) from FYI hold accurately (the actionable rows are few
-  // and scattered across a run that may carry >1000 hold rows).
-  const dispositionQuery = useAllDispositionRecommendations(currentRunId, !!currentRunId);
-  const dispositionRows = useMemo(
-    () => (dispositionQuery.data ?? []).map(recToDispositionRow),
-    [dispositionQuery.data],
-  );
-  const { actionable: actionableDispositions, hold: holdDispositions } = useMemo(
-    () => splitDispositionRows(dispositionRows),
-    [dispositionRows],
-  );
+  /**
+   * Whether the plan row's decision control is actionable (S16, captain 21 Aug, 3rd time
+   * requested: "I want the decision made here"). The row is a decision surface at every
+   * grain now - grouped included, via fan-out - so grain no longer locks it. The one run
+   * that genuinely cannot record here is one that predates the front-planning contract
+   * (`legacyLockReason`, `lib/planGrain.ts`); its decisions are history.
+   */
+  const rowDecisionLockReason = legacyLockReason(currentItem);
+  // 5.3: "1 line of retail, 1 line of project" - the Buy view groups its per-warehouse
+  // rows into one row per (product, channel) whenever THIS run is stamped Product grain.
+  const groupByChannel = shouldGroupByChannel(currentItem);
 
   const summary = currentItem?.summary ?? null;
   const { date: dateLabel, time: timeLabel } = labelsFor(currentItem?.started_at ?? null);
@@ -142,12 +249,29 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
     }
   }, [manual.isComplete, manual.isFailed, manual.run?.run_id, manual.error, manual, queryClient]);
 
+  /**
+   * An upload has been QUEUED, not applied.
+   *
+   * The five order-book and history feeds write on the worker, so there is nothing to report
+   * here: the counts do not exist yet, the drawer is already following the job, and the
+   * dialog has already said "queued". What this can honestly do is drop what the page holds,
+   * so the moment the job lands a refetch reads the new position rather than the old one.
+   */
+  const uploadQueued = () => {
+    void queryClient.invalidateQueries({ queryKey: todayRunKey });
+    void queryClient.invalidateQueries({ queryKey: runHistoryKey });
+  };
+
   const launch = (inputs: ManualPlanInputs) => {
     setModalOpen(false);
     pendingManual.current = true;
     void manual.start({
       warehouse_codes: inputs.warehouse_codes,
+      // Empty = every product (AC-B8a), which is what the scheduled daily run does.
+      product_codes: inputs.product_codes,
       budget_id: null,
+      // Empty = no horizon (today's behaviour). Captain, 20 Aug.
+      plan_horizon_date: inputs.plan_horizon_date || null,
     });
     toast.info('Generating manual plan...');
   };
@@ -165,6 +289,11 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
       setResetOpen(false);
       plan.resetLocal(); // drop the FE decision overlay so stale pins/rejects clear too
       void queryClient.invalidateQueries({ queryKey: decisionsKey(currentRunId) });
+      // S16: the backend also drops every `plan_row_decision` on the run (see
+      // `reset_run_decisions`'s own `plan_row_decisions_cleared` count) - invalidate the
+      // cache this screen reads them through, or the header + row cells keep showing
+      // decisions the reset just cleared until an unrelated refetch happens to fire.
+      void queryClient.invalidateQueries({ queryKey: planRowDecisionsKey(currentRunId) });
       void queryClient.invalidateQueries({ queryKey: ['scm', 'reorder', 'cash-recs', currentRunId] });
       void queryClient.invalidateQueries({ queryKey: ['scm', 'reorder', 'dispositions', currentRunId] });
       void queryClient.invalidateQueries({ queryKey: todayRunKey });
@@ -176,6 +305,33 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
       toast.error(e instanceof Error ? e.message : 'Failed to reset the plan');
     } finally {
       setResetting(false);
+    }
+  };
+
+  /**
+   * Confirm decisions on the results grid (captain, 21 Aug follow-up: "I need the
+   * confirm decision to be in reorder planning, not in another page called order
+   * summary"). `plan.confirm` (`useReorderPlan`, wrapping `useDecisionMutations`'
+   * `confirm`) already hits the SAME endpoint the Order summary screen's own button
+   * does - the service dispatches by grain, so this materialises the grid's own
+   * Decision pills (`PlanRowDecision`) for a product-grain run. Neither `confirm` nor
+   * the mutation it wraps toasts on its own, so the toast + invalidation live here,
+   * mirroring `doReset` right above.
+   */
+  const doConfirmDecisions = async () => {
+    try {
+      const res = await plan.confirm();
+      if (!res) return;
+      void queryClient.invalidateQueries({ queryKey: decisionsKey(currentRunId) });
+      void queryClient.invalidateQueries({ queryKey: planRowDecisionsKey(currentRunId) });
+      void queryClient.invalidateQueries({ queryKey: ['scm', 'purchase-orders'] });
+      toast.success(
+        res.confirmed_count > 0
+          ? `Confirmed ${res.confirmed_count} decision${res.confirmed_count === 1 ? '' : 's'} into ${res.po_count} draft purchase order${res.po_count === 1 ? '' : 's'}`
+          : 'Nothing to confirm - no product has a buy decision yet',
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to confirm decisions');
     }
   };
 
@@ -222,10 +378,13 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             The daily reorder plan runs automatically each morning. You can also generate one now for
             a single warehouse.
           </p>
-          <Button onClick={() => setModalOpen(true)}>
-            <PlayCircle className="size-4" />
-            Manual plan
-          </Button>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <UploadDataMenu onQueued={uploadQueued} />
+            <Button onClick={() => setModalOpen(true)}>
+              <PlayCircle className="size-4" />
+              Manual plan
+            </Button>
+          </div>
         </Card>
         <RunPlanningModal
           open={modalOpen}
@@ -234,6 +393,23 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
           isSubmitting={manual.isRunning || pendingManual.current}
         />
       </>
+    );
+  }
+
+  // The first plan ever is still being built. There is no snapshot to fall back on, so the
+  // page says what is happening rather than "No plan yet", which reads as nothing running
+  // and invites the user to start a second one.
+  if (buildingFirstPlan) {
+    return (
+      <Card className="flex flex-col items-center gap-3 p-12 text-center">
+        <span className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+          <Loader2 className="size-6 animate-spin" aria-hidden />
+        </span>
+        <div className="text-base font-semibold">Building the plan</div>
+        <p className="max-w-md text-sm text-muted-foreground">
+          Started {dateLabel} at {timeLabel}. This page updates on its own when it finishes.
+        </p>
+      </Card>
     );
   }
 
@@ -249,6 +425,23 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
           <h2 className="text-lg font-semibold">
             {isPastRun ? `Plan · ${dateLabel}, ${timeLabel}` : `Today's plan · ${dateLabel}`}
           </h2>
+          {/* The plan-grain chip lived here until the captain removed it (20 Aug: "remove
+              these") - the grain still governs `shouldGroupByChannel`'s grouping (S16, 21
+              Aug: it no longer locks the row's own decision, only a legacy run does - see
+              `legacyLockReason`); it is just not announced in the header any more. */}
+          {/* Planning horizon (captain, 20 Aug): only shown when this run was launched
+              with one - an unhorizoned run (every run before this feature, and every
+              scheduled daily one) says nothing extra. */}
+          {currentItem?.plan_horizon_date ? (
+            <Badge
+              variant="secondary"
+              appearance="light"
+              size="sm"
+              title="Demand needed after this date was excluded from this plan's netting. Demand with no date is always counted."
+            >
+              Until {fmtDate(currentItem.plan_horizon_date)}
+            </Badge>
+          ) : null}
           <PlanMethodologySheet
             runContext={{
               dateLabel,
@@ -260,7 +453,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             facts={methodologyFacts}
           />
         </div>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1">
           {currentRunId ? (
             <button
               type="button"
@@ -272,6 +465,23 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
               <RotateCcw className="size-3.5" aria-hidden />
             </button>
           ) : null}
+          {/* The results grid IS where a product-grain buyer decides (S16's Decision
+              column) - Confirm decisions lives right here, not only on the Order
+              summary screen's own copy of the same button (captain, 21 Aug follow-up).
+              Location-grain runs decide differently (Accept/Adjust on the recommendation
+              itself), so this stays product-grain only. */}
+          {view === 'buy' && groupByChannel && currentRunId ? (
+            <Button
+              variant="outline"
+              onClick={() => void doConfirmDecisions()}
+              disabled={plan.isConfirming || !decisionProgress?.decided}
+              title="Materialise every decided product's buy into a draft purchase order"
+            >
+              <CheckCircle2 className="size-4" />
+              Confirm decisions{decisionProgress?.decided ? ` (${decisionProgress.decided})` : ''}
+            </Button>
+          ) : null}
+          <UploadDataMenu onQueued={uploadQueued} />
           <Button onClick={() => setModalOpen(true)}>
             <PlayCircle className="size-4" />
             Manual plan
@@ -289,68 +499,183 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         isBusy={resetting}
       />
 
+      {/* Demand that arrived with no stated location. It IS planned now - it lands on the
+          location holding the most of each item - but the planner should know which part of
+          the plan rests on demand nobody located, because that is the part most likely to be
+          wrong. Saying "not in this plan" here would now be false. */}
+      {unlocated.data && unlocated.data.products > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-sm">
+          <AlertTriangle className="size-4 shrink-0 text-amber-600" aria-hidden />
+          <span className="text-muted-foreground">
+            <span className="font-medium text-foreground tabular-nums">
+              {fmtInt(unlocated.data.quantity)}
+            </span>{' '}
+            units of committed demand across{' '}
+            <span className="font-medium text-foreground tabular-nums">
+              {fmtInt(unlocated.data.products)}
+            </span>{' '}
+            product{unlocated.data.products === 1 ? '' : 's'} arrived with no stock location.
+            It is planned against the location holding the most of each item, and rows built
+            on it are marked.
+            {unlocated.data.sample.length ? (
+              <>
+                {' '}
+                Largest:{' '}
+                <span className="font-medium text-foreground">
+                  {unlocated.data.sample.map((s) => s.product_code).join(', ')}
+                </span>
+                .
+              </>
+            ) : null}
+          </span>
+        </div>
+      ) : null}
+
+      {/* Project demand the Order Inquiry import never named. NOT in the plan, by the
+          user's own rule - the inquiry is the demand for the project side - and counted
+          here so a smaller-than-expected plan explains itself instead of looking like
+          lost data.
+
+          Wording note (live diagnosis, 20 Aug): "waiting on an Order Inquiry" implied the
+          orders the plan DOES count have one - 598 of 605 do not, they are retail/direct
+          sales-order lines the split never asked to have one. The predicate this reports
+          is order-level, not line-level: a project-class order the import never named. */}
+      {setAside.data && setAside.data.orders > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-sky-500/40 bg-sky-500/5 px-3 py-2 text-sm">
+          <Info className="size-4 shrink-0 text-sky-600" aria-hidden />
+          <span className="text-muted-foreground">
+            <span className="font-medium text-foreground tabular-nums">
+              {fmtInt(setAside.data.quantity)}
+            </span>{' '}
+            units across{' '}
+            <span className="font-medium text-foreground tabular-nums">
+              {fmtInt(setAside.data.orders)}
+            </span>{' '}
+            project order{setAside.data.orders === 1 ? '' : 's'} the Order Inquiry import
+            never named, so this plan leaves them out.
+            {setAside.data.sample.length ? (
+              <>
+                {' '}
+                Largest:{' '}
+                <span className="font-medium text-foreground">
+                  {setAside.data.sample.map((x) => x.so_number).join(', ')}
+                </span>
+                .
+              </>
+            ) : null}
+          </span>
+        </div>
+      ) : null}
+
+      {/* A newer plan is being built. Said alongside the plan on screen, not instead of it:
+          the numbers below are still the last usable ones, and hiding them would leave the
+          planner with nothing to work from while they wait. */}
+      {planInProgress ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
+          <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden />
+          <span className="text-muted-foreground">
+            A new plan is being built. The figures below are from the last completed one until
+            it finishes.
+          </span>
+        </div>
+      ) : null}
+
+      {/* Two different situations, and offering the same control for both made one of them a
+          dead end: "Back to today's plan" cleared the selection, landed on the same run, and
+          nothing moved. It is offered only when there IS a today plan to return to. */}
       {isPastRun ? (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm">
           <History className="size-4 shrink-0 text-primary" aria-hidden />
-          <span className="text-muted-foreground">
-            You are viewing a past run from{' '}
-            <span className="font-medium text-foreground">
-              {dateLabel}, {timeLabel}
-            </span>
-            . Return to today&apos;s plan to make changes.
-          </span>
-          <button
-            type="button"
-            className="ms-auto font-medium text-primary underline-offset-2 hover:underline"
-            onClick={() => setSelectedRun(null)}
-          >
-            Back to today&apos;s plan
-          </button>
+          {hasTodayRun ? (
+            <>
+              <span className="text-muted-foreground">
+                You are viewing a past run from{' '}
+                <span className="font-medium text-foreground">
+                  {dateLabel}, {timeLabel}
+                </span>
+                . Return to today&apos;s plan to make changes.
+              </span>
+              <button
+                type="button"
+                className="ms-auto font-medium text-primary underline-offset-2 hover:underline"
+                onClick={() => setSelectedRun(null)}
+              >
+                Back to today&apos;s plan
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="text-muted-foreground">
+                No plan has run today. This is the most recent one, from{' '}
+                <span className="font-medium text-foreground">
+                  {dateLabel}, {timeLabel}
+                </span>
+                . Stock and demand have moved since, so run one before deciding quantities.
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                className="ms-auto"
+                onClick={() => setModalOpen(true)}
+              >
+                <PlayCircle className="size-4" />
+                Plan now
+              </Button>
+            </>
+          )}
         </div>
       ) : null}
 
       <ReorderStatTiles
-        buyCount={summary?.buy_count ?? 0}
-        dispositionCount={actionableDispositions.length}
+        decided={decisionProgress?.decided ?? 0}
+        total={decisionProgress?.total ?? 0}
+        cashCommitted={progressTotals?.cost ?? 0}
         cashTotal={summary?.total_cash_impact ?? 0}
-        activeView={view}
-        onSelectView={setView}
+        undecidedFilterActive={decidedFilter === 'undecided'}
+        onToggleUndecidedFilter={toggleUndecidedFilter}
       />
 
-      {view === 'buy' ? (
-        <>
-          <PlanAssistant
-            runId={currentRunId}
-            onApplyProposalLine={plan.applyProposalLine}
-            onApplyActions={plan.applyActions}
-          />
-          {plan.isLoading ? (
-            <Skeleton className="h-72 w-full rounded-xl" />
-          ) : plan.isError ? (
-            <Card className="flex flex-col items-center gap-3 p-10 text-center">
-              <span className="flex size-10 items-center justify-center rounded-full bg-destructive/10 text-destructive">
-                <AlertCircle className="size-5" aria-hidden />
-              </span>
-              <p className="max-w-sm text-sm text-muted-foreground">
-                {plan.error instanceof Error ? plan.error.message : 'Failed to load buy recommendations.'}
-              </p>
-              <Button variant="outline" onClick={() => void plan.refetch()}>
-                Try again
-              </Button>
-            </Card>
-          ) : (
-            <CashCopilotResults plan={plan} />
-          )}
-        </>
-      ) : dispositionQuery.isLoading ? (
-        <Skeleton className="h-72 w-full rounded-xl" />
+      {view === 'plan_exceptions' ? (
+        // Where the plan disagrees with supply already placed (S5, AC-D2). Reads the SAME
+        // run as the plan above, so a past run shows the batch that week produced.
+        <PlanExceptionsView runId={currentRunId} onBack={() => selectView('buy')} />
+      ) : view === 'po_worklist' ? (
+        // What Mr Loo decided, ready to be keyed (S4, AC-E2.1). Reads the SAME run as
+        // the plan above, so a past run's worklist is that week's decisions.
+        <PoWorklistView runId={currentRunId} onBack={() => selectView('buy')} />
+      ) : view === 'order_summary' ? (
+        // The weekly sheet Mr Loo decides order quantities on (S3b, AC-C2.1). Reads
+        // the SAME run as the plan above, so a past run reports the week it was.
+        <SummaryOrderReportView runId={currentRunId} onBack={() => selectView('buy')} />
       ) : (
-        <DispositionResultsGrid rows={dispositionRows} />
+        // ONE LIST (S11). Every planning line lives in a single DataGrid where what the plan
+        // found is a STATUS COLUMN, not a place the row lives. The six bands this replaces
+        // sorted the work for the buyer, and two of them - Within budget, Over budget -
+        // delivered a verdict before the buyer had decided anything, using a budget they had
+        // not entered. The money question now comes last, in PlanBudgetReview, asked of the
+        // decisions that were actually made.
+        <>
+          {/* PlanAssistant sat here until the captain removed it from this screen
+              (20 Aug: "remove these"). The component and its plumbing survive for the
+              surfaces that still mount it. */}
+          <PlanLinesSection
+            runId={currentRunId}
+            decidedFilter={decidedFilter}
+            onDecidedFilterChange={setDecidedFilter}
+            onTotalsChange={setProgressTotals}
+            onDecisionProgressChange={setDecisionProgress}
+            secondaryActions={reportLinks}
+            decisionsReadOnly={!!rowDecisionLockReason}
+            readOnlyReason={rowDecisionLockReason}
+            groupByChannel={groupByChannel}
+          />
+        </>
       )}
 
       <RunHistoryPanel
         selectedRunId={currentRunId}
         onSelect={(run) => setSelectedRun(run)}
+        initialSelectRunId={initialRunIdFromUrl}
       />
 
       <RunPlanningModal

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertCircle, ChevronLeft, ChevronRight, History, Warehouse } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -135,7 +135,7 @@ function RunRow({
 }
 
 /**
- * Run history — a collapsible-free panel listing recent planning runs newest-first.
+ * Run history - a collapsible-free panel listing recent planning runs newest-first.
  * Clicking a run asks the parent to LOAD it (summary + recommendations) into the
  * main view without re-running. Renders explicit loading / empty / error states.
  */
@@ -143,12 +143,20 @@ export function RunHistoryPanel({
   selectedRunId,
   onSelect,
   runs: runsOverride,
+  initialSelectRunId,
 }: {
   selectedRunId: string | null;
   onSelect: (run: ReorderRunHistoryItem) => void;
   /** Prototype override (M8-D9): when provided, render these mock runs and skip
    *  the fetch entirely. Phase 2 drops this and uses the live run-history API. */
   runs?: ReorderRunHistoryItem[];
+  /** A run id carried in from the URL (`?plan=<id>`, captain 2026-08-20 -
+   *  `ReorderPlanningView` reserves `?run=1` as the "start a run" modal flag, so the
+   *  history param is `?plan=` instead). Resolved against the first page of runs once
+   *  it loads and reported back via `onSelect`; an id that isn't on that page falls
+   *  back silently to whatever is already selected. Tried at most once - later page
+   *  changes don't re-trigger it. */
+  initialSelectRunId?: string | null;
 }) {
   const usingMock = runsOverride !== undefined;
   const [page, setPage] = useState(1);
@@ -166,6 +174,17 @@ export function RunHistoryPanel({
   const isError = usingMock ? false : queryError;
   const totalPages = usingMock ? 1 : (data?.pagination.total_pages ?? 1);
   const total = usingMock ? runsOverride.length : (data?.pagination.total ?? 0);
+
+  // Resolve `initialSelectRunId` against this (first) page once it loads. A match
+  // reports back via `onSelect`; a miss is a silent no-op - the default stays shown.
+  const triedInitialSelect = useRef(false);
+  useEffect(() => {
+    if (triedInitialSelect.current) return;
+    if (usingMock || !initialSelectRunId || isLoading) return;
+    triedInitialSelect.current = true;
+    const match = data?.data.find((run) => run.run_id === initialSelectRunId);
+    if (match) onSelect(match);
+  }, [usingMock, initialSelectRunId, isLoading, data, onSelect]);
 
   return (
     <Card>

@@ -94,17 +94,55 @@ class PackingListLineGRNSimple(BaseModel):
         from_attributes = True
 
 
-class ProductSupplierBase(BaseModel):
+def _normalize_currency_code(value: Optional[str]) -> Optional[str]:
+    """Trim and upper-case a currency code; blank stays None (nothing on file)."""
+    if value is None:
+        return None
+    code = value.strip().upper()
+    return code or None
+
+
+class ProductSupplierSourcingTerms(BaseModel):
+    """What we buy this product from this supplier ON: the price, the money that price is
+    in, and the quantities the supplier will accept.
+
+    These live on the link rather than on the product because they are terms of a
+    relationship - two suppliers quote different prices, in different currencies, with
+    different minimums. The reorder plan reads every one of them, so a blank here is the
+    difference between a buy the buyer can act on and one it can only describe.
+    """
+
+    moq: Optional[int] = Field(default=None, ge=0)
+    order_multiple: Optional[int] = Field(default=None, ge=1)
+    unit_cost: Optional[Decimal] = Field(default=None, ge=0)
+    # No `max_length` here: it would run BEFORE the validator and reject " cny " for its
+    # padding rather than trimming it. The validator owns the whole rule.
+    currency: Optional[str] = None
+    is_primary_supplier: Optional[bool] = None
+
+    @field_validator("currency")
+    @classmethod
+    def _currency_code(cls, v: Optional[str]) -> Optional[str]:
+        code = _normalize_currency_code(v)
+        if code is not None and (len(code) != 3 or not code.isalpha()):
+            raise ValueError("Currency must be a 3-letter code, for example MYR or CNY.")
+        return code
+
+
+class ProductSupplierBase(ProductSupplierSourcingTerms):
     product_id: str
     supplier_id: str
-    standard_lead_time_days: Optional[int] = None
+    # Required, because the column is NOT NULL with no default. Declaring it optional
+    # turned a missing required field into a 500 at INSERT time; a caller that omits it
+    # now gets a 422 that says which field.
+    standard_lead_time_days: int = Field(ge=0)
 
 
 class ProductSupplierCreate(ProductSupplierBase):
     pass
 
 
-class ProductSupplierUpdate(BaseModel):
+class ProductSupplierUpdate(ProductSupplierSourcingTerms):
     standard_lead_time_days: Optional[int] = None
 
 
@@ -113,7 +151,7 @@ class ProductSupplierResponse(ProductSupplierBase):
     created_at: datetime
     product: Optional[ProductSimple] = None
     supplier: Optional[SupplierSimple] = None
-    
+
     class Config:
         from_attributes = True
 
@@ -121,6 +159,9 @@ class ProductSupplierResponse(ProductSupplierBase):
 class InboundShipmentLineBase(BaseModel):
     product_id: str
     quantity_shipped: int
+    # Whose line this is, when the caller knows. Left unset it falls back to the header's
+    # supplier at write time, so an existing single-supplier payload is unchanged.
+    supplier_id: Optional[str] = None
     uom_id: Optional[str] = None
     batch_number: Optional[str] = None
     serial_number_range_from: Optional[str] = None
@@ -129,6 +170,17 @@ class InboundShipmentLineBase(BaseModel):
     cartons_count: int = 1
     weight_per_carton: Optional[Decimal] = None
     unit_cost: Optional[Decimal] = None
+    # What `unit_cost` is stated in. The column has existed since S3b; the packing-list
+    # upload had no way to fill it, so a price parsed out of the file could only be stored
+    # as a number with no meaning. Optional and never defaulted (AC-P5.1).
+    #
+    # On the BASE, not on `...Create` alone, so it travels back out with the price it
+    # denominates: a read that returns `unit_cost` and no currency hands its caller the same
+    # meaningless number the write path exists to prevent.
+    currency: Optional[str] = None
+    # Volume as the packing list stated it, and the supplier's own note on the line.
+    cbm: Optional[Decimal] = None
+    remarks: Optional[str] = None
 
 
 class InboundShipmentLineCreate(InboundShipmentLineBase):
@@ -320,7 +372,12 @@ class SPOAllocationBase(BaseModel):
 
 
 class SPOAllocationCreate(SPOAllocationBase):
-    pass
+    # Which Supply PO line this allocation draws down (PO -> SPO -> GRN). The model column
+    # exists; without it on the create schema the allocation is written with no link to the
+    # ordered line, so the incoming cost has no currency to resolve from and no ordered cost
+    # to be compared against (AC-C3.2).
+    # Optional: 860 pre-existing allocations have no PO, and stock can arrive against none.
+    po_line_id: Optional[str] = None
 
 
 class SPOAllocationUpdate(BaseModel):
@@ -431,6 +488,12 @@ class SPOWithAllocationsGroup(BaseModel):
 
 class PickingLineBase(BaseModel):
     spo_allocation_id: Optional[str] = None
+    # What the SHEET said this line was received against, unnormalised. Present
+    # whether or not it matched an allocation, so a line the matcher could not
+    # place reads as stated rather than as a dash; NULL when no single SPO was
+    # named. On the BASE (not just the response) so a GRN edit can round-trip the
+    # value it read instead of deleting it.
+    spo_number_raw: Optional[str] = None
     product_id: str
     quantity_expected: int
     quantity_picked: int
@@ -656,6 +719,12 @@ class StockInquiryUpdate(BaseModel):
     purchasing_response: Optional[str] = None
     contact_id: Optional[str] = None
     space_id: Optional[str] = None
+    # Declared, but NOT editable on ANY update path (the plain PUT and
+    # update-and-reply alike): the lifecycle moves only through the workflow
+    # actions. A value that would MOVE the record is refused with a 422; one that
+    # echoes the current status is accepted and dropped, so a caller posting the
+    # whole entity back still saves. See ``_pop_status_or_refuse_move`` in
+    # procurement_service.
     status: Optional[str] = None
     last_responded_by: Optional[str] = None
     last_responded_at: Optional[datetime] = None
@@ -746,6 +815,17 @@ class StockInquiryResponse(StockInquiryBase):
     # How many PDF exports the VIEWING user has taken of this record (list path only;
     # 0 on the detail path, which does not batch the count).
     print_count: Optional[int] = None
+    # Portal submission revisions. The client echoes revision_no back in the
+    # X-Revision-No header on every write and a stale value is refused with 409
+    # (UAC CB1). Declared here because a response_model silently DROPS any field
+    # it does not name, which would leave the fence nothing to compare.
+    revision_no: Optional[int] = None
+    last_revised_at: Optional[datetime] = None
+    # Whether `purchasing_response` may be written at this status (UAC O1). Computed
+    # from `response_gate`, the same module the write path raises from, so the client
+    # gating an affordance and the server enforcing the rule read ONE source instead
+    # of two status lists that drift. Same response_model rule as above.
+    response_write_allowed: Optional[bool] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     attachments: Optional[List[StockInquiryAttachmentResponse]] = []
@@ -785,6 +865,9 @@ class PurchaseRequestHeaderBase(BaseModel):
     # Site contact, free text ("name and contact number"). Optional.
     pic: Optional[str] = None
     project_title: Optional[str] = None
+    # AC-F3: the sponsorship-to-project link. Nullable everywhere, and project_title
+    # stays as the display fallback for the rows that predate it (AC-F6).
+    project_id: Optional[str] = None
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None  # sponsorship form
     total_project_value: Optional[Decimal] = None  # sponsorship form
@@ -849,6 +932,9 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     # Site contact, free text ("name and contact number"). Optional.
     pic: Optional[str] = None
     project_title: Optional[str] = None
+    # AC-F3: the sponsorship-to-project link. Nullable everywhere, and project_title
+    # stays as the display fallback for the rows that predate it (AC-F6).
+    project_id: Optional[str] = None
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None
     total_project_value: Optional[Decimal] = None
@@ -862,6 +948,12 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     requested_by: Optional[str] = None
     requested_by_contact_id: Optional[str] = None
     requested_at: Optional[date] = None
+    # Declared, but NOT editable on ANY update path (the plain PUT and
+    # update-and-reply alike): the lifecycle moves only through the workflow
+    # actions. A value that would MOVE the record is refused with a 422; one that
+    # echoes the current status is accepted and dropped, so a caller posting the
+    # whole entity back still saves. See ``_pop_status_or_refuse_move`` in
+    # procurement_service.
     status: Optional[str] = None
     contact_id: Optional[str] = None
     space_id: Optional[str] = None
@@ -908,6 +1000,13 @@ class PurchaseRequestHeaderListResponse(PurchaseRequestHeaderBase):
     assigned_to_name: Optional[str] = None  # resolved display name
     handled_by_name: Optional[str] = None  # form-handling-lock holder display name
     handled_by_wa_phone: Optional[str] = None  # holder's wa.me digits (banner link)
+    # Portal revisions: the list needs BOTH. `revision_no` drives the "Rev N" badge
+    # and the -R{n} display suffix, and the frontend fence registry harvests it from
+    # list rows so a row action taken without opening the detail page is still
+    # fenced. Omitting it here does not merely hide a badge, it silently unfences
+    # every PR/SF row action, because `response_model` strips undeclared fields.
+    revision_no: Optional[int] = None
+    last_revised_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -940,6 +1039,9 @@ class PurchaseRequestAttachmentLinkRequest(BaseModel):
 
 class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     id: str
+    # Resolved for display (AC-L3): the office-side detail page shows a project CODE, never a
+    # UUID, matching what the portal already resolves for contacts.
+    project_code: Optional[str] = None
     # Requestor display name, resolved live from the FK (read-only, response-only).
     requested_by_contact_name: Optional[str] = None
     request_number: Optional[str] = None
@@ -955,6 +1057,10 @@ class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     voided_at: Optional[datetime] = None
     voided_by_name: Optional[str] = None
     voided_by_wa_phone: Optional[str] = None
+    # Portal submission revisions - see StockInquiryResponse for why these are
+    # declared explicitly (UAC CB1).
+    revision_no: Optional[int] = None
+    last_revised_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     lines: Optional[List[PurchaseRequestLineResponse]] = []
@@ -1021,6 +1127,9 @@ class PublicApprovalSummaryResponse(BaseModel):
     # Site contact, free text ("name and contact number"). Optional.
     pic: Optional[str] = None
     project_title: Optional[str] = None
+    # AC-F3: the sponsorship-to-project link. Nullable everywhere, and project_title
+    # stays as the display fallback for the rows that predate it (AC-F6).
+    project_id: Optional[str] = None
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None  # sponsorship form
     total_project_value: Optional[Decimal] = None  # sponsorship form (numeric)

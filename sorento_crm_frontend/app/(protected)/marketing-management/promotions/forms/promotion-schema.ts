@@ -13,6 +13,8 @@ export const PromotionSchema = z.object({
   start_date: ymd,
   end_date: ymd,
   is_active: z.boolean(),
+  // Optional: a promotion with no type is served under the default type's rule.
+  promotion_type_id: z.string().optional(),
   access_levels: z.array(z.string()).min(1, {
     message: 'Select at least one access level.',
   }),

@@ -16,7 +16,7 @@ import {
 } from '../lib/health';
 import type { AbcClass, HealthState, XyzClass } from '../types/scm.types';
 
-/** Canonical formula copy — reused by the grid header + the drill-down popup. */
+/** Canonical formula copy - reused by the grid header + the drill-down popup. */
 export const NET_POSITION_FORMULA = 'Net position = On hand + On order − Committed';
 
 /** Canonical days-of-cover formula copy (M2). */
@@ -108,7 +108,7 @@ export function DaysOfCoverInfo({ className }: { className?: string }) {
 }
 
 /** Plain-language class chip. `kind='abc'` renders the "Value" scale
- *  (High/Med/Low), `kind='xyz'` the "Demand" scale (Steady/Variable/Erratic) —
+ *  (High/Med/Low), `kind='xyz'` the "Demand" scale (Steady/Variable/Erratic) -
  *  the underlying A/B/C · X/Y/Z values stay internal (see lib/health display
  *  maps). `null` (unclassifiable SKU) reads as a muted "Unknown" so the column
  *  never fabricates a class. `kind` tints the chip so the two read apart. */
@@ -156,7 +156,7 @@ export function ClassChip({
 /** Composite-vs-confidence explainer for the supplier scorecard tooltip. Confidence
  *  = how MANY receipts back the score (sample size); the composite = how WELL those
  *  receipts performed. A thin sample (below the 3-order minimum) reads as provisional
- *  even when its composite is high — the two axes are independent. `sampleSize` is
+ *  even when its composite is high - the two axes are independent. `sampleSize` is
  *  woven in when known so the copy is concrete rather than generic. */
 function confidenceTip(
   confidence: 'high' | 'medium' | 'low',
@@ -168,21 +168,21 @@ function confidenceTip(
   if (confidence === 'low') {
     return (
       `Confidence reflects how many receipts back the score. ` +
-      `${orders}${has ? ' — below the 3-order minimum' : ' fall below the 3-order minimum'}, ` +
+      `${orders}${has ? ' - below the 3-order minimum' : ' fall below the 3-order minimum'}, ` +
       `so treat it as provisional. The composite is how well those receipts performed, ` +
       `not how sure we are of it.`
     );
   }
   return (
     `Confidence reflects how many receipts back the score. ` +
-    `${orders} — enough history to trust it. The composite is how well those ` +
+    `${orders} - enough history to trust it. The composite is how well those ` +
     `receipts performed, a separate axis from confidence.`
   );
 }
 
 /** Confidence badge for the supplier scorecard. `low` is deliberately loud +
  *  distinct (amber, outlined, explanatory) so a thin sample is never mistaken
- *  for a confident score (plan §6 — don't oversell thin data). The badge is the
+ *  for a confident score (plan §6 - don't oversell thin data). The badge is the
  *  trigger for a keyboard-accessible tooltip explaining the composite-vs-confidence
  *  distinction (and folding in the scored-order count when known). */
 export function ConfidenceBadge({
@@ -250,7 +250,7 @@ export function StateChip({
   );
 }
 
-/** Critical attention pill — stockout WITH open committed demand. Distinct from
+/** Critical attention pill - stockout WITH open committed demand. Distinct from
  *  the plain stockout chip (heavier, outlined) so it never relies on colour alone. */
 export function CommittedStockoutPill({ className }: { className?: string }) {
   return (
@@ -259,7 +259,7 @@ export function CommittedStockoutPill({ className }: { className?: string }) {
         'inline-flex items-center gap-1 rounded-full border border-scm-stockout bg-scm-stockout-soft px-2 py-0.5 text-2xs font-semibold text-scm-stockout',
         className,
       )}
-      title="Stocked out while customer demand is committed — act first"
+      title="Stocked out while customer demand is committed - act first"
     >
       <AlertTriangle className="size-3 shrink-0" aria-hidden />
       committed
@@ -268,7 +268,7 @@ export function CommittedStockoutPill({ className }: { className?: string }) {
 }
 
 /** Composition mini-bar: relative split of a warehouse's SKUs by health state.
- *  Deferred segments (low/overstock = null) are simply absent — never faked. */
+ *  Deferred segments (low/overstock = null) are simply absent - never faked. */
 export function CompositionBar({
   composition,
   className,

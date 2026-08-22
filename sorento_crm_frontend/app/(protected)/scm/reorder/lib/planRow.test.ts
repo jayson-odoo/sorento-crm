@@ -1,5 +1,5 @@
 /**
- * SCM M8 — plan-row adapters (Phase 2, test-first).
+ * SCM M8 - plan-row adapters (Phase 2, test-first).
  * `recToPlanRow` / `recToDispositionRow` / `m8CashImpact` / `supplierOptionsFor`
  * map the REAL run payload onto the lean M8 grid rows the div-grid renders.
  *   M8-C11 Warehouse column · M8-A4 order-qty inputs · M8-C12 Stock allocation rows
@@ -15,6 +15,7 @@ import {
   splitDispositionRows,
   supplierOptionsFor,
   type M8DispositionRow,
+  type M8PlanRow,
 } from './planRow';
 
 const acme: SupplierChoice = {
@@ -33,7 +34,7 @@ const beta: SupplierChoice = {
   composite_score: 80,
   is_primary: false,
 };
-/** An uncosted alternative — must be dropped from swap options (can't be budgeted). */
+/** An uncosted alternative - must be dropped from swap options (can't be budgeted). */
 const nocost: SupplierChoice = {
   supplier_code: 'SUP-NOCOST',
   supplier_name: 'Gamma (no price)',
@@ -111,13 +112,17 @@ describe('recToPlanRow (M8 adapter)', () => {
     expect(row.net).toBe(240);
     expect(row.days_cover).toBe(20);
     expect(row.forecast_daily_demand).toBe(12);
-    // M8-A4 — order-qty drill reads these off the frozen rec, never recomputed.
+    // M8-A4 - order-qty drill reads these off the frozen rec, never recomputed.
     expect(row.order_qty_inputs).toEqual({
       safety_stock: 77,
       reorder_point: 280,
       order_up_to: 600,
       rounded_qty: 320,
       moq: 10,
+      // 20 Aug live test: the frozen master figure + override flag, carried through
+      // alongside the effective `moq` (the fixture rec carries neither).
+      master_moq: null,
+      moq_is_override: false,
       order_multiple: 5,
     });
     // data-only ids for the demand drill (never rendered)
@@ -151,26 +156,53 @@ describe('recToPlanRow (M8 adapter)', () => {
   });
 });
 
-describe('supplierOptionsFor — costed swap options only', () => {
+describe('supplierOptionsFor - costed swap options only', () => {
   it('includes the chosen supplier + costed alternatives, drops uncosted + dupes', () => {
     const opts = supplierOptionsFor(rec({ supplier: acme, alternatives: [beta, nocost, acme] }));
     // acme (chosen) + beta; nocost dropped (no price); acme not duplicated
     expect(opts.map((o) => o.value)).toEqual(['SUP-ACME', 'SUP-BETA']);
     expect(opts.find((o) => o.value === 'SUP-BETA')).toMatchObject({
-      value: 'SUP-BETA', // supplier CODE — what /adjust's override_supplier_id wants
+      value: 'SUP-BETA', // supplier CODE - what /adjust's override_supplier_id wants
       label: 'Beta Supplies',
       unit_cost: 38,
       lead_time_days: 21,
     });
   });
+
+  it('carries the currency of each option, so a price can be written as what it is', () => {
+    // Without it the shortlist prints bare numbers and a USD 8.00 alternative reads
+    // cheaper than an RM 10.00 chosen supplier, which is the opposite of the truth.
+    const usd: SupplierChoice = {
+      ...beta,
+      unit_cost: 8,
+      currency: 'USD',
+      unit_cost_base: 36,
+      base_currency: 'MYR',
+    };
+    const opts = supplierOptionsFor(rec({ supplier: acme, alternatives: [usd] }));
+
+    expect(opts.find((o) => o.value === 'SUP-BETA')).toMatchObject({
+      unit_cost: 8,
+      currency: 'USD',
+      unit_cost_base: 36,
+    });
+  });
+
+  it('leaves the currency absent when the payload carries none', () => {
+    // An older run has no currency on the choice; that figure already meant ringgit and
+    // is rendered as base, never as a bare number.
+    const opts = supplierOptionsFor(rec({ supplier: acme, alternatives: [beta] }));
+
+    expect(opts.find((o) => o.value === 'SUP-BETA')?.currency).toBeNull();
+  });
 });
 
-describe('m8CashImpact — live qty × unit cost', () => {
-  it('multiplies live qty by unit cost', () => {
-    expect(m8CashImpact({ order_qty: 320, unit_cost: 42 })).toBe(13440);
+describe('m8CashImpact - live qty x the price in the budget currency', () => {
+  it('multiplies live qty by the converted unit cost', () => {
+    expect(m8CashImpact({ order_qty: 320, unit_cost: 42, unit_cost_base: 42 })).toBe(13440);
   });
   it('is null when the row is uncosted', () => {
-    expect(m8CashImpact({ order_qty: 320, unit_cost: null })).toBeNull();
+    expect(m8CashImpact({ order_qty: 320, unit_cost: null, unit_cost_base: null })).toBeNull();
   });
 });
 
@@ -242,5 +274,44 @@ describe('splitDispositionRows (M8-F18 actionable vs FYI hold)', () => {
     const { actionable, hold } = splitDispositionRows([drow('a', 'hold'), drow('b', 'hold')]);
     expect(actionable).toHaveLength(0);
     expect(hold).toHaveLength(2);
+  });
+});
+
+describe('m8CashImpact - the live cash figure is in the budget currency', () => {
+  // The budget is one pot of ringgit. A USD row costed at its face value consumes a
+  // quarter of what it really does, so a buyer sliding the budget "funds" a plan they
+  // cannot pay for. The row therefore carries BOTH prices: what the supplier charges,
+  // and what it converts to.
+
+  const row = (over: Partial<M8PlanRow> = {}): Pick<
+    M8PlanRow,
+    'order_qty' | 'unit_cost' | 'unit_cost_base'
+  > => ({
+    order_qty: 10,
+    unit_cost: 45,
+    unit_cost_base: 198,
+    ...over,
+  });
+
+  it('converts before multiplying, so 10 x USD 45 is 1980 not 450', () => {
+    expect(m8CashImpact(row())).toBe(1980);
+  });
+
+  it('is unchanged for a price already in the budget currency', () => {
+    expect(m8CashImpact(row({ unit_cost: 190, unit_cost_base: 190 }))).toBe(1900);
+  });
+
+  it('has no figure when the price could not be converted', () => {
+    // Face value here would be a wrong number that funds; null is the honest answer and
+    // parks the row in front of a human.
+    expect(m8CashImpact(row({ unit_cost_base: null }))).toBeNull();
+  });
+
+  it('has no figure when nobody has priced the item', () => {
+    expect(m8CashImpact(row({ unit_cost: null, unit_cost_base: null }))).toBeNull();
+  });
+
+  it('costs a free item at zero rather than calling it unknown', () => {
+    expect(m8CashImpact(row({ unit_cost: 0, unit_cost_base: 0 }))).toBe(0);
   });
 });

@@ -1,4 +1,5 @@
 import { Metadata } from 'next';
+import Link from 'next/link';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -40,7 +41,16 @@ export default async function ContactAccessAgentsPage() {
               </BreadcrumbList>
             </Breadcrumb>
           </ToolbarHeading>
-          <ToolbarActions></ToolbarActions>
+          <ToolbarActions>
+            {/* The sibling surface: it reaches contacts with no agent grant, and
+                holds the all-contacts kill switch. */}
+            <Link
+              href="/system-management/respond-contacts"
+              className="text-sm text-muted-foreground hover:text-primary underline underline-offset-4"
+            >
+              Every contact and the kill switch: Respond Contacts
+            </Link>
+          </ToolbarActions>
         </Toolbar>
       </Container>
 

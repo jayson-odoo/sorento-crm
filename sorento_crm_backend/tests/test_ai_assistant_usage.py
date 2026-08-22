@@ -37,7 +37,7 @@ def seeded_user(db_session: Session) -> str:
 
 
 @pytest.fixture
-def chat_service(db_session: Session) -> AIAssistantChatService:
+def chat_service(db_session: Session, monkeypatch) -> AIAssistantChatService:
     """Wire a chat service with all external dependencies stubbed.
 
     The provider call inside ``_run_agent_loop`` is replaced with a stub so
@@ -75,8 +75,13 @@ def chat_service(db_session: Session) -> AIAssistantChatService:
     # Stub the entity resolver helper used inside respond().
     import app.services.ai_assistant_service as svc_module
 
-    svc_module.resolve_references = lambda _db, _q: ResolutionResult(  # type: ignore[assignment]
-        tokens=[], resolutions=[], elapsed_ms=0.0
+    # Through `monkeypatch`, NOT a bare rebind: an unrestored rebind of a module symbol leaks
+    # into every test that runs later in the session. `**_k` because the stub stands in for a
+    # function whose keyword arguments are free to grow.
+    monkeypatch.setattr(
+        svc_module,
+        "resolve_references",
+        lambda *_a, **_k: ResolutionResult(tokens=[], resolutions=[], elapsed_ms=0.0),
     )
     return svc
 

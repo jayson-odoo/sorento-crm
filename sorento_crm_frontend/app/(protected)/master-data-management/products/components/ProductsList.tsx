@@ -123,9 +123,18 @@ const ProductsList = () => {
       isReloadRef.current = false;
       if (searchParams.toString()) {
         // Preserve a "products discontinued" deep link through the reload-clean —
-        // it is an explicit navigation intent, not persisted list state.
+        // it is an explicit navigation intent, not persisted list state. The link
+        // carries the recipient's brand filter too (brand_id=a,b), and dropping it
+        // would widen the list to products they were never notified about.
         const batch = searchParams.get('discontinued_batch_id');
-        router.replace(batch ? `${pathname}?discontinued_batch_id=${batch}` : pathname);
+        const batchBrands = searchParams.get('brand_id');
+        if (batch) {
+          const kept = new URLSearchParams({ discontinued_batch_id: batch });
+          if (batchBrands) kept.set('brand_id', batchBrands);
+          router.replace(`${pathname}?${kept.toString()}`);
+        } else {
+          router.replace(pathname);
+        }
       }
       return;
     }
@@ -148,7 +157,9 @@ const ProductsList = () => {
       setSelectedCategory(category);
       setCategoryId(category);
     }
-    if (brand) {
+    // A multi-brand deep link (brand_id=a,b) has no single-select equivalent, so
+    // the dropdown stays on "All brands" while the param still filters the grid.
+    if (brand && !brand.includes(',')) {
       setSelectedBrand(brand);
       setBrandId(brand);
     }
@@ -184,6 +195,13 @@ const ProductsList = () => {
   // Deep link from a "products discontinued" notification — restrict the list to
   // exactly the products reported in that batch.
   const discontinuedBatchId = searchParams.get('discontinued_batch_id') || undefined;
+  // ...and, for a recipient scoped to specific brands, to their slice of it. The
+  // param is passed through verbatim (comma-separated ids filter with IN).
+  const discontinuedBrandIds = discontinuedBatchId
+    ? searchParams.get('brand_id') || undefined
+    : undefined;
+  const effectiveBrandId =
+    selectedBrand && selectedBrand !== 'all' ? selectedBrand : discontinuedBrandIds;
 
   // Fetch products from the server API
   const fetchProducts = async ({
@@ -240,6 +258,7 @@ const ProductsList = () => {
       selectedVariantFilter,
       advancedFilter,
       discontinuedBatchId,
+      discontinuedBrandIds,
     ],
     queryFn: async () => {
       if (advancedFilter) {
@@ -255,7 +274,7 @@ const ProductsList = () => {
           quick_search: searchQuery || undefined,
           category_id:
             selectedCategory && selectedCategory !== 'all' ? selectedCategory : undefined,
-          brand_id: selectedBrand && selectedBrand !== 'all' ? selectedBrand : undefined,
+          brand_id: effectiveBrandId,
           product_status:
             selectedStatus && selectedStatus !== 'all' ? selectedStatus : undefined,
         });
@@ -266,7 +285,8 @@ const ProductsList = () => {
         sorting,
         searchQuery,
         selectedCategory,
-        selectedBrand,
+        // The deep link's brand filter rides in here when the dropdown is on "all".
+        selectedBrand: effectiveBrandId ?? null,
         selectedStatus,
         selectedVariantFilter,
       });
@@ -330,7 +350,7 @@ const ProductsList = () => {
       {
         category_id:
           selectedCategory && selectedCategory !== 'all' ? selectedCategory : undefined,
-        brand_id: selectedBrand && selectedBrand !== 'all' ? selectedBrand : undefined,
+        brand_id: effectiveBrandId,
         status: selectedStatus && selectedStatus !== 'all' ? selectedStatus : undefined,
         discontinued_batch_id: discontinuedBatchId,
       },

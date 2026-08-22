@@ -5,11 +5,18 @@ the same per-tenant attachment quota (file size + extension whitelist).
 
 Endpoints:
 
-- ``GET  /api/v1/public/portal/ai-extract/schema?form_key=...`` — return the
+- ``GET  /api/v1/public/portal/ai-extract/schema?form_key=...`` - return the
   resolved schema + per-field guidance (lookup options, product hints) so the
   FE can show the user what fields will be attempted.
-- ``POST /api/v1/public/portal/ai-extract`` — multipart, accepts ``form_key``
+- ``POST /api/v1/public/portal/ai-extract`` - multipart, accepts ``form_key``
   + ``files`` (repeated). Returns a structured ``ExtractResult``.
+
+Both handlers are plain ``def``, so FastAPI runs them in its threadpool: the
+extract does a PDF render plus an LLM round trip, and on the loop that froze
+every other request on the worker. Same defect, same fix as the flyer read in
+PR #164. Measured 5.8 to 9.8 s per image on 2026-08-13 against the portal
+extract path (documentation/plans/ai-extract/PLAN-ai-extract-off-the-loop.md);
+re-measure before reusing the number.
 """
 from __future__ import annotations
 
@@ -75,12 +82,23 @@ def ai_extract_schema(
 
 
 @router.post("/ai-extract", response_model=ExtractResult)
-async def ai_extract(
+def ai_extract(
     form_key: Annotated[str, Form(min_length=1)],
     files: Annotated[list[UploadFile], File(...)],
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ) -> ExtractResult:
+    """Extract structured fields out of what the contact uploaded.
+
+    Plain ``def``, so FastAPI runs the whole handler in a thread rather than on
+    the event loop: ``AIExtractService.extract`` is synchronous and slow (PDF
+    render plus LLM), and as an ``async def`` it blocked every concurrent
+    request on the worker. ``async`` bought nothing else here, because each file
+    is read whole before the running total is checked, so there was never any
+    streaming size enforcement to keep. That is the difference from the flyer
+    upload route, which stays ``async def`` precisely so it can refuse oversized
+    bytes as they arrive. Sibling fix: PR #164.
+    """
     if not files:
         raise handle_validation_error("Upload at least one file.")
     if len(files) > _MAX_FILES:
@@ -97,7 +115,7 @@ async def ai_extract(
                 f"Unsupported file type: {f.filename}. Allowed: "
                 f"{', '.join(sorted(_ALLOWED_EXTS))}."
             )
-        data = await f.read()
+        data = f.file.read()
         total += len(data)
         if total > _MAX_TOTAL_BYTES:
             raise handle_validation_error(

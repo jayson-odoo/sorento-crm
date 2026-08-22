@@ -13,12 +13,18 @@ import type {
   ProductApiResponse,
   ProductDetail,
   ProductVariantRef,
+  ProductLineRef,
   PriceHistory,
 } from '../types/product.types';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 
 export interface GetProductsParams extends DataGridApiFetchParams {
   category_id?: string;
+  /**
+   * One brand id, or a comma-separated list (`a,b`) which the backend filters
+   * with IN. The list form is what a discontinued-notice deep link carries for a
+   * recipient scoped to specific brands.
+   */
   brand_id?: string;
   status?: 'active' | 'inactive' | 'all';
   price_min?: number;
@@ -244,6 +250,54 @@ export async function resetVariantAuto(productId: string): Promise<ProductDetail
 }
 
 /**
+ * The same `/select` rows, keeping the fields a picked product decides for the line it lands on.
+ *
+ * `getProductsForVariantSelect` below narrows every row to a code and a name, which is all a
+ * variant picker needs. A quotation line needs the record itself: choosing a product there has
+ * to answer the description, the brand, the unit and the list price beside it, and a second
+ * round trip per pick to fetch what the dropdown was already holding would be latency for
+ * nothing. The endpoint returns the whole product row, so this mapper simply keeps more of it.
+ */
+export async function getProductsForLineSelect(
+  query?: string,
+): Promise<ProductLineRef[]> {
+  const queryParams = new URLSearchParams(query ? { query } : {});
+  const response = await apiFetch(
+    `/api/v1/master-data/products/select?${queryParams.toString()}`,
+    {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to fetch products'));
+  }
+
+  const body = await response.json();
+  const rows: Array<{
+    id: string;
+    product_code: string;
+    product_name: string;
+    description?: string | null;
+    brand_id?: string | null;
+    base_uom_id?: string | null;
+    list_price?: number | string | null;
+  }> = body?.data ?? [];
+  return rows.map((p) => ({
+    id: p.id,
+    product_code: p.product_code,
+    product_name: p.product_name,
+    description: p.description ?? null,
+    brand_id: p.brand_id ?? null,
+    base_uom_id: p.base_uom_id ?? null,
+    // Left as the STRING the API sent. A price that becomes a number here comes back out of
+    // `String(...)` as `1250` or `392.85000000000002`, and the line endpoints take decimals.
+    list_price: p.list_price === null || p.list_price === undefined ? null : String(p.list_price),
+  }));
+}
+
+/**
  * Product options for the variant-parent / add-child combobox.
  * Maps the shared `/select` endpoint to human-readable refs (no UUID in the UI).
  */
@@ -341,6 +395,60 @@ export async function getPriceHistory(id: string): Promise<PriceHistory[]> {
   return response.json();
 }
 
+/** One purchase-order line that bought this product. */
+export interface ProductPurchaseLine {
+  purchase_order_id: string;
+  po_number: string;
+  /** Date-only ISO string, or null on an order with no issue date. */
+  issue_date: string | null;
+  status: string;
+  supplier_code: string | null;
+  supplier_name: string | null;
+  qty_ordered: number | null;
+  qty_received: number | null;
+  unit_cost: number | null;
+  currency: string | null;
+}
+
+/** What we last paid, and the evidence for it.
+ *
+ *  `status` separates three facts a bare dash cannot: a known price (`ok`), an item nobody
+ *  has ever bought (`never_purchased`), and orders that exist but carry no unit cost
+ *  (`no_price_recorded`). A recorded 0 is a price OF zero and comes back as `ok`. */
+export interface ProductCostSummary {
+  status: 'ok' | 'never_purchased' | 'no_price_recorded';
+  unit_cost: number | null;
+  currency: string | null;
+  po_number: string | null;
+  purchase_order_id: string | null;
+  supplier_code: string | null;
+  supplier_name: string | null;
+  issue_date: string | null;
+}
+
+export interface ProductPurchaseHistory {
+  product_id: string;
+  lines: ProductPurchaseLine[];
+  /** Every line that exists, whether or not it was returned - the cap is never silent. */
+  total: number;
+  shown: number;
+  cost: ProductCostSummary;
+}
+
+/** GET /api/v1/master-data/products/{id}/purchase-history?limit=n */
+export async function getProductPurchaseHistory(
+  id: string,
+  limit = 50,
+): Promise<ProductPurchaseHistory> {
+  const response = await apiFetch(
+    `/api/v1/master-data/products/${id}/purchase-history?limit=${limit}`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load purchase history'));
+  }
+  return response.json();
+}
+
 /**
  * Bulk update products (e.g., status change)
  */
@@ -417,10 +525,14 @@ export async function validateProductsImport(
 
 /**
  * Bulk import products from Excel data (queued).
- * Expected columns: Item Code, Description, Desc 2, Item Group, Item Brand, Price, Is Active (T/F), UOM (optional).
+ * Expected columns: Item Code, Description, Desc 2, Item Group, Item Brand, Price, Is Active (T/F), UOM (optional),
+ * Reorder Level (optional), Reorder Qty (optional).
  * Item Group / Item Brand / UOM match a category / brand / unit-of-measure code or name;
  * anything unmatched is created by the import (code = name = the value in the file),
  * so master data does not have to exist before the upload.
+ * Reorder Level / Reorder Qty land on the product AND on the SCM planning table. A 0 is a
+ * real level; a blank cell in a file that CARRIES the column clears the held one; a file
+ * with no such column leaves every level untouched.
  * Returns job_id for tracking progress in Import Jobs.
  */
 export async function bulkImportProducts(

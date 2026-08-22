@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_permission
 from app.services.user_service import AccessAgentService
 from app.schemas.user import (
     AccessAgentCreate,
@@ -33,7 +33,7 @@ async def get_all_contact_access_agents(
     contact_id: Optional[str] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.access_agents.view")),
     db: Session = Depends(get_db)
 ):
     """Get all contact access agents with pagination and filtering."""
@@ -58,7 +58,7 @@ async def get_access_agents(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.access_agents.view")),
     db: Session = Depends(get_db)
 ):
     """Get access agents with pagination and search."""
@@ -74,7 +74,7 @@ async def get_access_agents(
 async def get_access_agent_neighbours(
     id: str = Query(..., description="Access agent id to resolve neighbours for"),
     query: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.access_agents.view")),
     db: Session = Depends(get_db),
 ):
     """Prev/next neighbours of an access agent within the active filtered list set.
@@ -96,7 +96,7 @@ async def get_access_agent_neighbours(
 @router.get("/{agent_id}", response_model=AccessAgentResponse)
 async def get_access_agent(
     agent_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.access_agents.view")),
     db: Session = Depends(get_db)
 ):
     """Get a single access agent by ID."""
@@ -169,7 +169,7 @@ async def delete_access_agent(
 @router.get("/{agent_id}/teams")
 async def get_agent_teams(
     agent_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.access_agents.view")),
     db: Session = Depends(get_db),
 ):
     """List assignments with team name, members, last assigned and next in line (round-robin state)."""
@@ -221,7 +221,7 @@ async def get_agent_field_access(
             "(null = follows the agent) and `effective`."
         ),
     ),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.access_agents.view")),
     db: Session = Depends(get_db),
 ):
     """Which fields this agent may reveal, and to whom.
@@ -277,7 +277,7 @@ async def set_agent_field_access(
 @router.get("/{agent_id}/contact-access", response_model=list[ContactAgentAccessResponse])
 async def get_contact_access_agents(
     agent_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.access_agents.view")),
     db: Session = Depends(get_db)
 ):
     """List contact access entries for an agent."""

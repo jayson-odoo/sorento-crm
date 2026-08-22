@@ -43,7 +43,16 @@ def _uid() -> str:
 
 @pytest.fixture(autouse=True)
 def _isolate_registry():
-    """The status registry is process-global; snapshot and restore it."""
+    """The status registry is process-global; snapshot and restore it.
+
+    ``list_status_entities()`` first, to force the lazy module discovery to run
+    BEFORE the snapshot is taken. Population is lazy and fires once per process, so
+    snapshotting an empty registry and then restoring it would wipe every real
+    module entity for the rest of the session -- and ``lazy_once`` would never
+    re-populate it. That shows up as another test file failing only when run after
+    this one.
+    """
+    status_registry.list_status_entities()
     saved = dict(status_registry._REGISTRY)
     yield
     status_registry._REGISTRY.clear()

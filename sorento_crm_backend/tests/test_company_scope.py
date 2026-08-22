@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal, Base
 from app.models.base import CompanyScopedMixin
 from app.models.company import Company
+from app.models.dealer_kit import Page as DealerKitPage
 from app.models.product import Brand, ProductCategory
 from app.models.inventory import Warehouse
 from app.models.marketing import CampaignType
@@ -74,6 +75,10 @@ REPRESENTATIVE = [
     (Warehouse, "warehouse_code", dict(warehouse_name="ZZSCOPE wh")),
     (CampaignType, "type_code", dict(type_name="ZZSCOPE ct")),
     (ProductCategory, "category_code", dict(category_name="ZZSCOPE cat")),
+    # Dealer Kit lives in its own Postgres schema. It is in this list because the
+    # do_orm_execute filter matching across a schema boundary is a distinct thing
+    # from matching inside public, and only a real query proves it.
+    (DealerKitPage, "slug", dict(name="ZZSCOPE dk page")),
 ]
 
 
@@ -284,6 +289,40 @@ _COMPANY_ID_ALLOWLIST = {
     # including the ~160 tests and background readers that hold a policy id with no
     # company context at all, and turns each one into an empty result.
     "sla_policies",
+    # Numbering rules key their counter by (company_id, doc_type) with NULL meaning the
+    # legacy/global rule (migration 327). Deliberately NOT the mixin: the resolver names
+    # the company explicitly on every claim, and the auto-filter would hide the NULL
+    # fallback row from every scoped session - a fresh company would then mint no numbers
+    # at all instead of inheriting the default rule.
+    "document_numbering_rules",
+    # Container sizes are per-tenant OR global: a row with a NULL company is a default
+    # this system ships for everyone, and a tenant row overrides it (hence the unique
+    # index on coalesce(company_id, nil)). The mixin's auto-filter would drop every
+    # NULL-company row, leaving a loading plan with no container to pack into, so
+    # `loading_plan_service.container_sizes` reads them unfiltered on purpose.
+    # KNOWN GAP, deliberately left for its own slice rather than changed during a merge:
+    # unfiltered also means one tenant can read another's custom size. The fix is
+    # `company_id IS NULL OR company_id = <scope>` in that one reader, not the mixin.
+    "container_size",
+    # The salesperson master is per-company OR shared, and in the captain's own files it is
+    # shared: the same agent codes sell for both companies, so partitioning the master would
+    # duplicate every agent and split one person's demand class across two rows. A NULL
+    # company therefore means "everyone's", and the mixin's auto-filter drops NULL-company
+    # rows - which here would hide the entire master and leave every imported order with no
+    # agent to classify from. Same shape and same known gap as `container_size`: the day a
+    # tenant needs its own agent, the fix is `company_id IS NULL OR company_id = <scope>` in
+    # `sales_agent_service`, not the mixin. That fix is now WRITEABLE rather than aspirational:
+    # migration 356 replaced the global unique on the code with one on
+    # `(coalesce(company_id, nil), sales_agent)`, exactly `container_size`'s index, so a tenant
+    # row can coexist with the shared row it overrides.
+    "sales_agents",
+    # A user's product-discontinued (company, brand) scopes: a preference about
+    # which company's catalogue they want to hear about, not company-owned data.
+    # The scheduled fan-out runs under the task's own company scope, so an owned
+    # table here would be filtered by it and would silently drop recipients from
+    # a narrowed run - the whole point of the row is to say "notify me about
+    # company X" from a session that is scoped to company Y.
+    "user_product_discontinued_scopes",
 }
 
 
@@ -303,22 +342,109 @@ def test_every_company_id_table_is_registered():
         f"Tables have a company_id column but are not CompanyScopedMixin subclasses "
         f"(add the mixin or allowlist them): {offenders}"
     )
-    # Foundation slice shipped 34 owned tables (PLAN §4.1); the certificate
-    # register added `certificates` as the 35th. Its two child tables
-    # (`certificate_revisions`, `certificate_products`) are deliberately NOT
-    # scoped: they are only ever reached through their certificate, which is
-    # scoped, so a second filter would be redundant surface (SEC-2a).
-    # Container status tracking added `shipment_tracking_observations` as the
-    # 36th. Unlike the certificate children this one IS scoped: a carrier
-    # observation names a container, and one tenant's containers must not be
-    # readable through a tenant-agnostic evidence table.
-    # Company-aware assignment routing added `teams` and `agent_teams` as the 37th and
-    # 38th. A team belongs to exactly one company, so the Teams page and every team
-    # picker follow the company switcher; `agent_teams` is scoped as the backstop for
-    # the ad-hoc AgentTeam queries in sla_service that the resolvers' required
-    # company_id argument cannot reach. `access_agents` is deliberately NOT here: one
-    # agent is a single router serving both brands through two ladders.
-    assert len(owned) == 38, f"expected 38 owned tables, found {len(owned)}: {sorted(owned)}"
+    # The count is a tripwire, not a fact about the schema: it forces a human to look
+    # whenever an owned table appears, because an unpartitioned one leaks across
+    # companies silently. Update it deliberately, never to "make the test pass".
+    #
+    # It stays a COUNT, not a list: enumerating the owned tables in a comment is how the
+    # number and the prose drifted apart twice already. The rule is what matters. A table
+    # is owned when the row is a fact about ONE company that cannot be derived from
+    # something already scoped:
+    #   - Planning artefacts own their company because a run, a recommendation, a budget or
+    #     an exception batch is a company's own decision queue, and an exception's warehouse
+    #     is nullable (supply in transit names no location to filter through).
+    #   - Fulfilment rows (loading plans, supplier notices, supplier inventory, allocations)
+    #     own it for the same reason: they are that company's shipment, not a place.
+    #   - The project-sales domain owns its company the same way: a project, a lead, a
+    #     quotation, an intake PO/SO and their versions are that company's pipeline.
+    #   - Certificate children are deliberately NOT owned: they are only reachable through
+    #     the certificate, which is scoped, so a second filter is redundant surface (SEC-2a).
+    #     Same reasoning for the project children that inherit their partition through their
+    #     parent (projects.series_categories, projects.brands, projects.collaborators,
+    #     projects.takeover_requests).
+    #   - `access_agents` is NOT owned: one agent routes both brands through two ladders.
+    # Derived instead of owned: demand_stat / item_classification / the views (via the
+    # warehouse join), supplier_performance (via suppliers), market signals (facts about
+    # the world, not about us).
+    # The Dealer Kit adds 9 owned tables under the same rule: a page, its editions and
+    # tiles, its assets, collections, bundles, a flyer reading, a selection and the
+    # contact -> customer link are each a fact about ONE company's catalogue.
+    # `selection_line` is deliberately NOT owned: it hangs off a scoped parent, so
+    # scoping it too would filter it twice and add nothing.
+    # `promotion_types` is owned but SHARED (`__company_shared__`, like attachments):
+    # the five kinds the migration seeds carry no company and have to stay visible
+    # under every scope, while a company that adds a type of its own keeps it. Owned
+    # without the shared flag would have hidden the seeds from every logged-in user
+    # while an API-key caller still saw them.
+    # `product_spec_flyer_batches` is owned: a proposal batch is ONE company's pass over
+    # its own flyer, and it copies the company off the reading it was started from. Its
+    # proposal rows are not owned - they hang off the scoped batch, so scoping them too
+    # would filter them twice (the `selection_line` rule above).
+    # Onboarding adds 3 owned tables under the same rule: a request is ONE company's
+    # intake batch (the requester is invited into that company, and the reviewer works
+    # a queue of her own company's requests), its people are that batch's named staff,
+    # and its templates are that company's own bundles of access. `onboarding_people`
+    # is owned rather than derived through its request because every per-person review
+    # write loads the person BY ID (`get_person`), so that id-keyed load is worth
+    # scoping in its own right, and the mixin also stamps the company at insert.
+    # Note what this does NOT replace: a cross-company write is already refused because
+    # each caller pairs that load with the scoped `get_request` (`_request_owning`,
+    # `_assert_reviewer_writable`), and the mixin cannot catch a SAME-company write
+    # aimed at another request's person, which is exactly what those ownership checks
+    # are for. Both are load-bearing; removing either is a real hole.
+    # Front planning adds 2 owned tables between its stages. `so_supply_decisions` is a
+    # fact about ONE company's project pipeline (the revision CS confirmed against a
+    # Project SO, loaded by id on every read of the sheet it backs), and
+    # `order_summary_location_allocation` is a planning artefact for the same reason
+    # `reorder_recommendation` and `recommendation_override` beside it are: it is that
+    # company's decision, read by the PO worklist, and the mixin stamps the company at
+    # insert so a split written under one scope can never be read under another.
+    # The proforma slice adds 2 more under the same rule: an invoice is ONE company's
+    # document of record from ONE of its suppliers, and its lines are that document's own
+    # charges. The lines are owned rather than derived because the write path deletes and
+    # reinserts them BY invoice id, and the mixin also stamps the company at insert.
+    #
+    # The number is the union of five lineages at this merge: main's 68 (67 plus the flyer
+    # proposal batch above), plus the 41 the project-sales branch brought (audited table by
+    # table at its own merge), plus `so_supply_decisions`, plus
+    # `order_summary_location_allocation`, plus `proforma_invoice` and
+    # `proforma_invoice_line`.
+    #
+    # Every branch that has reached this line so far arrived with a number that was right
+    # about its own lineage and wrong about the union, so measure rather than add up. Stage
+    # 1C branched before the flyer proposal batch landed and counted 67+41+1 = 109; main
+    # counted 68+41 = 109; Stage 2 branched before Stage 1C and counted its OWN copy of
+    # `so_supply_decisions` plus `order_summary_location_allocation` as 68+41+2 = 111; the
+    # proforma branch counted 68+41+2 = 111 for a different pair. 111 was only coincidentally
+    # the merged answer at Stage 2, because `so_supply_decisions` exists once and not twice
+    # (Stage 1C owns the model, Stage 2's duplicate declaration is gone - see
+    # `app/models/project_so.py`). The value below is measured against the merged model set.
+    #
+    # PLAN-so-book-diff-replanning.md adds 2: `planning_change_batches` is ONE company's
+    # reaction to its own re-uploaded SO book (born from that company's upload, listed on
+    # its own worklist), and `planning_change_rows` is that batch's own line-by-line record -
+    # owned rather than derived through the batch because every row write and read is BY
+    # ROW, keyed straight off `batch_id`/`row_id`, the same reason `plan_exception` and
+    # `so_amendments` are owned beside their own parents rather than left to a join.
+    #
+    # PLAN-scm-proforma-to-spo.md adds 2 more link tables: `proforma_invoice_shipment_link`
+    # (migration 405) records where a proforma invoice line's goods actually went - the draft
+    # inbound shipment line the "convert" action made for it, or why it made none - and
+    # `shipment_line_spo_link` (migration 406) records the next hop, where a shipment line's
+    # demand actually went - the SPO line "Create SPO" made for it, or why it made none. Both
+    # are owned rather than derived through their parent because the write path is idempotent
+    # BY the link row (a second convert / second "Create SPO" is refused by finding an
+    # existing row), the same shape as `so_amendments` beside `plan_exception`.
+    #
+    # PLAN-scm-reorder-decision-to-autocount.md adds 1: `plan_row_decision` (migration 408) is
+    # the buyer's CURRENT decision on one recommendation row - buy / use stock / use an
+    # existing PO / skip, or a mixture - kept CURRENT rather than append-only. Owned because it
+    # is that company's own decision queue, the same reason `recommendation_override` beside
+    # it is owned.
+    expected_owned = 118
+    assert len(owned) == expected_owned, (
+        f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
+    )
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------

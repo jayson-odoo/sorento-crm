@@ -81,11 +81,11 @@ describe('ProductListDialog', () => {
     expect(within(dialog).getByText('RM 1,500')).toBeInTheDocument();
   });
 
-  it('renders "—" for a null valuation', () => {
+  it('renders "-" for a null valuation', () => {
     useScmProducts.mockReturnValue(page([prod({ stock_valuation: null })], 1));
     render(<ProductListDialog {...baseProps} />);
-    // Null valuation + null avg-daily-demand + null days-of-cover all render "—".
-    expect(within(screen.getByRole('dialog')).getAllByText('—').length).toBeGreaterThanOrEqual(1);
+    // Null valuation + null avg-daily-demand + null days-of-cover all render "-".
+    expect(within(screen.getByRole('dialog')).getAllByText('-').length).toBeGreaterThanOrEqual(1);
   });
 
   it('exposes the keyboard-accessible net-position formula tooltip', () => {

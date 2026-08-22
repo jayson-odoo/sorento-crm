@@ -2,9 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
 
-// Capture the array-of-arrays handed to aoa_to_sheet so we can assert on the
-// exact rows the export builds, without producing a real .xlsx download.
-const captured: { aoa: (string | number)[][] | null } = { aoa: null };
+// Capture the array-of-arrays handed to aoa_to_sheet (and the download
+// filename) so we can assert on the exact rows the export builds, without
+// producing a real .xlsx download.
+const captured: { aoa: (string | number)[][] | null; filename: string | null } = {
+  aoa: null,
+  filename: null,
+};
 
 vi.mock('xlsx', () => ({
   utils: {
@@ -15,7 +19,9 @@ vi.mock('xlsx', () => ({
     book_new: () => ({}) as unknown,
     book_append_sheet: () => undefined,
   },
-  writeFile: () => undefined,
+  writeFile: (_wb: unknown, filename: string) => {
+    captured.filename = filename;
+  },
 }));
 
 import {
@@ -46,6 +52,7 @@ function makeRequest(overrides: Partial<PurchaseRequest> = {}): PurchaseRequest 
 describe('exportSponsorshipFormToExcel', () => {
   beforeEach(() => {
     captured.aoa = null;
+    captured.filename = null;
   });
 
   it('includes a Remark column in the line-items header', async () => {
@@ -82,6 +89,7 @@ describe('exportSponsorshipFormToExcel', () => {
 describe('exportPurchaseRequestToExcel (unchanged — regression guard)', () => {
   beforeEach(() => {
     captured.aoa = null;
+    captured.filename = null;
   });
 
   it('still has its Remark column', async () => {
@@ -90,5 +98,51 @@ describe('exportPurchaseRequestToExcel (unchanged — regression guard)', () => 
     );
     const header = captured.aoa!.find((r) => r[0] === '#');
     expect(header).toEqual(['#', 'Item Code', 'Qty', 'Remark']);
+  });
+});
+
+/**
+ * The sheet is one of the surfaces that must not disagree with the screens
+ * (UAC N4/N5): a revised record shows its derived `-R{n}` suffix in the number
+ * cell and in the file it downloads as. Revision 0 stays bare - there is no
+ * `-R0` (N3).
+ */
+describe('revision suffix on the exported document number', () => {
+  beforeEach(() => {
+    captured.aoa = null;
+    captured.filename = null;
+  });
+
+  it('suffixes the purchase request number cell and the filename', async () => {
+    await exportPurchaseRequestToExcel(
+      makeRequest({
+        request_type: 'purchase_request',
+        request_number: 'PR26-0332',
+        revision_no: 2,
+      }),
+    );
+    const numberRow = captured.aoa!.find((r) => r[0] === 'Purchase request number:');
+    expect(numberRow?.[1]).toBe('PR26-0332-R2');
+    expect(captured.filename).toBe('Purchase_Request_PR26-0332-R2.xlsx');
+  });
+
+  it('suffixes the sponsorship form number cell and the filename', async () => {
+    await exportSponsorshipFormToExcel(makeRequest({ revision_no: 3 }));
+    const numberRow = captured.aoa!.find((r) => r[0] === 'Sponsorship form number:');
+    expect(numberRow?.[1]).toBe('PSSF26-0326-R3');
+    expect(captured.filename).toBe('Sponsorship_Form_PSSF26-0326-R3.xlsx');
+  });
+
+  it('leaves a never-revised record bare', async () => {
+    await exportPurchaseRequestToExcel(
+      makeRequest({
+        request_type: 'purchase_request',
+        request_number: 'PR26-0332',
+        revision_no: 0,
+      }),
+    );
+    const numberRow = captured.aoa!.find((r) => r[0] === 'Purchase request number:');
+    expect(numberRow?.[1]).toBe('PR26-0332');
+    expect(captured.filename).toBe('Purchase_Request_PR26-0332.xlsx');
   });
 });

@@ -1,6 +1,6 @@
 """User management models."""
 import enum
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Index, Integer, UniqueConstraint
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Numeric, Text, Index, Integer, UniqueConstraint, text
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, ARRAY, JSONB
 from sqlalchemy.orm import relationship
@@ -106,6 +106,52 @@ class User(Base):
         Index("ix_users_respond_contact_id", "respond_contact_id"),
         # One phone == one user. Postgres allows multiple NULLs, so unlinked users are fine.
         UniqueConstraint("contact_number", name="uq_users_contact_number"),
+    )
+
+
+class UserProductDiscontinuedScope(Base):
+    """One (company, brand) slice of the catalogue a user is notified about.
+
+    ``company_id`` NULL = every company (which forces ``brand_id`` NULL);
+    ``brand_id`` NULL = every brand in that company. A product matches a scope iff
+    ``(scope.company_id IS NULL OR = product.company_id) AND
+    (scope.brand_id IS NULL OR = product.brand_id)``, so a product carrying no
+    brand is only ever reported to an all-brands scope.
+
+    The channel toggles on ``users`` stay HOW a recipient is notified; these rows
+    decide WHAT they hear about. Zero rows = zero notices.
+
+    Deliberately a plain ``Base`` and NOT ``CompanyScopedMixin``: this is a user
+    preference, not company-owned business data, and the scheduled task that fans
+    the batch out runs under a per-task company scope. An owned table would be
+    filtered by that scope and would silently drop recipients mid-run.
+    """
+
+    __tablename__ = "user_product_discontinued_scopes"
+
+    id = Column(PG_UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    company_id = Column(
+        PG_UUID(as_uuid=False), ForeignKey("companies.id", ondelete="CASCADE"), nullable=True
+    )
+    brand_id = Column(
+        PG_UUID(as_uuid=False), ForeignKey("brands.id", ondelete="CASCADE"), nullable=True
+    )
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_user_product_discontinued_scopes_user_id", "user_id"),
+        Index("ix_user_product_discontinued_scopes_company_id", "company_id"),
+        Index("ix_user_product_discontinued_scopes_brand_id", "brand_id"),
+        # Dedupe guard. Expression index over coalesced NULLs rather than
+        # NULLS NOT DISTINCT, which needs Postgres 15.
+        Index(
+            "uq_user_product_discontinued_scopes",
+            "user_id",
+            text("coalesce(company_id, '00000000-0000-0000-0000-000000000000'::uuid)"),
+            text("coalesce(brand_id, '00000000-0000-0000-0000-000000000000'::uuid)"),
+            unique=True,
+        ),
     )
 
 
@@ -245,6 +291,31 @@ class SystemSetting(Base):
         String(20), nullable=False, server_default="1,2", default="1,2"
     )
 
+    # Project registration clash bars (AC-C5). Two, not one: surfacing is generous
+    # because a missed duplicate is silent, blocking is strict because a false block
+    # fired often enough teaches users to ignore the warning. Calibrated on the live
+    # title corpus -- see app/services/project_clash_service.py for the measurements.
+    # AC-I3: months from launch date to delivery, used to bucket the forecast by year.
+    # Seeded at 30 from the client's own worked example. A setting rather than a constant
+    # because it is a market observation, and it will change before the code does.
+    project_delivery_lag_months = Column(
+        Integer, nullable=False, server_default="30", default=30
+    )
+
+    project_clash_surface_threshold = Column(
+        Numeric(4, 3), nullable=False, server_default="0.550", default=0.550
+    )
+    project_clash_block_threshold = Column(
+        Numeric(4, 3), nullable=False, server_default="0.700", default=0.700
+    )
+
+    # SCM front planning: the admin PLAN GRAIN policy (plan 5.1, AC-F01). `product` or
+    # `location`, rollout default `product`. It is policy, not a per-run selector - each
+    # new reorder run stamps the configured value at creation and keeps it, so changing
+    # this affects only runs created afterwards. Separate from the buyer's own
+    # Planning mode: Auto / Manual, which it never renames or overrides.
+    plan_grain = Column(String(20), nullable=False, server_default="product", default="product")
+
     # SMTP for notification emails (password not returned in read APIs)
     smtp_host = Column(String(255), nullable=True)
     smtp_port = Column(String(10), nullable=True)
@@ -350,6 +421,60 @@ class SystemSetting(Base):
     # = today's status+permission-only gating. Read via
     # handling_lock_service.is_handling_lock_enabled.
     handling_lock_enabled_types = Column(Text, nullable=True, server_default="")
+
+    # Portal submission revisions (PLAN-portal-submission-revisions). Global defaults;
+    # per-type overrides live in portal_revision_configs.
+    # `portal_revisions_enabled` is the kill switch: false disables revisions for every
+    # type regardless of its config row. `portal_max_revisions` is the fallback cap used
+    # when a type's own max_revisions is NULL.
+    # Both must ALSO appear in the settings GET dict AND SystemSettingUpdate - the
+    # routes build a manual dict and silently drop anything not listed there.
+    portal_revisions_enabled = Column(Boolean, nullable=False, server_default="true", default=True)
+    portal_max_revisions = Column(Integer, nullable=False, server_default="2", default=2)
+
+    # Chatbot media endpoint (PLAN-chatbot-media-endpoint section 2.4). Every number
+    # the endpoint enforces is an operator-editable column, not a constant in code -
+    # the captain's requirement, and the reason the settings surface exists at all.
+    # Same rule as the two blocks above: each of these must ALSO appear in the
+    # settings GET dict AND in SystemSettingUpdate, or it never reaches the frontend.
+    media_image_monthly_limit = Column(Integer, nullable=False, server_default="50", default=50)
+    media_voice_monthly_limit = Column(Integer, nullable=False, server_default="100", default=100)
+    media_voice_max_seconds = Column(Integer, nullable=False, server_default="120", default=120)
+    media_burst_limit = Column(Integer, nullable=False, server_default="5", default=5)
+    media_burst_window_seconds = Column(Integer, nullable=False, server_default="60", default=60)
+    media_warn_threshold_percent = Column(Integer, nullable=False, server_default="80", default=80)
+    # NULL falls back to the AIAssistantConfig row, matching _resolve_provider.
+    media_image_provider = Column(Text, nullable=True)
+    media_image_model = Column(Text, nullable=True)
+    # NULL means degradation is IMPOSSIBLE, so the monthly quota becomes a hard
+    # refusal (`denied_quota`) instead of an accepted-but-degraded extraction.
+    # Deliberately no default: a default would make an explicit NULL unwritable
+    # (SQLAlchemy cannot tell "set to None" from "unset" on a defaulted column),
+    # and shipping a paid model switched on by default is not a decision this
+    # feature gets to make on an operator's behalf.
+    media_image_degraded_model = Column(Text, nullable=True)
+    media_transcribe_model = Column(Text, nullable=False, server_default="whisper-1", default="whisper-1")
+    # Voice's own degraded tier, and it ships NULL and UNSEEDED on purpose. The
+    # image tiers were measured (PLAN section 14.1) so migration 358 seeds them;
+    # no cheaper transcription model has been measured, so none is claimed here.
+    # A NULL degraded model means the monthly voice quota is a hard refusal -
+    # which is honest, where degrading to the same model and then telling the
+    # contact their accuracy has dropped would not be.
+    media_voice_degraded_model = Column(Text, nullable=True)
+    # pinned | hints | auto. `pinned`/`en` reproduces today's behaviour exactly.
+    media_language_mode = Column(String(16), nullable=False, server_default="pinned", default="pinned")
+    media_language_pinned = Column(String(16), nullable=False, server_default="en", default="en")
+    media_language_hints = Column(Text, nullable=False, server_default="en,ms,zh", default="en,ms,zh")
+    # How long the endpoint awaits the worker before returning `pending`. This is
+    # the value that bounds the dispatcher's lock. Range 5-90, enforced in the
+    # backend validator, not only in the settings form.
+    media_sync_wait_seconds = Column(Integer, nullable=False, server_default="30", default=30)
+    # The worker's own hard ceiling. Range 5-110, and must be >= the sync wait so a
+    # job that outlives the wait still finishes and stays retrievable rather than
+    # being killed mid-flight. 110 keeps a maximally misconfigured pair inside the
+    # dispatcher's 120 second lock TTL.
+    media_extraction_timeout_seconds = Column(Integer, nullable=False, server_default="45", default=45)
+    media_max_entities = Column(Integer, nullable=False, server_default="10", default=10)
 
 
 class UserQuickAccess(Base):

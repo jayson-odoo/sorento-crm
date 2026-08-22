@@ -65,6 +65,59 @@ describe('DataGridListToolbar', () => {
     expect(screen.getByRole('button', { name: /clear/i })).toBeInTheDocument();
   });
 
+  it('hides the search while rows are selected, unless the page opts out (D2/H)', () => {
+    render(
+      <Harness
+        initialSelection={{ '1': true }}
+        toolbarProps={{ exportConfig: false, searchSlot: <input placeholder="Search rows" /> }}
+      />,
+    );
+    expect(screen.queryByPlaceholderText('Search rows')).toBeNull();
+  });
+
+  it('keeps the search beside the bulk strip when keepSearchWhileSelected is set', () => {
+    render(
+      <Harness
+        initialSelection={{ '1': true }}
+        toolbarProps={{
+          exportConfig: false,
+          searchSlot: <input placeholder="Search rows" />,
+          keepSearchWhileSelected: true,
+        }}
+      />,
+    );
+    // Both, at once: the search is how the next order to tick is found, and the strip is
+    // what says how many are ticked already.
+    expect(screen.getByPlaceholderText('Search rows')).toBeInTheDocument();
+    expect(screen.getByText(/1 selected/i)).toBeInTheDocument();
+    // The search comes FIRST, where it sits when nothing is selected, so it does not move
+    // under the cursor the moment a row is ticked.
+    const search = screen.getByPlaceholderText('Search rows');
+    const badge = screen.getByText(/1 selected/i);
+    expect(search.compareDocumentPosition(badge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  /**
+   * A tick made on a page (or a search) that is no longer loaded: the key is in
+   * `rowSelection`, but the row is not in the table's row model.
+   */
+  it('counts only the loaded rows in the bulk strip by default', () => {
+    render(<Harness initialSelection={{ '1': true, 'off-page': true }} toolbarProps={{ exportConfig: false }} />);
+    expect(screen.getByText(/1 selected/i)).toBeInTheDocument();
+  });
+
+  it('counts the whole accumulated selection when keepSearchWhileSelected is set', () => {
+    render(
+      <Harness
+        initialSelection={{ '1': true, 'off-page': true }}
+        toolbarProps={{ exportConfig: false, keepSearchWhileSelected: true }}
+      />,
+    );
+    // The page that opted into ticking across searches is counting the SET, so the strip has
+    // to agree with the count its own action button shows.
+    expect(screen.getByText(/2 selected/i)).toBeInTheDocument();
+  });
+
   it('does NOT render a Filters button when no filters are wired (D3)', () => {
     render(<Harness toolbarProps={{ exportConfig: false }} />);
     expect(screen.queryByRole('button', { name: /filters/i })).toBeNull();
@@ -104,5 +157,76 @@ describe('DataGridListToolbar', () => {
     // Inline buttons collapsed; an "Actions" overflow trigger appears instead.
     expect(screen.getByRole('button', { name: /actions/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^import$/i })).toBeNull();
+  });
+  it('states an active custom filter as a chip above the grid (AC-C1)', () => {
+    render(
+      <Harness
+        toolbarProps={{
+          exportConfig: false,
+          filters: {
+            kind: 'custom',
+            active: true,
+            activeCount: 1,
+            activeSummary: { label: 'Pending purchasing', onClear: () => {} },
+            content: <div>filter body</div>,
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText('Pending purchasing')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /clear filter: pending purchasing/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('renders no chip when the filter is not active (AC-C3)', () => {
+    render(
+      <Harness
+        toolbarProps={{
+          exportConfig: false,
+          filters: {
+            kind: 'custom',
+            active: false,
+            activeSummary: { label: 'Pending purchasing', onClear: () => {} },
+            content: <div>filter body</div>,
+          },
+        }}
+      />,
+    );
+    expect(screen.queryByText('Pending purchasing')).toBeNull();
+  });
+
+  it('renders no chip for a listing that supplies no summary (AC-C3)', () => {
+    render(
+      <Harness
+        toolbarProps={{
+          exportConfig: false,
+          filters: { kind: 'custom', active: true, activeCount: 2, content: <div>filter body</div> },
+        }}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /clear filter/i })).toBeNull();
+    // The count badge on the Filters button is unchanged.
+    expect(screen.getByRole('button', { name: /filters/i })).toHaveTextContent('2');
+  });
+
+  it('fires the chip clear handler (AC-C2)', () => {
+    const onClear = vi.fn();
+    render(
+      <Harness
+        toolbarProps={{
+          exportConfig: false,
+          filters: {
+            kind: 'custom',
+            active: true,
+            activeCount: 1,
+            activeSummary: { label: 'Responded', onClear },
+            content: <div>filter body</div>,
+          },
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /clear filter: responded/i }));
+    expect(onClear).toHaveBeenCalledTimes(1);
   });
 });

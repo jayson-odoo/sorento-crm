@@ -35,6 +35,9 @@ export interface PurchaseRequest {
   /** Site contact, free text ("name and contact number"). Optional. */
   pic?: string | null;
   project_title?: string | null;
+  /** AC-L3: reportable link to a registered project. `project_code` is the display value. */
+  project_id?: string | null;
+  project_code?: string | null;
   purpose?: string | null;
   delivery_address?: string | null;
   total_project_value?: number | null;
@@ -79,6 +82,12 @@ export interface PurchaseRequest {
   voided_by_name?: string | null;
   voided_at?: string | null;
   void_reason?: string | null;
+  /** Contact-initiated portal revisions, denormalized so the list needs no
+   *  per-row query (UAC H4). 0 = the original submission. The `-R{n}` document
+   *  number suffix is DERIVED from this, never stored (UAC N2). */
+  revision_no?: number | null;
+  /** When the latest revision landed (naive UTC). */
+  last_revised_at?: string | null;
   lines?: PurchaseRequestLine[];
   attachments?: PurchaseRequestAttachment[];
   grand_total?: number | null;
@@ -115,6 +124,7 @@ export interface PurchaseRequestFormData {
   customer_name?: string;
   pic?: string | null;
   project_title?: string;
+  project_id?: string | null;
   purpose?: string;
   delivery_address?: string;
   total_project_value?: number;

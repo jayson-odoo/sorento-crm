@@ -21,6 +21,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet';
+import { EM_DASH, fmtInt, fmtMoney, fmtTrimmedDecimal } from '../../lib/format';
 
 /**
  * SCM M8-F15 - "How this plan was built" methodology explainer.
@@ -159,13 +160,11 @@ function warehouseLabel(ctx?: PlanMethodologyRunContext | null): string {
   return `${count} warehouses`;
 }
 
-const nf = new Intl.NumberFormat('en-MY', { maximumFractionDigits: 1 });
-const nf0 = new Intl.NumberFormat('en-MY', { maximumFractionDigits: 0 });
-const money = new Intl.NumberFormat('en-MY', { maximumFractionDigits: 0 });
-/** Format a nullable number, dash when the engine had no value for it. */
+/** Format a nullable number, dash when the engine had no value for it. Delegates to the
+ *  shared formatters so this sheet's figures are written the way the grid writes them. */
 function n(v: number | null | undefined, whole = false): string {
-  if (v === null || v === undefined || Number.isNaN(v)) return '—';
-  return (whole ? nf0 : nf).format(v);
+  if (v === null || v === undefined || Number.isNaN(v)) return EM_DASH;
+  return whole ? fmtInt(v) : fmtTrimmedDecimal(v, 1);
 }
 
 /** Compact per-run numbers table revealed under a step. Columns depend on the step,
@@ -177,9 +176,9 @@ function StepNumbers({ kind, facts }: { kind: StepDetail; facts?: PlanMethodolog
     const rows: [string, string][] = [
       ['Within budget', `${n(facts.withinCount, true)} buys`],
       ['Over budget', `${n(facts.overCount, true)} buys`],
-      ['Cash budget', `RM ${money.format(facts.budget)}`],
-      ['Committed', `RM ${money.format(facts.committed)}`],
-      ['Free', `RM ${money.format(facts.free)}`],
+      ['Cash budget', fmtMoney(facts.budget)],
+      ['Committed', fmtMoney(facts.committed)],
+      ['Free', fmtMoney(facts.free)],
     ];
     return (
       <details className="group mt-3">
@@ -208,7 +207,7 @@ function StepNumbers({ kind, facts }: { kind: StepDetail; facts?: PlanMethodolog
         : kind === 'rop'
           ? [
               { head: 'Safety stock', cell: (b) => n(b.safetyStock, true) },
-              { head: 'Lead time', cell: (b) => (b.leadTime == null ? '—' : `${n(b.leadTime, true)}d`) },
+              { head: 'Lead time', cell: (b) => (b.leadTime == null ? '-' : `${n(b.leadTime, true)}d`) },
               { head: 'Reorder point', cell: (b) => n(b.reorderPoint, true) },
             ]
           : [

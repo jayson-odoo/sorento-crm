@@ -171,20 +171,32 @@ def test_neighbours_last_record_next_wraps_to_first(db: Session) -> None:
 def test_neighbours_out_of_filter_falls_back_to_unfiltered(db: Session) -> None:
     # The record exists but is NOT in the active filtered set. The service must
     # fall back to the unfiltered set so the pager is never dead, and the total
-    # reflects the unfiltered count.
-    _seed_ordered_set(db, 3)  # match query=PREFIX
+    # reflects the unfiltered count, not the filtered one.
+    #
+    # This used to prove that second half by comparing two SEPARATELY fetched
+    # live totals of the real, shared `customers` table for equality (one probe
+    # call, then `out["total"]` from the fallback). Another xdist worker's file
+    # can insert/delete rows in the gap between them (BL-034's exact shape,
+    # first found on `tests/test_complaint_neighbours.py`). What matters -
+    # that the fallback used the unfiltered scope, not the filtered one - is
+    # provable from this test's own marker rows alone.
+    in_set = _seed_ordered_set(db, 3)  # match query=PREFIX
     # A row that does NOT match query=PREFIX.
     outside = _seed(db, customer_code="NBRCUST-OUTSIDE-1", customer_name="ZZZ-out")
+    own_ids = {r.id for r in in_set} | {outside.id}
 
     svc = CustomerService(db)
-    # Compute the true unfiltered total to compare against.
-    unfiltered_total = svc.neighbours(outside.id)["total"]
-
     out = svc.neighbours(outside.id, query=PREFIX, sort_field="customer_name")
-    # Fell back: index resolved against the unfiltered set, total == unfiltered.
+    # Fell back: not found in the filtered 3-row set, so index resolved against
+    # the wider one instead of staying None.
     assert out["index"] is not None, "D2 fallback must resolve the record"
-    assert out["total"] == unfiltered_total
     assert out["total"] > 3  # bigger than the filtered subset
+
+    fallback_ids = {
+        str(row[0])
+        for row in svc._build_customer_list_query().with_entities(Customer.id).all()
+    }
+    assert own_ids <= fallback_ids
 
 
 def test_neighbours_no_filter_uses_full_set(db: Session) -> None:

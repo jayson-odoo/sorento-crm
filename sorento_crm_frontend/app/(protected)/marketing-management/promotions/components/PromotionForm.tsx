@@ -27,6 +27,8 @@ import type { PromotionFormData } from '../types/promotion.types';
 import PromotionAttachmentsTab from './PromotionAttachmentsTab';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { usePromotionTypes } from '@/app/(protected)/marketing-management/promotion-types/hooks/usePromotionTypes';
 import { malaysiaCivilYyyyMmDdFromApi, todayMalaysiaYyyyMmDd } from '@/lib/helpers';
 
 interface PromotionFormProps {
@@ -52,6 +54,13 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
   const { data: navigationData } = usePromotions(navigationParams);
   const navigationItems = navigationData?.data ?? [];
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
+  // The kind of promotion decides what happens after its end date, so a
+  // misclassified upload is corrected right here rather than in a support ticket.
+  const { data: promotionTypesData } = usePromotionTypes();
+  const promotionTypeOptions = (promotionTypesData?.data ?? []).map((type) => ({
+    value: type.id,
+    label: type.type_name,
+  }));
   const defaultAccessLevels = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
 
   const todayYmd = useMemo(() => todayMalaysiaYyyyMmDd(), []);
@@ -63,6 +72,7 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
       start_date: todayYmd,
       end_date: todayYmd,
       is_active: true,
+      promotion_type_id: '',
       access_levels: defaultAccessLevels,
     },
     mode: 'onSubmit',
@@ -84,6 +94,7 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
           start_date: startYmd,
           end_date: endYmd,
           is_active: promotion.is_active,
+          promotion_type_id: promotion.promotion_type_id || '',
           access_levels:
             promotion.access_levels && promotion.access_levels.length > 0
               ? promotion.access_levels
@@ -109,6 +120,9 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
         start_date: data.start_date,
         end_date: data.end_date,
         is_active: data.is_active,
+        // Empty means "unclassified": send null so the backend clears it rather
+        // than rejecting an empty string as a missing type.
+        promotion_type_id: data.promotion_type_id ? data.promotion_type_id : null,
         access_levels: data.access_levels,
       };
 
@@ -214,6 +228,29 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
                       value={field.value || ''}
                     />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="promotion_type_id"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Promotion Type</FormLabel>
+                  <FormControl>
+                    <SearchableSelect
+                      value={field.value || ''}
+                      onChange={field.onChange}
+                      options={promotionTypeOptions}
+                      clearable
+                      placeholder="Unclassified - uses the default type"
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Decides whether this promotion still applies after its end date.
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

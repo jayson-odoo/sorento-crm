@@ -43,7 +43,7 @@ from app.services.ai_trace import (
 )
 from app.services.embedding_service import EmbeddingReadService
 from app.services.entity_resolver import ResolutionResult, resolve_references
-from app.services.llm_provider import ChatResult, LLMProvider, get_provider
+from app.services.llm_provider import ChatResult, LLMProvider, get_provider, resolve_api_key
 from app.schemas.ai_semantic_parser import (
     PARSE_RESULT_JSON_SCHEMA,
     PARSE_RESULT_SCHEMA_NAME,
@@ -195,6 +195,18 @@ _UUID_PARAM_ENTITY_TYPES: dict[str, str] = {
     "supplier_id": "supplier",
     "promotion_ids": "promotion",
     "promotion_id": "promotion",
+    # Project Sales (AC-K1). `developer_party_ids` maps to the shared party resolver, which
+    # covers developers, architects and main contractors in one probe -- the LLM writes the
+    # company name it was shown either way.
+    "project_ids": "project",
+    "project_id": "project",
+    "developer_party_ids": "project_party",
+    "developer_party_id": "project_party",
+    # "my pipeline" / "what is Ali working on". The tool takes a user uuid, and since the
+    # slimmed project payload no longer carries owner uuids, a NAME is the only thing the model
+    # ever has to work with -- so without this entry the owner filter cannot be reached at all.
+    "owner_user_ids": "user",
+    "owner_user_id": "user",
 }
 
 _UUID_RE = re.compile(
@@ -414,6 +426,8 @@ class AIAssistantConfigService:
             row.api_key_ciphertext = data.api_key.strip()
         if data.anthropic_api_key is not None and data.anthropic_api_key.strip():
             row.anthropic_api_key_ciphertext = data.anthropic_api_key.strip()
+        if data.gemini_api_key is not None and data.gemini_api_key.strip():
+            row.gemini_api_key_ciphertext = data.gemini_api_key.strip()
         self.db.commit()
         self.db.refresh(row)
         return row
@@ -427,6 +441,7 @@ class AIAssistantConfigService:
             "system_prompt": row.system_prompt,
             "api_key_masked": _mask_key(row.api_key_ciphertext),
             "anthropic_api_key_masked": _mask_key(row.anthropic_api_key_ciphertext),
+            "gemini_api_key_masked": _mask_key(row.gemini_api_key_ciphertext),
             "enabled_tools": list(row.enabled_tools or []),
             "rag_enabled": bool(row.rag_enabled),
             "is_enabled": bool(row.is_enabled),
@@ -1253,7 +1268,7 @@ class AIAssistantChatService:
         raw = (user_message or "").strip()
         if not raw:
             return fallback_parse(raw)
-        api_key = config.api_key_ciphertext or settings.openai_api_key
+        api_key = resolve_api_key(config, config.provider)
         if not api_key:
             return fallback_parse(raw)
 
@@ -2212,9 +2227,26 @@ class AIAssistantChatService:
 
     def _resolve_value_to_uuids(self, value: str, entity_type: str) -> list[str]:
         """Fallback: resolve a single name/code to UUIDs of ``entity_type`` by
-        reusing ``resolve_references``. Best-effort — any failure yields []."""
+        reusing ``resolve_references``. Best-effort — any failure yields [].
+
+        The value is passed as a TOKEN LIST, not as a query string. Handed a string,
+        ``resolve_references`` runs `extract_candidate_tokens`, which only keeps code-like
+        tokens (a digit AND a letter) plus names that follow a "customer is ..." marker -- so a
+        bare person or company name tokenized to NOTHING and this fallback silently returned []
+        for every name it was ever asked about. Here the value IS the token: the LLM already
+        told us what to look up, there is nothing to extract.
+
+        Embedding fallback is off deliberately. This substitutes a UUID into a filter, so a
+        plausible-but-wrong semantic neighbour would answer confidently about the wrong
+        salesperson or developer; leaving the value unresolved makes the backend say so.
+        """
         try:
-            res = resolve_references(self.db, value)
+            res = resolve_references(
+                self.db,
+                [value],
+                allowed_entity_types=[entity_type],
+                enable_embedding_fallback=False,
+            )
         except Exception:
             logger.exception("uuid-arg fallback resolve failed value=%s", value[:80])
             return []
@@ -2249,7 +2281,7 @@ class AIAssistantChatService:
         ``token_usage_dict`` aggregates ``prompt_tokens`` / ``completion_tokens`` /
         ``total_tokens`` across every provider call made by this turn.
         """
-        api_key = config.api_key_ciphertext or settings.openai_api_key
+        api_key = resolve_api_key(config, config.provider)
         tool_calls_log: list[MCPToolCallResult] = []
         token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
@@ -2825,7 +2857,7 @@ class AIAssistantChatService:
         token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         tool_calls_log: list[MCPToolCallResult] = []
 
-        api_key = config.api_key_ciphertext or settings.openai_api_key
+        api_key = resolve_api_key(config, config.provider)
         if not api_key:
             return self._deterministic_fallback(tool_calls_log), tool_calls_log, token_usage
         try:
@@ -3107,11 +3139,17 @@ class AIAssistantChatService:
         return redacted
 
     def _embed_query(self, query: str) -> list[float]:
-        # Embeddings always go via OpenAI for now (Anthropic does not expose
-        # an embeddings API as of this writing). The provider abstraction's
-        # embed() falls back to OpenAI when configured, so we delegate.
+        # Embeddings always go via OpenAI: the stored vectors were written by
+        # that model, and a vector from another one is not comparable to them
+        # whatever its dimensionality. So this builds `OpenAIProvider` below
+        # unconditionally, and the key it needs is deliberately NOT read the way
+        # the chat call sites read theirs. `api_key_ciphertext` holds the key
+        # for whichever provider the assistant is configured on, so a
+        # Gemini- or Anthropic-configured assistant would post that vendor's key
+        # to OpenAI; a non-OpenAI configuration therefore falls through to the
+        # env key, which is the only one known to belong to OpenAI.
         config = self.cfg.get()
-        api_key = config.api_key_ciphertext if config.provider == "openai" else settings.openai_api_key
+        api_key = resolve_api_key(config, "openai")
         if not api_key:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

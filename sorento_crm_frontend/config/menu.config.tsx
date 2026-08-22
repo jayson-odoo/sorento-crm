@@ -4,8 +4,8 @@ import {
   Badge,
   Bell,
   Bitcoin,
-  Bolt,
   Book,
+  BookOpen,
   Briefcase,
   Building,
   Building2,
@@ -14,7 +14,6 @@ import {
   CheckCircle,
   Clock,
   Code,
-  Codepen,
   Coffee,
   File as DocumentIcon,
   Euro,
@@ -43,7 +42,6 @@ import {
   Package,
   Users as PeopleIcon,
   Plug,
-  ScrollText,
   Settings,
   Share2,
   Shield,
@@ -52,9 +50,7 @@ import {
   ShoppingCart,
   SquareMousePointer,
   Star,
-  Theater,
   TrendingUp,
-  Truck,
   UserCheck,
   UserCircle,
   Users,
@@ -306,6 +302,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'user_management.users.view',
       },
       {
+        title: 'Onboarding Requests',
+        path: '/user-management/onboarding-requests',
+        permission: 'user_management.onboarding.view',
+      },
+      {
         title: 'Roles',
         path: '/user-management/roles',
         permission: 'user_management.roles.view',
@@ -328,14 +329,22 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Internal Users',
         path: '/user-management/contact-access-agents',
+        permission: 'user_management.contacts.view',
       },
       {
         title: 'Contact Access Types',
         path: '/user-management/contact-access-types',
+        permission: 'user_management.access_agents.view',
       },
       {
         title: 'Market Segments',
         path: '/user-management/market-segments',
+        permission: 'user_management.reference_data.view',
+      },
+      {
+        title: 'Sales Agents',
+        path: '/master-data-management/sales-agents',
+        permission: 'master_data.sales_agents.view',
       },
       {
         title: 'Account',
@@ -374,6 +383,21 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'scm.reorder.run',
       },
       {
+        title: 'Loading Plan',
+        path: '/scm/loading-plan',
+        permission: 'scm.reorder.run',
+      },
+      {
+        title: 'Incoming Containers',
+        path: '/scm/incoming',
+        permission: 'scm.reorder.run',
+      },
+      {
+        title: 'Proforma Invoices',
+        path: '/scm/proforma-invoices',
+        permission: 'scm.dashboard.view',
+      },
+      {
         title: 'Policies',
         path: '/scm/policies',
         permission: 'scm.policy.manage',
@@ -392,6 +416,61 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Market Signals',
         path: '/scm/market-signals',
         permission: 'scm.dashboard.view',
+      },
+      {
+        title: 'Simulation',
+        path: '/scm/simulation',
+        permission: 'scm.reorder.run',
+      },
+    ],
+  },
+  {
+    // Dealer Kit — the catalogue page builder.
+    //
+    // Deliberately carries NO `moduleKey` and NO `permission` yet. The sidebar
+    // hides any branch whose moduleKey is absent from the tenant's enabled set,
+    // so declaring `dealer_kit` before the backend seeds its catalogue row would
+    // hide this entry outright. Both gates land in S1 phase 2, together with the
+    // module row and the permission slugs that actually enforce them — a gate
+    // added before its enforcement exists is a gate that lies.
+    title: 'Dealer Kit',
+    icon: BookOpen,
+    children: [
+      {
+        title: 'Catalogue Pages',
+        path: '/dealer-kit',
+      },
+      {
+        title: 'Product Collections',
+        path: '/dealer-kit/collections',
+      },
+      {
+        title: 'Tile Designs',
+        path: '/dealer-kit/tile-designs',
+      },
+      {
+        title: 'Brochure Images',
+        path: '/dealer-kit/brochure-images',
+      },
+      {
+        title: 'Flyers',
+        path: '/dealer-kit/flyer-readings',
+      },
+      {
+        title: 'Editions',
+        path: '/dealer-kit/editions',
+      },
+      {
+        title: 'Bundles',
+        path: '/dealer-kit/bundles',
+      },
+      {
+        title: 'Room Designer',
+        path: '/dealer-kit/design',
+      },
+      {
+        title: 'Design Summary',
+        path: '/dealer-kit/design/summary',
       },
     ],
   },
@@ -448,6 +527,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/sla-management/sla-policies',
       },
       {
+        title: 'Conversations',
+        path: '/sla-management/conversations',
+        permission: 'sla_management.conversations.view',
+      },
+      {
         title: 'Conversation SLA Tracking',
         path: '/sla-management/conversation-sla-tracking',
       },
@@ -466,6 +550,11 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'SLA Event Logs',
         path: '/sla-management/escalation-logs',
+      },
+      {
+        title: 'Message Snippets',
+        path: '/sla-management/message-snippets',
+        permission: 'sla_management.message_snippets.view',
       },
       {
         title: 'KPI Dashboard',
@@ -508,6 +597,16 @@ export const MENU_SIDEBAR: MenuConfig = [
       title: 'Product Specifications',
       path: '/master-data-management/product-specifications',
       permission: 'master_data.products.view',
+    },
+    {
+      title: 'Spec Verification',
+      path: '/master-data-management/spec-verification',
+      permission: 'master_data.products.view',
+    },
+    {
+      title: 'Flyer Spec Proposals',
+      path: '/master-data-management/flyer-spec-proposals',
+      permission: 'master_data.products.edit',
     },
     {
       title: 'Brands',
@@ -613,6 +712,112 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
   {
+    title: 'Project Sales',
+    icon: Building2,
+    moduleKey: 'projects',
+    children: [
+      {
+        // Pipeline carries both views behind its own Board / Grid toggle, and the Grid
+        // is the same list a separate "Projects" entry used to show. Two menu entries
+        // onto one screen is a choice the user has to make and cannot get right.
+        // /project-sales/projects still resolves, it redirects here.
+        title: 'Pipeline',
+        path: '/project-sales/pipeline',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Leads',
+        path: '/project-sales/leads',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Marketing's worklist: leads assigned but not yet accepted. Its own entry
+        // because a lead nobody has accepted is nobody's job, and it stays invisible
+        // if you have to go looking for it inside the leads list.
+        title: 'Awaiting Acceptance',
+        path: '/project-sales/lead-acceptance',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'My Tasks',
+        path: '/project-sales/my-tasks',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Cross-project by nature: a claim raised on one project's sales order is
+        // answered by another project's CS, so it cannot live under either project.
+        title: 'Stock Claims',
+        path: '/project-sales/stock-claims',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Cross-project for the same reason claims are: a reconciliation belongs to one
+        // sales order, but the point of the list is that a STACK of unanswered ones is
+        // visible to management rather than discovered (AC-N6).
+        title: 'AutoCount Differences',
+        path: '/project-sales/divergences',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Cross-project for the same reason the two entries above are: CS works the whole
+        // published order book down in one pass, and a reconciliation that only exists
+        // inside its own project is one nobody goes looking for.
+        title: 'Fulfilment Planning',
+        path: '/project-sales/fulfilment-planning',
+        permission: 'projects.projects.view',
+      },
+      {
+        // "Is the plan stored, how do I review it" (captain, 19 Aug 2026 demo): the board
+        // writes the decision, this is where it is reviewed afterwards - cross-project for
+        // the same reason Fulfilment Planning beside it is.
+        title: 'Plans',
+        path: '/project-sales/plans',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Purchasing's own worklist, and cross-project because purchasing is: the rows an
+        // ADOPTED AutoCount order raises belong to no project at all, so inside a project
+        // they are reachable nowhere. Shaped like the spreadsheet they work from today,
+        // one tab per delivery month.
+        title: 'Order Inquiries',
+        path: '/project-sales/order-inquiries',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Where the re-uploaded book's reaction to a planned line is reviewed and
+        // applied - born on the sales-order upload confirmation, listed here after.
+        title: 'Planning changes',
+        path: '/project-sales/planning-changes',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Forecast & Reports',
+        path: '/project-sales/reports',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Parties',
+        path: '/project-sales/parties',
+        permission: 'projects.parties.view',
+      },
+      {
+        title: 'Setup',
+        path: '/project-sales/setup',
+        permission: 'projects.types.view',
+      },
+      {
+        title: 'Series',
+        path: '/project-sales/series',
+        permission: 'projects.types.view',
+      },
+      {
+        title: 'Price Floors',
+        path: '/project-sales/price-floors',
+        permission: 'projects.types.view',
+      },
+    ],
+  },
+  {
     title: 'Marketing Management',
     icon: Megaphone,
     moduleKey: 'marketing',
@@ -627,6 +832,10 @@ export const MENU_SIDEBAR: MenuConfig = [
           {
             title: 'Promotion Attachments',
             path: '/marketing-management/promotion-attachments',
+          },
+          {
+            title: 'Promotion Types',
+            path: '/marketing-management/promotion-types',
           },
         ],
       },
@@ -815,6 +1024,11 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Respond.io Workspaces',
         path: '/system-management/respond-workspaces',
+        permission: 'system.respond_workspaces.view',
+      },
+      {
+        title: 'Respond.io Contacts',
+        path: '/system-management/respond-contacts',
         permission: 'system.respond_workspaces.view',
       },
       {
@@ -1227,6 +1441,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/user-management/users',
       },
       {
+        title: 'Onboarding Requests',
+        path: '/user-management/onboarding-requests',
+      },
+      {
         title: 'Roles',
         path: '/user-management/roles',
       },
@@ -1253,6 +1471,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Market Segments',
         path: '/user-management/market-segments',
+      },
+      {
+        title: 'Sales Agents',
+        path: '/master-data-management/sales-agents',
+        permission: 'master_data.sales_agents.view',
       },
       {
         title: 'Account',
@@ -1318,6 +1541,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/sla-management/sla-policies',
       },
       {
+        title: 'Conversations',
+        path: '/sla-management/conversations',
+        permission: 'sla_management.conversations.view',
+      },
+      {
         title: 'Conversation SLA Tracking',
         path: '/sla-management/conversation-sla-tracking',
       },
@@ -1336,6 +1564,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'SLA Event Logs',
         path: '/sla-management/escalation-logs',
+      },
+      {
+        title: 'Message Snippets',
+        path: '/sla-management/message-snippets',
+        permission: 'sla_management.message_snippets.view',
       },
       {
         title: 'KPI Dashboard',
@@ -1378,6 +1611,16 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       title: 'Product Specifications',
       path: '/master-data-management/product-specifications',
       permission: 'master_data.products.view',
+    },
+    {
+      title: 'Spec Verification',
+      path: '/master-data-management/spec-verification',
+      permission: 'master_data.products.view',
+    },
+    {
+      title: 'Flyer Spec Proposals',
+      path: '/master-data-management/flyer-spec-proposals',
+      permission: 'master_data.products.edit',
     },
     {
       title: 'Brands',
@@ -1483,6 +1726,112 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     ],
   },
   {
+    title: 'Project Sales',
+    icon: Building2,
+    moduleKey: 'projects',
+    children: [
+      {
+        // Pipeline carries both views behind its own Board / Grid toggle, and the Grid
+        // is the same list a separate "Projects" entry used to show. Two menu entries
+        // onto one screen is a choice the user has to make and cannot get right.
+        // /project-sales/projects still resolves, it redirects here.
+        title: 'Pipeline',
+        path: '/project-sales/pipeline',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Leads',
+        path: '/project-sales/leads',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Marketing's worklist: leads assigned but not yet accepted. Its own entry
+        // because a lead nobody has accepted is nobody's job, and it stays invisible
+        // if you have to go looking for it inside the leads list.
+        title: 'Awaiting Acceptance',
+        path: '/project-sales/lead-acceptance',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'My Tasks',
+        path: '/project-sales/my-tasks',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Cross-project by nature: a claim raised on one project's sales order is
+        // answered by another project's CS, so it cannot live under either project.
+        title: 'Stock Claims',
+        path: '/project-sales/stock-claims',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Cross-project for the same reason claims are: a reconciliation belongs to one
+        // sales order, but the point of the list is that a STACK of unanswered ones is
+        // visible to management rather than discovered (AC-N6).
+        title: 'AutoCount Differences',
+        path: '/project-sales/divergences',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Cross-project for the same reason the two entries above are: CS works the whole
+        // published order book down in one pass, and a reconciliation that only exists
+        // inside its own project is one nobody goes looking for.
+        title: 'Fulfilment Planning',
+        path: '/project-sales/fulfilment-planning',
+        permission: 'projects.projects.view',
+      },
+      {
+        // "Is the plan stored, how do I review it" (captain, 19 Aug 2026 demo): the board
+        // writes the decision, this is where it is reviewed afterwards - cross-project for
+        // the same reason Fulfilment Planning beside it is.
+        title: 'Plans',
+        path: '/project-sales/plans',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Purchasing's own worklist, and cross-project because purchasing is: the rows an
+        // ADOPTED AutoCount order raises belong to no project at all, so inside a project
+        // they are reachable nowhere. Shaped like the spreadsheet they work from today,
+        // one tab per delivery month.
+        title: 'Order Inquiries',
+        path: '/project-sales/order-inquiries',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Where the re-uploaded book's reaction to a planned line is reviewed and
+        // applied - born on the sales-order upload confirmation, listed here after.
+        title: 'Planning changes',
+        path: '/project-sales/planning-changes',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Forecast & Reports',
+        path: '/project-sales/reports',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Parties',
+        path: '/project-sales/parties',
+        permission: 'projects.parties.view',
+      },
+      {
+        title: 'Setup',
+        path: '/project-sales/setup',
+        permission: 'projects.types.view',
+      },
+      {
+        title: 'Series',
+        path: '/project-sales/series',
+        permission: 'projects.types.view',
+      },
+      {
+        title: 'Price Floors',
+        path: '/project-sales/price-floors',
+        permission: 'projects.types.view',
+      },
+    ],
+  },
+  {
     title: 'Marketing Management',
     icon: Megaphone,
     moduleKey: 'marketing',
@@ -1497,6 +1846,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
           {
             title: 'Promotion Attachments',
             path: '/marketing-management/promotion-attachments',
+          },
+          {
+            title: 'Promotion Types',
+            path: '/marketing-management/promotion-types',
           },
         ],
       },
@@ -1685,6 +2038,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Respond.io Workspaces',
         path: '/system-management/respond-workspaces',
+        permission: 'system.respond_workspaces.view',
+      },
+      {
+        title: 'Respond.io Contacts',
+        path: '/system-management/respond-contacts',
         permission: 'system.respond_workspaces.view',
       },
     ],

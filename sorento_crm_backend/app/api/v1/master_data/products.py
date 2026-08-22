@@ -9,6 +9,7 @@ from typing import Optional, List
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.product_service import ProductService
+from app.services import product_purchase_history_service
 from app.services.attachment_field_link_service import AttachmentFieldLinkService
 from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, BulkImportProductsRequest, BulkDeleteProductsRequest
@@ -55,6 +56,28 @@ def _normalize_entities(raw: Optional[list[str]]) -> Optional[list[str]]:
             seen.add(key)
             out.append(piece)
     return out or None
+
+
+def _with_specifications(service: ProductService, result: dict) -> JSONResponse:
+    """The listing page, each row carrying its derived specs.
+
+    Serialized through `ListResponse[ProductResponse]` BY HAND and returned as a
+    raw response, because the declared `response_model` drops any key it does not
+    declare - the standing gotcha. Declaring the field on the schema instead
+    would emit `"specifications": null` on every row for every caller that never
+    asked, which is exactly the byte-for-byte change this opt-in exists to avoid.
+
+    The field set is otherwise identical: the same model does the serializing,
+    this only adds one key per row.
+    """
+    body = ListResponse[ProductResponse].model_validate(result).model_dump(mode="json")
+    rows = result.get("data") or []
+    by_product = service.specifications_for_products([str(row.id) for row in rows])
+    for serialized, row in zip(body.get("data") or [], rows):
+        # Present-but-null when nothing has been derived: absence of data is a
+        # fact the caller should be able to read, not a key it has to miss.
+        serialized["specifications"] = by_product.get(str(row.id))
+    return JSONResponse(content=body)
 
 
 @router.get("/", response_model=ListResponse[ProductResponse])
@@ -104,6 +127,15 @@ def get_products(
         "all",
         pattern="^(base|variant|all)$",
         description="Variant-graph filter: base (no parent) | variant (has parent) | all.",
+    ),
+    include_specifications: bool = Query(
+        False,
+        description=(
+            "Attach each row's derived product specifications: "
+            "`specifications: {values, rendered_text, sources}`, or null when the "
+            "product has no derived row. Off by default - the response is "
+            "unchanged for every caller that does not ask."
+        ),
     ),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
@@ -166,6 +198,8 @@ def get_products(
         if isinstance(result, dict) and result.get("alternatives"):
             from fastapi.encoders import jsonable_encoder
             return JSONResponse(content=jsonable_encoder(result))
+        if include_specifications and isinstance(result, dict):
+            return _with_specifications(service, result)
         return result
     except Exception as e:
         elapsed_ms = (time.perf_counter() - started) * 1000
@@ -247,6 +281,30 @@ def get_product(
         service = ProductService(db)
         product = service.get_product(product_id)
         return product
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{product_id}/purchase-history")
+def get_product_purchase_history(
+    product_id: str,
+    limit: int = Query(
+        50, ge=1, le=200,
+        description="Max number of purchase-history rows to return (not a DataGrid page size).",
+    ),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Every purchase order that bought this product, newest first, plus the cost summary.
+
+    The product is fetched first, through the service, so a product this company cannot see
+    returns 404 here too rather than leaking whether another company buys it.
+    """
+    try:
+        ProductService(db).get_product(product_id)   # visibility gate (404s on miss)
+        return product_purchase_history_service.purchase_history(db, product_id, limit)
     except HTTPException:
         raise
     except Exception as e:

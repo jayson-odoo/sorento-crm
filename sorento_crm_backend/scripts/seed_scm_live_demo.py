@@ -59,6 +59,8 @@ from typing import Any
 from sqlalchemy import text
 
 from app.database import SessionLocal
+from app.models.base import set_company_scope
+from app.services.company_scope import register_company_scope_listeners
 from app.models.inventory import Stock, Warehouse
 from app.models.order import (
     Customer,
@@ -80,6 +82,8 @@ from app.models.scm import CashRankingPolicy, PurchasingBudget, ReorderPolicy
 
 # --- stable demo tags (the ONLY thing cleanup keys on) ----------------------
 SOURCE = "scm_demo"
+#: The company every demo row belongs to. Sorento is the only company with SCM data.
+SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
 WAREHOUSE_CODE = "SCM-DEMO-WH"
 CATEGORY_CODE = "SCM-DEMO-CAT"
 PRODUCT_PREFIX = "SCM-DEMO-P-"
@@ -626,7 +630,14 @@ def _guard() -> None:
 def main() -> None:
     _guard()
     _banner()
+    # Owned rows are stamped with the session's company scope by an ORM `before_insert`
+    # listener that `app/main.py` installs at startup. A script never imports main, so the
+    # listener was absent, every insert below arrived with a NULL company_id, and the seed
+    # died on the NOT NULL. Install it here, then say which company this is: the demo
+    # belongs to Sorento, the same company the rest of these numbers describe.
+    register_company_scope_listeners()
     db = SessionLocal()
+    set_company_scope(db, frozenset({SORENTO_COMPANY_ID}))
     try:
         print(f"[seed_scm_live_demo] reference date = {TODAY}")
         cleanup(db)

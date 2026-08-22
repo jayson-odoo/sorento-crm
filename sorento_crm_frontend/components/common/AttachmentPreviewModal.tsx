@@ -186,7 +186,10 @@ export default function AttachmentPreviewModal({
         className="max-w-5xl gap-0 overflow-hidden p-0"
         onKeyDown={onKeyDown}
       >
-        <DialogHeader className="flex-row items-center justify-between gap-3 border-b px-4 py-3 pr-12">
+        {/* Stacks at phone width: title + zoom + Open + Download cannot fit on
+            one 375px row, and a plain flex-row overflows the dialog instead of
+            wrapping. */}
+        <DialogHeader className="flex-col items-stretch gap-2 border-b px-4 py-3 pr-12 text-start sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <div className="min-w-0">
             <DialogTitle className="truncate text-base" title={activeItem?.name}>
               {activeItem?.name}
@@ -198,7 +201,7 @@ export default function AttachmentPreviewModal({
               {current + 1} / {items.length}
             </DialogDescription>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
             {activeIsImage && (
               <div className="flex items-center rounded-md border">
                 <Button
@@ -318,10 +321,11 @@ function PreviewSlide({
 }) {
   const kind = kindOf(item.name);
   // <img>/<video>/<iframe> can't send an auth header, so they can only render a
-  // public CDN url. Without one (e.g. an attachment missing its stored CDN
-  // path), fall back to download rather than a broken element. Excel is exempt
-  // it reads bytes via fetchBytes.
-  const hasCdn = item.url.startsWith('http');
+  // public CDN url - or a local blob:/data: url for bytes the browser already
+  // holds (a file staged before upload). Without one (e.g. an attachment
+  // missing its stored CDN path), fall back to download rather than a broken
+  // element. Excel is exempt - it reads bytes via fetchBytes.
+  const hasCdn = /^(https?:|blob:|data:)/.test(item.url);
 
   if (kind === 'image') {
     return hasCdn ? (
@@ -395,11 +399,23 @@ function PreviewFallback({
     <div className="my-auto flex flex-col items-center gap-3 py-12 text-center">
       <FileQuestion className="size-10 text-muted-foreground/50" />
       <p className="text-sm text-muted-foreground">{reason}</p>
-      {item.downloadUrl && (
+      {item.downloadUrl ? (
         <Button variant="outline" size="sm" onClick={() => downloadItem(item, fetchBytes)}>
           <Download className="size-4 mr-1" />
           Download to view
         </Button>
+      ) : (
+        // No same-origin /download route (chat media has no attachments row):
+        // the CDN url is the only way to reach the bytes, so offer it here
+        // rather than leaving the slide a dead end.
+        item.url?.startsWith('http') && (
+          <Button variant="outline" size="sm" asChild>
+            <a href={item.url} download={item.name} target="_blank" rel="noopener noreferrer">
+              <Download className="size-4 mr-1" />
+              Download to view
+            </a>
+          </Button>
+        )
       )}
     </div>
   );
@@ -514,20 +530,9 @@ function ExcelSlide({ item, fetchBytes }: { item: AttachmentPreviewItem; fetchBy
   }, [item.downloadUrl]);
 
   if (loading) return <SlideSpinner />;
-  if (error) {
-    return (
-      <div className="my-auto flex flex-col items-center gap-3 py-12 text-center">
-        <FileQuestion className="size-10 text-muted-foreground/50" />
-        <p className="text-sm text-muted-foreground">{error}</p>
-        {item.downloadUrl && (
-          <Button variant="outline" size="sm" onClick={() => downloadItem(item, fetchBytes)}>
-            <Download className="size-4 mr-1" />
-            Download instead
-          </Button>
-        )}
-      </div>
-    );
-  }
+  // Same fallback shape as every other unpreviewable slide, so a spreadsheet we
+  // cannot read (no same-origin route, unreadable bytes) still offers the file.
+  if (error) return <PreviewFallback item={item} reason={error} fetchBytes={fetchBytes} />;
 
   return (
     <div className="flex h-full w-full flex-col gap-2">

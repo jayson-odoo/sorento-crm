@@ -11,29 +11,28 @@ The preview is the point. The relevance floor and the per-key weights are curren
 one engineer's judgement measured against a small eval set; they only become right
 when a product person types real phrases and says which results are wrong.
 """
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, text as sql_text
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
-from app.models.product_spec import ProductFindabilityResult, ProductFindabilityRun
-from app.services.spec_findability import run_findability
 from app.models.product import Product, ProductCategory
 from app.models.product_spec import (
     ProductSpecRegistry,
-    ProductFlyerText,
     ProductSpecException,
     ProductSpecifications,
 )
 from app.schemas.common import MAX_PAGE_LIMIT
-from app.services.error_handler import handle_internal_error, handle_not_found
+from app.services import product_spec_verification
+from app.services.error_handler import AppException, handle_internal_error, handle_not_found
 from app.services.product_class_signal import explain_code
+from app.services.product_spec_registry import value_for_registry
 from app.services.product_spec_search import RELEVANCE_FLOOR, search_specs
-from app.services.product_spec_understanding import understand_phrase
 
 router = APIRouter()
 
@@ -43,6 +42,20 @@ def _spec_reject(message: str):
     from app.services.error_handler import AppException
 
     return AppException(status_code=400, message=message, code="product_spec_bad_value")
+
+
+def _spec_reject_unprocessable(message: str):
+    """The same refusal at 422, for a body that is the wrong size rather than wrong."""
+    from app.services.error_handler import AppException
+
+    return AppException(status_code=422, message=message, code="product_spec_bad_text")
+
+
+# The registry coercion, lifted to `app/services/product_spec_registry.py` so a SERVICE
+# (the flyer ingest) can call it without reaching into `app/api`. Aliased rather than
+# renamed at the two call sites below: one helper, three callers, one name each side.
+_value_for_registry = value_for_registry
+
 
 _INTERNAL_ONLY_VALUE_KEYS: set[str] = set()
 
@@ -84,7 +97,7 @@ async def list_product_specifications(
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None, description="Match a product code or class."),
-    status: Optional[str] = Query(None, description="derived | needs_review | approved"),
+    status: Optional[str] = Query(None, description="derived | needs_review | authored"),
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
@@ -208,6 +221,15 @@ async def get_product_specification(
             "category_code": category.category_code if category else None,
             "searchable": bool(spec),
             "diagnosis": diagnosis,
+            # Both from the CODE, so the two company copies of a model show the
+            # identical badge and the Specifications tab needs no second round trip
+            # (AC-D.14). `values_hash` is what a single Verify echoes back.
+            "verification": product_spec_verification.verification_block(
+                db, product.product_code
+            ),
+            "values_hash": product_spec_verification.current_values_hash(
+                db, product.product_code
+            ),
             "spec": (
                 {
                     "values": _display_values(spec.values or {}),
@@ -230,14 +252,6 @@ async def get_product_specification(
                 for row in exceptions
             ],
             "source_text": product.description or product.product_name or "",
-            # The OTHER text derivation reads. A value whose provenance says `flyer`
-            # came from here and from nowhere the product master shows, so without it
-            # the only honest answer to "where did massage jet come from" is a shrug.
-            "flyer_text": (
-                db.query(ProductFlyerText.text)
-                .filter(ProductFlyerText.product_code == product.product_code)
-                .scalar()
-            ),
         }
     except HTTPException:
         raise
@@ -309,6 +323,159 @@ async def rederive_one_product(
         raise handle_internal_error(str(e))
 
 
+class SpecExtractRequest(BaseModel):
+    """The text a person pasted. Held in the request body and nowhere else."""
+
+    text: str = Field(description="A flyer card, a leaflet paragraph, a supplier blurb.")
+
+
+class SpecBatchEntry(BaseModel):
+    """One accepted proposal, on its way to the write choke point."""
+
+    # Bounded rather than free: a `spec_key` is a registry column and an `evidence`
+    # string is one sentence a value was read from. Neither is a place for a pasted
+    # document, and an unbounded string here would be written into `provenance` on
+    # every company copy of the code and rendered in a table cell for ever after.
+    spec_key: str = Field(max_length=100)
+    value: Any
+    unit: Optional[str] = None
+    evidence: str = Field(default="", max_length=500)
+
+
+class SpecBatchRequest(BaseModel):
+    entries: list[SpecBatchEntry] = Field(min_length=1, max_length=50)
+
+
+@router.post("/by-product/{product_id}/extract")
+def extract_spec_proposals_from_text(
+    product_id: str,
+    payload: SpecExtractRequest,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Read pasted text and PROPOSE. Writes no specification data, anywhere.
+
+    Not a shortcut for the batch write below: the whole point is that a machine reading
+    of marketing copy is shown to a person beside what is already stored, and only what
+    they tick is written. The pasted text lives in this request and in the component's
+    own state, and is never persisted (AC-B.1).
+
+    The one row a call can write is the usage-log row the model call books against
+    itself, stamped with the caller so a reading made here is counted beside every
+    other model call. Telemetry about the call, never a claim about the product.
+
+    Plain ``def``, so FastAPI runs it in a thread: the model round trip is blocking, and
+    on the event loop it freezes the whole worker (same fix as the preview route).
+    """
+    from app.services.product_spec_extract import MAX_TEXT_LENGTH, extract_spec_proposals
+
+    text = (payload.text or "").strip()
+    if not text:
+        raise _spec_reject_unprocessable(
+            "There is nothing to read. Paste the text about this product first."
+        )
+    if len(text) > MAX_TEXT_LENGTH:
+        # Refused rather than truncated: reading half a document and proposing from it
+        # looks like a complete answer and is not one.
+        raise _spec_reject_unprocessable(
+            f"That text is {len(text):,} characters, and this reads up to "
+            f"{MAX_TEXT_LENGTH:,}. Paste the part that describes this product."
+        )
+
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if product is None:
+        raise handle_not_found("Product", product_id)
+
+    try:
+        return extract_spec_proposals(
+            db, product, text, user_id=(current_user or {}).get("id")
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/by-product/{product_id}/values/batch")
+def set_spec_values_in_one_batch(
+    product_id: str,
+    payload: SpecBatchRequest,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Write every accepted proposal in ONE call (AC-B.9).
+
+    One call per key would produce one fan-out, one rendered-sentence rebuild and one
+    verification diff PER KEY for what the user experienced as a single action, and a
+    partial failure would leave the table half-applied. So the batch is the shape and a
+    batch of one is the narrow case.
+
+    Every entry is validated against the registry exactly as the single PUT validates
+    the one it is given (`_value_for_registry`), because a value a person accepted off
+    a flyer card is the same claim as one they typed, and only the shared helper keeps
+    the two from drifting.
+
+    Plain ``def``, so FastAPI runs it in a thread: up to fifty keys, a fan-out to every
+    company copy and a full re-derive of the code is real synchronous work, and on the
+    event loop it holds up every other request the worker is serving.
+    """
+    from app.services.product_spec_write import apply_spec_values
+
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if product is None:
+        raise handle_not_found("Product", product_id)
+
+    # Pre-flight, before anything is written: the choke point validates the operation
+    # and the value but knows nothing about the registry, so an unknown key would
+    # otherwise be written as a permanent provenance entry no screen can render, and an
+    # out-of-vocabulary value would be written as a word the ranker has never heard of.
+    # Every entry is checked first, so one bad entry writes none of the batch.
+    keys = [entry.spec_key.strip() for entry in payload.entries]
+    # One key twice in one batch is two different claims about the same thing, and the
+    # choke point would apply them in list order and keep the last silently - the user
+    # ticked two rows and one of them would vanish without a word. Refused whole.
+    duplicated = sorted({key for key in keys if keys.count(key) > 1})
+    if duplicated:
+        raise _spec_reject_unprocessable(
+            "The same specification appears more than once in this batch: "
+            + ", ".join(duplicated)
+            + ". Send one value per specification."
+        )
+    known = {
+        row.spec_key: row
+        for row in db.query(ProductSpecRegistry)
+        .filter(ProductSpecRegistry.spec_key.in_(keys or [""]))
+        .all()
+    }
+    for key in keys:
+        if key not in known:
+            raise handle_not_found("Spec key", key)
+
+    prepared: list[dict] = []
+    for entry in payload.entries:
+        row = known[entry.spec_key.strip()]
+        # The words the text was read from, kept on the row: a value a person accepted
+        # off a flyer is still traceable to the sentence that proposed it, which is
+        # what makes the badge honest a year later. A dangling "read from text: " with
+        # nothing after it says less than the phrase alone, so it collapses.
+        evidence = (entry.evidence or "").strip()
+        prepared.append(
+            {
+                "spec_key": row.spec_key,
+                "op": "set",
+                "value": _value_for_registry(row, entry.value, _spec_reject_unprocessable),
+                # The registry's unit, never the caller's: the unit belongs to the key
+                # and a batch that could smuggle in its own would store 250 cm under a
+                # millimetre measurement.
+                "unit": row.unit or None,
+                "source": "human",
+                "evidence": f"read from text: {evidence}" if evidence else "read from text",
+            }
+        )
+
+    return apply_spec_values(db, product.product_code, prepared, actor=current_user)
+
+
 @router.put("/by-product/{product_id}/values/{spec_key}")
 async def set_spec_value_by_hand(
     product_id: str,
@@ -327,8 +494,7 @@ async def set_spec_value_by_hand(
     word the ranker and the parser have never heard of, which is the whole reason the
     vocabulary is shared.
     """
-    from app.services.product_spec_registry import merged_allowed_values
-    from app.services.product_spec_rendering import render_spec_sentence
+    from app.services.product_spec_write import apply_spec_values
 
     product = db.query(Product).filter(Product.id == product_id).first()
     if product is None:
@@ -338,46 +504,27 @@ async def set_spec_value_by_hand(
     if row is None:
         raise handle_not_found("Spec key", spec_key)
 
-    value = payload.value
-    data_type = (row.data_type or "").lower()
-    if data_type == "boolean":
-        value = str(value).strip().lower() in {"true", "yes", "1"}
-    elif data_type == "numeric":
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            raise _spec_reject(f"{row.label} is a measurement, so it needs a number.")
-        value = int(number) if number.is_integer() else number
-    else:
-        value = str(value).strip()
-        allowed = merged_allowed_values(row)
-        if allowed and value not in allowed:
-            raise _spec_reject(
-                f"{row.label} does not have a value called \"{value}\". "
-                f"Add it to the specification first, or pick one of: {', '.join(allowed)}."
-            )
+    # The same coercion the batch route runs, from the same helper: a value a person
+    # types and a value they tick off a proposal are the same claim about the product.
+    value = _value_for_registry(row, payload.value, _spec_reject)
 
-    spec = db.query(ProductSpecifications).filter_by(product_id=product.id).first()
-    if spec is None:
-        spec = ProductSpecifications(product_id=product.id, values={}, provenance={})
-        db.add(spec)
-        db.flush()
-
-    values = dict(spec.values or {})
-    entry: dict[str, Any] = {"value": value}
-    if row.unit:
-        entry["unit"] = row.unit
-    values[spec_key] = entry
-    provenance = dict(spec.provenance or {})
-    provenance[spec_key] = {
-        "source": "human",
-        "confidence": 1.0,
-        "evidence": f"set by {current_user.get('email') or 'a person'}",
-    }
-    spec.values = values
-    spec.provenance = provenance
-    spec.rendered_text = render_spec_sentence(values)
-    db.commit()
+    # The write itself belongs to the spec write service: it fans the value out to every
+    # company copy of the code, holds it against the re-derivation it triggers, and
+    # raises the disagreement if the rules read something else.
+    apply_spec_values(
+        db,
+        product.product_code,
+        [
+            {
+                "spec_key": spec_key,
+                "op": "set",
+                "value": value,
+                "unit": row.unit or None,
+                "source": "human",
+            }
+        ],
+        actor=current_user,
+    )
     return {"spec_key": spec_key, "value": value, "source": "human"}
 
 
@@ -385,93 +532,57 @@ async def set_spec_value_by_hand(
 async def clear_hand_set_spec_value(
     product_id: str,
     spec_key: str,
+    mode: str = Query(
+        "revert",
+        description=(
+            "revert - hand the key back to derivation. "
+            "absent - record that this product does not have this spec."
+        ),
+    ),
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """Drop a hand-set value and let derivation own the key again."""
-    from app.services.product_spec_derivation import derive_for_code
+    """Remove a value, one of two ways, because they mean different things.
 
-    product = db.query(Product).filter(Product.id == product_id).first()
-    if product is None:
-        raise handle_not_found("Product", product_id)
+    "Use what the rules read" hands the key back to derivation and it comes back with
+    whatever the catalogue says. "This product does not have this spec" is a statement
+    of fact that must survive every later run, so it is stored as a tombstone rather
+    than as an absence, which derivation would simply fill in again.
 
-    spec = db.query(ProductSpecifications).filter_by(product_id=product.id).first()
-    if spec is not None:
-        spec.values = {k: v for k, v in (spec.values or {}).items() if k != spec_key}
-        spec.provenance = {k: v for k, v in (spec.provenance or {}).items() if k != spec_key}
-        db.flush()
-    # Re-read so the key comes back with whatever the rules make of it, rather than
-    # staying blank until the next catalogue run.
-    derive_for_code(db, product.product_code, commit=True)
-    return {"spec_key": spec_key, "cleared": True}
-
-
-class FlyerTextEdit(BaseModel):
-    """The flyer card's wording, as a person corrects it."""
-
-    text: str
-
-
-@router.put("/by-product/{product_id}/flyer-text")
-async def set_flyer_text(
-    product_id: str,
-    payload: FlyerTextEdit,
-    current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    """Correct the flyer card this product's specs are read from.
-
-    The card text comes from a machine reading of the printed flyer, and that reading is
-    not complete: a card the layout split across a column break, or one whose code the
-    reading could not place, leaves a product with no flyer text and therefore no
-    dimensions, no seat material, no flush type. Until now the only fix was to re-run
-    the reading, which is neither quick nor something a merchandiser can do.
-
-    The corrected text is stored as the product's flyer card and the product is read
-    again immediately, so the specs move in the same click rather than waiting for the
-    next catalogue run.
+    `revert` is the default because it is what the shipped screen has always done.
     """
-    from app.services.product_spec_derivation import derive_for_code
+    from app.services.product_spec_write import apply_spec_values
+
+    mode = (mode or "revert").strip().lower()
+    if mode not in {"revert", "absent"}:
+        raise _spec_reject(
+            f"\"{mode}\" is not a way to remove a specification. Use revert or absent."
+        )
 
     product = db.query(Product).filter(Product.id == product_id).first()
     if product is None:
         raise handle_not_found("Product", product_id)
 
-    text = (payload.text or "").strip()
-    row = (
-        db.query(ProductFlyerText)
-        .filter(ProductFlyerText.product_code == product.product_code)
-        .first()
+    if mode == "absent":
+        # A tombstone pins `status='authored'` on every copy of the code for good, so
+        # the key it names has to be one the registry knows - otherwise a typo writes a
+        # permanent provenance entry no registry-driven screen will ever show.
+        # `revert` is deliberately NOT checked: a key the registry has since dropped is
+        # still stored on rows, and handing it back to derivation must stay possible.
+        if db.query(ProductSpecRegistry).filter_by(spec_key=spec_key).first() is None:
+            raise handle_not_found("Spec key", spec_key)
+
+    apply_spec_values(
+        db,
+        product.product_code,
+        [{"spec_key": spec_key, "op": mode}],
+        actor=current_user,
     )
-    if row is None:
-        if not text:
-            return {"product_code": product.product_code, "flyer_text": None, "cleared": True}
-        row = ProductFlyerText(product_code=product.product_code)
-        db.add(row)
-
-    if not text:
-        # Emptying the box means "this product has no flyer card", not "store a blank
-        # one" - a blank row would keep answering for a card the flyer never printed.
-        db.delete(row)
-    else:
-        row.text = text
-        # `lines` is what the importer stored sentence by sentence; keep the two in step
-        # so a later import diffing against it sees the corrected wording.
-        row.lines = [part.strip() for part in text.split(".") if part.strip()]
-        row.source_label = "Edited by hand"
-        row.source_id = None
-
-    db.flush()
-    result = derive_for_code(db, product.product_code, commit=True)
-    return {
-        "product_code": product.product_code,
-        "flyer_text": text or None,
-        "rederived": result,
-    }
+    return {"spec_key": spec_key, "cleared": True, "mode": mode}
 
 
 @router.post("/preview-search")
-async def preview_spec_search(
+def preview_spec_search(
     payload: SpecPreviewRequest,
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
     db: Session = Depends(get_db),
@@ -480,26 +591,26 @@ async def preview_spec_search(
 
     Returns the score and the matched keys per candidate so a reviewer can see WHY a
     result placed where it did, rather than only that it did.
+
+    Plain ``def``, so FastAPI runs it in a thread: ``understand_phrase`` does a
+    blocking LLM round trip, which on the event loop froze the whole worker. Same
+    fix as the portal ai-extract route and PR #164.
     """
     try:
-        specs = list(payload.specs)
-        free_terms = list(payload.free_terms)
-        exclusions: list[dict] = []
-        understanding = None
+        # The same helper the resolve endpoint calls, so the two readings of one
+        # sentence cannot drift apart again (see derive_search_inputs).
+        from app.services import product_spec_understanding
 
-        if payload.phrase and payload.phrase.strip():
-            understanding = understand_phrase(
+        specs, free_terms, exclusions, understanding = (
+            product_spec_understanding.derive_search_inputs(
                 db,
                 payload.phrase,
-                user_id=current_user.get("id"),
+                specs=list(payload.specs),
+                free_terms=list(payload.free_terms),
                 allow_model=payload.understand,
+                user_id=current_user.get("id"),
             )
-            # A spec the caller pinned by hand always wins: they are looking at the
-            # screen, the model is guessing from one sentence.
-            pinned = {str(e.get("key")) for e in specs if e.get("key")}
-            specs = specs + [e for e in understanding.specs if e["key"] not in pinned]
-            free_terms = free_terms + [t for t in understanding.free_terms if t not in free_terms]
-            exclusions = list(understanding.exclusions)
+        )
 
         result = search_specs(
             db,
@@ -539,161 +650,194 @@ async def preview_spec_search(
         raise handle_internal_error(str(e))
 
 
-# --- Findability: can a customer find this product by describing it? ---------------
+# --- Verification: who vouched for a code's specs, and the queue of what is left ---
 #
-# The business's own test, automated. Open a flyer, read a card, say what is printed on
-# it, expect that product back. Run per flyer so the Cabana and Mocha flyers that follow
-# are new rows rather than new code.
+# Same router, same module guard, and the same two permissions the product screens
+# already use - `.view` to read the queue, `.edit` to stamp or withdraw one. No new
+# slug is minted: a dedicated one would ship the feature 403'd to everyone, which is
+# exactly what happened to the spec registry (AC-D.15).
 
 
-@router.get("/findability/flyers")
-def list_flyers(
+class SpecVerifyRequest(BaseModel):
+    """One code, and the hash of the values the person was actually looking at."""
+
+    product_code: str = Field(..., min_length=1)
+    values_hash: str = Field(..., min_length=1)
+
+
+class SpecVerifyBulkRequest(BaseModel):
+    """The rows a reviewer ticked. Capped because selection is page-scoped."""
+
+    items: list[SpecVerifyRequest] = Field(..., min_length=1, max_length=500)
+
+
+class SpecUnverifyRequest(BaseModel):
+    """A withdrawal takes no hash: a claim is being removed, not made."""
+
+    product_code: str = Field(..., min_length=1)
+
+
+class SpecUnverifyBulkRequest(BaseModel):
+    product_codes: list[str] = Field(..., min_length=1, max_length=500)
+
+
+def _verification_conflict(payload: dict) -> AppException:
+    """A 409 whose body IS the refusal, rather than a sentence about it.
+
+    The global handler serialises `AppException.detail` straight to the response body,
+    so replacing the standard envelope is how a route says something the client must
+    branch on. There is exactly one refusal left - `values_changed`, "re-read the
+    values" (AC-D.4); the open-exception refusal went with the exceptions UI (captain
+    ruling 2026-08-17). `message` is kept alongside so a generic error reader still has
+    something to show.
+
+    Encoded HERE, because that handler hands the detail to `JSONResponse` as-is rather
+    than through FastAPI's response encoding. A VerificationBlock carries datetimes, so
+    an unencoded payload raised TypeError inside the handler and turned the refusal into
+    a 500 - in exactly the case the refusal exists for, a stamped code whose values
+    moved. A code with no ledger history has nothing but strings in it, which is why
+    the first tests of this path passed.
+    """
+    payload = jsonable_encoder(payload)
+    exc = AppException(status_code=409, message=payload["message"], code=payload["error"])
+    exc.detail = payload
+    return exc
+
+
+@router.get("/verification/worklist")
+def spec_verification_worklist(
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=MAX_PAGE_LIMIT),
+    query: Optional[str] = Query(None, description="Match a product code or name."),
+    # Literal rather than str: an unknown state or sort is a client bug, and silently
+    # serving the unfiltered list instead of 422ing hides it.
+    state: Optional[Literal["unverified", "verified", "needs_reverify"]] = Query(None),
+    class_label: Optional[str] = Query(None),
+    include_discontinued: bool = Query(False),
+    sort: Literal["default", "coverage", "code"] = Query("default"),
+    direction: str = Query("asc", alias="dir", description="asc | desc"),
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
     db: Session = Depends(get_db),
-):
-    """Every flyer we hold card text for, and whether it has been swept."""
-    try:
-        rows = db.execute(
-            sql_text(
-                "SELECT f.source_id, f.source_label, COUNT(DISTINCT f.product_code) AS cards,"
-                "       MAX(r.created_at) AS last_run"
-                "  FROM product_flyer_text f"
-                "  LEFT JOIN product_findability_runs r ON r.source_id = f.source_id"
-                " GROUP BY f.source_id, f.source_label"
-                " ORDER BY f.source_label"
-            )
-        ).fetchall()
-        return {
-            "flyers": [
-                {
-                    "source_id": r.source_id,
-                    "source_label": r.source_label,
-                    "cards": r.cards,
-                    "last_run": r.last_run.isoformat() if r.last_run else None,
-                }
-                for r in rows
-            ]
-        }
-    except Exception as e:
-        raise handle_internal_error(str(e))
+) -> dict[str, Any]:
+    """The codes waiting to be confirmed, worst first, in the caller's companies.
+
+    `summary` counts the same set the list does minus the state filter, so the progress
+    line stays honest while the reviewer is filtered down (AC-D.6). `classes` carries
+    the class filter's own options, so the screen needs no second call for a dropdown.
+    """
+    return product_spec_verification.worklist(
+        db,
+        page=page,
+        limit=limit,
+        query=query,
+        state=state,
+        class_label=class_label,
+        include_discontinued=include_discontinued,
+        sort=sort,
+        direction=direction,
+    )
 
 
-def _sweep_in_background(source_id: str | None, window: int, limit: int | None) -> None:
-    """Its own session: the request that started this is long gone."""
-    from app.database import SessionLocal
-
-    with SessionLocal() as session:
-        try:
-            run_findability(session, source_id=source_id, window=window, limit=limit)
-        except Exception as exc:  # noqa: BLE001 - recorded on the run, not swallowed
-            logging.exception("findability sweep failed")
-            session.rollback()
-            latest = (
-                session.query(ProductFindabilityRun)
-                .order_by(ProductFindabilityRun.created_at.desc())
-                .first()
-            )
-            if latest and latest.status == "running":
-                latest.status = "failed"
-                latest.error = str(exc)[:2000]
-                session.commit()
-
-
-@router.post("/findability/run")
-def start_findability_run(
-    background: BackgroundTasks,
-    source_id: str | None = Query(None, description="Which flyer. Omitted means all."),
-    window: int = Query(25, ge=1, le=100),
-    limit: int | None = Query(None, description="First N cards only, for a quick look."),
+@router.post("/verification/verify")
+def verify_spec_code(
+    payload: SpecVerifyRequest,
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
     db: Session = Depends(get_db),
-):
-    """Start a sweep. Returns immediately; a full flyer takes about half an hour."""
-    try:
-        background.add_task(_sweep_in_background, source_id, window, limit)
-        return {"started": True, "source_id": source_id}
-    except Exception as e:
-        raise handle_internal_error(str(e))
+) -> dict[str, Any]:
+    """Confirm one code's specs, against the values the person was shown."""
+    result = product_spec_verification.verify_code(
+        db,
+        payload.product_code,
+        values_hash=payload.values_hash,
+        actor=current_user,
+    )
+    if result["outcome"] == "not_found":
+        raise handle_not_found("Product", payload.product_code)
+    if result["outcome"] == "values_changed":
+        raise _verification_conflict(
+            {
+                "error": "values_changed",
+                "message": (
+                    "These specifications changed while you were reviewing them. "
+                    "Read them again before confirming."
+                ),
+                "values_hash": result["values_hash"],
+                "verification": result["verification"],
+            }
+        )
+    db.commit()
+    return {
+        "product_code": result["product_code"],
+        "outcome": result["outcome"],
+        "values_hash": result["values_hash"],
+        "verification": result["verification"],
+    }
 
 
-@router.get("/findability/runs")
-def list_findability_runs(
-    source_id: str | None = Query(None),
-    current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
+@router.post("/verification/verify-bulk")
+def verify_spec_codes_bulk(
+    payload: SpecVerifyBulkRequest,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
     db: Session = Depends(get_db),
-):
-    """Past sweeps, newest first. The comparison is the point."""
-    try:
-        query = db.query(ProductFindabilityRun)
-        if source_id:
-            query = query.filter(ProductFindabilityRun.source_id == source_id)
-        runs = query.order_by(ProductFindabilityRun.created_at.desc()).limit(30).all()
-        return {
-            "runs": [
-                {
-                    "id": r.id,
-                    "source_label": r.source_label,
-                    "window": r.window,
-                    "cards": r.cards,
-                    "found_by_card": r.found_by_card,
-                    "found_by_specs": r.found_by_specs,
-                    "not_found": r.not_found,
-                    "status": r.status,
-                    "created_at": r.created_at.isoformat() if r.created_at else None,
-                }
-                for r in runs
-            ]
-        }
-    except Exception as e:
-        raise handle_internal_error(str(e))
+) -> dict[str, Any]:
+    """The same guard, per code. A refused code is reported, never fails the batch.
+
+    Also what the per-row button calls, with one item: one code path to keep honest
+    (AC-D.16, AC-D.23).
+    """
+    # The service commits per code (it locks up to 500 of them, and a code decided is
+    # a code the reviewer was told about), so there is nothing left to commit here.
+    results = product_spec_verification.verify_codes_bulk(
+        db,
+        [item.model_dump() for item in payload.items],
+        actor=current_user,
+    )
+
+    verified = sum(1 for r in results if r["outcome"] in ("verified", "already_verified"))
+    return {
+        "results": [
+            {
+                # The hash comes back on a refused code too, so the row can refresh
+                # itself without a reload (AC-D.24).
+                "product_code": r["product_code"],
+                "outcome": r["outcome"],
+                "values_hash": r["values_hash"],
+                "verification": r["verification"],
+            }
+            for r in results
+        ],
+        "counts": {"verified": verified, "skipped": len(results) - verified},
+    }
 
 
-@router.get("/findability/runs/{run_id}")
-def findability_run_detail(
-    run_id: str,
-    boundary: str | None = Query(None, description="Filter, e.g. 'none' for the gaps."),
-    q: str | None = Query(None, description="Product code contains."),
-    current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
+@router.post("/verification/unverify")
+def unverify_spec_code(
+    payload: SpecUnverifyRequest,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
     db: Session = Depends(get_db),
-):
-    """One sweep, card by card, with every angle that was tried."""
-    try:
-        run = db.query(ProductFindabilityRun).filter_by(id=run_id).first()
-        if not run:
-            raise HTTPException(status_code=404, detail="Run not found")
+) -> dict[str, Any]:
+    """Withdraw a confirmation. A user may withdraw a stamp that is not their own -
+    the recorded actor is what makes that accountable (AC-D.26)."""
+    result = product_spec_verification.unverify_code(
+        db, payload.product_code, actor=current_user
+    )
+    db.commit()
+    return result
 
-        query = db.query(ProductFindabilityResult).filter_by(run_id=run_id)
-        if boundary:
-            query = query.filter(ProductFindabilityResult.boundary == boundary)
-        if q:
-            query = query.filter(ProductFindabilityResult.product_code.ilike(f"%{q}%"))
-        results = query.order_by(ProductFindabilityResult.product_code).all()
 
-        return {
-            "run": {
-                "id": run.id,
-                "source_label": run.source_label,
-                "window": run.window,
-                "cards": run.cards,
-                "found_by_card": run.found_by_card,
-                "found_by_specs": run.found_by_specs,
-                "not_found": run.not_found,
-                "status": run.status,
-                "error": run.error,
-                "created_at": run.created_at.isoformat() if run.created_at else None,
-            },
-            "results": [
-                {
-                    "product_code": r.product_code,
-                    "is_discontinued": r.is_discontinued,
-                    "phrase": r.phrase,
-                    "boundary": r.boundary,
-                    "ranks": r.ranks or {},
-                }
-                for r in results
-            ],
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
+@router.post("/verification/unverify-bulk")
+def unverify_spec_codes_bulk(
+    payload: SpecUnverifyBulkRequest,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    # Commits per code, like verify-bulk. The single-code routes still commit themselves.
+    results = product_spec_verification.unverify_codes_bulk(
+        db, payload.product_codes, actor=current_user
+    )
+
+    unverified = sum(1 for r in results if r["outcome"] == "unverified")
+    return {
+        "results": results,
+        "counts": {"unverified": unverified, "no_change": len(results) - unverified},
+    }

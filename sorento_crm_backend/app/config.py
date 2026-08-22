@@ -49,12 +49,32 @@ class Settings(BaseSettings):
     # e.g. "1,2" (Tier 1 + Tier 2) or "1" (Tier 1 only). COMPLAINT_DO_DELIVERED_NOTIFY_TIERS
     complaint_do_delivered_notify_tiers: str = "1,2"
 
+    # Which spreadsheet extensions the SCM upload channels accept. Comma list, no dots.
+    # SCM_UPLOAD_EXTENSIONS. Configurable because the format is the CUSTOMER's, not ours:
+    # AutoCount's own "Purchase Order Listing With Detail" export is legacy BIFF `.xls`,
+    # and refusing it means asking somebody to re-save 13 MB of history by hand before
+    # they can load it. One list, read by the route that rejects and by the reader that
+    # dispatches, so the two can never disagree about what is accepted.
+    scm_upload_extensions: str = "xlsx,xlsm,xls"
+
     # Respond.io
     respond_api_key: str | None = None
     respond_base_url: str = "https://api.respond.io"
     respond_app_base_url: str = "https://app.respond.io"  # Base URL for inbox links (e.g. /space/{id}/inbox/{contact_id})
     respond_space_id: str | None = None
     
+    # Shared secret the CRM puts on its DIRECT n8n webhook calls (respond-send-user,
+    # respond-close-convo) as X-CRM-Webhook-Secret. N8N_CRM_WEBHOOK_SECRET. Unset =
+    # the header is omitted, the send still goes out, and the n8n gate stays closed:
+    # a misconfigured deploy degrades to "bot-pause inert", never to a blocked send
+    # (UAC AC-J6).
+    n8n_crm_webhook_secret: str | None = None
+
+    # Direct webhook the CRM calls when a resolve closes the contact's LAST open
+    # intervention ticket (UAC AC-M3). N8N_CLOSE_CONVO_WEBHOOK_URL. Unset = the
+    # call is skipped with a warning and the resolve is unaffected.
+    n8n_close_convo_webhook_url: str | None = None
+
     # External API Access
     external_api_key: str | None = None  # API key for external parties to access endpoints
     # When set, X-API-Key auth resolves RBAC as this users row (required for MCP/n8n read tools).
@@ -62,6 +82,12 @@ class Settings(BaseSettings):
     
     # Redis Queue (must match everywhere: API, workers, seed scripts; use same host:port/db)
     redis_url: str = "redis://localhost:6379/0"
+
+    # Redis pub/sub channel for the conversation ticket server-push (UAC K, S4.2).
+    # Namespaced because one Redis instance is shared with RQ and with every local
+    # worktree; override per environment (CONVERSATION_EVENTS_CHANNEL) when two
+    # stacks on one broker must not hear each other.
+    conversation_events_channel: str = "sorento:conversation-events:v1"
 
     # Request idempotency (duplicate-submit / network-slowness backstop) — see
     # documentation/plans/PLAN-uniform-idempotency.md. Scoped to an allowlist of action endpoints
@@ -110,8 +136,36 @@ class Settings(BaseSettings):
     # SCM M5 market research — Anthropic web-search backend (key-gated; the run
     # endpoint degrades to a 'failed' run row when unset, never crashes).
     anthropic_api_key: str | None = None
+    # Google Gemini - env fallback for the DB-configured key (System > AI
+    # Assistant). Read by the chatbot media image lane when Gemini is selected.
+    gemini_api_key: str | None = None
     openai_embeddings_url: str = "https://api.openai.com/v1/embeddings"
     openai_chat_completions_url: str = "https://api.openai.com/v1/chat/completions"
+
+    # Document extraction (customer PO scans, delivery-schedule matrices).
+    # Separate from the AI assistant on purpose: a different provider wins on
+    # this job (measured, PLAN-project-lead-to-so.md 5b) and it must be
+    # switchable without touching assistant behaviour. Blank key = the feature
+    # reports "extraction unavailable" instead of crashing an upload.
+    gemini_api_key: str | None = None                       # GEMINI_API_KEY (secret)
+    document_ai_provider: str = "gemini"                    # DOCUMENT_AI_PROVIDER
+    document_ai_model: str = "gemini-2.5-flash"             # DOCUMENT_AI_MODEL
+    document_ai_render_dpi: int = 170                       # DOCUMENT_AI_RENDER_DPI
+    document_ai_page_limit: int = 40                        # DOCUMENT_AI_PAGE_LIMIT
+    # How many pages read concurrently (19 Aug follow-up: "make it absolutely the
+    # fastest"). The model call is a synchronous HTTP round trip per page and the
+    # provider holds no shared mutable state, so a bounded thread pool is the whole
+    # change; 8 is generous headroom over the 40-page ceiling above without opening
+    # that many sockets to the provider at once.
+    document_ai_page_concurrency: int = 8                    # DOCUMENT_AI_PAGE_CONCURRENCY
+
+    # Project sales allocation (P9). The master location a sales order line is
+    # sourced from first. Held as a warehouse CODE, not an id, because it is the
+    # AutoCount location code people say out loud, and because all four sites run
+    # a "-BB" bin (BRW-BB, DC1-BB, MWH-BB, WH3-BB) so the site prefix decides
+    # which one is the master. No matching warehouse row means no `brw` candidate,
+    # never a blank screen.
+    project_allocation_brw_warehouse_code: str = "BRW-BB"
 
     # AI assistant
     ai_assistant_enabled: bool = True

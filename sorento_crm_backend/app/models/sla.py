@@ -128,7 +128,23 @@ class ConversationSLATracking(Base):
     source_entity_id = Column(UUID(as_uuid=False), nullable=True)
     agent_id = Column(UUID(as_uuid=False), ForeignKey("access_agents.id", ondelete="SET NULL"), nullable=True)  # FK to access_agents
     team_set_code = Column(String(100), nullable=True)  # Team assignment set code for escalation; cleared on resolve
+    # The brand the initial assignment resolved with (lower-case `brands.brand_code`),
+    # NULL = unknown, which narrows nobody. Stamped once at creation and read back by
+    # every escalation, exactly like company_id above: without it a tier-2 escalation
+    # of a Mocha conversation would round-robin the whole tier-2 team instead of the
+    # members tagged for Mocha.
+    brand_code = Column(Text, nullable=True)
     message_id = Column(BigInteger, nullable=True)  # External message id (e.g. n8n); cleared on resolve
+    # Identity of a conversation intervention ticket: the message that asked for a
+    # human. Text (not BigInteger) so the ticket layer stays channel-agnostic when
+    # the chat surface swaps off Respond.io. Backfilled from message_id by migration
+    # 321. NULL on form-SLA rows and on legacy rows that carried no trigger message.
+    source_message_id = Column(Text, nullable=True)
+    # The trigger message's own text (the enquiry) - the drawer's quoted header and
+    # the widget's row snippet both read this verbatim, never re-fetched from
+    # Respond.io. NULL on form-SLA rows and legacy tickets created before this
+    # field existed (backfill is not attempted - the original text is gone).
+    source_message_text = Column(Text, nullable=True)
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     resolution_duration = Column(Numeric(10, 2), nullable=True)
@@ -143,6 +159,16 @@ class ConversationSLATracking(Base):
     # on every re-escalation. Never set for conversation-SLA (n8n) rows.
     handled_by_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     handled_at = Column(DateTime(timezone=False), nullable=True)
+    # Void (PLAN-portal-submission-revisions). A stage whose work was cancelled before it
+    # could finish - today only by a contact revising the submission underneath it
+    # (`void_reason = "revised_by_contact"`). Deliberately NOT is_resolved: a voided
+    # stage was never resolved, and overloading the resolve flag would count it as a
+    # completed stage in every duration and KPI aggregate. Dashboards exclude
+    # `voided_at IS NOT NULL` from open-tracker and breach counts, and the reason code is
+    # what makes that exclusion explainable rather than invisible (UAC F4a). The row stays
+    # readable as history.
+    voided_at = Column(DateTime(timezone=False), nullable=True)
+    void_reason = Column(String(50), nullable=True)  # revised_by_contact
 
     policy = relationship("SLAPolicy", back_populates="tracking")
     event_logs = relationship(
@@ -169,6 +195,27 @@ class ConversationSLATracking(Base):
             "source_entity_id",
         ),
         Index("ix_conversation_sla_tracking_handled_by_id", "handled_by_id"),
+        # One OPEN intervention ticket per (contact, triggering message). Replaces
+        # migration 180's one-open-row-per-contact singleton: a contact may now
+        # hold several open tickets, but an n8n retry of the same trigger message
+        # cannot open a second one. Contact-scoped (migration 323) because
+        # WhatsApp message ids are not guaranteed globally unique across
+        # different contacts/threads - a bare source_message_id key let two
+        # DIFFERENT contacts' colliding trigger messages fight over one row.
+        # Declared on the model as well as in the migration because test/CI
+        # schemas come from create_all, which never runs migration bodies.
+        # Form-SLA rows are outside the predicate - the two families share this
+        # table and must not constrain each other.
+        Index(
+            "uq_conversation_sla_tracking_open_contact_source_message",
+            "respond_contact_id",
+            "source_message_id",
+            unique=True,
+            postgresql_where=text(
+                "source_message_id IS NOT NULL AND is_resolved = false "
+                "AND (source_entity_type IS NULL OR source_entity_type = 'conversation')"
+            ),
+        ),
     )
 
 

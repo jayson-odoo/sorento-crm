@@ -1,5 +1,5 @@
 /**
- * SCM M4 Slice B — usePurchaseOrderActions hook (bulk-confirm + create-GR).
+ * SCM M4 Slice B - usePurchaseOrderActions hook (bulk-confirm + create-GR).
  * Both mutations must invalidate the PO-list cache (so the status chip +
  * on-order state refresh) and surface the extracted error on failure.
  *   AC-M4.6 (confirm drafts → active; create-GR from an active PO)
@@ -42,7 +42,7 @@ function makeWrapper() {
 
 beforeEach(() => apiFetch.mockReset());
 
-describe('usePurchaseOrderActions — confirm (AC-M4.6)', () => {
+describe('usePurchaseOrderActions - confirm (AC-M4.6)', () => {
   it('confirm returns the count and invalidates the PO list', async () => {
     apiFetch.mockResolvedValue(ok({ confirmed_count: 3 }));
     const { spy, wrapper } = makeWrapper();
@@ -68,7 +68,7 @@ describe('usePurchaseOrderActions — confirm (AC-M4.6)', () => {
   });
 });
 
-describe('usePurchaseOrderActions — create-GR (AC-M4.6)', () => {
+describe('usePurchaseOrderActions - create-GR (AC-M4.6)', () => {
   it('createGr returns the GR reference and invalidates the PO list', async () => {
     apiFetch.mockResolvedValue(ok({ gr_reference: 'GR-2026/07-0001' }));
     const { spy, wrapper } = makeWrapper();
@@ -91,5 +91,34 @@ describe('usePurchaseOrderActions — create-GR (AC-M4.6)', () => {
         await result.current.createGr.mutateAsync('po-9');
       }),
     ).rejects.toThrow('PO is still a draft');
+  });
+});
+
+describe('usePurchaseOrderActions - bulkDelete', () => {
+  it('bulkDelete returns deleted + unplaced_rows and invalidates the PO list', async () => {
+    apiFetch.mockResolvedValue(ok({ deleted: 2, unplaced_rows: 1 }));
+    const { spy, wrapper } = makeWrapper();
+    const { result } = renderHook(() => usePurchaseOrderActions(), { wrapper });
+    let res: { deleted: number; unplaced_rows: number } | undefined;
+    await act(async () => {
+      res = await result.current.bulkDelete.mutateAsync(['po-1', 'po-2']);
+    });
+    expect(res).toEqual({ deleted: 2, unplaced_rows: 1 });
+    const keys = spy.mock.calls.map((c) => JSON.stringify((c[0] as { queryKey: unknown }).queryKey));
+    expect(keys).toContain(JSON.stringify(['scm', 'purchase-orders']));
+    // Deleting a PO can unplace a row - the order-inquiry reads must refetch too.
+    expect(keys).toContain(JSON.stringify(['project-order-inquiry-rows']));
+    expect(keys).toContain(JSON.stringify(['order-inquiry-worklist']));
+  });
+
+  it('bulkDelete surfaces the extracted error on failure', async () => {
+    apiFetch.mockResolvedValue(fail('Select at least one purchase order to delete.'));
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => usePurchaseOrderActions(), { wrapper });
+    await expect(
+      act(async () => {
+        await result.current.bulkDelete.mutateAsync([]);
+      }),
+    ).rejects.toThrow('Select at least one purchase order to delete.');
   });
 });

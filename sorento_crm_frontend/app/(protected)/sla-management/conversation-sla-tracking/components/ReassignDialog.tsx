@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { LoaderCircleIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { useVisibleUsers } from '../hooks/useTeamPendingSLA';
 import type { VisibleUser } from '../services/conversationSLATrackingService';
 
@@ -31,8 +32,17 @@ export interface ReassignDialogProps {
 }
 
 /**
- * Shared reassign picker. User list is scope-B (visible-users endpoint) — only
- * colleagues the actor can see. Names only, no UUIDs.
+ * Shared reassign picker (the widget, the ticket drawer - never a fork).
+ *
+ * User list is scope-B (visible-users endpoint) — only colleagues the actor can
+ * see. Names only, no UUIDs.
+ *
+ * AC-N7: each colleague says whether they are Respond-linked, and the list can
+ * be filtered to those, because a reply from an unlinked user cannot carry a
+ * real Respond sender identity. The linkage rides on the picker's OWN rows
+ * (`respond_linked` on visible-users) - it used to come from the shared
+ * user-select endpoint, which is gated by `user_management.users.view` and so
+ * degraded to no-badge-no-filter for exactly the SLA agents who need it.
  */
 export default function ReassignDialog({
   open,
@@ -43,12 +53,31 @@ export default function ReassignDialog({
 }: ReassignDialogProps) {
   const { data: users = [], isLoading, error } = useVisibleUsers(open);
   const [selectedId, setSelectedId] = useState<string>('');
+  const [linkedOnly, setLinkedOnly] = useState(false);
 
   useEffect(() => {
     if (!open) {
       setSelectedId('');
+      setLinkedOnly(false);
     }
   }, [open]);
+
+  const options = useMemo(() => {
+    const visible = linkedOnly ? users.filter((u) => u.respond_linked) : users;
+    return visible.map((u) => ({
+      value: u.id,
+      label: displayUser(u),
+      searchText: `${u.name ?? ''} ${u.email}`.trim(),
+      // Carried on the option so `renderOption` can badge it without a lookup.
+      description: u.respond_linked ? 'Respond-linked' : undefined,
+    }));
+  }, [users, linkedOnly]);
+
+  // A filter that hides the selection would submit someone the user can no
+  // longer see. Drop the selection instead of carrying it invisibly.
+  useEffect(() => {
+    if (selectedId && !options.some((o) => o.value === selectedId)) setSelectedId('');
+  }, [options, selectedId]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -60,17 +89,47 @@ export default function ReassignDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2 py-1">
-          <Label>Assign to</Label>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Label htmlFor="reassign-assignee">Assign to</Label>
+            <div className="flex items-center gap-2">
+              <Switch
+                id="reassign-respond-linked-only"
+                data-testid="reassign-respond-linked-filter"
+                size="sm"
+                checked={linkedOnly}
+                onCheckedChange={(next) => setLinkedOnly(!!next)}
+                disabled={submitting}
+              />
+              <Label
+                htmlFor="reassign-respond-linked-only"
+                className="text-xs font-normal text-muted-foreground"
+              >
+                Respond-linked only
+              </Label>
+            </div>
+          </div>
           <SearchableSelect
+            id="reassign-assignee"
             value={selectedId}
             onChange={setSelectedId}
-            options={users.map((u) => ({
-              value: u.id,
-              label: displayUser(u),
-              searchText: `${u.name ?? ''} ${u.email}`.trim(),
-            }))}
+            options={options}
+            renderOption={(opt) => (
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate">{opt.label}</span>
+                {opt.description === 'Respond-linked' && (
+                  <span
+                    data-testid={`respond-linked-badge-${opt.value}`}
+                    className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200"
+                  >
+                    Respond-linked
+                  </span>
+                )}
+              </span>
+            )}
             placeholder={isLoading ? 'Loading users…' : 'Select a colleague'}
-            emptyMessage="No colleagues available."
+            emptyMessage={
+              linkedOnly ? 'No Respond-linked colleagues.' : 'No colleagues available.'
+            }
             disabled={isLoading || submitting}
             triggerClassName="w-full"
           />

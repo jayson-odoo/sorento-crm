@@ -95,10 +95,26 @@ _RAW: Dict[str, dict] = {
         "description": "Tokenized public pages for shared entities.",
         "dependencies": ["base"],
     },
+    "dealer_kit": {
+        "display_name": "Dealer Sales Kit",
+        "description": "Catalogue page builder, product collections and brochure export.",
+        "dependencies": ["base", "product", "resources"],
+    },
     "scm": {
         "display_name": "Supply Chain & Inventory Optimisation",
         "description": "Reorder engine, net-position views, demand classification, supplier performance.",
         "dependencies": ["base", "product", "inventory", "order", "procurement"],
+    },
+    "projects": {
+        "display_name": "Project sales",
+        "description": (
+            "Project registration and exclusivity, parties and stakeholders, "
+            "pipeline, quotations, samples and demand forecast."
+        ),
+        # `product` for the brands a project pushes; `resources` for tender documents
+        # and drawings. Deliberately NOT `order`: a Project PO is a customer's order
+        # to us and lives in its own table (ADR-0002).
+        "dependencies": ["base", "product", "resources"],
     },
 }
 

@@ -1,5 +1,5 @@
 """Inventory management schemas."""
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 from datetime import datetime
 
@@ -10,6 +10,23 @@ class WarehouseBase(BaseModel):
     location: Optional[str] = None
     manager_id: Optional[str] = None
     is_active: bool = True
+    # Planning configuration. Both drive what the reorder plan buys, so they belong on the
+    # warehouse screen rather than in a migration only an engineer can change.
+    #
+    # counts_as_available - whether stock here may cover demand. Held, reserved, defective
+    # and clearance locations hold real stock that is not sellable; counting it makes the
+    # plan buy too little, and excluding a good location makes it buy too much.
+    #
+    # pool_warehouse_id - the shared pool this location draws on. A shortage in a customer
+    # bin is covered from its site's pool before it is ever a purchase (ADR-0011). Empty
+    # means the location is its own pool, which is the no-pooling default.
+    #
+    # segment - who this location sells to, `dealer` or `project`. The bare site code is
+    # the dealer bin and its suffixed bins are project stock, which is why "last purchase
+    # cost" is two different numbers depending on who is asking.
+    counts_as_available: bool = True
+    pool_warehouse_id: Optional[str] = None
+    segment: Optional[str] = None
 
 
 class WarehouseCreate(WarehouseBase):
@@ -22,6 +39,9 @@ class WarehouseUpdate(BaseModel):
     location: Optional[str] = None
     manager_id: Optional[str] = None
     is_active: Optional[bool] = None
+    counts_as_available: Optional[bool] = None
+    pool_warehouse_id: Optional[str] = None
+    segment: Optional[str] = None
 
 
 class WarehouseResponse(WarehouseBase):
@@ -30,6 +50,8 @@ class WarehouseResponse(WarehouseBase):
     updated_at: Optional[datetime] = None
     zones_count: Optional[int] = 0
     stock_count: Optional[int] = 0
+    # Resolved for display: the UI must never show a bare UUID.
+    pool_warehouse_code: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -141,6 +163,17 @@ class StockResponse(StockBase):
     product: Optional[ProductSimple] = None
     warehouse: Optional[WarehouseSimple] = None
     status: Optional[str] = None  # 'low', 'critical', 'normal', 'overstock'
+    # Multi-company reply clarity: the owning company. ``company_name`` is
+    # resolved ONLY when the lookup spanned more than one company
+    # (`company_scope.stamp_lookup_companies`), and is null otherwise.
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
+
+    @field_validator('company_id', mode='before')
+    @classmethod
+    def _company_id_to_str(cls, v):
+        """Convert UUID objects to strings."""
+        return str(v) if v else None
     
     class Config:
         from_attributes = True

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import {
   ColumnDef,
   PaginationState,
@@ -11,7 +12,15 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { toast } from 'sonner';
-import { CheckCircle2, Info, PackageCheck, Search, X } from 'lucide-react';
+import { CheckCircle2, LoaderCircle, PackageCheck, Search, Upload, X } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -25,14 +34,28 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { usePurchaseOrders } from '../../hooks/usePurchaseOrders';
 import { usePurchaseOrderActions } from '../../hooks/usePurchaseOrderActions';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import { BulkActionsMenu } from '../../components/BulkActionsMenu';
+import { OutstandingUploadDialog } from '../../reorder/components/OutstandingUploadDialog';
 import { buildPoBulkActions } from '../lib/poBulkActions';
-import { fmtDate, fmtInt } from '../../lib/format';
+import { EM_DASH, fmtDate, fmtInt, fmtMoney, fmtSupplierCost } from '../../lib/format';
 import type { PurchaseOrder, PurchaseOrderStatus } from '../../types/scm.types';
+
+/** All / Outstanding / Closed - the buyer's "at a glance" read (the captain, 20 Aug: "how
+ *  do i know the open PO / outstanding PO"). Maps straight onto the list's `outstanding`
+ *  query param: `true` / `false` / omitted. Default Outstanding, because that is the
+ *  question this screen exists to answer. */
+type OutstandingFilter = 'all' | 'outstanding' | 'closed';
+
+const OUTSTANDING_TO_PARAM: Record<OutstandingFilter, boolean | null> = {
+  all: null,
+  outstanding: true,
+  closed: false,
+};
 
 type BadgeDef = { variant: 'secondary' | 'primary' | 'warning' | 'success'; label: string };
 
@@ -73,11 +96,25 @@ export default function PurchaseOrdersList() {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  // Default Outstanding: the buyer's "at a glance" question, answered without opening
+  // the advanced Filters popover.
+  const [outstandingFilter, setOutstandingFilter] = useState<OutstandingFilter>('outstanding');
+  // "Have we ever bought this item, and for how much." The plan now takes its cost from
+  // this book, so when a plan line shows no cost, this is where the buyer finds out why.
+  const [productFilter, setProductFilter] = useState('');
+  // Committed on Enter or blur rather than per keystroke: this filter hits the whole order
+  // book by line, and firing it on every character is a query per letter typed.
+  const [productDraft, setProductDraft] = useState('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   // Confirm-flow dialog state.
   const [confirmIds, setConfirmIds] = useState<string[] | null>(null);
   const [grPo, setGrPo] = useState<PurchaseOrder | null>(null);
+  // Bulk delete (captain, 20 Aug: "give me an option to bulk delete purchase orders").
+  const [deleteIds, setDeleteIds] = useState<string[] | null>(null);
+  // The outstanding PURCHASE-ORDER book is loaded here, on the screen whose actor owns
+  // it, until AutoCount is integrated.
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   const { data, isLoading, isFetching, refetch } = usePurchaseOrders({
     pageIndex: pagination.pageIndex,
@@ -86,16 +123,41 @@ export default function PurchaseOrdersList() {
     searchQuery,
     status: statusFilter || null,
     supplier: null,
+    productCode: productFilter || null,
+    outstanding: OUTSTANDING_TO_PARAM[outstandingFilter],
   });
 
-  const { confirm, createGr } = usePurchaseOrderActions();
+  const { confirm, createGr, bulkDelete } = usePurchaseOrderActions();
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
     setRowSelection({});
-  }, [searchQuery, statusFilter]);
+  }, [searchQuery, statusFilter, productFilter, outstandingFilter]);
 
   const rows = useMemo<PurchaseOrder[]>(() => data?.data ?? [], [data]);
+
+  // Carried into the detail URL so its prev/next pager walks the SAME filtered, sorted page
+  // the user was reading (same param names as the list GET).
+  const detailSearch = useMemo(
+    () =>
+      buildDetailSearch(
+        { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery },
+        {
+          status: statusFilter || undefined,
+          product_code: productFilter || undefined,
+          outstanding: OUTSTANDING_TO_PARAM[outstandingFilter] ?? undefined,
+        },
+      ),
+    [
+      pagination.pageIndex,
+      pagination.pageSize,
+      sorting,
+      searchQuery,
+      statusFilter,
+      productFilter,
+      outstandingFilter,
+    ],
+  );
 
   const columns = useMemo<ColumnDef<PurchaseOrder>[]>(
     () => [
@@ -108,7 +170,7 @@ export default function PurchaseOrdersList() {
         cell: ({ row }) => (
           <div className="flex flex-col">
             <Link
-              href={`/scm/purchase-orders/${row.original.id}`}
+              href={`/scm/purchase-orders/${row.original.id}${detailSearch ? `?${detailSearch}` : ''}`}
               onClick={(e) => e.stopPropagation()}
               className="font-medium text-primary hover:underline"
               title={`Open ${row.original.po_number}`}
@@ -124,19 +186,28 @@ export default function PurchaseOrdersList() {
       {
         accessorKey: 'supplier_name',
         header: ({ column }) => <DataGridColumnHeader title="Supplier" column={column} />,
-        cell: ({ row }) => (
-          <div className="flex flex-col">
+        cell: ({ row }) =>
+          row.original.supplier_name ? (
             <span className="truncate" title={row.original.supplier_name}>
               {row.original.supplier_name}
             </span>
-            {row.original.warehouse_name ? (
-              <span className="text-xs text-muted-foreground">{row.original.warehouse_name}</span>
-            ) : null}
-          </div>
-        ),
-        size: 220,
+          ) : (
+            // An imported historical PO can carry no supplier at all. Blank read as the
+            // warehouse underneath it standing in for the supplier - the captain's "why
+            // is BRW under supplier?" - so this is an explicit dash, never the location.
+            <span
+              className="truncate text-muted-foreground"
+              title="No supplier on this imported PO"
+            >
+              {EM_DASH}
+            </span>
+          ),
+        size: 180,
         meta: { headerTitle: 'Supplier' },
       },
+      // No header-level Location column (captain, 20 Aug: "PO's location is at line
+      // level ... at header level we don't need location actually") - the per-line
+      // warehouse lives on the detail page's lines grid, where the fact is real.
       {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
@@ -193,7 +264,7 @@ export default function PurchaseOrdersList() {
       },
       {
         // create-GR stays a PER-ROW action on an active PO (not bulk). Drafts
-        // have no per-row action — they're confirmed via the bulk Actions menu.
+        // have no per-row action - they're confirmed via the bulk Actions menu.
         id: 'actions',
         header: '',
         cell: ({ row }) => {
@@ -220,7 +291,7 @@ export default function PurchaseOrdersList() {
         enableSorting: false,
       },
     ],
-    [],
+    [detailSearch],
   );
 
   const table = useReactTable({
@@ -240,9 +311,12 @@ export default function PurchaseOrdersList() {
     enableColumnResizing: true,
   });
 
-  const filtersActive = statusFilter ? 1 : 0;
+  const filtersActive = (statusFilter ? 1 : 0) + (productFilter ? 1 : 0);
+  const lastCost = data?.product_cost ?? null;
 
-  // Confirm applies to the DRAFT subset of the selection (select-all can include actives).
+  // Confirm applies to the DRAFT subset of the selection (select-all can include actives);
+  // Delete applies to the WHOLE selection regardless of status.
+  const selectedIds = table.getSelectedRowModel().rows.map((r) => r.original.id);
   const selectedDraftIds = table
     .getSelectedRowModel()
     .rows.filter((r) => isDraft(r.original.status))
@@ -254,12 +328,22 @@ export default function PurchaseOrdersList() {
       const res = await confirm.mutateAsync(confirmIds);
       table.resetRowSelection();
       toast.success(
-        `Confirmed ${res.confirmed_count} purchase order${res.confirmed_count === 1 ? '' : 's'} — now counted as incoming stock`,
+        `Confirmed ${res.confirmed_count} purchase order${res.confirmed_count === 1 ? '' : 's'} - now counted as incoming stock`,
       );
       setConfirmIds(null);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to confirm purchase orders');
     }
+  };
+
+  /**
+   * The upload was QUEUED, so there is nothing yet to report: it writes on the worker and
+   * the drawer is already following the job. Refetching is still worth doing - the list
+   * re-reads as soon as the job lands rather than showing yesterday's book until a reload -
+   * and the dialog has already told the user it is queued.
+   */
+  const bookQueued = () => {
+    void refetch();
   };
 
   const runCreateGr = async () => {
@@ -273,17 +357,29 @@ export default function PurchaseOrdersList() {
     }
   };
 
+  const runBulkDelete = async () => {
+    if (!deleteIds) return;
+    try {
+      const res = await bulkDelete.mutateAsync(deleteIds);
+      table.resetRowSelection();
+      const deletedMsg = `Deleted ${res.deleted} purchase order${res.deleted === 1 ? '' : 's'}`;
+      // The side effect the buyer has to know about, not just the count they asked for:
+      // any row that was placed on one of these POs is back on the board unplaced.
+      toast.success(
+        res.unplaced_rows > 0
+          ? `${deletedMsg} - ${res.unplaced_rows} order-inquiry row${res.unplaced_rows === 1 ? '' : 's'} placed on them ${res.unplaced_rows === 1 ? 'was' : 'were'} put back on the board`
+          : deletedMsg,
+      );
+      setDeleteIds(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete purchase orders');
+    }
+  };
+
   return (
     <div className="space-y-3">
-      <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-        <Info className="mt-0.5 size-4 shrink-0" />
-        <span>
-          Draft POs are drafted from accepted reorder recommendations and are NOT counted as incoming
-          stock. Confirm a draft (single or in bulk) to make it Active — only then does it count as
-          on-order. Create a goods receipt from an Active PO to record what arrived.
-        </span>
-      </div>
-
+      {/* The draft-vs-active explainer banner lived here until the captain removed it
+          (20 Aug) - teaching prose belongs in the user guide, not the UI. */}
       <DataGrid
         table={table}
         recordCount={data?.pagination.total || 0}
@@ -292,30 +388,82 @@ export default function PurchaseOrdersList() {
         emptyMessage="No purchase orders yet. Accept a funded reorder recommendation to draft one."
       >
         <Card>
+          {productFilter ? (
+            <div
+              className="border-b px-5 py-2.5 text-sm"
+              role="status"
+              aria-label="Last purchase price"
+            >
+              {lastCost ? (
+                <span>
+                  Last paid{' '}
+                  <span className="font-medium tabular-nums">
+                    {/* In the currency the order was written in. The book is 8438 lines
+                        USD against 4186 MYR, so "RM 45" against a USD purchase order is a
+                        wrong number, not a formatting detail. */}
+                    {fmtSupplierCost(lastCost.unit_cost, lastCost.currency)}
+                  </span>{' '}
+                  for <span className="font-medium">{productFilter}</span>
+                  {lastCost.supplier_name ? ` from ${lastCost.supplier_name}` : ''} on{' '}
+                  {lastCost.po_number}
+                  {lastCost.issue_date ? ` (${fmtDate(lastCost.issue_date)})` : ''}.
+                </span>
+              ) : (
+                // Never bought is a different answer from bought for nothing, and this is
+                // the screen where the buyer tells them apart: a plan line with no cost is
+                // explained by this sentence.
+                <span className="text-muted-foreground">
+                  No purchase order records a price for{' '}
+                  <span className="font-medium text-foreground">{productFilter}</span>, so the
+                  plan has no cost to work from.
+                </span>
+              )}
+            </div>
+          ) : null}
           <CardHeader className="block">
             <DataGridListToolbar
               table={table}
               searchSlot={
-                <div className="relative">
-                  <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    placeholder="Search PO or supplier..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-64 ps-9"
-                  />
-                  {searchQuery ? (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                      onClick={() => setSearchQuery('')}
-                      aria-label="Clear search"
-                    >
-                      <X />
-                    </Button>
-                  ) : null}
-                </div>
+                <>
+                  <div className="relative">
+                    <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      placeholder="Search PO or supplier..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-64 ps-9"
+                    />
+                    {searchQuery ? (
+                      <Button
+                        mode="icon"
+                        variant="dim"
+                        className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
+                        onClick={() => setSearchQuery('')}
+                        aria-label="Clear search"
+                      >
+                        <X />
+                      </Button>
+                    ) : null}
+                  </div>
+                  {/* "How do i know the open PO / outstanding PO" (the captain, 20 Aug) -
+                      a glance-able control, not buried inside the Filters popover. */}
+                  <ToggleGroup
+                    type="single"
+                    variant="outline"
+                    value={outstandingFilter}
+                    onValueChange={(v) => v && setOutstandingFilter(v as OutstandingFilter)}
+                  >
+                    <ToggleGroupItem value="all" className="px-3">
+                      All
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="outstanding" className="px-3">
+                      Outstanding
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="closed" className="px-3">
+                      Closed
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                </>
               }
               filters={{
                 kind: 'custom',
@@ -324,8 +472,26 @@ export default function PurchaseOrdersList() {
                 content: (
                   <div className="space-y-4">
                     <div>
-                      <Label className="mb-1 block">Status</Label>
+                      <Label htmlFor="po-product-code" className="mb-1 block">
+                        Product code
+                      </Label>
+                      <Input
+                        id="po-product-code"
+                        placeholder="e.g. MWC7624-RL-S10"
+                        value={productDraft}
+                        onChange={(e) => setProductDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') setProductFilter(productDraft.trim());
+                        }}
+                        onBlur={() => setProductFilter(productDraft.trim())}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="po-status" className="mb-1 block">
+                        Status
+                      </Label>
                       <SearchableSelect
+                        id="po-status"
                         value={statusFilter}
                         onChange={setStatusFilter}
                         options={STATUS_FILTER_OPTIONS}
@@ -334,7 +500,15 @@ export default function PurchaseOrdersList() {
                     </div>
                     {filtersActive > 0 ? (
                       <div className="flex justify-end">
-                        <Button variant="ghost" size="sm" onClick={() => setStatusFilter('')}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setStatusFilter('');
+                            setProductFilter('');
+                            setProductDraft('');
+                          }}
+                        >
                           Clear filters
                         </Button>
                       </div>
@@ -344,23 +518,27 @@ export default function PurchaseOrdersList() {
               }}
               bulkActionsSlot={
                 // Unified "Actions" dropdown (same pattern as the reorder results grid).
-                // Only surfaces Confirm when the selection contains ≥1 draft; BulkActionsMenu
-                // renders nothing (button hidden) when no action applies to the selection.
+                // Confirm surfaces when the selection contains ≥1 draft; Delete surfaces
+                // whenever anything at all is selected. BulkActionsMenu renders nothing
+                // (button hidden) when neither applies.
                 <BulkActionsMenu
-                  actions={
-                    selectedDraftIds.length > 0
-                      ? [
-                          {
-                            key: 'confirm',
-                            label: `Confirm ${selectedDraftIds.length} draft${selectedDraftIds.length === 1 ? '' : 's'}`,
-                            icon: CheckCircle2,
-                            onClick: () => setConfirmIds(selectedDraftIds),
-                          },
-                        ]
-                      : []
-                  }
+                  actions={buildPoBulkActions(
+                    { draftCount: selectedDraftIds.length, selectedCount: selectedIds.length },
+                    {
+                      onConfirm: () => setConfirmIds(selectedDraftIds),
+                      onDelete: () => setDeleteIds(selectedIds),
+                    },
+                  )}
                 />
               }
+              secondaryActions={[
+                {
+                  key: 'upload-order-book',
+                  label: 'Upload order book',
+                  icon: Upload,
+                  onClick: () => setUploadOpen(true),
+                },
+              ]}
               exportConfig={{ filename: 'purchase_orders_export.xlsx' }}
               onRefresh={() => void refetch()}
               isRefreshing={isFetching && !isLoading}
@@ -407,6 +585,47 @@ export default function PurchaseOrdersList() {
         onConfirm={runCreateGr}
         isBusy={createGr.isPending}
       />
+
+      <OutstandingUploadDialog
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        kind="purchase-orders"
+        onQueued={bookQueued}
+      />
+
+      {/* Destructive - AlertDialog + destructive button per ADR-PRODUCT-STANDARDS, not
+          ConfirmActionDialog (that one is reserved for non-destructive confirms). */}
+      <AlertDialog open={!!deleteIds} onOpenChange={(o) => !o && setDeleteIds(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm delete</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteIds
+                ? `Delete ${fmtInt(deleteIds.length)} purchase order${
+                    deleteIds.length === 1 ? '' : 's'
+                  }? This action cannot be undone.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteIds(null)}
+              disabled={bulkDelete.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={runBulkDelete}
+              disabled={bulkDelete.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {bulkDelete.isPending ? <LoaderCircle className="size-4 animate-spin" /> : null}
+              Delete
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

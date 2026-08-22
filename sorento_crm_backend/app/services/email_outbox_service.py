@@ -83,6 +83,9 @@ def enqueue(
     scheduled_for: Optional[datetime] = None,
     max_attempts: int = 5,
     coalesce_key: Optional[str] = None,
+    attachment_filename: Optional[str] = None,
+    attachment_storage_provider: Optional[str] = None,
+    attachment_storage_key: Optional[str] = None,
 ) -> str:
     """Write a row to email_outbox. Returns row id. Drainer dispatches asynchronously.
 
@@ -112,6 +115,9 @@ def enqueue(
         attempt_count=0,
         max_attempts=max_attempts,
         coalesce_key=coalesce_key,
+        attachment_filename=attachment_filename,
+        attachment_storage_provider=attachment_storage_provider,
+        attachment_storage_key=attachment_storage_key,
     )
     db.add(row)
     db.flush()

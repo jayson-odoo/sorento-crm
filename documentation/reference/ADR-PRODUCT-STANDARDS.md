@@ -59,6 +59,125 @@ typing in the popover's search box → pick one (or many).
 
 ---
 
+## 1c. Form Controls — a date RANGE is ONE control
+
+**Doctrine:** any "X from / X to" pair MUST render a single range control,
+`@/components/ui/date-range-picker` (`DateRangePicker`). Two date inputs side by side are
+**banned** for a value that is one range.
+
+- **Why.** Two fields make the user hold the relationship in their head: nothing stops "to"
+  landing before "from", the two labels have to be read separately to learn they describe one
+  fact, and at phone width they wrap apart so the pair stops looking like a pair. A range
+  picker enforces the order by construction — an end cannot be picked before a start.
+- **Label the range, not the ends.** "Expected delivery", never "Expected delivery from" plus
+  "Expected delivery to".
+- **Both ends stay optional** where the domain allows a half-known range (a developer often
+  gives the start of a delivery window months before the end). The control renders `01/05/2027 - ?`
+  rather than hiding the half it has.
+- **Wire format is unchanged:** two `YYYY-MM-DD` fields on the API. `onChange` emits both ends
+  together because they are one fact; `parseIsoDate` / `toIsoDate` are exported for callers.
+- Filtering a list BY a date range is the same rule.
+
+---
+
+## 1d. Lists — the row is the way in, and status is a pill
+
+**Doctrine, applies to every list in the product:**
+
+- **No "Open" / "View" action column.** Clicking the ROW opens the record (`onRowClick` on the
+  shared `DataGrid`). A column whose only job is to repeat what the row already does spends a
+  column on nothing.
+- **A status-like value renders as a status pill** (`@/lib/status-pill`), never as an `outline`
+  badge. An outlined box containing a verb-shaped word ("Open") reads as a BUTTON — and once one
+  cell looks clickable, the reader stops trusting which parts of the row are actions. Map new
+  vocabularies onto the shared palette's existing keys rather than inventing colours; an unknown
+  key silently falls back to grey, which is how the miss hides.
+- **Timestamps are ABSOLUTE, never relative.** "yesterday" and "3 days ago" cannot be compared
+  between two rows, cannot be quoted to anybody, and change meaning depending on when the page
+  was loaded — a list left open overnight goes on claiming "today" about yesterday. Use
+  `describeLastActivity`.
+- **A total belongs IN the table, under the column it sums.** Declare `footer` on the column
+  definition and the shared `DataGrid` renders a `<tfoot>` row aligned to it (both the draggable
+  and non-draggable branches). A total parked beside the toolbar - "1 PO, RM 1,810,640.62" -
+  competes with the buttons and never says WHICH column it totals; under its own column it needs
+  no caption at all. Sum from `table.getCoreRowModel().rows` so a search narrows the total with
+  the list.
+- **Row counts come from the standard pagination bar, always shown.** "1 - 1 of 1", a page picker
+  and a rows-per-page selector, exactly as the user list has them. Never write a sentence like
+  "1 PO on this project", and never hide the bar because the list fits on one page: a short list
+  that drops its footer reads as a different component from the long one.
+
+---
+
+## 1d-bis. A HISTORY is a timeline, not a grid
+
+**Doctrine:** activity feeds and audit trails render `@/components/common/EventTimeline`.
+Everything else that lists rows renders a `DataGrid`. This is the only exception to 1d, and
+the line between them is what to check first when adding a surface.
+
+- **Records** (quotations, POs, stakeholders, schedules, documents) are a GRID. The reader
+  scans one column, sorts it, compares two rows, clicks one to open it.
+- **Events** (activity, audit, status history) are a TIMELINE. The client's reference points
+  were Lazada / Shopee / Lalamove parcel tracking and Google Sheets version history: "a
+  timeline that explains what happens at what time". Nobody sorts parcel tracking by courier.
+  What a history is read for is the SEQUENCE and the gaps in it, and a rail with a dot per
+  event makes "then, three days later" visible at a glance. A table of timestamps hides it.
+- **Shape:** newest first; grouped under a date heading so the day is stated once instead of
+  per row; the time on the right of each step; the rail continuous between dots so it reads as
+  one thread; the newest event marked as the live step. An avatar may replace the dot for a
+  human post, which is what Sheets history does.
+- **Times are absolute here too** (1d). A feed left open overnight must not keep claiming
+  "3h ago", and two entries cannot be compared when both say "yesterday".
+- An undated event is still shown, dated honestly, never dropped: dropping it makes the record
+  read as though the thing never happened.
+
+---
+
+## 1e. Empty values and helper text
+
+- **An unknown value is `-`.** Not "Not recorded", not "Not set", not "None". A card of mostly
+  empty fields reads as prose when each blank is a sentence; `-` keeps it a table of facts.
+- **An empty COLLECTION is also `-`.** "No collaborators", "No open requests", "None yet" are
+  the same absence dressed as a sentence, and they cost a line each in a panel whose job is to
+  be skimmed. Zero rows renders `-`.
+- **What stays in words is an answer that names a different PATH or STATE, not an absence.**
+  "Registered directly, with no lead before it" says this project never had a lead, which is a
+  fact about how it began; "No source yet" is an allocation's real state. Test: could the value
+  ever become known later? If yes it is an absence, so `-`. If the answer is itself the record
+  of what happened, keep the words.
+- **Do not explain the feature inside the form.** Helper text under a field is for a CONSTRAINT
+  the user cannot infer ("Codes must be unique per company"), never for teaching what the field
+  is for or what the system will do with it. Explanations belong in the user guide. This is the
+  existing cursor rule ("no feature explanations inside the UI itself") applied to field hints.
+- **Do not title a fact inside a card.** One more `Fact` in the same grid beats a bordered
+  sub-section with its own heading and a sentence. (Promoting a fact to a top-level SECTION is a
+  different decision, governed by 1f: it is warranted when people come to the page asking for
+  that one thing.)
+
+---
+
+## 1f. Detail pages — group facts into named sections
+
+**Doctrine:** a detail page is a set of titled sections, each holding facts that are read
+together. One card listing every column the entity has is banned.
+
+- **Why.** In an undifferentiated grid of fifteen facts, finding any one of them means reading
+  all of them, and there is no signal about which belong together. The client's words against
+  exactly that layout: "too many information here, too many words". Sections give the eye a
+  place to land, and each heading answers "what is this group for" once instead of per field.
+- **Group by the question, not by the table.** "The development", "Value and timing",
+  "Consultants" are groups a salesperson thinks in. `project_profiles` versus `projects` is not
+  a grouping the reader can see or cares about, so it must not shape the page.
+- **A question people ask directly earns its own section.** "Which lead did this come from" was
+  one `Fact` labelled "Source" at the bottom of a long grid, and it was missed — it is now a
+  section of its own. The test is whether someone would open the record specifically to answer
+  it.
+- **Do not repeat a fact across sections.** Owner lives in Access; it is not also a registration
+  fact. Two copies drift the moment one of them gains a link or a badge.
+- Sections still follow section 3: **every one renders even when empty**, with `-` per 1e.
+
+---
+
 ## 2. Delete and Archive Semantics
 
 ### Delete Policy
@@ -84,6 +203,27 @@ typing in the popover's search box → pick one (or many).
 ### Detail Page Structure
 - **Always render all sections** relevant to the entity, regardless of whether data exists.
 - Do NOT hide entire sections when empty (e.g. "Team Assignments" must always appear on Access Agent detail).
+- **Detail pages carry prev/next record navigation** using `components/common/RecordNavigation`.
+  Reviewing a list of records one at a time is the normal case, and forcing a return to the list
+  between each is what makes a screen feel half-built. See `user-management/users/[id]` and
+  `order-management/customers` for the established usage.
+
+### View and Edit must share one layout
+The read view and the edit view of the same record MUST present the same structure: the same tabs
+in the same order, and the same fields in the same order within each tab. Editing swaps a
+read-only value for an input **in place**; nothing moves, appears, or disappears.
+
+The read view is what teaches a user where things are. If Edit rearranges them, every edit begins
+with the user re-finding the field they came to change, and a value they could see a moment ago
+but now cannot reads as data loss.
+
+- Group a record's distinct concerns (identity vs configuration, say) into **tabs once**, and use
+  that same tab set on both views rather than a long scroll on one and tabs on the other.
+- **Read-only metadata** (Created, Last Updated, ids) belongs in the page header or a meta strip,
+  **never inside a tab body** - it has no edit counterpart, so putting it in a tab guarantees the
+  two views differ.
+- Keep field help to a short hint at most. Multi-sentence explanation belongs in the user guide,
+  per the existing "no feature explanations inside the UI" rule.
 
 ### Empty States
 - Each section with optional data MUST have an explicit empty state.

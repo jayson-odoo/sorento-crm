@@ -9,6 +9,10 @@ interface UsePurchaseOrdersParams {
   searchQuery: string;
   status: string | null;
   supplier: string | null;
+  /** Keep only orders carrying this SKU; the response then carries what we last paid. */
+  productCode?: string | null;
+  /** true = outstanding only, false = closed only, null/undefined = every status. */
+  outstanding?: boolean | null;
 }
 
 export function usePurchaseOrders(params: UsePurchaseOrdersParams) {
@@ -23,6 +27,8 @@ export function usePurchaseOrders(params: UsePurchaseOrdersParams) {
         searchQuery: params.searchQuery,
         status: params.status,
         supplier: params.supplier,
+        productCode: params.productCode ?? null,
+        outstanding: params.outstanding ?? null,
       }),
     staleTime: 10_000,
     refetchOnWindowFocus: false,

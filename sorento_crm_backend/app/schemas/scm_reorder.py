@@ -7,6 +7,7 @@ supplier resolve to human codes/names (ids stay on the request path only).
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel
@@ -21,8 +22,16 @@ class CreateReorderRunRequest(BaseModel):
     ``include_market`` stays false here.
     """
     warehouse_codes: List[str] = []
+    # Empty means every product, which is what the daily scheduled run sends. Human codes,
+    # never ids, like every other field the frontend passes.
+    product_codes: List[str] = []
     budget_id: Optional[str] = None  # M4 — ignored in M3
     include_market: bool = False  # M7 — opt-in market-trend priority factor
+    # "Plan until" (captain, 20 Aug): omitted/None plans every open SO line regardless of
+    # need date, unchanged from before this field existed. When set, demand needed AFTER
+    # it is excluded from the run's netting; demand carrying no date is always still
+    # counted.
+    plan_horizon_date: Optional[date] = None
 
 
 class ReorderRunAccepted(BaseModel):
@@ -47,6 +56,15 @@ class ReorderRunStatusResponse(BaseModel):
     buy_scope: Optional[str] = None
     error: Optional[str] = None
     summary: Optional[ReorderRunSummary] = None
+    # The grain this run may be DECIDED at, stamped from the admin plan-grain policy when
+    # it was created (front-planning plan 5.1). NULL on a legacy run, which
+    # `front_planning_contract_version IS NULL` identifies and which accepts no decision
+    # in either grain. Never the live setting - the FE chip reads the stamp.
+    decision_grain: Optional[Literal["product", "location"]] = None
+    front_planning_contract_version: Optional[int] = None
+    # The "Plan until" cutoff this run was launched with, ISO date, or None when the run
+    # carried no horizon (every run has always planned every open SO line, unchanged).
+    plan_horizon_date: Optional[str] = None
 
 
 # --- run history (list) -----------------------------------------------------
@@ -64,6 +82,13 @@ class ReorderRunListItem(BaseModel):
     started_at: Optional[str] = None   # naive-UTC ISO — FE formats in Malaysia time
     finished_at: Optional[str] = None
     summary: Optional[ReorderRunSummary] = None
+    # Same stamp as ReorderRunStatusResponse, so the history list and today's run label a
+    # run's grain identically. NULL = legacy run.
+    decision_grain: Optional[Literal["product", "location"]] = None
+    front_planning_contract_version: Optional[int] = None
+    # Same field as ReorderRunStatusResponse - the plan header reads it off whichever of
+    # the two responses is on screen (today's run vs a past one).
+    plan_horizon_date: Optional[str] = None
 
 
 class ReorderRunListResponse(BaseModel):
@@ -75,8 +100,30 @@ class ReorderRunTodayResponse(ReorderRunListItem):
     """The run the reorder page opens to without knowing an id (M8-D3/D4): today's
     scheduled snapshot when present, else the most-recent completed run (the last
     available snapshot). ``is_today`` tells the FE whether the header may say
-    "Today's plan" or must show that run's date + time (M8-D11)."""
+    "Today's plan" or must show that run's date + time (M8-D11).
+
+    ``in_progress`` is a SEPARATE fact from the run being returned: a plan started today
+    that has not finished yet. The run shown is always a completed one, so the page keeps
+    the last usable snapshot on screen while it says a newer plan is being built."""
     is_today: bool = False
+    in_progress: bool = False
+
+
+class UnlocatedDemandSample(BaseModel):
+    product_code: str
+    quantity: float
+
+
+class UnlocatedDemandResponse(BaseModel):
+    """Open demand the plan cannot see, because the line names no stock location.
+
+    Planning nets per product AND location, so a line with no warehouse has nothing to net
+    against and produces no recommendation. Reported rather than silently omitted: a plan
+    that leaves out most of the demand without saying so is read as "nothing to buy"."""
+    lines: int = 0
+    products: int = 0
+    quantity: float = 0.0
+    sample: List[UnlocatedDemandSample] = []
 
 
 # --- recommendations grid ---------------------------------------------------
