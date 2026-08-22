@@ -767,8 +767,13 @@ def test_placing_leaves_committed_v_confirmed_leg_and_unplacing_restores_it():
 
         core_so = _confirm_core_so(db, company_id)
         core_line = _confirm_core_line(db, core_so, product, warehouse, qty_ordered="40")
+        from app.services.project_seed_service import seed_numbering_rule
         from app.services.project_service import register_project
 
+        # The real database in CI is freshly bootstrapped and has no numbering rule
+        # unless another test happened to leave one; seed it here (flushed, rolled
+        # back with the session) so this test holds whichever shard it lands in.
+        seed_numbering_rule(db)
         project = register_project(
             db, company_id=company_id, actor_user_id=user_id, developer_party_id=None,
             title=f"{MARKER} Netting Residences",
@@ -1139,8 +1144,13 @@ def test_partial_allocation_leaves_the_remainder_raised_and_in_committed_v():
 
         core_so = _confirm_core_so(db, company_id)
         core_line = _confirm_core_line(db, core_so, product, warehouse, qty_ordered="40")
+        from app.services.project_seed_service import seed_numbering_rule
         from app.services.project_service import register_project
 
+        # The real database in CI is freshly bootstrapped and has no numbering rule
+        # unless another test happened to leave one; seed it here (flushed, rolled
+        # back with the session) so this test holds whichever shard it lands in.
+        seed_numbering_rule(db)
         project = register_project(
             db, company_id=company_id, actor_user_id=user_id, developer_party_id=None,
             title=f"{MARKER} Partial Netting Residences",
