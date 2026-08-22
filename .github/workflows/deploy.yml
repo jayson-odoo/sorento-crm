@@ -427,6 +427,16 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
+    # The suite is CPU-bound (~3 s of CPU per test across 9k tests) and a
+    # standard runner has 4 vCPUs, so one job takes ~29 min no matter how the
+    # database is tuned. Four runners in parallel, each still xdist across its
+    # own 4 cores, is 4x the CPU. pytest-split assigns every collected test to
+    # exactly one group, so the four groups together are the full suite and no
+    # test runs twice or is dropped.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     services:
       postgres:
         # pgvector image, not plain postgres: the embedding tables need the
@@ -515,8 +525,10 @@ jobs:
         working-directory: sorento_crm_backend
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
-          echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm"
-          python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 $IGNORES --ignore=tests/scm tests/
+          echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm; shard ${{ matrix.shard }} of 4"
+          python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 \
+            --splits 4 --group ${{ matrix.shard }} \
+            $IGNORES --ignore=tests/scm tests/
 
   validate-frontend:
     name: Validate frontend (vitest)
