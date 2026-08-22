@@ -10,7 +10,7 @@ from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_any_permission, require_permission
 from app.models.access import RespondContact
 from app.models.ai_assistant import (
     AIAssistantConversation,
@@ -45,7 +45,10 @@ from app.schemas.ai_assistant import (
     QueryDetailResponse,
     RecentQueryItem,
     TestConnectionRequest,
+    ProviderModelsResponse,
     TestConnectionResponse,
+    TestModelRequest,
+    TestModelResponse,
     TopContactItem,
     TopUserItem,
     TraceResponse,
@@ -57,6 +60,11 @@ from app.schemas.ai_assistant import (
 from app.services.ai_assistant_service import AIAssistantChatService, AIAssistantConfigService
 from app.services.ai_wishlist_service import AiWishlistService
 from app.services.llm_provider import get_provider
+from app.services.provider_model_catalog import (
+    list_models as list_provider_models,
+    model_choices,
+    probe_model,
+)
 
 router = APIRouter()
 
@@ -139,6 +147,55 @@ def test_ai_assistant_connection(
         return TestConnectionResponse(ok=False, message=str(exc), latency_ms=0)
     ok, message, latency_ms = provider.test_connection()
     return TestConnectionResponse(ok=ok, message=message, latency_ms=latency_ms)
+
+
+# Both routes below are reachable from TWO screens with different permissions -
+# the assistant settings page and the chatbot media settings page - so they are
+# gated on either. Gating on the assistant permission alone would 403 the media
+# page for exactly the operator who has to fix a broken degraded model.
+_MODEL_VIEW = ["system.ai_assistant_settings.view", "user_management.settings.view"]
+_MODEL_EDIT = ["system.ai_assistant_settings.edit", "user_management.settings.edit"]
+
+
+@router.get("/ai-assistant/models", response_model=ProviderModelsResponse)
+def list_ai_assistant_models(
+    provider: Optional[str] = Query(None, max_length=64),
+    _user: dict = Depends(require_any_permission(_MODEL_VIEW)),
+    db: Session = Depends(get_db),
+):
+    """What `provider` says this key may call, cached for an hour.
+
+    A blank `provider` is not an error: it is what the media settings page saves
+    to mean "inherit the assistant's provider", so it resolves to that provider
+    and the response says which one it landed on.
+
+    Never 502s on an unreachable provider: the built-in list is served with
+    `source="fallback"` and the reason, because a model picker that fails closed
+    stops an operator fixing the very setting they came for.
+    """
+    result = list_provider_models(db, provider)
+    return ProviderModelsResponse(
+        provider=result.provider,
+        source=result.source,
+        message=result.message,
+        models=model_choices(result),
+    )
+
+
+@router.post("/ai-assistant/test-model", response_model=TestModelResponse)
+def test_ai_assistant_model(
+    payload: TestModelRequest,
+    _user: dict = Depends(require_any_permission(_MODEL_EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Call the model once, for real, and report the provider's own words.
+
+    Distinct from `/test-connection`, which proves the KEY works: Gemini's key
+    probe is a ListModels call, and ListModels happily returns a model whose
+    first generateContent is a 404. This is the check that catches that.
+    """
+    ok, message, latency_ms = probe_model(db, payload.provider, payload.model)
+    return TestModelResponse(ok=ok, message=message, latency_ms=latency_ms)
 
 
 @router.get("/ai-assistant/tools", response_model=list[str])

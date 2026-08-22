@@ -52,6 +52,25 @@ class ImagePart:
     data_b64: str
 
 
+@dataclass
+class ProviderModel:
+    """One model the provider says this key may call.
+
+    `value` is the id sent on the wire; `label` is what an operator reads. The
+    pair exists because Anthropic ships a display name and the other two do not,
+    so the label is derived where it is missing rather than at three call sites.
+    """
+
+    value: str
+    label: str
+
+
+# A provider's own list is authority on what EXISTS, never on what WORKS: Google
+# lists `gemini-2.5-flash-lite` to a key that gets `404 ... no longer available
+# to new users` the moment it calls generateContent on it (measured 2026-08-22,
+# and the cause of every over-quota photo failing in the media lane). Anything
+# picked from this list still has to be probed with a real call - that is what
+# `probe_model` in `provider_model_catalog` is for.
 # Last-resort model per provider, for a caller that has no configured model to
 # use. Each is that provider's cheap-but-capable general model, and every caller
 # that needs one reads it through `default_model_for` so registering a fourth
@@ -165,6 +184,8 @@ class LLMProvider(Protocol):
     def embed(self, text: str) -> list[float]: ...
 
     def test_connection(self) -> tuple[bool, str, int]: ...
+
+    def list_models(self) -> list[ProviderModel]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +428,53 @@ class OpenAIProvider:
         except Exception as exc:  # noqa: BLE001
             elapsed = int((time.perf_counter() - started) * 1000)
             return False, str(exc), elapsed
+
+    def list_models(self) -> list[ProviderModel]:
+        """Chat-capable models this key can see, newest first.
+
+        OpenAI returns one flat list covering embeddings, speech, images and
+        moderation alongside chat, and nothing in the payload says which is
+        which - so the families that cannot hold a conversation are named here
+        and dropped. A new chat family is included automatically; a new
+        non-chat one shows up until its keyword is added, which is the right way
+        round for a list an operator can also type into.
+        """
+        models = self._client().models.list()
+        out: list[ProviderModel] = []
+        for item in getattr(models, "data", None) or []:
+            model_id = str(getattr(item, "id", "") or "")
+            if not model_id or not _openai_is_chat_model(model_id):
+                continue
+            out.append(ProviderModel(value=model_id, label=model_id))
+        out.sort(key=lambda m: m.value, reverse=True)
+        return out
+
+
+# The non-chat families in OpenAI's flat model list. Substring match, because the
+# ids carry the family in the middle as often as at the front
+# (`gpt-4o-mini-tts`, `gpt-4o-transcribe`).
+_OPENAI_NON_CHAT = (
+    "embedding",
+    "tts",
+    "transcribe",
+    "whisper",
+    "dall-e",
+    "moderation",
+    "image",
+    "audio",
+    "realtime",
+    "sora",
+    "codex",
+    "babbage",
+    "davinci",
+)
+
+
+def _openai_is_chat_model(model_id: str) -> bool:
+    lowered = model_id.lower()
+    if any(part in lowered for part in _OPENAI_NON_CHAT):
+        return False
+    return lowered.startswith(("gpt-", "chatgpt-", "o1", "o3", "o4"))
 
 
 # ---------------------------------------------------------------------------
@@ -691,6 +759,22 @@ class AnthropicProvider:
             elapsed = int((time.perf_counter() - started) * 1000)
             return False, str(exc), elapsed
 
+    def list_models(self) -> list[ProviderModel]:
+        """Every model this key can see. Anthropic lists chat models only.
+
+        The API returns them newest first and carries a display name, so neither
+        is reconstructed here.
+        """
+        models = self._client().models.list(limit=100)
+        out: list[ProviderModel] = []
+        for item in getattr(models, "data", None) or []:
+            model_id = str(getattr(item, "id", "") or "")
+            if not model_id:
+                continue
+            label = str(getattr(item, "display_name", "") or "") or model_id
+            out.append(ProviderModel(value=model_id, label=label))
+        return out
+
 
 # ---------------------------------------------------------------------------
 # Google Gemini
@@ -734,8 +818,14 @@ def _gemini_thinking_budget(model: Optional[str]) -> Optional[int]:
     can be consumed entirely by thinking and come back as a candidate with no
     parts at all - `finishReason=MAX_TOKENS` with nothing to parse.
 
-    `flash` and `flash-lite` accept a zero budget, which is what this lane
-    wants: the work is reading a photo into a fixed JSON shape, not reasoning.
+    `flash` and `flash-lite` want the smallest budget the model will take: the
+    work is reading a photo into a fixed JSON shape, not reasoning. On the 2.5
+    family that is zero. **The 3.x family rejects zero outright** - measured
+    2026-08-22 against `gemini-3.5-flash-lite`, `thinkingBudget: 0` comes back
+    `400 INVALID_ARGUMENT` with no field named, while 1 and above answer
+    normally - so 3.x gets 1, which says the same thing in the only dialect it
+    accepts. Getting this wrong fails every call on the model, not some of them.
+
     A model id with no readable version is treated as pre-2.5, because omitting
     the field costs at worst a shorter answer while sending it to a model that
     does not take it costs the whole call.
@@ -744,9 +834,12 @@ def _gemini_thinking_budget(model: Optional[str]) -> Optional[int]:
     version = re.search(r"gemini-(\d+)(?:\.(\d+))?", name)
     if version is None:
         return None
-    if (int(version.group(1)), int(version.group(2) or 0)) < (2, 5):
+    major, minor = int(version.group(1)), int(version.group(2) or 0)
+    if (major, minor) < (2, 5):
         return None
-    return 0 if "flash" in name else GEMINI_PRO_THINKING_BUDGET
+    if "flash" in name:
+        return 0 if major < 3 else 1
+    return GEMINI_PRO_THINKING_BUDGET
 
 
 # Gemini's schema dialect is a strict subset of JSON Schema (OpenAPI 3.0). An
@@ -1262,6 +1355,52 @@ class GeminiProvider:
         except Exception as exc:  # noqa: BLE001
             elapsed = int((time.perf_counter() - started) * 1000)
             return False, str(exc), elapsed
+
+    def list_models(self) -> list[ProviderModel]:
+        """Models this key can call `generateContent` on, by Google's own account.
+
+        `supportedGenerationMethods` is the filter rather than a name pattern,
+        because the same list carries embedding, speech and video models. The
+        media families are dropped on top of it: several of them do support
+        generateContent and none of them can read a photo into JSON, so offering
+        one is offering a model that fails at the only job this picker is for.
+
+        Google's display names are used where present. Note what this list is
+        NOT: `gemini-2.5-flash-lite` appears here for a key that gets a 404 the
+        moment it calls the model (see the note above `ProviderModel`).
+        """
+        body = self._request("GET", "models", params={"pageSize": 200})
+        out: list[ProviderModel] = []
+        for item in body.get("models") or []:
+            if not isinstance(item, dict):
+                continue
+            if "generateContent" not in (item.get("supportedGenerationMethods") or []):
+                continue
+            model_id = str(item.get("name") or "").split("/")[-1]
+            if not model_id or _gemini_is_media_model(model_id):
+                continue
+            label = str(item.get("displayName") or "") or model_id
+            out.append(ProviderModel(value=model_id, label=label))
+        return out
+
+
+# Gemini families that answer `generateContent` without being able to do this
+# lane's work (read text, read a photo). Substring match on the id.
+_GEMINI_NON_TEXT = (
+    "embedding",
+    "tts",
+    "image",
+    "lyria",
+    "veo",
+    "imagen",
+    "robotics",
+    "computer-use",
+)
+
+
+def _gemini_is_media_model(model_id: str) -> bool:
+    lowered = model_id.lower()
+    return any(part in lowered for part in _GEMINI_NON_TEXT)
 
 
 # ---------------------------------------------------------------------------

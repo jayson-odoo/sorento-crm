@@ -1,30 +1,15 @@
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
-import {
-  MODEL_OPTIONS,
-  providerLabel,
-} from '@/app/(protected)/system-management/ai-assistant/lib/modelOptions';
 
 /**
  * Option lists for the chatbot media settings page.
  *
- * The image provider and model lists are NOT redefined here - they come from
- * `system-management/ai-assistant/lib/modelOptions`, which is already shared between
- * the global assistant setting and each agent's own row. A third copy would drift the
- * first time a model was added to one of them.
+ * The image model list is NOT here any more. It used to be a slice of a hardcoded
+ * table, and with no provider chosen it offered every provider's models at once -
+ * so a Gemini id could be saved against an OpenAI key, and a model Google had
+ * retired stayed on offer indefinitely. The page now asks the provider through
+ * `useProviderModels`, which also resolves a blank provider to the assistant's
+ * own rather than guessing.
  */
-
-/**
- * Models offered for the image lanes. With no provider chosen the setting inherits
- * the AI assistant's provider, which we do not know here - so offer every model
- * rather than an empty list the operator cannot get past.
- */
-export function imageModelOptions(provider: string): SearchableSelectOption[] {
-  const forProvider = MODEL_OPTIONS[provider];
-  if (forProvider) return forProvider;
-  return Object.entries(MODEL_OPTIONS).flatMap(([key, models]) =>
-    models.map((model) => ({ ...model, group: providerLabel(key) })),
-  );
-}
 
 export const LANGUAGE_MODE_OPTIONS: SearchableSelectOption[] = [
   { value: 'pinned', label: 'Pinned to one language' },

@@ -1,10 +1,16 @@
 /**
- * The models an agent can be pointed at.
+ * The FALLBACK models an agent can be pointed at.
  *
- * Shared because the choice is now made in two places — the global assistant setting
- * and each agent's own row — and two copies of this list would drift the first time a
- * model was added to one of them. Both screens also accept a typed-in name, so a model
- * missing here is an inconvenience, never a blocker.
+ * Not the source any more: every picker asks the provider itself through
+ * `useProviderModels`, because a hand-maintained list goes stale silently. Google
+ * retired `gemini-2.5-flash-lite` while it still sat in this table, and the media
+ * lane's degraded tier - the one nobody exercises until a contact runs out of
+ * allowance - failed every call on it.
+ *
+ * This list is what a picker shows while the provider cannot be reached (no key
+ * configured yet, network down). The backend keeps its own copy for the same
+ * reason and serves it with `source: "fallback"`; this one covers the case where
+ * the request itself failed. Every screen also accepts a typed-in name.
  *
  * Newest first. The 4o family is kept because existing configuration points at it, not
  * because it is the one to pick.

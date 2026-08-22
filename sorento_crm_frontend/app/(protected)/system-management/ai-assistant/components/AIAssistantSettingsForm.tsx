@@ -19,6 +19,7 @@ import {
   useUpdateAIAssistantConfig,
 } from '../hooks/useAIAssistantAdmin';
 import { MODEL_OPTIONS, PROVIDER_OPTIONS } from '../lib/modelOptions';
+import { useProviderModels } from '@/hooks/useProviderModels';
 
 
 export default function AIAssistantSettingsForm() {
@@ -47,6 +48,7 @@ export default function AIAssistantSettingsForm() {
   const [enabledTools, setEnabledTools] = useState<string[]>([]);
   const [ragEnabled, setRagEnabled] = useState(true);
   const [isEnabled, setIsEnabled] = useState(true);
+  const modelsQuery = useProviderModels(provider);
 
   useEffect(() => {
     if (!data) return;
@@ -77,7 +79,10 @@ export default function AIAssistantSettingsForm() {
     return allTools.filter((t) => t.toLowerCase().includes(q));
   }, [toolSearch, toolsQuery.data]);
 
-  const modelOptions = MODEL_OPTIONS[provider] || [];
+  // The provider's own catalogue, with the built-in table standing in only while
+  // it cannot be reached: a hand-maintained list goes stale without saying so, and
+  // a retired model stays on offer until someone hits it.
+  const modelOptions = modelsQuery.data?.models ?? MODEL_OPTIONS[provider] ?? [];
 
   const handleProviderChange = (next: string) => {
     setProvider(next);

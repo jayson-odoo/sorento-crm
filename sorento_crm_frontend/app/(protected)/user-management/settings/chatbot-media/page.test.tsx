@@ -41,6 +41,14 @@ vi.mock('./hooks/useChatbotMediaSettings', () => ({
   useSaveChatbotMediaSettings: () => mockMutation(),
 }));
 
+const mockModelsQuery = vi.fn();
+const mockProbe = vi.fn();
+
+vi.mock('@/hooks/useProviderModels', () => ({
+  useProviderModels: (provider: string) => mockModelsQuery(provider),
+  useTestProviderModel: () => mockProbe(),
+}));
+
 import ChatbotMediaSettingsPage from './page';
 import type { ChatbotMediaSettings } from './services/chatbotMediaSettingsService';
 
@@ -100,10 +108,30 @@ function modelField(id: string) {
   };
 }
 
+const probeMutate = vi.fn();
+
 beforeEach(() => {
   mockQuery.mockReset();
   mockMutation.mockReset();
   mockMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
+  mockModelsQuery.mockReset();
+  mockModelsQuery.mockReturnValue({
+    data: {
+      provider: 'openai',
+      source: 'live',
+      message: null,
+      models: [{ value: 'gpt-4o', label: 'GPT-4o' }],
+    },
+  });
+  mockProbe.mockReset();
+  probeMutate.mockReset();
+  mockProbe.mockReturnValue({
+    mutate: probeMutate,
+    reset: vi.fn(),
+    isPending: false,
+    data: undefined,
+    error: null,
+  });
 });
 
 afterEach(() => cleanup());
@@ -436,5 +464,131 @@ describe('ChatbotMediaSettingsPage save re-sync', () => {
 
     expect(mutate).toHaveBeenCalled();
     expect(input).toHaveValue('999');
+  });
+});
+
+
+/**
+ * The image model list is asked of the provider, and the Test button is the only
+ * thing that proves a picked model works. Both exist because a degraded model
+ * picked off a valid list (`gemini-2.5-flash-lite`) had been retired by Google,
+ * and every over-quota photo failed with "I could not read anything" until
+ * someone went looking.
+ */
+describe('ChatbotMediaSettingsPage image model list', () => {
+  it('asks for the models of the provider currently in the draft', () => {
+    mockQuery.mockReturnValue({
+      data: settings({ media_image_provider: 'gemini' }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithClient();
+
+    expect(mockModelsQuery).toHaveBeenCalledWith('gemini');
+  });
+
+  it('sends a blank provider as blank, which the backend reads as "inherit"', () => {
+    mockQuery.mockReturnValue({
+      data: settings({ media_image_provider: null }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithClient();
+
+    expect(mockModelsQuery).toHaveBeenCalledWith('');
+  });
+
+  it('says so when the list is the built-in one rather than the provider\'s', () => {
+    mockQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
+    mockModelsQuery.mockReturnValue({
+      data: {
+        provider: 'gemini',
+        source: 'fallback',
+        message: 'Could not reach gemini: timeout',
+        models: [{ value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' }],
+      },
+    });
+
+    renderWithClient();
+
+    expect(screen.getByText(/could not reach gemini: timeout/i)).toBeInTheDocument();
+  });
+});
+
+describe('ChatbotMediaSettingsPage model probe', () => {
+  const testButtons = () => screen.getAllByRole('button', { name: /test model/i });
+
+  it('offers a test on both image models and on neither voice model', () => {
+    mockQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
+
+    renderWithClient();
+
+    // Two, not four: the probe is a chat call, so a transcription model would
+    // fail it for reasons that have nothing to do with the setting.
+    expect(testButtons()).toHaveLength(2);
+  });
+
+  it('probes the typed model against the draft provider', async () => {
+    mockQuery.mockReturnValue({
+      data: settings({
+        media_image_provider: 'gemini',
+        media_image_degraded_model: 'gemini-2.5-flash-lite',
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithClient();
+    fireEvent.click(testButtons()[1]);
+
+    await waitFor(() =>
+      expect(probeMutate).toHaveBeenCalledWith({
+        provider: 'gemini',
+        model: 'gemini-2.5-flash-lite',
+      }),
+    );
+  });
+
+  it('cannot be tested while no model is named', () => {
+    mockQuery.mockReturnValue({
+      data: settings({ media_image_degraded_model: null }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithClient();
+
+    expect(testButtons()[1]).toBeDisabled();
+  });
+
+  it("shows the provider's own refusal rather than a generic failure", () => {
+    mockQuery.mockReturnValue({
+      data: settings({
+        media_image_provider: 'gemini',
+        media_image_degraded_model: 'gemini-2.5-flash-lite',
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    mockProbe.mockReturnValue({
+      mutate: probeMutate,
+      reset: vi.fn(),
+      isPending: false,
+      data: {
+        ok: false,
+        message:
+          'Gemini call failed (404): This model models/gemini-2.5-flash-lite is no longer available to new users.',
+        latency_ms: 310,
+      },
+      error: null,
+    });
+
+    renderWithClient();
+
+    expect(
+      screen.getAllByText(/no longer available to new users/i).length,
+    ).toBeGreaterThan(0);
   });
 });
