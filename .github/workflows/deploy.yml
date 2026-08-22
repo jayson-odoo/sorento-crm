@@ -367,6 +367,21 @@ jobs:
 
       # See test-backend: `alembic upgrade head` cannot build this schema from
       # zero. bootstrap_env creates it from the ORM models and stamps alembic.
+      # Throwaway database: durability costs the suite fsync on every commit for
+      # nothing. All three settings are reloadable (SIGHUP context), no restart.
+      - name: Relax Postgres durability for the test run
+        run: |
+          # One -c per statement: a multi-statement -c runs in one transaction
+          # and ALTER SYSTEM refuses to run inside a transaction block.
+          # $DATABASE_URL carries the job's own database name (the two backend
+          # jobs use different ones), so target that rather than a literal.
+          PSQL="psql $DATABASE_URL -v ON_ERROR_STOP=1"
+          $PSQL -c "ALTER SYSTEM SET fsync = off" \
+                -c "ALTER SYSTEM SET synchronous_commit = off" \
+                -c "ALTER SYSTEM SET full_page_writes = off" \
+                -c "SELECT pg_reload_conf()"
+          $PSQL -c "SHOW fsync" -c "SHOW synchronous_commit" -c "SHOW full_page_writes"
+
       - name: Bootstrap the database
         working-directory: sorento_crm_backend
         run: python -m scripts.bootstrap_env
@@ -376,7 +391,7 @@ jobs:
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
           echo "excluding $(echo "$IGNORES" | wc -w) path(s)"
-          python -m pytest -q -p no:cacheprovider --durations=30 $IGNORES tests/scm/
+          python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 $IGNORES tests/scm/
 
   # The executing backend gate, run in parallel under pytest-xdist `-n auto`.
   #
@@ -412,6 +427,16 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
+    # The suite is CPU-bound (~3 s of CPU per test across 9k tests) and a
+    # standard runner has 4 vCPUs, so one job takes ~29 min no matter how the
+    # database is tuned. Four runners in parallel, each still xdist across its
+    # own 4 cores, is 4x the CPU. pytest-split assigns every collected test to
+    # exactly one group, so the four groups together are the full suite and no
+    # test runs twice or is dropped.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     services:
       postgres:
         # pgvector image, not plain postgres: the embedding tables need the
@@ -469,6 +494,21 @@ jobs:
       # bootstrap_env creates the schema from the ORM models, adds the scm views,
       # seeds reference data (roles / order statuses / permissions), then stamps
       # alembic at head.
+      # Throwaway database: durability costs the suite fsync on every commit for
+      # nothing. All three settings are reloadable (SIGHUP context), no restart.
+      - name: Relax Postgres durability for the test run
+        run: |
+          # One -c per statement: a multi-statement -c runs in one transaction
+          # and ALTER SYSTEM refuses to run inside a transaction block.
+          # $DATABASE_URL carries the job's own database name (the two backend
+          # jobs use different ones), so target that rather than a literal.
+          PSQL="psql $DATABASE_URL -v ON_ERROR_STOP=1"
+          $PSQL -c "ALTER SYSTEM SET fsync = off" \
+                -c "ALTER SYSTEM SET synchronous_commit = off" \
+                -c "ALTER SYSTEM SET full_page_writes = off" \
+                -c "SELECT pg_reload_conf()"
+          $PSQL -c "SHOW fsync" -c "SHOW synchronous_commit" -c "SHOW full_page_writes"
+
       - name: Bootstrap the database
         working-directory: sorento_crm_backend
         run: python -m scripts.bootstrap_env
@@ -485,8 +525,10 @@ jobs:
         working-directory: sorento_crm_backend
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
-          echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm"
-          python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 $IGNORES --ignore=tests/scm tests/
+          echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm; shard ${{ matrix.shard }} of 4"
+          python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 \
+            --splits 4 --group ${{ matrix.shard }} \
+            $IGNORES --ignore=tests/scm tests/
 
   validate-frontend:
     name: Validate frontend (vitest)

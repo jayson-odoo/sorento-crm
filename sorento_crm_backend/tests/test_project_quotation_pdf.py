@@ -45,6 +45,9 @@ MARKER = "zzt-qpdf"
 # cannot pass by accidentally matching the priced one.
 PRICED_RATE = "250.00"
 PRICED_QTY = 4
+# Lines in the "many photographs" size test. Three distinct photographs prove the per-line ratio;
+# 52 proved the same thing at 160 s a run.
+LINE_COUNT = 3
 PRICED_TOTAL = "1,000.00"
 RATE_ONLY_RATE = "180.00"
 RATE_ONLY_QTY = 7
@@ -708,10 +711,12 @@ def test_an_unreachable_image_leaves_the_document_renderable(monkeypatch):
         assert '<td class="img"></td>' in html
 
 
-def test_a_fifty_two_line_quotation_of_photographs_stays_a_pdf_somebody_can_email(monkeypatch):
+def test_a_multi_line_quotation_of_photographs_stays_a_pdf_somebody_can_email(monkeypatch):
     """PDF-4, measured rather than asserted in the abstract. The client's real quotation runs to
     52+ lines and the live catalogue's chosen photographs average 1.1 MB, so the honest question
-    is not "is it downscaled" but "what does the artifact weigh"."""
+    is not "is it downscaled" but "what does the artifact weigh". Size scales linearly per line,
+    so a handful of distinct photographs measures the same ratio as 52 did, in seconds rather
+    than minutes of CI."""
     from app.services import product_image_service as images
     from app.services import project_quotation_document_service as qdocs
     from app.services import project_quotation_pdf_service as qpdf
@@ -741,7 +746,7 @@ def test_a_fifty_two_line_quotation_of_photographs_stays_a_pdf_somebody_can_emai
             db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
         )
         version = quotes.current_version(db, scope.id)
-        for index in range(52):
+        for index in range(LINE_COUNT):
             product = _product(
                 db, env["category"].id, env["uom"], description=f"{MARKER} item {index}"
             )
@@ -765,10 +770,10 @@ def test_a_fifty_two_line_quotation_of_photographs_stays_a_pdf_somebody_can_emai
         except Exception as exc:  # WeasyPrint's native libs are optional on a dev host
             pytest.skip(f"WeasyPrint cannot render here: {exc}")
 
-        naive = 52 * len(original)
+        naive = LINE_COUNT * len(original)
         print(
-            f"\n52-line PDF: {len(pdf_bytes) / 1024:.0f} KB "
-            f"(52 originals would be {naive / 1024 / 1024:.1f} MB)"
+            f"\n{LINE_COUNT}-line PDF: {len(pdf_bytes) / 1024:.0f} KB "
+            f"({LINE_COUNT} originals would be {naive / 1024 / 1024:.1f} MB)"
         )
         assert len(pdf_bytes) < 4 * 1024 * 1024, f"{len(pdf_bytes)} bytes"
         assert len(pdf_bytes) < naive / 10

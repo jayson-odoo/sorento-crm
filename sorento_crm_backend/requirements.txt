@@ -35,6 +35,7 @@ pytest>=7.0.0
 # not tuning: the shared-database fixtures assume the tests of one file run
 # serially (see the job comment in .github/workflows/deploy.yml).
 pytest-xdist>=3.6
+pytest-split>=0.10  # CI shards the backend suite across runners (--splits/--group)
 pgvector
 PyMuPDF>=1.24
 opencv-python-headless>=4.9
