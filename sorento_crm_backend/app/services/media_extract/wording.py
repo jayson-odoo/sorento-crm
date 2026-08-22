@@ -52,6 +52,28 @@ ATTRIBUTE_LABELS: dict[str, str] = {
     "document_date": "document date",
 }
 
+# How an entity hint is said out loud, in brackets after the code the customer
+# sent. A bare code carries no type, so a customer account number the model
+# filed as a product only surfaces after the lookup comes back wrong; the label
+# is the model's OWN classification, so it can be corrected before that. A hint
+# this map does not carry renders bare - never a guessed type.
+ENTITY_LABELS: dict[str, str] = {
+    "product": "product",
+    "promotion": "promotion",
+    "customer": "customer",
+    "transporter": "transporter",
+    "inbound_shipment": "shipment",
+    "warehouse": "warehouse",
+    "attachment": "file",
+    "form": "form",
+    "order": "order",
+    "category": "category",
+    "brand": "brand",
+    "attachment_type": "file type",
+    "goods_receive": "goods receipt",
+    "spo": "SPO",
+}
+
 _ESCAPE_HATCH = "Type the codes and I will look them up straight away."
 
 # The quotas are per modality - separate limits, separate ledger counts, separate
@@ -176,13 +198,24 @@ def degraded(resets_on: str, modality: str = "image") -> str:
 def _read_phrases(
     entities: Iterable[MediaEntity], attributes: Iterable[MediaAttribute]
 ) -> list[str]:
-    """What was read, in customer words: the raw string, attributes labelled."""
-    phrases = [entity.raw for entity in entities]
+    """What was read, in customer words: entities and attributes both labelled.
+
+    Attributes self-describe ("document date 17/08/2026"); an entity is the raw
+    code followed by its classification in brackets ("300-H071 (customer)") so
+    a misfiled code can be spotted before the lookup runs on it.
+    """
+    phrases = [_entity_phrase(entity) for entity in entities]
     phrases += [
         f"{ATTRIBUTE_LABELS.get(attribute.kind, attribute.kind)} {attribute.raw}"
         for attribute in attributes
     ]
     return phrases
+
+
+def _entity_phrase(entity: MediaEntity) -> str:
+    """The raw code plus the model's own classification; bare when it has none."""
+    label = ENTITY_LABELS.get((entity.hint or "").strip().casefold())
+    return f"{entity.raw} ({label})" if label else entity.raw
 
 
 def _note_clause(note: Optional[str]) -> str:

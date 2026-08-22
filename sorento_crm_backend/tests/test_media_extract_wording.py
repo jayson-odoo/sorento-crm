@@ -323,15 +323,16 @@ def test_confirmation_names_everything_read_when_nothing_is_in_doubt():
         MediaAttribute(kind="batch_number", raw="YG2539", entity_raw=None, confident=True)
     ]
     assert wording.confirmation(entities, attributes, []) == (
-        "I read SRTKS6647 and batch number YG2539 from that photo. Is that right?"
+        "I read SRTKS6647 (product) and batch number YG2539 from that photo. "
+        "Is that right?"
     )
 
 
 def test_confirmation_flags_an_unconfident_value_with_no_conflict():
     entities = [MediaEntity(raw="SRTKS6647", hint="product", confident=False)]
     assert wording.confirmation(entities, [], []) == (
-        "I read SRTKS6647 from that photo. I am not certain about SRTKS6647. "
-        "Is that right?"
+        "I read SRTKS6647 (product) from that photo. I am not certain about "
+        "SRTKS6647. Is that right?"
     )
 
 
@@ -358,7 +359,7 @@ def test_conflicted_attribute_is_not_also_listed_under_not_certain():
     message = wording.confirmation(entities, attributes, conflicts)
 
     assert message == (
-        "I read SRTBF31610 from that photo. On the quantity I can see 6 "
+        "I read SRTBF31610 (product) from that photo. On the quantity I can see 6 "
         "(printed) and 4 (handwritten) - handwritten amendment over the "
         "printed quantity. Which one should I use?"
     )
@@ -388,7 +389,7 @@ def test_a_disputed_entity_is_named_once_by_the_conflict_sentence_only():
     message = wording.confirmation(entities, [], conflicts)
 
     assert message == (
-        "I read SRTBF31610 from that photo. On the product code I can see "
+        "I read SRTBF31610 (product) from that photo. On the product code I can see "
         "SRTKS6647 (printed) and SRTKS6641 (handwritten). Which one should I use?"
     )
     assert "not certain" not in message
@@ -412,8 +413,73 @@ def test_the_line_a_conflict_sits_on_stays_listed_as_read_but_not_as_uncertain()
 
     message = wording.confirmation(entities, [], conflicts)
 
-    assert message.startswith("I read SRTBF31610 from that photo. On the quantity")
+    assert message.startswith("I read SRTBF31610 (product) from that photo. On the quantity")
     assert "not certain" not in message
+
+
+def test_confirmation_labels_each_entity_with_the_extractors_own_classification():
+    """The captain's 2026-08-22 ask: a customer account number the model filed as
+    a product must be visible as "(product)" so it can be corrected before the
+    lookup returns the wrong thing. Every label is the hint the model itself
+    emitted, said in customer words."""
+    entities = [
+        MediaEntity(raw="300-H071", hint="customer", confident=True),
+        MediaEntity(raw="RMA-SRT2608-01", hint="product", confident=True),
+        MediaEntity(raw="DO-2026-0811", hint="order", confident=True),
+        MediaEntity(raw="CNT-44", hint="inbound_shipment", confident=True),
+    ]
+    assert wording.confirmation(entities, [], []) == (
+        "I read 300-H071 (customer), RMA-SRT2608-01 (product), DO-2026-0811 "
+        "(order) and CNT-44 (shipment) from that photo. Is that right?"
+    )
+
+
+def test_confirmation_leaves_an_unclassified_entity_bare_never_guesses():
+    """No hint, or one the label map does not know, renders the bare code. A
+    guessed type would be exactly the misclassification the label exists to
+    expose."""
+    entities = [
+        MediaEntity(raw="300-H071", hint="", confident=True),
+        MediaEntity(raw="XYZ-9", hint="something_new", confident=True),
+    ]
+    assert wording.confirmation(entities, [], []) == (
+        "I read 300-H071 and XYZ-9 from that photo. Is that right?"
+    )
+
+
+def test_confirmation_keeps_self_describing_attributes_untouched_by_labels():
+    """Dates, document numbers, quantities and sizes already say what they are;
+    their phrasing is byte-identical to before the entity labels landed."""
+    entities = [MediaEntity(raw="SRTGB2550", hint="product", confident=True)]
+    attributes = [
+        MediaAttribute(kind="document_date", raw="17/08/2026", entity_raw=None, confident=True),
+        MediaAttribute(kind="document_number", raw="202603-1444", entity_raw=None, confident=True),
+        MediaAttribute(kind="quantity", raw="1", entity_raw="SRTGB2550", confident=True),
+        MediaAttribute(kind="product_size", raw="400MM x 500MM", entity_raw=None, confident=True),
+    ]
+    assert wording.confirmation(entities, attributes, []) == (
+        "I read SRTGB2550 (product), document date 17/08/2026, document number "
+        "202603-1444, quantity 1 and size 400MM x 500MM from that photo. "
+        "Is that right?"
+    )
+
+
+def test_the_not_certain_list_names_the_bare_code_the_label_already_introduced():
+    """The label sits on the first mention only; repeating "(product)" in the
+    uncertainty sentence says nothing new and lengthens a message read aloud."""
+    entities = [MediaEntity(raw="300-H071", hint="customer", confident=False)]
+    assert wording.confirmation(entities, [], []) == (
+        "I read 300-H071 (customer) from that photo. I am not certain about "
+        "300-H071. Is that right?"
+    )
+
+
+def test_every_entity_hint_the_prompt_allows_has_a_customer_label():
+    """`ENTITY_HINTS` is the model's enum; a hint it can emit that the label map
+    does not carry would render bare and look unclassified when it is not."""
+    from app.services.media_extract.prompts import ENTITY_HINTS
+
+    assert set(ENTITY_HINTS) <= set(wording.ENTITY_LABELS)
 
 
 def test_confirmation_nothing_read_delegates_to_nothing_read():
@@ -431,7 +497,7 @@ def test_clarification_names_what_was_read_then_asks():
         MediaAttribute(kind="batch_number", raw="YG2539", entity_raw=None, confident=True)
     ]
     assert wording.clarification(entities, attributes) == (
-        "I read SRTKS6647 and batch number YG2539 from that photo. What "
+        "I read SRTKS6647 (product) and batch number YG2539 from that photo. What "
         "would you like me to do with it?"
     )
 
