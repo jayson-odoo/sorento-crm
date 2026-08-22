@@ -705,6 +705,59 @@ def _ws_insensitive_lower(col):
     return func.lower(func.regexp_replace(col, r"[-\s]+", "", "g"))
 
 
+# Minimum length (after dash/whitespace-stripping) before a normalized CONTAINS
+# clause is allowed. Below it, dropping separators lets a short token span word
+# boundaries and match almost anything ("nkl" hitting "MOON KLANG"). Anchored
+# prefix matching carries no such risk, so `_norm_prefix` is not guarded.
+_NORM_MIN_LEN = 4
+
+
+def _norm_prefix(col, token: str):
+    """`col ILIKE 'token%'` OR the same match with both sides normalized.
+
+    One of the two standard matching primitives (see `_norm_contains`). Every
+    resolver tier goes through them so a token whose separators were stripped
+    upstream — n8n strips dashes and whitespace from EVERY entity token before
+    calling /system/references/resolve, because STT spaces product codes
+    ("SRT WC286SH") — still reaches a stored value that keeps them
+    ("MASTILEKLANG" -> "MASTILE KLANG SDN BHD"). The plain ILIKE is always kept
+    alongside, so the normalized clause can only ADD matches, never remove one.
+    """
+    clauses = [col.ilike(f"{token}%")]
+    norm = _strip_all_ws(token).lower()
+    if norm:
+        clauses.append(_ws_insensitive_lower(col).like(f"{norm}%"))
+    return or_(*clauses)
+
+
+def _norm_contains(col, token: str):
+    """`col ILIKE '%token%'` OR the same match with both sides normalized.
+
+    Guarded by `_NORM_MIN_LEN`: an unanchored normalized match on a very short
+    token would span word boundaries. These are sequential scans either way; if
+    one turns hot, the fix is an expression index on
+    `lower(regexp_replace(col, '[-\\s]+', '', 'g'))`.
+    """
+    clauses = [col.ilike(f"%{token}%")]
+    norm = _strip_all_ws(token).lower()
+    if len(norm) >= _NORM_MIN_LEN:
+        clauses.append(_ws_insensitive_lower(col).like(f"%{norm}%"))
+    return or_(*clauses)
+
+
+def _norm_token_map(tokens: Iterable[str]) -> dict[str, str]:
+    """`{normalized_token: original_token}` for the EXACT tiers.
+
+    Lets an exact-match probe accept a separator-stripped token and still map
+    the matched row back to the token the caller sent. Short tokens are dropped
+    for the same reason `_norm_contains` guards them."""
+    return {
+        _strip_all_ws(t).lower(): t
+        for t in tokens
+        if t and len(_strip_all_ws(t)) >= _NORM_MIN_LEN
+    }
+
+
 def _probe_product(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
     """Exact match on product_code (case-insensitive, whitespace-insensitive).
 
@@ -789,6 +842,21 @@ def _probe_customer_order(db: Session, tokens: list[str]) -> dict[str, list[Reso
     return result
 
 
+def _name_hit(name: str | None, token: str) -> bool:
+    """Did `token` match `name` — plainly, or only after normalization?
+
+    Used to label match_field: a row pulled in by the normalized clause has the
+    token nowhere in the raw name, so the plain `in` test alone would mislabel
+    the hit as a phone match."""
+    if not name:
+        return False
+    lowered_name = name.lower()
+    if token.lower() in lowered_name:
+        return True
+    norm_token = _strip_all_ws(token).lower()
+    return bool(len(norm_token) >= _NORM_MIN_LEN and norm_token in _strip_all_ws(lowered_name))
+
+
 def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
     """Exact match on customer_code; fuzzy ILIKE on customer_name / phone_number / email."""
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
@@ -835,16 +903,11 @@ def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
     _CUSTOMER_FUZZY_LIMIT = 25
     unresolved = [t for t in tokens if not result[t]]
     for token in unresolved:
-        term = f"%{token}%"
         token_has_digit = any(ch.isdigit() for ch in token)
-        name_or_phone = (
-            or_(
-                Customer.customer_name.ilike(term),
-                Customer.phone_number.ilike(term),
-            )
-            if token_has_digit
-            else Customer.customer_name.ilike(term)
-        )
+        clauses = [_norm_contains(Customer.customer_name, token)]
+        if token_has_digit:
+            clauses.append(_norm_contains(Customer.phone_number, token))
+        name_or_phone = or_(*clauses)
         rows = (
             db.query(
                 Customer.id,
@@ -868,7 +931,7 @@ def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
                     entity_type="customer",
                     canonical_code=code or name,
                     uuid=str(cid) if cid else None,
-                    match_field="customer_name" if (name and token.lower() in (name or "").lower()) else "phone_number",
+                    match_field="customer_name" if _name_hit(name, token) else "phone_number",
                     display=display,
                 )
             )
@@ -887,22 +950,30 @@ def _probe_customer_debtor_name(db: Session, tokens: list[str]) -> dict[str, lis
     if not tokens:
         return result
 
-    # Tier 1 — exact case-insensitive match.
+    # Tier 1 — exact case-insensitive match, plus a normalized exact so a
+    # separator-stripped token ("MASTILEKLANGSDNBHD") still lands on Tier 1
+    # rather than falling through to the substring scan.
     lowered = [t.lower() for t in tokens if t]
+    name_to_token = {t.lower(): t for t in tokens if t}
+    norm_to_token = _norm_token_map(tokens)
+    exact_clauses = [func.lower(Order.debtor_name).in_(lowered)]
+    if norm_to_token:
+        exact_clauses.append(_ws_insensitive_lower(Order.debtor_name).in_(list(norm_to_token)))
     rows = (
         db.query(Order.debtor_name, Order.debtor_code, Customer.id)
         .outerjoin(Customer, func.lower(func.btrim(Customer.customer_name)) == func.lower(func.btrim(Order.debtor_name)))
         .filter(
             Order.deleted_at.is_(None),
             Order.debtor_name.isnot(None),
-            func.lower(Order.debtor_name).in_(lowered),
+            or_(*exact_clauses),
         )
         .distinct()
         .all()
     )
-    name_to_token = {t.lower(): t for t in tokens if t}
     for debtor_name, debtor_code, customer_id in rows:
-        token = name_to_token.get(str(debtor_name).lower())
+        token = name_to_token.get(str(debtor_name).lower()) or norm_to_token.get(
+            _strip_all_ws(str(debtor_name)).lower()
+        )
         if not token:
             continue
         if any(m.canonical_code == debtor_name for m in result[token]):
@@ -934,7 +1005,7 @@ def _probe_customer_debtor_name(db: Session, tokens: list[str]) -> dict[str, lis
         stripped = token.rstrip("s")
         if stripped and stripped != token and len(stripped) >= 4:
             variants.append(stripped)
-        like_clauses = [Order.debtor_name.ilike(f"%{v}%") for v in variants if v]
+        like_clauses = [_norm_contains(Order.debtor_name, v) for v in variants if v]
         if not like_clauses:
             continue
         _DEBTOR_FUZZY_LIMIT = 25
@@ -970,6 +1041,17 @@ def _probe_customer_debtor_name(db: Session, tokens: list[str]) -> dict[str, lis
     return result
 
 
+def _transporter_name_clauses(token: str, *, include_code: bool) -> list:
+    """Substring clauses for a transporter token across code / name / normalized_name."""
+    clauses = [
+        _norm_contains(Transporter.name, token),
+        _norm_contains(Transporter.normalized_name, token),
+    ]
+    if include_code:
+        clauses.append(_norm_contains(Transporter.code, token))
+    return clauses
+
+
 def _probe_transporter_freeword(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
     """Free-text substring lookup against `Transporter.name` / `normalized_name`.
 
@@ -987,13 +1069,7 @@ def _probe_transporter_freeword(db: Session, tokens: list[str]) -> dict[str, lis
         term = f"%{token}%"
         rows = (
             db.query(Transporter.id, Transporter.code, Transporter.name, Transporter.normalized_name)
-            .filter(
-                or_(
-                    Transporter.name.ilike(term),
-                    Transporter.normalized_name.ilike(term),
-                    Transporter.code.ilike(term),
-                )
-            )
+            .filter(or_(*_transporter_name_clauses(token, include_code=True)))
             .limit(25)
             .all()
         )
@@ -1020,18 +1096,18 @@ def _probe_transporter(db: Session, tokens: list[str]) -> dict[str, list[Resolve
     if not tokens:
         return result
     lowered = [t.lower() for t in tokens if t]
-    # Code is whitespace-insensitive; name / normalized_name keep spaces because
-    # human names ("GT Delivery") legitimately contain them.
+    # Code, name and normalized_name all match dash/whitespace-insensitively.
     normalized_codes = [_strip_all_ws(t) for t in lowered]
+    exact_clauses = [
+        _ws_insensitive_lower(Transporter.code).in_(normalized_codes),
+        func.lower(Transporter.name).in_(lowered),
+        func.lower(Transporter.normalized_name).in_(lowered),
+        _ws_insensitive_lower(Transporter.name).in_(normalized_codes),
+        _ws_insensitive_lower(Transporter.normalized_name).in_(normalized_codes),
+    ]
     rows = (
         db.query(Transporter.id, Transporter.code, Transporter.name, Transporter.normalized_name)
-        .filter(
-            or_(
-                _ws_insensitive_lower(Transporter.code).in_(normalized_codes),
-                func.lower(Transporter.name).in_(lowered),
-                func.lower(Transporter.normalized_name).in_(lowered),
-            )
-        )
+        .filter(or_(*exact_clauses))
         .all()
     )
     for tid, code, name, norm in rows:
@@ -1039,7 +1115,10 @@ def _probe_transporter(db: Session, tokens: list[str]) -> dict[str, list[Resolve
             tl = token.lower()
             tl_no_ws = _strip_all_ws(tl)
             code_no_ws = _strip_all_ws((code or "").lower())
-            if tl_no_ws != code_no_ws and tl not in {(name or "").lower(), (norm or "").lower()}:
+            name_forms = {(name or "").lower(), (norm or "").lower()}
+            name_forms |= {_strip_all_ws(f) for f in name_forms}
+            name_hit = tl in name_forms or tl_no_ws in name_forms
+            if tl_no_ws != code_no_ws and not name_hit:
                 continue
             if any(m.canonical_code == code for m in result[token]):
                 continue
@@ -1057,15 +1136,9 @@ def _probe_transporter(db: Session, tokens: list[str]) -> dict[str, list[Resolve
     for token in unresolved:
         if len(token) < 4:
             continue
-        term = f"%{token}%"
         rows = (
             db.query(Transporter.id, Transporter.code, Transporter.name, Transporter.normalized_name)
-            .filter(
-                or_(
-                    Transporter.name.ilike(term),
-                    Transporter.normalized_name.ilike(term),
-                )
-            )
+            .filter(or_(*_transporter_name_clauses(token, include_code=False)))
             .limit(25)
             .all()
         )
@@ -1296,6 +1369,13 @@ def _probe_attachment(db: Session, tokens: list[str]) -> dict[str, list[Resolved
     if not tokens:
         return result
     lowered = [t.lower() for t in tokens]
+    name_to_token = {t.lower(): t for t in tokens}
+    norm_to_token = _norm_token_map(tokens)
+    exact_clauses = [func.lower(Attachment.original_filename).in_(lowered)]
+    if norm_to_token:
+        exact_clauses.append(
+            _ws_insensitive_lower(Attachment.original_filename).in_(list(norm_to_token))
+        )
     rows = (
         db.query(
             Attachment.id,
@@ -1308,13 +1388,14 @@ def _probe_attachment(db: Session, tokens: list[str]) -> dict[str, list[Resolved
         .outerjoin(AttachmentType, AttachmentType.id == Attachment.attachment_type_id)
         .filter(
             Attachment.is_deleted.is_(False),
-            func.lower(Attachment.original_filename).in_(lowered),
+            or_(*exact_clauses),
         )
         .all()
     )
-    name_to_token = {t.lower(): t for t in tokens}
     for aid, filename, description, mime, dir_path, type_name in rows:
-        token = name_to_token.get(str(filename).lower())
+        token = name_to_token.get(str(filename).lower()) or norm_to_token.get(
+            _strip_all_ws(str(filename)).lower()
+        )
         if not token:
             continue
         result[token].append(
@@ -1467,6 +1548,16 @@ def _probe_attachment_type(db: Session, tokens: list[str]) -> dict[str, list[Res
     if not tokens:
         return result
     lowered = [t.lower() for t in tokens]
+    exact_to_token = {t.lower(): t for t in tokens}
+    norm_to_token = _norm_token_map(tokens)
+    exact_clauses = [
+        func.lower(AttachmentType.code).in_(lowered),
+        func.lower(AttachmentType.type_name).in_(lowered),
+    ]
+    if norm_to_token:
+        norm_keys = list(norm_to_token)
+        exact_clauses.append(_ws_insensitive_lower(AttachmentType.code).in_(norm_keys))
+        exact_clauses.append(_ws_insensitive_lower(AttachmentType.type_name).in_(norm_keys))
     rows = (
         db.query(
             AttachmentType.id,
@@ -1474,22 +1565,20 @@ def _probe_attachment_type(db: Session, tokens: list[str]) -> dict[str, list[Res
             AttachmentType.type_name,
             AttachmentType.description,
         )
-        .filter(
-            or_(
-                func.lower(AttachmentType.code).in_(lowered),
-                func.lower(AttachmentType.type_name).in_(lowered),
-            )
-        )
+        .filter(or_(*exact_clauses))
         .all()
     )
-    norm_to_token = {t.lower(): t for t in tokens}
+
+    def _token_for(value: str | None) -> str | None:
+        if not value:
+            return None
+        return exact_to_token.get(value.lower()) or norm_to_token.get(_strip_all_ws(value).lower())
+
     for tid, code, type_name, description in rows:
-        key = (code or "").lower()
-        token = norm_to_token.get(key)
+        token = _token_for(code)
         match_field = "code"
         if not token:
-            key = (type_name or "").lower()
-            token = norm_to_token.get(key)
+            token = _token_for(type_name)
             match_field = "type_name"
         if not token:
             continue
@@ -1559,7 +1648,6 @@ def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
 
 
 def _prefix_probe_customer_order(db: Session, token: str) -> list[ResolvedEntity]:
-    prefix = f"{token}%"
     rows = (
         db.query(
             Order.id,
@@ -1570,7 +1658,7 @@ def _prefix_probe_customer_order(db: Session, token: str) -> list[ResolvedEntity
             OrderStatus.status_name,
         )
         .outerjoin(OrderStatus, OrderStatus.id == Order.order_status_id)
-        .filter(Order.order_number.ilike(prefix), Order.deleted_at.is_(None))
+        .filter(_norm_prefix(Order.order_number, token), Order.deleted_at.is_(None))
         .limit(PREFIX_LIMIT)
         .all()
     )
@@ -1593,7 +1681,6 @@ def _prefix_probe_customer_order(db: Session, token: str) -> list[ResolvedEntity
 
 
 def _prefix_probe_inbound_shipment(db: Session, token: str) -> list[ResolvedEntity]:
-    prefix = f"{token}%"
     rows = (
         db.query(
             InboundShipment.id,
@@ -1604,10 +1691,10 @@ def _prefix_probe_inbound_shipment(db: Session, token: str) -> list[ResolvedEnti
         )
         .filter(
             or_(
-                InboundShipment.shipment_number.ilike(prefix),
-                InboundShipment.shipping_container_number.ilike(prefix),
-                InboundShipment.bill_of_lading_number.ilike(prefix),
-                InboundShipment.invoice_number.ilike(prefix),
+                _norm_prefix(InboundShipment.shipment_number, token),
+                _norm_prefix(InboundShipment.shipping_container_number, token),
+                _norm_prefix(InboundShipment.bill_of_lading_number, token),
+                _norm_prefix(InboundShipment.invoice_number, token),
             ),
             InboundShipment.shipment_status != _DRAFT_SHIPMENT_STATUS,
         )
@@ -1633,10 +1720,9 @@ def _prefix_probe_inbound_shipment(db: Session, token: str) -> list[ResolvedEnti
 
 
 def _prefix_probe_customer(db: Session, token: str) -> list[ResolvedEntity]:
-    prefix = f"{token}%"
     rows = (
         db.query(Customer.id, Customer.customer_code, Customer.customer_name, Customer.phone_number)
-        .filter(Customer.customer_code.ilike(prefix))
+        .filter(_norm_prefix(Customer.customer_code, token))
         .limit(PREFIX_LIMIT)
         .all()
     )
@@ -1661,15 +1747,13 @@ def _prefix_probe_customer_debtor_name(db: Session, token: str) -> list[Resolved
     """
     if not token or len(token) < 3:
         return []
-    prefix = f"{token}%"
-    substr = f"%{token}%"
     rows = (
         db.query(Order.debtor_name, Order.debtor_code, Customer.id)
         .outerjoin(Customer, func.lower(func.btrim(Customer.customer_name)) == func.lower(func.btrim(Order.debtor_name)))
         .filter(
             Order.deleted_at.is_(None),
             Order.debtor_name.isnot(None),
-            Order.debtor_name.ilike(prefix),
+            _norm_prefix(Order.debtor_name, token),
         )
         .distinct()
         .limit(PREFIX_LIMIT)
@@ -1683,7 +1767,7 @@ def _prefix_probe_customer_debtor_name(db: Session, token: str) -> list[Resolved
             .filter(
                 Order.deleted_at.is_(None),
                 Order.debtor_name.isnot(None),
-                Order.debtor_name.ilike(substr),
+                _norm_contains(Order.debtor_name, token),
             )
             .distinct()
             .limit(PREFIX_LIMIT)
@@ -1704,7 +1788,7 @@ def _prefix_probe_customer_debtor_name(db: Session, token: str) -> list[Resolved
                 .filter(Order.deleted_at.is_(None), Order.debtor_name.isnot(None))
             )
             for w in words:
-                q = q.filter(Order.debtor_name.ilike(f"%{w}%"))
+                q = q.filter(_norm_contains(Order.debtor_name, w))
             rows = q.distinct().limit(PREFIX_LIMIT).all()
             tier = "word"
     seen: set[str] = set()
@@ -1728,10 +1812,9 @@ def _prefix_probe_customer_debtor_name(db: Session, token: str) -> list[Resolved
 
 
 def _prefix_probe_warehouse(db: Session, token: str) -> list[ResolvedEntity]:
-    prefix = f"{token}%"
     rows = (
         db.query(Warehouse.id, Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.is_active)
-        .filter(Warehouse.warehouse_code.ilike(prefix))
+        .filter(_norm_prefix(Warehouse.warehouse_code, token))
         .limit(PREFIX_LIMIT)
         .all()
     )
@@ -1749,10 +1832,9 @@ def _prefix_probe_warehouse(db: Session, token: str) -> list[ResolvedEntity]:
 
 
 def _prefix_probe_supplier(db: Session, token: str) -> list[ResolvedEntity]:
-    prefix = f"{token}%"
     rows = (
         db.query(Supplier.id, Supplier.supplier_code, Supplier.supplier_name, Supplier.is_active)
-        .filter(Supplier.supplier_code.ilike(prefix))
+        .filter(_norm_prefix(Supplier.supplier_code, token))
         .limit(PREFIX_LIMIT)
         .all()
     )
@@ -1770,10 +1852,9 @@ def _prefix_probe_supplier(db: Session, token: str) -> list[ResolvedEntity]:
 
 
 def _prefix_probe_spo(db: Session, token: str) -> list[ResolvedEntity]:
-    prefix = f"{token}%"
     rows = (
         db.query(SPOAllocation.id, SPOAllocation.spo_number)
-        .filter(SPOAllocation.spo_number.ilike(prefix))
+        .filter(_norm_prefix(SPOAllocation.spo_number, token))
         .distinct()
         .limit(PREFIX_LIMIT)
         .all()
@@ -1792,7 +1873,6 @@ def _prefix_probe_spo(db: Session, token: str) -> list[ResolvedEntity]:
 
 
 def _prefix_probe_grn(db: Session, token: str) -> list[ResolvedEntity]:
-    prefix = f"{token}%"
     rows = (
         db.query(
             PickingHeader.id,
@@ -1801,7 +1881,7 @@ def _prefix_probe_grn(db: Session, token: str) -> list[ResolvedEntity]:
             PickingHeader.picking_status,
         )
         .filter(
-            PickingHeader.picking_number.ilike(prefix),
+            _norm_prefix(PickingHeader.picking_number, token),
             PickingHeader.picking_type == "goods_received",
         )
         .limit(PREFIX_LIMIT)
@@ -1833,15 +1913,13 @@ def _prefix_probe_transporter(db: Session, token: str) -> list[ResolvedEntity]:
     """
     if not token or len(token) < 3:
         return []
-    prefix = f"{token}%"
-    substr = f"%{token}%"
     rows = (
         db.query(Transporter.id, Transporter.code, Transporter.name, Transporter.normalized_name)
         .filter(
             or_(
-                Transporter.code.ilike(prefix),
-                Transporter.name.ilike(prefix),
-                Transporter.normalized_name.ilike(prefix),
+                _norm_prefix(Transporter.code, token),
+                _norm_prefix(Transporter.name, token),
+                _norm_prefix(Transporter.normalized_name, token),
             )
         )
         .limit(PREFIX_LIMIT)
@@ -1851,13 +1929,7 @@ def _prefix_probe_transporter(db: Session, token: str) -> list[ResolvedEntity]:
     if not rows:
         rows = (
             db.query(Transporter.id, Transporter.code, Transporter.name, Transporter.normalized_name)
-            .filter(
-                or_(
-                    Transporter.code.ilike(substr),
-                    Transporter.name.ilike(substr),
-                    Transporter.normalized_name.ilike(substr),
-                )
-            )
+            .filter(or_(*_transporter_name_clauses(token, include_code=True)))
             .limit(PREFIX_LIMIT)
             .all()
         )
@@ -1891,11 +1963,9 @@ def _prefix_probe_promotion(db: Session, token: str) -> list[ResolvedEntity]:
     """
     if not token or len(token) < 3:
         return []
-    prefix = f"{token}%"
-    substr = f"%{token}%"
     rows = (
         db.query(Promotion.id, Promotion.description, Promotion.is_active)
-        .filter(Promotion.description.ilike(prefix))
+        .filter(_norm_prefix(Promotion.description, token))
         .limit(PREFIX_LIMIT)
         .all()
     )
@@ -1903,7 +1973,7 @@ def _prefix_probe_promotion(db: Session, token: str) -> list[ResolvedEntity]:
     if not rows:
         rows = (
             db.query(Promotion.id, Promotion.description, Promotion.is_active)
-            .filter(Promotion.description.ilike(substr))
+            .filter(_norm_contains(Promotion.description, token))
             .limit(PREFIX_LIMIT)
             .all()
         )
@@ -1914,8 +1984,8 @@ def _prefix_probe_promotion(db: Session, token: str) -> list[ResolvedEntity]:
     if tier == "prefix" and rows:
         substring_rows = (
             db.query(Promotion.id, Promotion.description, Promotion.is_active)
-            .filter(Promotion.description.ilike(substr))
-            .filter(~Promotion.description.ilike(prefix))
+            .filter(_norm_contains(Promotion.description, token))
+            .filter(~_norm_prefix(Promotion.description, token))
             .limit(PREFIX_LIMIT)
             .all()
         )
@@ -1930,7 +2000,7 @@ def _prefix_probe_promotion(db: Session, token: str) -> list[ResolvedEntity]:
     if len(words) >= 2:
         word_query = db.query(Promotion.id, Promotion.description, Promotion.is_active)
         for w in words:
-            word_query = word_query.filter(Promotion.description.ilike(f"%{w}%"))
+            word_query = word_query.filter(_norm_contains(Promotion.description, w))
         rows = list(rows) + list(word_query.limit(PREFIX_LIMIT).all())
     for pid, description, is_active in rows:
         key = str(pid)
@@ -1965,8 +2035,6 @@ def _prefix_probe_form(db: Session, token: str) -> list[ResolvedEntity]:
     if not token or len(token) < 3:
         return []
     from sqlalchemy import or_, and_
-    prefix = f"{token}%"
-    substr = f"%{token}%"
     fields = (
         (Form.code, "form_code"),
         (Form.name, "form_name"),
@@ -1999,14 +2067,14 @@ def _prefix_probe_form(db: Session, token: str) -> list[ResolvedEntity]:
     for col, label in fields:
         rows = (
             db.query(Form.id, Form.code, Form.name, Form.purpose, Form.is_active, Form.form_type)
-            .filter(col.ilike(prefix))
+            .filter(_norm_prefix(col, token))
             .limit(PREFIX_LIMIT)
             .all()
         )
         substring_rows = (
             db.query(Form.id, Form.code, Form.name, Form.purpose, Form.is_active, Form.form_type)
-            .filter(col.ilike(substr))
-            .filter(~col.ilike(prefix))
+            .filter(_norm_contains(col, token))
+            .filter(~_norm_prefix(col, token))
             .limit(PREFIX_LIMIT)
             .all()
         )
@@ -2024,9 +2092,9 @@ def _prefix_probe_form(db: Session, token: str) -> list[ResolvedEntity]:
     if len(tokens) >= 2:
         token_conds = [
             or_(
-                Form.code.ilike(f"%{t}%"),
-                Form.name.ilike(f"%{t}%"),
-                Form.purpose.ilike(f"%{t}%"),
+                _norm_contains(Form.code, t),
+                _norm_contains(Form.name, t),
+                _norm_contains(Form.purpose, t),
             )
             for t in tokens
         ]
@@ -2050,8 +2118,6 @@ def _prefix_probe_attachment(db: Session, token: str) -> list[ResolvedEntity]:
     """
     if not token or len(token) < 3:
         return []
-    prefix = f"{token}%"
-    substr = f"%{token}%"
     base = (
         db.query(
             Attachment.id,
@@ -2067,9 +2133,9 @@ def _prefix_probe_attachment(db: Session, token: str) -> list[ResolvedEntity]:
     prefix_rows = (
         base.filter(
             or_(
-                Attachment.original_filename.ilike(prefix),
-                Attachment.description.ilike(prefix),
-                AttachmentType.type_name.ilike(prefix),
+                _norm_prefix(Attachment.original_filename, token),
+                _norm_prefix(Attachment.description, token),
+                _norm_prefix(AttachmentType.type_name, token),
             )
         )
         .limit(PREFIX_LIMIT)
@@ -2078,9 +2144,9 @@ def _prefix_probe_attachment(db: Session, token: str) -> list[ResolvedEntity]:
     substring_rows = (
         base.filter(
             or_(
-                Attachment.original_filename.ilike(substr),
-                Attachment.description.ilike(substr),
-                AttachmentType.type_name.ilike(substr),
+                _norm_contains(Attachment.original_filename, token),
+                _norm_contains(Attachment.description, token),
+                _norm_contains(AttachmentType.type_name, token),
             )
         )
         .limit(PREFIX_LIMIT)
@@ -2099,12 +2165,11 @@ def _prefix_probe_attachment(db: Session, token: str) -> list[ResolvedEntity]:
     if len(words) >= 2:
         word_query = base
         for w in words:
-            wsub = f"%{w}%"
             word_query = word_query.filter(
                 or_(
-                    Attachment.original_filename.ilike(wsub),
-                    Attachment.description.ilike(wsub),
-                    AttachmentType.type_name.ilike(wsub),
+                    _norm_contains(Attachment.original_filename, w),
+                    _norm_contains(Attachment.description, w),
+                    _norm_contains(AttachmentType.type_name, w),
                 )
             )
         word_and_rows = word_query.limit(PREFIX_LIMIT).all()
@@ -2159,8 +2224,6 @@ def _prefix_probe_attachment_type(db: Session, token: str) -> list[ResolvedEntit
     """
     if not token or len(token) < 2:
         return []
-    prefix = f"{token}%"
-    substr = f"%{token}%"
     base = db.query(
         AttachmentType.id,
         AttachmentType.code,
@@ -2170,8 +2233,8 @@ def _prefix_probe_attachment_type(db: Session, token: str) -> list[ResolvedEntit
     prefix_rows = (
         base.filter(
             or_(
-                AttachmentType.code.ilike(prefix),
-                AttachmentType.type_name.ilike(prefix),
+                _norm_prefix(AttachmentType.code, token),
+                _norm_prefix(AttachmentType.type_name, token),
             )
         )
         .limit(PREFIX_LIMIT)
@@ -2180,9 +2243,9 @@ def _prefix_probe_attachment_type(db: Session, token: str) -> list[ResolvedEntit
     substring_rows = (
         base.filter(
             or_(
-                AttachmentType.code.ilike(substr),
-                AttachmentType.type_name.ilike(substr),
-                AttachmentType.description.ilike(substr),
+                _norm_contains(AttachmentType.code, token),
+                _norm_contains(AttachmentType.type_name, token),
+                _norm_contains(AttachmentType.description, token),
             )
         )
         .limit(PREFIX_LIMIT)
@@ -2197,12 +2260,11 @@ def _prefix_probe_attachment_type(db: Session, token: str) -> list[ResolvedEntit
     if words:
         word_clauses = []
         for w in words:
-            ws = f"%{w}%"
             word_clauses.extend(
                 [
-                    AttachmentType.code.ilike(ws),
-                    AttachmentType.type_name.ilike(ws),
-                    AttachmentType.description.ilike(ws),
+                    _norm_contains(AttachmentType.code, w),
+                    _norm_contains(AttachmentType.type_name, w),
+                    _norm_contains(AttachmentType.description, w),
                 ]
             )
         word_rows = base.filter(or_(*word_clauses)).limit(PREFIX_LIMIT).all()
@@ -2961,7 +3023,12 @@ AND_MODE_LIMIT = 200
 
 
 def _concat_ws(*cols):
-    """Sqlalchemy concat_ws helper used by AND-mode probes."""
+    """Sqlalchemy concat_ws helper used by AND-mode probes.
+
+    Note the blob is space-joined, so the normalized half of `_norm_contains`
+    also drops the join separator — a word can in principle match across two
+    concatenated columns. `_NORM_MIN_LEN` bounds that; the plain ILIKE half is
+    unaffected."""
     return func.concat_ws(" ", *cols)
 
 
@@ -3009,7 +3076,7 @@ def _and_token_match_counts(blob, tokens: list[str]):
             variants = _word_variants(word)
             if not variants:
                 continue
-            ilike_any = or_(*[blob.ilike(f"%{v}%") for v in variants])
+            ilike_any = or_(*[_norm_contains(blob, v) for v in variants])
             indicators.append(case((ilike_any, 1), else_=0))
         if not indicators:
             continue
@@ -3101,7 +3168,7 @@ def _token_coverage_expr(blob, tokens: list[str]):
             variants = _word_variants(word)
             if not variants:
                 continue
-            word_preds.append(or_(*[blob.ilike(f"%{v}%") for v in variants]))
+            word_preds.append(or_(*[_norm_contains(blob, v) for v in variants]))
         if not word_preds:
             continue
         indicators.append(case((and_(*word_preds), 1), else_=0))
@@ -3355,7 +3422,7 @@ def _and_probe_customer_order(db: Session, tokens: list[str]) -> list[ResolvedEn
     # the substring (e.g. customer "MOCHA SDN BHD (DOCUMENT)" matched "DO"). Anyone
     # filtering orders by customer name should resolve the customer separately and
     # pass the customer entity, not bundle the name into a customer_order token.
-    conds = [Order.order_number.ilike(f"%{t}%") for t in tokens if t]
+    conds = [_norm_contains(Order.order_number, t) for t in tokens if t]
     if not conds:
         return []
     rows = (
