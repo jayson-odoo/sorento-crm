@@ -46,6 +46,7 @@ from app.services.media_extract.schema import (
     parse_extraction,
     parse_provider_json,
 )
+from app.services.media_extract.tiling import split_image_part
 from app.services.media_extract.transcribe import (
     TranscriptionError,
     transcribe,
@@ -385,6 +386,14 @@ class MediaExtractService:
             raise MediaExtractionError(
                 f"Nothing readable in the media (mime {mime or 'unknown'})."
             )
+
+        # A multi-panel promo flyer is split into per-panel crops so each panel
+        # gets its own tile grid (see `tiling`). Only a lone frame is split: a
+        # PDF or a video already arrives as one part per page/frame, and
+        # splitting each of those multiplies the token cost of a document for no
+        # gain - the pages are separate subjects already.
+        if len(parts) == 1:
+            parts = split_image_part(parts[0])
 
         provider, provider_name, model_name = self._resolve_image_provider(
             job.tier, settings
