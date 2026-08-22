@@ -705,6 +705,16 @@ def _ws_insensitive_lower(col):
     return func.lower(func.regexp_replace(col, r"[-\s]+", "", "g"))
 
 
+def _norm_sql(expr: str) -> str:
+    """Raw-SQL twin of :func:`_ws_insensitive_lower`, for ``text()`` blocks.
+
+    Same expression, spelled for the hand-written trigram probes that cannot use
+    the ORM construct. Keep the two in lockstep: a divergence would silently
+    normalize one tier differently from the next, and would drop the functional
+    indexes that migration 410 builds on exactly this expression."""
+    return "lower(regexp_replace(" + expr + ", '[-\\s]+', '', 'g'))"
+
+
 # Minimum length (after dash/whitespace-stripping) before a normalized CONTAINS
 # clause is allowed. Below it, dropping separators lets a short token span word
 # boundaries and match almost anything ("nkl" hitting "MOON KLANG"). Anchored
@@ -2560,6 +2570,21 @@ def _trgm_lookup(
     phrase = (phrase or "").strip()
     if not phrase or len(phrase) < 3:
         return []
+    # Every probe below scores the dash/whitespace-STRIPPED form of both sides
+    # (§3a), never the raw column. n8n strips separators from every token it
+    # sends, so a raw `similarity()` compares a stripped query against a column
+    # that kept its hyphen and collapses - "STRWC286SH" scored 0.50 against the
+    # WRONG family while the dash-kept spelling scored 0.643 against the right
+    # one.
+    #
+    # Normalized REPLACES raw rather than OR-ing beside it. Keeping both is what
+    # `_norm_prefix` does, but there the raw side is a cheap ILIKE; here each
+    # extra operand is a second GIN bitmap plus its recheck, and measured
+    # end-to-end over ten phrases an OR of both cost 2.6x (73ms -> 195ms median,
+    # p90 95ms -> 230ms) for ~15% more hits. Nothing is lost: separators carry no
+    # meaning in these identifiers - that is the premise of §3a - so a token that
+    # matched raw matches its stripped form too.
+    norm = _strip_all_ws(phrase).lower() or phrase.lower()
     out: list[ResolvedEntity] = []
 
     if "product" in allowed_entity_types:
@@ -2576,6 +2601,7 @@ def _trgm_lookup(
             # curated-looking variants (SRTKT71SS, -BL/-GM) beat digit-neighbours
             # (SRTKT72SS) even when raw similarity ties (§3.2). Self is excluded.
             scope_sql, scope_params = _company_scope_sql(db)
+            n_code = _norm_sql("product_code")
             # SAVEPOINT: this lookup is best-effort, and a failed statement
             # otherwise leaves the whole transaction aborted - every later
             # query in the request would die on InFailedSqlTransaction.
@@ -2584,20 +2610,16 @@ def _trgm_lookup(
                     text(
                         f"""
                         SELECT id, product_code, product_name,
-                               similarity(product_code, :p) AS sim,
-                               (left(lower(regexp_replace(product_code, '[-\\s]', '', 'g')),
-                                     length(lower(regexp_replace(:p, '[-\\s]', '', 'g'))))
-                                  = lower(regexp_replace(:p, '[-\\s]', '', 'g')))
-                                 AS is_variant
+                               similarity({n_code}, :pn) AS sim,
+                               (left({n_code}, length(:pn)) = :pn) AS is_variant
                         FROM products
-                        WHERE product_code % :p
-                          AND lower(regexp_replace(product_code, '[-\\s]', '', 'g'))
-                              <> lower(regexp_replace(:p, '[-\\s]', '', 'g')){scope_sql}
+                        WHERE {n_code} % :pn
+                          AND {n_code} <> :pn{scope_sql}
                         ORDER BY is_variant DESC, sim DESC, product_code
                         LIMIT :n
                         """
                     ),
-                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                    {"pn": norm, "n": TRGM_LIMIT, **scope_params},
                 ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
@@ -2630,6 +2652,11 @@ def _trgm_lookup(
                 if scope_params
                 else ""
             )
+            # No COALESCE: GREATEST ignores NULL args and a NULL `%` operand is
+            # simply not a match, so the bare column keeps the expression
+            # byte-identical to the functional index (migration 410).
+            n_dname = _norm_sql("o.debtor_name")
+            n_dcode = _norm_sql("o.debtor_code")
             # SAVEPOINT: this lookup is best-effort, and a failed statement
             # otherwise leaves the whole transaction aborted - every later
             # query in the request would die on InFailedSqlTransaction.
@@ -2640,20 +2667,20 @@ def _trgm_lookup(
                         SELECT o.debtor_name, o.debtor_code,
                                c.id AS customer_id,
                                GREATEST(
-                                   similarity(COALESCE(o.debtor_name, ''), :p),
-                                   similarity(COALESCE(o.debtor_code, ''), :p)
+                                   similarity({n_dname}, :pn),
+                                   similarity({n_dcode}, :pn)
                                ) AS sim
                         FROM orders o
                         LEFT JOIN customers c ON lower(btrim(c.customer_name)) = lower(btrim(o.debtor_name))
                         WHERE o.deleted_at IS NULL
                           AND o.debtor_name IS NOT NULL
-                          AND (o.debtor_name % :p OR o.debtor_code % :p){order_scope_sql}{cust_scope_sql}
+                          AND ({n_dname} % :pn OR {n_dcode} % :pn){order_scope_sql}{cust_scope_sql}
                         GROUP BY o.debtor_name, o.debtor_code, c.id
                         ORDER BY sim DESC
                         LIMIT :n
                         """
                     ),
-                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                    {"pn": norm, "n": TRGM_LIMIT, **scope_params},
                 ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
@@ -2671,6 +2698,8 @@ def _trgm_lookup(
                     )
                 )
             scope_sql, scope_params = _company_scope_sql(db)
+            n_ccode = _norm_sql("customer_code")
+            n_cname = _norm_sql("customer_name")
             # SAVEPOINT: this lookup is best-effort, and a failed statement
             # otherwise leaves the whole transaction aborted - every later
             # query in the request would die on InFailedSqlTransaction.
@@ -2680,16 +2709,16 @@ def _trgm_lookup(
                         f"""
                         SELECT id, customer_code, customer_name,
                                GREATEST(
-                                   similarity(customer_code, :p),
-                                   similarity(customer_name, :p)
+                                   similarity({n_ccode}, :pn),
+                                   similarity({n_cname}, :pn)
                                ) AS sim
                         FROM customers
-                        WHERE (customer_code % :p OR customer_name % :p){scope_sql}
+                        WHERE ({n_ccode} % :pn OR {n_cname} % :pn){scope_sql}
                         ORDER BY sim DESC
                         LIMIT :n
                         """
                     ),
-                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                    {"pn": norm, "n": TRGM_LIMIT, **scope_params},
                 ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
@@ -2712,6 +2741,7 @@ def _trgm_lookup(
     if "customer_order" in allowed_entity_types:
         try:
             scope_sql, scope_params = _company_scope_sql(db)
+            n_onum = _norm_sql("order_number")
             # SAVEPOINT: this lookup is best-effort, and a failed statement
             # otherwise leaves the whole transaction aborted - every later
             # query in the request would die on InFailedSqlTransaction.
@@ -2719,14 +2749,15 @@ def _trgm_lookup(
                 rows = db.execute(
                     text(
                         f"""
-                        SELECT id, order_number, similarity(order_number, :p) AS sim
+                        SELECT id, order_number,
+                               similarity({n_onum}, :pn) AS sim
                         FROM orders
-                        WHERE deleted_at IS NULL AND order_number % :p{scope_sql}
+                        WHERE deleted_at IS NULL AND {n_onum} % :pn{scope_sql}
                         ORDER BY sim DESC
                         LIMIT :n
                         """
                     ),
-                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                    {"pn": norm, "n": TRGM_LIMIT, **scope_params},
                 ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
@@ -2749,6 +2780,7 @@ def _trgm_lookup(
     if "promotion" in allowed_entity_types:
         try:
             scope_sql, scope_params = _company_scope_sql(db)
+            n_desc = _norm_sql("description")
             # SAVEPOINT: this lookup is best-effort, and a failed statement
             # otherwise leaves the whole transaction aborted - every later
             # query in the request would die on InFailedSqlTransaction.
@@ -2757,14 +2789,14 @@ def _trgm_lookup(
                     text(
                         f"""
                         SELECT id, description,
-                               similarity(COALESCE(description, ''), :p) AS sim
+                               similarity({n_desc}, :pn) AS sim
                         FROM promotions
-                        WHERE description % :p{scope_sql}
+                        WHERE {n_desc} % :pn{scope_sql}
                         ORDER BY sim DESC
                         LIMIT :n
                         """
                     ),
-                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                    {"pn": norm, "n": TRGM_LIMIT, **scope_params},
                 ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
@@ -2787,6 +2819,9 @@ def _trgm_lookup(
     if "transporter" in allowed_entity_types:
         try:
             scope_sql, scope_params = _company_scope_sql(db)
+            n_tcode = _norm_sql("code")
+            n_tname = _norm_sql("name")
+            n_tnorm = _norm_sql("normalized_name")
             # SAVEPOINT: this lookup is best-effort, and a failed statement
             # otherwise leaves the whole transaction aborted - every later
             # query in the request would die on InFailedSqlTransaction.
@@ -2796,17 +2831,18 @@ def _trgm_lookup(
                         f"""
                         SELECT id, code, name, normalized_name,
                                GREATEST(
-                                   similarity(COALESCE(code, ''), :p),
-                                   similarity(COALESCE(name, ''), :p),
-                                   similarity(COALESCE(normalized_name, ''), :p)
+                                   similarity({n_tcode}, :pn),
+                                   similarity({n_tname}, :pn),
+                                   similarity({n_tnorm}, :pn)
                                ) AS sim
                         FROM transporters
-                        WHERE (code % :p OR name % :p OR normalized_name % :p){scope_sql}
+                        WHERE ({n_tcode} % :pn OR {n_tname} % :pn
+                               OR {n_tnorm} % :pn){scope_sql}
                         ORDER BY sim DESC
                         LIMIT :n
                         """
                     ),
-                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                    {"pn": norm, "n": TRGM_LIMIT, **scope_params},
                 ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
@@ -2919,11 +2955,15 @@ def _find_entity_neighbours_with_data(
     if input_id:
         try:
             scope_sql, scope_params = _company_scope_sql(db)
+            # Scored the same way as `_trgm_lookup` (stripped both sides): a curated
+            # sibling stored as "SRT-FH12-CR-DIY-BL" must not be cut by
+            # SUGGEST_FLOOR just because the caller sent "srtfh12crdiy".
+            n_code = _norm_sql("product_code")
             graph_rows = db.execute(
                 text(
                     f"""
                     SELECT id, product_code, product_name,
-                           similarity(product_code, :p) AS sim
+                           similarity({n_code}, :pn) AS sim
                     FROM products
                     WHERE id <> :pid
                       AND (variant_of_id = :pid
@@ -2931,7 +2971,7 @@ def _find_entity_neighbours_with_data(
                            OR (:parent_id IS NOT NULL AND id = :parent_id)){scope_sql}
                     """
                 ),
-                {"p": code, "pid": input_id, "parent_id": parent_id, **scope_params},
+                {"pn": norm, "pid": input_id, "parent_id": parent_id, **scope_params},
             ).all()
             for r in graph_rows:
                 cid = str(r.id)
