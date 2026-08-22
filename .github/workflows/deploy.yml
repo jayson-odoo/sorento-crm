@@ -367,6 +367,20 @@ jobs:
 
       # See test-backend: `alembic upgrade head` cannot build this schema from
       # zero. bootstrap_env creates it from the ORM models and stamps alembic.
+      # Throwaway database: durability costs the suite fsync on every commit for
+      # nothing. All three settings are reloadable (SIGHUP context), no restart.
+      - name: Relax Postgres durability for the test run
+        run: |
+          # One -c per statement: a multi-statement -c runs in one transaction
+          # and ALTER SYSTEM refuses to run inside a transaction block.
+          export PGPASSWORD=sorento
+          PSQL="psql -h localhost -U sorento -d sorento_ci -v ON_ERROR_STOP=1"
+          $PSQL -c "ALTER SYSTEM SET fsync = off" \
+                -c "ALTER SYSTEM SET synchronous_commit = off" \
+                -c "ALTER SYSTEM SET full_page_writes = off" \
+                -c "SELECT pg_reload_conf()"
+          $PSQL -c "SHOW fsync" -c "SHOW synchronous_commit" -c "SHOW full_page_writes"
+
       - name: Bootstrap the database
         working-directory: sorento_crm_backend
         run: python -m scripts.bootstrap_env
@@ -376,7 +390,7 @@ jobs:
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
           echo "excluding $(echo "$IGNORES" | wc -w) path(s)"
-          python -m pytest -q -p no:cacheprovider --durations=30 $IGNORES tests/scm/
+          python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 $IGNORES tests/scm/
 
   # The executing backend gate, run in parallel under pytest-xdist `-n auto`.
   #
@@ -469,6 +483,20 @@ jobs:
       # bootstrap_env creates the schema from the ORM models, adds the scm views,
       # seeds reference data (roles / order statuses / permissions), then stamps
       # alembic at head.
+      # Throwaway database: durability costs the suite fsync on every commit for
+      # nothing. All three settings are reloadable (SIGHUP context), no restart.
+      - name: Relax Postgres durability for the test run
+        run: |
+          # One -c per statement: a multi-statement -c runs in one transaction
+          # and ALTER SYSTEM refuses to run inside a transaction block.
+          export PGPASSWORD=sorento
+          PSQL="psql -h localhost -U sorento -d sorento_ci -v ON_ERROR_STOP=1"
+          $PSQL -c "ALTER SYSTEM SET fsync = off" \
+                -c "ALTER SYSTEM SET synchronous_commit = off" \
+                -c "ALTER SYSTEM SET full_page_writes = off" \
+                -c "SELECT pg_reload_conf()"
+          $PSQL -c "SHOW fsync" -c "SHOW synchronous_commit" -c "SHOW full_page_writes"
+
       - name: Bootstrap the database
         working-directory: sorento_crm_backend
         run: python -m scripts.bootstrap_env
