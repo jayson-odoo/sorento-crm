@@ -51,14 +51,27 @@ and it needs users who have installed the app.
 
 ## The four defects
 
-### 1. The `notifications` queue is not drained
+### 1. The `notifications` queue has one drainer and no backstop
 
-`worker.py` defaults `WORKER_QUEUES` to
-`imports,respond_io,catalogue_render,media,project_docs,flyer_read`. Every notification
-delivery is enqueued with `queue_name="notifications"`
-(`notification_service.py:124, 168, 360`). A worker running the default list therefore
-never touches them, and the job sits in Redis until it expires. That is the 86 pending
-rows, and it silently costs email as well as push.
+**Corrected 23 Aug 2026.** An earlier draft of this plan said the queue was never drained
+at all. That was wrong, and it was wrong because the claim was written without reading
+`queue_service.py`. What is actually the case:
+
+| Path | State |
+| --- | --- |
+| In-process daemon drain on enqueue (`_IMMEDIATE_DRAIN_QUEUES = {"notifications": 5}`) | works, capped at 5 jobs per enqueue |
+| Scheduler backstop `notification_delivery_processor` (drains 20 per tick) | **disabled** in `scheduled_tasks`, last ran 14 Aug 2026 |
+| RQ worker draining the queue | absent from the default `WORKER_QUEUES` |
+
+So deliveries are processed by a daemon thread inside whichever API process handled the
+request, and both backstops are off. A burst larger than five, or a process recycled
+mid-drain by a deploy or a restart, leaves rows `pending` with nothing to recover them.
+
+The fix is therefore **resilience, not an outage repair**: a dedicated worker survives API
+restarts and deploys where a daemon thread does not, and the five-job cap stops being
+load-bearing. Re-enabling `notification_delivery_processor` would restore the safety net
+independently; that is a production data flag rather than a code change, and with a worker
+draining the queue it may simply be unnecessary.
 
 Fix: add `notifications` to the default list, and pin it with a test so the next queue
 added cannot drop it again (AC-P1, AC-P2).
