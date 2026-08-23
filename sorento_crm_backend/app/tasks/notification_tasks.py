@@ -401,6 +401,57 @@ def _enqueue_coalesced_attachment_email(
     return outbox_id, merged
 
 
+# Push services reject a payload of 4096 bytes or more. The limit is theirs, not
+# ours, and it is enforced per request.
+WEB_PUSH_PAYLOAD_LIMIT_BYTES = 4096
+
+# Keys the service worker actually reads out of `data` (sorento_crm_frontend/public/sw.js:
+# `data.link` on notificationclick, `tag` for coalescing). Everything else in a
+# notification's `data` exists for other channels and has no business on the wire.
+_PUSH_DATA_KEYS = ("link", "tag")
+
+
+def build_push_payload(notification) -> str:
+    """Serialise a notification into a web-push body that always fits.
+
+    Built explicitly rather than by passing `notification.data` through. SLA
+    notifications carry `whatsapp_context_vars` in that dict - the full message,
+    the reason, three URLs - and 13 production pushes were rejected with
+    "binary data passed in the request must be less than 4096 bytes". The push is
+    a poke with a link; everything else is one authenticated fetch away, which is
+    the same argument `conversation_event_bus` makes for its own payload shape.
+
+    The link outranks the body: if the body alone would overflow, it is truncated
+    so the notification still arrives and still goes somewhere useful. Truncation
+    is measured in BYTES, because a CJK body is three bytes per character and a
+    character cap would still overflow.
+    """
+    import json
+
+    source = notification.data or {}
+    data = {k: source[k] for k in _PUSH_DATA_KEYS if source.get(k) is not None}
+    body = notification.body or ""
+
+    def _encode(b: str) -> str:
+        return json.dumps({"title": notification.title, "body": b, "data": data})
+
+    payload = _encode(body)
+    if len(payload.encode("utf-8")) < WEB_PUSH_PAYLOAD_LIMIT_BYTES:
+        return payload
+
+    # Binary-search the longest body that fits, then re-encode once. Slicing by a
+    # fixed byte count would cut mid-character and json.dumps escaping means the
+    # encoded length is not a simple function of the body length.
+    low, high = 0, len(body)
+    while low < high:
+        mid = (low + high + 1) // 2
+        if len(_encode(body[:mid] + "...").encode("utf-8")) < WEB_PUSH_PAYLOAD_LIMIT_BYTES:
+            low = mid
+        else:
+            high = mid - 1
+    return _encode(body[:low] + "..." if low else "")
+
+
 def _send_web_push_for_notification(
     db,
     notification: Notification,
@@ -439,12 +490,7 @@ def _send_web_push_for_notification(
         db.commit()
         return
 
-    import json
-    payload = json.dumps({
-        "title": notification.title,
-        "body": notification.body or "",
-        "data": notification.data or {},
-    })
+    payload = build_push_payload(notification)
     last_error = None
     sent_any = False
     for sub in subs:
