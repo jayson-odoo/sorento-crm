@@ -99,7 +99,10 @@ describe('RespondChatList inbound quote rendering (AC-L6)', () => {
     expect(screen.getByTestId('quoted-context')).toHaveTextContent('[image]');
   });
 
-  it('names an automated sender rather than claiming the reader wrote it', () => {
+  // A machine send is deliberately unlabelled in a bubble, so the quote block
+  // has no sender name to borrow and reads as the company - which is still the
+  // point of the rule: never claim the reader wrote it.
+  it('attributes an automated sender to the company, not to the reader', () => {
     const quoted = msg(1, {
       traffic: 'outgoing',
       sender: { source: 'ai_agent' },
@@ -115,7 +118,7 @@ describe('RespondChatList inbound quote rendering (AC-L6)', () => {
     });
     render(<RespondChatList items={[quoted, reply]} />);
 
-    expect(screen.getByTestId('quoted-context')).toHaveTextContent(/Replying to AI Agent/i);
+    expect(screen.getByTestId('quoted-context')).toHaveTextContent(/Replying to Sorento/i);
   });
 
   it('renders nothing extra on a message with no quote', () => {

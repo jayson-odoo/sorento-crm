@@ -12,8 +12,25 @@ export type RespondMessageRenderable = {
   message?: {
     type?: string;
     text?: string;
+    /**
+     * The body of a `quick_reply` message. Respond.io puts the prose under
+     * `title` there and leaves `text` unset, so a reader of `text` alone shows
+     * an empty bubble for every option prompt the bot has ever sent.
+     */
+    title?: string;
     messageTag?: string;
     // Selection-style payloads observed in Respond.io v2 list/quick-reply messages.
+    /** What a `quick_reply` actually carries: bare option strings. */
+    replies?: Array<string | { title?: string; label?: string; text?: string }>;
+    /** WhatsApp template payload: the body text is mirrored onto `text`, the buttons are not. */
+    template?: {
+      name?: string;
+      components?: Array<{
+        type?: string;
+        text?: string;
+        buttons?: Array<{ type?: string; text?: string; url?: string }>;
+      }>;
+    };
     quickReplies?: Array<string | { title?: string; label?: string; text?: string }>;
     options?: Array<string | { title?: string; label?: string; text?: string }>;
     buttons?: Array<string | { title?: string; label?: string; text?: string }>;
@@ -24,7 +41,8 @@ export type RespondMessageRenderable = {
     };
   } & Record<string, unknown>;
   status?: RespondStatusEntry[];
-  sender?: { source?: string };
+  /** `name` is resolved by the backend from `sender.userId` - Respond sends only the id. */
+  sender?: { source?: string; userId?: number | string | null; name?: string | null };
   /**
    * Inbound quote context (UAC AC-L6). Respond's `message.received` webhook and
    * its message objects carry `replyTo` when the contact quoted an earlier
@@ -53,6 +71,54 @@ export function getReceiptTier(item: RespondMessageRenderable): ReceiptTier {
   return 'sent';
 }
 
+/**
+ * The prose of a message, wherever this message type happens to keep it.
+ *
+ * `text` for a plain message and for a WhatsApp template (Respond mirrors the
+ * template body onto it), but a `quick_reply` carries its body under `title`
+ * and no `text` at all - which is why every option prompt used to render as
+ * "(no text)" with its question invisible.
+ */
+export function getMessageBodyText(item: RespondMessageRenderable): string {
+  const m = item.message;
+  if (!m) return '';
+  const text = (m.text ?? '').trim();
+  if (text) return m.text ?? '';
+  return m.title ?? '';
+}
+
+/** A button a WhatsApp template offered the contact. */
+export interface TemplateButton {
+  text: string;
+  /** Absolute URL for a `url` button; absent for a quick-reply style button. */
+  url?: string;
+}
+
+/**
+ * The buttons a WhatsApp template put on the contact's handset.
+ *
+ * The template body is mirrored onto `message.text` and renders already, but
+ * the button component is not: staff reading the thread could not see that the
+ * contact had been handed a "View" link to their complaint, let alone follow
+ * it. Read straight off the template component so what the thread shows is what
+ * the handset showed.
+ */
+export function extractTemplateButtons(item: RespondMessageRenderable): TemplateButton[] {
+  const components = item.message?.template?.components;
+  if (!Array.isArray(components)) return [];
+  const out: TemplateButton[] = [];
+  for (const component of components) {
+    if (!Array.isArray(component?.buttons)) continue;
+    for (const button of component.buttons) {
+      const text = (button?.text ?? '').toString().trim();
+      if (!text) continue;
+      const url = (button?.url ?? '').toString().trim();
+      out.push(url ? { text, url } : { text });
+    }
+  }
+  return out;
+}
+
 /** Extract selection options from Respond.io interactive payloads (defensive across shapes). */
 export function extractSelectionOptions(item: RespondMessageRenderable): string[] {
   const m = item.message;
@@ -71,7 +137,7 @@ export function extractSelectionOptions(item: RespondMessageRenderable): string[
     return '';
   };
   const out: string[] = [];
-  for (const arr of [m.quickReplies, m.options, m.buttons]) {
+  for (const arr of [m.replies, m.quickReplies, m.options, m.buttons]) {
     if (Array.isArray(arr)) {
       for (const v of arr) {
         const s = pickLabel(v).trim();

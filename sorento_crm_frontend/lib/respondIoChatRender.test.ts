@@ -3,7 +3,10 @@ import { describe, it, expect } from 'vitest';
 import {
   describeMessageAttachments,
   describeQuotedContext,
+  extractSelectionOptions,
+  extractTemplateButtons,
   fileNameFromAttachmentUrl,
+  getMessageBodyText,
   QUOTED_CONTEXT_MAX_CHARS,
   type RespondMessageRenderable,
 } from './respondIoChatRender';
@@ -238,5 +241,101 @@ describe('describeQuotedContext', () => {
       message: { type: 'text', text: '> quoted line\nreply body' },
     };
     expect(describeQuotedContext(item)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The interactive shapes Respond.io actually sends. Every fixture below is
+// copied from a live message in this workspace's own history - the reason the
+// old guesses (quickReplies / options / buttons) never fired is that Respond
+// uses neither of those keys.
+// ---------------------------------------------------------------------------
+describe('getMessageBodyText', () => {
+  it('reads a plain message body', () => {
+    expect(getMessageBodyText(msg({ type: 'text', text: 'no stock today' }))).toBe(
+      'no stock today',
+    );
+  });
+
+  it('reads a quick_reply body off `title`', () => {
+    const out = getMessageBodyText(
+      msg({
+        type: 'quick_reply',
+        title: 'No stock for SRTW2600-SS-CR. Reply with a code to continue.',
+        replies: ['SRTW2600', 'Yes escalate'],
+      }),
+    );
+    expect(out).toBe('No stock for SRTW2600-SS-CR. Reply with a code to continue.');
+  });
+
+  it('prefers a non-empty text over title', () => {
+    expect(getMessageBodyText(msg({ type: 'text', text: 'body', title: 'other' }))).toBe('body');
+  });
+
+  it('is empty for a message carrying neither', () => {
+    expect(getMessageBodyText(msg({ type: 'attachment' }))).toBe('');
+  });
+});
+
+describe('extractSelectionOptions - quick_reply', () => {
+  it('reads the bare `replies` strings a quick_reply carries', () => {
+    const out = extractSelectionOptions(
+      msg({
+        type: 'quick_reply',
+        title: 'Try one of these',
+        replies: ['SRTFC2043', 'SRTFC2044', 'Yes escalate', "No it's okay"],
+      }),
+    );
+    expect(out).toEqual(['SRTFC2043', 'SRTFC2044', 'Yes escalate', "No it's okay"]);
+  });
+
+  it('still reads the older object-shaped keys', () => {
+    const out = extractSelectionOptions(
+      msg({ type: 'quick_reply', quickReplies: [{ title: 'Yes' }, 'No'] }),
+    );
+    expect(out).toEqual(['Yes', 'No']);
+  });
+});
+
+describe('extractTemplateButtons', () => {
+  const template = (components: unknown) =>
+    msg({ type: 'whatsapp_template', text: 'body', template: { components } } as never);
+
+  it('reads a url button off a whatsapp template', () => {
+    const out = extractTemplateButtons(
+      template([
+        { type: 'body', text: '*Complaint No - CMP26-0181*' },
+        {
+          type: 'buttons',
+          buttons: [
+            {
+              type: 'url',
+              text: 'View',
+              url: 'https://fe-sorento.foundryx.my/portal/c/VWRW980G6B/complaint/3f871885',
+            },
+          ],
+        },
+      ]),
+    );
+    expect(out).toEqual([
+      {
+        text: 'View',
+        url: 'https://fe-sorento.foundryx.my/portal/c/VWRW980G6B/complaint/3f871885',
+      },
+    ]);
+  });
+
+  it('keeps a button with no url as a bare label', () => {
+    const out = extractTemplateButtons(
+      template([{ type: 'buttons', buttons: [{ type: 'quick_reply', text: 'Stop' }] }]),
+    );
+    expect(out).toEqual([{ text: 'Stop' }]);
+  });
+
+  it('drops a nameless button and returns nothing for a plain message', () => {
+    expect(
+      extractTemplateButtons(template([{ type: 'buttons', buttons: [{ type: 'url', url: 'x' }] }])),
+    ).toEqual([]);
+    expect(extractTemplateButtons(msg({ type: 'text', text: 'hi' }))).toEqual([]);
   });
 });

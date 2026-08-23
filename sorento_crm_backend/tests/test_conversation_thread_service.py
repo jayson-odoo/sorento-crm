@@ -501,3 +501,80 @@ def test_page_endpoint_rejects_a_bad_limit():
         res = client.get(f"{_BASE}/{_FAKE_ID}/conversation/page", params={"limit": 5000})
     # Validation or auth, never a 200 and never a 500.
     assert res.status_code in (401, 403, 422), res.text
+
+
+# ---------------------------------------------------------------------------
+# Sender identity (the audit of 2026-08-22)
+#
+# Respond names the sender of a staff reply by its OWN user id and gives us no
+# name with it, so a bubble could only ever be labelled by the transport that
+# carried it. `users.respond_user_id` is the bridge back to a CRM user.
+# ---------------------------------------------------------------------------
+
+
+def _staff_user(db, *, respond_user_id: str, name: str):
+    from app.models.user import User
+
+    user = User(
+        email=f"{respond_user_id}@zzt.invalid",
+        name=name,
+        respond_user_id=respond_user_id,
+    )
+    db.add(user)
+    db.flush()
+    return user
+
+
+def test_attach_sender_names_names_a_human_send(db):
+    _staff_user(db, respond_user_id="ZZT1098828", name="Tay Zhi Yang")
+    items = [
+        {"sender": {"source": "user", "userId": "ZZT1098828"}},
+    ]
+
+    svc._attach_sender_names(db, items)
+
+    assert items[0]["sender"]["name"] == "Tay Zhi Yang"
+
+
+def test_attach_sender_names_leaves_a_machine_send_unnamed(db):
+    # A bot send carries no user id, and is deliberately unlabelled in the UI.
+    _staff_user(db, respond_user_id="ZZT1098829", name="Should Not Appear")
+    items = [
+        {"sender": {"source": "n8n", "userId": None}},
+        {"sender": {"source": "api"}},
+        {"sender": {"source": "contact"}},
+    ]
+
+    svc._attach_sender_names(db, items)
+
+    assert all("name" not in item["sender"] for item in items)
+
+
+def test_attach_sender_names_skips_a_user_id_we_do_not_hold(db):
+    items = [{"sender": {"source": "user", "userId": "ZZT-no-such-user"}}]
+
+    svc._attach_sender_names(db, items)
+
+    assert "name" not in items[0]["sender"]
+
+
+def test_quick_reply_is_stored_by_its_title_not_as_a_placeholder():
+    """A `quick_reply` keeps its prose under `title`, so reading `text` alone
+    stored the whole prompt as "[quick_reply]" and put its words beyond the
+    reach of in-thread search."""
+    item = {
+        "message": {
+            "type": "quick_reply",
+            "title": "No stock for SRTW2600-SS-CR. Reply with a code to continue.",
+            "replies": ["SRTW2600", "Yes escalate"],
+        }
+    }
+
+    assert (
+        svc._respond_item_text(item)
+        == "No stock for SRTW2600-SS-CR. Reply with a code to continue."
+    )
+
+
+def test_a_typed_placeholder_still_answers_for_a_bodyless_message():
+    assert svc._respond_item_text({"message": {"type": "sticker"}}) == "[sticker]"

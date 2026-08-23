@@ -8,6 +8,7 @@ import {
   AlertCircle,
   Clock,
   CornerUpLeft,
+  ExternalLink,
   FileText,
   Headphones,
   Image as ImageIcon,
@@ -26,6 +27,8 @@ import {
   formatBubbleTime,
   formatDatePillLabel,
   describeQuotedContext,
+  extractTemplateButtons,
+  getMessageBodyText,
   getReceiptTier,
   type MessageAttachmentDescriptor,
   type QuotedContext,
@@ -35,7 +38,9 @@ import { getRespondMessageDisplayTimeMs, getRespondMessageSortTimeMs } from '@/l
 import {
   getNormalizedRespondSource,
   getOutgoingSenderLabel,
+  getRespondSenderName,
 } from '@/lib/respondIoOutgoingMessage';
+import { parseWhatsAppText, stripWhatsAppMarkup } from '@/lib/whatsappText';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
@@ -178,6 +183,94 @@ function HighlightedText({ text, term }: { text: string; term: string }) {
   );
 }
 
+/**
+ * A message body, rendered the way the handset rendered it: WhatsApp markup
+ * applied, bare URLs clickable, and the search term still highlighted inside
+ * whatever style the segment ended up with.
+ *
+ * The two passes compose in this order on purpose - markup first, highlight
+ * second - because a search term can land anywhere inside a styled run, and
+ * splitting for the mark before parsing the markup would cut a `*bold*` pair in
+ * half and leave the asterisks on screen.
+ */
+function FormattedMessageText({ text, term }: { text: string; term: string }) {
+  const segments = parseWhatsAppText(text);
+  return (
+    <>
+      {segments.map((segment, i) => {
+        const marked = <HighlightedText text={segment.text} term={term} />;
+
+        if (segment.code) {
+          return (
+            <code
+              key={i}
+              className="block whitespace-pre-wrap rounded bg-black/5 px-1.5 py-1 font-mono text-[13px] dark:bg-white/10"
+            >
+              {marked}
+            </code>
+          );
+        }
+
+        let node: React.ReactNode = marked;
+        if (segment.strike) node = <s>{node}</s>;
+        if (segment.italic) node = <em>{node}</em>;
+        if (segment.bold) node = <strong className="font-semibold">{node}</strong>;
+
+        if (segment.href) {
+          return (
+            <a
+              key={i}
+              href={segment.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              // Stops the click from also selecting/scrolling the bubble it sits in.
+              onClick={(event) => event.stopPropagation()}
+              className="underline underline-offset-2 hover:opacity-80"
+            >
+              {node}
+            </a>
+          );
+        }
+        return <span key={i}>{node}</span>;
+      })}
+    </>
+  );
+}
+
+/**
+ * The buttons a WhatsApp template put on the contact's handset. A `url` button
+ * is a real link here so staff can open the same page the contact was sent;
+ * anything else is a label, because there is nothing for us to press.
+ */
+function TemplateButtons({ buttons }: { buttons: ReturnType<typeof extractTemplateButtons> }) {
+  if (buttons.length === 0) return null;
+  return (
+    <div
+      data-testid="template-buttons"
+      className="mt-2 flex flex-col divide-y divide-zinc-200 overflow-hidden rounded border border-zinc-200 bg-white/70 dark:divide-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/40"
+    >
+      {buttons.map((button, i) =>
+        button.url ? (
+          <a
+            key={i}
+            href={button.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-medium text-sky-700 hover:bg-black/5 dark:text-sky-300 dark:hover:bg-white/5"
+          >
+            <ExternalLink className="size-3" />
+            {button.text}
+          </a>
+        ) : (
+          <div key={i} className="px-2.5 py-1.5 text-center text-xs text-zinc-800 dark:text-zinc-200">
+            {button.text}
+          </div>
+        ),
+      )}
+    </div>
+  );
+}
+
 function AttachmentIcon({ kind }: { kind: MessageAttachmentDescriptor['kind'] }) {
   if (kind === 'image') return <ImageIcon className="size-3.5 shrink-0" />;
   if (kind === 'video') return <Video className="size-3.5 shrink-0" />;
@@ -245,8 +338,11 @@ function AttachmentBlock({
  */
 function quotedAgentLabel(quoted?: RespondMessageRenderable): string {
   if (!quoted) return 'Sorento';
-  const label = getOutgoingSenderLabel(getNormalizedRespondSource(quoted));
-  return label === 'User' ? 'Sorento' : label;
+  const label = getOutgoingSenderLabel(
+    getNormalizedRespondSource(quoted),
+    getRespondSenderName(quoted),
+  );
+  return label ?? 'Sorento';
 }
 
 function ReceiptTicks({ tier }: { tier: ReturnType<typeof getReceiptTier> }) {
@@ -267,22 +363,33 @@ function ReceiptTicks({ tier }: { tier: ReturnType<typeof getReceiptTier> }) {
 function QuotedContextBlock({
   context,
   agentLabel,
+  contactLabel,
   onJump,
 }: {
   context: QuotedContext;
   /** Who sent the quoted message on OUR side, when it can be named. */
   agentLabel: string;
+  /** The contact's own name, when the thread knows it. */
+  contactLabel?: string | null;
   onJump?: () => void;
 }) {
+  // A quoted message from the contact reads as their name when we hold one, and
+  // otherwise as a bare "Replying to" - the generic word "Contact" names nobody.
   const senderLabel =
-    context.sender === 'contact' ? 'Contact' : context.sender === 'agent' ? agentLabel : null;
+    context.sender === 'contact'
+      ? (contactLabel ?? '').trim() || null
+      : context.sender === 'agent'
+        ? agentLabel
+        : null;
   const inner = (
     <>
       <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide opacity-70">
         <CornerUpLeft className="size-3" />
         {senderLabel ? `Replying to ${senderLabel}` : 'Replying to'}
       </span>
-      <span className="line-clamp-3 whitespace-pre-wrap break-words">{context.excerpt}</span>
+      <span className="line-clamp-3 whitespace-pre-wrap break-words">
+        {stripWhatsAppMarkup(context.excerpt)}
+      </span>
     </>
   );
   const className =
@@ -720,7 +827,7 @@ export default function RespondChatList({
 
           const item = entry.item;
           const isOutgoing = item.traffic === 'outgoing';
-          const text = item.message?.text ?? '';
+          const text = getMessageBodyText(item);
           // AC-L6: a contact's quote-reply arrives as a STRUCTURED `replyTo`.
           // There is no outgoing counterpart - Respond's send API takes no
           // reply-to, and the ">"-prefix emulation we used to write was removed
@@ -736,13 +843,19 @@ export default function RespondChatList({
           if (dKey) lastDateKey = dKey;
 
           const sourceNorm = getNormalizedRespondSource(item);
-          const senderLabel = isOutgoing ? getOutgoingSenderLabel(sourceNorm) : 'Contact';
+          // No label on an incoming bubble (the thread IS this contact, and the
+          // header already names them) and none on a machine send. A colleague's
+          // own reply keeps their name - see getOutgoingSenderLabel.
+          const senderLabel = isOutgoing
+            ? getOutgoingSenderLabel(sourceNorm, getRespondSenderName(item))
+            : null;
 
           const bubbleClass = isOutgoing
             ? 'bg-[#d9fdd3] text-zinc-900 dark:bg-[#005c4b] dark:text-zinc-50'
             : 'bg-white text-zinc-900 dark:bg-[#202c33] dark:text-zinc-50';
 
           const options = extractSelectionOptions(item);
+          const templateButtons = extractTemplateButtons(item);
           const tier = getReceiptTier(item);
           const isHighlighted =
             normalizedHighlightId != null && String(item.messageId ?? '') === normalizedHighlightId;
@@ -786,15 +899,18 @@ export default function RespondChatList({
                     isFlashed ? ' ring-2 ring-emerald-500 dark:ring-emerald-400' : ''
                   }`}
                 >
-                  <div className="mb-0.5 flex items-center gap-2">
-                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
-                      {senderLabel}
-                    </span>
-                  </div>
+                  {senderLabel && (
+                    <div className="mb-0.5 flex items-center gap-2">
+                      <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                        {senderLabel}
+                      </span>
+                    </div>
+                  )}
                   {quotedContext && (
                     <QuotedContextBlock
                       context={quotedContext}
                       agentLabel={quotedAgentLabel(quotedTarget)}
+                      contactLabel={contactName}
                       onJump={quotedTargetId ? () => jumpToMessage(quotedTargetId) : undefined}
                     />
                   )}
@@ -807,7 +923,7 @@ export default function RespondChatList({
                   ))}
                   {text && (
                     <div className="whitespace-pre-wrap break-words leading-snug">
-                      <HighlightedText text={text} term={highlightTerm} />
+                      <FormattedMessageText text={text} term={highlightTerm} />
                     </div>
                   )}
                   {options.length > 0 && (
@@ -822,8 +938,10 @@ export default function RespondChatList({
                       ))}
                     </div>
                   )}
+                  <TemplateButtons buttons={templateButtons} />
                   {!text &&
                     options.length === 0 &&
+                    templateButtons.length === 0 &&
                     attachments.length === 0 &&
                     !quotedContext && <div className="italic opacity-70">(no text)</div>}
                   <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-zinc-500 dark:text-zinc-300/80">
