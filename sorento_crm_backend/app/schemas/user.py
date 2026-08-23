@@ -1,6 +1,6 @@
 """User management schemas."""
 from pydantic import BaseModel, ConfigDict, field_validator
-from typing import Optional, List, Any
+from typing import Literal, Optional, List, Any
 from datetime import datetime
 
 
@@ -173,6 +173,13 @@ class ProductDiscontinuedScopeOut(ProductDiscontinuedScopeIn):
     brand_name: Optional[str] = None
 
 
+# The four values `users.notify_push_message_scope` may hold (PLAN-message-push).
+# Declared as a Literal so an unknown value is a 422 from FastAPI's validation
+# handler rather than a column write nobody notices (UAC AC-M25).
+MessagePushScope = Literal["assigned_and_coverage", "assigned_only", "all_contacts", "off"]
+DEFAULT_MESSAGE_PUSH_SCOPE: MessagePushScope = "assigned_and_coverage"
+
+
 class UserBase(BaseModel):
     email: str
     name: Optional[str] = None
@@ -198,6 +205,7 @@ class UserBase(BaseModel):
     notify_whatsapp_on_deadline_extended: Optional[bool] = False
     notify_email_on_handling: Optional[bool] = True
     notify_whatsapp_on_handling: Optional[bool] = False
+    notify_push_message_scope: MessagePushScope = DEFAULT_MESSAGE_PUSH_SCOPE
 
     @field_validator("contact_number", mode="before")
     @classmethod
@@ -239,6 +247,7 @@ class UserUpdate(BaseModel):
     notify_whatsapp_on_deadline_extended: Optional[bool] = None
     notify_email_on_handling: Optional[bool] = None
     notify_whatsapp_on_handling: Optional[bool] = None
+    notify_push_message_scope: Optional[MessagePushScope] = None
     # Replace-all when provided (an empty list clears every scope, i.e. the user
     # hears nothing); untouched when omitted.
     product_discontinued_scopes: Optional[List[ProductDiscontinuedScopeIn]] = None
