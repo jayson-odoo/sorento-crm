@@ -93,8 +93,10 @@ publisher moves - the hook below is on the committed row, not on the transport.
 
 ### Recipient resolution (`app/services/message_push_service.py`)
 
-Inbound only. `type != 'inbound'` returns no recipients (AC-M11) - an agent reply, a bot
-reply and a template send all reach the same ingest endpoint.
+Inbound only. `type != 'incoming'` returns no recipients (AC-M11) - an agent reply, a
+bot reply and a template send all reach the same ingest endpoint. The AC originally said
+`'inbound'`; the column has only ever held `incoming` / `outgoing`, so S2 corrected both
+sides (see the note under AC-M11).
 
 1. Resolve **every open** conversation tracking for the contact - not one. Conversation
    SLA is no longer max-one-open-per-contact (`sla_service.py`, AC-F1 multi-open
