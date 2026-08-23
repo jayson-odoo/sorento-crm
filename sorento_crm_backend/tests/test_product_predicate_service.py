@@ -29,7 +29,7 @@ from app.services.product_class_signal import backfill_category_signals
 from app.services.product_spec_derivation import derive_for_code
 from app.services.product_spec_registry import seed_spec_registry
 from app.services.product_spec_search import filter_specs, search_specs
-from app.services.product_set_service import resolve_product_set
+from app.services.product_predicate_service import resolve_product_set
 from tests._pg_fixture import blank_session
 
 _REFS: dict = {}

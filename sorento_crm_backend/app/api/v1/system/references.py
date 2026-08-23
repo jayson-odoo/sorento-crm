@@ -2107,7 +2107,7 @@ def resolve_reference_post(
     # The whole intersection + count happens in the service (zero SQL here); this
     # veneer only maps the outcome onto the wire shape the spine already reads.
     if payload.require:
-        from app.services.product_set_service import resolve_product_set
+        from app.services.product_predicate_service import resolve_product_set
 
         outcome = resolve_product_set(
             db,

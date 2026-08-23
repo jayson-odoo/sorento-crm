@@ -441,7 +441,15 @@ def test_every_company_id_table_is_registered():
     # existing PO / skip, or a mixture - kept CURRENT rather than append-only. Owned because it
     # is that company's own decision queue, the same reason `recommendation_override` beside
     # it is owned.
-    expected_owned = 118
+    #
+    # PLAN-product-sets.md adds 1: `product_sets` is the flyer code that names an assembly
+    # (`SRTWC8608-RL` = pedestal + cistern + seat cover). Owned because every product code in
+    # the catalogue exists once under Sorento and once under Mocha, so a set naming those
+    # products belongs to exactly one of them - the unique index is `(company_id, set_code)`
+    # for the same reason. `product_set_members` is deliberately NOT owned: it reaches its
+    # scope through its parent set, the way `certificate_products` reaches it through
+    # `Certificate`.
+    expected_owned = 119
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

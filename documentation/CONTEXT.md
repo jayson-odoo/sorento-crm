@@ -382,6 +382,23 @@ A Bundle is **not** a **Discount Rule**: it has no code to enter, no usage limit
 and no validity window. Where a Discount Rule reduces a price at checkout, a
 Bundle *is* a price.
 
+### Product Set
+A code that names an assembly Sorento sells as one thing and stocks as several.
+`SRTWC8608-RL` is printed on a flyer and asked for on WhatsApp, but the catalogue
+holds only its parts: a pedestal, a cistern and a seat cover, each its own SKU.
+The Set is that missing code.
+
+Like a Bundle it is not a product, is never stocked or costed, and derives its
+availability from its members. It differs from a Bundle on the two things that
+matter: a Bundle **has no code** and *is* an authored price, while a Set is a
+**code first** and its price is **derived** from whichever members are ticked as
+contributing. A Set is also not orderable at all, where a Bundle is ordered
+through its components.
+
+Distinct again from an **item package** (the read-only AutoCount `PackageDTL`
+mirror), which is what Project Sales explodes a PO SET line with. AutoCount owns
+that one; Sorento owns this one.
+
 ### Brochure
 One Assembler-produced instance: a Page, a page-scoped Collection, and cover
 details. Shareable and exportable. Renders against the Page Version it was made

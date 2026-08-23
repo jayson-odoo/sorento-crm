@@ -147,7 +147,7 @@ blank Postgres schema, no bugs found (every case confirmed intended behaviour):
 Full new-feature regression (`test_spec_values_on_rows.py`,
 `test_resolve_unrecognized_terms.py`, `test_resolve_brand_routing.py`,
 `test_resolve_raw_text.py`, `test_resolve_spec_fallback.py`, `test_resolve_predicate.py`,
-`test_product_set_service.py`, `test_product_spec_search.py`,
+`test_product_predicate_service.py`, `test_product_spec_search.py`,
 `test_product_spec_understanding.py`, `test_product_spec_registry.py`,
 `test_spec_findability.py`, `test_spec_raw_text_hardening.py`): **221 passed, 1 skipped,
 0 failed.**
