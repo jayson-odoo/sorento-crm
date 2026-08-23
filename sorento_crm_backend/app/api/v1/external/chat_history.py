@@ -207,6 +207,37 @@ def ingest_chat_message(
             conversation_event_bus.EVENT_MESSAGE, contact_id=payload.contact_id
         )
 
+        # AC-M20: buzz the phones of whoever asked to hear from this contact. On
+        # the `notifications` queue, AFTER the row committed, and best-effort -
+        # a post-commit side effect that raises hands the caller a 500 for an
+        # operation that actually succeeded, and n8n answers a 500 by retrying
+        # the lane this endpoint exists to stop. Gated on the same
+        # `already_existed` as the poke above: the second mirror lane resolves a
+        # row the first already announced, so a second job would only re-derive
+        # a notification the dedup key throws away.
+        try:
+            from app.services.message_push_service import INBOUND_TYPE
+            from app.services.queue_service import enqueue_job
+            from app.tasks import message_push_tasks
+
+            # Half of everything ingested is OUTGOING, and an outgoing message
+            # buzzes nobody (AC-M11), so it is filtered here too rather than
+            # paying for a job and a database session per agent reply. Off the
+            # same constant the service compares against, so the two cannot
+            # drift onto different spellings of "from the contact".
+            if str(payload.type or "").lower() == INBOUND_TYPE:
+                enqueue_job(
+                    message_push_tasks.send_message_push,
+                    message_id,
+                    queue_name="notifications",
+                )
+        except Exception as push_error:
+            logger.warning(
+                "Failed to enqueue message push for chat_histories.id=%s: %s",
+                message_id,
+                push_error,
+            )
+
     # 201 either way: the caller (n8n) treats anything else as a lane failure and
     # retries, which is exactly the loop this endpoint exists to end. "duplicate"
     # names the outcome in the body instead, mirroring the conversation-SLA

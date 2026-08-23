@@ -43,8 +43,6 @@ TRACKING_LINK = "/sla-management/conversation-sla-tracking"
 @pytest.fixture
 def db():
     with blank_session() as session:
-        schema = session.get_bind()._execution_options["schema_translate_map"][None]
-        session.execute(text(f'SET LOCAL search_path TO "{schema}"'))
         yield session
 
 
