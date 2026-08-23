@@ -1,6 +1,20 @@
 # PLAN - push notification infrastructure and adoption
 
-Status: DRAFT - awaiting review
+Status: IN PROGRESS - I0 and I1 landed (commit d363c51e5); I2 in build
+
+| Slice | State |
+| --- | --- |
+| I0 queue + VAPID boot warning | DONE - `notifications` in `DEFAULT_QUEUES`, `resolve_queue_names()` seam, tests pin each queue |
+| I1 payload under 4096 bytes | DONE - `build_push_payload()`, byte-measured truncation, link outranks body |
+| I2 install + enable prompts | in build (#253) |
+| I3 evidence + production audit | not started (#254) |
+
+Production compose check (23 Aug 2026): the `worker` service does **not** pin
+`WORKER_QUEUES`, so the new default reaches it on the next deploy. Two places could still
+override it and neither has been read: `env_file: ./sorento_crm_backend/.env` on the
+server, and the `*backend-env` anchor. The worker inherits that same `.env`, so the VAPID
+half of AC-P18 is answered by the same grep - and failing that, by the new boot warning on
+the next restart.
 UAC: `documentation/plans/notifications/push-infrastructure-acceptance-criteria.md`
 Domain: notifications
 
