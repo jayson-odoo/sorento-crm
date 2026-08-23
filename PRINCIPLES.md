@@ -10,6 +10,36 @@ is the running gotcha log; deep design detail lives in `documentation/`. Keep th
 > The methodology below is fused from Sorento's three-phase loop and the FoundryX
 > shared-service governance model.
 
+## Simplest thing that works (GOVERNING - this outranks every rule below)
+
+**Build the most direct thing that satisfies the journey, and nothing more.** When two designs
+both work, the one with fewer moving parts wins, every time. This rule governs: where another
+section here would have you add a layer, and the direct path already works, the direct path
+wins and the deviation is recorded in the PR description.
+
+What this forbids, concretely:
+
+- **No machinery for hypotheticals.** A registry, a rule engine, an abstraction layer, a
+  configuration surface or a plugin point is justified by a problem that exists **today**, in
+  this codebase, with evidence, not by one that is easy to imagine. "We might need to configure
+  this later" is not evidence. Write the trigger down in the plan instead: name the condition
+  that would justify the machinery, so the next person builds it when it arrives.
+- **One event does not need a registry. One preference does not need a table.** Add the column,
+  the branch, the if. Record in the plan what would turn it into a table, and let the second case
+  pay for the generalisation.
+- **A precedent is not evidence.** That the codebase already does something a certain way
+  somewhere else does not make it right here. Copy a mechanism only together with the
+  justification that earned it. Copying the shape without the reason is how a 100-line split
+  arrives to solve nothing.
+- **Check whether it already exists before designing it.** Read the code and, where the claim is
+  about behaviour, measure against real data. A feature that ships already and is merely broken
+  needs a repair plan, not a build plan, and those are very different pieces of work.
+- **Push back on review findings that add layers.** A reviewer asking for an abstraction owes the
+  same evidence. Say so plainly and keep the direct version.
+
+The cost this avoids is not typing. It is that every layer is a thing to understand, test,
+migrate and debug forever, and it is paid by whoever is on call at 2am, not by whoever wrote it.
+
 ## Methodology (mandatory order, every non-trivial feature)
 
 **Run it with `/feature`** (`.claude/skills/feature/SKILL.md`) — it executes this order and

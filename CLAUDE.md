@@ -196,6 +196,26 @@ Frontend (`sorento_crm_frontend/.env` or `.env.local`): `DATABASE_URL` (Prisma â
 
 MCP (`sorento_crm_mcp/`): `CRM_BASE_URL`, `EXTERNAL_API_KEY`, optional `CRM_MCP_HOST/PORT/TIMEOUT/MAX_RESPONSE_BYTES/LOG_LEVEL`.
 
+## Simplest thing that works (governing)
+
+`PRINCIPLES.md` carries this as its first section and it outranks everything below. Restated
+here because this is the file that gets read while code is being written:
+
+**Build the most direct thing that satisfies the journey, and nothing more.** Two designs that
+both work: the one with fewer moving parts wins.
+
+- A registry, rule engine, abstraction layer, configuration surface or plugin point needs a
+  problem that exists **today**, in this codebase, with evidence. "We might want to configure
+  this later" is not evidence. Name the trigger in the plan instead, so the machinery gets built
+  when the condition actually arrives.
+- One event does not need a registry. One preference does not need a table - add the column.
+  Let the second case pay for the generalisation.
+- A precedent is not evidence. Copy a mechanism only with the justification that earned it.
+- **Check whether it already exists, before designing it.** Read the code; where the claim is
+  about behaviour, measure against real data. Something that ships already and is merely broken
+  needs a repair plan, not a build plan.
+- Push back on review findings that add layers. The reviewer owes the same evidence.
+
 ## Development methodology â€” three-phase loop
 
 All non-trivial feature work follows three phases in order. Skipping or reordering is a process violation; if a phase can't be done (e.g. no design to prototype), call it out explicitly in the PR description.

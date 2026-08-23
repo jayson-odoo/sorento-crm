@@ -31,10 +31,6 @@ reports its queue list, then `notifications` is in it. Today's default
 **AC-P2** [T] A test asserts `notifications` is present in the default queue list, so the
 next queue added cannot silently drop it again.
 
-**AC-P3** [BE] Given deliveries are sitting `pending` older than a threshold, when a
-recovery command is run, then they are re-enqueued and their outcome recorded. This is a
-one-shot reconciler for the existing backlog, not a scheduled sweeper.
-
 **AC-P4** [BE] Given the worker process starts without `VAPID_PRIVATE_KEY`, when it
 boots, then it logs a clear WARNING naming the missing variable. 158 deliveries failed
 with "VAPID not configured" between 27 May and 13 Aug 2026 and nothing surfaced it.
@@ -101,6 +97,12 @@ it can be re-walked.
 which queues the PRODUCTION worker actually drains (the compose file on the server is
 hand-edited and gitignored, so this cannot be read from the repo) and whether the
 production worker has the VAPID variables.
+
+## Explicitly not built
+
+**The 86 stuck deliveries are not re-sent.** They are one to three months old; delivering
+a stale SLA alert to a phone long after the form was handled is worse than the silence.
+AC-P1 stops them accumulating. Cut deliberately rather than left undecided.
 
 ## Out of scope
 

@@ -136,8 +136,9 @@ is ingested, then it notifies exactly once per ingest, as the row insert does.
 attempted, then nothing is sent and nothing raises.
 
 **AC-M18** [BE] Given a push endpoint answers 404 or 410, when the send fails, then that
-`push_subscriptions` row is deleted (dead-endpoint pruning, matching the existing
-`_send_web_push_for_notification` behaviour).
+`push_subscriptions` row is deleted. This is the existing
+`_send_web_push_for_notification` behaviour and needs no new code - asserted here so a
+future refactor cannot drop it.
 
 **AC-M19** [BE] Given VAPID is not configured, when a message lands, then the ingest
 still returns its normal 201 and the failure is logged, not raised.

@@ -127,29 +127,30 @@ event volume, not because configuration is good in itself.
 
 Tickets: [#250](https://github.com/jayson-odoo/sorento-crm/issues/250) I0,
 [#251](https://github.com/jayson-odoo/sorento-crm/issues/251) I1,
-[#252](https://github.com/jayson-odoo/sorento-crm/issues/252) I2,
-[#253](https://github.com/jayson-odoo/sorento-crm/issues/253) I3,
-[#254](https://github.com/jayson-odoo/sorento-crm/issues/254) I4.
+[#253](https://github.com/jayson-odoo/sorento-crm/issues/253) I2 (install + enable),
+[#254](https://github.com/jayson-odoo/sorento-crm/issues/254) I3 (evidence).
+[#252](https://github.com/jayson-odoo/sorento-crm/issues/252) closed - see below.
 
 **I0 - queue and boot correctness.** `notifications` in the default queue list, a test
 pinning it, the VAPID boot warning, failure logging at WARNING. Covers AC-P1, AC-P2,
 AC-P4, AC-P7.
 
 **I1 - payload builder.** Explicit push payload under 4096 bytes with a test at the
-boundary. Covers AC-P5, AC-P6. Lands in `push_sender.py` if
-`PLAN-message-push.md` slice S3 has already extracted it, otherwise directly in
-`notification_tasks`.
+boundary. Covers AC-P5, AC-P6. Lands directly in
+`notification_tasks._send_web_push_for_notification` - no new module.
 
-**I2 - pending reconciler.** A one-shot management command re-enqueuing the stuck
-deliveries and reporting the outcome. Covers AC-P3. Run once against production after I0
-is deployed, or the 86 stay stuck forever.
+**I2 - install and enable prompts.** Covers AC-P8 to AC-P16, including the icon fix.
 
-**I3 - install and enable prompts.** Covers AC-P8 to AC-P16, including the icon fix.
+**I3 - evidence and operational note.** Covers AC-P17, AC-P18.
 
-**I4 - evidence and operational note.** Covers AC-P17, AC-P18.
+I0 and I1 are independent of I2. I3 is last.
 
-I0 blocks I2 (no point re-enqueuing onto a queue nobody drains). I1 and I3 are
-independent. I4 is last.
+**There is no reconciler slice.** The 86 stuck deliveries are between one and three
+months old. Re-enqueuing them would deliver a stale SLA alert to a phone long after the
+form was handled, which is worse than the silence. Once I0 lands they stop accumulating;
+the existing rows are left where they are, and that is the whole decision. A one-shot
+command to re-send them was drafted and cut - it is machinery for a backlog nobody wants
+delivered.
 
 ## Ordering against the message event
 
@@ -172,8 +173,7 @@ event does is reproduce all three defects.
 ## Definition of Done
 
 1. `notifications` drained by the worker, asserted by test AND confirmed on the server.
-2. Stuck deliveries reconciled; the pending count for web_push is explained.
-3. A push with an oversized `data` blob delivers rather than failing.
-4. An install and an enable prompt, verified at 375px and 1280px by real sidebar
+2. A push with an oversized `data` blob delivers rather than failing.
+3. An install and an enable prompt, verified at 375px and 1280px by real sidebar
    navigation.
-5. A real SLA escalation observed arriving on a phone, recorded.
+4. A real SLA escalation observed arriving on a phone, recorded.

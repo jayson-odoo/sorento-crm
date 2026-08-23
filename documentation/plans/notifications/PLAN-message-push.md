@@ -75,7 +75,9 @@ Respond.io webhook
          message_push_service.recipients_for_message(row)
              |  assignee + coverage + all_contacts users, de-duplicated
              v
-         push_sender.send_to_user(user_id, payload)   <- extracted from notification_tasks
+         NotificationService.create(in_app + web_push, no email)
+             |
+             v  the existing notification pipeline, unchanged
              |
              v
          browser service worker: coalesce by tag, suppress if thread visible, show
@@ -157,10 +159,13 @@ Since `NotificationService.create()` always queues an `email` delivery, this eve
 the existing `send_email=False` path (already a parameter on the create overloads used by
 `users.py:208` and friends). Nothing new is invented for it.
 
-Extract the transport half of `notification_tasks._send_web_push_for_notification` into
-`app/services/push_sender.py::send_to_user(db, user_id, payload) -> int` (returns the
-number of endpoints that accepted), keeping the existing 404/410 pruning, so there is one
-webpush call site and one pruning rule rather than two.
+**Nothing is extracted for this.** Because the event goes through
+`NotificationService.create()` for its bell entry, it already reaches
+`notification_tasks._send_web_push_for_notification` on the `notifications` queue like
+every other notification. An earlier draft pulled a `push_sender.py` module out for this
+event to call; it would have been a new module whose only caller already called the
+original. The 4096-byte payload fix lands in that existing function, in
+`PLAN-push-infrastructure.md` slice I1.
 
 ### Payload
 
@@ -236,11 +241,11 @@ users), each row marker-prefixed, nothing borrowed with `LIMIT 1` from the live 
 - CI's database is empty. The multi-open cases (M10, M10a) need two trackings on one
 contact, one later resolved. Postgres only.
 
-**S3 - send path.** `push_sender.send_to_user` extracted, `send_message_push` task
-creating the notification through `NotificationService.create()` with `send_email=False`
-and the `message_id` dedup key, best-effort enqueue after commit in the ingest route.
-Covers AC-M14 to AC-M20. A pytest asserts the double-lane ingest produces one bell row
-and one push.
+**S3 - send path.** A `send_message_push` task creating the notification through
+`NotificationService.create()` with `send_email=False` and the `message_id` dedup key,
+best-effort enqueue after commit in the ingest route. No new transport code - the
+existing notification pipeline carries it from there. Covers AC-M14 to AC-M20. A pytest
+asserts the double-lane ingest produces one bell row and one push.
 
 **S4 - service worker.** Coalesce plus visible-thread suppression, with vitest over the
 handler logic (the handler is plain JS; import it or exercise it through a small
@@ -256,8 +261,8 @@ S2 blocks S3. S4 is independent of S1 to S3 and can run in parallel.
 
 - `message_push_service.recipients_for_message(db, row) -> list[str]` - the seam that
   makes recipient logic testable without Redis, a browser, or a push endpoint.
-- `push_sender.send_to_user(db, user_id, payload) -> int` - the seam that lets the send
-  path be tested with `pywebpush` patched, and that keeps 404/410 pruning in one place.
+- `notification_tasks._send_web_push_for_notification` - the existing seam; the send path
+  is tested with `pywebpush` patched, exactly as it already is.
 - The service worker's decision function, split out of the `push` listener so vitest can
   call it with a fake registration and a fake client list.
 
