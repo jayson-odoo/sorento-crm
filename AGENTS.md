@@ -6,13 +6,13 @@ Guidance for Codex agents working in this repository. This document is based on 
 
 This is a Sorento CRM monorepo with these main projects:
 
-- `sorento_crm_frontend/` — Next.js 15 / React 19 frontend using App Router, Tailwind 4, NextAuth, Prisma for auth/user/session data, TanStack Query/Table, Vitest, and Playwright.
-- `sorento_crm_backend/` — FastAPI backend using SQLAlchemy, Alembic, Pydantic v2, APScheduler, Redis/RQ, S3/R2 storage helpers, pgvector, and pytest.
-- `sorento_crm_mcp/` — Python MCP server that exposes CRM read tools over Streamable HTTP. It proxies FastAPI `/api/v1` GET endpoints and also registers custom tools such as user-guide tools.
-- `sorento_crm_loadtest/` — k6 load/stress suite for backend, frontend, AI, and n8n/webhook scenarios.
-- `sorento_crm/` — Docker Compose deployment wrapper for Postgres, backend, and frontend.
-- `docs/` — Product and architecture docs. `docs/ADR-PRODUCT-STANDARDS.md` and `docs/ARCHITECTURE-RULES.md` are binding for new/refactored product work.
-- `scripts/` — Repo-level utility scripts, including user-guide route annotation and Outline sync.
+- `sorento_crm_frontend/` - Next.js 15 / React 19 frontend using App Router, Tailwind 4, NextAuth, Prisma for auth/user/session data, TanStack Query/Table, Vitest, and Playwright.
+- `sorento_crm_backend/` - FastAPI backend using SQLAlchemy, Alembic, Pydantic v2, APScheduler, Redis/RQ, S3/R2 storage helpers, pgvector, and pytest.
+- `sorento_crm_mcp/` - Python MCP server that exposes CRM read tools over Streamable HTTP. It proxies FastAPI `/api/v1` GET endpoints and also registers custom tools such as user-guide tools.
+- `sorento_crm_loadtest/` - k6 load/stress suite for backend, frontend, AI, and n8n/webhook scenarios.
+- `sorento_crm/` - Docker Compose deployment wrapper for Postgres, backend, and frontend.
+- `documentation/` - Product and architecture docs. `PRINCIPLES.md` (repo root) governs, and `documentation/reference/ADR-PRODUCT-STANDARDS.md` is binding for new/refactored product work. `ARCHITECTURE-RULES.md` was deleted; its layering rules live in `PRINCIPLES.md`.
+- `scripts/` - Repo-level utility scripts, including user-guide route annotation and Outline sync.
 
 Generated or dependency-heavy directories include `sorento_crm_frontend/.next/`, `sorento_crm_frontend/node_modules/`, `sorento_crm_frontend/playwright-report/`, `sorento_crm_frontend/test-results/`, `sorento_crm_backend/venv/`, `sorento_crm_backend/.venv/`, `.pytest_cache/`, and `__pycache__/`. Do not edit these by hand.
 
@@ -136,14 +136,14 @@ Primary app tree: `sorento_crm_frontend/app/`.
 
 Key frontend structure:
 
-- `app/(auth)/` — auth, portal, public view, signup/reset/verification surfaces.
-- `app/(protected)/` — authenticated CRM modules and pages.
-- `app/api/auth/*` — NextAuth and auth-specific Next.js route handlers.
-- `app/api/v1/*` — proxy routes and selected BFF routes for backend-facing API calls.
-- `components/` and `app/components/` — shared UI and app-level components.
-- `components/ui/` — ReUI/shadcn-style primitives including DataGrid pieces.
-- `components/common/` — shared product components such as `ConfirmDeleteDialog`.
-- `hooks/`, `providers/`, `lib/`, `services/`, `config/`, `modules/`, `types/` — shared client infrastructure.
+- `app/(auth)/` - auth, portal, public view, signup/reset/verification surfaces.
+- `app/(protected)/` - authenticated CRM modules and pages.
+- `app/api/auth/*` - NextAuth and auth-specific Next.js route handlers.
+- `app/api/v1/*` - proxy routes and selected BFF routes for backend-facing API calls.
+- `components/` and `app/components/` - shared UI and app-level components.
+- `components/ui/` - ReUI/shadcn-style primitives including DataGrid pieces.
+- `components/common/` - shared product components such as `ConfirmDeleteDialog`.
+- `hooks/`, `providers/`, `lib/`, `services/`, `config/`, `modules/`, `types/` - shared client infrastructure.
 - Feature folders often contain local `components/`, `hooks/`, `services/`, and `types/`.
 
 The shared fetch wrapper is `lib/api.ts` (`apiFetch`). It maps legacy frontend API paths such as `/api/master-data/*` to backend `/api/v1/master-data/*`, while keeping explicit Next.js-only routes local.
@@ -194,7 +194,7 @@ before editing.
 
 ### Frontend Layering
 
-Follow the layering documented in `docs/ADR-PRODUCT-STANDARDS.md`:
+Follow the layering documented in `PRINCIPLES.md` and `documentation/reference/ADR-PRODUCT-STANDARDS.md`:
 
 ```text
 UI Components
@@ -213,7 +213,7 @@ Do not duplicate shared primitives:
 
 ### CRUD UX
 
-Per `docs/ADR-PRODUCT-STANDARDS.md`:
+Per `documentation/reference/ADR-PRODUCT-STANDARDS.md`:
 
 - List pages use a DataGrid/table with search, filters, pagination, and an Add/Create toolbar action.
 - Create and edit use modals by default.
@@ -228,7 +228,7 @@ Per `docs/ADR-PRODUCT-STANDARDS.md`:
 
 `.cursor/rules/development.mdc` says:
 
-- Do not put feature explanations in the system UI; put them in docs/FAQ.
+- Do not put feature explanations in the system UI; put them in the Outline user guides / FAQ.
 - Do not show UUIDs in frontend UI. Resolve to human-readable identifiers.
 
 ### Backend Services
@@ -291,7 +291,7 @@ Non-trivial feature work follows the mandatory order in `PRINCIPLES.md`. Claude 
 belongs at each step. Two rules override the `mattpocock-skills` plugin:
 
 1. **Files are the contract, tickets are the queue.** The UAC and PLAN files under
-   `documentation/plans/<domain>/` are the source of truth. `to-spec` writes there — it does not
+   `documentation/plans/<domain>/` are the source of truth. `to-spec` writes there - it does not
    publish a spec issue. An issue that contradicts the UAC loses.
 2. **Frontend mock before any backend code.** `implement` has no concept of Phase 1, so scope it
    to Phase 2 only. `prototype` output is throwaway and must never become the shipped frontend.
@@ -303,7 +303,7 @@ GitHub Issues on `jayson-odoo/sorento-crm`, via the `gh` CLI. See
 
 ### Triage labels
 
-`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix` — all five exist on
+`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix` - all five exist on
 the repo. See `documentation/agents/triage-labels.md`.
 
 ### Domain docs
