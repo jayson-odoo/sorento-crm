@@ -267,11 +267,11 @@ def _seed_world(db, company_id: str, user_id: str) -> dict:
     # not.
     project1 = register_project(
         db, company_id=company_id, actor_user_id=user_id, developer_party_id=None,
-        title=f"{MARKER} Alpha Quay {_uid()[:6]}", block_threshold=2.0,
+        title=f"{MARKER} Alpha Quay {_uid()[:12]}", block_threshold=2.0,
     )
     project2 = register_project(
         db, company_id=company_id, actor_user_id=user_id, developer_party_id=None,
-        title=f"{MARKER} Zeta Ridge {_uid()[:6]}", block_threshold=2.0,
+        title=f"{MARKER} Zeta Ridge {_uid()[:12]}", block_threshold=2.0,
     )
 
     product_a = _product(db, company_id, f"ZZT-PA-{_uid()[:6]}")

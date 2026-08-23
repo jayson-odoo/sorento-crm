@@ -208,7 +208,7 @@ def test_project_id_filters_the_list_to_that_project_only():
         order_a = _project_order(db, project_a, area_group="TOWER")
         _project_line(db, order_a, product, line_no=1, delivery_date=D1)
         project_b = _project(
-            db, company_id, owner, title=f"{MAR} Setia Alam Lakeside {_uid()[:6]}"
+            db, company_id, owner, title=f"{MAR} Setia Alam Lakeside {_uid()[:12]}"
         )
         order_b = _project_order(db, project_b, area_group="TOWER")
         _project_line(db, order_b, product, line_no=1, delivery_date=D1)
@@ -569,7 +569,7 @@ def test_query_matches_the_project_code():
         # titles fuzzily, so two default "Tuju Residences <rand>" registrations 409 the
         # second one whenever the two random suffixes happen to look alike.
         project_b = _project(
-            db, company_id, owner, title=f"{MARKER} Bandar Rimbayu {_uid()[:6]}"
+            db, company_id, owner, title=f"{MARKER} Bandar Rimbayu {_uid()[:12]}"
         )
         other = _project_order(db, project_b, area_group="TOWER")
         _project_line(db, other, product, line_no=1, delivery_date=D1)
@@ -602,7 +602,7 @@ def test_query_matches_the_project_title():
         # titles fuzzily, so two default "Tuju Residences <rand>" registrations 409 the
         # second one whenever the two random suffixes happen to look alike.
         project_b = _project(
-            db, company_id, owner, title=f"{MARKER} Bandar Rimbayu {_uid()[:6]}"
+            db, company_id, owner, title=f"{MARKER} Bandar Rimbayu {_uid()[:12]}"
         )
         other = _project_order(db, project_b, area_group="TOWER")
         _project_line(db, other, product, line_no=1, delivery_date=D1)

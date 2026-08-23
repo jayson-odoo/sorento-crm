@@ -100,7 +100,7 @@ def _project_order(db, company_id: str, owner: str) -> ProjectSalesOrder:
         company_id=company_id,
         actor_user_id=owner,
         developer_party_id=None,
-        title=f"{MARKER} Tuju Residences {_uid()[:6]}",
+        title=f"{MARKER} Tuju Residences {_uid()[:12]}",
     )
     order = ProjectSalesOrder(
         id=_uid(),

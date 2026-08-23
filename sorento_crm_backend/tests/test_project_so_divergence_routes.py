@@ -119,7 +119,7 @@ def _seed_order(db, company_id: str, user_id: str):
         company_id=company_id,
         actor_user_id=user_id,
         developer_party_id=None,
-        title=f"{MARKER} Tuju Residences {_uid()[:6]}",
+        title=f"{MARKER} Tuju Residences {_uid()[:12]}",
     )
     customer = Customer(
         id=_uid(), customer_code=f"ZZTC{_uid()[:6]}", customer_name=f"{MARKER} SLG"

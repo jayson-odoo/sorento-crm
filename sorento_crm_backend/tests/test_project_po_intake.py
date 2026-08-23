@@ -95,7 +95,7 @@ def _project(db, company_id: str, owner: str):
         company_id=company_id,
         actor_user_id=owner,
         developer_party_id=None,
-        title=f"{MARKER} Tuju {_uid()[:6]}",
+        title=f"{MARKER} Tuju {_uid()[:12]}",
     )
 
 

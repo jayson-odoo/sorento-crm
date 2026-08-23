@@ -83,7 +83,7 @@ def _project(db, company_id: str, owner: str) -> Project:
         company_id=company_id,
         project_code=f"ZZT-{_uid()[:8]}",
         title=f"{MARKER} Cabana Elmina",
-        normalised_title=f"{MARKER} cabana elmina {_uid()[:6]}",
+        normalised_title=f"{MARKER} cabana elmina {_uid()[:12]}",
         owner_user_id=owner,
     )
     db.add(project)

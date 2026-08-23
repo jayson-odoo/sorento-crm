@@ -278,7 +278,7 @@ def api():
             company_id=company_id,
             actor_user_id=user_id,
             developer_party_id=party.id,
-            title=f"{MARKER} Cabana Elmina {_uid()[:6]}",
+            title=f"{MARKER} Cabana Elmina {_uid()[:12]}",
         )
         db.commit()
         client, originals = _client(db, user_id)
@@ -644,7 +644,7 @@ def test_a_document_belonging_to_another_project_is_not_reachable_through_this_o
         company_id=company_id,
         actor_user_id=user_id,
         developer_party_id=None,
-        title=f"{MARKER} Seri Tanjung {_uid()[:6]}",
+        title=f"{MARKER} Seri Tanjung {_uid()[:12]}",
     )
     db.commit()
 

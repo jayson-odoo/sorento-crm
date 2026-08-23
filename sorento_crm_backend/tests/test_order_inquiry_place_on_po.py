@@ -223,7 +223,7 @@ def _seed_world(db, company_id: str, user_id: str) -> dict:
 
     project = register_project(
         db, company_id=company_id, actor_user_id=user_id, developer_party_id=None,
-        title=f"{MARKER} Residences {_uid()[:6]}",
+        title=f"{MARKER} Residences {_uid()[:12]}",
     )
     order = ProjectSalesOrder(
         id=_uid(),
