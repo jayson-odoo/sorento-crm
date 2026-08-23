@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { usePromptKeys, useSetAgentModel } from '../../hooks/useAIAssistantPrompts';
 import { MODEL_OPTIONS, PROVIDER_OPTIONS } from '../../lib/modelOptions';
+import { useProviderModels } from '@/hooks/useProviderModels';
 
 /**
  * Which LLM this one agent runs on.
@@ -34,9 +35,12 @@ export function AgentModelCard({ name, canEdit }: { name: string; canEdit: boole
     }
   }, [row, loaded]);
 
-  // A model typed by hand is legitimate — the provider ships new ones faster than this
-  // list is updated — so the dropdown offers, it does not restrict.
-  const options = MODEL_OPTIONS[provider] || [];
+  // Asked of the provider rather than read off a table here, so a model the
+  // provider has retired stops being offered the moment it is retired. A model
+  // typed by hand is still legitimate - the dropdown offers, it does not restrict -
+  // and the built-in list stands in when the provider cannot be reached.
+  const modelsQuery = useProviderModels(provider);
+  const options = modelsQuery.data?.models ?? MODEL_OPTIONS[provider] ?? [];
   const dirty = (row?.provider ?? '') !== provider || (row?.model ?? '') !== model;
 
   const save = async () => {

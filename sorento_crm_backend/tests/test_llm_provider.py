@@ -552,6 +552,23 @@ def test_gemini_thinking_budget_helper():
     assert _gemini_thinking_budget("gemini-2.5-pro") == 1024
     # Newer families think too, and a Pro-family model rejects a zero budget.
     assert _gemini_thinking_budget("gemini-3-something") == 1024
+
+
+def test_a_gemini_3_flash_never_gets_the_zero_budget_that_2_5_takes():
+    """3.x rejects `thinkingBudget: 0` outright, so the floor there is 1.
+
+    Measured 2026-08-22 against the live API with our own key:
+    `gemini-3.5-flash-lite` answers on 1, 128 and on an omitted config, and
+    returns `400 INVALID_ARGUMENT` (no field named) on 0. `gemini-2.5-flash`
+    takes 0 as it always has. This is not a tuning preference: sending 0 fails
+    EVERY call on a 3.x flash model, which is how a degraded media tier can be
+    configured to a valid, listed, currently-offered model and still never work.
+    """
+    assert _gemini_thinking_budget("gemini-3.5-flash-lite") == 1
+    assert _gemini_thinking_budget("gemini-3.1-flash-lite") == 1
+    assert _gemini_thinking_budget("gemini-3.5-flash") == 1
+    # Pro on 3.x already had a non-zero budget and keeps it.
+    assert _gemini_thinking_budget("gemini-3.5-pro") == 1024
     # None means "this model has no thinking to budget", so the caller leaves
     # `thinkingConfig` off the request: 2.0 and older reject the field with a
     # 400, and the model box on the settings page is free text.

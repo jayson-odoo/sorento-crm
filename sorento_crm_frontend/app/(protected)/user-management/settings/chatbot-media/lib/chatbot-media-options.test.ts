@@ -1,28 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { imageModelOptions } from './chatbot-media-options';
-import { MODEL_OPTIONS } from '@/app/(protected)/system-management/ai-assistant/lib/modelOptions';
+import { parseCsv, toCsv } from './chatbot-media-options';
 
-describe('imageModelOptions', () => {
-  it('returns a provider-specific list, ungrouped, when a provider is chosen', () => {
-    expect(imageModelOptions('gemini')).toEqual(MODEL_OPTIONS.gemini);
-    expect(imageModelOptions('openai')).toEqual(MODEL_OPTIONS.openai);
-    expect(imageModelOptions('anthropic')).toEqual(MODEL_OPTIONS.anthropic);
+/**
+ * The image model list used to be tested here. It has moved out of the frontend
+ * entirely - the page asks the provider through `useProviderModels` - because a
+ * hardcoded slice both went stale (Google retired `gemini-2.5-flash-lite` while
+ * it was still on offer in that list) and, with no provider chosen, mixed every
+ * provider's ids into one list a Gemini id could be picked from and saved
+ * against an OpenAI key.
+ *
+ * What is left here is the language-hint CSV pair, which is still this page's.
+ */
+
+describe('language hint CSV', () => {
+  it('reads a hint list, ignoring spacing and empty entries', () => {
+    expect(parseCsv(' en , ms ,, zh ')).toEqual(['en', 'ms', 'zh']);
   });
 
-  it('groups every model under its provider label when no provider is chosen', () => {
-    const options = imageModelOptions('');
+  it('treats a missing value as no hints rather than one empty hint', () => {
+    expect(parseCsv(null)).toEqual([]);
+    expect(parseCsv(undefined)).toEqual([]);
+    expect(parseCsv('')).toEqual([]);
+  });
 
-    const openaiOption = options.find((o) => o.value === 'gpt-4o-mini');
-    expect(openaiOption?.group).toBe('OpenAI');
-
-    const anthropicOption = options.find((o) => o.value === 'claude-haiku-4-5');
-    expect(anthropicOption?.group).toBe('Anthropic');
-
-    const geminiOption = options.find((o) => o.value === 'gemini-2.5-flash');
-    expect(geminiOption?.group).toBe('Google Gemini');
-
-    // Every model from every provider is present, not just a subset.
-    const totalModels = Object.values(MODEL_OPTIONS).reduce((n, list) => n + list.length, 0);
-    expect(options).toHaveLength(totalModels);
+  it('writes back without duplicating a language', () => {
+    expect(toCsv(['en', 'ms', 'en'])).toBe('en,ms');
   });
 });

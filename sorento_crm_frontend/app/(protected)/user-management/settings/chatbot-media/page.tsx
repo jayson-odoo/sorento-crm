@@ -20,8 +20,12 @@ import {
   type SearchableSelectOption,
 } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { PROVIDER_OPTIONS } from '@/app/(protected)/system-management/ai-assistant/lib/modelOptions';
+import {
+  MODEL_OPTIONS,
+  PROVIDER_OPTIONS,
+} from '@/app/(protected)/system-management/ai-assistant/lib/modelOptions';
 import { wholeNumberRangeError } from '@/lib/whole-number-range';
+import { useProviderModels, useTestProviderModel } from '@/hooks/useProviderModels';
 
 import {
   useChatbotMediaSettings,
@@ -35,7 +39,6 @@ import {
   LANGUAGE_MODE_OPTIONS,
   LANGUAGE_OPTIONS,
   TRANSCRIBE_MODEL_OPTIONS,
-  imageModelOptions,
   parseCsv,
   toCsv,
 } from './lib/chatbot-media-options';
@@ -161,6 +164,12 @@ export default function ChatbotMediaSettingsPage() {
   const settingsQuery = useChatbotMediaSettings();
   const save = useSaveChatbotMediaSettings();
   const [draft, setDraft] = useState<Draft | null>(null);
+  // Keyed on the DRAFT provider, not the saved one, so switching provider
+  // re-asks before anything is saved. Declared here rather than beside its use
+  // because the loading and error returns below would make it conditional. A
+  // blank provider is sent as blank: the backend reads it as "the assistant's
+  // own", which is exactly what a blank provider column means at runtime.
+  const modelsQuery = useProviderModels(draft?.imageProvider ?? '');
 
   useEffect(() => {
     if (settingsQuery.data && draft === null) setDraft(toDraft(settingsQuery.data));
@@ -212,7 +221,19 @@ export default function ChatbotMediaSettingsPage() {
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) =>
     setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
 
-  const modelOptions = imageModelOptions(draft.imageProvider);
+  // The built-in table stands in when the REQUEST itself failed, not just when
+  // the backend answered `fallback`: an empty dropdown with no explanation is the
+  // one case the built-in list exists to cover.
+  const liveModels = modelsQuery.data?.models;
+  const modelOptions = (
+    liveModels ?? MODEL_OPTIONS[draft.imageProvider] ?? []
+  ).map((m) => ({ value: m.value, label: m.label }));
+  const modelListNotice = modelsQuery.isError
+    ? 'Showing the built-in model list; the model list could not be loaded.'
+    : modelsQuery.data?.source === 'fallback'
+      ? (modelsQuery.data.message ??
+        'Showing the built-in model list; the provider could not be reached.')
+      : null;
 
   return (
     <div className="space-y-5">
@@ -330,6 +351,7 @@ export default function ChatbotMediaSettingsPage() {
               options={modelOptions}
               onChange={(v) => set('imageModel', v)}
               hint="Blank uses the AI assistant model."
+              testProvider={draft.imageProvider}
             />
             <ModelField
               id="media-image-degraded-model"
@@ -338,6 +360,7 @@ export default function ChatbotMediaSettingsPage() {
               options={modelOptions}
               onChange={(v) => set('imageDegradedModel', v)}
               hint="Used once a contact is past their monthly allowance."
+              testProvider={draft.imageProvider}
             />
             <NumberField
               id="media-max-entities"
@@ -348,6 +371,14 @@ export default function ChatbotMediaSettingsPage() {
               onChange={(v) => set('maxEntities', v)}
             />
           </div>
+          {modelListNotice ? (
+            <Alert variant="mono" icon="warning">
+              <AlertIcon>
+                <RiErrorWarningFill />
+              </AlertIcon>
+              <AlertTitle>{modelListNotice}</AlertTitle>
+            </Alert>
+          ) : null}
           {draft.imageDegradedModel.trim() === '' ? (
             <Alert variant="mono" icon="warning">
               <AlertIcon>
@@ -534,6 +565,7 @@ function ModelField({
   error,
   required,
   emptyLabel,
+  testProvider,
   onChange,
 }: {
   id: string;
@@ -551,11 +583,26 @@ function ModelField({
    * else says so instead.
    */
   emptyLabel?: string;
+  /**
+   * When set, the field carries a Test button that calls the model for real.
+   * Only the image fields pass it: the probe is a chat call, so it would fail on
+   * a transcription model for reasons that have nothing to do with the setting.
+   */
+  testProvider?: string;
   onChange: (value: string) => void;
 }) {
   const known = options.some((opt) => opt.value === value);
   const merged =
     value && !known ? [...options, { value, label: value }] : options;
+  const probe = useTestProviderModel();
+  const canTest = testProvider !== undefined && value.trim() !== '';
+  // A verdict belongs to one (provider, model) pair. Changing the provider makes
+  // it stale in exactly the way a changed model does.
+  const probeReset = probe.reset;
+  useEffect(() => {
+    probeReset();
+  }, [testProvider, probeReset]);
+  const result = probe.data;
 
   return (
     <div className="space-y-2">
@@ -563,7 +610,12 @@ function ModelField({
       <SearchableSelect
         id={id}
         value={value}
-        onChange={onChange}
+        onChange={(next) => {
+          // Both halves clear the verdict. Leaving it up would show a red 404
+          // from the previous model as if it judged the one now selected.
+          probe.reset();
+          onChange(next);
+        }}
         options={merged}
         clearable={!required}
         placeholder={required ? 'Select a model' : (emptyLabel ?? 'Inherit')}
@@ -573,8 +625,50 @@ function ModelField({
         placeholder="or type a model name"
         value={value}
         aria-invalid={invalid}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          probe.reset();
+          onChange(e.target.value);
+        }}
       />
+      {testProvider !== undefined ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!canTest || probe.isPending}
+            onClick={() =>
+              probe.mutate({
+                provider: testProvider,
+                model: value.trim(),
+                // These are the image lane's fields, so the probe has to prove
+                // the model can read a picture, not just answer.
+                withImage: true,
+              })
+            }
+          >
+            {probe.isPending ? (
+              <LoaderCircleIcon className="size-4 animate-spin" />
+            ) : null}
+            Test model
+          </Button>
+          {result ? (
+            <span
+              className={
+                result.ok
+                  ? 'text-xs text-muted-foreground'
+                  : 'text-xs text-destructive'
+              }
+            >
+              {result.ok ? `Answered in ${result.latency_ms} ms` : result.message}
+            </span>
+          ) : probe.error ? (
+            <span className="text-xs text-destructive">
+              {probe.error instanceof Error ? probe.error.message : 'Test failed'}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {error ? (
         <p className="text-xs text-destructive">{error}</p>
       ) : hint ? (

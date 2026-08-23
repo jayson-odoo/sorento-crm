@@ -110,6 +110,48 @@ class TestConnectionResponse(BaseModel):
     latency_ms: int
 
 
+class ProviderModelItem(BaseModel):
+    value: str
+    label: str
+
+
+class ProviderModelsResponse(BaseModel):
+    """The pickable models for one provider.
+
+    `source` says whether the provider answered ("live") or the built-in list is
+    standing in ("fallback"); `message` carries the reason when it is standing
+    in. Both reach the screen: an operator picking a model off a list that could
+    not be refreshed should be told so.
+    """
+
+    provider: str
+    source: str
+    message: Optional[str] = None
+    models: list[ProviderModelItem] = Field(default_factory=list)
+
+
+class TestModelRequest(BaseModel):
+    """A named model on a named provider, run with the stored key.
+
+    No `api_key` field, unlike `TestConnectionRequest`: this probe is about the
+    MODEL, so it uses the key already configured rather than asking a settings
+    page that never had the plaintext to send one. A blank provider inherits the
+    assistant's, the same as a blank provider on the media settings page.
+    """
+
+    provider: Optional[str] = Field(None, max_length=64)
+    model: str = Field(..., min_length=1, max_length=128)
+    # Set by the image lane's fields: a text-only model answers the plain probe
+    # and then fails on every photo, so "does it work" there means "can it see".
+    with_image: bool = False
+
+
+class TestModelResponse(BaseModel):
+    ok: bool
+    message: str
+    latency_ms: int
+
+
 class GreetingResponse(BaseModel):
     greeting: str
     suggestions: list[str] = Field(default_factory=list)

@@ -42,6 +42,15 @@ vi.mock('../hooks/useAIAssistantAdmin', () => ({
   useTestAIAssistantConnection: () => ({ mutate: mutateTestConn, isPending: false }),
 }));
 
+// The model dropdown now asks the provider for its catalogue, so the hook is
+// stubbed here the same way the admin hooks are - this file renders the form
+// without a QueryClientProvider on purpose.
+vi.mock('@/hooks/useProviderModels', () => ({
+  useProviderModels: () => ({
+    data: { provider: 'openai', source: 'live', message: null, models: [] },
+  }),
+}));
+
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 beforeEach(() => {
