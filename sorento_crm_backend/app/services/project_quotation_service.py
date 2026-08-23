@@ -391,12 +391,39 @@ def delete_quotation(db: Session, quotation: ProjectQuotation) -> None:
 # ---------------------------------------------------------------------- lines
 
 
+def _next_sort_order(db: Session, version_id: str) -> int:
+    """One past the last line on this version, counting rows not yet flushed.
+
+    The pending rows matter: a caller adding several lines before a flush would
+    otherwise read the same max every time and hand them all the same position,
+    which is the tie this exists to remove.
+    """
+    stored = (
+        db.query(func.max(ProjectQuotationLine.sort_order))
+        .filter(ProjectQuotationLine.version_id == version_id)
+        .scalar()
+    )
+    pending = [
+        int(obj.sort_order or 0)
+        for obj in db.new
+        if isinstance(obj, ProjectQuotationLine)
+        and str(getattr(obj, "version_id", "")) == str(version_id)
+    ]
+    return max([int(stored or 0), *pending]) + 1
+
+
 def list_lines(db: Session, version_id: str) -> List[ProjectQuotationLine]:
     return (
         db.query(ProjectQuotationLine)
         .filter(ProjectQuotationLine.version_id == version_id)
         .order_by(
-            ProjectQuotationLine.sort_order.asc(), ProjectQuotationLine.created_at.asc()
+            ProjectQuotationLine.sort_order.asc(),
+            ProjectQuotationLine.created_at.asc(),
+            # `id` is the last resort, and it is not decorative: every line written
+            # through the per-row path before this was fixed sits at sort_order 0 with
+            # a created_at shared to the microsecond by its siblings, so without a
+            # total key those rows reorder between renders of the same document.
+            ProjectQuotationLine.id.asc(),
         )
         .all()
     )
@@ -583,7 +610,17 @@ def _write_line(
 
     if line is None:
         line = ProjectQuotationLine(
-            company_id=quotation.company_id, version_id=version.id
+            company_id=quotation.company_id,
+            version_id=version.id,
+            # A new line goes to the END, explicitly. `sort_order` defaults to 0, and
+            # the per-row editor path never assigned one, so every line added this way
+            # tied at 0 - and the `created_at` tiebreaker ties too, because Postgres
+            # freezes now() for the whole transaction, giving rows written in one
+            # request the SAME timestamp to the microsecond. With both keys tied the
+            # order is whatever the plan yields, so an issued quotation could renumber
+            # its lines between two renders of the same document. `replace_lines`
+            # already writes the array position; this is the per-row path catching up.
+            sort_order=_next_sort_order(db, version.id),
         )
         db.add(line)
 

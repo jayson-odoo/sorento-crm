@@ -229,7 +229,11 @@ def _load_scopes(db: Session, issue: ProjectQuotationIssue) -> List[Dict[str, An
             db.query(ProjectQuotationLine)
             .filter(ProjectQuotationLine.version_id == row.version_id)
             .order_by(
-                ProjectQuotationLine.sort_order.asc(), ProjectQuotationLine.created_at.asc()
+                ProjectQuotationLine.sort_order.asc(),
+                ProjectQuotationLine.created_at.asc(),
+                # See `list_lines`: legacy rows tie on both keys, and this document is
+                # the one a customer reads, so its order must not move between renders.
+                ProjectQuotationLine.id.asc(),
             )
             .all()
         )

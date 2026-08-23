@@ -1110,7 +1110,11 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
         lines = (
             db.query(ProjectQuotationLine)
             .filter(ProjectQuotationLine.version_id == pair.version_id)
-            .order_by(ProjectQuotationLine.sort_order, ProjectQuotationLine.created_at)
+            .order_by(
+                ProjectQuotationLine.sort_order,
+                ProjectQuotationLine.created_at,
+                ProjectQuotationLine.id,
+            )
             .all()
         )
         scopes.append(

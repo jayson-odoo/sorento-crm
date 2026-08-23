@@ -1028,7 +1028,11 @@ class ProjectSODraftService:
         lines = (
             self.db.query(ProjectQuotationLine)
             .filter(ProjectQuotationLine.version_id == quotation_version.id)
-            .order_by(ProjectQuotationLine.sort_order.asc(), ProjectQuotationLine.created_at.asc())
+            .order_by(
+                ProjectQuotationLine.sort_order.asc(),
+                ProjectQuotationLine.created_at.asc(),
+                ProjectQuotationLine.id.asc(),
+            )
             .all()
         )
         if not lines:
