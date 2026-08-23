@@ -11,11 +11,13 @@ from app.schemas.external.procurement import GRNRequest
 from app.schemas.procurement import PickingHeaderCreate, PickingLineCreate, PickingHeaderResponse
 from app.services.procurement_service import PickingHeaderService
 from app.models.procurement import SPOAllocation
+from app.models.inventory import Warehouse
 from app.api.v1.external.utils import (
     parse_date_value,
     get_products_by_code,
     get_warehouses_by_code_or_name,
     normalize_code,
+    pin_scope_to_companies,
 )
 
 router = APIRouter()
@@ -36,16 +38,12 @@ def create_grn(
     if not payload.grn_lines:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No GRN lines provided")
 
-    product_codes = [item.product_code for item in payload.grn_lines]
-    products_map = get_products_by_code(db, product_codes)
-    missing_codes = [code for code in product_codes if normalize_code(code) not in products_map]
-    if missing_codes:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"message": "Missing product codes", "product_codes": missing_codes},
-        )
-
-    # Resolve warehouse from location where provided
+    # Warehouses and SPOs FIRST, products second. `warehouse_code` is globally
+    # unique and `spo_number` names one allocation set, so those resolve correctly
+    # under the all-companies scope an X-API-Key call arrives with; `product_code`
+    # does not (unique per company only). Their company pins the request, and the
+    # product lookup below then runs inside one company instead of choosing one by
+    # row order. See `pin_scope_to_companies`.
     locations = [(item.location or "").strip() for item in payload.grn_lines if (item.location or "").strip() and not item.warehouse_id]
     warehouses_by_location = get_warehouses_by_code_or_name(db, locations) if locations else {}
     for loc in locations:
@@ -54,6 +52,41 @@ def create_grn(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"message": "Warehouse not found for location", "location": loc},
             )
+
+    anchor_company_ids = {
+        getattr(w, "company_id", None) for w in warehouses_by_location.values()
+    }
+    direct_warehouse_ids = {item.warehouse_id for item in payload.grn_lines if item.warehouse_id}
+    if direct_warehouse_ids:
+        anchor_company_ids |= {
+            row[0]
+            for row in db.query(Warehouse.company_id)
+            .filter(Warehouse.id.in_(direct_warehouse_ids))
+            .all()
+        }
+    spo_numbers = {
+        (item.spo_allocation or "").strip()
+        for item in payload.grn_lines
+        if (item.spo_allocation or "").strip()
+    }
+    if spo_numbers and not anchor_company_ids:
+        anchor_company_ids |= {
+            row[0]
+            for row in db.query(SPOAllocation.company_id)
+            .filter(SPOAllocation.spo_number.in_(spo_numbers))
+            .distinct()
+            .all()
+        }
+    pin_scope_to_companies(db, anchor_company_ids, anchor="This GRN's warehouses/SPOs")
+
+    product_codes = [item.product_code for item in payload.grn_lines]
+    products_map = get_products_by_code(db, product_codes)
+    missing_codes = [code for code in product_codes if normalize_code(code) not in products_map]
+    if missing_codes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": "Missing product codes", "product_codes": missing_codes},
+        )
 
     # Resolve SPO allocation per line: prefer (spo_number, product_id, warehouse_id); fallback to (spo_number, spo_line_number)
     spo_map_by_triple = {}

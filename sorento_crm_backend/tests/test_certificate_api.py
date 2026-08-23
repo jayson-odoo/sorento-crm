@@ -126,7 +126,9 @@ class _Env:
         self.db.flush()
         return row
 
-    def product(self, code_stem: str) -> Any:
+    def product(self, code_stem: str, *, code: str | None = None) -> Any:
+        """Seed one product. Pass ``code`` to control the code exactly - the
+        fan-out tests need a family that shares a substring."""
         if not hasattr(self, "_category"):
             self._category = ProductCategory(
                 category_code=unique_code(MARKER), category_name=f"{MARKER} category"
@@ -135,7 +137,7 @@ class _Env:
             self.db.add_all([self._category, self._uom])
             self.db.flush()
         row = Product(
-            product_code=unique_code(f"{MARKER}-{code_stem}"),
+            product_code=code or unique_code(f"{MARKER}-{code_stem}"),
             product_name=f"{MARKER} {code_stem}",
             category_id=self._category.id,
             base_uom_id=self._uom.id,
@@ -931,3 +933,158 @@ def test_ingest_treats_a_blank_title_as_absent(env):
         .first()
     )
     assert cert.title is None
+
+
+# ------------------------------------------------- product-code fan-out (BL-045)
+# A product code is a SUBSTRING pattern, not a key: "WC7601" names MWC7601-RL-S12,
+# IBWC7601-RL-S10 and every other product carrying it. Every path used to take
+# `.first()` of that match, so a certificate covered one arbitrary sibling and the
+# rest of the family silently held no file at all.
+def _fan_out_family(env, stem: str) -> tuple[str, list[Any]]:
+    """Three products sharing one code substring, plus one that does not."""
+    root = f"{MARKER}{stem}{unique_code('')[-6:]}"
+    family = [
+        env.product(stem, code=f"M{root}-RL-S12"),
+        env.product(stem, code=f"IB{root}-RL-S10"),
+        env.product(stem, code=f"{root}-PP"),
+    ]
+    env.product(stem, code=f"{MARKER}UNRELATED{unique_code('')[-6:]}")
+    return root, family
+
+
+def test_single_product_code_links_every_matching_product(env):
+    attachment_type = env.attachment_type(is_certificate=False, name="Product Photos")
+    attachment = env.attachment(attachment_type, "fanoutsingle")
+    root, family = _fan_out_family(env, "FANS")
+
+    response = env.client.post(
+        EXTERNAL, json={"attachment_id": str(attachment.id), "product_code": root}
+    )
+    assert response.status_code == 200, response.text
+
+    assert {str(r.product_id) for r in env.projection(attachment.id)} == {
+        str(p.id) for p in family
+    }
+
+
+def test_single_product_code_answers_with_the_link_row_not_the_bulk_envelope(env):
+    """The single-code form must not start answering with the BULK envelope just
+    because the code now names several products - the n8n node that posts it has
+    never parsed `linked`/`skipped_product_codes`. It answers with a link row.
+
+    That row must be re-read after the commits. `db.commit()` expires the instance
+    the service returned, an expired ORM row has an empty `__dict__`, and this
+    route carries no `response_model` - so FastAPI encoded it as `{}` and the node
+    received nothing at all.
+    """
+    attachment_type = env.attachment_type(is_certificate=False, name="Product Photos")
+    attachment = env.attachment(attachment_type, "fanoutshape")
+    root, family = _fan_out_family(env, "SHAP")
+
+    body = env.client.post(
+        EXTERNAL, json={"attachment_id": str(attachment.id), "product_code": root}
+    ).json()
+
+    assert "linked" not in body
+    assert "skipped_product_codes" not in body
+    assert body["attachment_id"] == str(attachment.id)
+    # `order_by(product_code)` makes "the first" the same row on every call.
+    first = sorted(family, key=lambda p: p.product_code)[0]
+    assert body["product_id"] == str(first.id)
+    # Every sibling got the file, not just the one the response names.
+    assert {str(r.product_id) for r in env.projection(attachment.id)} == {
+        str(p.id) for p in family
+    }
+
+
+def test_a_single_match_also_answers_with_a_populated_row(env):
+    """The `{}` was not specific to the fan-out: one product, one link, one
+    commit, and the row came back empty just the same."""
+    attachment_type = env.attachment_type(is_certificate=False, name="Product Photos")
+    attachment = env.attachment(attachment_type, "fanoutone")
+    product = env.product("ONE")
+
+    body = env.client.post(
+        EXTERNAL,
+        json={"attachment_id": str(attachment.id), "product_code": product.product_code},
+    ).json()
+
+    assert body["product_id"] == str(product.id)
+    assert body["attachment_id"] == str(attachment.id)
+    assert body["id"]
+
+
+def test_single_product_code_that_matches_nothing_is_still_400(env):
+    attachment_type = env.attachment_type(is_certificate=False, name="Product Photos")
+    attachment = env.attachment(attachment_type, "fanoutmiss")
+
+    response = env.client.post(
+        EXTERNAL,
+        json={"attachment_id": str(attachment.id), "product_code": f"{MARKER}NOSUCHCODE"},
+    )
+    assert response.status_code == 400, response.text
+
+
+def test_bulk_link_links_every_product_matching_the_code(env):
+    attachment_type = env.attachment_type(is_certificate=False, name="Product Photos")
+    attachment = env.attachment(attachment_type, "fanoutbulk")
+    root, family = _fan_out_family(env, "FANB")
+
+    body = env.client.post(
+        EXTERNAL, json={"attachment_id": str(attachment.id), "products": [root]}
+    ).json()
+
+    assert {x["product_code"] for x in body["linked"]} == {p.product_code for p in family}
+    assert body["skipped_product_codes"] == []
+    assert {str(r.product_id) for r in env.projection(attachment.id)} == {
+        str(p.id) for p in family
+    }
+
+
+def test_bulk_link_reports_a_product_two_codes_both_name_as_already_linked(env):
+    """Overlapping codes ("WC601" and "CWC601") reach the same product. The
+    upsert in `create_product_attachment` makes the repeat harmless; the response
+    says so rather than pretending the second code linked nothing."""
+    attachment_type = env.attachment_type(is_certificate=False, name="Product Photos")
+    attachment = env.attachment(attachment_type, "fanoutoverlap")
+    stem = unique_code("")[-6:]
+    narrow = f"C{MARKER}OVL{stem}"
+    product = env.product("OVL", code=narrow)
+
+    body = env.client.post(
+        EXTERNAL,
+        json={
+            "attachment_id": str(attachment.id),
+            "products": [narrow, f"{MARKER}OVL{stem}"],
+        },
+    ).json()
+
+    assert [x["product_code"] for x in body["linked"]] == [narrow]
+    assert body["already_linked"] == [narrow]
+    assert len(env.projection(attachment.id)) == 1
+    assert str(env.projection(attachment.id)[0].product_id) == str(product.id)
+
+
+def test_certificate_ingest_covers_every_product_matching_the_code(env):
+    """The cert path resolves codes through the same matcher, so a certificate
+    filed against "WC7601" covers the whole family, not one sibling."""
+    attachment_type = env.attachment_type(is_certificate=True, name="Certification")
+    attachment = env.attachment(attachment_type, "fanoutcert")
+    root, family = _fan_out_family(env, "FANC")
+
+    payload = _cert_payload(attachment, [])
+    payload["products"] = [root]
+    response = env.client.post(EXTERNAL, json=payload)
+    assert response.status_code == 200, response.text
+
+    cert = env.db.query(Certificate).one()
+    covered = {
+        str(r.product_id)
+        for r in env.db.query(CertificateProduct).filter(
+            CertificateProduct.certificate_id == cert.id
+        )
+    }
+    assert covered == {str(p.id) for p in family}
+    assert {str(r.product_id) for r in env.projection(attachment.id)} == {
+        str(p.id) for p in family
+    }

@@ -184,6 +184,10 @@ def _resolve_product_codes(db: Session, codes: list[str]) -> tuple[list[tuple[st
     by the session listener (``scope_to_attachment_company`` pinned it to the
     attachment's company), so a same-coded product in another company never
     resolves - SEC-1.
+
+    A code is a SUBSTRING, not a key: "WC7601" names MWC7601-RL-S12,
+    IBWC7601-RL-S10 and every other product carrying it. Every match is
+    returned, because taking one arbitrarily left the rest silently uncovered.
     """
     matched: list[tuple[str, object]] = []
     unmatched: list[str] = []
@@ -196,13 +200,16 @@ def _resolve_product_codes(db: Session, codes: list[str]) -> tuple[list[tuple[st
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
-        product = (
-            db.query(Product).filter(Product.product_code.ilike(f"%{normalized}%")).first()
+        products = (
+            db.query(Product)
+            .filter(Product.product_code.ilike(f"%{normalized}%"))
+            .order_by(Product.product_code)
+            .all()
         )
-        if product is None:
+        if not products:
             unmatched.append(code)
-        else:
-            matched.append((code, product))
+            continue
+        matched.extend((code, product) for product in products)
     return matched, unmatched
 
 
@@ -345,7 +352,10 @@ def _link_via_certificate(
         )
 
     # Single-code form: answer with the projection row the certificate service
-    # wrote, so the legacy node keeps receiving the shape it always has.
+    # wrote, so the legacy node keeps receiving the shape it always has. One code
+    # can name several products; `matched` is ordered by product_code, so the row
+    # echoed back is a stable representative of the set, not a random one. The
+    # certificate covers all of them either way.
     if matched:
         row = (
             db.query(ProductAttachment)
@@ -429,66 +439,103 @@ def create_product_attachment(
             field_keys_override=getattr(payload, "field_keys", None),
         )
 
-    # Single link: ILIKE search on product_code (input: spaces removed, then used as pattern)
+    # Single link: ILIKE search on product_code (input: spaces removed, then used
+    # as pattern). The pattern is a SUBSTRING, so one code names several products
+    # ("WC7601" -> MWC7601-RL-S12, IBWC7601-RL-S10, ...). All of them are linked;
+    # taking the first left the siblings without the file. The response stays the
+    # single-row shape the n8n node has always parsed, carrying the first link -
+    # `order_by(product_code)` makes "first" the same row on every call.
     normalized = _normalize_product_code(payload.product_code or "")
     if not normalized:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid product_code",
         )
-    product = db.query(Product).filter(
-        Product.product_code.ilike(f"%{normalized}%")
-    ).first()
-    if not product:
+    products = (
+        db.query(Product)
+        .filter(Product.product_code.ilike(f"%{normalized}%"))
+        .order_by(Product.product_code)
+        .all()
+    )
+    if not products:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid product_code",
         )
-    product_id = str(getattr(product, "id"))
-    product_code = str(getattr(product, "product_code", "") or "")
-    data = ProductAttachmentCreate(
-        product_id=product_id,
-        attachment_id=payload.attachment_id,
-        sort_order=payload.sort_order,
-        is_primary=payload.is_primary,
-        access_levels=payload.access_levels,
-    )
     service = ProductAttachmentService(db)
     # The integration's principal is a real users row, so attribution is recorded.
     created_by = current_user["id"]
-    result = service.create_product_attachment(data, created_by=created_by)
-    try:
-        AttachmentFieldLinkService(db).apply_template_to_row(
-            attachment,
-            "product",
-            product_id,
-            override_keys=payload.field_keys,
-            created_by=created_by,
-        )
-        db.commit()
-    except Exception as e:
-        # Field-link fan-out must never fail the upstream link itself; the
-        # link row is already committed and the user can recover via the
-        # per-row Manage field links endpoint.
-        logger.warning(
-            "Field-link fan-out failed for attachment=%s product=%s: %s",
-            payload.attachment_id,
-            product_id,
-            e,
-            exc_info=True,
-        )
-    try:
-        _notify_product_attachment_external(
-            db,
-            attachment_id=payload.attachment_id,
-            notify_user_id=getattr(payload, "notify_user_id", None),
-            mode="single",
-            product_code=product_code,
+    field_link_service = AttachmentFieldLinkService(db)
+    first_link_id: str | None = None
+    linked_codes: list[str] = []
+    for product in products:
+        product_id = str(getattr(product, "id"))
+        product_code = str(getattr(product, "product_code", "") or "")
+        data = ProductAttachmentCreate(
             product_id=product_id,
+            attachment_id=payload.attachment_id,
+            sort_order=payload.sort_order,
+            # `is_primary` is per PRODUCT (uq_product_attachment_primary is keyed
+            # on product_id), and brochure_image_service clears that product's
+            # previous holder, so flagging each sibling is both legal and what the
+            # caller asked for: this photo is the image for every product it names.
+            is_primary=payload.is_primary,
+            access_levels=payload.access_levels,
         )
+        result = service.create_product_attachment(data, created_by=created_by)
+        if first_link_id is None:
+            # Read the id NOW, while the instance is still loaded. The commit
+            # below expires it, and an expired instance carries an empty
+            # ``__dict__`` - which is exactly how this route came to answer `{}`.
+            first_link_id = str(result.id)
+        linked_codes.append(product_code or payload.product_code or "")
+        try:
+            field_link_service.apply_template_to_row(
+                attachment,
+                "product",
+                product_id,
+                override_keys=payload.field_keys,
+                created_by=created_by,
+            )
+            db.commit()
+        except Exception as e:
+            # Field-link fan-out must never fail the upstream link itself; the
+            # link row is already committed and the user can recover via the
+            # per-row Manage field links endpoint.
+            logger.warning(
+                "Field-link fan-out failed for attachment=%s product=%s: %s",
+                payload.attachment_id,
+                product_id,
+                e,
+                exc_info=True,
+            )
+    try:
+        if len(products) == 1:
+            _notify_product_attachment_external(
+                db,
+                attachment_id=payload.attachment_id,
+                notify_user_id=getattr(payload, "notify_user_id", None),
+                mode="single",
+                product_code=linked_codes[0],
+                product_id=str(getattr(products[0], "id")),
+            )
+        else:
+            # One notification naming every product, not N notifications each
+            # claiming to be the whole story.
+            _notify_product_attachment_external(
+                db,
+                attachment_id=payload.attachment_id,
+                notify_user_id=getattr(payload, "notify_user_id", None),
+                mode="bulk",
+                linked_codes=linked_codes,
+            )
     except Exception as e:
         logger.warning("External product attachment notification failed: %s", e, exc_info=True)
-    return result
+    # Re-read AFTER every commit, the way the certificate path does. Returning the
+    # instance the service handed back means returning one the commit has expired,
+    # and FastAPI (no ``response_model`` on this route) encodes an expired ORM row
+    # from its empty ``__dict__`` - so the node has been receiving `{}` all along.
+    return service.get_product_attachment(first_link_id)
 
 
 def _link_attachment_to_products_bulk(
@@ -525,49 +572,59 @@ def _link_attachment_to_products_bulk(
             continue
         seen_normalized.add(normalized)
 
-        product = db.query(Product).filter(
-            Product.product_code.ilike(f"%{normalized}%")
-        ).first()
-        if not product:
+        # The pattern is a SUBSTRING, so one code names several products
+        # ("WC7601" -> MWC7601-RL-S12, IBWC7601-RL-S10, ...). Every one of them
+        # gets the file; taking the first left the siblings without it. Ordered,
+        # so a repeated call reports the same list in the same order.
+        products = (
+            db.query(Product)
+            .filter(Product.product_code.ilike(f"%{normalized}%"))
+            .order_by(Product.product_code)
+            .all()
+        )
+        if not products:
             skipped_product_codes.append(code)
             continue
 
-        existing = db.query(ProductAttachment).filter(
-            ProductAttachment.attachment_id == attachment_id,
-            ProductAttachment.product_id == product.id,
-        ).first()
-        product_id = str(getattr(product, "id"))
-        product_code = str(getattr(product, "product_code", "") or "")
-        if existing:
-            already_linked.append(product_code or code)
-            continue
+        for product in products:
+            existing = db.query(ProductAttachment).filter(
+                ProductAttachment.attachment_id == attachment_id,
+                ProductAttachment.product_id == product.id,
+            ).first()
+            product_id = str(getattr(product, "id"))
+            product_code = str(getattr(product, "product_code", "") or "")
+            if existing:
+                already_linked.append(product_code or code)
+                continue
 
-        data = ProductAttachmentCreate(
-            product_id=product_id,
-            attachment_id=attachment_id,
-            access_levels=access_levels,
-        )
-        service.create_product_attachment(data, created_by=created_by)
-        try:
-            field_link_service.apply_template_to_row(
-                attachment_row or attachment_id,
-                "product",
-                product_id,
-                override_keys=field_keys_override,
-                created_by=created_by,
+            data = ProductAttachmentCreate(
+                product_id=product_id,
+                attachment_id=attachment_id,
+                access_levels=access_levels,
             )
-            db.commit()
-        except Exception as e:
-            logger.warning(
-                "Field-link fan-out failed for attachment=%s product=%s: %s",
-                attachment_id,
-                product_id,
-                e,
-                exc_info=True,
+            service.create_product_attachment(data, created_by=created_by)
+            try:
+                field_link_service.apply_template_to_row(
+                    attachment_row or attachment_id,
+                    "product",
+                    product_id,
+                    override_keys=field_keys_override,
+                    created_by=created_by,
+                )
+                db.commit()
+            except Exception as e:
+                logger.warning(
+                    "Field-link fan-out failed for attachment=%s product=%s: %s",
+                    attachment_id,
+                    product_id,
+                    e,
+                    exc_info=True,
+                )
+            linked.append(
+                ProductAttachmentBulkLinkItem(
+                    product_id=product_id, product_code=product_code or code
+                )
             )
-        linked.append(
-            ProductAttachmentBulkLinkItem(product_id=product_id, product_code=product_code or code)
-        )
 
     try:
         codes = [x.product_code for x in linked] + list(already_linked)

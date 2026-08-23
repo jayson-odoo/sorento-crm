@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from datetime import datetime, date
 from typing import Iterable, Dict, Optional
+from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.models.base import set_company_scope
+from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.models.product import Product
 from app.models.inventory import Warehouse
-from app.models.procurement import InboundShipment, InboundShipmentLine
+from app.models.procurement import InboundShipment
 
 
 def scope_to_attachment_company(db: Session, attachment) -> Optional[str]:
@@ -28,6 +30,40 @@ def scope_to_attachment_company(db: Session, attachment) -> Optional[str]:
         set_company_scope(db, frozenset({str(company_id)}))
         return str(company_id)
     return None
+
+
+def pin_scope_to_companies(db: Session, company_ids: Iterable[Optional[str]], *, anchor: str) -> str:
+    """Pin the request to the company the payload's own anchors belong to.
+
+    An X-API-Key call with no ``contact_id``/``space_id`` resolves to scope
+    ``None`` = ALL companies (``company_scope_resolver._resolve_api_key_scope``).
+    That is fine for reads, and wrong for any match-by-code: ``product_code`` is
+    unique PER COMPANY (``uq_products_company_product_code``, migration 305), and
+    11k+ codes currently exist in both companies, so an unscoped lookup picks a
+    company by physical row order.
+
+    So the payload has to name its own company through something that IS globally
+    unique - a warehouse code, a container number, an SPO - and this pins the rest
+    of the request to it. Anchors disagreeing is a 400 rather than a guess: one
+    document cannot receive goods into two companies.
+
+    Nothing to go on falls back to the INCUMBENT company, the same rule
+    ``_portal_token_scope`` and ``company_scope._owner_company_id`` already use -
+    every pre-multi-company row carries that id, so it is what these integrations
+    have effectively been resolving to all along. Deterministic beats arbitrary.
+    """
+    ids = {str(cid) for cid in company_ids if cid}
+    if len(ids) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": f"{anchor} spans more than one company; one request cannot.",
+                "company_ids": sorted(ids),
+            },
+        )
+    resolved = next(iter(ids)) if ids else DEFAULT_COMPANY_ID
+    set_company_scope(db, frozenset({resolved}))
+    return resolved
 
 
 def parse_date_value(value: str | date | datetime | None) -> date | None:
@@ -80,10 +116,15 @@ def get_warehouses_by_code_or_name(db: Session, values: Iterable[str]) -> Dict[s
         func.lower(Warehouse.warehouse_code).in_(list(keys)) |
         func.lower(Warehouse.warehouse_name).in_(list(keys))
     ).all()
+    # Codes and names share one namespace here, so a warehouse NAMED like another
+    # warehouse's CODE would silently take that key over. Names are written first
+    # and codes last: `warehouse_code` is the unique column, so it wins the clash.
     result = {}
     for w in warehouses:
+        if w.warehouse_name:
+            result[normalize_code(w.warehouse_name)] = w
+    for w in warehouses:
         result[normalize_code(w.warehouse_code)] = w
-        result[normalize_code(w.warehouse_name)] = w
     return result
 
 
@@ -94,29 +135,15 @@ def get_inbound_shipment_by_container_number(
     if not (shipping_container_number or "").strip():
         return None
     key = normalize_code(shipping_container_number)
+    # Ordered, because a container number is not unique: packing-list duplicate
+    # detection keys on container + ETA + shipment_date precisely because the same
+    # container comes back on later voyages. Unordered, "the" shipment was whatever
+    # the seq scan happened to hand back, and could change under the caller between
+    # two identical requests. Oldest first, so a re-post binds where the first did.
     shipment = (
         db.query(InboundShipment)
         .filter(func.lower(InboundShipment.shipping_container_number) == key)
+        .order_by(InboundShipment.created_at, InboundShipment.id)
         .first()
     )
     return shipment
-
-
-def get_shipment_line_by_product(
-    db: Session, shipment_id: str, product_id: str
-) -> Optional[InboundShipmentLine]:
-    """Find first inbound shipment line for this shipment and product.
-
-    Ordered oldest first: two factories can ship the same product code in one container,
-    so "first" has to mean the same row on every call rather than whatever the planner
-    happened to return.
-    """
-    return (
-        db.query(InboundShipmentLine)
-        .filter(
-            InboundShipmentLine.shipment_id == shipment_id,
-            InboundShipmentLine.product_id == product_id,
-        )
-        .order_by(InboundShipmentLine.created_at, InboundShipmentLine.id)
-        .first()
-    )

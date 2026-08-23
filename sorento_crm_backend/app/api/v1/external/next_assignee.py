@@ -33,10 +33,19 @@ _SLA_FIELDS_EMPTY = {
 }
 
 
-def _resolve_sla_policy_tier_for_next_assignee(db: Session, body: dict) -> dict:
+def _resolve_sla_policy_tier_for_next_assignee(
+    db: Session, body: dict, company_id: Optional[str] = None
+) -> dict:
     """
     When policy_code and tier are both sent, load SLA policy id and tier hour targets.
     When neither is sent, return nulls for those fields. If only one is sent, 400.
+
+    Filtered by the resolved routing company. ``SLAPolicy`` is deliberately NOT a
+    ``CompanyScopedMixin`` (see its docstring), so pinning the request scope does
+    nothing for it and isolation has to be spelled out at each read. ``code`` is
+    unique per company, not globally - NORMAL and PURCHASING each exist in two
+    companies today - so an unfiltered read returned whichever row came back
+    first, and with it another company's response/resolution hour targets.
     """
     policy_code = (body.get("policy_code") or body.get("sla_policy_code") or "").strip()
     tier_raw = body.get("tier") if "tier" in body else body.get("tier_level")
@@ -53,7 +62,10 @@ def _resolve_sla_policy_tier_for_next_assignee(db: Session, body: dict) -> dict:
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="tier must be an integer.")
 
-    policy = db.query(SLAPolicy).filter(SLAPolicy.code == policy_code).first()
+    policy_q = db.query(SLAPolicy).filter(SLAPolicy.code == policy_code)
+    if company_id:
+        policy_q = policy_q.filter(SLAPolicy.company_id == str(company_id))
+    policy = policy_q.order_by(SLAPolicy.created_at, SLAPolicy.id).first()
     if not policy:
         raise HTTPException(status_code=404, detail=f"No SLA policy found with code={policy_code!r}")
 
@@ -403,7 +415,9 @@ async def post_next_assignee(
     routing_company = _routing_company_for_body(db, body, contact_phone)
     _scope_request_to_company(db, routing_company)
 
-    sla_policy_tier = _resolve_sla_policy_tier_for_next_assignee(db, body)
+    sla_policy_tier = _resolve_sla_policy_tier_for_next_assignee(
+        db, body, getattr(routing_company, "company_id", None)
+    )
 
     calendar = CalendarService(db)
     is_working_hours = calendar.is_within_working_time()

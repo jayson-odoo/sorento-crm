@@ -96,9 +96,13 @@ def _entity_link_for(db: Session, attachment_id: str) -> str:
     try:
         from app.models.entity_attachment import EntityAttachmentLink
 
+        # Ordered: an attachment can be linked to several entities, and this
+        # string goes into an audit line. Unordered it named a different one from
+        # one read to the next, which reads as the link having moved.
         link = (
             db.query(EntityAttachmentLink)
             .filter(EntityAttachmentLink.attachment_id == attachment_id)
+            .order_by(EntityAttachmentLink.created_at, EntityAttachmentLink.id)
             .first()
         )
         if link:
