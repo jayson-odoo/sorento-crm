@@ -133,7 +133,7 @@ def _project(db, company_id: str, owner: str, *, developer_party_id=None):
         company_id=company_id,
         actor_user_id=owner,
         developer_party_id=developer_party_id,
-        title=f"{MARKER} Cabana Elmina {_uid()[:6]}",
+        title=f"{MARKER} Cabana Elmina {_uid()[:12]}",
     )
 
 

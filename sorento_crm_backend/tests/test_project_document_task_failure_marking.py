@@ -83,7 +83,7 @@ def seeded():
             company_id=company_id,
             actor_user_id=owner,
             developer_party_id=None,
-            title=f"{MARKER} {_uid()[:6]}",
+            title=f"{MARKER} {_uid()[:12]}",
         )
         po = po_svc.create_po(
             db,

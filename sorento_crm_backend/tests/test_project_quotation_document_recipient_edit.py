@@ -124,7 +124,7 @@ def _document(db):
         company_id=company_id,
         actor_user_id=owner,
         developer_party_id=party.id,
-        title=f"{MARKER} Cabana Elmina {_uid()[:6]}",
+        title=f"{MARKER} Cabana Elmina {_uid()[:12]}",
     )
     document = qdocs.create_document(db, project=project, actor_user_id=owner)
     return document, party, owner

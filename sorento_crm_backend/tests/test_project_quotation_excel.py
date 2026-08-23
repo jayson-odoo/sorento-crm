@@ -244,7 +244,7 @@ def _setup(db, *, developer_address=None, developer_phone=None):
         company_id=company_id,
         actor_user_id=owner,
         developer_party_id=party.id if party is not None else None,
-        title=f"{MARKER} Cadangan Membina Pangsapuri {_uid()[:6]}",
+        title=f"{MARKER} Cadangan Membina Pangsapuri {_uid()[:12]}",
     )
     return {
         "company_id": company_id,

@@ -121,7 +121,7 @@ def _setup(db):
         company_id=company_id,
         actor_user_id=owner,
         developer_party_id=None,
-        title=f"{MARKER} Cadangan Membina Pangsapuri {_uid()[:6]}",
+        title=f"{MARKER} Cadangan Membina Pangsapuri {_uid()[:12]}",
     )
     return {
         "company_id": company_id,

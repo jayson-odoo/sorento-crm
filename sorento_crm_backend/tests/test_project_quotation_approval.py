@@ -151,7 +151,7 @@ def _setup(db, *, with_floor: bool = True):
         company_id=company_id,
         actor_user_id=owner,
         developer_party_id=None,
-        title=f"{MARKER} Cabana Elmina {_uid()[:6]}",
+        title=f"{MARKER} Cabana Elmina {_uid()[:12]}",
     )
     document = qdocs.create_document(db, project=project, actor_user_id=owner)
     scope = qdocs.add_scope(

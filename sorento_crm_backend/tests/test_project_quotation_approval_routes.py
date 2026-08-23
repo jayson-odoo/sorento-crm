@@ -177,7 +177,7 @@ def api():
             company_id=company_id,
             actor_user_id=user_id,
             developer_party_id=None,
-            title=f"{MARKER} Cabana Elmina {_uid()[:6]}",
+            title=f"{MARKER} Cabana Elmina {_uid()[:12]}",
         )
         db.commit()
         client, originals = _client(db, user_id)
