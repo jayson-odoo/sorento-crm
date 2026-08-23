@@ -53,6 +53,7 @@ from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from app.models.chat_history import CHAT_HISTORY_DEDUPE_PREDICATE, ChatHistory
+from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +208,51 @@ def _respond_item(item: dict) -> dict:
     return out
 
 
+def _attach_sender_names(db: Session, items: list[dict]) -> None:
+    """Name the colleague behind each human send, in place.
+
+    Respond identifies the sender of a staff reply by its OWN user id and gives
+    us no name with it, so the thread could only ever label a bubble by the
+    transport that carried it. ``users.respond_user_id`` is the bridge back to a
+    CRM user, and the name goes on ``sender.name`` where the chat list reads it.
+
+    Machine sends (n8n, api, workflow) are skipped: they carry no user id, and
+    a bot send is deliberately unlabelled in the UI. Best-effort - a thread
+    still renders when this lookup fails, just without the names.
+    """
+    wanted: set[str] = set()
+    for item in items:
+        sender = item.get("sender")
+        if not isinstance(sender, dict):
+            continue
+        if str(sender.get("source") or "").strip().lower() != "user":
+            continue
+        user_id = sender.get("userId")
+        if user_id not in (None, ""):
+            wanted.add(str(user_id).strip())
+    if not wanted:
+        return
+
+    try:
+        rows = (
+            db.query(User.respond_user_id, User.name)
+            .filter(User.respond_user_id.in_(sorted(wanted)))
+            .all()
+        )
+    except Exception:  # noqa: BLE001 - a nameless bubble beats a failed thread
+        logger.warning("sender name lookup failed", exc_info=True)
+        return
+
+    by_respond_id = {str(r[0]): (r[1] or "").strip() for r in rows}
+    for item in items:
+        sender = item.get("sender")
+        if not isinstance(sender, dict):
+            continue
+        name = by_respond_id.get(str(sender.get("userId") or "").strip())
+        if name:
+            sender["name"] = name
+
+
 def _respond_item_text(item: dict) -> str:
     """Storable text for a Respond message.
 
@@ -218,6 +264,12 @@ def _respond_item_text(item: dict) -> str:
     body = (message.get("text") or "").strip()
     if body:
         return body
+    # A `quick_reply` keeps its prose under `title` and leaves `text` unset, so
+    # reading `text` alone stored the whole option prompt as "[quick_reply]" and
+    # put its words beyond the reach of in-thread search.
+    title = (message.get("title") or "").strip()
+    if title:
+        return title
     kind = (message.get("type") or "").strip() or "attachment"
     attachment = message.get("attachment") if isinstance(message.get("attachment"), dict) else None
     if attachment:
@@ -605,6 +657,7 @@ def fetch_thread_page(
                 exc_info=True,
             )
         else:
+            _attach_sender_names(db, page["items"])
             page["backfilled"] = _persist_best_effort(db, contact, page["items"])
             return page
 

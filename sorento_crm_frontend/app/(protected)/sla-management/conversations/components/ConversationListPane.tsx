@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia, parseDateTimeAsUTC, timeAgo } from '@/lib/helpers';
+import { stripWhatsAppMarkup } from '@/lib/whatsappText';
 import { cn } from '@/lib/utils';
 
 import { useConversationsInbox } from '../hooks/useConversationsInbox';
@@ -247,7 +248,8 @@ export default function ConversationListPane({
                       />
                     ) : null}
                     <span className="min-w-0 truncate">
-                      {item.last_message_snippet?.trim() || 'No messages yet'}
+                      {stripWhatsAppMarkup(item.last_message_snippet?.trim() ?? '') ||
+                        'No messages yet'}
                     </span>
                   </span>
                 </button>

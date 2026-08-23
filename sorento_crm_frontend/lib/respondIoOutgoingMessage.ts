@@ -8,12 +8,30 @@ export function getNormalizedRespondSource(item: {
   return (item.sender?.source ?? '').trim().toLowerCase();
 }
 
-/** Label above outgoing bubble (not shown for incoming). */
-export function getOutgoingSenderLabel(sourceNorm: string): string {
-  if (sourceNorm === 'n8n') return 'n8n';
-  if (sourceNorm === 'workflow') return 'Workflow';
-  if (sourceNorm === 'ai_agent' || sourceNorm === 'agent') return 'AI Agent';
-  return 'User';
+/** The colleague who sent this message, resolved by the backend from `sender.userId`. */
+export function getRespondSenderName(item: {
+  sender?: { name?: string | null };
+}): string {
+  return (item.sender?.name ?? '').trim();
+}
+
+/**
+ * Label above an outgoing bubble, or null for no label at all.
+ *
+ * A machine send gets NO label. The thread is our side of one conversation, so
+ * naming the transport that carried a message ("n8n") tells the reader nothing
+ * they can act on and leaks an internal tool name into a customer-facing
+ * surface. A colleague's own send is the case where the name matters - "who
+ * replied to this customer" is a real question - so those keep their name, and
+ * an unresolvable one falls back to no label rather than to a placeholder.
+ */
+export function getOutgoingSenderLabel(
+  sourceNorm: string,
+  senderName?: string | null,
+): string | null {
+  if (sourceNorm !== 'user') return null;
+  const name = (senderName ?? '').trim();
+  return name || null;
 }
 
 /** Tailwind classes for outgoing bubble background/text (incoming uses bg-muted elsewhere). */
