@@ -15,6 +15,7 @@ from app.api.v1.external.utils import (
     get_products_by_code,
     get_warehouses_by_code_or_name,
     get_inbound_shipment_by_container_number,
+    pin_scope_to_companies,
     normalize_code,
 )
 
@@ -102,6 +103,31 @@ def create_spo_allocations(
                             reason="Warehouse not found for location",
                         )
                     )
+    # Shipments and warehouses are resolved above by globally unique keys
+    # (container number, warehouse code), so they hold under the all-companies
+    # scope an X-API-Key call arrives with. `product_code` does not - it is unique
+    # per company only - so their company pins the request before products are
+    # looked up, instead of the lookup choosing a company by row order. See
+    # `pin_scope_to_companies`.
+    anchor_company_ids = {
+        getattr(sh, "company_id", None) for sh in shipment_by_container.values()
+    }
+    direct_shipment_ids = {
+        item.inbound_shipment_id for item in payload.spo_allocations if item.inbound_shipment_id
+    }
+    if direct_shipment_ids:
+        anchor_company_ids |= {
+            row[0]
+            for row in db.query(InboundShipment.company_id)
+            .filter(InboundShipment.id.in_(direct_shipment_ids))
+            .all()
+        }
+    if not anchor_company_ids:
+        anchor_company_ids |= {
+            getattr(w, "company_id", None) for w in warehouses_by_location.values()
+        }
+    pin_scope_to_companies(db, anchor_company_ids, anchor="These allocations' shipments")
+
     # Products map
     product_codes = [item.product_code for item in payload.spo_allocations]
     products_map = get_products_by_code(db, product_codes)
