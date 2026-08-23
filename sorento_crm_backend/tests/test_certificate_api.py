@@ -967,14 +967,15 @@ def test_single_product_code_links_every_matching_product(env):
     }
 
 
-def test_single_product_code_keeps_its_own_response_shape(env):
+def test_single_product_code_answers_with_the_link_row_not_the_bulk_envelope(env):
     """The single-code form must not start answering with the BULK envelope just
     because the code now names several products - the n8n node that posts it has
-    never parsed `linked`/`skipped_product_codes`.
+    never parsed `linked`/`skipped_product_codes`. It answers with a link row.
 
-    (What it does answer with is a raw ORM row and no `response_model`, which
-    FastAPI encodes to `{}`. That predates the fan-out and is left alone here:
-    changing it is a contract change for the node, not a bug fix.)
+    That row must be re-read after the commits. `db.commit()` expires the instance
+    the service returned, an expired ORM row has an empty `__dict__`, and this
+    route carries no `response_model` - so FastAPI encoded it as `{}` and the node
+    received nothing at all.
     """
     attachment_type = env.attachment_type(is_certificate=False, name="Product Photos")
     attachment = env.attachment(attachment_type, "fanoutshape")
@@ -986,10 +987,31 @@ def test_single_product_code_keeps_its_own_response_shape(env):
 
     assert "linked" not in body
     assert "skipped_product_codes" not in body
-    # Every sibling still got the file, whatever the envelope says.
+    assert body["attachment_id"] == str(attachment.id)
+    # `order_by(product_code)` makes "the first" the same row on every call.
+    first = sorted(family, key=lambda p: p.product_code)[0]
+    assert body["product_id"] == str(first.id)
+    # Every sibling got the file, not just the one the response names.
     assert {str(r.product_id) for r in env.projection(attachment.id)} == {
         str(p.id) for p in family
     }
+
+
+def test_a_single_match_also_answers_with_a_populated_row(env):
+    """The `{}` was not specific to the fan-out: one product, one link, one
+    commit, and the row came back empty just the same."""
+    attachment_type = env.attachment_type(is_certificate=False, name="Product Photos")
+    attachment = env.attachment(attachment_type, "fanoutone")
+    product = env.product("ONE")
+
+    body = env.client.post(
+        EXTERNAL,
+        json={"attachment_id": str(attachment.id), "product_code": product.product_code},
+    ).json()
+
+    assert body["product_id"] == str(product.id)
+    assert body["attachment_id"] == str(attachment.id)
+    assert body["id"]
 
 
 def test_single_product_code_that_matches_nothing_is_still_400(env):

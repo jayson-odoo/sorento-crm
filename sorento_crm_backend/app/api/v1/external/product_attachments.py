@@ -466,7 +466,7 @@ def create_product_attachment(
     # The integration's principal is a real users row, so attribution is recorded.
     created_by = current_user["id"]
     field_link_service = AttachmentFieldLinkService(db)
-    first_result = None
+    first_link_id: str | None = None
     linked_codes: list[str] = []
     for product in products:
         product_id = str(getattr(product, "id"))
@@ -483,8 +483,11 @@ def create_product_attachment(
             access_levels=payload.access_levels,
         )
         result = service.create_product_attachment(data, created_by=created_by)
-        if first_result is None:
-            first_result = result
+        if first_link_id is None:
+            # Read the id NOW, while the instance is still loaded. The commit
+            # below expires it, and an expired instance carries an empty
+            # ``__dict__`` - which is exactly how this route came to answer `{}`.
+            first_link_id = str(result.id)
         linked_codes.append(product_code or payload.product_code or "")
         try:
             field_link_service.apply_template_to_row(
@@ -528,7 +531,11 @@ def create_product_attachment(
             )
     except Exception as e:
         logger.warning("External product attachment notification failed: %s", e, exc_info=True)
-    return first_result
+    # Re-read AFTER every commit, the way the certificate path does. Returning the
+    # instance the service handed back means returning one the commit has expired,
+    # and FastAPI (no ``response_model`` on this route) encodes an expired ORM row
+    # from its empty ``__dict__`` - so the node has been receiving `{}` all along.
+    return service.get_product_attachment(first_link_id)
 
 
 def _link_attachment_to_products_bulk(
