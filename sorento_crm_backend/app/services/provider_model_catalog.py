@@ -62,12 +62,30 @@ FALLBACK_MODELS: dict[str, list[ProviderModel]] = {
 # at most an hour away while a page full of pickers costs one upstream call.
 CACHE_TTL_SECONDS = 3600.0
 
-# The probe asks for one word but pays for a few dozen tokens, because a Gemini
-# 2.5+ model spends its first tokens thinking: a 1-token ceiling returns an empty
-# candidate and would report a working model as broken (the same trap that made
-# Gemini's `test_connection` a ListModels call rather than a generate).
-PROBE_MAX_TOKENS = 64
+# A failure is cached too, briefly. Without this every render of every settings
+# screen re-attempts a provider that is down, and each attempt pays the full
+# timeout before falling back - so the page gets slower the more broken the
+# provider is. A minute is short enough that fixing the key feels immediate.
+FAILURE_CACHE_TTL_SECONDS = 60.0
+
+# The probe asks for one word but pays for a thousand tokens, because a thinking
+# model spends its first tokens reasoning and only then answers: a tight ceiling
+# returns an empty completion and would report a working model as broken. That is
+# not hypothetical - measured 2026-08-23, `o3-mini` returns nothing at 64 and
+# answers at this ceiling, while `gpt-4.1` and `gpt-5.4` answer at either. It is
+# the same trap that made Gemini's `test_connection` a ListModels call rather than
+# a generate, and it is worth a fraction of a cent to not re-lay it here.
+PROBE_MAX_TOKENS = 1024
 PROBE_PROMPT = "Reply with the single word OK."
+
+# A 1x1 transparent PNG, attached when the probe is certifying a model for the
+# image lane. A text-only model answers the text probe perfectly and then fails on
+# every real photo (`gpt-3.5-turbo` and Google's `gemma-*` both survive the list
+# filters), so for an image field "does this model work" has to mean "can it see".
+PROBE_IMAGE_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
+    "YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+)
 
 
 @dataclass
@@ -90,6 +108,9 @@ class CatalogResult:
 class _CacheEntry:
     expires_at: float
     models: list[ProviderModel] = field(default_factory=list)
+    # Set when the provider could not be asked. A negative entry is served as a
+    # fallback with its original reason rather than re-attempting the call.
+    failure: Optional[str] = None
 
 
 # Keyed by (provider, key fingerprint) so a rotated key is not served the old
@@ -168,6 +189,13 @@ def list_models(db: Session, provider: str, *, now: Optional[float] = None) -> C
     cache_key = (name, _fingerprint(api_key))
     hit = _cache.get(cache_key)
     if hit is not None and hit.expires_at > clock:
+        if hit.failure is not None:
+            return CatalogResult(
+                provider=name,
+                models=list(FALLBACK_MODELS.get(name, [])),
+                source="fallback",
+                message=hit.failure,
+            )
         return CatalogResult(provider=name, models=list(hit.models), source="live")
 
     try:
@@ -175,11 +203,15 @@ def list_models(db: Session, provider: str, *, now: Optional[float] = None) -> C
         models = provider_impl.list_models()
     except Exception as exc:  # noqa: BLE001 - an upstream failure is a fallback, not a 500
         logger.warning("could not list %s models: %s", name, exc)
+        reason = f"Could not reach {name}: {exc}"
+        _cache[cache_key] = _CacheEntry(
+            expires_at=clock + FAILURE_CACHE_TTL_SECONDS, failure=reason
+        )
         return CatalogResult(
             provider=name,
             models=list(FALLBACK_MODELS.get(name, [])),
             source="fallback",
-            message=f"Could not reach {name}: {exc}",
+            message=reason,
         )
 
     if not models:
@@ -194,7 +226,9 @@ def list_models(db: Session, provider: str, *, now: Optional[float] = None) -> C
     return CatalogResult(provider=name, models=models, source="live")
 
 
-def probe_model(db: Session, provider: str, model: str) -> tuple[bool, str, int]:
+def probe_model(
+    db: Session, provider: str, model: str, *, with_image: bool = False
+) -> tuple[bool, str, int]:
     """Call `model` for real, once, and report what the provider said.
 
     The point is that it goes through `provider.chat` - the same path the media
@@ -203,10 +237,14 @@ def probe_model(db: Session, provider: str, model: str) -> tuple[bool, str, int]
     while the real lane failed on it, because the failure was our own
     `thinkingBudget: 0` and not the model.
 
+    `with_image` attaches a 1x1 PNG, which is what the image lane's fields ask for:
+    without it the probe certifies that the model talks, not that it sees.
+
     Returns `(ok, message, latency_ms)`. The provider's own words are the message
     on failure: "404 ... no longer available to new users" tells an operator what
     to do, and any sentence we substitute for it does not.
     """
+    from app.services.llm_provider import ImagePart
     name = resolve_provider_name(db, provider)
     model_name = (model or "").strip()
     if not model_name:
@@ -227,6 +265,11 @@ def probe_model(db: Session, provider: str, model: str) -> tuple[bool, str, int]
             temperature=0.0,
             max_tokens=PROBE_MAX_TOKENS,
             model=model_name,
+            images=(
+                [ImagePart(mime="image/png", data_b64=PROBE_IMAGE_B64)]
+                if with_image
+                else None
+            ),
         )
     except Exception as exc:  # noqa: BLE001 - the provider's refusal IS the answer
         return False, str(exc), int((time.perf_counter() - started) * 1000)

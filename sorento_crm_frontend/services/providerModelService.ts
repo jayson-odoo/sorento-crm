@@ -40,14 +40,19 @@ export async function getProviderModels(provider: string): Promise<ProviderModel
   return response.json();
 }
 
+/**
+ * `withImage` attaches a 1x1 PNG to the probe. The image fields pass it because a
+ * text-only model answers the plain probe and then fails on every real photo.
+ */
 export async function testProviderModel(
   provider: string,
   model: string,
+  withImage = false,
 ): Promise<TestModelResult> {
   const response = await apiFetch('/api/v1/system/ai-assistant/test-model', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ provider, model }),
+    body: JSON.stringify({ provider, model, with_image: withImage }),
   });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to test the model'));

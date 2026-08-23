@@ -65,6 +65,15 @@ class ProviderModel:
     label: str
 
 
+# Listing is not an operator-initiated call the way `chat` and `test_connection`
+# are: it runs on every render of three settings screens. An SDK's default (up to
+# ten minutes across retries) would hold a request, and one threadpool worker, for
+# the whole of it on a provider that accepts the connection and never answers - so
+# the "degrades to the built-in list" promise would arrive minutes late. Ten
+# seconds is generous for a call that returns a few hundred names.
+LIST_MODELS_TIMEOUT_SECONDS = 10.0
+
+
 # A provider's own list is authority on what EXISTS, never on what WORKS: Google
 # lists `gemini-2.5-flash-lite` to a key that gets `404 ... no longer available
 # to new users` the moment it calls generateContent on it (measured 2026-08-22,
@@ -328,10 +337,11 @@ class OpenAIProvider:
 
     # Lazy-import the SDK so importing this module is cheap and we don't fail
     # in environments without the SDK present (tests monkey-patch it anyway).
-    def _client(self):
+    def _client(self, **overrides: Any):
+        """The SDK seam. `overrides` reach the constructor (timeouts for listing)."""
         from openai import OpenAI
 
-        return OpenAI(api_key=self.api_key)
+        return OpenAI(api_key=self.api_key, **overrides)
 
     def chat(
         self,
@@ -439,15 +449,20 @@ class OpenAIProvider:
         non-chat one shows up until its keyword is added, which is the right way
         round for a list an operator can also type into.
         """
-        models = self._client().models.list()
-        out: list[ProviderModel] = []
+        client = self._client(timeout=LIST_MODELS_TIMEOUT_SECONDS, max_retries=1)
+        models = client.models.list()
+        rows: list[tuple[int, ProviderModel]] = []
         for item in getattr(models, "data", None) or []:
             model_id = str(getattr(item, "id", "") or "")
             if not model_id or not _openai_is_chat_model(model_id):
                 continue
-            out.append(ProviderModel(value=model_id, label=model_id))
-        out.sort(key=lambda m: m.value, reverse=True)
-        return out
+            # `created` is the release timestamp OpenAI ships with each model.
+            # Sorting on the id instead only looks like newest-first: it puts
+            # `o4-mini` above every `gpt-*` and `gpt-4o` above `gpt-4.1`.
+            created = int(getattr(item, "created", 0) or 0)
+            rows.append((created, ProviderModel(value=model_id, label=model_id)))
+        rows.sort(key=lambda row: (row[0], row[1].value), reverse=True)
+        return [model for _, model in rows]
 
 
 # The non-chat families in OpenAI's flat model list. Substring match, because the
@@ -607,10 +622,11 @@ class AnthropicProvider:
         self.api_key = api_key
         self.default_model = default_model
 
-    def _client(self):
+    def _client(self, **overrides: Any):
+        """The SDK seam. `overrides` reach the constructor (timeouts for listing)."""
         import anthropic
 
-        return anthropic.Anthropic(api_key=self.api_key)
+        return anthropic.Anthropic(api_key=self.api_key, **overrides)
 
     def chat(
         self,
@@ -765,7 +781,8 @@ class AnthropicProvider:
         The API returns them newest first and carries a display name, so neither
         is reconstructed here.
         """
-        models = self._client().models.list(limit=100)
+        client = self._client(timeout=LIST_MODELS_TIMEOUT_SECONDS, max_retries=1)
+        models = client.models.list(limit=100)
         out: list[ProviderModel] = []
         for item in getattr(models, "data", None) or []:
             model_id = str(getattr(item, "id", "") or "")
@@ -1127,6 +1144,7 @@ class GeminiProvider:
         *,
         json_body: Optional[dict] = None,
         params: Optional[dict] = None,
+        timeout: Optional[float] = None,
     ) -> dict:
         """The single HTTP seam, so tests can record a response without a network."""
         import httpx
@@ -1143,7 +1161,7 @@ class GeminiProvider:
                 },
                 json=json_body,
                 params=params,
-                timeout=GEMINI_TIMEOUT_SECONDS,
+                timeout=GEMINI_TIMEOUT_SECONDS if timeout is None else timeout,
             )
         except httpx.HTTPError as exc:  # network-level failure
             raise RuntimeError(f"Gemini request failed: {exc}") from exc
@@ -1369,18 +1387,29 @@ class GeminiProvider:
         NOT: `gemini-2.5-flash-lite` appears here for a key that gets a 404 the
         moment it calls the model (see the note above `ProviderModel`).
         """
-        body = self._request("GET", "models", params={"pageSize": 200})
         out: list[ProviderModel] = []
-        for item in body.get("models") or []:
-            if not isinstance(item, dict):
-                continue
-            if "generateContent" not in (item.get("supportedGenerationMethods") or []):
-                continue
-            model_id = str(item.get("name") or "").split("/")[-1]
-            if not model_id or _gemini_is_media_model(model_id):
-                continue
-            label = str(item.get("displayName") or "") or model_id
-            out.append(ProviderModel(value=model_id, label=label))
+        params: dict[str, Any] = {"pageSize": 200}
+        # `pageSize` is a request, not a guarantee. An ignored `nextPageToken`
+        # would drop models from the picker while still reporting a live list,
+        # which reads exactly like a model the provider retired.
+        for _ in range(10):
+            body = self._request(
+                "GET", "models", params=params, timeout=LIST_MODELS_TIMEOUT_SECONDS
+            )
+            for item in body.get("models") or []:
+                if not isinstance(item, dict):
+                    continue
+                if "generateContent" not in (item.get("supportedGenerationMethods") or []):
+                    continue
+                model_id = str(item.get("name") or "").split("/")[-1]
+                if not model_id or _gemini_is_media_model(model_id):
+                    continue
+                label = str(item.get("displayName") or "") or model_id
+                out.append(ProviderModel(value=model_id, label=label))
+            token = body.get("nextPageToken")
+            if not token:
+                break
+            params = {"pageSize": 200, "pageToken": token}
         return out
 
 

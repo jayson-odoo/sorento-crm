@@ -38,7 +38,14 @@ export function useProviderModels(provider: string) {
  */
 export function useTestProviderModel() {
   return useMutation({
-    mutationFn: ({ provider, model }: { provider: string; model: string }) =>
-      testProviderModel(provider, model),
+    mutationFn: ({
+      provider,
+      model,
+      withImage,
+    }: {
+      provider: string;
+      model: string;
+      withImage?: boolean;
+    }) => testProviderModel(provider, model, withImage ?? false),
   });
 }

@@ -256,3 +256,66 @@ def test_the_probe_inherits_the_same_way(monkeypatch):
     catalog.probe_model(None, "", "claude-haiku-4-5")
 
     assert seen[0][0] == "anthropic"
+
+
+# ---- the probe has to certify the job the field is for ---------------------
+
+
+def test_an_image_probe_actually_sends_an_image(monkeypatch):
+    """A text-only model answers the plain probe and fails on every photo.
+
+    `gpt-3.5-turbo` survives the OpenAI chat filter and Google's `gemma-*` models
+    support generateContent, so both can be picked for the image lane. Only a call
+    carrying an image tells them apart.
+    """
+    _with_key(monkeypatch, "k")
+    provider = _Provider(reply="OK")
+    _install_provider(monkeypatch, provider)
+
+    catalog.probe_model(None, "openai", "gpt-4o", with_image=True)
+
+    images = provider.calls[0]["images"]
+    assert images and images[0].mime == "image/png"
+
+
+def test_a_plain_probe_sends_no_image(monkeypatch):
+    _with_key(monkeypatch, "k")
+    provider = _Provider(reply="OK")
+    _install_provider(monkeypatch, provider)
+
+    catalog.probe_model(None, "openai", "gpt-4o")
+
+    assert provider.calls[0]["images"] is None
+
+
+def test_the_probe_budget_leaves_room_for_a_model_that_thinks_first():
+    """Measured 2026-08-23: `o3-mini` returns an empty completion at 64 tokens and
+    answers at this ceiling. A tight budget reports a working model as broken."""
+    assert catalog.PROBE_MAX_TOKENS >= 512
+
+
+# ---- a provider that is down is not re-asked on every render ---------------
+
+
+def test_a_failure_is_cached_briefly_so_a_broken_provider_is_asked_once(monkeypatch):
+    _with_key(monkeypatch, "k")
+    seen = _install_provider(monkeypatch, _Provider(error=RuntimeError("boom")))
+
+    first = catalog.list_models(None, "openai", now=1000.0)
+    second = catalog.list_models(None, "openai", now=1000.0 + 5)
+
+    assert len(seen) == 1
+    assert (second.source, second.message) == ("fallback", first.message)
+    assert second.models == catalog.FALLBACK_MODELS["openai"]
+
+
+def test_the_failure_cache_expires_so_a_fixed_provider_recovers(monkeypatch):
+    _with_key(monkeypatch, "k")
+    seen = _install_provider(monkeypatch, _Provider(error=RuntimeError("boom")))
+
+    catalog.list_models(None, "openai", now=1000.0)
+    catalog.list_models(
+        None, "openai", now=1000.0 + catalog.FAILURE_CACHE_TTL_SECONDS + 1
+    )
+
+    assert len(seen) == 2

@@ -93,7 +93,7 @@ def test_the_settings_permission_is_enough_for_both_routes(make_client, monkeypa
     """The media settings page holds this pair and no assistant permission."""
     monkeypatch.setattr(
         "app.api.v1.system.ai_assistant.probe_model",
-        lambda db, provider, model: (True, "OK", 12),
+        lambda db, provider, model, with_image=False: (True, "OK", 12),
     )
     client = make_client({"user_management.settings.edit"})
 
@@ -111,7 +111,7 @@ def test_a_failing_probe_is_a_200_carrying_the_providers_refusal(make_client, mo
     the operator needs the provider's sentence rather than an error envelope."""
     monkeypatch.setattr(
         "app.api.v1.system.ai_assistant.probe_model",
-        lambda db, provider, model: (
+        lambda db, provider, model, with_image=False: (
             False,
             "Gemini call failed (404): This model models/gemini-2.5-flash-lite is no "
             "longer available to new users.",
@@ -152,3 +152,27 @@ def test_a_view_only_caller_cannot_spend_money_on_a_probe(make_client):
     )
 
     assert response.status_code == 403
+
+
+def test_the_image_flag_reaches_the_probe(make_client, monkeypatch):
+    """The media page's fields set it, and a dropped flag would certify a
+    text-only model for the image lane - the plain probe cannot tell them apart."""
+    seen: list[bool] = []
+    monkeypatch.setattr(
+        "app.api.v1.system.ai_assistant.probe_model",
+        lambda db, provider, model, with_image=False: (
+            seen.append(with_image) or (True, "OK", 5)
+        ),
+    )
+    client = make_client({"user_management.settings.edit"})
+
+    client.post(
+        "/api/v1/system/ai-assistant/test-model",
+        json={"provider": "openai", "model": "gpt-4o", "with_image": True},
+    )
+    client.post(
+        "/api/v1/system/ai-assistant/test-model",
+        json={"provider": "openai", "model": "gpt-4o"},
+    )
+
+    assert seen == [True, False]

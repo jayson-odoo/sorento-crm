@@ -20,7 +20,10 @@ import {
   type SearchableSelectOption,
 } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { PROVIDER_OPTIONS } from '@/app/(protected)/system-management/ai-assistant/lib/modelOptions';
+import {
+  MODEL_OPTIONS,
+  PROVIDER_OPTIONS,
+} from '@/app/(protected)/system-management/ai-assistant/lib/modelOptions';
 import { wholeNumberRangeError } from '@/lib/whole-number-range';
 import { useProviderModels, useTestProviderModel } from '@/hooks/useProviderModels';
 
@@ -218,11 +221,19 @@ export default function ChatbotMediaSettingsPage() {
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) =>
     setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
 
-  const modelOptions = (modelsQuery.data?.models ?? []).map((m) => ({
-    value: m.value,
-    label: m.label,
-  }));
-  const modelListIsStale = modelsQuery.data?.source === 'fallback';
+  // The built-in table stands in when the REQUEST itself failed, not just when
+  // the backend answered `fallback`: an empty dropdown with no explanation is the
+  // one case the built-in list exists to cover.
+  const liveModels = modelsQuery.data?.models;
+  const modelOptions = (
+    liveModels ?? MODEL_OPTIONS[draft.imageProvider] ?? []
+  ).map((m) => ({ value: m.value, label: m.label }));
+  const modelListNotice = modelsQuery.isError
+    ? 'Showing the built-in model list; the model list could not be loaded.'
+    : modelsQuery.data?.source === 'fallback'
+      ? (modelsQuery.data.message ??
+        'Showing the built-in model list; the provider could not be reached.')
+      : null;
 
   return (
     <div className="space-y-5">
@@ -360,15 +371,12 @@ export default function ChatbotMediaSettingsPage() {
               onChange={(v) => set('maxEntities', v)}
             />
           </div>
-          {modelListIsStale ? (
+          {modelListNotice ? (
             <Alert variant="mono" icon="warning">
               <AlertIcon>
                 <RiErrorWarningFill />
               </AlertIcon>
-              <AlertTitle>
-                {modelsQuery.data?.message ??
-                  'Showing the built-in model list; the provider could not be reached.'}
-              </AlertTitle>
+              <AlertTitle>{modelListNotice}</AlertTitle>
             </Alert>
           ) : null}
           {draft.imageDegradedModel.trim() === '' ? (
@@ -588,6 +596,12 @@ function ModelField({
     value && !known ? [...options, { value, label: value }] : options;
   const probe = useTestProviderModel();
   const canTest = testProvider !== undefined && value.trim() !== '';
+  // A verdict belongs to one (provider, model) pair. Changing the provider makes
+  // it stale in exactly the way a changed model does.
+  const probeReset = probe.reset;
+  useEffect(() => {
+    probeReset();
+  }, [testProvider, probeReset]);
   const result = probe.data;
 
   return (
@@ -596,7 +610,12 @@ function ModelField({
       <SearchableSelect
         id={id}
         value={value}
-        onChange={onChange}
+        onChange={(next) => {
+          // Both halves clear the verdict. Leaving it up would show a red 404
+          // from the previous model as if it judged the one now selected.
+          probe.reset();
+          onChange(next);
+        }}
         options={merged}
         clearable={!required}
         placeholder={required ? 'Select a model' : (emptyLabel ?? 'Inherit')}
@@ -619,7 +638,13 @@ function ModelField({
             size="sm"
             disabled={!canTest || probe.isPending}
             onClick={() =>
-              probe.mutate({ provider: testProvider, model: value.trim() })
+              probe.mutate({
+                provider: testProvider,
+                model: value.trim(),
+                // These are the image lane's fields, so the probe has to prove
+                // the model can read a picture, not just answer.
+                withImage: true,
+              })
             }
           >
             {probe.isPending ? (

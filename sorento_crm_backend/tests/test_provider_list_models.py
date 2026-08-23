@@ -41,13 +41,18 @@ def test_openai_offers_chat_families_and_drops_the_rest(monkeypatch):
         "whisper-1",
     ]
     provider = OpenAIProvider(api_key="k")
+    # `**kw` because listing builds its client with a short timeout: the seam has
+    # to accept the overrides production passes it, or the test proves nothing.
     monkeypatch.setattr(
         provider,
         "_client",
-        lambda: SimpleNamespace(
+        lambda **kw: SimpleNamespace(
             models=SimpleNamespace(
                 list=lambda: SimpleNamespace(
-                    data=[SimpleNamespace(id=model_id) for model_id in listed]
+                    data=[
+                        SimpleNamespace(id=model_id, created=index)
+                        for index, model_id in enumerate(listed)
+                    ]
                 )
             )
         ),
@@ -63,7 +68,7 @@ def test_anthropic_keeps_the_display_name_the_api_already_ships(monkeypatch):
     monkeypatch.setattr(
         provider,
         "_client",
-        lambda: SimpleNamespace(
+        lambda **kw: SimpleNamespace(
             models=SimpleNamespace(
                 list=lambda limit: SimpleNamespace(
                     data=[

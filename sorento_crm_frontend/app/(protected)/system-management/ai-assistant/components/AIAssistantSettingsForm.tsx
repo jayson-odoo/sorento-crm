@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -49,6 +49,11 @@ export default function AIAssistantSettingsForm() {
   const [ragEnabled, setRagEnabled] = useState(true);
   const [isEnabled, setIsEnabled] = useState(true);
   const modelsQuery = useProviderModels(provider);
+  // Read inside the load effect, which must not re-run when the catalogue arrives.
+  const modelsForProvider = useRef<{ value: string; label: string }[] | undefined>(
+    undefined,
+  );
+  modelsForProvider.current = modelsQuery.data?.models;
 
   useEffect(() => {
     if (!data) return;
@@ -56,8 +61,15 @@ export default function AIAssistantSettingsForm() {
     const loadedModel = data.model || 'gpt-4o-mini';
     setProvider(loadedProvider);
     setModel(loadedModel);
-    // Auto-detect custom-model if loaded model isn't in the standard list for the provider.
-    const knownForProvider = (MODEL_OPTIONS[loadedProvider] || []).some((m) => m.value === loadedModel);
+    // Auto-detect custom-model if the loaded model is in neither the live catalogue
+    // nor the built-in table. Checking only the table would open every config that
+    // points at a live-only model in "Custom model" mode, hiding the very list this
+    // screen now fetches.
+    const known = [
+      ...(modelsForProvider.current ?? []),
+      ...(MODEL_OPTIONS[loadedProvider] || []),
+    ];
+    const knownForProvider = known.some((m) => m.value === loadedModel);
     setCustomModel(!knownForProvider);
     setTemperature(data.temperature ?? 0);
     setSystemPrompt(data.system_prompt || '');
@@ -86,7 +98,10 @@ export default function AIAssistantSettingsForm() {
 
   const handleProviderChange = (next: string) => {
     setProvider(next);
-    // Reset model to first option in the new provider's list (unless user has chosen custom).
+    // Reset model to the first option the NEW provider actually offers. The live
+    // list is keyed on `provider`, so it has not refetched yet at this point -
+    // the built-in table is the only thing available, and the merged option below
+    // keeps whatever is chosen visible either way.
     if (!customModel) {
       const first = MODEL_OPTIONS[next]?.[0]?.value;
       if (first) setModel(first);

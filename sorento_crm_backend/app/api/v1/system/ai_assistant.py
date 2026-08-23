@@ -193,8 +193,14 @@ def test_ai_assistant_model(
     Distinct from `/test-connection`, which proves the KEY works: Gemini's key
     probe is a ListModels call, and ListModels happily returns a model whose
     first generateContent is a 404. This is the check that catches that.
+
+    `with_image` sends a 1x1 PNG along with the prompt, which is what a caller
+    certifying an image-lane model wants: a text-only model passes the plain
+    probe and then fails on every photo.
     """
-    ok, message, latency_ms = probe_model(db, payload.provider, payload.model)
+    ok, message, latency_ms = probe_model(
+        db, payload.provider, payload.model, with_image=payload.with_image
+    )
     return TestModelResponse(ok=ok, message=message, latency_ms=latency_ms)
 
 

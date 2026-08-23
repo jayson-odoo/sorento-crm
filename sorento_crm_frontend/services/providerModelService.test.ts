@@ -64,10 +64,23 @@ describe('testProviderModel', () => {
     expect(apiFetch).toHaveBeenCalledWith('/api/v1/system/ai-assistant/test-model', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider: 'gemini', model: 'gemini-2.5-flash-lite' }),
+      body: JSON.stringify({
+        provider: 'gemini',
+        model: 'gemini-2.5-flash-lite',
+        with_image: false,
+      }),
     });
     // A model that does not work is a 200 carrying `ok: false`, not a thrown error:
     // the provider's sentence is the answer the operator needs.
     expect(result).toEqual({ ok: false, message: '404 retired', latency_ms: 12 });
+  });
+
+  it('asks for an image probe when the field certifies an image model', async () => {
+    apiFetch.mockResolvedValue(ok({ ok: true, message: 'OK', latency_ms: 9 }));
+
+    await testProviderModel('openai', 'gpt-4o', true);
+
+    const body = JSON.parse(apiFetch.mock.calls[0][1].body);
+    expect(body.with_image).toBe(true);
   });
 });

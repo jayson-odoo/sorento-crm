@@ -141,6 +141,9 @@ class TestModelRequest(BaseModel):
 
     provider: Optional[str] = Field(None, max_length=64)
     model: str = Field(..., min_length=1, max_length=128)
+    # Set by the image lane's fields: a text-only model answers the plain probe
+    # and then fails on every photo, so "does it work" there means "can it see".
+    with_image: bool = False
 
 
 class TestModelResponse(BaseModel):

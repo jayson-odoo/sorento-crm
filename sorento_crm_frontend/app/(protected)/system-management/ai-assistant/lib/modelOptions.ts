@@ -31,7 +31,10 @@ export const MODEL_OPTIONS: Record<string, { value: string; label: string }[]> =
   gemini: [
     { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
     { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-    { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
+    // `gemini-2.5-flash-lite` is deliberately absent: Google retired it for new
+    // keys (404 on the first generateContent) while still listing it, and the
+    // backend's own fallback drops it for the same reason. A fallback list that
+    // hands out the broken model is worse than a shorter one.
   ],
 };
 

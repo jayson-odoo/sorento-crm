@@ -547,6 +547,9 @@ describe('ChatbotMediaSettingsPage model probe', () => {
       expect(probeMutate).toHaveBeenCalledWith({
         provider: 'gemini',
         model: 'gemini-2.5-flash-lite',
+        // These are the image lane's fields, so the probe carries an image: a
+        // text-only model answers the plain probe and fails on every photo.
+        withImage: true,
       }),
     );
   });
