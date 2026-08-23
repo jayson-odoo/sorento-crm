@@ -88,6 +88,16 @@ class User(Base):
     # always fires for non-actor recipients.
     notify_email_on_handling = Column(Boolean, default=True, nullable=False, server_default="true")
     notify_whatsapp_on_handling = Column(Boolean, default=False, nullable=False, server_default="false")
+    # Which contacts' inbound messages push to this user's phone (PLAN-message-push).
+    # One of assigned_and_coverage | assigned_only | all_contacts | off. A column and not
+    # a preference table because there is exactly ONE event today; the second event
+    # (mentions) is the trigger to migrate it into notification_scope_preferences.
+    # The server default is the backfill - every pre-existing user opts in at
+    # assigned_and_coverage, which is the behaviour the feature ships with.
+    notify_push_message_scope = Column(
+        String(24), default="assigned_and_coverage", nullable=False,
+        server_default="assigned_and_coverage",
+    )
 
     role_assignments = relationship("UserRoleAssignment", back_populates="user", cascade="all, delete-orphan")
     system_logs = relationship("SystemLog", back_populates="user")

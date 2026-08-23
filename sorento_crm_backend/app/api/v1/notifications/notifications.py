@@ -15,6 +15,7 @@ from app.services.user_sla_daily_summary_service import (
     verify_unsubscribe_token,
     set_user_daily_summary_subscription,
 )
+from app.schemas.user import DEFAULT_MESSAGE_PUSH_SCOPE, MessagePushScope
 from app.schemas.notification import (
     NotificationResponse,
     UnreadCountResponse,
@@ -114,6 +115,9 @@ class _ChannelPrefsUpdate(BaseModel):
     notify_whatsapp_on_deadline_extended: Optional[bool] = None
     notify_email_on_handling: Optional[bool] = None
     notify_whatsapp_on_handling: Optional[bool] = None
+    # Which contacts' inbound messages push to this user's phone. A Literal, so
+    # anything outside the four is a 422 before the write (UAC AC-M25).
+    notify_push_message_scope: Optional[MessagePushScope] = None
 
 
 def _channel_prefs(user) -> dict:
@@ -121,6 +125,9 @@ def _channel_prefs(user) -> dict:
         "daily_sla_summary_subscribed": bool(getattr(user, "daily_sla_summary_subscribed", True)),
         "notify_whatsapp": bool(getattr(user, "notify_whatsapp", False)),
         "notify_whatsapp_summary": bool(getattr(user, "notify_whatsapp_summary", False)),
+        "notify_push_message_scope": str(
+            getattr(user, "notify_push_message_scope", None) or DEFAULT_MESSAGE_PUSH_SCOPE
+        ),
     }
     # Email defaults true, whatsapp false — match the column server_defaults.
     for f in _SLA_NOTIFY_FIELDS:
@@ -160,6 +167,9 @@ async def set_channel_preferences(
     ):
         if field in data and data[field] is not None:
             setattr(user, field, bool(data[field]))
+    # Not a bool, so it is applied separately rather than coerced by the loop above.
+    if data.get("notify_push_message_scope") is not None:
+        user.notify_push_message_scope = data["notify_push_message_scope"]
     db.commit()
     db.refresh(user)
     return _channel_prefs(user)

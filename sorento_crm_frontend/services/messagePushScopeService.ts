@@ -1,12 +1,12 @@
 /* -------------------------------------------------------------------------------------
- * Message push scope preference - PLAN-message-push, slice S0 (Phase 1, MOCKED).
+ * Message push scope preference - PLAN-message-push (S0 built the card, S1 wired it).
  *
  * One decision, one column: which contacts' inbound WhatsApp messages buzz my phone.
  * The preference is SERVER-side and governs every device the user has enabled browser
  * notifications on - it is not the per-device push subscription (that is `pushService`).
  *
  * ===================================================================================
- * EXPECTED API CONTRACT (built in S1; this file is mock-backed until then)
+ * API CONTRACT (built in S1; this file now calls the real route)
  * ===================================================================================
  *
  * The scope rides on the EXISTING self-service account preference route rather than a
@@ -44,10 +44,8 @@
  * react-query key only if that second GET actually shows up as a problem.
  * ----------------------------------------------------------------------------------- */
 
-import {
-  mockFetchMessagePushScope,
-  mockSaveMessagePushScope,
-} from '@/services/__mocks__/messagePushScope';
+import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 
 export type MessagePushScope =
   | 'assigned_and_coverage'
@@ -69,36 +67,42 @@ export function isMessagePushScope(value: unknown): value is MessagePushScope {
   return MESSAGE_PUSH_SCOPE_OPTIONS.some((o) => o.value === value);
 }
 
-/**
- * Current user's message push scope.
- *
- * S1 swaps the mock line for:
- *   const res = await apiFetch('/api/v1/notifications/preferences/channels');
- *   if (!res.ok) throw new Error(await extractApiError(res, 'Unable to load message notification setting'));
- *   const data = (await res.json()) as { notify_push_message_scope?: string };
- *   return isMessagePushScope(data.notify_push_message_scope)
- *     ? data.notify_push_message_scope
- *     : DEFAULT_MESSAGE_PUSH_SCOPE;
- */
+const CHANNELS_ROUTE = '/api/v1/notifications/preferences/channels';
+
+/** The route echoes the whole preference set back; only this field concerns us. */
+function readScope(payload: unknown): MessagePushScope {
+  const scope = (payload as { notify_push_message_scope?: unknown })
+    ?.notify_push_message_scope;
+  return isMessagePushScope(scope) ? scope : DEFAULT_MESSAGE_PUSH_SCOPE;
+}
+
+/** Current user's message push scope. */
 export async function getMessagePushScope(): Promise<MessagePushScope> {
-  return mockFetchMessagePushScope();
+  const res = await apiFetch(CHANNELS_ROUTE);
+  if (!res.ok) {
+    throw new Error(
+      await extractApiError(res, 'Unable to load message notification setting'),
+    );
+  }
+  return readScope(await res.json());
 }
 
 /**
  * Persist the scope. Rejects with the extracted API message so the caller can revert
  * the select and toast it (AC-M4).
- *
- * S1 swaps the mock line for:
- *   const res = await apiFetch('/api/v1/notifications/preferences/channels', {
- *     method: 'PATCH',
- *     headers: { 'Content-Type': 'application/json' },
- *     body: JSON.stringify({ notify_push_message_scope: scope }),
- *   });
- *   if (!res.ok) throw new Error(await extractApiError(res, 'Unable to update message notification setting'));
- *   ...same parse as the GET...
  */
 export async function updateMessagePushScope(
   scope: MessagePushScope,
 ): Promise<MessagePushScope> {
-  return mockSaveMessagePushScope(scope);
+  const res = await apiFetch(CHANNELS_ROUTE, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notify_push_message_scope: scope }),
+  });
+  if (!res.ok) {
+    throw new Error(
+      await extractApiError(res, 'Unable to update message notification setting'),
+    );
+  }
+  return readScope(await res.json());
 }
