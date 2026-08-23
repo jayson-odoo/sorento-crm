@@ -199,7 +199,8 @@ never a dev server.
 ## Related
 
 - `PRINCIPLES.md` — the binding contract this skill executes
-- `CLAUDE.md` — repo conventions, dev sessions, lessons learned
+- `CLAUDE.md` - repo conventions, dev sessions, architecture
+- `LESSONS-LEARNT.md` - the gotcha log (88 entries); read before debugging anything non-obvious
 - `CONTEXT-MAP.md` — glossaries
 - `documentation/agents/` — issue tracker, triage labels, domain doc rules,
   session handoff (`/handoff` + `/resume-handoff`, the autocompact replacement)
