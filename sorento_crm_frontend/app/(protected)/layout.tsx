@@ -14,6 +14,7 @@ import {
 import { MyDownloadsProvider } from '@/components/my-downloads/MyDownloadsContext';
 import { MyDownloadsDrawer } from '@/components/my-downloads/MyDownloadsDrawer';
 import { CompanyProvider } from '@/app/providers/CompanyProvider';
+import PushPrompts from '@/components/pwa/PushPrompts';
 
 export default function ProtectedLayout({
   children,
@@ -61,7 +62,12 @@ export default function ProtectedLayout({
       <UploadManagerProvider>
         <MyDownloadsProvider>
           <GuideTargetSpotlight />
-          <Demo1Layout>{children}</Demo1Layout>
+          <Demo1Layout>
+            {/* In flow at the top of the page body: neither prompt can cover the
+                primary action of the page beneath it (AC-P16). */}
+            <PushPrompts />
+            {children}
+          </Demo1Layout>
           <UploadActivityDrawer />
           <MyDownloadsDrawer />
         </MyDownloadsProvider>
