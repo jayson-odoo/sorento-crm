@@ -25,6 +25,14 @@ from app.services.marketing_service import (
     dealer_cost_and_margin_from_list,
     raise_promotion_product_unique_violation,
 )
+
+from app.services.product_code_resolution import resolve_codes_to_products
+
+#: The ONE resolver, shared with `product_attachments`. Promotions used to do an
+#: exact match with a `+`-split fallback while attachments did a substring match,
+#: so the same flyer code could link a file and fail to create a promotion. That
+#: divergence is the defect this alias exists to prevent recurring.
+_resolve_codes = resolve_codes_to_products
 from app.services.attachment_notification_helper import notify_after_external_promotion_created
 from app.services.promotion_classifier import classify_promotion_type
 
@@ -99,18 +107,17 @@ def _product_code_candidates(raw_code: Optional[str]) -> list[str]:
 
 
 def _resolve_product_codes(raw_code: Optional[str], products_map: dict) -> list[str]:
+    """Concrete product codes for one payload code, read off a prepared resolution.
+
+    `products_map` is now the map produced by the shared resolver rather than an
+    exact-match-only lookup, so this returns the set members for a set code and
+    every substring match for a partial one - the same answers the attachment
+    path gives for the same input.
     """
-    Resolve payload product_code into concrete product codes:
-    - exact match first
-    - fallback to '+' split parts when exact doesn't exist
-    """
-    candidates = _product_code_candidates(raw_code)
-    if not candidates:
+    resolution = products_map.get("__resolution__") if products_map else None
+    if resolution is None:
         return []
-    exact = candidates[0]
-    if exact in products_map:
-        return [exact]
-    return [c for c in candidates[1:] if c in products_map]
+    return resolution.codes_for((raw_code or "").strip())
 
 
 @router.post("/", response_model=PromotionCreateResponse)
@@ -161,7 +168,13 @@ def create_promotion(
         product_codes = []
         for item in (payload.promotion_products or []):
             product_codes.extend(_product_code_candidates(item.product_code))
-    products_map = get_products_by_code_exact(db, product_codes)
+    # One resolution for every code in the payload, through the shared resolver:
+    # exact, then a PRODUCT SET expanded to its members, then `+` split, then
+    # substring. `__resolution__` rides along so `_resolve_product_codes` can ask
+    # it which concrete codes each payload code produced.
+    _resolution = _resolve_codes(db, product_codes)
+    products_map = dict(_resolution.products_by_code)
+    products_map["__resolution__"] = _resolution
     if payload.promotion_groups:
         source_codes = [row.product_code for g in payload.promotion_groups for row in g.promotion_products]
     else:
@@ -337,6 +350,7 @@ def create_promotion(
                             promotion_id=promotion.id,
                             promotion_group_id=pg.id,
                             product_id=product.id,
+                            linked_via_set_id=_resolution.product_set_id_for(code),
                             **vals,
                         )
                     )
@@ -378,6 +392,7 @@ def create_promotion(
                         promotion_id=promotion.id,
                         promotion_group_id=default_group.id,
                         product_id=product.id,
+                        linked_via_set_id=_resolution.product_set_id_for(code),
                         **vals,
                     )
                 )

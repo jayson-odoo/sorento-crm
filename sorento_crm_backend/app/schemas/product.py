@@ -372,6 +372,9 @@ class ProductAttachmentBase(BaseModel):
     is_primary: Optional[bool] = False
     sort_order: Optional[int] = None
     access_levels: Optional[list[str]] = None
+    #: Set only when a PRODUCT SET code fanned this link out. NULL means a person
+    #: or an exact product code made it.
+    linked_via_set_id: Optional[str] = None
 
 
 class ProductAttachmentCreate(ProductAttachmentBase):
