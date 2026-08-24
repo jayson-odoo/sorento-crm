@@ -173,8 +173,29 @@ A slice is not done until all pass (`PRINCIPLES.md`):
 
 Branch per feature; merge only after review. The user codes concurrently in the
 main checkout — run `git status` before ANY branch or commit operation and never
-assume the tree is clean. Hand off on a **prod build** (`npm run build && npm start`),
-never a dev server.
+assume the tree is clean. Hand off on the **dev server** (`npm run dev`), never a
+prod build: that is the standing rule in `CLAUDE.md` "Frontend dev loop", and it
+supersedes the older prod-build habit this step used to carry.
+
+### Step 11 — Reclaim the worktree
+
+A slice is not closed until its build cache is gone. A `.next` directory reaches
+2-3G per worktree and never shrinks, so idle lanes quietly cost tens of gigabytes.
+It is regenerable, so it must not outlive the work.
+
+Once the PR is merged (or the lane is abandoned), from the primary checkout run:
+
+```bash
+./scripts/worktree-gc.sh                     # dry run, see what would go
+./scripts/worktree-gc.sh --apply             # drop .next in every idle worktree
+./scripts/worktree-gc.sh --apply --merged    # also remove clean worktrees whose
+                                             # HEAD is already in origin/main
+git worktree prune
+```
+
+The script skips any worktree running `next dev`, never kills a process, and
+never removes a worktree that is dirty or not yet in `origin/main`. Add `--deep`
+to also drop `node_modules` and `venv` from lanes you are done with.
 
 ## Skill map (quick reference)
 
