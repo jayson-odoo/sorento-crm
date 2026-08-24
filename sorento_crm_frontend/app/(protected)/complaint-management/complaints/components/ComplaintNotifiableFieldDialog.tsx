@@ -100,7 +100,7 @@ export default function ComplaintNotifiableFieldDialog({
             value={selected}
             onChange={(v) => setSelected(v)}
             options={[
-              { value: UNSET, label: '— None —' },
+              { value: UNSET, label: ' - None - ' },
               ...options.map((opt) => ({ value: opt.id, label: opt.name })),
             ]}
             placeholder={copy.placeholder}

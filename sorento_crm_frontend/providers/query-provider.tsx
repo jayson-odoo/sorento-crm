@@ -27,6 +27,34 @@ const QueryProvider = ({ children }: { children: ReactNode }) => {
             const message =
               error.message || 'Something went wrong. Please try again.';
 
+            // When a user hits a page without permission, every query 403s
+            // independently. Without deduplication that produces a stack of red
+            // toasts. Sonner dedupes by `id`, so a single fixed id collapses
+            // them into one.
+            const isPermissionError =
+              message.startsWith('Permission required:') ||
+              message.startsWith('One of these permissions required:');
+
+            if (isPermissionError) {
+              toast.custom(
+                () => (
+                  <Alert variant="mono" icon="destructive" close={false}>
+                    <AlertIcon>
+                      <RiErrorWarningFill />
+                    </AlertIcon>
+                    <AlertTitle>
+                      {"You don't have permission to view this. Ask an administrator."}
+                    </AlertTitle>
+                  </Alert>
+                ),
+                {
+                  id: 'permission-denied',
+                  position: 'top-center',
+                },
+              );
+              return;
+            }
+
             toast.custom(
               () => (
                 <Alert variant="mono" icon="destructive" close={false}>

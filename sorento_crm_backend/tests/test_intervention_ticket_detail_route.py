@@ -5,9 +5,9 @@ Complements tests/test_intervention_ticket_detail.py (service-level, 5 tests)
 by exercising the actual FastAPI route through a TestClient with real
 dependency-injection wiring (mirrors tests/test_form_handling_lock_routes.py):
 
-  - happy path: assignee opens their own ticket -> 200 with the drawer contract
-  - auth denial: no principal at all -> 401/403, route body never runs
-  - out-of-scope viewer: an outsider (not assignee, not admin, no shared team)
+ - happy path: assignee opens their own ticket -> 200 with the drawer contract
+ - auth denial: no principal at all -> 401/403, route body never runs
+ - out-of-scope viewer: an outsider (not assignee, not admin, no shared team)
     -> 404, never a 403 (no existence leak, matches the service-level pin)
 
 Run:

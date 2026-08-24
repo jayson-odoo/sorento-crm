@@ -61,7 +61,7 @@ class EmbeddingDocument(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     # Company of the source entity (multi-company isolation). Nullable: shared /
     # company-less knowledge (mcp_tool, form, schema_doc, conversation_frame) stays
-    # NULL and is visible under every scope. NOT a CompanyScopedMixin — the vector
+    # NULL and is visible under every scope. NOT a CompanyScopedMixin - the vector
     # search filters on this column manually (the pipeline processes all companies).
     company_id = Column(UUID(as_uuid=False), nullable=True, index=True)
     created_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
@@ -101,7 +101,7 @@ class EmbeddingChunk(Base):
     embedding_provider = Column(String(64), nullable=False)
     source_hash = Column(String(64), nullable=False)
     metadata_json = Column("metadata", JSON, nullable=False, server_default="{}")
-    # Company of the source entity (multi-company isolation) — mirrors the parent
+    # Company of the source entity (multi-company isolation) - mirrors the parent
     # document; the vector search filters on this column. See EmbeddingDocument.
     company_id = Column(UUID(as_uuid=False), nullable=True, index=True)
     is_current = Column(Boolean, nullable=False, default=True)

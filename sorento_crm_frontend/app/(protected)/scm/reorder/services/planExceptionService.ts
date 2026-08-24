@@ -53,14 +53,14 @@
  *      Auth: `scm.reorder.run` (this one writes), matching the decision route.
  *
  *    Validation the server owns, because the UI must not be the only thing enforcing it:
- *      - `status: "approved"` requires an `action_code` that is one of THAT exception's
+ *    - `status: "approved"` requires an `action_code` that is one of THAT exception's
  *        proposed actions. Approving an action the engine never proposed is not a
  *        decision about this exception.
- *      - `status: "rejected"` requires a non-empty `reason` (AC-D6).
- *      - `action_code: "split"` requires `split_qty` strictly between 0 and the
+ *    - `status: "rejected"` requires a non-empty `reason` (AC-D6).
+ *    - `action_code: "split"` requires `split_qty` strictly between 0 and the
  *        exception's quantity, and the remainder stays on the original line so the two
  *        parts sum to it (AC-D11b).
- *      - An exception that is already decided returns 409. Re-deciding is a different
+ *    - An exception that is already decided returns 409. Re-deciding is a different
  *        operation from deciding, and silently overwriting loses who decided what.
  *
  *    Approving a reallocation writes an ALLOCATION DECISION. It does not amend the

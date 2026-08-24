@@ -8,7 +8,7 @@ Sponsorship forms: "purpose" IS the sponsor subject. This migration collapses th
 two into a strict lookup on ``purchase_requests.sponsor_subject`` and parks any
 unmatched free text in a new ``sponsor_subject_other`` column.
 
-Ordering (matters — the binding validates all existing values when it attaches):
+Ordering (matters - the binding validates all existing values when it attaches):
 1. Create lookup set ``procurement_sponsor_subject`` + options + keywords.
 2. Add nullable ``purchase_requests.sponsor_subject_other``.
 3. Backfill every sponsorship row (purpose wins, fallback old sponsor_subject):

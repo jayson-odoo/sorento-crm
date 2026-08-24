@@ -26,7 +26,7 @@ const selectAllButton = () => document.querySelector('[data-slot="searchable-mul
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('SearchableMultiSelect — select all', () => {
+describe('SearchableMultiSelect - select all', () => {
   it('offers select all with the option count and selects every value', async () => {
     const { onChange } = renderMulti();
     openMenu();
@@ -125,7 +125,7 @@ function Controlled({
 
 const option = (name: string) => screen.getByRole('option', { name });
 
-describe('SearchableMultiSelect — what the menu says is chosen', () => {
+describe('SearchableMultiSelect - what the menu says is chosen', () => {
   it('reports every chosen option as chosen, not only the last one clicked', async () => {
     // The bug this pins: the ONLY sign that an option was chosen was a bare tick
     // icon with no text. Nothing reading the page rather than looking at it - a

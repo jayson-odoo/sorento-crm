@@ -42,16 +42,16 @@ import type { ListQueryFilterGroup, ListQueryResourceKey } from '@/lib/list-quer
  * list the strip counts the accumulated selection, not just the loaded page's share.
  *
  * Rules baked in (so pages cannot diverge):
- *  - Filters renders ONLY when `filters` is supplied (no dead "no filters" popover). (D3)
- *  - Export is DISABLED until >=1 row is selected; click opens a column modal
+ * - Filters renders ONLY when `filters` is supplied (no dead "no filters" popover). (D3)
+ * - Export is DISABLED until >=1 row is selected; click opens a column modal
  *    pre-ticked to the currently-visible columns; exports the SELECTED rows. (D4)
- *  - Secondary actions collapse into a `▾` overflow when there are >=2. (D7)
- *  - Selection is read from react-table's rowSelection (use `buildSelectColumn`).
+ * - Secondary actions collapse into a `▾` overflow when there are >=2. (D7)
+ * - Selection is read from react-table's rowSelection (use `buildSelectColumn`).
  *
  * Place inside `<CardHeader>`. This is the ONLY sanctioned list toolbar: the
  * legacy auto-rendered `DataGridStandardToolbar` and DataGrid's `standardToolbar`
  * escape hatch were removed, so a list cannot accidentally render a second/duplicate
- * toolbar. Do NOT hand-roll a separate button row in a list CardHeader — feed slots
+ * toolbar. Do NOT hand-roll a separate button row in a list CardHeader - feed slots
  * here instead.
  */
 
@@ -113,7 +113,7 @@ export type ListToolbarExport<TData extends object> = {
 /**
  * Server-side ListQuery export (orders/products/suppliers/promotions/workflows).
  * Opens `ListQueryExportDialog` which exports the full FILTERED set server-side
- * with column selection — this already satisfies "export reflects columns / full
+ * with column selection - this already satisfies "export reflects columns / full
  * set", so it is intentionally NOT selection-gated (deviation from D4, documented
  * in the plan). If rows ARE selected they are passed as `selectedRecordIds`.
  */
@@ -173,7 +173,7 @@ export type DataGridListToolbarProps<TData extends object> = {
   bulkActions?: ToolbarAction[];
   /**
    * Custom bulk strip content (overrides `bulkActions` AND the auto Export button)
-   * — for pages that consolidate all bulk actions into a single "Action" dropdown
+   * - for pages that consolidate all bulk actions into a single "Action" dropdown
    * with selection-dependent gating (e.g. the Unified Drive, UAC F2). The slot is
    * rendered between the "N selected" badge and the Clear button.
    *
@@ -278,7 +278,7 @@ export function DataGridListToolbar<TData extends object>({
   // export is gated on having a selection (or the all-records banner). (D4)
   const exportEnabled = exportConfig !== false && (isListQueryExport || hasSelection || allRecordsActive);
 
-  // Columns eligible for export — exclude the structural select/actions columns.
+  // Columns eligible for export - exclude the structural select/actions columns.
   const exportableColumns = useMemo(
     () =>
       table
@@ -341,7 +341,7 @@ export function DataGridListToolbar<TData extends object>({
     (allRecordsActive || (allPageRowsSelected && hasSelection && selectAllMatching!.total > selectAllMatching!.loadedCount));
 
   // The left cluster flips to the bulk strip whenever there is a selection
-  // (page rows or the full filtered set). Export lives in BOTH places — gated
+  // (page rows or the full filtered set). Export lives in BOTH places - gated
   // off in the normal cluster, enabled inside the bulk strip.
   const bulkStripActive = hasSelection || allRecordsActive;
 
@@ -384,7 +384,7 @@ export function DataGridListToolbar<TData extends object>({
     <TooltipProvider>
      <div className="flex w-full flex-col gap-2 py-5">
       <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        {/* LEFT cluster — replaced by the bulk strip while rows are selected (D2/H). */}
+        {/* LEFT cluster - replaced by the bulk strip while rows are selected (D2/H). */}
         {bulkStripActive ? (
           <div className="flex flex-wrap items-center gap-2">
             {/* Where the box already sits when nothing is selected, so it does not move
@@ -474,7 +474,7 @@ export function DataGridListToolbar<TData extends object>({
           </div>
         )}
 
-        {/* RIGHT cluster — secondary overflow + primary CTA (always present). */}
+        {/* RIGHT cluster - secondary overflow + primary CTA (always present). */}
         <div className="flex flex-wrap items-center gap-2">
           {secondaryActions.length === 1 ? (
             <ActionButton action={secondaryActions[0]} />
@@ -576,7 +576,7 @@ export function DataGridListToolbar<TData extends object>({
       ) : null}
      </div>
 
-      {/* Column-selection export modal — pre-ticked to visible columns (D4).
+      {/* Column-selection export modal - pre-ticked to visible columns (D4).
           Only for selection (client) export; listQuery uses its own dialog below. */}
       {!isListQueryExport && (
       <Dialog open={exportOpen} onOpenChange={setExportOpen}>

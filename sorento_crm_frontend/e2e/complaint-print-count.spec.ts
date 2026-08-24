@@ -10,7 +10,7 @@
  *      adjacent print-count chip opens the same per-complaint downloads modal;
  *      a ready row is click-to-download.
  *
- * Required env vars (test skipped otherwise — per feedback_playwright_via_sidebar
+ * Required env vars (test skipped otherwise - per feedback_playwright_via_sidebar
  * memory: always sidebar-navigate, never deep-link):
  *   PORTAL_E2E_BASE_URL=http://localhost:3000   (default in playwright.config)
  *   COMPLAINT_E2E_EMAIL=...

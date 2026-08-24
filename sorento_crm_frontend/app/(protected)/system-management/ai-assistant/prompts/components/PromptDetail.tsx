@@ -107,7 +107,7 @@ export function PromptDetail({ name }: { name: string }) {
     label: 'production' | 'staging';
   }>({ open: false, version: null, versionId: null, label: 'production' });
 
-  // Version-switch discard confirm (AlertDialog, never window.confirm — CRUD UX
+  // Version-switch discard confirm (AlertDialog, never window.confirm - CRUD UX
   // standard / feedback_confirm_before_delete_or_unlink).
   const [pendingSwitch, setPendingSwitch] = useState<number | null>(null);
 
@@ -162,7 +162,7 @@ export function PromptDetail({ name }: { name: string }) {
         onSuccess: (v) => {
           const missing = v.missing_vars ?? validation.missing;
           if (missing.length) {
-            toast.warning(`Saved v${v.version}. Note: declared var(s) not used — ${missing.join(', ')}`);
+            toast.warning(`Saved v${v.version}. Note: declared var(s) not used - ${missing.join(', ')}`);
           } else {
             toast.success(`Saved v${v.version}`);
           }
@@ -221,7 +221,7 @@ export function PromptDetail({ name }: { name: string }) {
 
       {!meta.active ? (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">
-          Inactive — this prompt is saved but not used at runtime yet. It activates in milestone{' '}
+          Inactive - this prompt is saved but not used at runtime yet. It activates in milestone{' '}
           {meta.activates_in}. You can draft ahead; dry-run is disabled until it has a call site.
         </div>
       ) : null}

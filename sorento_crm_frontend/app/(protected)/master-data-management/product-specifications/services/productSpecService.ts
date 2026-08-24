@@ -317,7 +317,7 @@ async function throwSpecWriteError(response: Response, fallback: string): Promis
   throw new Error(await extractApiError(response, fallback));
 }
 
-/** Register a new spec key. Owned by whoever creates it — never seed-repaired. */
+/** Register a new spec key. Owned by whoever creates it - never seed-repaired. */
 export async function createSpecKey(body: {
   spec_key: string;
   label: string;
@@ -366,7 +366,7 @@ export async function addValueToSpecKey(
 
 /**
  * Edit calibration and extend vocabulary. A seeded key's `allowed_values` are
- * rejected by the API on purpose — they are the chatbot parser's contract.
+ * rejected by the API on purpose - they are the chatbot parser's contract.
  */
 export async function updateSpecKey(
   specKey: string,

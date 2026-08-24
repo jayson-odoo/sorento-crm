@@ -35,7 +35,7 @@ export function IdeationEmbed({ ideaId, title }: IdeationEmbedProps) {
   // Silent re-mint (WS-C3 / AC-CAP-12): the embedded grid posts a refresh request
   // when its short-lived embed token expires mid-session. The HOST re-runs the
   // /embed/session handshake (refetch) and posts the fresh token back into the
-  // iframe so interactive editing never breaks. Origin-checked both ways — the
+  // iframe so interactive editing never breaks. Origin-checked both ways - the
   // host stays the gate for who may mint (5-min token unchanged).
   useEffect(() => {
     if (!embedOrigin) return;
@@ -89,7 +89,7 @@ export function IdeationEmbed({ ideaId, title }: IdeationEmbedProps) {
   }
 
   // Token travels to the iframe in the URL FRAGMENT (not a query param) so it stays
-  // out of server logs and the Referer header (AC-E-10) — never shown to the user.
+  // out of server logs and the Referer header (AC-E-10) - never shown to the user.
   const src = `${data.iframe_url}#token=${encodeURIComponent(data.token)}`;
 
   return (

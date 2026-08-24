@@ -6,7 +6,7 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 const RAW_AT = '2026-07-09T01:30:00';
 
-describe('SlaEscalationBanner — PersonLink integration (ESC-4..ESC-6)', () => {
+describe('SlaEscalationBanner - PersonLink integration (ESC-4..ESC-6)', () => {
   it('escalatedFromName + phone → "escalated from" wa.me anchor + the WHEN', () => {
     const { container } = render(
       <SlaEscalationBanner

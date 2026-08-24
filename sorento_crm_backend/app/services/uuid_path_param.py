@@ -3,7 +3,7 @@
 A malformed (non-UUID) path id would otherwise reach the DB layer and raise a
 generic exception that the route's `except Exception` turns into a 500 (leaking
 an error + masking the real "not found"). Calling `validate_uuid_path` first
-turns that into a clean 404 — a malformed id is, from the client's view, a
+turns that into a clean 404 - a malformed id is, from the client's view, a
 guaranteed-missing row.
 
 Sibling of `uuid_list_param.parse_uuid_list` (which guards `<entity>_ids` query
@@ -36,7 +36,7 @@ def validate_uuid_path(value: str, *, resource: str = "Resource") -> str:
     """
     s = (value or "").strip()
     if not _UUID_RE.match(s):
-        # 404 (not 422) — a bad-format id is just a guaranteed-missing row, and
+        # 404 (not 422) - a bad-format id is just a guaranteed-missing row, and
         # we already return 404 for genuinely-absent rows; one code for clients.
         raise handle_not_found(resource, value)
     return s.lower()

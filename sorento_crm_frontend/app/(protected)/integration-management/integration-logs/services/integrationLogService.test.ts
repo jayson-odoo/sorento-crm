@@ -21,7 +21,7 @@ const emptyEnvelope = { data: [], pagination: { total: 0, page: 1, limit: 50 }, 
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('getIntegrationLogs — System Health drill-down params', () => {
+describe('getIntegrationLogs - System Health drill-down params', () => {
   it('adds status, integration_channel and created_from to the request', async () => {
     mockedFetch.mockResolvedValue(okResponse(emptyEnvelope));
 

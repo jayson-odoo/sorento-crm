@@ -1,6 +1,6 @@
-# UAC — Import job row-level outcome visibility
+# UAC - Import job row-level outcome visibility
 
-Status: **Approved — in implementation through Phase 3.**
+Status: **Approved - in implementation through Phase 3.**
 Scope: every import job type in `sorento_crm_backend/app/tasks/import_tasks.py` (+ the services they call).
 
 Locked decisions: migration `307` chains onto committed head `301_promo_expiry_rule_engine`
@@ -13,7 +13,7 @@ mapped business columns only · legacy `result` keys kept one release.
 `delivery_order_detail_import` of 4231 rows reported `successful=203`, `failed=0`,
 `skipped=4028`, and listed **11** reasons. The other **4017 skipped rows recorded nothing**
 (`import_tasks.py:2406` bumps `skipped += 1` on the dedup path with no reason, no row,
-no code). The operator cannot answer "what was skipped, and why?" — the central complaint.
+no code). The operator cannot answer "what was skipped, and why?" - the central complaint.
 
 The same class of blindness exists across every importer: silent counter bumps, no
 aggregation, silent list truncation (`[:100]`, `[-50:]`), and a different `result` JSON
@@ -45,8 +45,8 @@ shape per job type so the FE can only dump raw JSON.
 - **AC-A8** **No per-row INSERT.** Outcome rows are written only via buffered
   `bulk_insert_mappings` (1,000/flush + a final flush). Verified by measuring the real
   4,231-row file (`Order Listing - Macro Version …xlsm`) before and after the change on
-  **both** profiles — insert-heavy (3,452 created / 779 skipped) and duplicate-heavy
-  (4,231 skipped) — against the recorded baselines in PLAN §0. A run whose rows are
+  **both** profiles - insert-heavy (3,452 created / 779 skipped) and duplicate-heavy
+  (4,231 skipped) - against the recorded baselines in PLAN §0. A run whose rows are
   *all* skipped or *all* failed does not count as proof: the measured run must contain
   successful, skipped **and** failed rows, because success rows are the expensive path.
   Target: ≤10% wall-clock regression.
@@ -55,7 +55,7 @@ shape per job type so the FE can only dump raw JSON.
   savepoints solely to attribute the failure, so the job reports `failed=N` with the
   offending row numbers instead of collapsing to `status=failed` with zeroed counters.
 - **AC-A9** Row persistence is capped (`max_rows`, default 200,000/job). Past the cap,
-  rows stop persisting, `rows_truncated=true` is set — **but counts and the aggregated
+  rows stop persisting, `rows_truncated=true` is set - **but counts and the aggregated
   breakdown stay exact**, because aggregation is in-memory, not derived from stored rows.
 
 ## B. Aggregated breakdown (backend)
@@ -64,20 +64,20 @@ shape per job type so the FE can only dump raw JSON.
   job type:
   `{message, counts:{total,processed,successful,failed,skipped}, breakdown:{successful[],skipped[],failed[]}, rows_truncated, rows_total}`.
 - **AC-B2** Each breakdown entry = `{code, label, count, top_values:[{value,count}]}`,
-  ordered by count desc. `count` is **exact and complete** — never truncated.
+  ordered by count desc. `count` is **exact and complete** - never truncated.
 - **AC-B3** `top_values` lists up to 10 distinct offending values per code (e.g. the
   actual missing product codes), each with its own count.
 - **AC-B4** `counts.successful + counts.failed + counts.skipped == counts.processed`, and
   the sum of every breakdown `count` equals `counts.processed`. Asserted in tests.
-- **AC-B5** Reason codes come from one shared taxonomy module — the same code means the
+- **AC-B5** Reason codes come from one shared taxonomy module - the same code means the
   same thing across importers (`product_not_found` is never spelled two ways).
 - **AC-B6** Validation-preview paths (`validate_spo_import`, `validate_grn_listing_import`,
   `validate_grn_lines_import`) emit the **same codes** as the real import, so preview
   matches outcome.
-- **AC-B7** Legacy jobs (no breakdown in `result`) still render — FE falls back to the
+- **AC-B7** Legacy jobs (no breakdown in `result`) still render - FE falls back to the
   existing raw-JSON view without error.
 
-## C. Coverage — all import types
+## C. Coverage - all import types
 
 - **AC-C1** Rewired and verified for: `delivery_order_detail_import`, `grn_lines_import`,
   `grn_listing_import`, `spo_import`, `order_tracking_import`, `product_import`,
@@ -104,10 +104,10 @@ shape per job type so the FE can only dump raw JSON.
 - **AC-D5** Export of a 200k-row job streams without loading all rows into memory
   (keyset-paginated generator).
 
-## E. Frontend — job detail page
+## E. Frontend - job detail page
 
 - **AC-E1** "Result Details" is replaced by an **Outcome breakdown** card: three groups
-  (Successful / Skipped / Failed), each listing `label — count`, expandable to show the
+  (Successful / Skipped / Failed), each listing `label - count`, expandable to show the
   top distinct values with counts. Raw JSON stays available in the collapsed
   `Full result (JSON)` block.
 - **AC-E2** Clicking a breakdown reason filters the Rows grid to that `code`.
@@ -119,7 +119,7 @@ shape per job type so the FE can only dump raw JSON.
   box. Filters drive the API, not client-side slicing.
 - **AC-E5** "Download CSV" button hits the export endpoint with the active filters.
 - **AC-E6** Every section always renders with an explicit empty state (per ADR product
-  standards) — never hidden on missing data.
+  standards) - never hidden on missing data.
 - **AC-E7** No UUIDs shown in the UI: identity renders business keys (doc no, item code,
   location, filename), never raw ids.
 - **AC-E8** Loading / empty / error / truncated states all render; when
@@ -132,7 +132,7 @@ shape per job type so the FE can only dump raw JSON.
   job, batched by keyset (no unbounded DELETE).
 - **AC-F2** Retention days is DB-configurable (`system_settings.import_job_rows_retention_days`,
   default 90) and appears in both the settings GET builder and the update schema.
-- **AC-F3** Pruning removes row detail only — `import_jobs` counts and the stored
+- **AC-F3** Pruning removes row detail only - `import_jobs` counts and the stored
   breakdown survive forever.
 - **AC-F4** The detail page states when row detail has been pruned rather than showing an
   empty grid that looks like "nothing happened".
@@ -151,13 +151,13 @@ shape per job type so the FE can only dump raw JSON.
   truncated.
 - **AC-G6** playwright: import job detail → filter to skipped → reason chip → grid shows
   matching rows → CSV request fires with the filter params (`browser_network_requests`).
-- **AC-G7** Test cleanup is scoped to marker rows only — never an unscoped
+- **AC-G7** Test cleanup is scoped to marker rows only - never an unscoped
   `DELETE FROM import_job_rows` (the local DB is a copy of production data).
 
 ## H. Non-goals
 
 - Re-running / repairing skipped rows from the UI (separate feature).
-- Changing any import's business behaviour — dedup stays dedup; this work only makes the
+- Changing any import's business behaviour - dedup stays dedup; this work only makes the
   existing outcome legible.
 - Backfilling row detail for jobs already completed (impossible; historical jobs keep
   their legacy `result`).

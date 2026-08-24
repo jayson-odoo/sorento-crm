@@ -1,14 +1,14 @@
-"""SCM M8 Slice C — pin/reject-aware budget split + full-budget funding (backend parity).
+"""SCM M8 Slice C - pin/reject-aware budget split + full-budget funding (backend parity).
 
 Two halves, mirroring ``test_m4_cash``:
 
-  * PURE maths (no DB) — ``cash_ranking.allocate_funding`` gains ``pinned_ids`` /
+  * PURE maths (no DB) - ``cash_ranking.allocate_funding`` gains ``pinned_ids`` /
     ``rejected_ids`` / full-budget (``budget=None`` or ``full=True``). Golden numbers
     are hand-authored here, derived INDEPENDENTLY of the allocator, to lock the
     "pins win + consume budget first, rejects excluded, uncosted still needs_cost,
     un-pinned greedy fills the leftover" semantics the FE ``computeFundingM8``
     already implements client-side (M8-C2/C3/C7).
-  * DB-backed — ``apply_run_budget`` derives pins (accepted/adjusted) + rejects
+  * DB-backed - ``apply_run_budget`` derives pins (accepted/adjusted) + rejects
     (dismissed) from the decision overlay so the PERSISTED ``funding_status`` matches
     the live FE split, plus the full-budget persist path (daily-cron style).
 
@@ -34,7 +34,7 @@ def _buys(*specs) -> list[cr.Buy]:
 
 
 # ===========================================================================
-# PURE — pins win + consume budget first (M8-C3)
+# PURE - pins win + consume budget first (M8-C3)
 # ===========================================================================
 
 def test_pin_forces_fund_and_consumes_budget_first():
@@ -50,7 +50,7 @@ def test_pin_forces_fund_and_consumes_budget_first():
 
 
 def test_pin_over_budget_stays_funded_free_goes_negative():
-    """Two pinned buys totalling 8000 against a 6000 budget BOTH stay funded — a pin
+    """Two pinned buys totalling 8000 against a 6000 budget BOTH stay funded - a pin
     never drops to deferred on an overspend; funded_cash (8000) exceeds budget and the
     free figure (budget − funded) goes negative (−2000), matching the FE."""
     budget = 6000
@@ -74,7 +74,7 @@ def test_pinned_buy_funds_even_with_zero_budget():
 
 
 # ===========================================================================
-# PURE — rejects excluded entirely (M8-C3)
+# PURE - rejects excluded entirely (M8-C3)
 # ===========================================================================
 
 def test_rejected_buy_excluded_from_every_bucket():
@@ -90,7 +90,7 @@ def test_rejected_buy_excluded_from_every_bucket():
 
 
 # ===========================================================================
-# PURE — un-pinned greedy fills the leftover by rank (M8-C2)
+# PURE - un-pinned greedy fills the leftover by rank (M8-C2)
 # ===========================================================================
 
 def test_unpinned_greedy_fills_leftover_by_rank():
@@ -108,11 +108,11 @@ def test_unpinned_greedy_fills_leftover_by_rank():
 
 
 # ===========================================================================
-# PURE — uncosted stays needs_cost even when pinned (M8-C7)
+# PURE - uncosted stays needs_cost even when pinned (M8-C7)
 # ===========================================================================
 
 def test_pinned_uncosted_buy_stays_needs_cost():
-    """A pin cannot fund an unknown cost — a pinned UNCOSTED buy stays needs_cost and
+    """A pin cannot fund an unknown cost - a pinned UNCOSTED buy stays needs_cost and
     draws nothing from the budget; the un-pinned costed buy still funds/defers."""
     result = cr.allocate_funding(
         _buys(("a", 1, None), ("b", 2, 3000)),
@@ -122,7 +122,7 @@ def test_pinned_uncosted_buy_stays_needs_cost():
 
 
 # ===========================================================================
-# PURE — full budget funds all costed (M8 daily-cron path)
+# PURE - full budget funds all costed (M8 daily-cron path)
 # ===========================================================================
 
 def test_full_budget_none_funds_all_costed():
@@ -155,12 +155,12 @@ def test_full_budget_still_excludes_rejects():
 
 
 # ===========================================================================
-# DB — apply_run_budget persists the pin/reject-aware split (M8-C3 parity)
+# DB - apply_run_budget persists the pin/reject-aware split (M8-C3 parity)
 # ===========================================================================
 
 def test_apply_budget_pins_accepted_regardless_of_rank(scm_app):
     """A manually ACCEPTED buy is force-funded on persist even when the budget is 0 and
-    its rank is lower — it consumes budget first; the un-pinned buy defers."""
+    its rank is lower - it consumes budget first; the un-pinned buy defers."""
     app, db = _client(scm_app, "purchasing")
     _, a, b = _seed_two_buys(db)
     # Accept / reject below are LOCATION-grain decisions (front planning 5.4), so the run
@@ -175,7 +175,7 @@ def test_apply_budget_pins_accepted_regardless_of_rank(scm_app):
         "FROM scm.reorder_recommendation WHERE run_id = :r AND rec_type = 'buy'"
     ), {"r": rid}).mappings().all()
     by_pid = {r["pid"]: r for r in recs}
-    # accept the CALM buy (higher rank number) — a pin must win over rank + zero budget
+    # accept the CALM buy (higher rank number) - a pin must win over rank + zero budget
     dsvc.accept_recommendation(db, by_pid[b]["id"], None)
     db.flush()
 
@@ -189,7 +189,7 @@ def test_apply_budget_pins_accepted_regardless_of_rank(scm_app):
 
 
 def test_apply_budget_excludes_dismissed(scm_app):
-    """A manually REJECTED (dismissed) buy is excluded from the persisted split — its
+    """A manually REJECTED (dismissed) buy is excluded from the persisted split - its
     funding_status is cleared, and it is not counted as funded/deferred."""
     app, db = _client(scm_app, "purchasing")
     _, a, b = _seed_two_buys(db)
@@ -239,12 +239,12 @@ def test_apply_full_budget_persists_all_costed_funded(scm_app):
 
 
 # ===========================================================================
-# DB — PUT /budget full-budget request (null amount → fund all)
+# DB - PUT /budget full-budget request (null amount → fund all)
 # ===========================================================================
 
 def test_put_budget_full_request_funds_all(scm_app):
     """PUT /budget with ``full: true`` (no numeric budget) persists every costed buy as
-    funded — the daily-cron / 'fund all within budget' path."""
+    funded - the daily-cron / 'fund all within budget' path."""
     from fastapi.testclient import TestClient
 
     app, db = _client(scm_app, "purchasing")

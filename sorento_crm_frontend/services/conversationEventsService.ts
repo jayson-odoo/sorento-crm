@@ -8,18 +8,18 @@
  * BACKEND CONTRACT (as shipped)
  * ---------------------------------------------------------------------------
  * GET /api/v1/sla-management/conversation-events/stream?contacts=<id>[,<id>]
- *   - `text/event-stream`, chunked. Max 25 contacts; the backend drops any the
+ * - `text/event-stream`, chunked. Max 25 contacts; the backend drops any the
  *     caller has no ticket standing for, silently.
- *   - `event: ready` on connect (the cue to refetch), then `event: <type>` with
+ * - `event: ready` on connect (the cue to refetch), then `event: <type>` with
  *     a JSON `data:` line, plus a `: keep-alive` comment roughly every 25s.
- *   - Types: `message` | `ticket_created` | `ticket_updated`. A NOTE is poked as
+ * - Types: `message` | `ticket_created` | `ticket_updated`. A NOTE is poked as
  *     `message` (ticket_comment_service publishes EVENT_MESSAGE), so a `message`
  *     event has to refresh the notes as well as the thread.
- *   - Payload, five keys, never any content:
+ * - Payload, five keys, never any content:
  *     `{type, contact_id, user_id, entity_id, ts}`. `contact_id` is the
  *     Respond.io contact id (`respond_contacts.respond_io_id`), NOT the internal
  *     UUID.
- *   - Stateless: no Last-Event-ID, no replay. A reconnect just resubscribes and
+ * - Stateless: no Last-Event-ID, no replay. A reconnect just resubscribes and
  *     the gap is covered by the refetch on `ready` plus the surface's slow poll.
  *
  * ---------------------------------------------------------------------------

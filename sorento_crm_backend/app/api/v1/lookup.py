@@ -1,4 +1,4 @@
-"""Public lookup endpoints — used by FE dropdowns and n8n MCP tools."""
+"""Public lookup endpoints - used by FE dropdowns and n8n MCP tools."""
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -96,7 +96,7 @@ async def resolve(
     # as-is. An unresolved/orphan contact -> empty scope (0 rows, fail-closed).
     #
     # L3: apply the body-derived override ONLY for the X-API-Key/MCP principal.
-    # A logged-in JWT user keeps their own resolver-set active-company scope — a
+    # A logged-in JWT user keeps their own resolver-set active-company scope - a
     # forged contact_id/space_id in the body must never let them re-scope their
     # session into another company's data.
     is_api_key = (current_user or {}).get("auth_method") == "api_key"

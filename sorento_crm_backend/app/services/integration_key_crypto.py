@@ -13,7 +13,7 @@ human-chosen passwords. There is no dictionary to attack and no meaningful
 offline-cracking advantage to slow down, so a slow KDF buys nothing. What it
 would cost is real: a deterministic hash lets verification be a single indexed
 lookup on ``key_hash``, whereas a salted KDF forces a scan of every stored key
-with a KDF invocation per row — on the hot path of every external request.
+with a KDF invocation per row - on the hot path of every external request.
 
 See ``documentation/plans/autocount/PLAN-autocount-integration.md`` §2 (A1-A8).
 """
@@ -53,7 +53,7 @@ def key_prefix(key: str) -> str:
 def verify_api_key(key: Optional[str], stored_hash: Optional[str]) -> bool:
     """Constant-time check of a presented key against a stored hash (AC-AC-04).
 
-    Returns False — never raises — for absent input on either side. A blank or
+    Returns False - never raises - for absent input on either side. A blank or
     missing ``stored_hash`` must never authenticate anyone: that is the state a
     naive seed would leave behind if ``EXTERNAL_API_KEY`` were absent at
     migration time (AC-AC-09).

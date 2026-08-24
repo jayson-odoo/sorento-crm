@@ -103,7 +103,7 @@ def is_discontinued_from_description(description: Optional[str]) -> bool:
 
     Auto-derived flag: a product whose description begins with four asterisks
     is considered discontinued. Recomputed on every save (single create/edit
-    and bulk import) — never edited manually.
+    and bulk import) - never edited manually.
     """
     if not description:
         return False
@@ -439,7 +439,7 @@ class ProductService:
         # Apply sorting
         # GREATEST / LEAST give us a virtual "max axis" / "min axis" per row so the LLM can ask
         # for the biggest or smallest product in one call (sort=largest_dimension dir=desc).
-        # NULL dimensions sort to the bottom on desc and top on asc — handled with NULLS LAST/FIRST.
+        # NULL dimensions sort to the bottom on desc and top on asc - handled with NULLS LAST/FIRST.
         largest_dim = func.greatest(
             Product.dimensions_length,
             Product.dimensions_width,
@@ -751,14 +751,14 @@ class ProductService:
     def _product_entity_alternatives(self, input_code: Optional[str]) -> list[dict]:
         """Trigram/graph sibling products (existing + priced) for a row-miss.
 
-        Fires on a genuine ``total == 0`` — a `query` code that matched no product
+        Fires on a genuine ``total == 0`` - a `query` code that matched no product
         row. The neighbour helper's input product does not exist, so it falls to
         trigram recall (§3.1 "did you mean") over EXISTING siblings. The has-data
         gate = candidate has a non-null, positive ``list_price`` so a price question
         gets a priced neighbour.
 
         Deliberately NOT called when a product resolves but carries ``list_price``
-        0 — that is a field-level miss, and substituting a different SKU's price is
+        0 - that is a field-level miss, and substituting a different SKU's price is
         misleading (a variant's price is legitimately different). Only the row-miss
         (nothing matched) path reaches here.
         """
@@ -839,7 +839,7 @@ class ProductService:
 
         Populates two throwaway instance attrs consumed by ProductResponse via
         `validation_alias` (`_variant_of_ref`, `_variant_children`) so the schema
-        never touches the SQLAlchemy relationships directly — keeping LIST rows
+        never touches the SQLAlchemy relationships directly - keeping LIST rows
         (which never call this) free of variant N+1s. See
         PLAN-suggest-on-miss-variant-graph.md §1.5.
         """
@@ -861,7 +861,7 @@ class ProductService:
         product._variant_child_count = len(children)
 
     def set_variant_parent(self, product_id: str, parent_id: str, updated_by: str):
-        """Manually set/change a product's variant parent (D1 — sticky override).
+        """Manually set/change a product's variant parent (D1 - sticky override).
 
         Sets ``variant_of_id`` + ``variant_link_manual = True`` so auto-derivation
         never re-points it. Rejects self-parent and cycles (walking the chosen
@@ -890,7 +890,7 @@ class ProductService:
                 message="A product cannot be a variant of itself",
                 code="VALIDATION_ERROR",
             )
-        # Cycle check — walk the chosen parent's ancestor chain via variant_of_id.
+        # Cycle check - walk the chosen parent's ancestor chain via variant_of_id.
         # If `product` is encountered, linking would create a cycle. Visited-set
         # guards against a pre-existing cycle looping forever.
         visited: set[str] = set()
@@ -924,7 +924,7 @@ class ProductService:
         return product
 
     def unlink_variant(self, product_id: str, updated_by: str):
-        """Manually unlink a product from its parent (D1 — sticky override).
+        """Manually unlink a product from its parent (D1 - sticky override).
 
         Nulls ``variant_of_id`` and sets ``variant_link_manual = True`` so
         auto-reconcile will not re-link it. Also the "remove a child" path: call
@@ -982,7 +982,7 @@ class ProductService:
         if not page_ids:
             return
 
-        # 1) Parent refs — one IN-query over just the parents referenced on this page.
+        # 1) Parent refs - one IN-query over just the parents referenced on this page.
         parent_ids = {
             str(p.variant_of_id) for p in rows if getattr(p, "variant_of_id", None)
         }
@@ -997,7 +997,7 @@ class ProductService:
                 if getattr(p, "variant_of_id", None):
                     p._variant_of_ref = parent_by_id.get(str(p.variant_of_id))
 
-        # 2) Direct-child counts — one grouped IN-query keyed on this page's ids.
+        # 2) Direct-child counts - one grouped IN-query keyed on this page's ids.
         counts = (
             self.db.query(Product.variant_of_id, func.count(Product.id))
             .filter(Product.variant_of_id.in_(page_ids))
@@ -1151,11 +1151,11 @@ class ProductService:
                 triggered_by=updated_by,
             )
             # Re-derive the variant link only when the code (the derivation input)
-            # actually changed — avoids churn on price/description-only edits.
+            # actually changed - avoids churn on price/description-only edits.
             if "product_code" in update_data:
                 # Capture existing children BEFORE re-deriving: a rename can break
                 # the old-code prefix match, so each former child must re-derive to
-                # its next ancestor (else it stays mis-linked to us — the FK is
+                # its next ancestor (else it stays mis-linked to us - the FK is
                 # unchanged by a rename). Mirrors delete_product's re-anchor.
                 ex_children = self._variant_child_ids(product.id)
                 self._reconcile_variant_links(product.id)
@@ -1177,7 +1177,7 @@ class ProductService:
         return {"message": "Product deleted successfully"}
 
     def _reconcile_variant_links(self, code_or_id: str) -> None:
-        """Best-effort post-commit variant-graph reconcile. Never raises — a
+        """Best-effort post-commit variant-graph reconcile. Never raises - a
         side effect running AFTER the row committed must not 500 a succeeded op
         (post-commit side-effect rule, CLAUDE.md)."""
         try:
@@ -2599,11 +2599,11 @@ class ProductAttachmentService:
     def _resolve_product_identifiers(self, product_identifier: Optional[str]) -> Optional[list[str]]:
         """Resolve a product UUID or product_code to one or more product UUIDs.
 
-        - UUID input -> [uuid].
-        - Non-UUID input -> case-insensitive substring (ilike) match across product_code,
+      - UUID input -> [uuid].
+      - Non-UUID input -> case-insensitive substring (ilike) match across product_code,
           so callers passing a partial/base code (e.g. ``SRTMCB6084-WH``) also find
           variants (``SRTMCB6084-WH-DF`` etc.).
-        - Returns ``None`` when input is empty; ``[]`` when no product matches.
+      - Returns ``None`` when input is empty; ``[]`` when no product matches.
         """
         if not product_identifier:
             return None
@@ -2674,7 +2674,7 @@ class ProductAttachmentService:
             joinedload(ProductAttachment.product),
             joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
         ).filter(
-            # Exclude trashed (soft-deleted) attachments — mirrors
+            # Exclude trashed (soft-deleted) attachments - mirrors
             # get_product_attachments_by_product. Without this, "Move to Trash"d
             # files keep showing in product-attachment listings.
             ProductAttachment.attachment.has(Attachment.is_deleted == False),
@@ -2810,7 +2810,7 @@ class ProductAttachmentService:
         )
         # Entity-axis relaxation (§3.4 M5): the product resolved but has no
         # (matching-type) attachment. Offer data-bearing variant/neighbour
-        # products that DO have such an attachment. Only on the empty path — a
+        # products that DO have such an attachment. Only on the empty path - a
         # non-empty result stays byte-identical (AC-R1).
         if total == 0:
             # Best-effort: a suggestion probe must never turn an empty attachment
@@ -2872,7 +2872,7 @@ class ProductAttachmentService:
         Only fires when exactly ONE input product resolved. The has-data gate =
         the candidate product has at least one non-trashed product-attachment,
         narrowed to ``attachment_type_ids`` when the caller asked for a specific
-        document class (e.g. a certificate). Reuses the shared neighbour helper —
+        document class (e.g. a certificate). Reuses the shared neighbour helper - 
         no bespoke neighbour ranking here.
         """
         ids = list(product_ids or [])
@@ -2919,6 +2919,87 @@ class ProductAttachmentService:
         self._stamp_certificate_validity([product_attachment])
         return product_attachment
     
+    def _certificate_of_attachment(self, attachment_id):
+        """``(certificate, is_current_revision)`` for a file that is a filed revision."""
+        if not attachment_id:
+            return None, False
+        from app.services.certificate_service import CertificateService
+
+        return CertificateService(self.db).find_by_revision_attachment(str(attachment_id))
+
+    def _certificate_link_target(self, attachment_id, data):
+        """Link through COVERAGE when the file is a filed certificate revision.
+
+        ``product_attachments`` rows for such a file are a projection of
+        ``certificate_products`` x the current revision, and
+        ``reconcile_certificate`` hard-deletes every row the coverage does not
+        name. A row written straight into the table therefore survives only
+        until the next external re-submit or coverage edit - the manual link
+        vanished with no trace. Authoring coverage instead makes it durable.
+
+        Returns the resulting projection row, or ``None`` for an ordinary file,
+        which leaves the plain path below completely untouched.
+        """
+        from sqlalchemy.orm import joinedload
+
+        certificate, is_current = self._certificate_of_attachment(attachment_id)
+        if certificate is None:
+            return None
+        if not is_current:
+            # A superseded revision serves nothing by design (REV-3): the stale
+            # sweep removes its rows whatever the coverage says, so accepting the
+            # link would only promise something the next reconcile breaks.
+            raise AppException(
+                status_code=400,
+                message=(
+                    "This file is a superseded revision of certificate "
+                    f"{certificate.scheme} {certificate.certificate_number}. "
+                    "Link the current revision instead."
+                ),
+                code="certificate_revision_superseded",
+            )
+
+        from app.services.certificate_service import (
+            CERTIFICATE_SOURCE_MANUAL,
+            CertificateService,
+        )
+
+        CertificateService(self.db).add_coverage(
+            str(certificate.id),
+            [str(data.product_id)],
+            source=CERTIFICATE_SOURCE_MANUAL,
+            created_by=getattr(data, "created_by", None),
+        )
+        row = (
+            self.db.query(ProductAttachment)
+            .filter(
+                ProductAttachment.product_id == data.product_id,
+                ProductAttachment.attachment_id == data.attachment_id,
+            )
+            .first()
+        )
+        if row is None:
+            raise AppException(
+                status_code=500,
+                message="Certificate coverage was recorded but its product link is missing.",
+                code="certificate_projection_missing",
+            )
+        # Coverage decides that the row EXISTS; the caller still owns the
+        # presentation fields the projection does not manage.
+        if data.sort_order is not None:
+            row.sort_order = data.sort_order
+        self._apply_brochure_choice(row, data.model_dump(exclude_unset=True).get("is_primary"))
+        self.db.commit()
+        return (
+            self.db.query(ProductAttachment)
+            .options(
+                joinedload(ProductAttachment.product),
+                joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type),
+            )
+            .filter(ProductAttachment.id == row.id)
+            .first()
+        )
+
     def create_product_attachment(self, product_attachment_data: ProductAttachmentCreate, created_by: Optional[str] = None):
         """Create or refresh a product attachment relationship.
 
@@ -2930,6 +3011,12 @@ class ProductAttachmentService:
         echo it back to the caller.
         """
         from sqlalchemy.orm import joinedload
+
+        cert_row = self._certificate_link_target(
+            product_attachment_data.attachment_id, product_attachment_data
+        )
+        if cert_row is not None:
+            return cert_row
 
         existing = self.db.query(ProductAttachment).filter(
             ProductAttachment.product_id == product_attachment_data.product_id,
@@ -3045,8 +3132,23 @@ class ProductAttachmentService:
         ).filter(ProductAttachment.id == product_attachment.id).first()
     
     def delete_product_attachment(self, product_attachment_id: str):
-        """Delete a product attachment relationship."""
+        """Delete a product attachment relationship.
+
+        For a cert-bearing file the row is a PROJECTION, so deleting it alone
+        leaves the coverage that produced it - and the next ``reconcile`` puts
+        the row straight back. Uncover instead and let the projection follow.
+        """
         product_attachment = self.get_product_attachment(product_attachment_id)
+        attachment_id = str(product_attachment.attachment_id)
+        product_id = str(product_attachment.product_id)
+        certificate, _is_current = self._certificate_of_attachment(attachment_id)
+        if certificate is not None:
+            from app.services.certificate_service import CertificateService
+
+            CertificateService(self.db).remove_coverage(
+                str(certificate.id), [product_id]
+            )
+            return {"message": "Product attachment deleted successfully"}
         self.db.delete(product_attachment)
         self.db.commit()
         return {"message": "Product attachment deleted successfully"}

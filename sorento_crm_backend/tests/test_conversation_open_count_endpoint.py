@@ -5,10 +5,10 @@ UAC: documentation/plans/sla/conversation-intervention-tickets-acceptance-criter
 
 n8n gates the customer-facing "conversation closed and resolved" WhatsApp message
 on this count. Two failure modes are unacceptable there and both are pinned below:
-  - a 404-as-data (the sibling GET-by-contact 404s on an unknown contact / no
+ - a 404-as-data (the sibling GET-by-contact 404s on an unknown contact / no
     tracking), which n8n would have to interpret, and which reads identically to
     a routing typo;
-  - a sort-order-dependent read (the sibling returns the "preferred" single row),
+ - a sort-order-dependent read (the sibling returns the "preferred" single row),
     which cannot answer "are ANY still open" for a contact holding several.
 Either one tells a contact their still-open enquiry is resolved.
 

@@ -1,8 +1,8 @@
-"""SCM M0 CP2 — position/consumption views + module registration (numbering, RBAC, catalog).
+"""SCM M0 CP2 - position/consumption views + module registration (numbering, RBAC, catalog).
 
 Builds on 273 (the scm schema + brain/public tables). Adds:
 - 5 read-model views in the `scm` schema (decoupled: read only canonical public
-  tables + the scm SO/PO tables — never inbound_shipments/spo_allocations/picking
+  tables + the scm SO/PO tables - never inbound_shipments/spo_allocations/picking
   for on_order). Consumption reads DO `order_lines` because `stock_ledger` is
   snapshot/bulk-import only and carries no per-DO sales rows.
 - Numbering rules for `sales_order` / `purchase_order` (SO-YYYY/MM-#### monthly).

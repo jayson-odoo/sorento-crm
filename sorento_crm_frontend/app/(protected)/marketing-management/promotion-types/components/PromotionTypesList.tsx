@@ -26,7 +26,7 @@ import PromotionTypeFormModal from './PromotionTypeFormModal';
 import { useDeletePromotionType, usePromotionTypes } from '../hooks/usePromotionTypes';
 import type { PromotionType } from '../types/promotionType.types';
 
-/** "PP Promo · until end of year" — the rule in the words an admin set it in. */
+/** "PP Promo · until end of year" - the rule in the words an admin set it in. */
 function expiryRuleLabel(row: PromotionType): string {
   if (!row.show_expired) return 'Not served once expired';
   const bounds: string[] = [];

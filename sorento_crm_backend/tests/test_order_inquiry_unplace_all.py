@@ -240,14 +240,14 @@ def _restore(originals) -> None:
 def _seed_world(db, company_id: str, user_id: str) -> dict:
     """Two projects, three placeable rows and one raised control.
 
-    - `row1` and `row2` are BOTH product A, but on two DIFFERENT project sales orders
+  - `row1` and `row2` are BOTH product A, but on two DIFFERENT project sales orders
       (different `autocount_doc_no`) so their audit-claim identity (so_number, po_number,
       item_code) never collides - two rows sharing exactly that triple is an existing
       edge this fixture deliberately avoids poking, not something this file tests.
-    - `row1`/`row2` are project1 + supplier X; `row3` is project2 + supplier B, a
+  - `row1`/`row2` are project1 + supplier X; `row3` is project2 + supplier B, a
       different product, a different delivery month and a different raised day - one
       lever per filter.
-    - `row4` stays RAISED (never placed): the control that proves preview/POST only ever
+  - `row4` stays RAISED (never placed): the control that proves preview/POST only ever
       touch placed rows.
     """
     from app.services.project_service import register_project

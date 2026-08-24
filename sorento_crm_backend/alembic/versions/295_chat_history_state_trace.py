@@ -7,16 +7,16 @@ carrying the per-turn conversation-state transition (v1):
 
 `after: null` is meaningful and expected on real traffic (no-access refusals,
 voice-not-allowed, LLM-fallback branches never write state). It is NOT an error, NOT
-`{}`, and NOT absent — so the column is opaque jsonb and nothing on the path coerces it.
+`{}`, and NOT absent - so the column is opaque jsonb and nothing on the path coerces it.
 
 The column is nullable with no server_default, so Postgres records the change in catalog
-only — no table rewrite, no long ACCESS EXCLUSIVE, safe against live without a window.
+only - no table rewrite, no long ACCESS EXCLUSIVE, safe against live without a window.
 No index in v1: the access pattern (trace for this turn / this contact, recently) is
 already served by the existing partial btree indexes; a whole-document GIN would be paid
 on every insert to accelerate a flag-search nobody has run yet.
 
 `public.v_turn_state_transition` turns the raw 3 KB jsonb into the answer to "which turn
-silently dropped that entity, and what fired?" — entities lost/gained as set arithmetic,
+silently dropped that entity, and what fired?" - entities lost/gained as set arithmetic,
 the decision flags that fired, and whether post-processing overruled the LLM.
 
 Naming deviation flagged for review: `v_` prefix + `public` schema, per the brief. The
@@ -25,7 +25,7 @@ this reads a `public` table and there is no dedicated schema for it.
 
 CAVEAT for whoever adds the sixth computed column: `CREATE OR REPLACE VIEW` cannot change
 the output column list or types, only the body. Any change to the view's columns needs an
-explicit `DROP VIEW` first — a bare re-run of this migration will fail otherwise.
+explicit `DROP VIEW` first - a bare re-run of this migration will fail otherwise.
 
 Revision ID: 295_chat_history_state_trace
 Revises: 294_chat_latency_percentile

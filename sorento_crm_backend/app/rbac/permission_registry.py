@@ -122,7 +122,7 @@ PERMISSION_REGISTRY.append({
     "name": "Close Complaints",
     "description": "Permission to close an approved complaint that can't be resolved (status='closed'; closes the customer-service SLA stage). Separate from CS-processed so it can be granted/hidden independently.",
 })
-# Form void (per-form slug; mirrors the .process/.close precedent — a dedicated,
+# Form void (per-form slug; mirrors the .process/.close precedent - a dedicated,
 # irreversible terminal "void with reason" action, granted/hidden independently).
 PERMISSION_REGISTRY.append({
     "slug": "complaint_management.complaints.void",
@@ -336,7 +336,7 @@ PERMISSION_REGISTRY.extend([
     {"slug": "system.email_outbox.view", "name": "View Email Outbox", "description": "View pending and historical outbox rows for the email guardrail."},
     {"slug": "system.email_outbox.manage", "name": "Manage Email Outbox", "description": "Retry, cancel, and otherwise manage outbox rows."},
     {"slug": "system.respond_outbox.view", "name": "View Respond Outbox", "description": "View outgoing Respond.io / WhatsApp messages and templates (read-only over integration logs)."},
-    # Chat history holds raw customer message content — PII. Gated separately from the
+    # Chat history holds raw customer message content - PII. Gated separately from the
     # outbox view, and export is its own slug because a CSV leaves the system entirely.
     {"slug": "system.chat_history.view", "name": "View Chat History", "description": "View stored WhatsApp/chat messages and round-trip latency. Message content is customer PII."},
     {"slug": "system.chat_history.export", "name": "Export Chat History", "description": "Export chat messages to CSV via My Downloads."},
@@ -399,7 +399,7 @@ PERMISSION_REGISTRY.append({
 
 
 
-# Tickets — Jira-style internal ticketing.
+# Tickets - Jira-style internal ticketing.
 # Activities/notes for a ticket reuse `tickets.tickets.view` (anyone who can see
 # the ticket can read/post activities). `view_all` unlocks the full pool;
 # `assign` gates the assignee picker; `export` gates list-query CSV export.
@@ -436,7 +436,7 @@ PERMISSION_REGISTRY.append({
 })
 
 
-# Email Templates — designable HTML emails with Jinja2 placeholders.
+# Email Templates - designable HTML emails with Jinja2 placeholders.
 PERMISSION_REGISTRY.extend(_crud("email_templates", "templates", "Email Templates"))
 PERMISSION_REGISTRY.append({
     "slug": "email_templates.templates.preview",
@@ -445,7 +445,7 @@ PERMISSION_REGISTRY.append({
 })
 
 
-# Automation — rule-driven scheduled email sends.
+# Automation - rule-driven scheduled email sends.
 PERMISSION_REGISTRY.extend(_crud("automation", "automations", "Automations"))
 PERMISSION_REGISTRY.append({
     "slug": "automation.automations.run",
@@ -454,7 +454,7 @@ PERMISSION_REGISTRY.append({
 })
 
 
-# Status engine (ADR-0001) — CORE plumbing that other modules ride. Configuring a
+# Status engine (ADR-0001) - CORE plumbing that other modules ride. Configuring a
 # state machine changes what every record of that entity can legally do, so edit is
 # a deliberately separate grant from view.
 PERMISSION_REGISTRY.extend([
@@ -552,7 +552,57 @@ PERMISSION_REGISTRY.extend([
 ])
 
 
-# SCM (supply chain) — these five were previously created ONLY by migration 274's data
+# Ideation (Ideas board embed, shared-service SSO)
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "ideation.board.view",
+        "name": "View the Ideas board",
+        "description": "View the Ideas board and open individual ideas.",
+    },
+])
+
+
+# Dealer Kit - these six were previously created ONLY by migration 309's data seed.
+# Any database built via create_all + sync_permissions (CI, `scripts/bootstrap_env`)
+# never executes that seed, so the slugs did not exist and every Dealer Kit route
+# answered 403. Declaring them here is what makes them real on a fresh database;
+# migration 309 stays as the path for databases that were already migrated.
+# `sync_permissions` skips slugs that exist, so the two paths cannot conflict.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "dealer_kit.page.view",
+        "name": "View catalogue pages",
+        "description": "View Dealer Kit catalogue pages and their versions.",
+    },
+    {
+        "slug": "dealer_kit.page.edit",
+        "name": "Edit catalogue pages",
+        "description": "Create and edit catalogue pages, and move the staging label.",
+    },
+    {
+        "slug": "dealer_kit.page.publish",
+        "name": "Publish catalogue pages",
+        "description": "Move the published label, including rolling back to an earlier version.",
+    },
+    {
+        "slug": "dealer_kit.library.manage",
+        "name": "Manage Dealer Kit library",
+        "description": "Manage assets, tile templates and reusable collections.",
+    },
+    {
+        "slug": "dealer_kit.brochure.create",
+        "name": "Create brochures",
+        "description": "Produce a brochure from an existing published page.",
+    },
+    {
+        "slug": "dealer_kit.edition.approve",
+        "name": "Approve catalogue editions",
+        "description": "Approve or reject a catalogue edition before it goes live.",
+    },
+])
+
+
+# SCM (supply chain) - these five were previously created ONLY by migration 274's data
 # seed. Any database built the way CI and `scripts/bootstrap_env` build one (create_all
 # from the ORM, seed reference data, stamp alembic at head) never executes that seed, so
 # the slugs did not exist and every SCM route answered 403 "Permission required:

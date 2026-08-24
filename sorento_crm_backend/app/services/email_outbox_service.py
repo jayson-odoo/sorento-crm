@@ -7,7 +7,7 @@ private to the drainer worker.
 Coalesce semantics: when a row with the same `coalesce_key` is already pending and its
 `scheduled_for` is in the future, merge the new payload into that row (append attachment_ids,
 rebuild body) instead of creating a second outbox row. Guarantees one outbox row = one outgoing
-email — never coalesces after-the-fact at drain time, preserving traceability.
+email - never coalesces after-the-fact at drain time, preserving traceability.
 """
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ def enqueue(
     """Write a row to email_outbox. Returns row id. Drainer dispatches asynchronously.
 
     Disabled events still create a row (so operators can see what would have been sent and
-    what got cancelled at drain time) — the drainer marks it `cancelled` with reason
+    what got cancelled at drain time) - the drainer marks it `cancelled` with reason
     `event_disabled` rather than skipping silently.
     """
     cfg, evt_def = _resolve_event_config(db, event_key)

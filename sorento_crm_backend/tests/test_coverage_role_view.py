@@ -1,4 +1,4 @@
-"""Unit tests for coverage_role_view — the shared role-explicit projection + summary.
+"""Unit tests for coverage_role_view - the shared role-explicit projection + summary.
 
 The summary must bind each name to its role with hardcoded verbs so any reader
 (LLM page snapshot, screen reader) can't swap "covers for" with "assigned by".
@@ -44,7 +44,7 @@ def test_self_subscribed_no_expiry_notify_only():
 
 
 def test_summary_orders_coverer_before_covered():
-    """Coverer must precede 'covers for', covered must follow it — the bug was the
+    """Coverer must precede 'covers for', covered must follow it - the bug was the
     reader treating the assigner as the covered person."""
     v = coverage_role_view(
         coverer_name="A",

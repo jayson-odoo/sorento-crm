@@ -21,5 +21,5 @@ label and was reused as-is; the other four were created during setup.
 
 The stock labels `bug`, `documentation`, `enhancement`, `duplicate`,
 `good first issue`, `help wanted`, `invalid` and `question` also exist. They are
-orthogonal to triage state — an issue can carry both `bug` and `needs-triage`.
+orthogonal to triage state - an issue can carry both `bug` and `needs-triage`.
 The five above are the ones the state machine owns; leave the rest to humans.

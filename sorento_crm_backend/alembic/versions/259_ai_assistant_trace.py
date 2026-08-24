@@ -91,7 +91,7 @@ def upgrade() -> None:
         op.create_index("ix_ai_assistant_spans_trace_dotted", "ai_assistant_spans", ["trace_id", "dotted_order"])
 
     # ai_assistant_messages.trace_id FK (SET NULL). FK added separately so the
-    # column exists before the traces table on fresh installs is irrelevant —
+    # column exists before the traces table on fresh installs is irrelevant - 
     # traces table is created above first.
     msg_cols = {c["name"] for c in insp.get_columns("ai_assistant_messages")}
     if "trace_id" not in msg_cols:
@@ -116,7 +116,7 @@ def upgrade() -> None:
         op.add_column("system_settings", sa.Column("ai_trace_error_ttl_days", sa.Integer(), nullable=False, server_default="90"))
     if "ai_trace_max_payload_bytes" not in ss_cols:
         op.add_column("system_settings", sa.Column("ai_trace_max_payload_bytes", sa.Integer(), nullable=False, server_default="16384"))
-    # M2.5 role-split toggle (default off — behavioral change, opt-in).
+    # M2.5 role-split toggle (default off - behavioral change, opt-in).
     if "ai_assistant_role_split_enabled" not in ss_cols:
         op.add_column("system_settings", sa.Column("ai_assistant_role_split_enabled", sa.Boolean(), nullable=False, server_default="false"))
 

@@ -1,31 +1,31 @@
-"""Slice C — ``ideate`` brain-path turn endpoint + service + confirmation gate.
+"""Slice C - ``ideate`` brain-path turn endpoint + service + confirmation gate.
 
 Keys back to ``documentation/plans/ideation/ideation-ideate-intent-acceptance-criteria.md``:
 
-- **AC-10 [BE]** — the service returns ``{ status, reply_text, link?, session_vars }``
+- **AC-10 [BE]** - the service returns ``{ status, reply_text, link?, session_vars }``
   (full updated blob) from one ``create_idea`` call.
-- **AC-11 / AC-11b [BE][T]** — the §5.1 input is built deterministically
+- **AC-11 / AC-11b [BE][T]** - the §5.1 input is built deterministically
   (``product_id`` from the workspace binding, ``submitter`` = contact phone E.164)
   and carries the brain-extracted ``{ fields, remove, confirm }`` (D-CONFIRM).
-- **AC-12 [BE][T]** — first turn omits ``draft_id`` and persists
+- **AC-12 [BE][T]** - first turn omits ``draft_id`` and persists
   ``session_vars.ideation = { draft_id, status, missing, updated_at }``.
-- **AC-12b [BE][T]** — ``review`` KEEPS the pointer (never cleared before confirm),
+- **AC-12b [BE][T]** - ``review`` KEEPS the pointer (never cleared before confirm),
   even for a one-shot-complete turn that routes through ``review``.
-- **AC-13 [BE][T]** — a continuation passes ``draft_id`` through (idempotent enrich).
-- **AC-13b [BE][T]** — a revise loop survives ≥3 turns keeping ``review``.
-- **AC-13c / AC-14 [BE][T]** — explicit confirm → ``complete`` + ``link``, and ONLY
+- **AC-13 [BE][T]** - a continuation passes ``draft_id`` through (idempotent enrich).
+- **AC-13b [BE][T]** - a revise loop survives ≥3 turns keeping ``review``.
+- **AC-13c / AC-14 [BE][T]** - explicit confirm → ``complete`` + ``link``, and ONLY
   then is ``session_vars.ideation`` cleared.
-- **AC-15 [BE][T]** — ``duplicate`` clears the pointer and relays the tool's copy.
-- **AC-16 [BE][T]** — read-modify-write preserves every other CRM session_vars key.
-- **AC-17 [BE][T]** — resume-by-``draft_id`` after an interrupt (open draft intact).
-- **AC-19 [BE]** — a shared-service outage returns a graceful reply, never a 500,
+- **AC-15 [BE][T]** - ``duplicate`` clears the pointer and relays the tool's copy.
+- **AC-16 [BE][T]** - read-modify-write preserves every other CRM session_vars key.
+- **AC-17 [BE][T]** - resume-by-``draft_id`` after an interrupt (open draft intact).
+- **AC-19 [BE]** - a shared-service outage returns a graceful reply, never a 500,
   and never mutates session_vars.
-- **AC-31 [BE][T]** — no ``ideation_product_id`` → fail-closed, no ``create_idea`` call.
-- **AC-20 [BE]** — the endpoint writes an ``integration_log`` on success AND failure.
+- **AC-31 [BE][T]** - no ``ideation_product_id`` → fail-closed, no ``create_idea`` call.
+- **AC-20 [BE]** - the endpoint writes an ``integration_log`` on success AND failure.
 
 The brain extractor's LLM output is STUBBED; the httpx ``create_idea`` call is
 STUBBED (monkeypatched wrapper). No live LLM, no live shared-service, no real DB
-for the service tests — session_vars I/O is faked so the merge logic is asserted
+for the service tests - session_vars I/O is faked so the merge logic is asserted
 byte-for-byte. AC-11b's live-LLM extraction quality is DEFERRED to the opt-in
 harness (the deterministic ``confirm``-guard is tested here).
 """
@@ -56,12 +56,12 @@ def wired(monkeypatch):
     """Wire every DB/LLM/HTTP seam of the turn service to in-memory fakes.
 
     Returns a small harness object exposing:
-      - ``store``: the current session_vars blob (mutated on overwrite)
-      - ``payloads``: every create_idea payload the service built
-      - ``set_contact(phone, session_vars)``
-      - ``set_extraction(fields, remove, confirm)``
-      - ``set_create_idea(result_or_exc)``
-      - ``set_product_id(pid)``
+    - ``store``: the current session_vars blob (mutated on overwrite)
+    - ``payloads``: every create_idea payload the service built
+    - ``set_contact(phone, session_vars)``
+    - ``set_extraction(fields, remove, confirm)``
+    - ``set_create_idea(result_or_exc)``
+    - ``set_product_id(pid)``
     """
 
     state = {
@@ -100,7 +100,7 @@ def wired(monkeypatch):
             raise res
         return res
 
-    # overwrite_for_contact(db, *, respond_io_id, state) — capture + persist so
+    # overwrite_for_contact(db, *, respond_io_id, state) - capture + persist so
     # multi-turn chains read the written blob back on the next turn.
     def _overwrite_capture(_db, *, respond_io_id, state):  # noqa: ANN001
         state_copy = dict(state)
@@ -160,7 +160,7 @@ def _turn(**kw):
 
 
 # --------------------------------------------------------------------------- #
-# AC-12 — first turn: no draft_id, persist collecting pointer                  #
+# AC-12 - first turn: no draft_id, persist collecting pointer                  #
 # --------------------------------------------------------------------------- #
 def test_first_turn_collecting_persists_pointer(wired):
     wired.set_session_vars({})
@@ -170,13 +170,13 @@ def test_first_turn_collecting_persists_pointer(wired):
             "status": "collecting",
             "captured": {"what": "PO expiry reminder"},
             "missing": ["module", "who"],
-            "reply_text": "Got it — which module?",
+            "reply_text": "Got it - which module?",
         }
     )
     out = _turn()
 
     assert out["status"] == "collecting"
-    assert out["reply_text"] == "Got it — which module?"
+    assert out["reply_text"] == "Got it - which module?"
     assert "link" not in out
     # AC-12: draft_id omitted on turn 1
     assert "draft_id" not in wired.payloads[0]
@@ -189,7 +189,7 @@ def test_first_turn_collecting_persists_pointer(wired):
 
 
 # --------------------------------------------------------------------------- #
-# AC-11 / AC-11b — deterministic input shape + brain extraction passthrough    #
+# AC-11 / AC-11b - deterministic input shape + brain extraction passthrough    #
 # --------------------------------------------------------------------------- #
 def test_input_shape_and_extraction_passthrough(wired):
     wired.set_session_vars({})
@@ -212,7 +212,7 @@ def test_input_shape_and_extraction_passthrough(wired):
 
 
 # --------------------------------------------------------------------------- #
-# WS-A / AC-CAP-1..3 — submitter name from the CRM contact, n8n fallback       #
+# WS-A / AC-CAP-1..3 - submitter name from the CRM contact, n8n fallback       #
 # --------------------------------------------------------------------------- #
 def test_submitter_name_from_crm_contact(wired):
     """respond_contacts name wins → passed as submitter_name."""
@@ -248,12 +248,12 @@ def test_submitter_name_absent_when_both_blank(wired):
 
 
 # --------------------------------------------------------------------------- #
-# WS-B / AC-CAP-5..7 — raw_transcript accumulates across turns                 #
+# WS-B / AC-CAP-5..7 - raw_transcript accumulates across turns                 #
 # --------------------------------------------------------------------------- #
 def test_raw_transcript_accumulates_over_turns(wired):
     """Each turn appends to the transcript; the payload carries the WHOLE convo,
     not just the finalizing message. The pointer persists the running list."""
-    # Turn 1 — collecting, transcript = [msg1]
+    # Turn 1 - collecting, transcript = [msg1]
     wired.set_session_vars({})
     wired.set_create_idea(
         {"draft_id": "d-7", "status": "collecting", "captured": {}, "missing": ["impact"], "reply_text": "ok"}
@@ -264,7 +264,7 @@ def test_raw_transcript_accumulates_over_turns(wired):
         "I want AI to update contractors on delivery"
     ]
 
-    # Turn 2 — continuation adds a substantive turn.
+    # Turn 2 - continuation adds a substantive turn.
     wired.set_create_idea(
         {"draft_id": "d-7", "status": "review", "captured": {}, "missing": [], "reply_text": "confirm?"}
     )
@@ -273,7 +273,7 @@ def test_raw_transcript_accumulates_over_turns(wired):
         "I want AI to update contractors on delivery\nimpact is high ROI"
     )
 
-    # Turn 3 — the finalizing "confirm" turn: transcript still holds the prior turns.
+    # Turn 3 - the finalizing "confirm" turn: transcript still holds the prior turns.
     wired.set_create_idea(
         {"draft_id": "d-7", "status": "complete", "captured": {}, "missing": [], "reply_text": "done",
          "link": "https://fe-sorento.foundryx.my/ideas/d-7"}
@@ -287,7 +287,7 @@ def test_raw_transcript_accumulates_over_turns(wired):
 
 
 # --------------------------------------------------------------------------- #
-# AC-12b — review KEEPS the pointer (one-shot complete still routes review)    #
+# AC-12b - review KEEPS the pointer (one-shot complete still routes review)    #
 # --------------------------------------------------------------------------- #
 def test_review_keeps_pointer(wired):
     wired.set_session_vars({})
@@ -297,7 +297,7 @@ def test_review_keeps_pointer(wired):
             "status": "review",
             "captured": {"what": "x", "module": "y", "who": "z"},
             "missing": [],
-            "reply_text": "Here's the summary — confirm or revise?",
+            "reply_text": "Here's the summary - confirm or revise?",
         }
     )
     out = _turn()
@@ -310,7 +310,7 @@ def test_review_keeps_pointer(wired):
 
 
 # --------------------------------------------------------------------------- #
-# AC-13 — continuation passes draft_id through (idempotent enrich)             #
+# AC-13 - continuation passes draft_id through (idempotent enrich)             #
 # --------------------------------------------------------------------------- #
 def test_continuation_passes_draft_id(wired):
     wired.set_session_vars(
@@ -325,7 +325,7 @@ def test_continuation_passes_draft_id(wired):
 
 
 # --------------------------------------------------------------------------- #
-# Continuity — caller-supplied session_vars is trusted over the DB copy        #
+# Continuity - caller-supplied session_vars is trusted over the DB copy        #
 # (the accumulation bug: n8n's last-writer PUT nests ideation under            #
 # `variables`, so the endpoint's top-level DB read missed it and minted a new  #
 # draft every turn). The fix: read the pointer from session_vars_in first.     #
@@ -336,7 +336,7 @@ def test_caller_session_vars_continues_draft_when_db_copy_empty(wired):
     wired.set_create_idea(
         {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
     )
-    # n8n hands the prior pointer back on the request — top-level shape.
+    # n8n hands the prior pointer back on the request - top-level shape.
     _turn(
         message_text="department is general",
         session_vars_in={
@@ -365,10 +365,10 @@ def test_caller_session_vars_nested_under_variables(wired):
 
 
 # --------------------------------------------------------------------------- #
-# AC-13b — revise loop survives ≥3 turns keeping review                        #
+# AC-13b - revise loop survives ≥3 turns keeping review                        #
 # --------------------------------------------------------------------------- #
 def test_revise_loop_survives_three_turns(wired):
-    # turn 1 — incomplete → collecting
+    # turn 1 - incomplete → collecting
     wired.set_session_vars({})
     wired.set_extraction(fields={"what": "reminder"})
     wired.set_create_idea(
@@ -377,7 +377,7 @@ def test_revise_loop_survives_three_turns(wired):
     o1 = _turn()
     assert o1["session_vars"]["ideation"]["status"] == "collecting"
 
-    # turn 2 — now complete → review
+    # turn 2 - now complete → review
     wired.set_extraction(fields={"module": "procurement"})
     wired.set_create_idea(
         {"draft_id": "d-9", "status": "review", "captured": {}, "missing": [], "reply_text": "confirm?"}
@@ -385,7 +385,7 @@ def test_revise_loop_survives_three_turns(wired):
     o2 = _turn(message_text="procurement")
     assert o2["session_vars"]["ideation"]["status"] == "review"
 
-    # turn 3 — revise → stays review
+    # turn 3 - revise → stays review
     wired.set_extraction(fields={"module": "inventory"})
     wired.set_create_idea(
         {"draft_id": "d-9", "status": "review", "captured": {}, "missing": [], "reply_text": "confirm?"}
@@ -398,7 +398,7 @@ def test_revise_loop_survives_three_turns(wired):
 
 
 # --------------------------------------------------------------------------- #
-# AC-13c / AC-14 — explicit confirm → complete + link, THEN clear             #
+# AC-13c / AC-14 - explicit confirm → complete + link, THEN clear             #
 # --------------------------------------------------------------------------- #
 def test_confirm_completes_and_clears(wired):
     wired.set_session_vars(
@@ -425,7 +425,7 @@ def test_confirm_completes_and_clears(wired):
 
 
 # --------------------------------------------------------------------------- #
-# AC-15 — duplicate clears the pointer, relays tool copy                       #
+# AC-15 - duplicate clears the pointer, relays tool copy                       #
 # --------------------------------------------------------------------------- #
 def test_duplicate_clears_pointer(wired):
     wired.set_session_vars(
@@ -437,7 +437,7 @@ def test_duplicate_clears_pointer(wired):
             "status": "duplicate",
             "captured": {},
             "missing": [],
-            "reply_text": "This is similar to an existing idea — I upvoted it for you.",
+            "reply_text": "This is similar to an existing idea - I upvoted it for you.",
             "duplicate_of": "idea-77",
         }
     )
@@ -449,7 +449,7 @@ def test_duplicate_clears_pointer(wired):
 
 
 # --------------------------------------------------------------------------- #
-# AC-16 — read-modify-write preserves other CRM keys                          #
+# AC-16 - read-modify-write preserves other CRM keys                          #
 # --------------------------------------------------------------------------- #
 def test_preserves_other_crm_keys_on_write(wired):
     wired.set_session_vars(
@@ -488,7 +488,7 @@ def test_preserves_other_crm_keys_on_clear(wired):
 
 
 # --------------------------------------------------------------------------- #
-# AC-17 — resume-by-draft_id after an interrupt                                #
+# AC-17 - resume-by-draft_id after an interrupt                                #
 # --------------------------------------------------------------------------- #
 def test_resume_by_draft_id_after_interrupt(wired):
     # A CRM interrupt turn is NOT this endpoint; it left session_vars.ideation intact.
@@ -509,7 +509,7 @@ def test_resume_by_draft_id_after_interrupt(wired):
 
 
 # --------------------------------------------------------------------------- #
-# AC-31 — fail-closed: no product binding → no create_idea call               #
+# AC-31 - fail-closed: no product binding → no create_idea call               #
 # --------------------------------------------------------------------------- #
 def test_no_product_binding_fails_closed(wired):
     wired.set_session_vars({"unrelated": 1})
@@ -532,7 +532,7 @@ def test_no_config_fails_closed(wired, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# AC-19 — shared-service outage → graceful reply, no 500, no mutation          #
+# AC-19 - shared-service outage → graceful reply, no 500, no mutation          #
 # --------------------------------------------------------------------------- #
 def test_outage_returns_graceful_reply(wired):
     wired.set_session_vars(
@@ -560,7 +560,7 @@ def test_call_create_idea_wraps_httpx_error(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# AC-20 — endpoint writes an integration_log on success AND failure           #
+# AC-20 - endpoint writes an integration_log on success AND failure           #
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def api_client(monkeypatch):
@@ -624,7 +624,7 @@ def test_endpoint_logs_on_failure(api_client):
 
 
 # --------------------------------------------------------------------------- #
-# Group F — multi-modal capture (DC-1..DC-10)                                  #
+# Group F - multi-modal capture (DC-1..DC-10)                                  #
 # --------------------------------------------------------------------------- #
 from app.services.ideation_media_service import MediaClients  # noqa: E402
 from tests._external_auth import external_permissions_granted
@@ -669,7 +669,7 @@ def test_first_turn_lookback_offers_menu_and_sets_pending(wired):
     assert "mockup.jpg" in out["reply_text"]
     pending = out["session_vars"]["ideation"]["pending_media"]
     assert [p["source_msg_id"] for p in pending] == ["m1", "m2"]
-    # no attachments sent yet — the user hasn't picked
+    # no attachments sent yet - the user hasn't picked
     assert "attachments" not in wired.payloads[-1]
 
 
@@ -748,7 +748,7 @@ def test_is_new_idea_discards_old_and_starts_fresh(wired):
     )
     wired.set_create_idea({"draft_id": "new", "status": "collecting", "missing": ["impact"], "reply_text": "new idea noted"})
     out = _turn(
-        message_text="actually forget that — different idea about dark mode",
+        message_text="actually forget that - different idea about dark mode",
         is_new_idea=True,
         fetch_recent_messages=lambda: _respond_payload(),
         media_clients=_stub_media_clients(),
@@ -757,7 +757,7 @@ def test_is_new_idea_discards_old_and_starts_fresh(wired):
     assert payload["discard_draft_id"] == "old"
     assert "draft_id" not in payload  # fresh draft
     # transcript reset to just this turn
-    assert out["session_vars"]["ideation"]["transcript"] == ["actually forget that — different idea about dark mode"]
+    assert out["session_vars"]["ideation"]["transcript"] == ["actually forget that - different idea about dark mode"]
     assert out["session_vars"]["ideation"]["draft_id"] == "new"
 
 

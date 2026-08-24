@@ -3,8 +3,8 @@
  *
  * These mirror the Phase-2 backend contract documented at the top of
  * `services/scmPolicyService.ts`. Three policy families feed the reorder engine:
- *   1. reorder_policy       - scoped CRUD, resolved most-specific-active-wins.
- *   2. abc_xyz_policy        - single global classification-threshold row.
+ *   1. reorder_policy     - scoped CRUD, resolved most-specific-active-wins.
+ *   2. abc_xyz_policy      - single global classification-threshold row.
  *   3. supplier_scoring_policy - single global supplier-scoring row.
  * Plus a resolution preview that (Phase 2) calls the SAME resolver the run uses.
  *

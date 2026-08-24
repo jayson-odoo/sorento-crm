@@ -163,8 +163,8 @@ reason raw SQL must be schema-qualified or converted to ORM everywhere:
   autogenerate diff does not read as drift.
 - **Schema names must be module-level constants, not literals**, or the dual-path test in S4
   cannot run in a scratch schema:
-  - `TARGET_SCHEMA = "projects"` at module level (the test rebinds it to `f"{blank}_projects"`).
-  - Source schema resolved at run time from `current_schema()`, NOT hardcoded `public`. In
+ - `TARGET_SCHEMA = "projects"` at module level (the test rebinds it to `f"{blank}_projects"`).
+ - Source schema resolved at run time from `current_schema()`, NOT hardcoded `public`. In
     production `current_schema()` is `public`; in the scratch fixture it is the blank schema.
     Hardcoding `public` would make the S4 test move REAL dev-database tables.
 - `downgrade()` is the exact inverse: rename back to the prefixed name inside `projects`,
@@ -383,14 +383,14 @@ the registry against the JSON file itself, and none constrain the table-name sha
 - `sorento_crm_backend/app/modules/projects/purge.py`: `PURGE_ORDER` is a list of model
   CLASSES, so the order needs no edit at all - the table names move with the models. Two
   changes:
-  - `_count_deleted` (line 167) and `purge` (line 184) key the returned dict on
+ - `_count_deleted` (line 167) and `purge` (line 184) key the returned dict on
     `model.__tablename__`. Switch both to `model.__table__.fullname` so an operator sees
     `projects.parties` and cannot confuse the module's `sales_orders` with core's.
-  - Docstring (lines 1-45): the "35 of the 47 tables carry the `project_` prefix" sentence is
+ - Docstring (lines 1-45): the "35 of the 47 tables carry the `project_` prefix" sentence is
     now wrong twice over (it is 34, and the prefix is gone). Rewrite it to say ownership is
     the `projects` schema, declared by the two model files, and point at ADR-0011. Keep the
     RESTRICT-edge comments verbatim - they are still load-bearing.
-  - Restate explicitly in the docstring that purge never issues `DROP SCHEMA`.
+ - Restate explicitly in the docstring that purge never issues `DROP SCHEMA`.
 - `sorento_crm_frontend/modules/projects/purge_tables.json`: rewrite all 47 entries as
   `projects.<name>`, same order. Keep `moduleKey: "projects"` and the `description` string
   as they are.
@@ -586,7 +586,7 @@ names.
 1. **BOTH directions rename the DERIVED index and constraint names; S1 said rename nothing.**
    S1's "they ride with the table, renaming 200-odd live objects is risk spent on cosmetics"
    was wrong on the facts, in two ways.
-   - **SQLAlchemy's convention name folds the SCHEMA in.** An index with no name of its own
+ - **SQLAlchemy's convention name folds the SCHEMA in.** An index with no name of its own
      is `ix_%(column_0_label)s`, and `column_0_label` for a schema-qualified table is
      `schema_table_column`. So declaring `schema="projects"` renamed
      `ix_project_leads_company_id` to `ix_projects_leads_company_id` IN THE METADATA, and
@@ -596,7 +596,7 @@ names.
      diff on every migrated database, and a CI or disaster-recovery database built by
      `scripts/bootstrap_env.py` disagrees with production - which is precisely the
      fresh-versus-migrated divergence migration 353 existed to remove.
-   - **Postgres-default names diverge the same way.** `project_brands_pkey` on a migrated
+ - **Postgres-default names diverge the same way.** `project_brands_pkey` on a migrated
      database, `brands_pkey` on a bootstrapped one.
    `upgrade()` now renames both families to the form `Base.metadata` produces, and
    `downgrade()` renames both back, each step guarded on "the source is there and the

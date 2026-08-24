@@ -1,5 +1,5 @@
 /**
- * PromotionTypesList — the admin screen behind per-type expiry behaviour.
+ * PromotionTypesList - the admin screen behind per-type expiry behaviour.
  *
  * Covers loading / empty / error / data, the rule wording each row shows, and the
  * delete confirmation copy (which has to name the promotions that lose their type).
@@ -15,7 +15,7 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => ({ get: () => null }),
 }));
 
-// DataGrid persists column prefs via this hook (fires network) — stub it, or the
+// DataGrid persists column prefs via this hook (fires network) - stub it, or the
 // grid renders skeletons forever and no row can be asserted.
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
@@ -134,7 +134,7 @@ describe('PromotionTypesList', () => {
 
     expect(rowOrder()[0]).toContain('Special Promo');
 
-    // Promotions: Special has 3, Standard has 0 — ascending must put Standard first.
+    // Promotions: Special has 3, Standard has 0 - ascending must put Standard first.
     fireEvent.click(screen.getByRole('button', { name: /^Promotions$/i }));
 
     await waitFor(() => expect(rowOrder()[0]).toContain('Standard Promo'));

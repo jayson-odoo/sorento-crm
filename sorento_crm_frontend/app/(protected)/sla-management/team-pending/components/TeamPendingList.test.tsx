@@ -8,7 +8,7 @@ import type { TeamPendingItem } from '@/app/(protected)/sla-management/conversat
 
 vi.mock('next/navigation', () => ({ usePathname: () => '/sla-management/team-pending' }));
 
-// DataGrid persists column prefs via this hook (fires network) — stub it.
+// DataGrid persists column prefs via this hook (fires network) - stub it.
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
@@ -42,7 +42,7 @@ const row: TeamPendingItem = {
   assignee_id: 'u-charissa',
   assignee_name: 'Charissa',
   team_id: 'team-1',
-  team_label: 'Marketing – Product',
+  team_label: 'Marketing - Product',
   source_entity_type: 'complaint',
   source_entity_id: 'cmp-1',
   is_form_sla: true,
@@ -92,7 +92,7 @@ describe('TeamPendingList', () => {
     render(<TeamPendingList />);
     expect(screen.getByText('CMP-0001')).toBeInTheDocument();
     expect(screen.getByText('Charissa')).toBeInTheDocument();
-    expect(screen.getByText('Marketing – Product')).toBeInTheDocument();
+    expect(screen.getByText('Marketing - Product')).toBeInTheDocument();
     expect(screen.queryByText('u-charissa')).not.toBeInTheDocument();
     expect(screen.queryByText('team-1')).not.toBeInTheDocument();
   });

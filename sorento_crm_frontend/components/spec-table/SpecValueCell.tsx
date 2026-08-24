@@ -172,7 +172,7 @@ export function SpecValueCell({
                             <span className="font-medium text-foreground">
                               {readable(match.value)}
                             </span>
-                            {match.viaSynonym ? ' — pick it above' : ''}
+                            {match.viaSynonym ? ' - pick it above' : ''}
                           </span>
                         );
                       }

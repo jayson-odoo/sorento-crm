@@ -44,7 +44,7 @@ class UnlinkedReason(BaseModel):
 
 
 class UploadActivityFile(BaseModel):
-    """One leaf row inside a session — corresponds to one attachment."""
+    """One leaf row inside a session - corresponds to one attachment."""
 
     client_id: str  # echoes attachment_id (no FE-only state here)
     attachment_id: Optional[str] = None
@@ -80,7 +80,7 @@ class UploadActivitySession(BaseModel):
     import_job_id: Optional[str] = None
     needs_action: bool = False
     # ---- import_job sessions only (Excel/data imports, no attachment rows).
-    # Replaces the per-page LatestImportStatusPanel bar — see
+    # Replaces the per-page LatestImportStatusPanel bar - see
     # docs/plans/PLAN-do-macro-upload-and-drawer-import-jobs.md.
     job_type: Optional[str] = None
     total_rows: Optional[int] = None

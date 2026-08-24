@@ -6,8 +6,8 @@
 The whole risk of this feature is in three values that must stay apart:
 
   * a NUMBER (including 0) - a real threshold; the SCM engine plans against it
-  * BLANK   - AutoCount says there is no level; the held one is cleared
-  * ABSENT  - the file does not carry the column; every held level is left alone
+  * BLANK - AutoCount says there is no level; the held one is cleared
+  * ABSENT - the file does not carry the column; every held level is left alone
 
 The frontend parses the sheet with `sheet_to_json`, which omits blank cells, so BLANK and
 ABSENT arrive as the same row dict. The importer therefore decides column presence ONCE

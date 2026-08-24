@@ -197,5 +197,5 @@ There may be `.env.example` files in either project; copy to `.env` and fill in 
 
 ## Further reading
 
-- **Backend:** `sorento_crm_backend/README.md` — API routes, auth, migrations, project layout.
-- **Frontend:** `sorento_crm_frontend/README.md` — Metronic/Next.js layout and tooling.
+- **Backend:** `sorento_crm_backend/README.md` - API routes, auth, migrations, project layout.
+- **Frontend:** `sorento_crm_frontend/README.md` - Metronic/Next.js layout and tooling.

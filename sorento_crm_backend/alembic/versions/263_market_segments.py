@@ -4,9 +4,9 @@ Adds a market-segment catalog + two M2M joins (contact ↔ segment, team_member 
 segment) and a segment_key discriminator on the round-robin cursor so the
 next-assignee rotation can be scoped per contact segment.
 
-- market_segments                  — catalog (seed retail, project)
-- respond_contact_market_segments  — contact ↔ segment
-- team_member_market_segments      — team membership ↔ segment
+- market_segments                - catalog (seed retail, project)
+- respond_contact_market_segments - contact ↔ segment
+- team_member_market_segments    - team membership ↔ segment
 - agent_team_round_robin_cursors.segment_key VARCHAR(120) NOT NULL DEFAULT ''
   ('' = the legacy / no-segment cursor; unique key widened to include it)
 

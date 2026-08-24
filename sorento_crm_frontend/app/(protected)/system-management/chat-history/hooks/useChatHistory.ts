@@ -25,7 +25,7 @@ export function useExportChatHistory() {
     onSuccess: () => {
       // The row lands in My Downloads as 'pending'; that drawer polls itself.
       queryClient.invalidateQueries({ queryKey: ['my-downloads'] });
-      toast.success('Preparing export — it will appear in My Downloads.');
+      toast.success('Preparing export - it will appear in My Downloads.');
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : 'Export failed'),
   });

@@ -5,7 +5,7 @@ All tables live in a dedicated ``scm`` Postgres schema (``__table_args__`` carri
 records (sales_order/purchase_order + product_suppliers/suppliers/picking_lines
 extensions) stay in ``public``.
 
-Cross-schema FKs into ``public`` are NORMAL Postgres foreign keys — public is the
+Cross-schema FKs into ``public`` are NORMAL Postgres foreign keys - public is the
 default search-path schema, so references are unqualified (``ForeignKey("products.id")``).
 scm→scm FKs are schema-qualified (``ForeignKey("scm.reorder_run.id")``).
 
@@ -272,8 +272,8 @@ class ReorderRun(Base, CompanyScopedMixin):
     product_ids = Column(JSONB, nullable=True)
     buy_scope = Column(String(20), nullable=True)  # network | warehouse
     budget_id = Column(UUID(as_uuid=False), ForeignKey("scm.purchasing_budget.id", ondelete="SET NULL"), nullable=True)
-    budget_amount = Column(Numeric(15, 2), nullable=True)  # M4 — chosen budget the "Apply budget" action persists
-    include_market = Column(Boolean, nullable=False, default=False)  # M7 — opt-in market-trend priority factor
+    budget_amount = Column(Numeric(15, 2), nullable=True)  # M4 - chosen budget the "Apply budget" action persists
+    include_market = Column(Boolean, nullable=False, default=False)  # M7 - opt-in market-trend priority factor
     # "Plan until" (captain, 20 Aug): demand needed AFTER this date is excluded from the
     # run's netting; NULL (the default) plans every open SO line regardless of need date,
     # unchanged from before this column existed. Stamped once at creation, like
@@ -285,7 +285,7 @@ class ReorderRun(Base, CompanyScopedMixin):
     finished_at = Column(DateTime(timezone=False), nullable=True)
     error_text = Column(Text, nullable=True)  # set on status='failed'
     run_log = Column(JSONB, nullable=True)  # {stage, buy, disposition, exceptions, total_cash_impact, recommendation_count, duration_ms}
-    overview = Column(Text, nullable=True)  # LLM (M5) — lazy-cached run-level AI overview
+    overview = Column(Text, nullable=True)  # LLM (M5) - lazy-cached run-level AI overview
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
     # Front planning (plan 5.1 / 5.4). `decision_grain` is the ONE grain this run may be
@@ -422,7 +422,7 @@ class PlanRowDecision(Base, CompanyScopedMixin):
     > it"); this is that decision, recorded on the row.
 
     ONE row per recommendation, kept CURRENT rather than append-only like
-    ``RecommendationOverride`` — "record a decision" replaces whatever was there,
+    ``RecommendationOverride`` - "record a decision" replaces whatever was there,
     "clear a decision" deletes the row outright, so `undecided` is the absence of a row
     here exactly as it is the absence of an entry in the FE's own in-memory
     `PlanDecisionMap` (`reorder/lib/planDecisions.ts`) before this landed.
@@ -433,7 +433,7 @@ class PlanRowDecision(Base, CompanyScopedMixin):
     stays read-only) and NEVER by ``decision_grain``: a product-grain run's grouped
     product fans this write out one member recommendation id at a time, the same way
     ``reorder_run_service.set_moq_override`` already fans a MoQ edit out to every
-    member — the write itself does not need to know which grain it landed on.
+    member - the write itself does not need to know which grain it landed on.
     A row written HERE DOES reach a draft PO on a product-grain run too, as of the
     captain's same-day correction (21 Aug): "I need the confirm decision to be in
     reorder planning, not in another page called order summary" - the results grid IS
@@ -465,11 +465,11 @@ class PlanRowDecision(Base, CompanyScopedMixin):
     )
     kind = Column(String(20), nullable=False)  # buy | use_stock | use_po | skip | mixture
     buy_qty = Column(Numeric, nullable=True)
-    #: [{location: warehouse CODE, location_name, qty}] — the bins the buyer named for
+    #: [{location: warehouse CODE, location_name, qty}] - the bins the buyer named for
     #: the stock portion. Never a UUID on the wire (mirrors override_supplier_code).
     stock_takes = Column(JSONB, nullable=True)
     po_qty = Column(Numeric, nullable=True)
-    #: PO numbers the "use PO" portion points at — display-only, no FK (the existing PO
+    #: PO numbers the "use PO" portion points at - display-only, no FK (the existing PO
     #: book is read by number elsewhere; this is the buyer's own note of which one(s)).
     po_refs = Column(JSONB, nullable=True)
     reason_text = Column(Text, nullable=True)
@@ -534,7 +534,7 @@ class CashRankingPolicy(Base):
     weight_abc = Column(Numeric, nullable=True)
     weight_priority = Column(Numeric, nullable=True)
     weight_committed = Column(Numeric, nullable=True)
-    weight_market = Column(Numeric, nullable=True)  # M7 — market-trend priority factor
+    weight_market = Column(Numeric, nullable=True)  # M7 - market-trend priority factor
     is_active = Column(Boolean, default=True, nullable=False)
     note = Column(Text, nullable=True)
     source_system = Column(String, nullable=True)
@@ -950,9 +950,9 @@ class PlanException(Base, CompanyScopedMixin):
     the engine saw:
 
       * `timeline_json` - before and after, side by side (AC-D4).
-      * `reading_json`  - lifecycle, velocity, business class, last purchase date, each with
+      * `reading_json` - lifecycle, velocity, business class, last purchase date, each with
         the field it was read from (AC-D9, AC-D12).
-      * `actions_json`  - the proposed actions and their rank, which IS the reading's verdict
+      * `actions_json` - the proposed actions and their rank, which IS the reading's verdict
         (AC-D10) and so is stored rather than re-derived.
 
     `quantity` is always positive; the TYPE carries the direction. A signed quantity would let

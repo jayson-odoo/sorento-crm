@@ -155,7 +155,7 @@ def _field_label(col: str) -> str:
 
 
 def _fmt_value(v: Any) -> Optional[str]:
-    """Stringify a value for display. ``None`` stays ``None`` (FE renders '—')."""
+    """Stringify a value for display. ``None`` stays ``None`` (FE renders '-')."""
     if v is None:
         return None
     if isinstance(v, bool):
@@ -193,7 +193,7 @@ def _summary(action: str, description: Optional[str], changes: list[dict]) -> Op
     if changes:
         c = changes[0]
         extra = f" (+{len(changes) - 1} more)" if len(changes) > 1 else ""
-        return f"{c['field']}: {c['from'] or '—'} → {c['to'] or '—'}{extra}"
+        return f"{c['field']}: {c['from'] or '-'} → {c['to'] or '-'}{extra}"
     return None
 
 
@@ -222,9 +222,9 @@ def _resolve_labels(
 ) -> dict[tuple[str, str], tuple[str, Optional[str]]]:
     """Batch-resolve (entity_type, entity_id) -> (label, href).
 
-    One query per entity type present in the page — never per row.
+    One query per entity type present in the page - never per row.
     """
-    # Group entity ids by config. entity_id is coerced to str — some legacy rows
+    # Group entity ids by config. entity_id is coerced to str - some legacy rows
     # store it as a UUID object, and live-row label maps are keyed by str(id).
     ids_by_cfg: dict[str, set[str]] = {}
     for r in rows:
@@ -264,7 +264,7 @@ def _resolve_labels(
         eid = str(r.entity_id)
         cfg = _BY_STORED.get(r.entity_type)
         if cfg is None:
-            # Unknown entity type — readable fallback, no href.
+            # Unknown entity type - readable fallback, no href.
             pretty = str(r.entity_type).replace("_", " ").title()
             resolved[(r.entity_type, eid)] = (
                 f"{pretty} {_short_id(eid)}", None
@@ -412,7 +412,7 @@ def get_activity_feed(
         cfg = _BY_STORED.get(r.entity_type)
         if r.action == "IMPORT":
             # Coarse import rows are job-keyed (entity_id = import job id, not a
-            # live entity) — resolving it would render a bogus "(deleted)" label.
+            # live entity) - resolving it would render a bogus "(deleted)" label.
             # Use the human description ("Order tracking import X, N rows") instead.
             pretty = str(r.entity_type).replace("_", " ").title()
             label = r.description or f"{pretty} import"
@@ -429,7 +429,7 @@ def get_activity_feed(
             "actor_id": str(r.user_id) if r.user_id else None,
             "actor_name": actor_names.get(str(r.user_id)) if r.user_id else "System",
             "actor_avatar_url": None,
-            # changed_at is stored naive UTC — emit with a 'Z' so the browser
+            # changed_at is stored naive UTC - emit with a 'Z' so the browser
             # parses it as UTC (else it's read as local time and shows ~8h off in
             # MYT). The FE date helpers render it in Asia/Kuala_Lumpur.
             "changed_at": (

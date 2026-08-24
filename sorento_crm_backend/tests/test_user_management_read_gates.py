@@ -451,7 +451,7 @@ def test_field_access_403_fires_before_any_field_access_row_is_read(api, monkeyp
     swallowed and read as an unrelated 500, not prove the point. Recording,
     then asserting the recording list stayed empty AFTER the response check,
     proves the permission dependency ran (and denied) before the handler body
-    - and therefore before `AccessAgentService.list_field_access` - ever ran.
+  - and therefore before `AccessAgentService.list_field_access` - ever ran.
     """
     client, allow, _caller = api
     calls: list[tuple[str, str | None]] = []

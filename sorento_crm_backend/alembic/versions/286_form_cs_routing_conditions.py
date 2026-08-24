@@ -6,17 +6,17 @@ Revises: 271_audit_action_allow_import
 R2 (documentation/plans/forms/PLAN-form-cs-routing-conditions.md). Additive +
 backward-safe:
 
-1. lookup_bindings.default_value  — generic: a binding may declare a default option
+1. lookup_bindings.default_value - generic: a binding may declare a default option
    the FE pre-selects on new forms.
-2. purchase_requests.sales_type   — new PR field (project / cash_sales), lookup-bound.
+2. purchase_requests.sales_type - new PR field (project / cash_sales), lookup-bound.
 3. lookup set procurement_sales_type + options (+ binding, default_value='project').
-4. respond_contact_cs_routing.match_conditions (JSONB) + priority (INT) — the generic
+4. respond_contact_cs_routing.match_conditions (JSONB) + priority (INT) - the generic
    predicate routing engine. Old unique (contact, use_case) → expression unique
    (contact, use_case, md5(match_conditions::text)) so one pin per distinct
    condition-set. Existing rows default to '[]' (wildcard) = identical behaviour.
 
 NOTE (merge): chained onto the real main tip 274_ideation_workspace_config.
-285_market_signal_sources is NOT a leaf on main — merge migration
+285_market_signal_sources is NOT a leaf on main - merge migration
 9785e8947154 already consumed it into the ideation chain (272 -> 273 -> 274),
 so forking off 285 produced a second alembic head and broke `upgrade head`.
 285 remains an applied ancestor (reached via that merge before 286 runs); our

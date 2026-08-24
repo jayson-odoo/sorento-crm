@@ -77,7 +77,7 @@ export default function RespondOutboxList() {
           return (
             <div className="min-w-0">
               <p className="truncate text-sm font-medium" title={r.contact_name ?? undefined}>
-                {r.contact_name ?? r.contact_phone ?? r.contact_identifier ?? '—'}
+                {r.contact_name ?? r.contact_phone ?? r.contact_identifier ?? '-'}
               </p>
               {r.contact_phone && (
                 <p className="text-xs text-muted-foreground">{r.contact_phone}</p>
@@ -116,14 +116,14 @@ export default function RespondOutboxList() {
                   </span>
                 )}
                 <span className="block truncate text-sm" title={filled ?? undefined}>
-                  {filled ?? (r.template_name ? '' : '—')}
+                  {filled ?? (r.template_name ? '' : '-')}
                 </span>
               </div>
             );
           }
           return (
             <span className="block max-w-[360px] truncate text-sm" title={r.message_text ?? undefined}>
-              {r.message_text ?? '—'}
+              {r.message_text ?? '-'}
             </span>
           );
         },
@@ -136,7 +136,7 @@ export default function RespondOutboxList() {
         cell: ({ row }) =>
           row.original.business_table
             ? BUSINESS_LABELS[row.original.business_table] ?? row.original.business_table
-            : '—',
+            : '-',
         size: 130,
         meta: { headerTitle: 'Linked' },
       },
@@ -273,14 +273,14 @@ export default function RespondOutboxList() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <Field label="Sent at" value={formatDateTimeInMalaysia(detail.created_at)} />
                 <Field label="Status" value={`${detail.status}${detail.status_code ? ` (${detail.status_code})` : ''}`} />
-                <Field label="Contact" value={detail.contact_name ?? detail.contact_phone ?? detail.contact_identifier ?? '—'} />
+                <Field label="Contact" value={detail.contact_name ?? detail.contact_phone ?? detail.contact_identifier ?? '-'} />
                 <Field label="Type" value={detail.sent_as === 'template' ? `Template: ${detail.template_name ?? ''}` : 'Text'} />
-                <Field label="Linked" value={detail.business_table ? `${BUSINESS_LABELS[detail.business_table] ?? detail.business_table} · ${detail.business_id ?? ''}` : '—'} />
+                <Field label="Linked" value={detail.business_table ? `${BUSINESS_LABELS[detail.business_table] ?? detail.business_table} · ${detail.business_id ?? ''}` : '-'} />
               </div>
               <div>
                 <p className="mb-1 text-xs font-medium text-muted-foreground">Message</p>
                 <pre className="whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-xs">
-                  {detail.message_text ?? detail.template_name ?? '—'}
+                  {detail.message_text ?? detail.template_name ?? '-'}
                 </pre>
               </div>
               {detail.button_url && (

@@ -161,7 +161,7 @@ def _real_import_job(db, *, company_id: str) -> SimpleNamespace:
     infra, never auto-filtered/auto-stamped), so it is seeded by raw INSERT
     rather than the ORM. Returns a ``SimpleNamespace`` with the SAME attribute
     shape ``_job()`` returns, so ``publish_import_source`` reads it identically
-    - the difference is that THIS job's ``id`` actually resolves a row in
+  - the difference is that THIS job's ``id`` actually resolves a row in
     ``import_jobs``, so the subquery has something real to read instead of
     always returning NULL.
     """

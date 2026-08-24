@@ -42,7 +42,7 @@ function dateOnlyUTC(value: string | Date | undefined | null): Date | undefined 
   return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
 }
 
-/** Count weekdays (Mon–Fri) strictly between start and end, matching backend logic. */
+/** Count weekdays (Mon - Fri) strictly between start and end, matching backend logic. */
 function businessDaysBetween(start: Date, end: Date): number {
   const s = new Date(start.getFullYear(), start.getMonth(), start.getDate());
   const e = new Date(end.getFullYear(), end.getMonth(), end.getDate());
@@ -219,7 +219,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
         order_number: data.order_number,
         order_date: data.order_date,
         // Send explicit null (not undefined) for cleared dates so the BE actually
-        // clears them — undefined is dropped by JSON.stringify and skipped by the
+        // clears them - undefined is dropped by JSON.stringify and skipped by the
         // backend's exclude_unset, so clearing the field would otherwise be a no-op.
         estimated_delivery_date: data.estimated_delivery_date || null,
         actual_delivery_date: data.actual_delivery_date || null,
@@ -519,7 +519,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                         </FormControl>
                         {remarksCsLocked && (
                           <FormDescription>
-                            Locked — this delivery order is delivered and linked to a complaint.
+                            Locked - this delivery order is delivered and linked to a complaint.
                           </FormDescription>
                         )}
                         <FormMessage />
@@ -678,7 +678,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                           </FormControl>
                           {remarksCsLocked && (
                             <FormDescription>
-                              Locked — this delivery order is delivered and linked to a complaint.
+                              Locked - this delivery order is delivered and linked to a complaint.
                             </FormDescription>
                           )}
                           <FormMessage />

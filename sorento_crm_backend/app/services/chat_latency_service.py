@@ -5,7 +5,7 @@ Measures **user presses send -> our reply is accepted by Respond**, against a p9
 Three deliberate narrowings, each of which is load-bearing:
 
 1. **One clock.** Both ends read `respond_ts`, the authoritative Respond-side timestamp.
-   `sent_at` is whatever n8n supplied and is not trustworthy — on production rows an
+   `sent_at` is whatever n8n supplied and is not trustworthy - on production rows an
    outgoing `sent_at` can precede the incoming message it answers, which would yield
    negative latency. Rows whose `respond_ts` is not yet resolved are omitted, never
    approximated.
@@ -31,7 +31,7 @@ from app.models.chat_history import ChatHistory
 
 # Below this many paired turns, a window-level percentile is noise rather than signal,
 # so fleet-level breach alerting stays quiet. The hard ceiling (`get_stalled_turns`)
-# has no such floor — one catastrophic turn should alert on its own.
+# has no such floor - one catastrophic turn should alert on its own.
 DEFAULT_MIN_SAMPLE = 30
 
 # Delivery states that mean "Respond accepted it", i.e. our part is done.
@@ -104,7 +104,7 @@ def get_turns(db: Session, since: datetime) -> list[Turn]:
             # Earliest incoming anchors the turn; rows arrive ordered by respond_ts.
             incoming.setdefault(key, row)
         else:
-            # First reply only — a multi-part answer is judged on when it *starts*,
+            # First reply only - a multi-part answer is judged on when it *starts*,
             # which is what the user perceives as responsiveness.
             first_reply.setdefault(key, row)
 
@@ -187,7 +187,7 @@ def get_stalled_turns(
 
 
 def compute_latency_stats_from_values(values: list[float]) -> LatencyStats:
-    """Stats from a bare list — the pure core, so percentile behaviour is
+    """Stats from a bare list - the pure core, so percentile behaviour is
     testable without constructing turns in a database."""
     if not values:
         return LatencyStats(count=0, p50=None, p95=None, p99=None, max=None)
@@ -207,7 +207,7 @@ def compute_latency_stats(db: Session, since: datetime) -> LatencyStats:
 
 
 # Percentiles the watchdog can alert on. Restricted to the ones that are
-# meaningful to state as a policy — an arbitrary quantile would also make the
+# meaningful to state as a policy - an arbitrary quantile would also make the
 # alert text ("p87 …") unreadable.
 _ALERT_PERCENTILES = {50: "p50", 95: "p95", 99: "p99"}
 DEFAULT_ALERT_PERCENTILE = 99
@@ -222,7 +222,7 @@ def evaluate_breach(
     """Fleet-level verdict. Quiet on an empty or too-small window.
 
     `percentile` selects which computed percentile is held to `target_seconds`.
-    An unrecognised value falls back to p99 rather than disabling the check — a
+    An unrecognised value falls back to p99 rather than disabling the check - a
     bad settings value must not silently switch alerting off.
     """
     label = _ALERT_PERCENTILES.get(int(percentile or 0), "p99")
@@ -248,7 +248,7 @@ def count_undelivered(
 ) -> int:
     """Outgoing messages Respond accepted but never confirmed delivered.
 
-    Channel health, not performance — reported next to the SLA, never inside it.
+    Channel health, not performance - reported next to the SLA, never inside it.
     """
     cutoff = now - timedelta(seconds=older_than_seconds)
     return (

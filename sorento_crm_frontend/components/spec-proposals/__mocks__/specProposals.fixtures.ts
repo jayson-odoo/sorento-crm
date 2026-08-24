@@ -4,13 +4,13 @@
  *
  * Every case named in the plan is here on purpose:
  *
- *  - a `new` key the product says nothing about
- *  - a `change` over a machine reading, which is ticked by default
- *  - a `conflict` over a value a person set, which is NOT
- *  - a numeric value with a unit and a boolean, so the readable-value path is exercised
- *  - a result with no proposals at all and a non-zero `unchanged` count, which is
+ * - a `new` key the product says nothing about
+ * - a `change` over a machine reading, which is ticked by default
+ * - a `conflict` over a value a person set, which is NOT
+ * - a numeric value with a unit and a boolean, so the readable-value path is exercised
+ * - a result with no proposals at all and a non-zero `unchanged` count, which is
  *    what a flyer restating the description produces and is the common case
- *  - a result read by the rules alone, with no model reachable
+ * - a result read by the rules alone, with no model reachable
  */
 import type { SpecProposal } from '../types';
 

@@ -1,10 +1,10 @@
-# UAC — Per-tier "notify on extension" for SLA deadline extensions
+# UAC - Per-tier "notify on extension" for SLA deadline extensions
 
 **Status:** authoring → build → self-verify (FE+BE) → handoff
 
 ## Problem
 When an SLA deadline is extended, only **tier current+1** (the immediate parent team)
-is notified — the grandparent (e.g. project director, tier 3) never is. The tier chain
+is notified - the grandparent (e.g. project director, tier 3) never is. The tier chain
 is the **agent team config** (`AgentTeam` rows: agent_id, tier 1/2/3, team_set_code,
 team_id), NOT `teams.parent_team_id`.
 
@@ -16,37 +16,37 @@ is notified out of the box; admins untick to silence a tier).
 
 ## Acceptance criteria
 
-**N1 — Column + default.** `agent_teams.notify_on_extension` bool, server_default true.
+**N1 - Column + default.** `agent_teams.notify_on_extension` bool, server_default true.
 Existing rows backfill to true (preserve+extend current notify). *BE migration.*
 
-**N2 — Multi-tier fan-up.** Extending a tier-1 form SLA notifies the tier-2 team's
+**N2 - Multi-tier fan-up.** Extending a tier-1 form SLA notifies the tier-2 team's
 next assignee AND the tier-3 team's next assignee (both flags true). Each is a distinct
 "(deadline extended)" notification. *BE.*
 
-**N3 — Per-tier opt-out.** With tier-3 `notify_on_extension=false`, the same extend
+**N3 - Per-tier opt-out.** With tier-3 `notify_on_extension=false`, the same extend
 notifies tier 2 only, NOT tier 3. *BE.*
 
-**N4 — No mutation.** Notify PEEKS the round-robin cursor (never advances it); tier /
+**N4 - No mutation.** Notify PEEKS the round-robin cursor (never advances it); tier /
 clock / RR state unchanged (same as today). *BE.*
 
-**N5 — Top tier.** Extending at tier 3 notifies nobody above (no tier 4). *BE.*
+**N5 - Top tier.** Extending at tier 3 notifies nobody above (no tier 4). *BE.*
 
-**N6 — Dedup.** If the same user is the next assignee of two notified tiers, they get
+**N6 - Dedup.** If the same user is the next assignee of two notified tiers, they get
 one notification, not two. *BE.*
 
-**N7 — Conversation SLA parity.** Conversation-SLA extend uses the same per-tier flag
+**N7 - Conversation SLA parity.** Conversation-SLA extend uses the same per-tier flag
 loop (not just +1). *BE.*
 
-**N8 — Admin reads the flag.** `GET /access-agents/{id}/teams` returns
+**N8 - Admin reads the flag.** `GET /access-agents/{id}/teams` returns
 `notify_on_extension` per tier-team row. *BE.*
 
-**N9 — Admin sets the flag.** `PUT /access-agents/{id}/teams` persists
+**N9 - Admin sets the flag.** `PUT /access-agents/{id}/teams` persists
 `notify_on_extension` per assignment. *BE.*
 
-**N10 — UI toggle (edit).** The access-agent edit form shows a "Notify on extension"
+**N10 - UI toggle (edit).** The access-agent edit form shows a "Notify on extension"
 switch on each tier-team row; saving persists it. *FE.*
 
-**N11 — UI shows state (detail).** The access-agent detail view shows the
+**N11 - UI shows state (detail).** The access-agent detail view shows the
 notify-on-extension state per tier-team row. *FE.*
 
 ## Files

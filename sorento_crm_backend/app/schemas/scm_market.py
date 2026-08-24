@@ -1,4 +1,4 @@
-"""SCM M5 Part B — market advisory schemas (signals viz + topic CRUD + run log).
+"""SCM M5 Part B - market advisory schemas (signals viz + topic CRUD + run log).
 
 Mirrors the FE contract in ``scm/market/types/market.types.ts``. No UUID surfaces
 in a display field the FE renders: signals carry the topic's human ``topic_label``
@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 class MarketSignal(BaseModel):
     id: str
-    topic_label: str  # resolved from the topic — never a UUID
+    topic_label: str  # resolved from the topic - never a UUID
     category_ref: Optional[str] = None
     currency: Optional[str] = None
     value: Optional[float] = None
@@ -47,7 +47,7 @@ class MarketResearchTopicWrite(BaseModel):
     label: str = Field(..., min_length=1)
     category_ref: Optional[str] = None
     currency: Optional[str] = None
-    # required — the prompt drives the web search; a promptless topic is inert
+    # required - the prompt drives the web search; a promptless topic is inert
     # (matches the FE modal, which requires it).
     search_prompt: str = Field(..., min_length=1)
     cadence: str = "manual"
@@ -109,7 +109,7 @@ class MarketProposalLine(BaseModel):
     sku: Optional[str] = None
     product_name: Optional[str] = None
     old_qty: float
-    new_qty: float  # bounded uplift — a proposal, never written here
+    new_qty: float  # bounded uplift - a proposal, never written here
     unit_cost: Optional[float] = None
     cash_impact_delta: Optional[float] = None  # (new-old) * unit_cost; null if uncosted
     reason: str  # pre-filled from the signal for the override layer

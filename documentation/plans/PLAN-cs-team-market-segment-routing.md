@@ -1,4 +1,4 @@
-# PLAN — CS team market-segment routing (retail / project)
+# PLAN - CS team market-segment routing (retail / project)
 
 **Status:** Phases 1-3 DONE + self-validated. All UAC passed (BE pytest + FE vitest + browser). No regression (existing suites pass unchanged). Ready for manual eyeball. Uncommitted.
 **Slug:** `cs-team-market-segment-routing`
@@ -37,7 +37,7 @@ to either. The endpoint must return only the members matching the contact's segm
    preferred assignee: n8n calls `team-members` (segment-filtered) → picks one → passes
    `preferred_assignee_id` to `next-assignee`, which returns that member directly (RR skipped).
    `next-assignee`'s `contact_id` filter is **strictly opt-in**: when `contact_id` is absent (the
-   normal case, incl. all non-CS agents) `next-assignee` behaves **exactly as today** — pure
+   normal case, incl. all non-CS agents) `next-assignee` behaves **exactly as today** - pure
    round-robin over the full team, **zero regression** (hard requirement + explicit test). It only
    segment-filters the RR pool when a caller explicitly passes `contact_id`.
 6. **Untagged member = serves all** (user grill #2, confirms the default below). Migration-safe:
@@ -47,7 +47,7 @@ to either. The endpoint must return only the members matching the contact's segm
    unchanged. See Cursor section.
 8. **Catalog admin UI in scope** (user grill #3): a Settings screen to manage the `market_segments`
    catalog (add / rename / activate / reorder), plus backend CRUD.
-9. **Contact with no segment = ALL segments** (user grill #3): minimum configuration — an untagged
+9. **Contact with no segment = ALL segments** (user grill #3): minimum configuration - an untagged
    contact matches every member; nothing needs to be set for today's behaviour to hold.
 
 ## Defaulted sub-decisions (documented)
@@ -70,7 +70,7 @@ to either. The endpoint must return only the members matching the contact's segm
 ```
 active = active members of team_id
 if not contact_segments:                      # no contact / untagged contact / param omitted
-    return active                             # unfiltered — today's behaviour
+    return active                             # unfiltered - today's behaviour
 filtered = [m for m in active
             if not m.segments                 # untagged member serves all
             or (m.segments & contact_segments)]  # intersection non-empty
@@ -84,13 +84,13 @@ cursor by the contact's segment** so each segment rotates independently and fair
 
 - Add a nullable `segment_key VARCHAR(120)` column to `agent_team_round_robin_cursors`; extend the
   unique key to `(agent_id, team_id, segment_key)`.
-- **`segment_key = NULL`** is the legacy cursor — used whenever `next-assignee` gets **no `contact_id`**
+- **`segment_key = NULL`** is the legacy cursor - used whenever `next-assignee` gets **no `contact_id`**
   (the normal RR path). This row is byte-identical to today → **zero regression**.
 - When `contact_id` IS passed and the contact has segment(s), `segment_key` = the sorted, `|`-joined
   contact-matched segment codes (e.g. `"retail"`, `"project"`, or `"project|retail"` for a both-contact).
   RR advances within the segment-filtered pool using that keyed cursor.
 - **Contact has NO segment** (untagged) → treated as **all segments** → no filter, and the cursor used
-  is the `NULL` (legacy) cursor — so a fully-unconfigured setup behaves exactly as today. This is the
+  is the `NULL` (legacy) cursor - so a fully-unconfigured setup behaves exactly as today. This is the
   "minimum configuration" guarantee: leave contacts untagged and nothing changes.
 - Empty filtered pool → fall back to the full team (and the `NULL` cursor).
 
@@ -179,16 +179,16 @@ n8n adds `&contact_id={{ ...respond_io_id }}` to its existing call. Omitting it 
 ## Tests (Phase 2, not deferred)
 
 - **pytest** `tests/test_team_member_segment_routing.py` (live PG, seeded prefix):
-  - retail contact → only retail + untagged members; project contact → only project + untagged.
-  - both-contact → union.
-  - contact untagged → all members (no filter).
-  - `contact_id` omitted → all members (byte-identical to today).
-  - unknown/other-workspace `contact_id` → all members (no 404, logged).
-  - **empty match → fall back to all** (retail contact, only project members tagged).
-  - segment filter ANDs correctly with tier resolution (`tier=1` team only).
+ - retail contact → only retail + untagged members; project contact → only project + untagged.
+ - both-contact → union.
+ - contact untagged → all members (no filter).
+ - `contact_id` omitted → all members (byte-identical to today).
+ - unknown/other-workspace `contact_id` → all members (no 404, logged).
+ - **empty match → fall back to all** (retail contact, only project members tagged).
+ - segment filter ANDs correctly with tier resolution (`tier=1` team only).
 - **pytest** `next-assignee` **regression guard (primary):** with NO `contact_id` in the body, the
   full existing round-robin sequence is byte-identical to today (cursor advances over the full team,
-  same order) — for a CS team AND a non-CS team. This is the hard no-regression requirement.
+  same order) - for a CS team AND a non-CS team. This is the hard no-regression requirement.
 - **pytest** `next-assignee` opt-in segment path: WITH `contact_id`, RR pool is segment-filtered
   (untagged member included); `preferred_assignee_id` still returns directly; empty pool → falls
   back to full team; cursor advances within the pool.
@@ -201,20 +201,20 @@ n8n adds `&contact_id={{ ...respond_io_id }}` to its existing call. Omitting it 
 
 ## Resolved & remaining
 
-- **O1 — `next-assignee` alignment.** RESOLVED (decision 5): CS routing runs through `team-members` +
+- **O1 - `next-assignee` alignment.** RESOLVED (decision 5): CS routing runs through `team-members` +
   `preferred_assignee_id`. `next-assignee` segment filtering is opt-in via `contact_id`; absent (the
   normal RR path, all non-CS agents) → **no behaviour change, no regression**. Cursor approach = note
   above, only reached when `contact_id` is explicitly passed.
-- **O2 — Untagged-member semantics.** RESOLVED (decision 6): untagged member = serves all.
-- **O3 — Catalog manageability.** RESOLVED (decision 8): full Settings admin screen + backend CRUD
+- **O2 - Untagged-member semantics.** RESOLVED (decision 6): untagged member = serves all.
+- **O3 - Catalog manageability.** RESOLVED (decision 8): full Settings admin screen + backend CRUD
   in scope (seed retail/project, admin can add/rename/activate/reorder).
-- **O4 — Who owns the contact tag long-term.** Manual now (decision 4). Future: sync from a
-  Respond.io field or derive from the customer record — out of scope, noted for later.
+- **O4 - Who owns the contact tag long-term.** Manual now (decision 4). Future: sync from a
+  Respond.io field or derive from the customer record - out of scope, noted for later.
 
 ## Phasing
 
-1. **Phase 1 — FE prototype** (mocks): Contact Market Segment section + member segment multiselect,
+1. **Phase 1 - FE prototype** (mocks): Contact Market Segment section + member segment multiselect,
    all states, screenshots. No backend.
-2. **Phase 2 — BE + wire + tests:** migration/models/service/endpoint + internal CRUD endpoints,
+2. **Phase 2 - BE + wire + tests:** migration/models/service/endpoint + internal CRUD endpoints,
    FE off mocks, all three test suites green. n8n adds `&contact_id=`.
-3. **Phase 3 — review:** `/code-review`, PR-CHECKLIST, then PR.
+3. **Phase 3 - review:** `/code-review`, PR-CHECKLIST, then PR.

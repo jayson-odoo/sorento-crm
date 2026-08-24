@@ -1,4 +1,4 @@
-# 1.1-Marketing — Upload a promotion
+# 1.1-Marketing - Upload a promotion
 
 Use this flow to upload a promotion file (flyer, brochure, campaign artwork, promotion details). The system stores the file, process it, and creates the promotion record automatically.
 
@@ -10,7 +10,7 @@ Use this flow to upload a promotion file (flyer, brochure, campaign artwork, pro
 3. Click **[Upload](/resource-management/attachment-directories#guide_target=resource-management.files.upload-button)** in the top toolbar.
 4. In the **Create Attachment** dialog, set **Attachment Type** to **Promotion**
 5. Drag the promotion file into the **Files** drop zone, or click **Select Files** to browse.
-6. (Optional) Adjust **[Access Levels](/resource-management/attachment-directories#guide_target=resource-management.files.access-levels)** — these decide who can see the promotion through the portal.
+6. (Optional) Adjust **[Access Levels](/resource-management/attachment-directories#guide_target=resource-management.files.access-levels)** - these decide who can see the promotion through the portal.
 7. Click **[Upload N Attachments](/resource-management/attachment-directories#guide_target=resource-management.files.upload-confirm-button)**.
 
 ## What the system does (auto-link)
@@ -23,7 +23,7 @@ The promotion workflow:
 3. Links it to **Promotion Products** as needed (visible at **[Marketing Management → Promotion Products](/marketing-management/promotion-products)**).
 4. Calls back into the CRM to attach the original file to the Promotion record.
 
-You don't need to create the promotion record by hand — the integration handles it. If anything is missing or wrong (e.g. a product code didn't match), open the promotion and edit it.
+You don't need to create the promotion record by hand - the integration handles it. If anything is missing or wrong (e.g. a product code didn't match), open the promotion and edit it.
 
 ## How you'll be notified
 

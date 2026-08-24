@@ -14,7 +14,7 @@ const DEFAULT_CURRENCY_FORMAT = 'RM {value}';
  * on the screens rendering currency do not hold. The projection is flat, so
  * `currency_format` sits at the top level rather than under `settings`.
  *
- * Cached under its own key with an infinite staleTime — the value changes only
+ * Cached under its own key with an infinite staleTime - the value changes only
  * when an admin saves Settings → General. Falls back to the shipped default
  * while loading or if the endpoint is unreachable.
  */

@@ -4,7 +4,7 @@ Verification aid for UAC OBS-S2-01..S2-11. Answers, against the real DB, the
 question the old implementation could not: for a given lateness, do the health
 card and the alert email agree, and does the alert say something actionable?
 
-Runs inside a transaction that is always rolled back — the DB is untouched.
+Runs inside a transaction that is always rolled back - the DB is untouched.
 
     venv/bin/python scripts/simulate_overdue_states.py [task_key]
 """
@@ -49,10 +49,10 @@ def main() -> int:
         print()
 
         scenarios = [
-            ("healthy — ran just now", timedelta(seconds=1)),
+            ("healthy - ran just now", timedelta(seconds=1)),
             ("late, inside grace", interval + grace * 0.5),
             ("exactly at due + grace (boundary)", interval + grace),
-            ("overdue — past grace", interval + grace + timedelta(seconds=90)),
+            ("overdue - past grace", interval + grace + timedelta(seconds=90)),
             ("badly overdue", interval * 20),
         ]
 
@@ -74,7 +74,7 @@ def main() -> int:
                 f"{'ok' if agree else 'MISMATCH'}"
             )
 
-        # Show the actual email body for the overdue case — the thing that was
+        # Show the actual email body for the overdue case - the thing that was
         # previously just a bare list of task keys.
         task.last_run_at = now - (interval * 20)
         db.flush()

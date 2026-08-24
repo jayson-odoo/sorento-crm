@@ -96,13 +96,13 @@ four worktrees at peak this stops being hygiene and becomes the thing the schedu
   `purchase_order_lines`), `warehouses.counts_as_available` (boolean, NOT NULL, default true).
 - **Two separate warehouse columns, because they answer two different questions.** Collapsing them
   into one flag breaks the pooled-netting case.
-  - `warehouses.counts_as_available` (boolean, NOT NULL, **default true**) - does this location's
+ - `warehouses.counts_as_available` (boolean, NOT NULL, **default true**) - does this location's
     stock count as available at all. **Config, not derived: every location starts sellable** and an
     admin turns one off. No suffix-based seeding, so nothing is silently excluded and no naming
     convention is baked into the engine. Risk direction is stated honestly: an over-stated
     availability figure under-buys, which surfaces as a stockout, and the correction is one edit on
     the warehouse screen.
-  - `warehouses.pool_warehouse_id` (nullable self-FK) - which shared pool this location may draw
+ - `warehouses.pool_warehouse_id` (nullable self-FK) - which shared pool this location may draw
     on. This is the structural half, and it is what makes "use BRW" possible. Seeded from the
     existing naming convention (`BRW-BB` points at `BRW`; a code with no suffix points at itself)
     and admin-editable, so a client whose codes look nothing like Sorento's just repoints the rows

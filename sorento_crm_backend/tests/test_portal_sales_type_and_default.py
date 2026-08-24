@@ -17,7 +17,7 @@ import uuid
 import pytest
 from fastapi import HTTPException
 
-# MUST be first app import — resolves circular-import in app.modules.runtime.guards
+# MUST be first app import - resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: F401,E402
 from app.api.v1.public.portal import lookup_set_options
 from app.models.lookup import LookupBinding, LookupOption, LookupSet

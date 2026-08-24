@@ -2,7 +2,7 @@
 
 Bug (CMP26-0035): scan_overdue_and_escalate ORed the response clock (due_at) with
 no is_responded guard, so a responded-on-time tracker whose response deadline had
-since lapsed kept escalating — even after an extend pushed only due_at_resolution
+since lapsed kept escalating - even after an extend pushed only due_at_resolution
 into the future. Fix: post-response, gate on due_at_resolution only (mirrors the
 conversation-SLA list_due_escalations rule). Manual escalation stays ungated.
 """
@@ -68,7 +68,7 @@ def test_not_responded_resolution_overdue_escalates():
     assert spy.called
 
 
-# UAC-4: gate is type-agnostic — the bug scenario must not escalate for ANY form type.
+# UAC-4: gate is type-agnostic - the bug scenario must not escalate for ANY form type.
 @pytest.mark.parametrize(
     "s_type",
     ["complaint", "purchase_request", "stock_inquiry", "sponsorship_form", "ticket"],
@@ -86,7 +86,7 @@ def test_responded_null_resolution_does_not_escalate_or_crash():
     assert not spy.called
 
 
-# UAC-10: manual escalation stays ungated — a responded, non-breached tracker still
+# UAC-10: manual escalation stays ungated - a responded, non-breached tracker still
 # force-escalates (pre-breach manual escalate is a feature).
 def test_manual_escalate_ungated_for_responded_tracker():
     now = _utc_naive_now()

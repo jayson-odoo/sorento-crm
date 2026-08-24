@@ -1,7 +1,7 @@
-# SCM first production release — deployment plan (demo)
+# SCM first production release - deployment plan (demo)
 
 > Status: DRAFT 2026-07-18. First-time production deployment of the ENTIRE SCM module
-> (M0–M8), branch `feat/scm-reorder-copilot`. Goal: **zero regression, zero visible change
+> (M0 - M8), branch `feat/scm-reorder-copilot`. Goal: **zero regression, zero visible change
 > for existing (non-SCM) users**, + a live-safe demo seed covering buy & allocation.
 
 ## 0. What is actually shipping
@@ -13,21 +13,21 @@ for the first time.
 
 ## 1. Zero-regression analysis (audited 2026-07-18)
 
-### 1a. Migrations — SAFE (additive)
+### 1a. Migrations - SAFE (additive)
 - Every new table is in the **`scm.*` schema** (invisible to existing modules).
 - Additive ALTERs on **6 shared tables**, all nullable or NOT NULL + `server_default` (backfilled):
-  - `273`: `suppliers`, `product_suppliers`, `customers` (`market_segment_code`), `market_segments`
+ - `273`: `suppliers`, `product_suppliers`, `customers` (`market_segment_code`), `market_segments`
     (`demand_nature`), `picking_lines`. `Supplier.is_primary_supplier` NOT NULL **with
     server_default=false** → safe.
-  - `275`: `sales_orders.requested_delivery_date` (nullable date).
-  - `285`: `scm.market_signal.sources` (JSONB, scm schema).
+ - `275`: `sales_orders.requested_delivery_date` (nullable date).
+ - `285`: `scm.market_signal.sources` (JSONB, scm schema).
 - `ADD COLUMN` on nullable / default-false is a fast, brief lock in Postgres. Deploy runs during a
   low-traffic window (blue/green, see §4) so the lock is a non-issue.
 - **No existing column, type, or constraint is changed or dropped.**
 
-### 1b. Backend shared code (13 files) — SAFE (all additive)
+### 1b. Backend shared code (13 files) - SAFE (all additive)
 New router mounted behind `require_module_enabled_with_api_key("scm")`; new models + nullable cols;
-**2 new AI prompt keys** (`scm_recommendation_explainer`, `scm_market_advisory`) — no existing prompt
+**2 new AI prompt keys** (`scm_recommendation_explainer`, `scm_market_advisory`) - no existing prompt
 touched, so existing assistant answers are unchanged; **2 new scheduler handlers**
 (`scm_analytics`, `scm_reorder_run`) registered additively and failure-guarded (a failed SCM run
 cannot crash the heartbeat); 1 new optional config key (`anthropic_api_key`, default None). No
@@ -55,9 +55,9 @@ existing function/field/relationship/RBAC grant/scheduled task modified.
   else is invisible.
 
 ## 2. Pre-commit hygiene (blockers)
-1. `git rm --cached sorento_crm_frontend/tsconfig.tsbuildinfo` — tracked on main + modified; the new
+1. `git rm --cached sorento_crm_frontend/tsconfig.tsbuildinfo` - tracked on main + modified; the new
    `.gitignore` does not untrack it.
-2. `git rm --cached -r sorento_crm_frontend/playwright-report/` — same.
+2. `git rm --cached -r sorento_crm_frontend/playwright-report/` - same.
 3. Delete stray `sorento_crm_frontend/sorento_crm/` (a mis-created nested `node_modules` copy;
    untracked, must never be `git add`ed). Add a `.gitignore` guard.
 4. Green gate before merge: `pytest` (backend SCM + regression), `npm run test`, `tsc --noEmit`,
@@ -78,7 +78,7 @@ existing function/field/relationship/RBAC grant/scheduled task modified.
 3. Push to main → CI `.github/workflows/deploy.yml`: build backend/frontend/mcp images,
    smoke-import (`app.main`, worker scheduler chain, mcp), `scp` deploy bundle to
    `/opt/sorento-crm2`, run `scripts/blue_green_deploy.sh`.
-4. New color's backend `start.sh` auto-runs `alembic upgrade head` (273–285 + merge) before it
+4. New color's backend `start.sh` auto-runs `alembic upgrade head` (273 - 285 + merge) before it
    reports healthy. Migration failure → unhealthy → deploy aborts, **old color unaffected**.
 5. Traffic switches to the new color only after all three containers are healthy → zero downtime,
    built-in rollback.
@@ -87,7 +87,7 @@ existing function/field/relationship/RBAC grant/scheduled task modified.
 - Worker container `ENABLE_SCHEDULER=true` → the daily `scm_reorder_run` + `scm_analytics` crons
   activate (SCM-only, guarded). Configure the reorder-run time via its `scheduled_tasks` row.
 
-## 5. Post-deploy LIVE seeding (must BUILD — the current seed is NOT live-safe)
+## 5. Post-deploy LIVE seeding (must BUILD - the current seed is NOT live-safe)
 
 **Problem:** `scripts/seed_scm_demo.py` **mutates real rows** (`products.cost_price`,
 `customers.market_segment_code`, `market_segments.demand_nature`) and selects real SKUs; it is
@@ -106,14 +106,14 @@ this script. → Prod SCM tables are **empty** after deploy; prod has **no "Demo
   long lead), `Johor Bathware Distributors Sdn Bhd`, `Guangzhou Sanitary Imports Ltd`,
   `Penang Tile & Fixtures Sdn Bhd`.
 - **Scenarios (drive the engine off demo-only stock + demo-only DO history):**
-  - **Buy (~6):** low `on_hand` in SCM-DEMO-WH + `product_suppliers.unit_cost` set + recent frequent
-    DO history (orders/order_lines over last 60–90d) → `net ≤ ROP` → costed buy.
-  - **Stockout + committed (~2):** `on_hand=0` + recent demand + open `sales_order` line → net
+ - **Buy (~6):** low `on_hand` in SCM-DEMO-WH + `product_suppliers.unit_cost` set + recent frequent
+    DO history (orders/order_lines over last 60 - 90d) → `net ≤ ROP` → costed buy.
+ - **Stockout + committed (~2):** `on_hand=0` + recent demand + open `sales_order` line → net
     negative → strongest buy.
-  - **Overstock / hold (~3):** high `on_hand` + light recent demand → `days_of_cover > 120`.
-  - **Dead / discontinue (~2):** `on_hand>0` + one DO line >180d ago, nothing since →
+ - **Overstock / hold (~3):** high `on_hand` + light recent demand → `days_of_cover > 120`.
+ - **Dead / discontinue (~2):** `on_hand>0` + one DO line >180d ago, nothing since →
     `last_movement_days > 180`.
-- **Mandatory post-seed:** run `analytics_service.run_analytics(db)` — without it `scm.demand_stat`
+- **Mandatory post-seed:** run `analytics_service.run_analytics(db)` - without it `scm.demand_stat`
   is empty, `demand_rate=0`, and **no buys emit**. Then trigger a reorder run (Manual plan / API) to
   produce the recommendations the demo shows.
 - **Promote rows:** the engine only ever emits `discontinue`/`hold` (never `promo`). To show

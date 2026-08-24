@@ -44,7 +44,7 @@ export type SearchableMultiSelectProps = {
    * selected values aren't in the fetched page.
    */
   selectedOptions?: SearchableMultiSelectOption[];
-  /** Trigger size — shared with Radix SelectTrigger. Default `md`. */
+  /** Trigger size - shared with Radix SelectTrigger. Default `md`. */
   size?: SelectTriggerSize;
   /**
    * Size the menu to its options and WRAP a long label instead of truncating it.
@@ -63,12 +63,12 @@ export type SearchableMultiSelectProps = {
   renderTriggerLabel?: (selected: SearchableMultiSelectOption[]) => React.ReactNode;
   /**
    * Render the option body (everything right of the checkbox). Parity with SearchableSelect.
-   * Needed by pickers whose rows carry their own interactive bits — a tooltip trigger, say —
+   * Needed by pickers whose rows carry their own interactive bits - a tooltip trigger, say - 
    * which `badgeText` / `description` cannot express.
    */
   renderOption?: (opt: SearchableMultiSelectOption) => React.ReactNode;
   /**
-   * Replace the whole trigger — for pickers that hang off an icon button rather than a select
+   * Replace the whole trigger - for pickers that hang off an icon button rather than a select
    * box, where the default trigger + chevron would be wrong. Must render one focusable element.
    */
   renderTrigger?: (state: {
@@ -158,7 +158,7 @@ export function SearchableMultiSelect({
   }, [baseOptions, selectedSet, isAsync, selectedOptions, value]);
 
   // Static mode filters here rather than delegating to cmdk, because Select all must act on
-  // exactly the rows the user can see — and cmdk never tells us which those are. Async mode is
+  // exactly the rows the user can see - and cmdk never tells us which those are. Async mode is
   // already filtered server-side, so its options pass through untouched.
   const visibleOptions = React.useMemo(() => {
     if (isAsync) return baseOptions;
@@ -182,7 +182,7 @@ export function SearchableMultiSelect({
     return Array.from(map.entries());
   }, [visibleOptions]);
 
-  // Select all targets the visible, non-disabled rows only — never a disabled option, and never
+  // Select all targets the visible, non-disabled rows only - never a disabled option, and never
   // a row the active search has filtered out.
   const selectable = React.useMemo(
     () => visibleOptions.filter((o) => !o.disabled),
@@ -344,7 +344,7 @@ export function SearchableMultiSelect({
                   return (
                     <CommandItem
                       key={opt.value}
-                      // Filtering is ours now, so this only has to be unique — two options
+                      // Filtering is ours now, so this only has to be unique - two options
                       // sharing a label would otherwise collide in cmdk's keyboard nav.
                       value={opt.value}
                       disabled={opt.disabled}

@@ -4,15 +4,15 @@
  * What these pin is the small set of claims the screen makes that a plainer list would
  * quietly drop:
  *
- *   - **The reduction is stated** (AC-D2b). Six exceptions out of 412 changed lines is the
+ * - **The reduction is stated** (AC-D2b). Six exceptions out of 412 changed lines is the
  *     filter working; showing only the six reads as a thin result.
- *   - **The actions arrive ordered by the item's READING, not by quantity** (AC-D10), and
+ * - **The actions arrive ordered by the item's READING, not by quantity** (AC-D10), and
  *     the grid never re-sorts them. Three rows with identical arithmetic propose three
  *     different first actions, and a discontinued surplus proposes keeping the order
  *     (AC-D11) rather than cancelling it.
- *   - **The staleness note is on the screen**, because nothing here reacts to a project
+ * - **The staleness note is on the screen**, because nothing here reacts to a project
  *     moving until the order book is re-uploaded.
- *   - **Open is the default filter**: the queue is what is left to decide.
+ * - **Open is the default filter**: the queue is what is left to decide.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';

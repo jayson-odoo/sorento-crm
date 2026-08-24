@@ -1,4 +1,4 @@
-# Lookup Sets — Generic Dropdown Master Data
+# Lookup Sets - Generic Dropdown Master Data
 
 **Status:** Draft
 **Date:** 2026-04-30
@@ -37,11 +37,11 @@ LookupEligibility (code-only)            LookupSet  (1) ──── (N) LookupO
                                             tenant_id
 ```
 
-- **LookupSet** — `set_key` (slug, unique per tenant), `name`, `description`, `tenant_id`.
-- **LookupOption** — belongs to one set; `value` (canonical, unique within set), `label`, `sort_order`, `is_active`, `description`.
-- **LookupOptionKeyword** — many keywords per option; `keyword` (normalized lowercase), `locale` optional.
-- **LookupEligibility** — code-only registry of which (model, column) pairs are bindable and their friendly labels. Devs control. Admins cannot add eligibility.
-- **LookupBinding** — DB row created by admin in FE: links one set to one eligible (table, column) within a tenant. Admin chooses (table, column) via dropdowns sourced from eligibility registry.
+- **LookupSet** - `set_key` (slug, unique per tenant), `name`, `description`, `tenant_id`.
+- **LookupOption** - belongs to one set; `value` (canonical, unique within set), `label`, `sort_order`, `is_active`, `description`.
+- **LookupOptionKeyword** - many keywords per option; `keyword` (normalized lowercase), `locale` optional.
+- **LookupEligibility** - code-only registry of which (model, column) pairs are bindable and their friendly labels. Devs control. Admins cannot add eligibility.
+- **LookupBinding** - DB row created by admin in FE: links one set to one eligible (table, column) within a tenant. Admin chooses (table, column) via dropdowns sourced from eligibility registry.
 
 ## 4. Database schema
 
@@ -173,8 +173,8 @@ On every binding create/update:
 
 Two enforcement points (both read DB bindings table, cached in-process 60s):
 
-1. **Pydantic validator helper** — `validate_lookup_value(table, column, value)` resolves binding from DB cache → loads active option values → raises `AppException` 422 if unknown.
-2. **SQLAlchemy `before_insert` / `before_update` listener** — defense-in-depth on every model. Iterates bindings whose `table_name == target.__tablename__`, fetches active option values, rejects unknown writes.
+1. **Pydantic validator helper** - `validate_lookup_value(table, column, value)` resolves binding from DB cache → loads active option values → raises `AppException` 422 if unknown.
+2. **SQLAlchemy `before_insert` / `before_update` listener** - defense-in-depth on every model. Iterates bindings whose `table_name == target.__tablename__`, fetches active option values, rejects unknown writes.
 
 Eligibility registry is consulted only at binding create/update time (not on every write). Per-write hot path reads only the bindings + options cache.
 
@@ -210,9 +210,9 @@ All under `app/api/v1/master_data/lookup_sets.py` + cross-cutting `app/api/v1/lo
 | PATCH | `/api/v1/master-data/lookup-sets/{id}/options/{option_id}` | update option (incl. keyword set replacement) |
 | DELETE | `/api/v1/master-data/lookup-sets/{id}/options/{option_id}` | delete option |
 | GET | `/api/v1/master-data/lookup-sets/{id}/bindings` | list bindings using this set |
-| POST | `/api/v1/master-data/lookup-sets/{id}/bindings` | bind set to (table, column) — body `{table_name, column_name}`, validated against eligibility |
+| POST | `/api/v1/master-data/lookup-sets/{id}/bindings` | bind set to (table, column) - body `{table_name, column_name}`, validated against eligibility |
 | DELETE | `/api/v1/master-data/lookup-sets/{id}/bindings/{binding_id}` | unbind |
-| GET | `/api/v1/master-data/lookup-eligibility` | list code-registered eligible (table, column) pairs w/ friendly labels — powers FE dropdowns. Supports `?available=true` to exclude already-bound pairs |
+| GET | `/api/v1/master-data/lookup-eligibility` | list code-registered eligible (table, column) pairs w/ friendly labels - powers FE dropdowns. Supports `?available=true` to exclude already-bound pairs |
 
 ### Public/n8n consumption
 
@@ -235,7 +235,7 @@ Both gated by `EXTERNAL_API_KEY` per existing MCP pattern. n8n agent fetches opt
 
 Order of attempts (first hit wins, returns score):
 
-1. `value` exact (**case-sensitive** — value is a canonical key) → score 1.0, type `exact_value`
+1. `value` exact (**case-sensitive** - value is a canonical key) → score 1.0, type `exact_value`
 2. `label` exact (case-insensitive) → 0.95, `exact_label`
 3. `keyword` exact (case-insensitive, optional locale match) → 0.9, `exact_keyword`
 4. Normalized (strip punctuation, collapse whitespace, lowercase) match against value/label/keywords → 0.8, `normalized`
@@ -254,25 +254,25 @@ Route: `/master-data-management/lookup-sets` (sibling to `brands`, `categories`,
 - Row actions: View, Edit, Delete (ConfirmDeleteDialog, hard delete copy).
 - Standard `tableLayout: { width: 'fixed', columnsResizable: true }` per ADR.
 
-### Create set — modal (binding-driven)
+### Create set - modal (binding-driven)
 
 Admins do not type raw table/column names. Flow:
 
 1. **Where will this dropdown appear?**
-   - "Module / Table" select — populated from `GET /master-data/lookup-eligibility` grouped by `table_label`. Friendly label only.
-   - "Field / Column" select — filtered to eligible columns of the chosen table that are not yet bound. Shows `column_label`.
-   - Optional: "Skip — create unbound set" toggle (admin can bind later from detail page).
+ - "Module / Table" select - populated from `GET /master-data/lookup-eligibility` grouped by `table_label`. Friendly label only.
+ - "Field / Column" select - filtered to eligible columns of the chosen table that are not yet bound. Shows `column_label`.
+ - Optional: "Skip - create unbound set" toggle (admin can bind later from detail page).
 2. **Set details** (auto-prefilled, editable):
-   - `set_key` suggested as `<table_name>_<column_name>` slug.
-   - `name` suggested as `"{table_label} — {column_label}"`.
-   - `description`, `is_active`.
+ - `set_key` suggested as `<table_name>_<column_name>` slug.
+ - `name` suggested as `"{table_label} - {column_label}"`.
+ - `description`, `is_active`.
 3. Save → atomically creates set + first binding (unless skipped). Redirect to detail page.
 
-### Edit set — modal
+### Edit set - modal
 
-Edits set meta only (`name`, `description`, `is_active`, `set_key` rename guarded — warn if MCP/n8n callers reference it). Bindings managed on detail page, not in this modal.
+Edits set meta only (`name`, `description`, `is_active`, `set_key` rename guarded - warn if MCP/n8n callers reference it). Bindings managed on detail page, not in this modal.
 
-### Detail page — `/master-data-management/lookup-sets/{id}`
+### Detail page - `/master-data-management/lookup-sets/{id}`
 
 Always renders all sections per ADR:
 
@@ -281,14 +281,14 @@ Always renders all sections per ADR:
 3. **Bindings** section: DataGrid of bindings. Columns: Table (friendly), Column (friendly), Actions (Unbind w/ ConfirmDeleteDialog). Toolbar "Add binding" → modal w/ same Table+Column dropdowns from create flow. Empty state: "Not yet bound to any field. Click Add binding to choose where this dropdown appears."
 4. **Test resolve** card (admin convenience): text input + "Resolve" button → calls POST `/lookup/resolve`, shows match result. Helps admin validate keyword coverage.
 
-### Option create/edit — modal
+### Option create/edit - modal
 
 Fields: `value`, `label`, `sort_order`, `is_active`, `description`, **Keywords** (multi-input chip component, allows free text add; optional locale per chip via small select). Save replaces full keyword set for that option (idempotent).
 
 ### UI rules followed
 
 - Hard delete + ConfirmDeleteDialog (count in bulk).
-- No UUIDs displayed — surface `set_key` and option `value` as identifiers.
+- No UUIDs displayed - surface `set_key` and option `value` as identifiers.
 - All sections render with empty states.
 - `extractApiError` + `buildDataGridParams` per ARCHITECTURE-RULES.
 

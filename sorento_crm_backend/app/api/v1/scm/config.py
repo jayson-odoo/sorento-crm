@@ -1,4 +1,4 @@
-"""SCM configuration endpoints — small, discoverable quick settings.
+"""SCM configuration endpoints - small, discoverable quick settings.
 
 At M1 this exposes the single ``dead_stock_days`` knob on the GLOBAL
 ``scm.reorder_policy`` (scope_type='global', scope_ref NULL). That value drives the

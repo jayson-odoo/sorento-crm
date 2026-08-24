@@ -12,11 +12,11 @@ import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/u
  *   404:   unknown job. A job with no captured rows returns an empty list, not an error.
  *
  * GET /api/v1/system/jobs/{job_id}/rows/export
- *   query: same filters as above (no paging — streams the whole filtered set)
+ *   query: same filters as above (no paging - streams the whole filtered set)
  *   200:   text/csv, Content-Disposition: attachment; filename="import-job-{id}-rows.csv"
  *   columns: row, outcome, code, reason, detail, value, identity, entity_id
  *
- * The per-job aggregate breakdown is NOT a separate call — it rides on
+ * The per-job aggregate breakdown is NOT a separate call - it rides on
  * GET /jobs/{job_id} in `result.breakdown` (see ImportJobResultEnvelope).
  * ─────────────────────────────────────────────────────────────────────────────────
  */

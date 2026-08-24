@@ -533,7 +533,7 @@ export function RichTextEditor({
         class: cn(
           'prose prose-sm dark:prose-invert max-w-none px-3 py-2 focus:outline-none',
           '[&_p]:my-2 [&_ul]:my-2 [&_ol]:my-2 [&_h1]:mt-3 [&_h2]:mt-3 [&_h3]:mt-3',
-          // Force list markers — Tailwind preflight removes them on ul/ol
+          // Force list markers - Tailwind preflight removes them on ul/ol
           '[&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6',
           '[&_li]:my-0.5 [&_li]:pl-1 [&_li>p]:my-0',
           '[&_ul_ul]:list-[circle] [&_ul_ul_ul]:list-[square]',

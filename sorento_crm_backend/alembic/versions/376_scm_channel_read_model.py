@@ -75,18 +75,18 @@ legs AS (
            sol.warehouse_id,
            CASE WHEN so.demand_class = 'project'
                 THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-                              - COALESCE(sol.qty_delivered, 0), 0)
+                            - COALESCE(sol.qty_delivered, 0), 0)
                 ELSE 0 END AS project_qty,
            -- The sheet leg is project-class demand, never firm Buy: no CS decision points
            -- at it, so it is netted like any other commitment (S13b).
            0 AS project_confirmed_qty,
            CASE WHEN so.demand_class IS NOT NULL AND so.demand_class <> 'project'
                 THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-                              - COALESCE(sol.qty_delivered, 0), 0)
+                            - COALESCE(sol.qty_delivered, 0), 0)
                 ELSE 0 END AS retail_qty,
            CASE WHEN so.demand_class IS NULL
                 THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-                              - COALESCE(sol.qty_delivered, 0), 0)
+                            - COALESCE(sol.qty_delivered, 0), 0)
                 ELSE 0 END AS unclassified_qty
     FROM sales_order_lines sol
     JOIN sales_orders so ON so.id = sol.sales_order_id
@@ -94,7 +94,7 @@ legs AS (
       AND sol.line_status = 'open'
       AND sol.purchasing_status <> 'covered'
       AND GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-                   - COALESCE(sol.qty_delivered, 0), 0) > 0
+                 - COALESCE(sol.qty_delivered, 0), 0) > 0
       -- S13b: project demand comes from the Order Inquiry; the book supplies the rest.
       -- Front planning narrows the sheet leg further: once CS has confirmed a decision
       -- for the order, its confirmed Buy residual below is the only Project reading.
@@ -145,14 +145,14 @@ CREATE OR REPLACE VIEW scm.committed_v AS
 SELECT sol.product_id,
        sol.warehouse_id,
        SUM(GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-                    - COALESCE(sol.qty_delivered, 0), 0)) AS committed
+                  - COALESCE(sol.qty_delivered, 0), 0)) AS committed
 FROM sales_order_lines sol
 JOIN sales_orders so ON so.id = sol.sales_order_id
 WHERE so.status = 'open'
   AND sol.line_status = 'open'
   AND sol.purchasing_status <> 'covered'
   AND GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-               - COALESCE(sol.qty_delivered, 0), 0) > 0
+             - COALESCE(sol.qty_delivered, 0), 0) > 0
   -- S13b: project demand comes from the Order Inquiry; the book supplies the rest.
   -- Front planning section 4: and only while CS has not confirmed a supply decision for
   -- it, after which the confirmed Buy residual replaces the sheet quantity.
@@ -185,7 +185,7 @@ SELECT k.product_id, k.warehouse_id,
        COALESCE(oo.on_order, 0) AS on_order,
        COALESCE(cm.committed, 0) AS committed,
        COALESCE(s.quantity_on_hand, 0) + COALESCE(oo.on_order, 0)
-           - COALESCE(cm.committed, 0) AS net_position
+         - COALESCE(cm.committed, 0) AS net_position
 FROM keys k
 LEFT JOIN stock s ON s.product_id = k.product_id AND s.warehouse_id = k.warehouse_id
 LEFT JOIN scm.on_order_v oo

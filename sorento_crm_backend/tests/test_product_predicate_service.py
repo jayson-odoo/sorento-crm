@@ -176,7 +176,7 @@ def test_filter_specs_resolves_a_class_term(db):
 
 
 def test_filter_specs_drops_known_spec_words_without_flagging_them(db):
-    # "wall hung" is a registry mounting value: not a class, but recognized —
+    # "wall hung" is a registry mounting value: not a class, but recognized - 
     # it must neither define membership nor be reported as unrecognized.
     verdict = filter_specs(db, free_terms=["wall hung"])
     assert verdict["class_labels"] == []
@@ -312,7 +312,7 @@ def test_class_membership_is_a_filter_but_numbers_stay_boosts(db):
     )
     codes = [c["product_code"] for c in out["candidates"]]
     # The water closet is filtered out (wrong class); the 800mm sink is NOT
-    # filtered by the number — it merely ranks below the 1000mm one.
+    # filtered by the number - it merely ranks below the 1000mm one.
     assert "ZZT-WC-A" not in codes
     assert set(codes) == {"ZZT-SINK-A", "ZZT-SINK-B"}
     assert codes[0] == "ZZT-SINK-A"

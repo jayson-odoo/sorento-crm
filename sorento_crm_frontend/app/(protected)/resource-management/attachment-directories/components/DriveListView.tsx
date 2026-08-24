@@ -89,7 +89,7 @@ function itemLabel(item: DriveItem): string {
 
 /**
  * One Drive row. Files are draggable into folders; folders are draggable AND
- * drop targets (so a file/folder can be dropped onto a folder row — UAC E1).
+ * drop targets (so a file/folder can be dropped onto a folder row - UAC E1).
  */
 function DriveRow({
   row,
@@ -204,7 +204,7 @@ function DriveRow({
  * Unified Drive list view (UAC A3): folders + files in ONE react-table, with
  * drag-move, folder-row drop targets, and the standard DataGrid resizable/fixed
  * layout. The owning panel builds the columns (incl. the search-only Location
- * column and folder "—" fallbacks).
+ * column and folder "-" fallbacks).
  */
 export default function DriveListView({
   draggable,

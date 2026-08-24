@@ -104,7 +104,7 @@ class TicketDraftPortalUpdate(BaseModel):
     """Portal-side draft edit (token-gated, draft-only).
 
     The portal review page lets the contact tweak the AI-extracted description
-    before submitting. We only expose description fields here — title /
+    before submitting. We only expose description fields here - title /
     priority / category come from the LLM extraction and stay server-owned."""
 
     description_text: Optional[str] = None
@@ -128,14 +128,14 @@ class TicketAssignRequest(BaseModel):
 
 
 class TicketResponseUpdate(BaseModel):
-    """Save-only response payload — does not change status or notify submitter."""
+    """Save-only response payload - does not change status or notify submitter."""
 
     response_html: str
     response_text: Optional[str] = None
 
 
 class TicketResolutionUpdate(BaseModel):
-    """Save-only resolution payload — does not change status or notify submitter."""
+    """Save-only resolution payload - does not change status or notify submitter."""
 
     resolution_html: str
     resolution_text: Optional[str] = None
@@ -165,7 +165,7 @@ class TicketRaisedByActor(BaseModel):
 
     ``kind`` is the discriminator. ``id`` is the row id in the corresponding
     table. ``email`` and ``avatar_url`` are user-only; ``phone_number`` and
-    ``respond_io_id`` are contact-only — fields not applicable to the kind
+    ``respond_io_id`` are contact-only - fields not applicable to the kind
     are simply ``None``."""
 
     kind: str  # 'user' | 'respond_contact'
@@ -310,7 +310,7 @@ class ITSupportTicketCreateRequest(BaseModel):
     )
     # NOTE: Respond.io has one inbox per contact, so the contact id IS the
     # conversation reference. We do not accept a separate conversation_id from
-    # callers — ticket_intake_service derives source_conversation_id from the
+    # callers - ticket_intake_service derives source_conversation_id from the
     # resolved contact's respond_io_id automatically.
     source_conversation_id: Optional[str] = None
     source_message_id: Optional[str] = Field(
@@ -359,7 +359,7 @@ class ITSupportTicketCreateResponse(BaseModel):
 
     Always creates a draft and returns a link the user opens to review +
     submit / edit / cancel. The caller (AI assistant or n8n WhatsApp agent)
-    is expected to surface ``draft_url`` to the user verbatim and stop —
+    is expected to surface ``draft_url`` to the user verbatim and stop - 
     no in-chat confirmation handshake."""
 
     status: Literal["draft_created"]

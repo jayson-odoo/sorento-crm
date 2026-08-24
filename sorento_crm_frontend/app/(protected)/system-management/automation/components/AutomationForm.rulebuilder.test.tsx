@@ -1,5 +1,5 @@
 /**
- * AutomationForm — RuleBuilder gating + conditions_json payload + 422 handling.
+ * AutomationForm - RuleBuilder gating + conditions_json payload + 422 handling.
  *
  * RuleBuilder is stubbed (exposes a "set-tree" button that emits a fixed tree).
  * The trigger catalog gives the promotion trigger a fact_source and the
@@ -122,7 +122,7 @@ async function fillMinimum() {
   await pickTemplate();
 }
 
-describe('AutomationForm — RuleBuilder gating', () => {
+describe('AutomationForm - RuleBuilder gating', () => {
   it('shows the builder for the promotion trigger (has fact_sources)', () => {
     renderForm();
     expect(screen.getByTestId('rule-builder')).toBeInTheDocument();

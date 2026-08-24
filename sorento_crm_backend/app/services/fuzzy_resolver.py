@@ -36,7 +36,7 @@ def resolve_via_embedding_then_ilike(
          top-k search the given `source_type`, look up the canonical fields on
          the matched rows, and add each canonical value as an ilike pattern.
       3. OR each pattern across `ilike_columns` and any `extra_filter_builders`
-         (callables that take the LIKE pattern and return a clause — used for
+         (callables that take the LIKE pattern and return a clause - used for
          relationship.has(...) clauses or other cross-table OR branches).
 
     Returns `(filter_clause | None, matched_canonical_values)`. Embedding

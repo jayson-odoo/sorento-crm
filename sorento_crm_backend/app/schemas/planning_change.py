@@ -192,7 +192,7 @@ class PlanningChangeBatchSummary(BaseModel):
 
 class PlanningChangeListEnvelope(BaseModel):
     """Flat `{ data, total, page, limit }`, exactly as the FE contract states it (section 3)
-    - deliberately NOT the shared `ListResponse[T]` envelope (nested `pagination`), because
+  - deliberately NOT the shared `ListResponse[T]` envelope (nested `pagination`), because
     the Phase 1 mock service (`planningChangeService.ts`) was built against this flat shape
     and the contract says Phase 2 must match it, not the other way round.
     """

@@ -53,7 +53,7 @@ async function openSidebarLink(
 ): Promise<string> {
   // Confirm the sidebar group + leaf link exist (catches missing nav entries /
   // wrong moduleKey / permission gating). Then resolve the href and navigate
-  // via that href — clicking the <Link> directly hangs because the protected
+  // via that href - clicking the <Link> directly hangs because the protected
   // layout fires a localhost:7242 ingest fetch that keeps the page in a
   // pre-load state, intercepting Playwright's click auto-wait.
   await page.goto('/', { waitUntil: 'commit' });
@@ -75,7 +75,7 @@ test('Files page exposes smart filters and access-level dropdown on upload', asy
   await login(page);
   await openSidebarLink(page, /resource management/i, /^files$/i);
   // The Files leaf may resolve to /resource-management/attachment-directories
-  // or /resource-management/attachments depending on routing — both expose the
+  // or /resource-management/attachments depending on routing - both expose the
   // same filter panel. Navigate to /attachments directly to assert the panel.
   await page.goto('/resource-management/attachments', { waitUntil: 'commit' });
 

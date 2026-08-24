@@ -47,7 +47,7 @@ class ListSearchRequest(BaseModel):
     dir: Optional[Literal["asc", "desc"]] = "asc"
     """Free-text search merged with AND (same behaviour as legacy list `query` param)."""
     quick_search: Optional[str] = None
-    # Legacy list filters (merged with AND) — same as existing GET list endpoints
+    # Legacy list filters (merged with AND) - same as existing GET list endpoints
     customer_id: Optional[str] = None
     order_status_id: Optional[str] = None
     has_order_lines: Optional[str] = None
@@ -83,7 +83,7 @@ class ListExportRequest(BaseModel):
     filter: Optional[FilterGroup] = None
     quick_search: Optional[str] = None
     fields: List[ExportFieldSelection] = Field(..., min_length=1)
-    """When set, export is limited to these ids (ANDed with filters — only rows matching both are returned)."""
+    """When set, export is limited to these ids (ANDed with filters - only rows matching both are returned)."""
     record_ids: Optional[List[str]] = Field(default=None, max_length=5000)
     customer_id: Optional[str] = None
     order_status_id: Optional[str] = None

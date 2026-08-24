@@ -3,13 +3,13 @@
  *
  * The three things this drill exists to guarantee:
  *
- *  - Demand is split by channel (Project / Retail / Unclassified), supply is NOT:
+ * - Demand is split by channel (Project / Retail / Unclassified), supply is NOT:
  *    stock, incoming SPO, PO and the reorder level are printed ONCE per location
  *    row, with no channel dimension (AC-F07).
- *  - The once-rounded product figure ("Suggested once at the product") and the
+ * - The once-rounded product figure ("Suggested once at the product") and the
  *    chosen quantity are restated beside the split, so a reader can check the
  *    location quantities sum exactly to the chosen one (AC-E06 / AC-F11 / AC-F12).
- *  - A legacy run states its channel breakdown is unavailable rather than
+ * - A legacy run states its channel breakdown is unavailable rather than
  *    inventing one, and every null channel cell says "Unavailable" instead of 0
  *    (AC-F10).
  *

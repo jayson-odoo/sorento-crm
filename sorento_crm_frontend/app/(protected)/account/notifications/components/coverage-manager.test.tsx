@@ -105,7 +105,7 @@ beforeEach(() => {
   useCoverageForMe.mockReturnValue({ data: [], isLoading: false, error: null });
 });
 
-describe('CoverageManager — non-manager', () => {
+describe('CoverageManager - non-manager', () => {
   it('has both a coverer and a covered picker (coverer defaults to "You")', () => {
     render(<CoverageManager canManageTeam={false} />);
     // Coverer picker (You + colleagues) + covered picker.
@@ -165,7 +165,7 @@ describe('CoverageManager — non-manager', () => {
   });
 });
 
-describe('CoverageManager — manager', () => {
+describe('CoverageManager - manager', () => {
   it('coverer picker present (You + colleagues); assigning a colleague posts assign', async () => {
     render(<CoverageManager canManageTeam />);
     const combos = screen.getAllByRole('combobox');
@@ -209,7 +209,7 @@ describe('CoverageManager — manager', () => {
   it('renders the backend role-explicit summary in the DOM (sr-only) for the AI snapshot', () => {
     useTeamCoverage.mockReturnValue({ data: [teamSub], isLoading: false, error: null });
     render(<CoverageManager canManageTeam />);
-    // The canonical sentence — unambiguous about coverer vs covers-for vs assigned-by —
+    // The canonical sentence - unambiguous about coverer vs covers-for vs assigned-by - 
     // is present in the DOM (sr-only is captured by innerText / read by AT).
     expect(
       screen.getByText(

@@ -69,7 +69,7 @@ function diagnosisCopy(
         title: `Product class "${suffix}" is not switched on yet`,
         body:
           `This product sits in category ${detail.category_code}. Spec derivation currently ` +
-          'runs for Kitchen Sink only — the pilot class. Nothing about this product has ' +
+          'runs for Kitchen Sink only - the pilot class. Nothing about this product has ' +
           'been read, so a customer describing it will not find it. Widening the class ' +
           'list is what turns this on.',
       };
@@ -105,7 +105,7 @@ function diagnosisCopy(
         title: 'Eligible, but nothing derived yet',
         body:
           `Class "${detail.diagnosis.class_label}" is switched on, so this product should ` +
-          'have specs. The derivation job has not covered it — re-running derivation for ' +
+          'have specs. The derivation job has not covered it - re-running derivation for ' +
           'this class will populate it.',
       };
   }

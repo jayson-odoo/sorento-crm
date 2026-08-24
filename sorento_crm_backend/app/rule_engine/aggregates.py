@@ -1,4 +1,4 @@
-"""Aggregate facts — count/sum/min/max/avg over an owner's child rows, exposed as
+"""Aggregate facts - count/sum/min/max/avg over an owner's child rows, exposed as
 a normal ``FactDef`` so a status-engine auto-edge condition ("project has >= 1
 purchase order") is authored in the rule builder like any other rule.
 

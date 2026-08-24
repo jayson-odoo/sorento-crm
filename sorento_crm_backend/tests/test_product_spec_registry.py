@@ -313,7 +313,7 @@ def test_every_derived_enum_value_exists_in_the_registry(db):
     Caught in the browser: `pillar_mounted` and `under_counter` were added to the
     derivation tables and not to the registry, so 603 pillar-mounted taps stored a
     value that the enum dropdown could not offer and no customer phrase could resolve.
-    The spec was derived, stored, rendered — and unreachable.
+    The spec was derived, stored, rendered - and unreachable.
     """
     from app.services.product_spec_derivation import (
         CONTROL_TOKENS,
@@ -359,7 +359,7 @@ def test_a_reseed_does_not_touch_a_user_owned_row(db):
 
     The seed REPAIRS drift on every deploy so the ranker and the n8n parser cannot
     disagree about what a value is called. Applied to a row a human owns, that same
-    behaviour silently reverts their edit — the UI would be a lie.
+    behaviour silently reverts their edit - the UI would be a lie.
     """
     from app.models.product_spec import ProductSpecRegistry
 
@@ -471,7 +471,7 @@ def test_a_value_staff_added_is_usable_in_a_rule(db):
     """"Add the value to this specification first" has to be possible to follow.
 
     A shipped key's `allowed_values` is the parser's contract and is seed-repaired, so
-    it cannot be edited — which left the rejection message pointing at a door with no
+    it cannot be edited - which left the rejection message pointing at a door with no
     handle for every key except the ones staff made themselves.
     """
     from app.api.v1.master_data.spec_registry import _validate_rules

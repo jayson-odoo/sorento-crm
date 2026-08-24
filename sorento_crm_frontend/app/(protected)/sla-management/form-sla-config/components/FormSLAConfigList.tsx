@@ -36,9 +36,9 @@ import {
 import FormSLAConfigDialog from './FormSLAConfigDialog';
 
 function EventChips({ value }: { value: string | null | undefined }) {
-  if (!value) return <>—</>;
+  if (!value) return <> - </>;
   const events = value.split(',').map((s) => s.trim()).filter(Boolean);
-  if (events.length === 0) return <>—</>;
+  if (events.length === 0) return <> - </>;
   return (
     <div className="flex flex-wrap gap-1">
       {events.map((e) => (
@@ -154,7 +154,7 @@ export default function FormSLAConfigList() {
                         {c.policy_name || c.policy_code || c.policy_id.slice(0, 8)}
                       </TableCell>
                       <TableCell>{c.agent_code}</TableCell>
-                      <TableCell>{c.team_set_code || '—'}</TableCell>
+                      <TableCell>{c.team_set_code || '-'}</TableCell>
                       <TableCell>
                         <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
                           {c.start_event}
@@ -170,7 +170,7 @@ export default function FormSLAConfigList() {
                         {c.next_stage_code ? (
                           <Badge variant="outline">{c.next_stage_code}</Badge>
                         ) : (
-                          '—'
+                          '-'
                         )}
                       </TableCell>
                       <TableCell>

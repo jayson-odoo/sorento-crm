@@ -4,7 +4,7 @@ Message content is customer PII, so viewing and exporting are separate slugs rat
 folded into a general system-admin grant.
 
 Also seeds `user_downloads_purge`. Nothing has ever deleted download rows or their stored
-objects — with `complaint_pdf` as the only producer that went unnoticed, but chat-history
+objects - with `complaint_pdf` as the only producer that went unnoticed, but chat-history
 CSV exports are the largest artifacts the system produces, so it now matters. The purge
 applies to every download kind, not just the new one.
 
@@ -40,7 +40,7 @@ _PERMISSIONS = (
 #
 # `UserPermissionService.check_user_has_permission` short-circuits to True for the
 # superadmin and admin roles, so every `system.*` page is reachable by them without an
-# explicit grant — `system.respond_outbox.view` and `system.email_outbox.view` both sit
+# explicit grant - `system.respond_outbox.view` and `system.email_outbox.view` both sit
 # at zero grants today for exactly this reason. Registering the slugs still matters: it
 # makes them assignable to a non-admin role later, and it keeps the registry complete.
 #

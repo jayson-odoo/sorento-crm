@@ -114,9 +114,9 @@ class ComplaintService:
         """Resolve supplied DO numbers against orders.order_number.
 
         Returns:
-            - resolved: canonical order numbers found in DB (preserve user order),
-            - missing: user-provided tokens not found,
-            - provided: normalized user-provided tokens.
+          - resolved: canonical order numbers found in DB (preserve user order),
+          - missing: user-provided tokens not found,
+          - provided: normalized user-provided tokens.
         """
         provided = self.normalize_delivery_order_numbers(raw_value)
         if not provided:
@@ -142,12 +142,12 @@ class ComplaintService:
         """Infer customer + product hints from selected delivery order numbers.
 
         Returns a dict with:
-            - delivery_order_numbers
-            - customer_name (when exactly one unique debtor_name found)
-            - customer_name_candidates (all unique debtor names found)
-            - product_code (when exactly one unique product code found)
-            - product_codes (all unique product codes found)
-            - product_names (all unique product names found)
+          - delivery_order_numbers
+          - customer_name (when exactly one unique debtor_name found)
+          - customer_name_candidates (all unique debtor names found)
+          - product_code (when exactly one unique product code found)
+          - product_codes (all unique product codes found)
+          - product_names (all unique product names found)
         """
         normalized = self.normalize_delivery_order_numbers(", ".join(do_numbers))
         if not normalized:
@@ -516,7 +516,7 @@ class ComplaintService:
 
         Serves 'which product has the most complaints' (group_by=product, ranked
         desc) and 'how many complaints were resolved last month' (date_field=
-        resolved_at + a date window — resolved rows have resolved_at set, so no
+        resolved_at + a date window - resolved rows have resolved_at set, so no
         status filter is needed). ``date_field`` selects which timestamp the
         date window and grouping-by-month apply to.
         """
@@ -628,7 +628,7 @@ class ComplaintService:
                 elif group_by == "month":
                     val = getattr(c, date_field, None)
                     _bump(_month_key(val), _month_key(val))
-                else:  # product — one complaint may cover several product codes
+                else:  # product - one complaint may cover several product codes
                     codes = self._complaint_product_codes(c)
                     for code in codes or ["(unspecified)"]:
                         k = code.strip() or "(unspecified)"
@@ -999,7 +999,7 @@ class ComplaintService:
         Empty when public view links are disabled or nothing can be built.
 
         Returned on its own line (``\\n\\n{url}``) and ALWAYS appended LAST in the
-        message so no sentence punctuation follows the URL — WhatsApp's link
+        message so no sentence punctuation follows the URL - WhatsApp's link
         auto-detection would otherwise absorb a trailing ``:`` into the link,
         producing ``…/{uuid}:`` and a 500 (invalid UUID) when the contact taps it.
         """
@@ -1020,7 +1020,7 @@ class ComplaintService:
     def _complaint_portal_or_view_url(self, complaint, complaint_id: str) -> str:
         """Bare interactive portal link for the complaint (contact can act /
         resubmit), falling back to the read-only public view URL. Same target as
-        the inline body link — used for the ``portal_url`` template variable so
+        the inline body link - used for the ``portal_url`` template variable so
         the 'Portal URL' button actually opens the portal, not the view token.
         """
         if self._complaint_public_view_links_enabled():
@@ -1418,7 +1418,7 @@ class ComplaintService:
         items: Optional[Iterable[dict]] = None,
     ) -> None:
         """Notify the Complaint team (Tier 1 + Tier 2) that a replacement DO was
-        delivered — in-app + a single email to all. Content is a delivery FACT;
+        delivered - in-app + a single email to all. Content is a delivery FACT;
         it never announces "fulfilled". Idempotency is enforced upstream by the
         ``complaint_fulfilment_orders.delivery_notified_at`` stamp, but the
         notification ``event_type`` is also keyed by the DO so two DOs delivering
@@ -2287,7 +2287,7 @@ class ComplaintService:
     ):
         """Mark an approved complaint as processed by customer service.
 
-        This is the normal CS completion (not a literal "resolved" — CS handled
+        This is the normal CS completion (not a literal "resolved" - CS handled
         the case). Closes the customer-service SLA stage.
         """
         return self._finalize_complaint(
@@ -2795,7 +2795,7 @@ class ComplaintService:
         if not target_fk or target is None:
             label = "root cause" if kind == "root_cause" else "resolution"
             raise handle_validation_error(
-                f"Cannot notify salesperson — no {label} is set on this complaint."
+                f"Cannot notify salesperson - no {label} is set on this complaint."
             )
 
         identifier = self._identifier_from_respond_inbox_url(
@@ -2803,7 +2803,7 @@ class ComplaintService:
         )
         if not identifier:
             raise handle_validation_error(
-                "Cannot notify salesperson — no Respond.io contact is linked to this complaint."
+                "Cannot notify salesperson - no Respond.io contact is linked to this complaint."
             )
 
         do_number = (getattr(complaint, "delivery_order_number", None) or "").strip()

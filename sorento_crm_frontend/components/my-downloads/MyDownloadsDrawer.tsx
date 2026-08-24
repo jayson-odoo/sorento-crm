@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * My Downloads drawer — right-side Sheet, opens via context state.
+ * My Downloads drawer - right-side Sheet, opens via context state.
  *
  * Single instance mounted near the top nav. On open: force `refetch()` to honour
  * the "no stale data" invariant. Each row shows status; ready rows expose a

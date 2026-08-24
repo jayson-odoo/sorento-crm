@@ -2,7 +2,7 @@
 
 Adds per-user opt-in toggles (email / whatsapp) for the "products discontinued"
 batch notification, plus two product columns used by the cron batcher:
-discontinued_notified_at (notify watermark — NULL means cron-eligible) and
+discontinued_notified_at (notify watermark - NULL means cron-eligible) and
 discontinued_notify_batch_id (stable id for the batch a product was reported in;
 deep-linked from the notification to the filtered product list).
 

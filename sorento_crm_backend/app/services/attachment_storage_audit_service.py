@@ -8,7 +8,7 @@ non-deleted attachment as ``accessible`` / ``missing`` by exact key membership.
 Bytes lost from the bucket (e.g. rows whose ``storage_provider`` was flipped to
 r2 without the object ever being copied) surface as ``missing`` so the Files
 page filter can list them for trashing. Deleted (``is_deleted``) rows are
-skipped — no point auditing trash.
+skipped - no point auditing trash.
 """
 import logging
 from datetime import datetime
@@ -76,7 +76,7 @@ def run_attachment_storage_audit(db: Session, task=None) -> Dict:
     scanned = accessible = missing = 0
     by_provider: Dict[str, Dict[str, int]] = {}
 
-    # Fetch lightweight rows (no ORM identity map, no server-side cursor — a
+    # Fetch lightweight rows (no ORM identity map, no server-side cursor - a
     # mid-stream commit would invalidate a yield_per named cursor). Compute the
     # verdict in memory, then bulk-UPDATE in batches keyed by status.
     rows = (

@@ -1,11 +1,11 @@
-# PLAN — SCM Reorder Co-Pilot
+# PLAN - SCM Reorder Co-Pilot
 
 **Slug:** `scm-reorder-copilot` · **Domain:** scm · **UAC:** `scm-reorder-copilot-acceptance-criteria.md`
 **Classification:** MODULE (installable per tenant). **Split by uninstall lifecycle:** core business records (SO/PO/GR/product_suppliers ext) in **`public`**; reorder *brain* (policy/run/recommendation/override/classification/supplier_perf/budget/market) in a dedicated **`scm`** Postgres schema with **cross-schema FKs** into `public` core (Postgres-native; NOT the old no-FK isolation). Uninstall = drop `scm` schema, business records untouched. Views for source-decoupling.
-**Status:** DRAFT (grilled, pre-code) — for day-2 internal team discussion; day-4 demo build.
+**Status:** DRAFT (grilled, pre-code) - for day-2 internal team discussion; day-4 demo build.
 
 > Fulfils the UAC above. Three-phase loop per feature slice (FE prototype → BE wiring + tests →
-> review). Milestones M0–M5 are the 4-day demo; each is independently demoable.
+> review). Milestones M0 - M5 are the 4-day demo; each is independently demoable.
 
 ## 0. Architecture guardrail (three-layer control)
 
@@ -26,7 +26,7 @@ emits prose/labels as output. **No path from LLM output to a numeric field.** (U
 - **Extend `suppliers`**: `+ current_performance_score` (denormalized, nullable).
 - **GR reuse**: `picking_headers` where `picking_type='goods_received'`; add `picking_lines.po_line_id` (soft, nullable) + explicit `qty_accepted`/`qty_rejected`; header links PO via existing `source_entity_type='purchase_order'`/`source_entity_id`.
 
-### 1.2 New tables — `source_system`/`source_ref` cols on all; schema split by uninstall lifecycle
+### 1.2 New tables - `source_system`/`source_ref` cols on all; schema split by uninstall lifecycle
 
 **Core business records → `public`** (survive module uninstall; sit with existing procurement/order domain): `sales_order`, `sales_order_line`, `purchase_order`, `purchase_order_line`. (GR = existing `public.picking_headers`; `product_suppliers`/`suppliers` extensions stay `public`.)
 
@@ -91,12 +91,12 @@ market_signal(id, topic_id, category_ref, currency, value, trend, summary,
               source_url, captured_at)
 ```
 
-### 1.3 Views (source-decoupling — engine reads these, AC-M0.3)
-- `scm_consumption_v` — realized outflow per SKU/warehouse/day, channel-tagged (from DO/`stock_ledger`).
-- `scm_committed_v` — open SO `Σ(qty_ordered−qty_delivered)` with priority + demand_nature.
-- `scm_on_order_v` — open PO `Σ(qty_ordered−qty_received)`.
-- `scm_net_position_v` — on_hand + on_order − committed per SKU/warehouse.
-- `scm_receipt_lead_v` — per-line `gr.receipt_date − po.issue_date` + quality (accepted/rejected/discrepancy) driving supplier snapshots.
+### 1.3 Views (source-decoupling - engine reads these, AC-M0.3)
+- `scm_consumption_v` - realized outflow per SKU/warehouse/day, channel-tagged (from DO/`stock_ledger`).
+- `scm_committed_v` - open SO `Σ(qty_ordered−qty_delivered)` with priority + demand_nature.
+- `scm_on_order_v` - open PO `Σ(qty_ordered−qty_received)`.
+- `scm_net_position_v` - on_hand + on_order − committed per SKU/warehouse.
+- `scm_receipt_lead_v` - per-line `gr.receipt_date − po.issue_date` + quality (accepted/rejected/discrepancy) driving supplier snapshots.
 
 ## 2. The engine (deterministic; UAC D10)
 
@@ -119,14 +119,14 @@ committed) → fund down the list; unfunded = `funding_status='deferred'` with v
 Policy resolution: SKU → ABC/XYZ cell → product_class → global; most-specific active wins.
 
 ## 3. LLM usage (semantic only; UAC D13/D15)
-- **Reason classifier** — new `ai_prompt` key; schema-forced output `{reason_code, confidence}` over the `override_reason` vocab; human-correctable. Generalized NLP, not keyword (memory `feedback_no_overfit_llm_nlp`).
-- **Explanation** — prose from the recommendation's numbers; numbers passed as structured input, echoed unchanged (AC-M5.1 test).
-- **Market advisory** — condenses latest `market_signal` rows to one sentence per recommendation.
-- **NL Q&A** — answers over displayed numbers only.
+- **Reason classifier** - new `ai_prompt` key; schema-forced output `{reason_code, confidence}` over the `override_reason` vocab; human-correctable. Generalized NLP, not keyword (memory `feedback_no_overfit_llm_nlp`).
+- **Explanation** - prose from the recommendation's numbers; numbers passed as structured input, echoed unchanged (AC-M5.1 test).
+- **Market advisory** - condenses latest `market_signal` rows to one sentence per recommendation.
+- **NL Q&A** - answers over displayed numbers only.
 - Reuse existing prompt registry (immutable versions + movable labels) + governance/trace infra.
 
 ## 4. Market research service (backend, no n8n; UAC D14)
-- `MarketResearchService`: iterate active `market_research_topic` → **backend web search** → parse → write `market_signal`. **Dependency:** a backend web-search capability (Anthropic web-search tool or a search-API key) — provision + wrap; flag in PR.
+- `MarketResearchService`: iterate active `market_research_topic` → **backend web search** → parse → write `market_signal`. **Dependency:** a backend web-search capability (Anthropic web-search tool or a search-API key) - provision + wrap; flag in PR.
 - Trigger: `scheduled_task` (cadence) + manual "Run research" button. Advisory-only.
 - Visualize `market_signal` in a dashboard panel (trend table).
 
@@ -157,7 +157,7 @@ plans lock the mechanics (migrations, views, endpoints, seed data, RBAC, tests).
 
 ## 6b. No-orphan-tables contract (every entity gets a frontend)
 
-Every new table ships a frontend (CRUD list or read-only grid, per the CRUD UX standard — DataGrid +
+Every new table ships a frontend (CRUD list or read-only grid, per the CRUD UX standard - DataGrid +
 bulk-action + modal-CRUD, reused, no one-offs). Each list is built in the milestone that owns its
 lifecycle:
 
@@ -193,8 +193,8 @@ playwright FE→BE→DB) → **Phase 3** `/code-review` then PR.
 - **M5** LLM explanation + market research (web-search dependency) + advisory panel.
 
 ## 8. Risks / open provisioning
-- **Backend web-search capability** (M5) — newest infra; provision early or M5 slips to fast-follow.
-- **Stock-ledger depth** — caps forecast history; MA on available window is acceptable; reconstruction deferred.
-- **`stock.quantity_reserved`** may already encode a committed signal — reconcile vs SO-committed during M1 (avoid double subtraction).
-- **4-day scope** — M0–M4 is the deterministic deal-closer; M5 (LLM + market) is the "wow" but the riskiest. If web-search provisioning stalls, demo M0–M4 + stub M5 explanation, market research fast-follow.
-- **Doc debt** — update `PRINCIPLES.md` + `CLAUDE.md` core/module doctrine to the corrected definition (memory `project_core_vs_module_schema`).
+- **Backend web-search capability** (M5) - newest infra; provision early or M5 slips to fast-follow.
+- **Stock-ledger depth** - caps forecast history; MA on available window is acceptable; reconstruction deferred.
+- **`stock.quantity_reserved`** may already encode a committed signal - reconcile vs SO-committed during M1 (avoid double subtraction).
+- **4-day scope** - M0 - M4 is the deterministic deal-closer; M5 (LLM + market) is the "wow" but the riskiest. If web-search provisioning stalls, demo M0 - M4 + stub M5 explanation, market research fast-follow.
+- **Doc debt** - update `PRINCIPLES.md` + `CLAUDE.md` core/module doctrine to the corrected definition (memory `project_core_vs_module_schema`).

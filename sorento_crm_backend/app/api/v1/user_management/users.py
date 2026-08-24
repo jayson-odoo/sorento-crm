@@ -380,6 +380,11 @@ async def get_current_user_profile(
             "notify_whatsapp_on_deadline_extended": getattr(user, "notify_whatsapp_on_deadline_extended", False),
             "notify_email_on_handling": getattr(user, "notify_email_on_handling", True),
             "notify_whatsapp_on_handling": getattr(user, "notify_whatsapp_on_handling", False),
+            # A new User column reaches the FE only through these manual dicts -
+            # inheriting it on UserResponse is not enough (UAC AC-M26).
+            "notify_push_message_scope": getattr(
+                user, "notify_push_message_scope", "assigned_and_coverage"
+            ),
             "avatar": resolve_avatar_url_for_client(user.avatar),
             "created_at": user.created_at,
             "updated_at": user.updated_at,
@@ -521,6 +526,11 @@ async def get_user(
             "notify_whatsapp_on_deadline_extended": getattr(user, "notify_whatsapp_on_deadline_extended", False),
             "notify_email_on_handling": getattr(user, "notify_email_on_handling", True),
             "notify_whatsapp_on_handling": getattr(user, "notify_whatsapp_on_handling", False),
+            # A new User column reaches the FE only through these manual dicts -
+            # inheriting it on UserResponse is not enough (UAC AC-M26).
+            "notify_push_message_scope": getattr(
+                user, "notify_push_message_scope", "assigned_and_coverage"
+            ),
             "avatar": resolve_avatar_url_for_client(user.avatar),
             "created_at": user.created_at,
             "updated_at": user.updated_at,
@@ -826,6 +836,11 @@ async def update_current_user_profile(
             "notify_whatsapp_on_deadline_extended": getattr(user, "notify_whatsapp_on_deadline_extended", False),
             "notify_email_on_handling": getattr(user, "notify_email_on_handling", True),
             "notify_whatsapp_on_handling": getattr(user, "notify_whatsapp_on_handling", False),
+            # A new User column reaches the FE only through these manual dicts -
+            # inheriting it on UserResponse is not enough (UAC AC-M26).
+            "notify_push_message_scope": getattr(
+                user, "notify_push_message_scope", "assigned_and_coverage"
+            ),
             "avatar": resolve_avatar_url_for_client(user.avatar),
             "created_at": user.created_at,
             "updated_at": user.updated_at,

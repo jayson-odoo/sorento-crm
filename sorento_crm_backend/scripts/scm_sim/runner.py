@@ -19,7 +19,7 @@ SNAPSHOT_PATH = _HERE / "snapshots" / "current.json"
 BASELINE_PATH = _HERE / "baselines" / "baseline.json"
 
 #: Every table the sim world writes to. TRUNCATE ... CASCADE is safe here ONLY because the
-#: sim database is dedicated and provably empty of anything else (see ``guard_sim_db``)  - 
+#: sim database is dedicated and provably empty of anything else (see ``guard_sim_db``) - 
 #: CASCADE will also empty any FK-dependent table outside this list, and on a real database
 #: that would be a disaster. Children before parents is not required for TRUNCATE (it locks
 #: everything named + CASCADE-reached up front), but the list still reads parent-to-child
@@ -600,17 +600,17 @@ def cmd_seed_auth() -> None:
 
     What actually gates a request here - investigated against the real code, not assumed:
 
-    - **RBAC bypass, not grants.** ``UserPermissionService.check_user_has_permission``
+  - **RBAC bypass, not grants.** ``UserPermissionService.check_user_has_permission``
       returns ``True`` outright for any user holding a role slug in
       ``{"superadmin", "admin"}`` - no ``user_permissions`` / ``user_role_permissions`` row
       is ever consulted for that user (``app/services/user_service.py``). So the minimal
       correct chain is ``users`` + the qualifying ``user_role_assignments`` row +
       ``user_roles`` row - permission-grant rows are not needed and are not copied.
-    - **Module guard no-ops in local dev.** ``require_module_enabled_with_api_key`` returns
+  - **Module guard no-ops in local dev.** ``require_module_enabled_with_api_key`` returns
       immediately when ``settings.module_guard_strict`` is off (the default, and unset in
       this repo's ``.env``), before it ever looks at a role or a tenant-module row. This
       function checks and prints which case applies rather than assuming it.
-    - **Auth is an opaque per-row session token, not a stateless JWT.** ``get_current_user``
+  - **Auth is an opaque per-row session token, not a stateless JWT.** ``get_current_user``
       looks the exact ``user_sessions.token`` up in THIS PROCESS's own database on every
       request (``app/services/user_session_service.py``) - a token minted against the real
       dev database will never resolve against the sim database's own (separate, and after

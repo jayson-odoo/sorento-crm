@@ -4,7 +4,7 @@ Adds a nullable ``company_id`` to ``embedding_documents`` and ``embedding_chunks
 so RAG / semantic search can be restricted to the caller's company scope (AC-I4)
 and fresh embeddings inherit their source entity's company (AC-I5). These are
 pipeline tables, NOT owned business tables: they are NOT CompanyScopedMixin
-subclasses (so the ORM ``do_orm_execute`` filter never touches them) — the vector
+subclasses (so the ORM ``do_orm_execute`` filter never touches them) - the vector
 search injects the company predicate manually in ``EmbeddingReadService``.
 
 The queue itself keeps no company_id column: the fresh-write path threads the
@@ -13,7 +13,7 @@ worker also re-derives it from the loaded source row (it runs system-scoped, so
 it can read any company). Backfill stamps existing embedding rows from their
 source owned row where the source_type maps to an owned table; rows whose source
 is synthetic / company-less (mcp_tool, form, schema_doc, conversation_frame,
-order_status, ``debtor:`` seeds) stay NULL — those are shared knowledge and remain
+order_status, ``debtor:`` seeds) stay NULL - those are shared knowledge and remain
 visible under every scope.
 
 Revision ID: 304_embedding_company

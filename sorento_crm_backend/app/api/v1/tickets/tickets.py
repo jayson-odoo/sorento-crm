@@ -226,7 +226,7 @@ def update_response(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("tickets.tickets.edit")),
 ):
-    """Save the response payload only — does not change ticket status or
+    """Save the response payload only - does not change ticket status or
     notify the submitter. Use ``/response/update-and-reply`` for the full
     flow."""
     from app.services.tickets_service import update_response as _impl
@@ -265,7 +265,7 @@ def update_resolution(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("tickets.tickets.edit")),
 ):
-    """Save the resolution payload only — does not change ticket status or
+    """Save the resolution payload only - does not change ticket status or
     notify the submitter. Use ``/resolution/update-and-reply`` for the full
     flow."""
     from app.services.tickets_service import update_resolution as _impl

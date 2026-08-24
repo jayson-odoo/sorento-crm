@@ -163,7 +163,7 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
   const supportsGrouping = triggerSpec?.supports_grouping ?? false;
 
   // Changing the trigger switches which facts are valid, so any existing
-  // condition tree no longer applies — reset it.
+  // condition tree no longer applies - reset it.
   const handleTriggerChange = (t: string) => {
     setTriggerType(t);
     setConditionsJson(null);

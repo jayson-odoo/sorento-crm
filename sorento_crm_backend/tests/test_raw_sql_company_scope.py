@@ -3,14 +3,14 @@
 The central ``do_orm_execute`` filter only covers ORM SELECTs. This module pins
 the hand-written enforcement added for the paths that bypass it:
 
-  - AC-I* / Group I: ``company_sql_predicate`` four-state fragment, and the
+ - AC-I* / Group I: ``company_sql_predicate`` four-state fragment, and the
     ``variant_link_service`` raw ``text()`` product queries scoped by it (a variant
     must never link across companies).
-  - AC-G1/G2 / Group G: the n8n binding endpoints scope the target-entity match to
-    the bound attachment's company — a company-A attachment must NOT bind a
+ - AC-G1/G2 / Group G: the n8n binding endpoints scope the target-entity match to
+    the bound attachment's company - a company-A attachment must NOT bind a
     same-coded product owned by company B (product_code is globally unique, so the
     realistic leak is "bind the ONE product that lives in another company").
-  - AC-I3: ``POST /lookup/resolve`` reads ``contact_id`` + ``space_id`` from the
+ - AC-I3: ``POST /lookup/resolve`` reads ``contact_id`` + ``space_id`` from the
     BODY (not query params) and pins the session scope to the contact's companies.
 
 Live-DB tests run inside a rolled-back SAVEPOINT against the local Postgres dev DB
@@ -46,7 +46,7 @@ pytestmark = pytest.mark.skipif(
 
 
 # --------------------------------------------------------------------------- #
-# company_sql_predicate — four-state fragment (no DB)                          #
+# company_sql_predicate - four-state fragment (no DB)                          #
 # --------------------------------------------------------------------------- #
 def _stub(scope):
     s = SimpleNamespace(info={})
@@ -152,7 +152,7 @@ def two_companies(db: Session):
 
 
 # --------------------------------------------------------------------------- #
-# Group I — variant_link_service raw SQL is company-scoped                     #
+# Group I - variant_link_service raw SQL is company-scoped                     #
 # --------------------------------------------------------------------------- #
 def test_derive_parent_stays_in_company(db, two_companies):
     from app.services.variant_link_service import _derive_parent_id
@@ -192,7 +192,7 @@ def test_derive_parent_never_crosses_company(db, two_companies):
 
 
 # --------------------------------------------------------------------------- #
-# Group G — binding endpoint scopes product match to attachment's company      #
+# Group G - binding endpoint scopes product match to attachment's company      #
 # --------------------------------------------------------------------------- #
 def _seed_attachment(db: Session, company_id, suffix: str, tag: str) -> str:
     aid = str(uuid.uuid4())
@@ -250,7 +250,7 @@ def test_bind_endpoint_rejects_cross_company_product(db, two_companies):
 
 
 # --------------------------------------------------------------------------- #
-# AC-I3 — lookup/resolve reads scope from the BODY                             #
+# AC-I3 - lookup/resolve reads scope from the BODY                             #
 # --------------------------------------------------------------------------- #
 def test_lookup_resolve_scopes_from_body(db, two_companies, monkeypatch):
     import app.api.v1.lookup as lookup_mod
@@ -288,7 +288,7 @@ def test_lookup_resolve_scopes_from_body(db, two_companies, monkeypatch):
     assert result.value == "CHAIR-01"
     assert get_company_scope(db) == frozenset({a})  # scope pinned from the body
 
-    # L3: a logged-in JWT user with the SAME forged body params is NOT re-scoped —
+    # L3: a logged-in JWT user with the SAME forged body params is NOT re-scoped - 
     # their active-company scope is preserved (no cross-company escalation).
     set_company_scope(db, None)
     asyncio.run(

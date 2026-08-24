@@ -70,7 +70,7 @@ interface Row {
   assignedByName: string | null;
   /** Canonical role-explicit sentence from the backend (real names, not "You"). Rendered
    * sr-only so the page snapshot the AI assistant reads is unambiguous about who covers
-   * whom vs who assigned it — the compact "name → name" row flattens that distinction. */
+   * whom vs who assigned it - the compact "name → name" row flattens that distinction. */
   summary: string | null;
   /** 'mine' = I'm the coverer (self endpoint); 'team' = HoD-managed row; 'for-me' =
    * a colleague covers me (revoke by id, edit via nominate). */
@@ -143,10 +143,10 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
       return (teamQuery.data ?? []).map((c) => ({
         id: c.id,
         covererId: c.subscriber_id,
-        covererName: c.subscriber_id === myId ? 'You' : c.subscriber_name ?? '—',
+        covererName: c.subscriber_id === myId ? 'You' : c.subscriber_name ?? '-',
         isMeCoverer: c.subscriber_id === myId,
         coveredId: c.target_user_id,
-        coveredName: c.target_user_name ?? '—',
+        coveredName: c.target_user_name ?? '-',
         redirect: c.redirect_assignments,
         expiresAt: c.expires_at,
         assignedByName: c.assigned_by_hod ? c.created_by_name ?? 'a manager' : null,
@@ -160,7 +160,7 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
       covererName: 'You',
       isMeCoverer: true,
       coveredId: c.target_user_id,
-      coveredName: c.target_user_name ?? '—',
+      coveredName: c.target_user_name ?? '-',
       redirect: c.redirect_assignments,
       expiresAt: c.expires_at,
       assignedByName: c.assigned_by_hod ? c.assigned_by_name ?? 'a manager' : null,
@@ -175,7 +175,7 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
       .map((c) => ({
         id: c.id,
         covererId: c.subscriber_id,
-        covererName: c.subscriber_name ?? '—',
+        covererName: c.subscriber_name ?? '-',
         isMeCoverer: false,
         coveredId: myId ?? ME,
         coveredName: 'You',
@@ -189,7 +189,7 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
   }, [canManageTeam, teamQuery.data, myQuery.data, forMeQuery.data, myId]);
 
   // Coverer options: "You" first, then scope-B colleagues. Everyone can pick a
-  // colleague now — a non-manager doing so can only cover THEMSELVES (self-nominate).
+  // colleague now - a non-manager doing so can only cover THEMSELVES (self-nominate).
   const covererOptions = useMemo(() => {
     const me = { id: ME, label: 'You' };
     return [me, ...visibleUsers.map((u) => ({ id: u.id, label: u.name || u.email }))];
@@ -229,7 +229,7 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
         { onSuccess: resetForm },
       );
     } else if (targetId === myId) {
-      // A colleague covers ME — self-service nominate (no manager permission needed).
+      // A colleague covers ME - self-service nominate (no manager permission needed).
       nominate.mutate(
         { covererId, expiresAt: expiresIso, redirectAssignments: redirect },
         { onSuccess: resetForm },
@@ -381,7 +381,7 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
               return (
                 <li key={r.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <div className="min-w-0">
-                    {/* Canonical role-explicit sentence — invisible on screen but present in
+                    {/* Canonical role-explicit sentence - invisible on screen but present in
                         the DOM (sr-only is captured by innerText), so the AI page snapshot and
                         screen readers get an unambiguous "X covers for Y, assigned by Z" instead
                         of the compact "X → Y" that flattens the roles. */}
@@ -480,7 +480,7 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Confirm delete</AlertDialogTitle>
             <AlertDialogDescription>
-              Remove coverage — {removeTarget?.covererName} covering {removeTarget?.coveredName}? Their SLA
+              Remove coverage - {removeTarget?.covererName} covering {removeTarget?.coveredName}? Their SLA
               tasks will stop routing. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>

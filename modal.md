@@ -1,413 +1,413 @@
 - generic [ref=e1]:
-  - alert [ref=e2]: Files | Sorento
-  - generic [ref=e33]:
-    - generic [ref=e34]:
-      - link "Sorento" [ref=e35] [cursor=pointer]:
-        - /url: /
-        - img "Sorento" [ref=e37]
-      - button [ref=e38] [cursor=pointer]:
-        - img [ref=e39]
-    - menu [ref=e44]:
-      - heading "Dashboards" [level=3] [ref=e46]:
-        - button "Dashboards" [ref=e47] [cursor=pointer]:
+ - alert [ref=e2]: Files | Sorento
+ - generic [ref=e33]:
+  - generic [ref=e34]:
+    - link "Sorento" [ref=e35] [cursor=pointer]:
+      - /url: /
+      - img "Sorento" [ref=e37]
+    - button [ref=e38] [cursor=pointer]:
+      - img [ref=e39]
+  - menu [ref=e44]:
+    - heading "Dashboards" [level=3] [ref=e46]:
+      - button "Dashboards" [ref=e47] [cursor=pointer]:
+        - img
+        - generic [ref=e48]: Dashboards
+        - img
+    - text: User Apps
+    - heading "Quick Access" [level=3] [ref=e223]:
+      - button "Quick Access" [ref=e224] [cursor=pointer]:
+        - img
+        - generic [ref=e225]: Quick Access
+        - img
+    - heading "User Management" [level=3] [ref=e50]:
+      - button "User Management" [ref=e51] [cursor=pointer]:
+        - img
+        - generic [ref=e52]: User Management
+        - img
+    - heading "Delivery Order Management" [level=3] [ref=e272]:
+      - button "Delivery Order Management" [ref=e273] [cursor=pointer]:
+        - img
+        - generic [ref=e56]: Delivery Order Management
+        - img
+    - heading "Complaint Management" [level=3] [ref=e274]:
+      - button "Complaint Management" [ref=e275] [cursor=pointer]:
+        - img
+        - generic [ref=e60]: Complaint Management
+        - img
+    - heading "SLA Management" [level=3] [ref=e276]:
+      - button "SLA Management" [ref=e277] [cursor=pointer]:
+        - img
+        - generic [ref=e64]: SLA Management
+        - img
+    - heading "Product Management" [level=3] [ref=e278]:
+      - button "Product Management" [ref=e279] [cursor=pointer]:
+        - img
+        - generic [ref=e68]: Product Management
+        - img
+    - heading "Procurement" [level=3] [ref=e280]:
+      - button "Procurement" [ref=e281] [cursor=pointer]:
+        - img
+        - generic [ref=e72]: Procurement
+        - img
+    - heading "Inventory Management" [level=3] [ref=e282]:
+      - button "Inventory Management" [ref=e283] [cursor=pointer]:
+        - img
+        - generic [ref=e76]: Inventory Management
+        - img
+    - heading "Marketing Management" [level=3] [ref=e284]:
+      - button "Marketing Management" [ref=e285] [cursor=pointer]:
+        - img
+        - generic [ref=e80]: Marketing Management
+        - img
+    - heading "Forms Management" [level=3] [ref=e286]:
+      - button "Forms Management" [ref=e287] [cursor=pointer]:
+        - img
+        - generic [ref=e84]: Forms Management
+        - img
+    - heading "Workflow Forms" [level=3] [ref=e288]:
+      - button "Workflow Forms" [ref=e289] [cursor=pointer]:
+        - img
+        - generic [ref=e88]: Workflow Forms
+        - img
+    - generic [ref=e89]:
+      - heading "Resource Management" [level=3] [ref=e290]:
+        - button "Resource Management" [expanded] [ref=e291] [cursor=pointer]:
           - img
-          - generic [ref=e48]: Dashboards
+          - generic [ref=e92]: Resource Management
           - img
-      - text: User Apps
-      - heading "Quick Access" [level=3] [ref=e223]:
-        - button "Quick Access" [ref=e224] [cursor=pointer]:
-          - img
-          - generic [ref=e225]: Quick Access
-          - img
-      - heading "User Management" [level=3] [ref=e50]:
-        - button "User Management" [ref=e51] [cursor=pointer]:
-          - img
-          - generic [ref=e52]: User Management
-          - img
-      - heading "Delivery Order Management" [level=3] [ref=e272]:
-        - button "Delivery Order Management" [ref=e273] [cursor=pointer]:
-          - img
-          - generic [ref=e56]: Delivery Order Management
-          - img
-      - heading "Complaint Management" [level=3] [ref=e274]:
-        - button "Complaint Management" [ref=e275] [cursor=pointer]:
-          - img
-          - generic [ref=e60]: Complaint Management
-          - img
-      - heading "SLA Management" [level=3] [ref=e276]:
-        - button "SLA Management" [ref=e277] [cursor=pointer]:
-          - img
-          - generic [ref=e64]: SLA Management
-          - img
-      - heading "Product Management" [level=3] [ref=e278]:
-        - button "Product Management" [ref=e279] [cursor=pointer]:
-          - img
-          - generic [ref=e68]: Product Management
-          - img
-      - heading "Procurement" [level=3] [ref=e280]:
-        - button "Procurement" [ref=e281] [cursor=pointer]:
-          - img
-          - generic [ref=e72]: Procurement
-          - img
-      - heading "Inventory Management" [level=3] [ref=e282]:
-        - button "Inventory Management" [ref=e283] [cursor=pointer]:
-          - img
-          - generic [ref=e76]: Inventory Management
-          - img
-      - heading "Marketing Management" [level=3] [ref=e284]:
-        - button "Marketing Management" [ref=e285] [cursor=pointer]:
-          - img
-          - generic [ref=e80]: Marketing Management
-          - img
-      - heading "Forms Management" [level=3] [ref=e286]:
-        - button "Forms Management" [ref=e287] [cursor=pointer]:
-          - img
-          - generic [ref=e84]: Forms Management
-          - img
-      - heading "Workflow Forms" [level=3] [ref=e288]:
-        - button "Workflow Forms" [ref=e289] [cursor=pointer]:
-          - img
-          - generic [ref=e88]: Workflow Forms
-          - img
-      - generic [ref=e89]:
-        - heading "Resource Management" [level=3] [ref=e290]:
-          - button "Resource Management" [expanded] [ref=e291] [cursor=pointer]:
+      - region "Resource Management" [ref=e523]:
+        - menu [ref=e524]:
+          - group [ref=e525]:
+            - heading "Files Add to Quick Access" [level=3] [ref=e527]:
+              - button "Files Add to Quick Access" [ref=e528] [cursor=pointer]:
+                - generic [ref=e529]:
+                  - link "Files" [ref=e530]:
+                    - /url: /resource-management/attachment-directories
+                  - button "Add to Quick Access" [ref=e531]:
+                    - img
+            - heading "Trash Add to Quick Access" [level=3] [ref=e533]:
+              - button "Trash Add to Quick Access" [ref=e534] [cursor=pointer]:
+                - generic [ref=e535]:
+                  - link "Trash" [ref=e536]:
+                    - /url: /resource-management/trash
+                  - button "Add to Quick Access" [ref=e537]:
+                    - img
+            - heading "Attachment Types Add to Quick Access" [level=3] [ref=e539]:
+              - button "Attachment Types Add to Quick Access" [ref=e540] [cursor=pointer]:
+                - generic [ref=e541]:
+                  - link "Attachment Types" [ref=e542]:
+                    - /url: /resource-management/attachment-types
+                  - button "Add to Quick Access" [ref=e543]:
+                    - img
+    - heading "System Management" [level=3] [ref=e292]:
+      - button "System Management" [ref=e293] [cursor=pointer]:
+        - img
+        - generic [ref=e96]: System Management
+        - img
+ - generic [ref=e105]:
+  - banner [ref=e106]:
+    - generic [ref=e107]:
+      - navigation "Main" [ref=e108]:
+        - list [ref=e110]:
+          - listitem [ref=e111]:
+            - link "Home" [ref=e112] [cursor=pointer]:
+              - /url: /
+          - listitem [ref=e113]:
+            - button "Profiles" [ref=e114] [cursor=pointer]:
+              - text: Profiles
+              - img [ref=e115]
+          - listitem [ref=e117]:
+            - button "My Account" [ref=e118] [cursor=pointer]:
+              - text: My Account
+              - img [ref=e119]
+          - listitem [ref=e121]:
+            - button "Network" [ref=e122] [cursor=pointer]:
+              - text: Network
+              - img [ref=e123]
+          - listitem [ref=e125]:
+            - button "Apps" [ref=e126] [cursor=pointer]:
+              - text: Apps
+              - img [ref=e127]
+      - generic [ref=e129]:
+        - button "Search menu... ⌘⇧K" [ref=e131] [cursor=pointer]:
+          - generic [ref=e132]:
+            - img [ref=e133]
+            - generic [ref=e136]: Search menu...
+          - generic "Cmd+Shift+K or Ctrl+Shift+K" [ref=e137]: ⌘⇧K
+        - generic [ref=e138]:
+          - button "1 upload need attention" [ref=e294] [cursor=pointer]:
+            - img [ref=e140]
+          - generic: "1"
+        - button "My downloads" [ref=e144] [cursor=pointer]:
+          - img [ref=e145]
+        - generic [ref=e148]:
+          - button [ref=e149] [cursor=pointer]:
+            - img [ref=e150]
+          - generic "103 unread notifications" [ref=e295]: 99+
+        - button [ref=e153] [cursor=pointer]:
+          - img [ref=e154]
+        - img "User avatar" [ref=e159] [cursor=pointer]
+  - main [ref=e160]:
+    - generic [ref=e546]:
+      - heading "Files" [level=1] [ref=e547]
+      - navigation "breadcrumb" [ref=e548]:
+        - list [ref=e549]:
+          - listitem [ref=e550]:
+            - link "Home" [ref=e551] [cursor=pointer]:
+              - /url: /
+          - listitem [ref=e552]:
+            - img [ref=e553]
+          - listitem [ref=e555]:
+            - link "Resource Management" [ref=e556] [cursor=pointer]:
+              - /url: /resource-management/attachments
+          - listitem [ref=e557]:
+            - img [ref=e558]
+          - listitem [ref=e560]:
+            - link "Files" [disabled] [ref=e561]
+    - generic [ref=e562]:
+      - generic [ref=e564]:
+        - generic [ref=e566]:
+          - generic [ref=e567]:
+            - generic: Folders
+            - generic [ref=e568]:
+              - button "Expand all" [ref=e569] [cursor=pointer]:
+                - img [ref=e570]
+              - button "Collapse all" [ref=e572] [cursor=pointer]:
+                - img [ref=e573]
+              - button "Add" [ref=e575] [cursor=pointer]:
+                - img [ref=e576]
+                - text: Add
+              - button "Collapse folders panel" [ref=e577] [cursor=pointer]:
+                - img [ref=e578]
+          - generic [ref=e582]:
             - img
-            - generic [ref=e92]: Resource Management
-            - img
-        - region "Resource Management" [ref=e523]:
-          - menu [ref=e524]:
-            - group [ref=e525]:
-              - heading "Files Add to Quick Access" [level=3] [ref=e527]:
-                - button "Files Add to Quick Access" [ref=e528] [cursor=pointer]:
-                  - generic [ref=e529]:
-                    - link "Files" [ref=e530]:
-                      - /url: /resource-management/attachment-directories
-                    - button "Add to Quick Access" [ref=e531]:
-                      - img
-              - heading "Trash Add to Quick Access" [level=3] [ref=e533]:
-                - button "Trash Add to Quick Access" [ref=e534] [cursor=pointer]:
-                  - generic [ref=e535]:
-                    - link "Trash" [ref=e536]:
-                      - /url: /resource-management/trash
-                    - button "Add to Quick Access" [ref=e537]:
-                      - img
-              - heading "Attachment Types Add to Quick Access" [level=3] [ref=e539]:
-                - button "Attachment Types Add to Quick Access" [ref=e540] [cursor=pointer]:
-                  - generic [ref=e541]:
-                    - link "Attachment Types" [ref=e542]:
-                      - /url: /resource-management/attachment-types
-                    - button "Add to Quick Access" [ref=e543]:
-                      - img
-      - heading "System Management" [level=3] [ref=e292]:
-        - button "System Management" [ref=e293] [cursor=pointer]:
-          - img
-          - generic [ref=e96]: System Management
-          - img
-  - generic [ref=e105]:
-    - banner [ref=e106]:
-      - generic [ref=e107]:
-        - navigation "Main" [ref=e108]:
-          - list [ref=e110]:
-            - listitem [ref=e111]:
-              - link "Home" [ref=e112] [cursor=pointer]:
-                - /url: /
-            - listitem [ref=e113]:
-              - button "Profiles" [ref=e114] [cursor=pointer]:
-                - text: Profiles
-                - img [ref=e115]
-            - listitem [ref=e117]:
-              - button "My Account" [ref=e118] [cursor=pointer]:
-                - text: My Account
-                - img [ref=e119]
-            - listitem [ref=e121]:
-              - button "Network" [ref=e122] [cursor=pointer]:
-                - text: Network
-                - img [ref=e123]
-            - listitem [ref=e125]:
-              - button "Apps" [ref=e126] [cursor=pointer]:
-                - text: Apps
-                - img [ref=e127]
-        - generic [ref=e129]:
-          - button "Search menu... ⌘⇧K" [ref=e131] [cursor=pointer]:
-            - generic [ref=e132]:
-              - img [ref=e133]
-              - generic [ref=e136]: Search menu...
-            - generic "Cmd+Shift+K or Ctrl+Shift+K" [ref=e137]: ⌘⇧K
-          - generic [ref=e138]:
-            - button "1 upload need attention" [ref=e294] [cursor=pointer]:
-              - img [ref=e140]
-            - generic: "1"
-          - button "My downloads" [ref=e144] [cursor=pointer]:
-            - img [ref=e145]
-          - generic [ref=e148]:
-            - button [ref=e149] [cursor=pointer]:
-              - img [ref=e150]
-            - generic "103 unread notifications" [ref=e295]: 99+
-          - button [ref=e153] [cursor=pointer]:
-            - img [ref=e154]
-          - img "User avatar" [ref=e159] [cursor=pointer]
-    - main [ref=e160]:
-      - generic [ref=e546]:
-        - heading "Files" [level=1] [ref=e547]
-        - navigation "breadcrumb" [ref=e548]:
-          - list [ref=e549]:
-            - listitem [ref=e550]:
-              - link "Home" [ref=e551] [cursor=pointer]:
-                - /url: /
-            - listitem [ref=e552]:
-              - img [ref=e553]
-            - listitem [ref=e555]:
-              - link "Resource Management" [ref=e556] [cursor=pointer]:
-                - /url: /resource-management/attachments
-            - listitem [ref=e557]:
-              - img [ref=e558]
-            - listitem [ref=e560]:
-              - link "Files" [disabled] [ref=e561]
-      - generic [ref=e562]:
-        - generic [ref=e564]:
-          - generic [ref=e566]:
-            - generic [ref=e567]:
-              - generic: Folders
-              - generic [ref=e568]:
-                - button "Expand all" [ref=e569] [cursor=pointer]:
-                  - img [ref=e570]
-                - button "Collapse all" [ref=e572] [cursor=pointer]:
-                  - img [ref=e573]
-                - button "Add" [ref=e575] [cursor=pointer]:
-                  - img [ref=e576]
-                  - text: Add
-                - button "Collapse folders panel" [ref=e577] [cursor=pointer]:
-                  - img [ref=e578]
-            - generic [ref=e582]:
-              - img
-              - textbox "Search folders..." [ref=e583]
-            - generic [ref=e585]:
-              - button "All attachments" [ref=e586]:
-                - img [ref=e587]
-                - text: All attachments
-              - button "Expand fdas Folder actions" [ref=e591]:
-                - button "Expand" [ref=e592]:
-                  - img [ref=e593]
-                - img [ref=e595]
-                - generic "fdas" [ref=e597]
-                - button "Folder actions" [ref=e598] [cursor=pointer]:
-                  - img [ref=e599]
-              - button "Expand Marketing Folder actions" [ref=e605]:
-                - button "Expand" [ref=e606]:
-                  - img [ref=e607]
-                - img [ref=e609]
-                - generic "Marketing" [ref=e611]
-                - button "Folder actions" [ref=e612] [cursor=pointer]:
-                  - img [ref=e613]
-              - button "Expand Purchasing Folder actions" [ref=e619]:
-                - button "Expand" [ref=e620]:
-                  - img [ref=e621]
-                - img [ref=e623]
-                - generic "Purchasing" [ref=e625]
-                - button "Folder actions" [ref=e626] [cursor=pointer]:
-                  - img [ref=e627]
-              - button "Expand Testing Folder actions" [ref=e633]:
-                - button "Expand" [ref=e634]:
-                  - img [ref=e635]
-                - img [ref=e637]
-                - generic "Testing" [ref=e639]
-                - button "Folder actions" [ref=e640] [cursor=pointer]:
-                  - img [ref=e641]
-          - separator [ref=e648]:
-            - img [ref=e650]
-          - generic [ref=e658]:
-            - generic [ref=e661]:
-              - button "Filters" [ref=e662] [cursor=pointer]:
-                - img [ref=e663]
-                - text: Filters
-              - button "Export" [ref=e665] [cursor=pointer]:
-                - img [ref=e666]
-                - text: Export
-              - button "Columns" [ref=e669] [cursor=pointer]:
-                - img [ref=e670]
-                - text: Columns
-            - generic [ref=e672]:
-              - generic [ref=e673]:
-                - generic [ref=e674]:
-                  - generic [ref=e675]:
-                    - img [ref=e676]
-                    - textbox "Search attachments..." [ref=e679]: BMOU5697857
-                    - button [ref=e2516] [cursor=pointer]:
-                      - img [ref=e2517]
-                  - button "Filters" [ref=e680] [cursor=pointer]:
-                    - img [ref=e681]
-                    - text: Filters
-                - generic [ref=e683]:
-                  - button "Upload" [ref=e684] [cursor=pointer]:
-                    - img [ref=e685]
-                    - text: Upload
-                  - button "Bulk import (ZIP)" [ref=e686] [cursor=pointer]:
-                    - img [ref=e687]
-                    - text: Bulk import (ZIP)
-              - table [ref=e696]:
-                - rowgroup [ref=e697]:
-                  - row "Select all Name Type Attachment Type Size Uploaded By Upload at Actions" [ref=e698]:
-                    - columnheader "Select all" [ref=e699]:
-                      - checkbox "Select all" [ref=e3179]
-                    - columnheader "Name" [ref=e701]:
-                      - button "Name" [ref=e3181] [cursor=pointer]:
-                        - text: Name
-                        - img [ref=e3182]
-                    - columnheader "Type" [ref=e708]:
-                      - button "Type" [ref=e3186] [cursor=pointer]:
-                        - text: Type
-                        - img [ref=e3187]
-                    - columnheader "Attachment Type" [ref=e715]:
-                      - button "Attachment Type" [ref=e3191] [cursor=pointer]:
-                        - text: Attachment Type
-                        - img [ref=e3192]
-                    - columnheader "Size" [ref=e722]:
-                      - button "Size" [ref=e3196] [cursor=pointer]:
-                        - text: Size
-                        - img [ref=e3197]
-                    - columnheader "Uploaded By" [ref=e729]:
-                      - button "Uploaded By" [ref=e3201] [cursor=pointer]:
-                        - text: Uploaded By
-                        - img [ref=e3202]
-                    - columnheader "Upload at" [ref=e736]:
-                      - button "Upload at" [ref=e3206] [cursor=pointer]:
-                        - text: Upload at
-                        - img [ref=e3207]
-                    - columnheader "Actions" [ref=e742]: Actions
-                - rowgroup [ref=e744]:
-                  - button "Select row Packing List BMOU5697857.xlsx application/vnd.openxmlformats... Packing List 16.98 KB Li Juan 14/05/2026, 3:37 pm" [ref=e3209]:
-                    - cell "Select row" [ref=e3210]:
-                      - checkbox "Select row" [ref=e3212]
-                    - cell "Packing List BMOU5697857.xlsx" [ref=e3213]
-                    - cell "application/vnd.openxmlformats..." [ref=e3214]:
-                      - generic "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" [ref=e3215]: application/vnd.openxmlformats...
-                    - cell "Packing List" [ref=e3216]
-                    - cell "16.98 KB" [ref=e3217]
-                    - cell "Li Juan" [ref=e3218]
-                    - cell "14/05/2026, 3:37 pm" [ref=e3219]
-                    - cell [ref=e3220]:
-                      - generic [ref=e3221]:
-                        - button "Preview" [ref=e3222] [cursor=pointer]:
-                          - img [ref=e3223]
-                        - button "Download" [ref=e3226] [cursor=pointer]:
-                          - img [ref=e3227]
-                        - button "Rename" [ref=e3230] [cursor=pointer]:
-                          - img [ref=e3231]
-                        - button "Resubmit to n8n" [ref=e3234] [cursor=pointer]:
-                          - img [ref=e3235]
-                        - button "Move to trash" [ref=e3240] [cursor=pointer]:
-                          - img [ref=e3241]
-              - generic [ref=e2496]:
-                - generic [ref=e2497]:
-                  - generic [ref=e3244]: Rows per page
-                  - combobox [ref=e3245]:
-                    - generic: "50"
-                    - img [ref=e3246]
-                - generic [ref=e3248]: 1 - 1 of 1
-        - status [ref=e2515]
-    - contentinfo [ref=e211]:
-      - generic [ref=e213]:
-        - generic [ref=e215]: 2026 @ Foundryx
-        - navigation [ref=e216]:
-          - link "Docs" [ref=e217] [cursor=pointer]:
-            - /url: https://doc.foundryx.my/collection/sorento-crm-BOoUtlxxTH
-          - link "Purchase" [ref=e218] [cursor=pointer]:
-            - /url: https://1.envato.market/Vm7VRE
-          - link "FAQ" [ref=e219] [cursor=pointer]:
-            - /url: https://keenthemes.com/metronic
-          - link "Support" [ref=e220] [cursor=pointer]:
-            - /url: /ticket-management/tickets
-          - link "License" [ref=e221] [cursor=pointer]:
-            - /url: ""
-  - button "Open AI assistant" [ref=e519] [cursor=pointer]:
-    - img [ref=e520]
-  - region "Notifications alt+T"
-  - dialog "Packing List BMOU5697857.xlsx" [ref=e3249]:
-    - generic [ref=e3250]:
-      - heading "Packing List BMOU5697857.xlsx" [level=2] [ref=e3251]
-      - generic "attachment navigation" [ref=e3252]:
-        - button "Previous attachment" [active] [ref=e3253] [cursor=pointer]:
-          - img [ref=e3254]
-        - generic "1 of 1 records" [ref=e3256]: 1 / 1
-        - button "Next attachment" [ref=e3257] [cursor=pointer]:
-          - img [ref=e3258]
-    - generic [ref=e3261]:
-      - generic [ref=e3262]:
-        - button "Preview" [ref=e3263] [cursor=pointer]:
-          - img [ref=e3264]
-          - text: Preview
-        - button "Download" [ref=e3267] [cursor=pointer]:
-          - img [ref=e3268]
-          - text: Download
-        - button "Resubmit" [ref=e3271] [cursor=pointer]:
-          - img [ref=e3272]
-          - text: Resubmit
-        - button "Move to Trash" [ref=e3277] [cursor=pointer]:
-          - img [ref=e3278]
-          - text: Move to Trash
-      - generic [ref=e3282]:
-        - tablist [ref=e3284]:
-          - tab "Attachment Details" [selected] [ref=e3285] [cursor=pointer]
-          - tab "Integration" [ref=e3286] [cursor=pointer]
-        - tabpanel "Attachment Details" [ref=e3288]:
-          - generic [ref=e3289]:
-            - paragraph [ref=e3290]: Directory
-            - paragraph [ref=e3291]: Purchasing --> Packing List
-            - link "Open folder →" [ref=e3292] [cursor=pointer]:
-              - /url: /resource-management/attachment-directories?directoryId=aa8d9a80-5c7d-445d-8fbd-cdcb4dead254
-          - generic [ref=e3293]:
-            - generic [ref=e3294]:
-              - paragraph [ref=e3295]: File Type
-              - paragraph [ref=e3296]: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
-            - generic [ref=e3297]:
-              - paragraph [ref=e3298]: Attachment Type
-              - generic [ref=e3299]:
-                - paragraph [ref=e3300]: Packing List
-                - button "Edit" [ref=e3301] [cursor=pointer]
-            - generic [ref=e3302]:
-              - paragraph [ref=e3303]: File Size
-              - paragraph [ref=e3304]: 16.98 KB
-            - generic [ref=e3305]:
-              - paragraph [ref=e3306]: Uploaded By
-              - paragraph [ref=e3307]: Li Juan
-            - generic [ref=e3308]:
-              - paragraph [ref=e3309]: Uploaded
-              - paragraph [ref=e3310]: 14/05/2026
-            - generic [ref=e3311]:
-              - paragraph [ref=e3312]: Status
-              - generic [ref=e3313]: Active
-          - generic [ref=e3315]:
-            - text: Description
-            - generic [ref=e3316]:
-              - paragraph [ref=e3317]: —
-              - button "Add" [ref=e3318] [cursor=pointer]
-          - generic [ref=e3319]:
-            - text: Access levels
-            - generic [ref=e3320]:
-              - generic [ref=e3321]:
-                - generic [ref=e3322]: Sorento Office
-                - generic [ref=e3323]: Sorento Dealer
-                - generic [ref=e3324]: Mocha Dealer
-                - generic [ref=e3325]: Cabana Office
-                - generic [ref=e3326]: Cabana Dealer
-                - generic [ref=e3327]: nl_dealer
-                - generic [ref=e3328]: End User
-              - button "Edit" [ref=e3329] [cursor=pointer]
-      - generic [ref=e3330]:
-        - heading "Linkages" [level=3] [ref=e3332]
-        - generic [ref=e3334]:
-          - tablist [ref=e3335]:
-            - tab "Products" [selected] [ref=e3336] [cursor=pointer]
-            - tab "Promotions" [ref=e3337] [cursor=pointer]
-            - tab "Forms" [ref=e3338] [cursor=pointer]
-            - tab "Packing Lists" [ref=e3339] [cursor=pointer]
-          - tabpanel "Products" [ref=e3340]:
-            - generic [ref=e3342]:
-              - paragraph [ref=e3343]: No products linked to this attachment.
-              - button "Link" [ref=e3344] [cursor=pointer]:
-                - img [ref=e3345]
-                - text: Link
-    - button "Close" [ref=e3346] [cursor=pointer]:
-      - img [ref=e3347]
-      - generic [ref=e3350]: Close
+            - textbox "Search folders..." [ref=e583]
+          - generic [ref=e585]:
+            - button "All attachments" [ref=e586]:
+              - img [ref=e587]
+              - text: All attachments
+            - button "Expand fdas Folder actions" [ref=e591]:
+              - button "Expand" [ref=e592]:
+                - img [ref=e593]
+              - img [ref=e595]
+              - generic "fdas" [ref=e597]
+              - button "Folder actions" [ref=e598] [cursor=pointer]:
+                - img [ref=e599]
+            - button "Expand Marketing Folder actions" [ref=e605]:
+              - button "Expand" [ref=e606]:
+                - img [ref=e607]
+              - img [ref=e609]
+              - generic "Marketing" [ref=e611]
+              - button "Folder actions" [ref=e612] [cursor=pointer]:
+                - img [ref=e613]
+            - button "Expand Purchasing Folder actions" [ref=e619]:
+              - button "Expand" [ref=e620]:
+                - img [ref=e621]
+              - img [ref=e623]
+              - generic "Purchasing" [ref=e625]
+              - button "Folder actions" [ref=e626] [cursor=pointer]:
+                - img [ref=e627]
+            - button "Expand Testing Folder actions" [ref=e633]:
+              - button "Expand" [ref=e634]:
+                - img [ref=e635]
+              - img [ref=e637]
+              - generic "Testing" [ref=e639]
+              - button "Folder actions" [ref=e640] [cursor=pointer]:
+                - img [ref=e641]
+        - separator [ref=e648]:
+          - img [ref=e650]
+        - generic [ref=e658]:
+          - generic [ref=e661]:
+            - button "Filters" [ref=e662] [cursor=pointer]:
+              - img [ref=e663]
+              - text: Filters
+            - button "Export" [ref=e665] [cursor=pointer]:
+              - img [ref=e666]
+              - text: Export
+            - button "Columns" [ref=e669] [cursor=pointer]:
+              - img [ref=e670]
+              - text: Columns
+          - generic [ref=e672]:
+            - generic [ref=e673]:
+              - generic [ref=e674]:
+                - generic [ref=e675]:
+                  - img [ref=e676]
+                  - textbox "Search attachments..." [ref=e679]: BMOU5697857
+                  - button [ref=e2516] [cursor=pointer]:
+                    - img [ref=e2517]
+                - button "Filters" [ref=e680] [cursor=pointer]:
+                  - img [ref=e681]
+                  - text: Filters
+              - generic [ref=e683]:
+                - button "Upload" [ref=e684] [cursor=pointer]:
+                  - img [ref=e685]
+                  - text: Upload
+                - button "Bulk import (ZIP)" [ref=e686] [cursor=pointer]:
+                  - img [ref=e687]
+                  - text: Bulk import (ZIP)
+            - table [ref=e696]:
+              - rowgroup [ref=e697]:
+                - row "Select all Name Type Attachment Type Size Uploaded By Upload at Actions" [ref=e698]:
+                  - columnheader "Select all" [ref=e699]:
+                    - checkbox "Select all" [ref=e3179]
+                  - columnheader "Name" [ref=e701]:
+                    - button "Name" [ref=e3181] [cursor=pointer]:
+                      - text: Name
+                      - img [ref=e3182]
+                  - columnheader "Type" [ref=e708]:
+                    - button "Type" [ref=e3186] [cursor=pointer]:
+                      - text: Type
+                      - img [ref=e3187]
+                  - columnheader "Attachment Type" [ref=e715]:
+                    - button "Attachment Type" [ref=e3191] [cursor=pointer]:
+                      - text: Attachment Type
+                      - img [ref=e3192]
+                  - columnheader "Size" [ref=e722]:
+                    - button "Size" [ref=e3196] [cursor=pointer]:
+                      - text: Size
+                      - img [ref=e3197]
+                  - columnheader "Uploaded By" [ref=e729]:
+                    - button "Uploaded By" [ref=e3201] [cursor=pointer]:
+                      - text: Uploaded By
+                      - img [ref=e3202]
+                  - columnheader "Upload at" [ref=e736]:
+                    - button "Upload at" [ref=e3206] [cursor=pointer]:
+                      - text: Upload at
+                      - img [ref=e3207]
+                  - columnheader "Actions" [ref=e742]: Actions
+              - rowgroup [ref=e744]:
+                - button "Select row Packing List BMOU5697857.xlsx application/vnd.openxmlformats... Packing List 16.98 KB Li Juan 14/05/2026, 3:37 pm" [ref=e3209]:
+                  - cell "Select row" [ref=e3210]:
+                    - checkbox "Select row" [ref=e3212]
+                  - cell "Packing List BMOU5697857.xlsx" [ref=e3213]
+                  - cell "application/vnd.openxmlformats..." [ref=e3214]:
+                    - generic "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" [ref=e3215]: application/vnd.openxmlformats...
+                  - cell "Packing List" [ref=e3216]
+                  - cell "16.98 KB" [ref=e3217]
+                  - cell "Li Juan" [ref=e3218]
+                  - cell "14/05/2026, 3:37 pm" [ref=e3219]
+                  - cell [ref=e3220]:
+                    - generic [ref=e3221]:
+                      - button "Preview" [ref=e3222] [cursor=pointer]:
+                        - img [ref=e3223]
+                      - button "Download" [ref=e3226] [cursor=pointer]:
+                        - img [ref=e3227]
+                      - button "Rename" [ref=e3230] [cursor=pointer]:
+                        - img [ref=e3231]
+                      - button "Resubmit to n8n" [ref=e3234] [cursor=pointer]:
+                        - img [ref=e3235]
+                      - button "Move to trash" [ref=e3240] [cursor=pointer]:
+                        - img [ref=e3241]
+            - generic [ref=e2496]:
+              - generic [ref=e2497]:
+                - generic [ref=e3244]: Rows per page
+                - combobox [ref=e3245]:
+                  - generic: "50"
+                  - img [ref=e3246]
+              - generic [ref=e3248]: 1 - 1 of 1
+      - status [ref=e2515]
+  - contentinfo [ref=e211]:
+    - generic [ref=e213]:
+      - generic [ref=e215]: 2026 @ Foundryx
+      - navigation [ref=e216]:
+        - link "Docs" [ref=e217] [cursor=pointer]:
+          - /url: https://doc.foundryx.my/collection/sorento-crm-BOoUtlxxTH
+        - link "Purchase" [ref=e218] [cursor=pointer]:
+          - /url: https://1.envato.market/Vm7VRE
+        - link "FAQ" [ref=e219] [cursor=pointer]:
+          - /url: https://keenthemes.com/metronic
+        - link "Support" [ref=e220] [cursor=pointer]:
+          - /url: /ticket-management/tickets
+        - link "License" [ref=e221] [cursor=pointer]:
+          - /url: ""
+ - button "Open AI assistant" [ref=e519] [cursor=pointer]:
+  - img [ref=e520]
+ - region "Notifications alt+T"
+ - dialog "Packing List BMOU5697857.xlsx" [ref=e3249]:
+  - generic [ref=e3250]:
+    - heading "Packing List BMOU5697857.xlsx" [level=2] [ref=e3251]
+    - generic "attachment navigation" [ref=e3252]:
+      - button "Previous attachment" [active] [ref=e3253] [cursor=pointer]:
+        - img [ref=e3254]
+      - generic "1 of 1 records" [ref=e3256]: 1 / 1
+      - button "Next attachment" [ref=e3257] [cursor=pointer]:
+        - img [ref=e3258]
+  - generic [ref=e3261]:
+    - generic [ref=e3262]:
+      - button "Preview" [ref=e3263] [cursor=pointer]:
+        - img [ref=e3264]
+        - text: Preview
+      - button "Download" [ref=e3267] [cursor=pointer]:
+        - img [ref=e3268]
+        - text: Download
+      - button "Resubmit" [ref=e3271] [cursor=pointer]:
+        - img [ref=e3272]
+        - text: Resubmit
+      - button "Move to Trash" [ref=e3277] [cursor=pointer]:
+        - img [ref=e3278]
+        - text: Move to Trash
+    - generic [ref=e3282]:
+      - tablist [ref=e3284]:
+        - tab "Attachment Details" [selected] [ref=e3285] [cursor=pointer]
+        - tab "Integration" [ref=e3286] [cursor=pointer]
+      - tabpanel "Attachment Details" [ref=e3288]:
+        - generic [ref=e3289]:
+          - paragraph [ref=e3290]: Directory
+          - paragraph [ref=e3291]: Purchasing --> Packing List
+          - link "Open folder →" [ref=e3292] [cursor=pointer]:
+            - /url: /resource-management/attachment-directories?directoryId=aa8d9a80-5c7d-445d-8fbd-cdcb4dead254
+        - generic [ref=e3293]:
+          - generic [ref=e3294]:
+            - paragraph [ref=e3295]: File Type
+            - paragraph [ref=e3296]: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+          - generic [ref=e3297]:
+            - paragraph [ref=e3298]: Attachment Type
+            - generic [ref=e3299]:
+              - paragraph [ref=e3300]: Packing List
+              - button "Edit" [ref=e3301] [cursor=pointer]
+          - generic [ref=e3302]:
+            - paragraph [ref=e3303]: File Size
+            - paragraph [ref=e3304]: 16.98 KB
+          - generic [ref=e3305]:
+            - paragraph [ref=e3306]: Uploaded By
+            - paragraph [ref=e3307]: Li Juan
+          - generic [ref=e3308]:
+            - paragraph [ref=e3309]: Uploaded
+            - paragraph [ref=e3310]: 14/05/2026
+          - generic [ref=e3311]:
+            - paragraph [ref=e3312]: Status
+            - generic [ref=e3313]: Active
+        - generic [ref=e3315]:
+          - text: Description
+          - generic [ref=e3316]:
+            - paragraph [ref=e3317]: - 
+            - button "Add" [ref=e3318] [cursor=pointer]
+        - generic [ref=e3319]:
+          - text: Access levels
+          - generic [ref=e3320]:
+            - generic [ref=e3321]:
+              - generic [ref=e3322]: Sorento Office
+              - generic [ref=e3323]: Sorento Dealer
+              - generic [ref=e3324]: Mocha Dealer
+              - generic [ref=e3325]: Cabana Office
+              - generic [ref=e3326]: Cabana Dealer
+              - generic [ref=e3327]: nl_dealer
+              - generic [ref=e3328]: End User
+            - button "Edit" [ref=e3329] [cursor=pointer]
+    - generic [ref=e3330]:
+      - heading "Linkages" [level=3] [ref=e3332]
+      - generic [ref=e3334]:
+        - tablist [ref=e3335]:
+          - tab "Products" [selected] [ref=e3336] [cursor=pointer]
+          - tab "Promotions" [ref=e3337] [cursor=pointer]
+          - tab "Forms" [ref=e3338] [cursor=pointer]
+          - tab "Packing Lists" [ref=e3339] [cursor=pointer]
+        - tabpanel "Products" [ref=e3340]:
+          - generic [ref=e3342]:
+            - paragraph [ref=e3343]: No products linked to this attachment.
+            - button "Link" [ref=e3344] [cursor=pointer]:
+              - img [ref=e3345]
+              - text: Link
+  - button "Close" [ref=e3346] [cursor=pointer]:
+    - img [ref=e3347]
+    - generic [ref=e3350]: Close

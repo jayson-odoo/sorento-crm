@@ -1,4 +1,4 @@
-# Commercial — Create and manage leads (and lead stages)
+# Commercial - Create and manage leads (and lead stages)
 
 A **lead** is the start of the commercial pipeline: a customer (client) plus a qualification profile (property, budget, confidence) that you progress through configurable **lead stages** until it converts into a project / tender / quotation. Use this guide to create a lead, work the list, and maintain the stage list.
 
@@ -10,9 +10,9 @@ The list opens as a DataGrid with a **List / board** view toggle. Visible column
 
 ### Search and filter
 
-* **Search leads...** — free-text search across lead code, title and client; press Enter to apply.
-* **Status** dropdown — **All statuses**, or pick a specific lead stage.
-* **Pipeline** dropdown — **All pipeline** or **Open stages only** (hides leads sitting in a terminal stage such as Won / Lost).
+* **Search leads...** - free-text search across lead code, title and client; press Enter to apply.
+* **Status** dropdown - **All statuses**, or pick a specific lead stage.
+* **Pipeline** dropdown - **All pipeline** or **Open stages only** (hides leads sitting in a terminal stage such as Won / Lost).
 
 ### Row actions
 
@@ -23,15 +23,15 @@ The `⋮` menu on each row offers **Duplicate**, **View lead** and **View client
 Click **+ Create Lead** (top right) to open the **Create New Lead** wizard (URL: `/commercial/leads/new`). It has four steps shown in the stepper: **Select Client**, **Property Info**, **Lead Detail**, **Confirmation**.
 
 
-1. **Select Client** — search and pick an existing client, or click **New client** to create one inline. A client is required to continue.
-2. **Property Info** — optional property location and details:
+1. **Select Client** - search and pick an existing client, or click **New client** to create one inline. A client is required to continue.
+2. **Property Info** - optional property location and details:
    * **Property Address**: **Address Line 1**, **Address Line 2**, **Postcode**, **Area / City**, **State**, **Country**. Use **Open Maps** to look the address up in Google Maps.
    * **Property Details**: **Property Type**, **Property Status** (**Planning**, **Under construction**, **Completed**, **Operational**, **Other**) and **Property Value** (currency **MYR** / **SGD** / **USD**).
-3. **Lead Detail** — the lead itself:
+3. **Lead Detail** - the lead itself:
    * **Lead title** (required) and **Lead owner** (required).
-   * **Respond workspace (optional)** — link the lead to a Respond.io workspace so its WhatsApp conversation threads through.
+   * **Respond workspace (optional)** - link the lead to a Respond.io workspace so its WhatsApp conversation threads through.
    * **Budget Range (RM)**, **Sales Closure Confidence**, **Referral**, **Est. Project Start Date**, **Est. Project End Date**.
-4. **Confirmation** — review the **Client**, **Property Information** and **Lead Details** cards (each has an **Edit** shortcut back to its step), then click **Create Lead**.
+4. **Confirmation** - review the **Client**, **Property Information** and **Lead Details** cards (each has an **Edit** shortcut back to its step), then click **Create Lead**.
 
 The owner, title and client are mandatory; the property and qualification fields are stored together as the lead's **qualification** profile and surface in the list (Property Type, Budget Range) and on the detail page.
 
@@ -48,11 +48,11 @@ Open [**Commercial → Lead Stages**](/commercial/lead-stages) (URL: `/commercia
 | **Code** | Stable machine code for the stage. |
 | **Name** | Display name shown in the Status column / filters. |
 | **Order** | Sort position in the pipeline. |
-| **Terminal** | Toggle — a terminal stage ends the pipeline (e.g. Won / Lost). "Open stages only" filters these out. |
-| **Allows conversion** | Toggle — whether a lead in this stage may be converted onward (e.g. into a project). |
+| **Terminal** | Toggle - a terminal stage ends the pipeline (e.g. Won / Lost). "Open stages only" filters these out. |
+| **Allows conversion** | Toggle - whether a lead in this stage may be converted onward (e.g. into a project). |
 
 * The **Terminal** and **Allows conversion** switches save immediately (edit permission required).
-* **Delete** removes a stage. The confirmation reads: *"Delete this stage? It must not be assigned to any lead."* — reassign any leads off the stage first.
+* **Delete** removes a stage. The confirmation reads: *"Delete this stage? It must not be assigned to any lead."* - reassign any leads off the stage first.
 * **Refresh** re-loads the list.
 
 > Lead stages are **configurable per tenant**, not a fixed list. They live in the shared workflow-stage model (`domain = lead`). New installs seed a starter set; your administrator tailors the names, order and terminal flags. The same stage editor is also reachable from [**Commercial → Process Configuration**](/commercial-core/process-configuration) under the **Stages** tab.

@@ -1,13 +1,13 @@
-"""Staff session lifecycle — mint, resolve (with sliding extension), revoke.
+"""Staff session lifecycle - mint, resolve (with sliding extension), revoke.
 
 Mirrors the contact portal's device-trust model (``portal_service.resolve_token``)
 for internal CRM users. The opaque token is the credential; the DB row is the
 source of truth for validity, so revocation and expiry are instant.
 
 Lifetimes (see PLAN-staff-rolling-sessions-fastapi-auth.md):
-  - remember-me checked  → ``rolling=True``, 30-day window re-extended on use,
+ - remember-me checked  → ``rolling=True``, 30-day window re-extended on use,
     write throttled to ~once/day via the 29-day threshold.
-  - remember-me unchecked → ``rolling=False``, fixed 8h, never slides.
+ - remember-me unchecked → ``rolling=False``, fixed 8h, never slides.
 
 ``last_seen_at`` is updated on a separate ~10-minute throttle so the "your devices"
 list stays fresh without a write on every request.
@@ -44,7 +44,7 @@ class SessionAuthError(Exception):
 
 
 def _utcnow() -> datetime:
-    """Naive UTC — matches the timezone=False columns (same as portal_service)."""
+    """Naive UTC - matches the timezone=False columns (same as portal_service)."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 

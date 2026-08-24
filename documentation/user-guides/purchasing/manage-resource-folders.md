@@ -1,4 +1,4 @@
-# 1.6-Purchasing — Manage folders, files, and Quick Access
+# 1.6-Purchasing - Manage folders, files, and Quick Access
 
 Folders help organise attachments (packing lists, product attachments, promotions, marketing forms, etc.) so they are easier to find. Folder operations live on the same **Files** page as the attachments, on the left **Folders** sidebar.
 
@@ -43,7 +43,7 @@ File rows in the attachments table no longer have a pencil / **Actions** column 
 
 ### Rename a file
 
-1. **Right-click** the file row in the attachments table (right pane) — or long-press on touch.
+1. **Right-click** the file row in the attachments table (right pane) - or long-press on touch.
 2. Choose **Rename** from the context menu.
 3. Edit the name in the rename dialog and confirm.
 

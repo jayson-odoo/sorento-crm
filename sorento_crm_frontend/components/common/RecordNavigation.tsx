@@ -118,7 +118,7 @@ export default function RecordNavigation(props: RecordNavigationProps) {
       : '…'
     : totalCount != null && totalCount > 0
       ? positionUnknown
-        ? `— / ${totalCount}`
+        ? `- / ${totalCount}`
         : currentIndex != null && currentIndex > 0
           ? `${currentIndex} / ${totalCount}`
           : null

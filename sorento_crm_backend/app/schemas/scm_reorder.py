@@ -2,7 +2,7 @@
 
 Mirror the Phase-1 FE contract documented at the top of
 ``app/(protected)/scm/reorder/services/reorderRunService.ts`` +
-``types/reorder.types.ts``. No UUIDs surface in display fields — SKU/warehouse/
+``types/reorder.types.ts``. No UUIDs surface in display fields - SKU/warehouse/
 supplier resolve to human codes/names (ids stay on the request path only).
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pydantic import BaseModel
 # --- create / poll ----------------------------------------------------------
 
 class CreateReorderRunRequest(BaseModel):
-    """Manual-plan request (M8-D5). ``buy_scope`` is gone — planning scope is fixed
+    """Manual-plan request (M8-D5). ``buy_scope`` is gone - planning scope is fixed
     (create_run defaults it internally); the FE manual modal sends only warehouse +
     budget. Market never enters a run (it reaches the plan through chat only), so
     ``include_market`` stays false here.
@@ -25,8 +25,8 @@ class CreateReorderRunRequest(BaseModel):
     # Empty means every product, which is what the daily scheduled run sends. Human codes,
     # never ids, like every other field the frontend passes.
     product_codes: List[str] = []
-    budget_id: Optional[str] = None  # M4 — ignored in M3
-    include_market: bool = False  # M7 — opt-in market-trend priority factor
+    budget_id: Optional[str] = None  # M4 - ignored in M3
+    include_market: bool = False  # M7 - opt-in market-trend priority factor
     # "Plan until" (captain, 20 Aug): omitted/None plans every open SO line regardless of
     # need date, unchanged from before this field existed. When set, demand needed AFTER
     # it is excluded from the run's netting; demand carrying no date is always still
@@ -71,7 +71,7 @@ class ReorderRunStatusResponse(BaseModel):
 
 class ReorderRunListItem(BaseModel):
     """One row in the newest-first run-history list. Runs are identified by time +
-    warehouses (never the run_id) — ``warehouse_codes`` resolve the frozen
+    warehouses (never the run_id) - ``warehouse_codes`` resolve the frozen
     ``warehouse_ids`` to human codes. ``summary`` populates once completed (read
     from the immutable ``run_log`` counts)."""
     run_id: str
@@ -79,7 +79,7 @@ class ReorderRunListItem(BaseModel):
     buy_scope: Optional[str] = None
     warehouse_codes: List[str] = []
     warehouse_count: int = 0
-    started_at: Optional[str] = None   # naive-UTC ISO — FE formats in Malaysia time
+    started_at: Optional[str] = None   # naive-UTC ISO - FE formats in Malaysia time
     finished_at: Optional[str] = None
     summary: Optional[ReorderRunSummary] = None
     # Same stamp as ReorderRunStatusResponse, so the history list and today's run label a

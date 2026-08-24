@@ -50,7 +50,7 @@ function filterMenuByPermission(items: MenuConfig, permissionSet: Set<string>): 
   });
 }
 
-/** Hide superadmin-only entries from non-superadmins. `isSuperadmin` null = still loading — show all (avoids flicker for real superadmins). */
+/** Hide superadmin-only entries from non-superadmins. `isSuperadmin` null = still loading - show all (avoids flicker for real superadmins). */
 function filterMenuBySuperadmin(items: MenuConfig, isSuperadmin: boolean | null): MenuConfig {
   if (isSuperadmin === null || isSuperadmin) return items;
   return items
@@ -69,7 +69,7 @@ function filterMenuBySuperadmin(items: MenuConfig, isSuperadmin: boolean | null)
     );
 }
 
-/** Hide menu branches tied to disabled tenant modules (null = still loading / error — show all). */
+/** Hide menu branches tied to disabled tenant modules (null = still loading / error - show all). */
 function filterMenuByModule(items: MenuConfig, enabledModuleKeys: Set<string> | null): MenuConfig {
   if (!enabledModuleKeys) return items;
   return items
@@ -90,6 +90,18 @@ function filterMenuByModule(items: MenuConfig, enabledModuleKeys: Set<string> | 
     });
 }
 
+/** Drop heading items that have no non-heading items following them before the next heading or end of list. */
+export function filterOrphanHeadings(items: MenuConfig): MenuConfig {
+  return items.filter((item, index) => {
+    if (!item.heading) return true;
+    for (let i = index + 1; i < items.length; i++) {
+      if (items[i].heading) return false;
+      return true;
+    }
+    return false;
+  });
+}
+
 export function SidebarMenu() {
   const pathname = usePathname();
   const { data: session, status } = useSession();
@@ -97,7 +109,7 @@ export function SidebarMenu() {
   const { permissionSet, isLoading } = usePermissions();
   const { enabledModuleKeys, isLoading: modulesLoading } = useTenantModules();
   const wfModuleEnabled = enabledModuleKeys?.has('workflow_forms') ?? false;
-  /** Avoid calling published-for-submission without RBAC — global QueryCache onError would toast 403 on every page. */
+  /** Avoid calling published-for-submission without RBAC - global QueryCache onError would toast 403 on every page. */
   const canFetchPublishedWorkflowForms = useHasAnyPermission(
     [...WORKFLOW_PUBLISHED_FOR_SUBMISSION_PERMISSIONS],
   );
@@ -112,10 +124,10 @@ export function SidebarMenu() {
 
   const effectiveMenu = useMemo(() => {
     const bySuper = filterMenuBySuperadmin(menuWithPublishedForms, isSuperadmin);
-    if (isLoading) return bySuper;
+    if (isLoading) return filterOrphanHeadings(bySuper);
     const byPerm = filterMenuByPermission(bySuper, permissionSet);
-    if (modulesLoading) return byPerm;
-    return filterMenuByModule(byPerm, enabledModuleKeys);
+    if (modulesLoading) return filterOrphanHeadings(byPerm);
+    return filterOrphanHeadings(filterMenuByModule(byPerm, enabledModuleKeys));
   }, [
     permissionSet,
     isLoading,
@@ -141,10 +153,10 @@ export function SidebarMenu() {
     label:
       'uppercase text-xs font-medium text-muted-foreground/70 pt-2.25 pb-px',
     separator: '',
-    item: 'h-8 hover:bg-transparent text-accent-foreground hover:text-primary data-[selected=true]:text-primary data-[selected=true]:bg-muted data-[selected=true]:font-medium',
+    item: 'h-8 text-accent-foreground hover:bg-accent hover:text-primary active:scale-[0.98] transition-transform duration-75 data-[selected=true]:text-primary data-[selected=true]:bg-muted data-[selected=true]:font-medium',
     sub: '',
     subTrigger:
-      'h-8 hover:bg-transparent text-accent-foreground hover:text-primary data-[selected=true]:text-primary data-[selected=true]:bg-muted data-[selected=true]:font-medium',
+      'h-8 text-accent-foreground hover:bg-accent hover:text-primary active:scale-[0.98] transition-transform duration-75 data-[selected=true]:text-primary data-[selected=true]:bg-muted data-[selected=true]:font-medium',
     subContent: 'py-0',
     indicator: '',
   };
@@ -325,11 +337,11 @@ export function SidebarMenu() {
     return <AccordionMenuLabel key={index}>{item.heading}</AccordionMenuLabel>;
   };
 
-  const userManagementIndex = useMemo(
-    () => effectiveMenu.findIndex((item) => !item.heading && item.title === 'User Management'),
+  const salesHeadingIndex = useMemo(
+    () => effectiveMenu.findIndex((item) => item.heading === 'SALES'),
     [effectiveMenu]
   );
-  const indexToSplit = userManagementIndex >= 0 ? userManagementIndex : effectiveMenu.length;
+  const indexToSplit = salesHeadingIndex >= 0 ? salesHeadingIndex : effectiveMenu.length;
   const menuBefore = useMemo(() => effectiveMenu.slice(0, indexToSplit), [effectiveMenu, indexToSplit]);
   const menuAfter = useMemo(() => effectiveMenu.slice(indexToSplit), [effectiveMenu, indexToSplit]);
 

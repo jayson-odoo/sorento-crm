@@ -33,11 +33,11 @@ const nextConfig = {
   // Proxy API requests to FastAPI backend in development
   async rewrites() {
     // Only apply rewrites in development mode
-    if (process.env.NODE_ENV === 'development' && !process.env.NEXT_PUBLIC_API_URL) {
+    if (process.env.NODE_ENV === 'development') {
       return [
         {
           source: '/api/v1/:path*',
-          destination: 'http://localhost:8000/api/v1/:path*',
+          destination: 'http://localhost:8032/api/v1/:path*',
         },
       ];
     }

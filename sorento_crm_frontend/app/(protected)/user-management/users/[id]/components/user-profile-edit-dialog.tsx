@@ -730,7 +730,7 @@ const UserProfileEditDialog = ({
                 );
               }}
             />
-            {/* WhatsApp contact link (TCK-31) — name + phone, never UUID */}
+            {/* WhatsApp contact link (TCK-31) - name + phone, never UUID */}
             <FormField
               control={form.control}
               name="respond_contact_id"

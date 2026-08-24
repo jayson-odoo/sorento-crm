@@ -1,4 +1,4 @@
-# 1.4-Purchasing — Upload product attachments (certifications)
+# 1.4-Purchasing - Upload product attachments (certifications)
 
 Use this flow to upload technical product documents (certifications) that should be linked to a product in the master data.
 
@@ -10,7 +10,7 @@ Use this flow to upload technical product documents (certifications) that should
 3. Click **[Upload](/resource-management/attachment-directories#guide_target=resource-management.files.upload-button)** in the top toolbar of the attachments table.
 4. In the **Create Attachment** dialog, set **Attachment Type** to your tenant's **Certification** type
 5. Drag the file(s) into the **Files** drop zone, or click **Select Files** to browse. You can upload several at once.
-6. (Optional) Adjust **[Access Levels](/resource-management/attachment-directories#guide_target=resource-management.files.access-levels)** — these control who can see the file from the portal.
+6. (Optional) Adjust **[Access Levels](/resource-management/attachment-directories#guide_target=resource-management.files.access-levels)** - these control who can see the file from the portal.
 7. Click **[Upload N Attachments](/resource-management/attachment-directories#guide_target=resource-management.files.upload-confirm-button)**.
 
 ## Linking is automatic
@@ -42,5 +42,5 @@ Attachments can be filed into folders for easier browsing. See the [folders guid
 ## See also
 
 * [Shared upload flow](../_shared/upload-flow.md)
-* [Upload product master](upload-product-master.md) — for adding new products in the first place
+* [Upload product master](upload-product-master.md) - for adding new products in the first place
 * [Upload packing list](upload-packing-list.md)

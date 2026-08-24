@@ -4,14 +4,14 @@ This is *application* data, not test fixtures: a fresh environment cannot
 function without base roles and the order-status vocabulary, and several code
 paths look them up by their stable codes. Keeping the canonical set in code (and
 therefore in review, and in git history) is what makes an environment
-reproducible — previously these rows existed only in whichever database happened
+reproducible - previously these rows existed only in whichever database happened
 to have them.
 
 Every seeder is idempotent and matches on the stable business key (role `slug`,
 order status `status_code`), never on id, so re-running never duplicates and
 never clobbers an operator's edits to names/descriptions.
 
-Business data — customers, products, orders — is deliberately NOT seeded here.
+Business data - customers, products, orders - is deliberately NOT seeded here.
 Tests that need those must create their own, so they stay independent of
 whatever rows a given environment happens to hold.
 """

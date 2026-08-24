@@ -2,11 +2,11 @@
 
 Synced from the Respond.io API (see `app/services/respond_template_service.py`):
 
-- ``respond_channels`` — channels of a workspace (``GET /v2/space/channel``).
-- ``respond_message_templates`` — WhatsApp templates of a channel
+- ``respond_channels`` - channels of a workspace (``GET /v2/space/channel``).
+- ``respond_message_templates`` - WhatsApp templates of a channel
   (``GET /v2/space/channel/{channelId}/template``). Hard-deleted on sync when
   gone from the API; only ``status='approved'`` rows are sendable.
-- ``respond_template_defaults`` — one row per auto-send use case mapping a
+- ``respond_template_defaults`` - one row per auto-send use case mapping a
   template + param mapping used when the contact's 24h window is closed.
   ``template_id`` is ``ON DELETE SET NULL`` so a sync hard-delete leaves the
   row with ``template_name_snapshot`` for the "template was removed" warning.
@@ -39,16 +39,16 @@ TEMPLATE_DEFAULT_USE_CASES = (
     "stock_inquiry",
     "purchase_request",
     "sponsorship_form",
-    # Portal OTP — sent when a contact verifies on a new device and the 24h
+    # Portal OTP - sent when a contact verifies on a new device and the 24h
     # window is closed. Map the approved auth/utility template's code param to
     # the ``otp_code`` variable.
     "portal_otp",
-    # SLA daily summary — bounded template (counts + deep link) sent to a staff
+    # SLA daily summary - bounded template (counts + deep link) sent to a staff
     # member when their 24h window is closed at summary time. Map params to the
     # ``outstanding`` / ``escalated_last_24h`` / ``resolved_last_24h`` counts and
     # ``portal_url`` deep link.
     "sla_daily_summary",
-    # SLA staff notifications — assignment + escalation. These already route
+    # SLA staff notifications - assignment + escalation. These already route
     # through send_text_or_template (notification_tasks._send_whatsapp_for_notification);
     # exposing them here lets an admin configure an approved template so the
     # message is uniform whether the staff member's 24h window is open or closed.
@@ -77,7 +77,7 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # skips until an admin maps an approved template; in-window sends the real text.
     "sla_handling_claimed",     # -> assignee + other eligible members: "X is now handling this"
     "sla_handling_taken_over",  # -> displaced holder: "X took over handling"
-    "sla_handling_released",    # -> eligible pool: "handling released — open again"
+    "sla_handling_released",    # -> eligible pool: "handling released - open again"
     # Form-action undo (PLAN-form-sla-undo). Sent when a committed form action is
     # reversed: the assignee whose spawned task was voided, and the previous holder
     # whose stage reopened (clock restarted). Migration 312c seeds both onto the
@@ -85,13 +85,13 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # any other. Map ``message`` at minimum - it carries the full notification body.
     "form_action_voided",     # -> voided assignee: "your task on X no longer applies"
     "form_action_reopened",   # -> reopened holder: "X is back with you, clock restarted"
-    # Product discontinued — batch notification to subscribed staff. Sent when their
+    # Product discontinued - batch notification to subscribed staff. Sent when their
     # 24h window is closed (the usual case). Map params to ``discontinued_count`` +
     # ``discontinued_link`` (deep link to the product list filtered to that batch).
     "product_discontinued",
     # Chat reply templates (PLAN-unified-conversation-composer-smart-send). Sent when
     # an admin types a free message in an entity's chat composer while the contact's
-    # 24h window is CLOSED — the typed text is wrapped into these per-form templates
+    # 24h window is CLOSED - the typed text is wrapped into these per-form templates
     # carrying ``sender_name`` (the replying staff) + ``message`` (the typed text).
     # Distinct from the status-update templates above so the wording reads as a human
     # reply, not a status change. Each MUST map a slot to ``message`` (enforced in
@@ -103,7 +103,7 @@ TEMPLATE_DEFAULT_USE_CASES = (
     "conversation_chat",
 )
 
-# Chat reply use cases — a *_chat / conversation_chat default MUST map a slot to the
+# Chat reply use cases - a *_chat / conversation_chat default MUST map a slot to the
 # ``message`` variable (the typed text) or the reply loses its whole point.
 CHAT_TEMPLATE_USE_CASES = (
     "complaint_chat",
@@ -127,7 +127,7 @@ class RespondChannel(Base):
         ForeignKey("respond_workspaces.id", ondelete="CASCADE"),
         nullable=False,
     )
-    # Respond.io numeric channel id (e.g. 453209) — required in template sends.
+    # Respond.io numeric channel id (e.g. 453209) - required in template sends.
     respond_channel_id = Column(Integer, nullable=False)
     name = Column(String(255), nullable=True)
     # Respond.io channel source, e.g. "whatsapp_business".
@@ -211,7 +211,7 @@ class RespondTemplateDefault(Base):
     # Survives template hard-delete so the UI can say "template was removed"
     # instead of silently showing "not set".
     template_name_snapshot = Column(String(255), nullable=True)
-    # {"1": "contact_name", "2": "message", ...} — positional param -> variable.
+    # {"1": "contact_name", "2": "message", ...} - positional param -> variable.
     param_mapping = Column(JSONB, nullable=False, server_default="{}")
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(

@@ -1,4 +1,4 @@
-"""AttachmentType.is_direct_access — flag types whose files are dealer-downloadable.
+"""AttachmentType.is_direct_access - flag types whose files are dealer-downloadable.
 
 crm_resource_attachments_list is pinned to these (direct_access_only). Backfills
 the existing "Direct Access" type (created in prod) to true.

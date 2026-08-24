@@ -47,7 +47,7 @@ export async function stopImpersonation(): Promise<void> {
 export async function fetchCurrentImpersonation(): Promise<ImpersonationSession | null> {
   const response = await apiFetch(`${BASE}/current`);
   if (!response.ok) {
-    // Treat any failure as "no active session" — banner just hides.
+    // Treat any failure as "no active session" - banner just hides.
     return null;
   }
   const body = (await response.json()) as ApiSessionResponse | null;

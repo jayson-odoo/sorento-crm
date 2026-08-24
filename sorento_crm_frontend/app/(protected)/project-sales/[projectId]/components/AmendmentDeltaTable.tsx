@@ -154,7 +154,7 @@ export function AmendmentDeltaTable({
         id: 'description',
         header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
         cell: ({ row }) => {
-          const text = row.original.description || '—';
+          const text = row.original.description || '-';
           return (
             <span className={cn('block truncate', declinedClass(row.original))} title={text}>
               {text}
@@ -217,7 +217,7 @@ export function AmendmentDeltaTable({
             className={cn('block truncate tabular-nums', declinedClass(row.original))}
             title={row.original.qty ?? ''}
           >
-            {row.original.qty ? formatQty(row.original.qty) : '—'}
+            {row.original.qty ? formatQty(row.original.qty) : '-'}
           </span>
         ),
         size: 90,

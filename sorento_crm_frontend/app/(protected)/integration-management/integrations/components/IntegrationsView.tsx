@@ -89,7 +89,7 @@ export function IntegrationsView() {
               ) : (
                 // Fails closed at the auth layer, so say so rather than
                 // leaving a blank that reads as "fine".
-                <span className="text-destructive">No principal — cannot authenticate</span>
+                <span className="text-destructive">No principal - cannot authenticate</span>
               )}
             </div>
           </div>
@@ -142,7 +142,7 @@ export function IntegrationsView() {
               {formatDateTimeInMalaysia(row.original.last_used_at)}
             </span>
           ) : (
-            <span className="text-muted-foreground">—</span>
+            <span className="text-muted-foreground"> - </span>
           ),
       },
       {
@@ -156,7 +156,7 @@ export function IntegrationsView() {
               {row.original.last_error}
             </span>
           ) : (
-            <span className="text-muted-foreground">—</span>
+            <span className="text-muted-foreground"> - </span>
           ),
       },
       {

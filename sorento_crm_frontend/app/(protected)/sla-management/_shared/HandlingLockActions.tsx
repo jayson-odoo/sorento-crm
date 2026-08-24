@@ -74,7 +74,7 @@ export function HandlingLockReleaseMenuItem({
 
 /**
  * Confirm dialog for taking over an ACTIVE handler. Non-destructive styling (default
- * primary action) — this is a handover, not a delete. Copy names the current holder so
+ * primary action) - this is a handover, not a delete. Copy names the current holder so
  * the actor knows who they're displacing (PLAN §5 / P1-9).
  */
 export function TakeOverConfirmDialog({

@@ -17,7 +17,7 @@ export interface IntegrationApiKey {
   rotated_from_id: string | null;
   last_used_at: string | null;
   created_at: string;
-  /** Server-computed. Do not re-derive from the dates — the auth path owns this rule. */
+  /** Server-computed. Do not re-derive from the dates - the auth path owns this rule. */
   is_active: boolean;
 }
 
@@ -29,7 +29,7 @@ export interface Integration {
   act_as_user_id: string | null;
   act_as_user_name: string | null;
   config_json: Record<string, unknown> | null;
-  /** Whether a credential is stored — never what it is. */
+  /** Whether a credential is stored - never what it is. */
   has_credentials: boolean;
   is_active: boolean;
   last_used_at: string | null;

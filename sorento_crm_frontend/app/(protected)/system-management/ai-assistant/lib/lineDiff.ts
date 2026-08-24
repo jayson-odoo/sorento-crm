@@ -1,5 +1,5 @@
 /**
- * Minimal client-side line-level diff (LCS). No external dep — raw-text
+ * Minimal client-side line-level diff (LCS). No external dep - raw-text
  * storage (PLAN §9b Q1/Q2) makes a simple line diff accurate. Returns an
  * ordered list of rows tagged equal | added | removed for side-by-side or
  * unified rendering.

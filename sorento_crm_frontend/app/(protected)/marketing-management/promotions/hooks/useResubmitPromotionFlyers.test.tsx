@@ -1,5 +1,5 @@
 /**
- * Tests for useResubmitPromotionFlyers — the Resubmit bulk-action mutation.
+ * Tests for useResubmitPromotionFlyers - the Resubmit bulk-action mutation.
  *
  * The two properties that matter operationally: the resubmits are SEQUENTIAL (each
  * one starts a Gemini extraction on the n8n side, so a page of selections must not

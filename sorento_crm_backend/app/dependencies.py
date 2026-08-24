@@ -119,7 +119,7 @@ def _maybe_apply_impersonation(
     """If real user is admin/superadmin AND active session matches header, swap to target user dict.
 
     Stash the real user on ``request.state.real_user`` regardless. Stale or invalid headers
-    are silently ignored — admin browses as themselves.
+    are silently ignored - admin browses as themselves.
     """
     request.state.real_user = real_user
     target_id = request.headers.get(IMPERSONATE_HEADER)
@@ -209,7 +209,7 @@ async def get_current_user(
         logger.debug(f"Token length: {len(token)}, first 20 chars: {token[:20]}...")
     
     if not token:
-        # Do NOT log request headers — they carry Authorization / X-API-Key / cookies.
+        # Do NOT log request headers - they carry Authorization / X-API-Key / cookies.
         logger.warning("No authentication token found in request")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -232,7 +232,7 @@ async def get_current_user(
         import logging
         logger = logging.getLogger(__name__)
         logger.error(f"JWT validation failed: {str(e)}")
-        # Never log token bytes (even a prefix) — log only length for debugging.
+        # Never log token bytes (even a prefix) - log only length for debugging.
         logger.error(f"Token length: {len(token) if token else 0}")
         logger.error(f"JWT Secret configured: {bool(settings.jwt_secret)}")
         logger.error(f"JWT Secret length: {len(settings.jwt_secret) if settings.jwt_secret else 0}")
@@ -402,7 +402,7 @@ def require_permission_with_api_key(permission_slug: str):
 
     Primarily for read endpoints. It is also used on a small set of AI-assistant
     write actions (complaint close, PR approve/reject) where execution runs as the
-    act-as principal — those paths ALSO enforce the actual end-user's permission at
+    act-as principal - those paths ALSO enforce the actual end-user's permission at
     the assistant layer (`_WRITE_TOOL_PERMISSIONS` in ai_assistant_service), so the
     check is applied twice. Do not add it to a write endpoint without that second,
     real-user gate.

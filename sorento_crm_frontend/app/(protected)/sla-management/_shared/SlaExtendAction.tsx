@@ -52,7 +52,7 @@ export function SlaExtendMenuItem({
   );
 }
 
-/** The controlled Extend dialog for a form entity — render as a sibling of the gear
+/** The controlled Extend dialog for a form entity - render as a sibling of the gear
  * menu (a dialog inside DropdownMenuContent would unmount on close). Wraps the shared
  * ExtendDueDialog, seeding it with the active tracker's resolution due + a label. */
 export function SlaExtendDialog({

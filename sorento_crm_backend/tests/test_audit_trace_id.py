@@ -1,4 +1,4 @@
-"""Sub-plan D Tier-2 — per-request trace_id correlation on audit rows.
+"""Sub-plan D Tier-2 - per-request trace_id correlation on audit rows.
 
 trace_id lives in a request-scoped contextvar set by LoggingMiddleware; the audit
 listener copies it onto every AuditLog written during the request, so a multi-row

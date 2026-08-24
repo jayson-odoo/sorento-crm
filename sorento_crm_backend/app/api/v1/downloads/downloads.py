@@ -2,7 +2,7 @@
 
 Rows are created by export endpoints (e.g. POST complaints/{id}/export/pdf) and
 populated asynchronously by RQ tasks. These endpoints are scoped to the current
-user — a download is only visible/resolvable by the user who requested it.
+user - a download is only visible/resolvable by the user who requested it.
 """
 import logging
 import mimetypes

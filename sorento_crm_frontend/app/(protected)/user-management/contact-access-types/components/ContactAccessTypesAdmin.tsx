@@ -198,7 +198,7 @@ export default function ContactAccessTypesAdmin() {
         enableSorting: false,
         meta: { headerTitle: 'Description', skeleton: <Skeleton className="h-4 w-44" /> },
         cell: ({ row }) => (
-          <span className="max-w-[200px] truncate">{row.original.description ?? '—'}</span>
+          <span className="max-w-[200px] truncate">{row.original.description ?? '-'}</span>
         ),
       },
       {
@@ -213,7 +213,7 @@ export default function ContactAccessTypesAdmin() {
           const joined = kw.join(', ');
           return (
             <span className="max-w-[200px] truncate" title={joined || undefined}>
-              {kw.length ? joined : '—'}
+              {kw.length ? joined : '-'}
             </span>
           );
         },
@@ -225,7 +225,7 @@ export default function ContactAccessTypesAdmin() {
         size: 140,
         enableSorting: false,
         meta: { headerTitle: 'Sort order', skeleton: <Skeleton className="h-4 w-20" /> },
-        cell: ({ row }) => <span>{row.original.sort_order ?? '—'}</span>,
+        cell: ({ row }) => <span>{row.original.sort_order ?? '-'}</span>,
       },
       {
         id: 'is_active',

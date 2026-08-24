@@ -43,11 +43,11 @@ export function useTakeoverSLATracking() {
     onSuccess: (result) => {
       invalidatePendingQueries(queryClient);
       if (result.committed) {
-        toast.success('Task taken over — it now appears in My Pending.');
+        toast.success('Task taken over - it now appears in My Pending.');
       } else if (result.already_pending) {
         toast.info('A takeover is already pending for this task.');
       } else {
-        toast.success('Takeover started — the assignee can reject during the cooldown.');
+        toast.success('Takeover started - the assignee can reject during the cooldown.');
       }
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to take over task'),
@@ -72,7 +72,7 @@ export function useRejectTakeover() {
     mutationFn: (requestId: string) => rejectTakeover(requestId),
     onSuccess: () => {
       invalidatePendingQueries(queryClient);
-      toast.success('Takeover rejected — the task stays with you.');
+      toast.success('Takeover rejected - the task stays with you.');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to reject takeover'),
   });

@@ -1,4 +1,4 @@
-"""SCM M8-E11 — market signal -> proposed qty deltas (proposal ONLY, no writes).
+"""SCM M8-E11 - market signal -> proposed qty deltas (proposal ONLY, no writes).
 
 A market signal reaches the plan through the chat, never the engine. This service
 takes a signal (an existing cached ``scm.market_signal`` by id, OR a fresh ad-hoc
@@ -11,7 +11,7 @@ HARD GUARDRAIL (umbrella §0 / M8-E7): this NEVER writes a numeric field on
 ``reorder_recommendation`` and NEVER re-runs the engine. It returns a proposal; the
 human confirms per line via the existing ``POST /recommendations/{id}/adjust`` which
 lands the number in the override layer. The only table an ad-hoc search touches is
-``scm.market_signal`` (its own advisory-only table) — never a recommendation column.
+``scm.market_signal`` (its own advisory-only table) - never a recommendation column.
 
 Ambiguous matches are LISTED, not collapsed (M8-E6): every matching buy rec becomes
 its own candidate line for the user to choose from.
@@ -52,7 +52,7 @@ def _proposed_qty(
     # ceil to whole units, but round off float noise first (100*1.12 = 112.0000…1)
     new_qty = float(math.ceil(round(new_qty, 6)))
     if new_qty <= old_qty:
-        # rounding collapsed the uplift — nudge by one order step so it is a real delta
+        # rounding collapsed the uplift - nudge by one order step so it is a real delta
         step = float(order_multiple) if order_multiple and float(order_multiple) > 0 else 1.0
         new_qty = old_qty + step
     if max_qty is not None and new_qty > float(max_qty):
@@ -80,7 +80,7 @@ def _resolve_signal(
         out = market_research_service.search_adhoc(db, query or "", category_ref, actor=actor)
         signals = out.get("signals") or []
         if not signals:
-            return None  # no key / nothing found — degrade to an empty proposal
+            return None  # no key / nothing found - degrade to an empty proposal
         return (
             db.query(MarketSignal)
             .filter(MarketSignal.id == signals[0]["id"])

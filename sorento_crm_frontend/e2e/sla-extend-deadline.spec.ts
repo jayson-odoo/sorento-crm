@@ -1,11 +1,11 @@
 /**
- * SLA "Extend resolution deadline" end-to-end (Phase 2 wiring) — UAC-19.
+ * SLA "Extend resolution deadline" end-to-end (Phase 2 wiring) - UAC-19.
  *
  * Flow: land on home (the My Pending Tasks widget lives on the dashboard), find an
  * eligible row, open the Extend dialog, submit a working-days extension, and assert:
- *   - the FE posts POST /api/v1/.../{id}/extend/preview while the user types, and
- *   - POST /api/v1/.../{id}/extend on submit (FE -> BE -> DB round-trip), and
- *   - the toast / dialog close confirms success.
+ * - the FE posts POST /api/v1/.../{id}/extend/preview while the user types, and
+ * - POST /api/v1/.../{id}/extend on submit (FE -> BE -> DB round-trip), and
+ * - the toast / dialog close confirms success.
  *
  * NAVIGATION: always sidebar/home navigation, never deep-link (project memory
  * feedback_playwright_via_sidebar).
@@ -13,7 +13,7 @@
  * AUTH GAP: this spec requires login creds that are NOT present in .env per
  * CLAUDE.md (USER_GUIDE_E2E_* / per-spec creds are not committed). It is therefore
  * SKIPPED unless SLA_EXTEND_E2E_EMAIL / SLA_EXTEND_E2E_PASSWORD are set. It has NOT
- * been run/verified green in this environment — committed for regression coverage.
+ * been run/verified green in this environment - committed for regression coverage.
  *   PORTAL_E2E_BASE_URL=http://localhost:3000   (default in playwright.config)
  *   SLA_EXTEND_E2E_EMAIL=...
  *   SLA_EXTEND_E2E_PASSWORD=...

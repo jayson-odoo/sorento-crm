@@ -4,11 +4,11 @@
  * SupplierNavigation reads the list query carried in the detail URL via
  * `parseDetailSearch`, forwards it to the thin `useSupplierNeighbours` wrapper,
  * and feeds the result to RecordNavigation in IDs mode. Covers:
- *  - forwards the parsed list query (search/sort) to useSupplierNeighbours
- *  - renders the "index / total" counter from the hook result
- *  - "… / total" while loading
- *  - stepping to a neighbour preserves the list query string in the URL
- *  - Prev/Next disabled when the corresponding id is null
+ * - forwards the parsed list query (search/sort) to useSupplierNeighbours
+ * - renders the "index / total" counter from the hook result
+ * - "… / total" while loading
+ * - stepping to a neighbour preserves the list query string in the URL
+ * - Prev/Next disabled when the corresponding id is null
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';

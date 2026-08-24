@@ -58,18 +58,42 @@ def _handler_integration_log_retry(db, task):
 
 
 def _handler_import_job_processor(db, task):
-    """Drain RQ imports queue (race-safe lpop) + reconcile orphan QUEUED rows."""
+    """Drain RQ imports queue (race-safe lpop) + settle rows RQ has already given up on."""
     drain = run_sync_rq_jobs("imports", max_jobs=2)
     orphans = _reconcile_orphan_import_jobs(db)
     return {**drain, "orphans_failed": orphans}
 
 
 def _reconcile_orphan_import_jobs(db) -> int:
-    """Flip QUEUED `import_jobs` rows to FAILED when their RQ job is gone.
+    """Settle `import_jobs` rows that RQ has already finished with.
 
-    Catches rows where the worker exited before `start_job` ran (e.g. early
-    exception in task body or temp-file unreachable across containers). Only
-    rows older than 3 minutes are inspected so fresh enqueues are not raced.
+    Two statuses, two deliberately different rules, because "Redis has never heard
+    of this job" means opposite things for each:
+
+    QUEUED
+        The row was never picked up, so a missing job hash can only mean the
+        enqueue is gone (worker exited before `start_job`, task body raised at
+        import time, temp file unreachable across containers). Fail it.
+
+    STARTED
+        Only an explicit `failed` / `canceled` from RQ counts. A missing hash is
+        ambiguous here: a job that FINISHED loses its hash after `result_ttl`
+        (500s by default), so "no hash" fits "it succeeded and the task crashed
+        before writing the row" exactly as well as it fits "it died". Failing on
+        that would relabel completed imports as failures, which is worse than
+        leaving one row unsettled.
+
+    STARTED is covered at all because of the 19 Aug 2026 SPO import: a deploy
+    recreates the worker in place, Docker allows ten seconds for RQ's warm
+    shutdown, and an import still running at t+10s takes the SIGKILL with the
+    parent. The parent stops heartbeating, the started-registry entry expires
+    ~90s later (`job_monitoring_interval + 60`, NOT `job_timeout`), and the next
+    worker's maintenance sweep moves the job to the FailedJobRegistry with
+    `AbandonedJobError`. The DB row meanwhile still said `started` for ever,
+    because the only thing that settled it was `JobService.sync_job_status`
+    running as a side effect of somebody opening the job page.
+
+    Only rows older than 3 minutes are inspected, so a fresh enqueue is never raced.
     """
     from rq.job import Job
     from rq.exceptions import NoSuchJobError
@@ -81,7 +105,7 @@ def _reconcile_orphan_import_jobs(db) -> int:
     rows = (
         db.query(ImportJob)
         .filter(
-            ImportJob.status == JobStatus.QUEUED.value,
+            ImportJob.status.in_([JobStatus.QUEUED.value, JobStatus.STARTED.value]),
             ImportJob.created_at < cutoff,
         )
         .limit(50)
@@ -93,22 +117,40 @@ def _reconcile_orphan_import_jobs(db) -> int:
     failed = 0
     for row in rows:
         rq_job_id = str(row.job_id)
+        was_started = row.status == JobStatus.STARTED.value
+        exc_info = None
         try:
             rq_job = Job.fetch(rq_job_id, connection=redis_conn)
             status = rq_job.get_status()
+            exc_info = getattr(rq_job, "exc_info", None)
         except NoSuchJobError:
             status = None
         except Exception:
+            # A Redis we cannot reach says nothing about the job.
             continue
-        if status in (None, "failed", "canceled"):
-            try:
-                job_service.fail_job(
-                    rq_job_id,
-                    "Import did not start (worker dropped before processing).",
-                )
-                failed += 1
-            except Exception:
-                logger.exception("Failed to fail orphan import job %s", rq_job_id)
+
+        # `.value` FIRST, never bare `str()`. RQ's JobStatus is a `(str, Enum)` and
+        # for a mixin enum `__str__` is Enum's, so `str(JobStatus.FAILED)` is
+        # "JobStatus.FAILED". Same trap as `project_extraction_recovery_service`.
+        status = getattr(status, "value", status)
+        status = str(status).lower() if status else None
+
+        if status in ("failed", "canceled", "cancelled"):
+            # RQ's own words, so the drawer and the job page say what the
+            # FailedJobRegistry says instead of a generic sentence of our own.
+            reason = (exc_info or "").strip() or (
+                "The import was interrupted; the worker running it stopped."
+            )
+        elif status is None and not was_started:
+            reason = "Import did not start (worker dropped before processing)."
+        else:
+            continue
+
+        try:
+            job_service.fail_job(rq_job_id, reason[:2000])
+            failed += 1
+        except Exception:
+            logger.exception("Failed to fail orphan import job %s", rq_job_id)
     return failed
 
 
@@ -323,14 +365,14 @@ def _handler_scm_analytics(db, task):
 
     Runs ``run_analytics`` on the scheduler/worker process. ``run_analytics`` opens its
     own ``scm.scm_analytics_run`` log row up-front and, on any failure, stamps that row
-    ``status='failed'`` + ``error_text`` before re-raising — so a bad run is always
+    ``status='failed'`` + ``error_text`` before re-raising - so a bad run is always
     observable in the run log. We re-raise here so the scheduled-task run is marked
     failed too; the heartbeat's outer guard (``run_due_tasks``) keeps the scheduler
     process alive, so a failed analytics run never crashes the scheduler.
 
     Optional ``scheduled_tasks.metadata`` keys tune the run with no code change:
-      * ``scope``  — dict forwarded to run_analytics (product_ids / supplier_ids / ...).
-      * ``config`` — dict forwarded to run_analytics (e.g. ``as_of``).
+      * ``scope`` - dict forwarded to run_analytics (product_ids / supplier_ids / ...).
+      * ``config`` - dict forwarded to run_analytics (e.g. ``as_of``).
     Absent metadata => full-catalog run as of today (the nightly default).
     """
     from app.services.scm.analytics_service import run_analytics
@@ -352,7 +394,7 @@ def _handler_scm_reorder_run(db, task):
     """Daily scheduled reorder planning run (M8-D1/D6/D8).
 
     Plans ALL active warehouses with market insight OFF, then funds EVERYTHING (full
-    budget) so the morning snapshot opens fully within-budget — the user tightens the
+    budget) so the morning snapshot opens fully within-budget - the user tightens the
     budget on the page to defer (M8-D6). Runs the pipeline INLINE on the scheduler/
     worker process (like ``_handler_scm_analytics`` runs ``run_analytics`` inline) so the
     run + the full-budget funding split are both complete + persisted when the handler
@@ -360,9 +402,9 @@ def _handler_scm_reorder_run(db, task):
 
     Optional ``scheduled_tasks.metadata`` keys tune the run with no code change (the
     "configurable time" is the row's ``start_at``/interval; these tune the run body):
-      * ``budget``          — a numeric cash cap for the scheduled split; null/absent =>
+      * ``budget``        - a numeric cash cap for the scheduled split; null/absent =>
         full budget (fund everything, the default).
-      * ``include_market``  — market-trend priority factor (default false; market never
+      * ``include_market`` - market-trend priority factor (default false; market never
         enters a run per M8-D5, so leave false).
     """
     from app.services.scm import reorder_run_service as reorder_svc

@@ -17,11 +17,11 @@ This service enforces the rules from next_agents/incoming_stock_enquiries.txt:
     * warehouse_code, warehouse_name, allocated_quantity (aggregated per warehouse)
     * attachment filename / file_path / mime_type (only when present)
     * remaining_incoming_quantity (computed server-side)
-    * unallocated_quantity (computed server-side — the GAP only, never the shipped base;
+    * unallocated_quantity (computed server-side - the GAP only, never the shipped base;
       see `_unallocated_quantity`)
 
 The source of truth for "still incoming" is `inbound_shipment_lines`; `spo_allocations` is used
-only to aggregate warehouse allocation summaries. GRN / picking data is NEVER read here — it is
+only to aggregate warehouse allocation summaries. GRN / picking data is NEVER read here - it is
 surfaced through a separate, explicit method only when the user asks.
 """
 from __future__ import annotations
@@ -106,7 +106,7 @@ def _unallocated_quantity(
     so on a partially-received line the two have different bases.
 
     Returns None when there is nothing to flag:
-      * no allocations at all — the empty `warehouse_allocations` list is itself the signal
+      * no allocations at all - the empty `warehouse_allocations` list is itself the signal
       * fully allocated
       * over-allocated (data error; clamp rather than report a negative gap)
     """
@@ -219,7 +219,7 @@ class IncomingStockService:
         single `product_id` parameter is folded into the list. A free-text
         `query` may be supplied instead; results are filtered to still-incoming
         lines only. `eta_from` / `eta_to` (inclusive) narrow to shipments whose
-        `estimated_arrival_date` falls in the window — applied on top of the
+        `estimated_arrival_date` falls in the window - applied on top of the
         product hint, never as a standalone filter (an ETA alone would full-scan).
         """
         limit = max(1, min(limit, 50))
@@ -275,7 +275,7 @@ class IncomingStockService:
                 "message": "Provide product_id (UUID or product_code) or a query term.",
             }
 
-        # ETA window — applied alongside the product hint, kept out of the
+        # ETA window - applied alongside the product hint, kept out of the
         # product_filters guard above so an ETA alone can't trigger a full scan.
         date_filters = []
         if eta_from is not None:
@@ -289,7 +289,7 @@ class IncomingStockService:
                 InboundShipmentLine.shipment_id,
                 InboundShipmentLine.product_id,
                 InboundShipmentLine.batch_number,
-                # Allocation base — used to derive the gap, never emitted (see
+                # Allocation base - used to derive the gap, never emitted (see
                 # `_unallocated_quantity`).
                 InboundShipmentLine.quantity_shipped,
                 remaining,
@@ -548,12 +548,12 @@ class IncomingStockService:
         page: int = 1,
         limit: int = 10,
     ) -> dict[str, Any]:
-        """Unified incoming-stock list — shipment-rooted with nested product lines.
+        """Unified incoming-stock list - shipment-rooted with nested product lines.
 
         One row per still-incoming shipment. Each carries the still-incoming
         product lines (filtered to the requested products when `product_ids` is
         given), every line with its per-warehouse allocations, plus the
-        shipment's packing-list attachment. NO aggregate totals — callers (n8n)
+        shipment's packing-list attachment. NO aggregate totals - callers (n8n)
         sum the line quantities themselves. Requires at least one narrowing
         filter (product / shipment / supplier / eta / query) to avoid full scans.
         """
@@ -657,7 +657,7 @@ class IncomingStockService:
             # which companies were searched.
             stamp_lookup_companies(self.db, result, [], product_ids=resolved_pids)
             # Data-miss (§3.3): a product resolved but nothing is incoming for it.
-            # Offer data-bearing variant/neighbour alternatives — same probe the
+            # Offer data-bearing variant/neighbour alternatives - same probe the
             # by-product tool uses. Product-driven query only; best-effort (AC-R1:
             # never turn an empty result into a 500).
             if resolved_pids:

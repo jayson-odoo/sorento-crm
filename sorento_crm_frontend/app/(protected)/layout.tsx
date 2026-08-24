@@ -14,6 +14,7 @@ import {
 import { MyDownloadsProvider } from '@/components/my-downloads/MyDownloadsContext';
 import { MyDownloadsDrawer } from '@/components/my-downloads/MyDownloadsDrawer';
 import { CompanyProvider } from '@/app/providers/CompanyProvider';
+import PushPrompts from '@/components/pwa/PushPrompts';
 
 export default function ProtectedLayout({
   children,
@@ -37,7 +38,7 @@ export default function ProtectedLayout({
       // landed on (path + query + hash), not just the pathname, so any internal
       // link survives the sign-in round-trip. The signin page reads callbackUrl
       // and only honours same-origin relative paths (starts with '/', not '//').
-      // This is staff/NextAuth only — the portal contact OTP flow uses public
+      // This is staff/NextAuth only - the portal contact OTP flow uses public
       // /view links + confirm-identity and never hits this protected layout.
       const loc = typeof window !== 'undefined' ? window.location : null;
       const target = loc
@@ -61,7 +62,12 @@ export default function ProtectedLayout({
       <UploadManagerProvider>
         <MyDownloadsProvider>
           <GuideTargetSpotlight />
-          <Demo1Layout>{children}</Demo1Layout>
+          <Demo1Layout>
+            {/* In flow at the top of the page body: neither prompt can cover the
+                primary action of the page beneath it (AC-P16). */}
+            <PushPrompts />
+            {children}
+          </Demo1Layout>
           <UploadActivityDrawer />
           <MyDownloadsDrawer />
         </MyDownloadsProvider>

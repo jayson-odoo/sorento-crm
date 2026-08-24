@@ -8,8 +8,8 @@ Status: DONE (2026-07-31) - browser-verified; all AC met. Uncommitted.
 
 1. Opens **Complaint Management -> Root Causes**. Each row already shows a Complaints count. The count is currently a dead end: you can see "Manufacturing Defect: 6" but not *which* 6.
 2. Two ways forward, both wanted:
-   - **Click the count chip** -> dialog lists those complaints, each a hyperlink. Fast peek without leaving the list.
-   - **Click the row** (the chevron already implies it) -> dedicated detail page: the root cause's own fields plus the full linked-complaints grid, deep-linkable and shareable.
+ - **Click the count chip** -> dialog lists those complaints, each a hyperlink. Fast peek without leaving the list.
+ - **Click the row** (the chevron already implies it) -> dedicated detail page: the root cause's own fields plus the full linked-complaints grid, deep-linkable and shareable.
 3. From either surface, clicking a complaint lands on `/complaint-management/complaints/{id}`.
 4. Reverse direction: on **Complaints**, the Filters popover gains **Root cause** and **Resolution** multi-selects, so "show me everything caused by Manufacturing Defect or Packaging Faulty" is one query.
 

@@ -3,10 +3,10 @@
 Enqueued by ``reorder_run_service.create_run`` on the ``imports`` queue (drained by
 the dedicated worker container). The task creates its own DB session inside the RQ
 work-horse and drives ``run_reorder``, which records success/failure on the run row
-and NEVER raises — so a broken run never crashes the worker.
+and NEVER raises - so a broken run never crashes the worker.
 
 WORKER RESTART: editing this module (or ``reorder_run_service``) requires restarting
-the RQ worker — it has NO reload. On macOS run it with
+the RQ worker - it has NO reload. On macOS run it with
 ``OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES``.
 """
 from __future__ import annotations

@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * IntegrationStatusChip — compact badge shown in AttachmentDetailModal
+ * IntegrationStatusChip - compact badge shown in AttachmentDetailModal
  * header. Reads from `useAttachmentIntegrationLog` for the run status and
  * (optionally) the attachment object for the most up-to-date linked count.
  */

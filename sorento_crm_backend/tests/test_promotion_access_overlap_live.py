@@ -224,7 +224,7 @@ def test_promotion_list_empty_contact_codes_returns_nothing(db: Session, fixture
 
 
 def test_promotion_list_none_codes_keeps_admin_path(db: Session, fixtures):
-    """contact_access_codes=None means no contact context — the FE/admin path
+    """contact_access_codes=None means no contact context - the FE/admin path
     that should see EVERY active promotion. Test only checks that our 3 fixtures
     survive (the dev DB may have other rows we don't care about)."""
     svc = PromotionService(db)
@@ -243,7 +243,7 @@ def test_promotion_get_404_when_no_overlap(db: Session, fixtures):
     the route-level not-found semantics)."""
     from app.api.v1.marketing.promotions import get_promotion as _route  # noqa: F401
     svc = PromotionService(db)
-    # Direct service call is permissive — it returns the promo and just filters
+    # Direct service call is permissive - it returns the promo and just filters
     # inline attachments. The 404 check lives in the FastAPI route. The route is
     # covered separately by test_promotion_get_route_access_overlap below.
     promo = svc.get_promotion(fixtures["promo_vip_id"], contact_access_codes=["dealer"])

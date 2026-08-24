@@ -9,10 +9,10 @@ substring it came from.
 
 Precedence, highest first:
 
-  1. a value a person already set              - a reviewer settled it, never touch it
+  1. a value a person already set            - a reviewer settled it, never touch it
                                                  (`AUTHORED_SOURCES`, product_spec_write)
-  2. the products table's own columns          - curated data outranks parsed text
-  3. literal tokens in the description         - shape-gated, see below
+  2. the products table's own columns        - curated data outranks parsed text
+  3. literal tokens in the description       - shape-gated, see below
   4. a closed code lookup (the finish suffix)
   5. nothing
 
@@ -345,7 +345,7 @@ SPOUT_TOKENS: list[tuple[str, str]] = [
 
 # How a water closet flushes. Order is precedence: SIPHONIC first because it is the
 # rarer, more specific term (14 rows) and 6 of those also say WASH DOWN in the same
-# sentence ("(SIPHONIC) WASH DOWN WC") — real plumbing marketing copy is not always
+# sentence ("(SIPHONIC) WASH DOWN WC") - real plumbing marketing copy is not always
 # a clean taxonomy, so the more specific word wins. TWISTER is a branded flush name
 # (188 rows, "TWISTER FLUSH WC") checked before the generic WASHDOWN family (498).
 FLUSH_TOKENS: list[tuple[str, str]] = [
@@ -391,7 +391,7 @@ SHAPE_TOKENS: list[tuple[str, str]] = [
 #
 # English puts the head noun LAST in a compound, so the description already carries the
 # answer: `BASIN MIXER` is a mixer, `URINAL FLUSH VALVE` is a valve, `SQUATTING PAN` is
-# a squatting pan. Only a token at the END counts — an earlier one is a modifier saying
+# a squatting pan. Only a token at the END counts - an earlier one is a modifier saying
 # what the product is FOR. Measured across 11,670 codes: 4,138 agree with the category,
 # 205 disagree, and reading the disagreements the description is right nearly every time.
 #
@@ -536,7 +536,7 @@ _FIXING_SCREW_NOUN = "SCREW"
 # identical spec profiles.
 FIXING_SCREW_RE = re.compile(r"(?<!W/O )(?<!WITHOUT )SCREW")
 
-# "S-TRAP 300MM" / "S-TRAP:250MM" / "( S- TRAP 250MM )" — the catalog is inconsistent
+# "S-TRAP 300MM" / "S-TRAP:250MM" / "( S- TRAP 250MM )" - the catalog is inconsistent
 # about the separator, so all three are matched. Independent of TRAP_TOKENS: a customer
 # who says "150mm S-trap" wants a specific pan, not just any S-trap.
 _TRAP_LENGTH_RE = re.compile(r"[SP]\s*-?\s*TRAP\s*[:,]?\s*(\d+(?:\.\d+)?)\s*MM")
@@ -699,7 +699,7 @@ def _rule_matches(
         return rule.get("value"), f"-{pattern.upper()}"
     # The code is the only place some facts are written down. `SRTSC` names a seat cover
     # in every code that carries it, while the descriptions say "SEAT COVER", "COVER",
-    # or nothing recognisable — and there was no way to say so. `code_suffix` reads the
+    # or nothing recognisable - and there was no way to say so. `code_suffix` reads the
     # finish after the last dash; nothing read the body of the code.
     #
     # Unbounded on purpose, unlike `contains` on prose: a product code is a dense string
@@ -934,7 +934,7 @@ def derive(
     #
     # The category prefix (`SRT-KS` -> Sorento) is a decode of a code, and the product
     # carries the real answer in `brand_id`: 22,771 of 22,805 products have one, across
-    # 12 brands. Trusting the prefix got 1,934 rows wrong — every INFINITY (532), OTHERS
+    # 12 brands. Trusting the prefix got 1,934 rows wrong - every INFINITY (532), OTHERS
     # (403) and NO LOGO (601) product was relabelled as Sorento or Cabana, and four
     # brands the prefix cannot express at all were unreachable. Curated data outranks a
     # decoded code, exactly as it does for dimensions below.

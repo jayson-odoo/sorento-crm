@@ -2,12 +2,12 @@
 awaited-but-non-blocking synchronous wire.
 
 Contract:
-  - PLAN-chatbot-media-endpoint.md section 3.3b (the route awaits the worker
+ - PLAN-chatbot-media-endpoint.md section 3.3b (the route awaits the worker
     without blocking the event loop: `await asyncio.wait_for(_await_job(job_id),
     timeout=media_sync_wait_seconds)`), section 3.4 (`GET
     /api/v1/external/media/jobs/{job_id}`), section 3.5 (one result shape,
     three transports) and section 2.3 (`media_extraction_job`).
-  - The S3 slice ships "with a stub extraction, so the async spine is proven
+ - The S3 slice ships "with a stub extraction, so the async spine is proven
     before the expensive part is attached" (PLAN section 10) -- so every test
     here monkeypatches `app.tasks.media_tasks.run_media_extraction`, the
     pluggable extraction seam S4/S5 replace with real image/voice logic. No
@@ -16,7 +16,7 @@ Contract:
 Implementation seams this file requires, named here because nothing in the
 plan pins the exact identifier and the coder needs a target to build to:
 
-  - `app.tasks.media_tasks.process_media_extraction(job_id: str) -> None`
+ - `app.tasks.media_tasks.process_media_extraction(job_id: str) -> None`
     The RQ task entrypoint (mirrors `app/tasks/import_tasks.py`'s
     `SessionLocal()`-per-task convention -- it opens and commits its own
     session, never receives the request's). Marks the job running, calls
@@ -28,16 +28,16 @@ plan pins the exact identifier and the coder needs a target to build to:
     this function (S3-07). Re-running it on an already-terminal job (status
     `completed`/`failed`) must be a no-op -- neither the extraction nor the
     callback fire again.
-  - `app.tasks.media_tasks.run_media_extraction(job) -> dict` the stub result
+ - `app.tasks.media_tasks.run_media_extraction(job) -> dict` the stub result
     producer, given the ORM `MediaExtractionJob` row.
-  - `app.tasks.media_tasks.deliver_callback(job) -> None` POSTs
+ - `app.tasks.media_tasks.deliver_callback(job) -> None` POSTs
     `job.callback_url` with `job.callback_headers` verbatim via
     `app.tasks.media_tasks._post_callback(url, headers, body)`, retried a
     bounded number of times, stamping `callback_status` /
     `callback_attempts`. A no-`callback_url` job is a no-op.
-  - `app.api.v1.external.media.enqueue_job` and `._await_job` -- PLAN 3.3b's
+ - `app.api.v1.external.media.enqueue_job` and `._await_job` -- PLAN 3.3b's
     own names, verbatim.
-  - `app.api.v1.external.media.resolve_media_settings(db)` -- same resolver
+ - `app.api.v1.external.media.resolve_media_settings(db)` -- same resolver
     S1/S2 use, so it can be monkeypatched to fixed, fast values here without
     touching the real `system_settings` singleton row.
 
@@ -733,8 +733,8 @@ def test_extraction_outliving_the_wait_degrades_to_pending_not_a_failure(
 ):
     """S3-01c: exceeding `media_sync_wait_seconds` returns status:pending
     with the job_id -- not an error -- the job keeps running, and:
-      - it is later retrievable through GET /jobs/{job_id} (S3-04's transport)
-      - a same-message_id re-call replays with no second ledger row / spend
+    - it is later retrievable through GET /jobs/{job_id} (S3-04's transport)
+    - a same-message_id re-call replays with no second ledger row / spend
         (S2-02's guarantee, re-checked here on the async path specifically).
     Extraction runs 2s against a 0.5s sync wait but a 5s extraction timeout
     (S3-01d's inequality), so it must complete -- not be killed mid-flight.

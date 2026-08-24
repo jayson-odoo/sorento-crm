@@ -1,7 +1,7 @@
 """Add verified_at to portal_tokens to gate first-visit OTP.
 
 Previously the portal token issued by an admin (Send via Respond.io / QR /
-copy-link) granted immediate access until expiry — bypassing OTP entirely.
+copy-link) granted immediate access until expiry - bypassing OTP entirely.
 This migration adds `verified_at`. Resolve_token rejects rows where
 `verified_at IS NULL`. Verify_otp marks all unrevoked tokens for the same
 contact as verified. Existing tokens are left NULL so every active contact

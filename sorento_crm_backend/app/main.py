@@ -32,7 +32,7 @@ logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-# Verbose auth-dependency logging only in debug — at DEBUG it logs token length +
+# Verbose auth-dependency logging only in debug - at DEBUG it logs token length +
 # first chars, which must never run in production (security audit 2026-06-29).
 if settings.debug:
     logging.getLogger('app.dependencies').setLevel(logging.DEBUG)
@@ -53,7 +53,7 @@ app.add_middleware(LoggingMiddleware)
 # proxy retry, two tabs) so harmful side effects (SLA assignment, Respond sends,
 # status transitions) execute exactly once. See app/middleware/idempotency_middleware.py.
 app.add_middleware(IdempotencyMiddleware)
-# Telemetry for /api/v1/external/* — total coverage by construction, so a new
+# Telemetry for /api/v1/external/* - total coverage by construction, so a new
 # external route is logged the day it is added rather than opt-in per endpoint.
 app.add_middleware(ApiCallLogMiddleware)
 
@@ -95,7 +95,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     error_logger.error(f"Request method: {request.method}")
     error_logger.error(f"Traceback:\n{error_traceback}")
     
-    # Never leak exception messages/types to clients in production — they aid
+    # Never leak exception messages/types to clients in production - they aid
     # reconnaissance (DB schema, file paths, library hints). Full detail is logged
     # server-side above; only expose it when debug is explicitly on (security audit 2026-06-29).
     content = {"message": "Internal server error"}
@@ -250,7 +250,7 @@ async def startup_event():
         from app.services.storage_router import warm_backends
 
         warm_backends()
-    except Exception as e:  # noqa: BLE001 — never block boot on storage config
+    except Exception as e:  # noqa: BLE001 - never block boot on storage config
         logging.warning("Storage backend warm-up failed: %s", e)
     try:
         from app.services.audit_service import register_audit_listeners
@@ -410,7 +410,7 @@ async def startup_event():
     except Exception as e:
         logging.error(f"Record-action bootstrap failed at startup: {str(e)}", exc_info=True)
 
-    # AI assistant wishlist clustering — register the callable so ops can wire
+    # AI assistant wishlist clustering - register the callable so ops can wire
     # it to the existing background scheduler (or cron). We do not schedule it
     # by default to avoid surprise traffic on environments without an OpenAI
     # API key. To enable nightly runs, add a `scheduled_tasks` row keyed

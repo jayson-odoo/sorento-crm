@@ -1,4 +1,4 @@
-"""Form SLA: notify_assignee — per-stage toggle for assignee notification.
+"""Form SLA: notify_assignee - per-stage toggle for assignee notification.
 
 When false, spawning the stage assigns the tracker but does NOT notify the
 assignee (silent routing). NULL/true = notify (backward-compatible).

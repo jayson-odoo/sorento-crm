@@ -1,4 +1,4 @@
-"""Sub-plan B — presigned-URL object-level hardening.
+"""Sub-plan B - presigned-URL object-level hardening.
 
 The endpoint used to sign ANY file_path off the shared X-API-Key (IDOR). Now it
 only signs a key that resolves to a real attachments row, clamps the TTL, and

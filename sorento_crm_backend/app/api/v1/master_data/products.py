@@ -88,7 +88,7 @@ def get_products(
     entities: Optional[list[str]] = Query(
         None,
         description=(
-            "DEPRECATED — free-text entity bag. Prefer `product_ids`. Free-text "
+            "DEPRECATED - free-text entity bag. Prefer `product_ids`. Free-text "
             "resolution should go through `/api/v1/system/references/resolve` first."
         ),
     ),
@@ -192,7 +192,7 @@ def get_products(
         )
         # Data-miss path (§3.3): when the service attached `alternatives` /
         # `relaxed_axis` (empty result only), bypass the strict `ListResponse`
-        # response_model — which would silently drop those keys — and emit the raw
+        # response_model - which would silently drop those keys - and emit the raw
         # dict. `data` is always [] here, so the with-data path stays byte-identical
         # (AC-R1).
         if isinstance(result, dict) and result.get("alternatives"):
@@ -548,7 +548,7 @@ async def set_product_attachment_field_links(
     """Idempotently replace the per-row field-link rows for one product +
     attachment with ``body.field_keys``."""
     try:
-        # Resolve product UUID — accept SKU like other endpoints.
+        # Resolve product UUID - accept SKU like other endpoints.
         product = ProductService(db).get_product(product_id)
         pid = str(product.get("id") if isinstance(product, dict) else getattr(product, "id"))
         service = AttachmentFieldLinkService(db)

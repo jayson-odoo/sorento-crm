@@ -244,5 +244,5 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 function Empty({ hint }: { hint?: string } = {}) {
-  return <span className="text-muted-foreground italic">{hint ?? '—'}</span>;
+  return <span className="text-muted-foreground italic">{hint ?? '-'}</span>;
 }

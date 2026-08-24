@@ -114,14 +114,14 @@ function getTimeRemainingPercent(
 }
 
 function formatSecondsToDuration(seconds: number | null | undefined) {
-  if (seconds == null) return '—';
+  if (seconds == null) return '-';
   return formatDuration(seconds * 1000);
 }
 
 function formatSecondsToDurationWithSeconds(
   seconds: number | null | undefined,
 ) {
-  if (seconds == null) return '—';
+  if (seconds == null) return '-';
   return formatDurationWithSeconds(seconds * 1000);
 }
 
@@ -168,7 +168,7 @@ export default function FormSLATrackingTab({
         header: ({ column }) => (
           <DataGridColumnHeader title="Stage" column={column} />
         ),
-        cell: ({ row }) => row.original.team_set_code || '—',
+        cell: ({ row }) => row.original.team_set_code || '-',
         size: 140,
       },
       {
@@ -181,7 +181,7 @@ export default function FormSLATrackingTab({
           row.original.policy_name ||
           row.original.policy?.code ||
           row.original.policy_code ||
-          '—',
+          '-',
         size: 180,
       },
       {
@@ -204,7 +204,7 @@ export default function FormSLATrackingTab({
           row.original.assigned_user?.name ||
           row.original.assigned_user?.email ||
           row.original.assigned_to ||
-          '—',
+          '-',
         size: 160,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
@@ -249,7 +249,7 @@ export default function FormSLATrackingTab({
         cell: ({ row }) => {
           const o = row.original;
           const dueRes = o.due_at_resolution ?? o.resolution_due_at;
-          if (!dueRes) return '—';
+          if (!dueRes) return '-';
           const overdue = isResolutionOverdue(o);
           return (
             <div className="space-y-1">
@@ -292,7 +292,7 @@ export default function FormSLATrackingTab({
                 ? formatDurationWithSeconds(
                     Number(o.response_time) * 3600 * 1000,
                   )
-                : '—');
+                : '-');
             return (
               <div className="space-y-0.5">
                 <div className="text-xs text-muted-foreground">Response time</div>
@@ -394,7 +394,7 @@ export default function FormSLATrackingTab({
         header: ({ column }) => (
           <DataGridColumnHeader title="Agent" column={column} />
         ),
-        cell: ({ row }) => row.original.agent_code || '—',
+        cell: ({ row }) => row.original.agent_code || '-',
         size: 140,
       },
       {

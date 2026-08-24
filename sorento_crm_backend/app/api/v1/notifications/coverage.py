@@ -113,7 +113,7 @@ async def nominate_coverer(
 ):
     """Self-service: nominate a scope-B colleague to cover ME while I'm away.
 
-    No ``manage_team`` permission required — the coverer just has to be in my
+    No ``manage_team`` permission required - the coverer just has to be in my
     teams (∪ child teams). Upsert keyed by (coverer, me): re-posting updates the
     expiry + mode. The coverer is notified best-effort."""
     try:

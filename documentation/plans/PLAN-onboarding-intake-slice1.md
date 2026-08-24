@@ -175,14 +175,14 @@ Algorithm, in order:
 2. Find the header row: the first row whose cells resolve a `full_name` column. Record the
    column map and the unmapped headers.
 3. Walk the rows after it. For each:
-   - **Repeated header** - the row re-resolves `full_name` *and* at least one other mapped
+ - **Repeated header** - the row re-resolves `full_name` *and* at least one other mapped
      field to the same positions. Skip, count nothing. (AC-4.3)
-   - **Section label** - exactly one non-empty cell, in a column that is either unmapped or
+ - **Section label** - exactly one non-empty cell, in a column that is either unmapped or
      the name column, whose text resolves to no field and does not look like a person (no `@`,
      no digit run of 7+). Set `current_section`, append to `sections`, count nothing. (AC-4.4)
-   - **Furniture** - `_is_report_furniture` over every non-empty cell (imported from
+ - **Furniture** - `_is_report_furniture` over every non-empty cell (imported from
      `customer_import_reader`, not re-implemented). Skip. (AC-4.5)
-   - Otherwise a **data row**: `total_rows += 1`. No name -> `RowProblem(row, "no staff
+ - Otherwise a **data row**: `total_rows += 1`. No name -> `RowProblem(row, "no staff
      name")` and skip. Otherwise emit a row carrying raw + normalised email and phone, plus
      `section_label = current_section`, and append a non-fatal `RowProblem` for a missing
      email or a phone `normalize_msisdn` could not read.

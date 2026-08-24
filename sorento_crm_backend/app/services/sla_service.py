@@ -680,10 +680,10 @@ class ConversationSLATrackingService:
     ) -> Optional[SLAPolicyTier]:
         """Resolve the SLAPolicyTier for ``(policy_id, tier_level)`` with clamping (D7).
 
-        - exact match wins
-        - else the highest defined tier with ``tier_level <= requested`` (clamp up to ceiling)
-        - else the lowest defined tier (requested below all defined tiers)
-        - None only when the policy has zero tiers
+      - exact match wins
+      - else the highest defined tier with ``tier_level <= requested`` (clamp up to ceiling)
+      - else the lowest defined tier (requested below all defined tiers)
+      - None only when the policy has zero tiers
 
         Logs a warning whenever the returned tier differs from the requested level so the
         operator sees that escalation overran the policy's defined tiers.
@@ -3227,8 +3227,8 @@ class ConversationSLATrackingService:
         breach, and still escalatable (tier 1 or 2; tier 3 has nowhere to go). Split-clock
         breach rule - the response clock stops on response (compute_tracking_timings), so
         escalation must not fire on a stopped clock:
-        - not responded → breach when due_at (response deadline) passes
-        - responded     → breach when due_at_resolution passes; never before
+      - not responded → breach when due_at (response deadline) passes
+      - responded     → breach when due_at_resolution passes; never before
         Each item carries everything the runner needs downstream - contact phone and
         Respond.io id included - so n8n needs no SQL nodes, plus `breach_type`
         ("response" | "resolution") for message templating. Datetime columns store naive
@@ -3702,12 +3702,12 @@ class ConversationSLATrackingService:
         After an assignee change, re-derive (agent_id, team_set_code, current_tier) from the
         new assignee's team membership and apply when different.
 
-        - Tier or team change restarts the tier clock (current_tier_started_at = now;
+      - Tier or team change restarts the tier clock (current_tier_started_at = now;
           due_at / due_at_resolution from the policy's matched-tier hours) and writes a
           'reassignment' event log row (including team-only changes at the same tier).
-        - Team change advances the round-robin cursor of the new (agent, team) to the
+      - Team change advances the round-robin cursor of the new (agent, team) to the
           manually picked assignee so auto-assign continues fairly after them.
-        - Returns a change summary dict, or None when no derivation / nothing changed.
+      - Returns a change summary dict, or None when no derivation / nothing changed.
 
         Because derivation now falls back deterministically instead of abandoning on
         ambiguity, invariant-violating legacy data gets its routing rewritten here and
@@ -6078,14 +6078,14 @@ class ConversationSLATrackingService:
         Returns the stamped tracking, or None when there is nothing to stamp.
         Never raises for "not applicable":
 
-        - unknown id -> None (a stale queued job is not an error)
-        - form-SLA stage row -> None (different family; form SLA owns its own
+      - unknown id -> None (a stale queued job is not an error)
+      - form-SLA stage row -> None (different family; form SLA owns its own
           clocks, see conversation_tracking_scope)
-        - ``expect_respond_io_id`` set and the ticket's contact is somebody else
+      - ``expect_respond_io_id`` set and the ticket's contact is somebody else
           -> None. The tracking id arrives from the client while the identifier
           is resolved server-side from the entity, so this pins the stamp to the
           contact who ACTUALLY received the template.
-        - already responded -> ``mark_ticket_responded`` no-ops (only the FIRST
+      - already responded -> ``mark_ticket_responded`` no-ops (only the FIRST
           reply stops the clock).
         """
         from app.services.form_sla_service import FORM_SLA_TYPES

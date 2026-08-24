@@ -37,7 +37,7 @@ def store_import_source_file(
     """Upload the original import bytes to the bucket and stamp the ``job`` row.
 
     Sets ``source_file_key`` / ``source_file_provider`` / ``source_file_size`` /
-    ``source_filename`` on ``job`` (in memory — the caller's ``db.commit()`` persists
+    ``source_filename`` on ``job`` (in memory - the caller's ``db.commit()`` persists
     them). Returns True on success, False if skipped/failed. Never raises.
 
     ``job`` must already be flushed so ``job.id`` is populated (JobService.create_job
@@ -60,7 +60,7 @@ def store_import_source_file(
         job.source_file_size = len(file_bytes)
         job.source_filename = filename or safe_name
         return True
-    except Exception as exc:  # noqa: BLE001 — tracing must never break an import
+    except Exception as exc:  # noqa: BLE001 - tracing must never break an import
         logger.warning(
             "store_import_source_file: failed to retain source file for job %s (%s); "
             "import continues without a stored file",

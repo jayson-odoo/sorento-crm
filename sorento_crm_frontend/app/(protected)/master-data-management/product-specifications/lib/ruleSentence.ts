@@ -6,7 +6,7 @@ import type { SpecDerivationRule } from '../types/productSpec.types';
  * The editor showed rules as raw fields: a dropdown reading "Pattern, capture a number"
  * next to `\bSINGLE\s+BOWLS?\b`. That is the engine's own notation, and it asks the
  * person least equipped to read regular expressions to verify the thing the whole
- * catalogue depends on. The rule is unchanged — only how it is read.
+ * catalogue depends on. The rule is unchanged - only how it is read.
  */
 
 /**
@@ -14,7 +14,7 @@ import type { SpecDerivationRule } from '../types/productSpec.types';
  *
  * Deliberately partial: it undoes the handful of constructs the shipped rules use
  * (\b, \s+, ?, character classes for digits) and gives up on anything else rather than
- * mistranslating it. `null` means "show the pattern as it is" — an honest fallback,
+ * mistranslating it. `null` means "show the pattern as it is" - an honest fallback,
  * where a wrong plain-English reading of a live rule would not be.
  */
 export function plainPattern(pattern: string): string | null {

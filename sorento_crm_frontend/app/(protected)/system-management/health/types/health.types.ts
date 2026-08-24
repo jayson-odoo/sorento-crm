@@ -6,7 +6,7 @@
  * (the FE renders an empty state for a null block, never an error).
  */
 export interface EmailOutboxHealth {
-  /** Lifetime ledger totals — NOT windowed. Shown alongside the windowed count so
+  /** Lifetime ledger totals - NOT windowed. Shown alongside the windowed count so
    *  an all-time figure never reads as a live incident. */
   pending: number;
   sent: number;
@@ -32,7 +32,7 @@ export interface ScheduledTasksHealth {
 
 /** One distinct fault behind a channel's `failed` count. */
 export interface FailureSignature {
-  /** Normalised grouping key (ids/timestamps masked) — not for display. */
+  /** Normalised grouping key (ids/timestamps masked) - not for display. */
   signature: string;
   /** A real un-masked message, safe to paste into a log search. */
   sample_message: string;
@@ -40,7 +40,7 @@ export interface FailureSignature {
   count: number;
   /**
    * Literal substrings shared by every row in this group, AND-ed by the
-   * drill-down filter. Not `sample_message` — that embeds a record id and would
+   * drill-down filter. Not `sample_message` - that embeds a record id and would
    * select the single row it came from.
    *
    * A list rather than one substring: the longest single run of one fault can

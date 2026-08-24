@@ -1,14 +1,14 @@
 """Service + endpoint tests for order aggregation analytics.
 
 Covers GET /api/v1/order-management/orders/analytics and
-OrderService.order_analytics — the analytical-question gap closer:
-  - metric=count / total_value / avg_delivery_days happy paths
-  - group_by=customer / product / month bucketing
-  - total_value falls back to line totals when the order header total_amount is 0
+OrderService.order_analytics - the analytical-question gap closer:
+ - metric=count / total_value / avg_delivery_days happy paths
+ - group_by=customer / product / month bucketing
+ - total_value falls back to line totals when the order header total_amount is 0
     (this dataset never populates orders.total_amount)
-  - avg_delivery_days computes the correct day difference and is non-negative
-  - validation: unknown metric / group_by raise 422 (AppException)
-  - endpoint enforces auth (401/403 with no principal)
+ - avg_delivery_days computes the correct day difference and is non-negative
+ - validation: unknown metric / group_by raise 422 (AppException)
+ - endpoint enforces auth (401/403 with no principal)
 
 Runs against the live Postgres test DB: seed rows with a unique order_number
 prefix, assert, clean up.

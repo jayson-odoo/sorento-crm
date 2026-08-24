@@ -138,7 +138,7 @@ export default function OrdersList() {
 
   const handleUploadTracking = async (file: File) => {
     const result = await importOrderTracking(file);
-    // Job is queued, will be processed in background — progress in the upload drawer
+    // Job is queued, will be processed in background - progress in the upload drawer
     notifyImportQueued();
     queryClient.invalidateQueries({ queryKey: ['orders'] });
     queryClient.invalidateQueries({ queryKey: ['import-jobs'] });

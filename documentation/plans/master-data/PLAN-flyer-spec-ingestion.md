@@ -340,7 +340,7 @@ session was closed with a plain `close` at the end, never `close --all`.
    sentence (verbatim): *"This flyer states 198 specification values across 34 products: 0 new, 24
    change what the master says, 17 conflict with a value a person set, 156 unchanged, 1
    suppressed."* Screenshot: `02-reading-page-proposed-counts.png`. Console/errors clean.
-   - **Deviation from the brief, recorded honestly:** the brief expected `new` rows to exist
+ - **Deviation from the brief, recorded honestly:** the brief expected `new` rows to exist
      (untick one). This flyer's master data already carries prior flyer-authored values for most
      of these 34 products (0 new, 24 change, 156 unchanged) - almost certainly from the same fixture
      having been read and applied before, in this shared dev DB, by an earlier session. The walk
@@ -351,13 +351,13 @@ session was closed with a plain `close` at the end, never `close --all`.
    `/master-data-management/flyer-spec-proposals/4f769de0-...` (`GET .../spec-proposals` fired,
    200). Confirmed the default-selection footer read **"Apply 0 selected" (disabled)** - correct
    per AC-D.3 given 0 `new` rows. Screenshot: `03-review-page-default-selection.png`.
-   - Ticked the `FG-CW13` product's `Capacity (oz)` row (`Changes 30 to 30 oz`, a `change` row,
+ - Ticked the `FG-CW13` product's `Capacity (oz)` row (`Changes 30 to 30 oz`, a `change` row,
      checkbox enabled) -> footer read "Apply 1 selected". Screenshot:
      `04-review-page-one-change-ticked.png`.
-   - Clicked Apply: `AlertDialog` **"Replace 1 master value?"** appeared, naming the row
+ - Clicked Apply: `AlertDialog` **"Replace 1 master value?"** appeared, naming the row
      (`Capacity (oz)` / `30 becomes 30 oz`) before the write, per AC-D.4. Screenshot:
      `05-replace-confirm-dialog.png`.
-   - Confirmed ("Replace and apply"): `POST .../spec-proposals/apply` -> **200**. The result read
+ - Confirmed ("Replace and apply"): `POST .../spec-proposals/apply` -> **200**. The result read
      **"Nothing was written to the product master" / "1 not written"** with the row listed as
      `FG-CW13 Capacity oz - Already stored - The product master already holds this value.` This is
      AC-C.2's live re-classification working as designed: the batch's propose-time snapshot said
@@ -365,7 +365,7 @@ session was closed with a plain `close` at the end, never `close --all`.
      same prior session that produced the 0-new/24-change starting counts), so the row was refused
      `already_matches` rather than written - exactly the safety net AC-C.2 and AC-C.6 describe.
      Screenshot: `06-review-page-after-apply.png`. Console/errors clean.
-   - To get a genuine write (needed for step 6's Specifications-tab evidence), re-selected a
+ - To get a genuine write (needed for step 6's Specifications-tab evidence), re-selected a
      second `change` row that was a real value change rather than a formatting no-op: product
      `SRTWC286-SH`, key `Type`, `Changes One piece to Toilet seat`. Ticked it, Apply -> `AlertDialog`
      "Replace 1 master value?" again, confirmed. `POST .../spec-proposals/apply` -> **200**, result
@@ -394,8 +394,8 @@ session was closed with a plain `close` at the end, never `close --all`.
    re-applied key is refused/non-selectable, not re-written. Footer read "Apply 0 selected".
    Screenshot: `09-review-page-idempotent-recheck.png`. Console/errors clean.
 7. **Viewport checks on the review page**, per AC-E.1's "clean console at 375px and 1280px":
-   - 375x812: `10-review-page-375x812.png`. Console/errors clean.
-   - 1280x800: `11-review-page-1280x800.png`. Console/errors clean.
+ - 375x812: `10-review-page-375x812.png`. Console/errors clean.
+ - 1280x800: `11-review-page-1280x800.png`. Console/errors clean.
 8. **AC-E.2 - Master Data list page.** Applying once more (a second `change` row, a different
    product's `Type: One piece -> Toilet seat`, same confirm-dialog path, `POST .../apply` -> 200,
    "1 specification value written") was done first so the `Applied on` column would be populated
@@ -879,20 +879,20 @@ were killed at the end; the browser session was closed with a plain `close`, nev
 1. **Search.** Opened `flyer_sample.pdf`'s review page (list showed `0 new, 14 change, 16
    conflict` - `Propose again` was not needed, plenty of pending rows). Baseline: 25 of 34
    product groups, `Show more products (9 left)`. Screenshot: `rw-01-review-page-baseline.png`.
-   - Typed `SRTJC80` -> filtered to exactly the 6 matching groups
+ - Typed `SRTJC80` -> filtered to exactly the 6 matching groups
      (`SRTJC8018`/`8028`/`8030`/`8037`/`8041`/`8066`), no `Show more` (all fit). Screenshot:
      `rw-02-review-page-search-filtered.png`. Cleared via the new **x** ("Clear the search")
      button -> back to the full 25-group first page **and** `Show more products (9 left)`
      restored. Screenshot: `rw-03-review-page-search-cleared-x-button.png`. This is the exact
      bug (`shown` depth carried across a list change) - confirmed fixed.
-   - Typed `SRT` (33 of 34 groups match) -> 25 shown, `Show more products (8 left)`. Clicked
+ - Typed `SRT` (33 of 34 groups match) -> 25 shown, `Show more products (8 left)`. Clicked
      `Show more` -> all 33 SRT-matching groups rendered, `Show more` gone. Screenshot:
      `rw-04-review-page-search-showmore-expanded.png`. Cleared via the **x** button -> back to
      25 groups + `Show more products (9 left)` for the FULL unfiltered 34, not the 33-match
      count - confirms paging restarts from the top on every search change rather than being
      stranded inside the old filtered depth. Screenshot:
      `rw-05-review-page-search-cleared-after-showmore.png`.
-   - Typed `SRTJC80` again (6 matches), then cleared via keyboard select-all (`End`,
+ - Typed `SRTJC80` again (6 matches), then cleared via keyboard select-all (`End`,
      `Shift+Home`) + `Delete` inside the input instead of the x button -> same correct outcome:
      25 groups, `Show more products (9 left)`, input empty. Screenshot:
      `rw-06-review-page-search-cleared-select-all-delete.png`. Console/errors clean throughout.

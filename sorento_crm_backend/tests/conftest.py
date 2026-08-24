@@ -222,7 +222,7 @@ def _restore_stubbed_module_symbols():
 # is Sorento): owned inserts auto-stamp Sorento (satisfying NOT NULL) and reads
 # filter to Sorento (where the data is). The ``after_begin`` listener only fills
 # the key when unset, so ``company_scope(db, ...)`` / ``set_company_scope`` still
-# win — the dedicated ``tests/test_company_scope.py`` overrides per-test to
+# win - the dedicated ``tests/test_company_scope.py`` overrides per-test to
 # assert the real four-state / fail-closed semantics.
 # ---------------------------------------------------------------------------
 import app.services.company_scope as _company_scope  # noqa: E402  (ensures module loaded)
@@ -233,7 +233,7 @@ from sqlalchemy import event as _sa_scope_event  # noqa: E402
 # auto-stamp) for the whole test process, exactly as production does at app/worker
 # import time. Idempotent (``_INSTALLED`` guard). Without this a test that uses a
 # bare ``SessionLocal`` and never imports ``app.main`` gets no auto-stamp, so its
-# owned inserts leave ``company_id`` NULL and violate the NOT NULL / FK — the
+# owned inserts leave ``company_id`` NULL and violate the NOT NULL / FK - the
 # ``after_begin`` default below only sets the scope, it does not stamp.
 _company_scope.register_company_scope_listeners()
 
@@ -314,7 +314,7 @@ def _reset_global_state():
         # Tests reuse user ids (e.g. a superadmin seeded under a fixed id) across
         # files; a stale non-superadmin `role_slugs`/`perm` entry cached by an
         # earlier test makes a later route's superadmin bypass miss and query the
-        # `user_permissions` table — which many sqlite fixtures deliberately omit,
+        # `user_permissions` table - which many sqlite fixtures deliberately omit,
         # yielding "no such table: user_permissions". Clearing per test removes
         # the cross-test leak. Prod is unaffected (this only runs under pytest).
         from app.services.user_service import invalidate_rbac_cache

@@ -2,11 +2,11 @@
 
 Two entry points, both registered as scheduled-task handlers:
 
-- ``run_health_watchdog(db)`` — frequent (every ~10 min). Evaluates the three
+- ``run_health_watchdog(db)`` - frequent (every ~10 min). Evaluates the three
   IMMEDIATE conditions and alerts admins on a transition into bad (de-duped via
   ``health_alert_state`` so a persistently-bad condition doesn't spam each tick;
   re-alerts only after ``ALERT_COOLDOWN``). Emits a recovery note on bad->ok.
-- ``run_health_daily_digest(db)`` — daily. Sends admins the full health summary.
+- ``run_health_daily_digest(db)`` - daily. Sends admins the full health summary.
 
 Recipients come from ``system_settings.health_notify_role_ids`` (fallback: all
 superadmin/admin users). Delivery = in-app + email, gated by settings toggles and
@@ -74,7 +74,7 @@ def _mark_ok(row: HealthAlertState, now: datetime) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Condition evaluators — return (is_bad, detail)
+# Condition evaluators - return (is_bad, detail)
 # ---------------------------------------------------------------------------
 def _eval_n8n_liveness(db: Session, now: datetime) -> tuple[bool, str]:
     """Bad if the latest n8n_healthcheck probe is failed, or no success within LIVENESS_STALE."""
@@ -90,7 +90,7 @@ def _eval_n8n_liveness(db: Session, now: datetime) -> tuple[bool, str]:
         return True, f"n8n liveness probe FAILED ({latest.error_code or 'no callback'}) at {latest.created_at:%Y-%m-%d %H:%M} UTC"
     if latest.status == "success":
         return False, ""
-    # pending/sent/processing — only bad once stale (probe fired but never confirmed)
+    # pending/sent/processing - only bad once stale (probe fired but never confirmed)
     if latest.created_at and (now - latest.created_at) >= LIVENESS_STALE:
         return True, f"n8n liveness probe stuck '{latest.status}' since {latest.created_at:%Y-%m-%d %H:%M} UTC (no callback)"
     return False, ""
@@ -113,7 +113,7 @@ def _eval_failed_integrations(db: Session, now: datetime, threshold: int) -> tup
     if not hot:
         return False, ""
     detail = "; ".join(f"{ch}: {n} failed/24h" for ch, n in hot)
-    return True, f"Integration failure spike — {detail}"
+    return True, f"Integration failure spike - {detail}"
 
 
 _MALAYSIA_TZ = timezone(timedelta(hours=8))
@@ -179,21 +179,21 @@ def _eval_scheduled_tasks(db: Session, now: datetime) -> tuple[bool, str]:
         # Itemized: the previous body was a bare list of keys, which told the
         # reader nothing about which run was late or by how much.
         items = "\n".join(
-            f"  • {o.task.key} ({o.task.name}) — {_humanize_interval(o.task)}, "
+            f"  • {o.task.key} ({o.task.name}) - {_humanize_interval(o.task)}, "
             f"last run {_malaysia_wall_clock(o.task.last_run_at)}, "
-            f"{_humanize_delta(o.late_by)} late — {_task_run_log_url(o.task)}"
+            f"{_humanize_delta(o.late_by)} late - {_task_run_log_url(o.task)}"
             for o in overdue
         )
         parts.append(f"overdue ({len(overdue)}):\n{items}")
 
-    return True, "Scheduled tasks — " + "; ".join(parts)
+    return True, "Scheduled tasks - " + "; ".join(parts)
 
 
 def _eval_chat_latency(db: Session, now: datetime, settings) -> tuple[bool, str]:
     """WhatsApp round-trip health, as three independent signals.
 
     A single rolling percentile is not enough. At volume, one turn that never completes
-    — the shape a dropped webhook takes — never moves p99 at all, so it would degrade
+  - the shape a dropped webhook takes - never moves p99 at all, so it would degrade
     silently. Hence a hard ceiling with no minimum sample, plus an explicit
     unanswered-turn check whose subjects are absent from the distribution by definition.
     """
@@ -213,14 +213,14 @@ def _eval_chat_latency(db: Session, now: datetime, settings) -> tuple[bool, str]
         stats, target_seconds=target, min_sample=min_sample, percentile=percentile
     )
     if verdict.breached:
-        parts.append(f"degraded — {verdict.reason}")
+        parts.append(f"degraded - {verdict.reason}")
 
     ceiling = target * multiplier
     stalled = latency.get_stalled_turns(db, since=window_start, ceiling_seconds=ceiling)
     if stalled:
         worst = max(stalled, key=lambda t: t.latency_seconds)
         parts.append(
-            f"stalled turns ({len(stalled)}) past {ceiling}s ceiling — "
+            f"stalled turns ({len(stalled)}) past {ceiling}s ceiling - "
             f"worst {worst.latency_seconds:.0f}s on turn {worst.turn_id}"
         )
 
@@ -228,13 +228,13 @@ def _eval_chat_latency(db: Session, now: datetime, settings) -> tuple[bool, str]
     if unanswered:
         worst = unanswered[0]
         parts.append(
-            f"no reply ({len(unanswered)}) after {no_reply_min}m — "
+            f"no reply ({len(unanswered)}) after {no_reply_min}m - "
             f"longest {worst.waiting_seconds / 60:.0f}m on turn {worst.turn_id}"
         )
 
     if not parts:
         return False, ""
-    return True, "WhatsApp round trip — " + "; ".join(parts)
+    return True, "WhatsApp round trip - " + "; ".join(parts)
 
 
 def run_chat_latency_watchdog(db: Session) -> dict:
@@ -357,7 +357,7 @@ def run_health_daily_digest(db: Session, task=None) -> dict:
     audit_h = health_mod._audit_activity_health(db, cutoff, now)
     live_bad, live_detail = _eval_n8n_liveness(db, now)
 
-    lines: list[str] = [f"System health digest — {now:%Y-%m-%d %H:%M} UTC", ""]
+    lines: list[str] = [f"System health digest - {now:%Y-%m-%d %H:%M} UTC", ""]
     lines.append(f"n8n liveness: {'⚠️ ' + live_detail if live_bad else '✅ OK'}")
     if integ_h and integ_h.channels:
         fails = [c for c in integ_h.channels if c.failed]
@@ -377,13 +377,13 @@ def run_health_daily_digest(db: Session, task=None) -> dict:
 
     _notify_admins(
         db, settings,
-        subject=f"📋 System health digest — {now:%Y-%m-%d}",
+        subject=f"📋 System health digest - {now:%Y-%m-%d}",
         lines=lines,
         is_alert=False,
-        # The digest has no entity identity — every run is a legitimately new digest,
+        # The digest has no entity identity - every run is a legitimately new digest,
         # so it must NOT dedup on a stable key (that made "Run now" a silent no-op).
         # Second-granular id: each manual/scheduled fire notifies afresh; only a
-        # genuine same-instant double-fire (a <1s retry) collapses — which we want.
+        # genuine same-instant double-fire (a <1s retry) collapses - which we want.
         dedup_id=f"digest:{now:%Y-%m-%dT%H:%M:%S}",
         task=task,
     )
@@ -439,7 +439,7 @@ def _notify_admins(
 ) -> None:
     """Fan out an in-app + email notification to the resolved admin recipients.
 
-    ``dedup_id`` becomes the notification ``source_entity_id`` — the dedup key is
+    ``dedup_id`` becomes the notification ``source_entity_id`` - the dedup key is
     ``(user_id, source_entity_type, source_entity_id, event_type)`` with NO time
     window, so a CONSTANT id would let each user receive this notification only
     once ever (the daily digest would fire once and never again). Callers pass a

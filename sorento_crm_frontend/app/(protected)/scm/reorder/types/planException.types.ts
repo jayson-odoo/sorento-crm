@@ -10,19 +10,19 @@
  *
  * Four shapes are load-bearing.
  *
- *   - **Before and after, side by side** (AC-D4). An exception that states only the new
+ * - **Before and after, side by side** (AC-D4). An exception that states only the new
  *     position asks the reviewer to remember the old one. Both timelines travel with the
  *     row.
- *   - **The reading, with its sources** (AC-D9, AC-D12). Every exception carries the
+ * - **The reading, with its sources** (AC-D9, AC-D12). Every exception carries the
  *     item's lifecycle, velocity, business class and last purchase date, each naming the
  *     field it came from, so somebody can disagree with the REASONING and not only the
  *     outcome. None of it is newly computed: all four already exist.
- *   - **Actions ordered by that reading, not by quantity** (AC-D10). The same arithmetic
+ * - **Actions ordered by that reading, not by quantity** (AC-D10). The same arithmetic
  *     on a discontinued C/Z retail item proposes keeping the PO and pooling the stock
  *     FIRST, where an active A/X project item proposes reallocating. A discontinued
  *     surplus is never first-proposed for cancellation or ETA deferral, because that
  *     stock is the last obtainable (AC-D11).
- *   - **Nothing is amended without approval** (AC-D6). Approving a reallocation writes
+ * - **Nothing is amended without approval** (AC-D6). Approving a reallocation writes
  *     an allocation decision; it does not amend the purchase order (AC-D7).
  *
  * No ids surface. Product code, warehouse code, a human name; `run_id` and

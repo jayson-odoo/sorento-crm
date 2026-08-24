@@ -5,7 +5,7 @@ Background: ``stored_filename`` is the canonical current name AND the basename o
 the storage object key embedded in ``file_path``. Older rows (and any row renamed
 before the storage-sync feature landed) can drift: ``stored_filename`` no longer
 matches the last segment of ``file_path``'s key, or the object is missing at the
-key entirely. This script reports those, and — only with ``--apply`` — repairs a
+key entirely. This script reports those, and - only with ``--apply`` - repairs a
 row when the intended object is found under a derivable alternate key.
 
 Run from sorento_crm_backend/:
@@ -16,7 +16,7 @@ Idempotent, JOIN-style "repair where mismatch": safe to re-run; it sets each row
 to its correct value rather than only filling NULLs, so a prior bad run self-heals.
 
 SAFETY:
-  * ``--dry-run`` (DEFAULT) makes ZERO writes — DB and storage untouched. It only
+  * ``--dry-run`` (DEFAULT) makes ZERO writes - DB and storage untouched. It only
     HEADs objects and prints a summary.
   * ``--apply`` is guarded and off by default. It performs server-side copy →
     verify → DB repair, and never deletes (a drifted source object is left as an

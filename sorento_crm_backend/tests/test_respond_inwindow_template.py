@@ -4,7 +4,7 @@ Inside the 24h WhatsApp window the choke point now renders the SAME use-case
 default template (variables filled) instead of the caller's ad-hoc text, so the
 message reads identically whether it ships as free text (in-window) or an
 approved template (out-of-window). With no configured default it falls back to
-the raw text — uniformity rolls out per use-case, never breaks an unconfigured one.
+the raw text - uniformity rolls out per use-case, never breaks an unconfigured one.
 """
 from app.services import respond_messaging_service as rms
 

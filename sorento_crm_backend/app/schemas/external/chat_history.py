@@ -39,7 +39,7 @@ class ChatHistoryMessageIngestRequest(BaseModel):
         description="n8n $execution.id, stamped on BOTH the incoming and the outgoing "
         "save of one turn. Pairs a reply to the message that triggered it exactly, so "
         "round-trip latency survives message bursts and reordering. Omit on proactive "
-        "sends (campaigns, SLA notices) — those are excluded from the latency SLA "
+        "sends (campaigns, SLA notices) - those are excluded from the latency SLA "
         "rather than paired by proximity.",
     )
     state_trace: Optional[dict[str, Any]] = Field(
@@ -47,7 +47,7 @@ class ChatHistoryMessageIngestRequest(BaseModel):
         description="Per-turn conversation state transition (v1). Incoming rows only; "
         "NULL on outgoing. Opaque by design: {v, before, parser_raw, parser_applied, "
         "after}. `after: null` means the turn wrote no state (no-access refusal, "
-        "voice-not-allowed, LLM fallback) and is a real signal — never coerce it to {}. "
+        "voice-not-allowed, LLM fallback) and is a real signal - never coerce it to {}. "
         "Stored as received; the producer owns the inner shape.",
     )
 

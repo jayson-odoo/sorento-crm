@@ -3,7 +3,7 @@
 Every status/notice banner rendered above a form (handling lock, SLA escalation,
 SLA extension, rejection) shows WHO did the thing and links their name to
 ``https://wa.me/{digits}``. This module is the ONE place a banner DTO turns a
-person id into those digits — no per-feature phone lookup.
+person id into those digits - no per-feature phone lookup.
 
 Phone digits come bare (e.g. ``60123456789``, no ``+``) from
 ``respond_contacts.phone_number`` via ``normalize_msisdn`` / ``resolve_user_respond_contact``,
@@ -44,7 +44,7 @@ def _phone_for_user(db: Session, user: Optional[User]) -> Optional[str]:
     if not phone:
         return None
     # wa.me wants bare digits (country code, no ``+``/spaces/dashes). Stored
-    # ``respond_contacts.phone_number`` may carry a leading ``+`` — strip it here so
+    # ``respond_contacts.phone_number`` may carry a leading ``+`` - strip it here so
     # every consumer of this contract gets link-ready digits, not just the FE.
     digits = re.sub(r"\D", "", str(phone))
     return digits or None

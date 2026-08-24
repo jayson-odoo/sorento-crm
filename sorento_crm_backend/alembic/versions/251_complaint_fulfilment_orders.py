@@ -1,4 +1,4 @@
-"""complaint_fulfilment_orders — complaint <-> replacement DO link table.
+"""complaint_fulfilment_orders - complaint <-> replacement DO link table.
 
 Revision ID: 251_complaint_fulfilment_orders
 Revises: 250_pr_submitted_at
@@ -7,7 +7,7 @@ Create Date: 2026-06-30
 A replacement / fulfilment Delivery Order is auto-linked to the complaint(s)
 named in its Remarks CS field. Many-to-many: one DO can name many complaints,
 one complaint can accumulate many DOs (partial shipments). ``delivery_notified_at``
-is the per-(complaint, DO) idempotency stamp for the delivery notification — set
+is the per-(complaint, DO) idempotency stamp for the delivery notification - set
 when the notice is sent (or stamped-without-send by the backfill). The new
 ``fulfilled`` complaint status is just a String(50) value; no enum migration.
 See docs/plans/PLAN-complaint-do-auto-fulfilment.md.

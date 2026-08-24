@@ -39,7 +39,7 @@ async function login(page: Page) {
 async function navigateViaSidebar(page: Page) {
   const link = page.getByRole('link', { name: /^WhatsApp Templates$/i }).first();
   const group = page.getByRole('button', { name: /system management/i }).first();
-  // Wait for the sidebar to hydrate + settle before interacting — clicking the
+  // Wait for the sidebar to hydrate + settle before interacting - clicking the
   // group while it animates/mounts is a no-op and leaves the leaf hidden.
   await expect(group).toBeVisible({ timeout: 20_000 });
   await page.waitForTimeout(1_500);

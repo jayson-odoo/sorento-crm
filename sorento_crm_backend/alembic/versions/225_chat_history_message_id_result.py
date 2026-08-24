@@ -1,9 +1,9 @@
 """chat_histories: message_id + result columns for n8n result-set referencing.
 
-- `chat_histories.message_id` — Respond.io message id of the outgoing message,
+- `chat_histories.message_id` - Respond.io message id of the outgoing message,
   so n8n can later reference a specific message (e.g. when the user replies to
   a quoted message) instead of only the latest one.
-- `chat_histories.result` — JSONB array of the numbered options the bot sent in
+- `chat_histories.result` - JSONB array of the numbered options the bot sent in
   that message (idx/uuid/label/...), consumed by
   GET /external/conversation-variables/{respond_io_id}?message_id=... which
   injects it as `referenced_result_set` in the response.

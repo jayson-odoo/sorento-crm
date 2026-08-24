@@ -107,7 +107,7 @@ const multiAttachmentItems: RespondMessageRenderable[] = [
   },
 ];
 
-describe('RespondChatList — WhatsApp-style render', () => {
+describe('RespondChatList - WhatsApp-style render', () => {
   it('renders contact name + phone in header', () => {
     render(
       <RespondChatList items={items} contactName="Jayson Teh" contactPhone="+60123456789" />,

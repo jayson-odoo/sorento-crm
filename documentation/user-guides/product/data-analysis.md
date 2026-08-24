@@ -1,43 +1,43 @@
-# Product Management — Data analysis for the AI assistant
+# Product Management - Data analysis for the AI assistant
 
 Reference for answering natural-language questions about the product catalogue (master data). It maps each entity to its fields, filters, status/active flags, and date columns, and gives example questions per entity.
 
-> **Products ARE embedded for semantic search.** Active products are written to the vector store, so fuzzy text lookups ("the stainless 12L mixing bowl", "anything for outdoor LED lighting") resolve to product rows by name/description without an exact code. Categories, brands, UoM, and product-attachment links are **not** embedded — match those by code/name. **Numerics (prices, dimensions, reorder levels, counts) are answered via SQL / the list endpoints, never from semantic recall** — embeddings find the row, then quote exact figures from the table.
+> **Products ARE embedded for semantic search.** Active products are written to the vector store, so fuzzy text lookups ("the stainless 12L mixing bowl", "anything for outdoor LED lighting") resolve to product rows by name/description without an exact code. Categories, brands, UoM, and product-attachment links are **not** embedded - match those by code/name. **Numerics (prices, dimensions, reorder levels, counts) are answered via SQL / the list endpoints, never from semantic recall** - embeddings find the row, then quote exact figures from the table.
 
 The five entities and their backing tables: **Product** (`products`), **Product Category** (`product_categories`), **Brand** (`brands`), **Unit of Measure** (`units_of_measure`), **Product Attachment** link (`product_attachments`).
 
 ---
 
-## Product — `products`
+## Product - `products`
 
 The catalogue item. The hub everything else (stock, orders, promotions, suppliers, attachments) hangs off of.
 
-**Identity / classification:** `id`, `product_code` (unique SKU — the lookup key, UI **Product Code**), `product_name` (UI **Product Name**), `description`, `category_id` (FK → `product_categories`, **required**), `brand_id` (FK → `brands`, optional), `base_uom_id` (FK → `units_of_measure`, **required**), `item_type` (`product` | `bundle` | `service` | `other`, nullable).
+**Identity / classification:** `id`, `product_code` (unique SKU - the lookup key, UI **Product Code**), `product_name` (UI **Product Name**), `description`, `category_id` (FK → `product_categories`, **required**), `brand_id` (FK → `brands`, optional), `base_uom_id` (FK → `units_of_measure`, **required**), `item_type` (`product` | `bundle` | `service` | `other`, nullable).
 
 **Pricing:** `list_price` (required), `cost_price` (nullable, **hidden from non-privileged viewers**), `invoice_price` (nullable, **hidden from non-privileged viewers**), `currency` (defaults `MYR`).
 
 **Specifications:** `weight`, `dimensions_length`, `dimensions_width`, `dimensions_height` (mm), `warranty_months`, `has_serial_tracking` (bool), `has_batch_tracking` (bool), `reorder_level`, `reorder_quantity`.
 
 **Status / lifecycle flags:**
-* `is_active` (bool) — the catalogue active/inactive toggle. Inactive products are hidden from pickers. UI **Status** = **Active** / **Inactive**.
-* `is_discontinued` (bool) — set by the import / discontinued-batch process, **not** a manual form field. UI **Discontinued: Yes/No** on the detail page.
-* `discontinued_notified_at` / `discontinued_notify_batch_id` — watermark + batch id used by the "products discontinued" notification deep link; not user-facing values.
+* `is_active` (bool) - the catalogue active/inactive toggle. Inactive products are hidden from pickers. UI **Status** = **Active** / **Inactive**.
+* `is_discontinued` (bool) - set by the import / discontinued-batch process, **not** a manual form field. UI **Discontinued: Yes/No** on the detail page.
+* `discontinued_notified_at` / `discontinued_notify_batch_id` - watermark + batch id used by the "products discontinued" notification deep link; not user-facing values.
 
 **Audit:** `created_by`, `updated_by`, `created_at`, `updated_at`.
 
 **Date columns:** `created_at`, `updated_at`.
 
 **Filters (product list endpoint):**
-* `query` — substring match over `product_code`, `product_name`, **and** `description`.
-* `category_id` — accepts a category **id, code, or name** (resolved).
-* `brand_id` — accepts a brand **id, code, or name** (resolved), or a **comma-separated list** of them (`a,b` matches any of the listed brands). The list form is what a brand-scoped "products discontinued" deep link carries.
-* `status` — `active` | `inactive` | `all` (maps to `is_active`).
-* `item_type` — exact (`product` | `bundle` | `service` | `other`).
-* `price_min` / `price_max` — on `list_price`.
-* `length_min/max`, `width_min/max`, `height_min/max` — per-axis (mm).
-* `any_dimension_min/max` — matches when **any** of L/W/H is in range (use for "dimension > 300mm" regardless of axis).
-* `discontinued_batch_id` — restricts to products reported in one discontinued batch. A recipient whose subscription covers only some brands gets that param **plus** `brand_id=<ids>`, so their link opens exactly the subset their notice counted.
-* `product_ids` — explicit id set.
+* `query` - substring match over `product_code`, `product_name`, **and** `description`.
+* `category_id` - accepts a category **id, code, or name** (resolved).
+* `brand_id` - accepts a brand **id, code, or name** (resolved), or a **comma-separated list** of them (`a,b` matches any of the listed brands). The list form is what a brand-scoped "products discontinued" deep link carries.
+* `status` - `active` | `inactive` | `all` (maps to `is_active`).
+* `item_type` - exact (`product` | `bundle` | `service` | `other`).
+* `price_min` / `price_max` - on `list_price`.
+* `length_min/max`, `width_min/max`, `height_min/max` - per-axis (mm).
+* `any_dimension_min/max` - matches when **any** of L/W/H is in range (use for "dimension > 300mm" regardless of axis).
+* `discontinued_batch_id` - restricts to products reported in one discontinued batch. A recipient whose subscription covers only some brands gets that param **plus** `brand_id=<ids>`, so their link opens exactly the subset their notice counted.
+* `product_ids` - explicit id set.
 * Advanced filter (list-query, resource key `products`): column-level conditions on **any** product field.
 
 **Sortable:** `created_at` (default, **asc**), `updated_at`, `product_code`, `product_name`, `list_price` (alias `price`), `cost_price`, `invoice_price`, `is_active`, `dimensions_length` (alias `length`), `dimensions_width` (alias `width`), `dimensions_height` (alias `height`), `largest_dimension`, `smallest_dimension`.
@@ -54,13 +54,13 @@ The catalogue item. The hub everything else (stock, orders, promotions, supplier
 * "Which products use batch tracking?" (`has_batch_tracking = true`)
 * "Show inactive products in category X created this year." (`status=inactive`, `category_id=X`, `created_at` this year)
 
-> Do **not** quote `cost_price` / `invoice_price` to users without margin/cost visibility — they're hidden from ordinary viewers in the UI.
+> Do **not** quote `cost_price` / `invoice_price` to users without margin/cost visibility - they're hidden from ordinary viewers in the UI.
 
 ---
 
-## Product Category — `product_categories`
+## Product Category - `product_categories`
 
-How products are classified. Self-referential — categories can nest via `parent_category_id`.
+How products are classified. Self-referential - categories can nest via `parent_category_id`.
 
 **Fields:** `id`, `category_code` (unique, UI **Category Code**), `category_name` (UI **Category Name**), `description`, `parent_category_id` (FK → `product_categories`, nullable; null = top-level), `is_active` (bool, UI **Active**), `display_order` (ordering within a level), `created_by`, `created_at`, `updated_at`. Responses may include computed `product_count`.
 
@@ -78,11 +78,11 @@ How products are classified. Self-referential — categories can nest via `paren
 
 ---
 
-## Brand — `brands`
+## Brand - `brands`
 
 The manufacturer / brand a product belongs to. Optional on a product.
 
-**Fields:** `id`, `brand_code` (unique, UI **Code**), `brand_name` (UI **Name**), `manufacturer`, `website`, `description` (UI **Description**), `logo_url`, `is_active` (bool, UI **Active**), `access_levels` (JSON array of visibility codes, e.g. `["dealer","end_user"]` — scopes portal/promotion product visibility), `created_by`, `created_at`, `updated_at`. Responses may include computed `product_count`.
+**Fields:** `id`, `brand_code` (unique, UI **Code**), `brand_name` (UI **Name**), `manufacturer`, `website`, `description` (UI **Description**), `logo_url`, `is_active` (bool, UI **Active**), `access_levels` (JSON array of visibility codes, e.g. `["dealer","end_user"]` - scopes portal/promotion product visibility), `created_by`, `created_at`, `updated_at`. Responses may include computed `product_count`.
 
 **Date columns:** `created_at`, `updated_at`.
 
@@ -98,9 +98,9 @@ The manufacturer / brand a product belongs to. Optional on a product.
 
 ---
 
-## Unit of Measure — `units_of_measure`
+## Unit of Measure - `units_of_measure`
 
-The units products are stocked/sold in. Self-referential — a derived unit points to its base via `base_uom_id` with a `conversion_factor`.
+The units products are stocked/sold in. Self-referential - a derived unit points to its base via `base_uom_id` with a `conversion_factor`.
 
 **Fields:** `id`, `uom_code` (unique, UI **UOM Code**), `uom_name` (UI **UOM Name**), `base_uom_id` (FK → `units_of_measure`, nullable; null = standalone base unit; UI **Base UOM**), `conversion_factor` (numeric, how many base units = 1 of this unit; UI **Conversion Factor**), `description`, `is_active` (bool, UI **Status**), `created_at`, `updated_at`. Responses may include computed `product_count`.
 
@@ -118,7 +118,7 @@ The units products are stocked/sold in. Self-referential — a derived unit poin
 
 ---
 
-## Product Attachment link — `product_attachments`
+## Product Attachment link - `product_attachments`
 
 Join rows linking a product to a file (datasheet / manual / photo). One product can have many; one file can be linked to many products. The pair `(product_id, attachment_id)` is unique.
 
@@ -126,7 +126,7 @@ Join rows linking a product to a file (datasheet / manual / photo). One product 
 
 **Date columns:** `created_at`.
 
-**Filters:** the listing endpoint is searchable; resolve by product code/name to find a product's files. There is no separate status flag — presence/absence of a row is the signal.
+**Filters:** the listing endpoint is searchable; resolve by product code/name to find a product's files. There is no separate status flag - presence/absence of a row is the signal.
 
 **Example questions**
 * "Which products have no attachments?" (products with zero `product_attachments` rows)
@@ -142,7 +142,7 @@ Join rows linking a product to a file (datasheet / manual / photo). One product 
 
 * **Joins:** `products.category_id` → `product_categories.id`; `products.brand_id` → `brands.id`; `products.base_uom_id` → `units_of_measure.id`; `product_attachments.product_id` → `products.id`. Resolve a name/code to its id first (exact code match preferred), then filter.
 * **No UUIDs in answers.** Resolve ids to product codes / category codes / brand codes / UOM codes before replying.
-* **`is_active` vs `is_discontinued`** are independent. "Active" is the catalogue toggle; "discontinued" is an import-driven lifecycle flag. Answer "active" questions from `is_active` and "discontinued" questions from `is_discontinued` — don't conflate them.
+* **`is_active` vs `is_discontinued`** are independent. "Active" is the catalogue toggle; "discontinued" is an import-driven lifecycle flag. Answer "active" questions from `is_active` and "discontinued" questions from `is_discontinued` - don't conflate them.
 * **Cost/invoice price are restricted.** Don't surface them to viewers without cost visibility.
 * **Dates are stored naive UTC; the UI renders Malaysia time.** Be explicit about the timezone when quoting timestamps.
 

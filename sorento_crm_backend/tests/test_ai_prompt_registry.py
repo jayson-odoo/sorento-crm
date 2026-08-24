@@ -6,7 +6,7 @@ wiring + metadata stamping through ``respond()`` (UAC C2-C3), and the HTTP
 routes' auth + guard behavior (UAC D1/D5/D6).
 
 Everything runs against a blank copy of the real Postgres schema with the LLM
-provider / MCP / RAG / entity-resolver stubbed — no network traffic.
+provider / MCP / RAG / entity-resolver stubbed - no network traffic.
 """
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Slice 9 of AutoCount Group A — per-integration rate limiting (AC-AC-10).
+"""Slice 9 of AutoCount Group A - per-integration rate limiting (AC-AC-10).
 
 **Given** an integration exceeding its configured rate
 **When** it calls

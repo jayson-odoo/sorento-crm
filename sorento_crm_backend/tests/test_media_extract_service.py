@@ -8,13 +8,13 @@ S5-02, S5-03, S5-04, S5-05, S5-06 (voice), and PLAN section 12.2 item 1/2/4
 
 No paid provider call anywhere in this file. The three seams stubbed, exactly
 as specified:
-  - `app.services.media_extract.service.fetch_media_bytes` (module-level, so
+ - `app.services.media_extract.service.fetch_media_bytes` (module-level, so
     tests monkeypatch the name the service module looks up, not `httpx`).
-  - the provider resolution inside `MediaExtractService`
+ - the provider resolution inside `MediaExtractService`
     (`MediaExtractService._resolve_image_provider` for the image lane,
     `app.services.llm_provider.resolve_api_key` for the voice lane's key
     lookup - the one resolver every lane shares).
-  - `app.services.media_extract.transcribe._post_transcription` for the voice
+ - `app.services.media_extract.transcribe._post_transcription` for the voice
     lane's HTTP call, plus a direct `httpx.post` stub for the one test that
     exercises `_post_transcription`'s own error-mapping code (there is no
     other way to reach that branch without a real request).

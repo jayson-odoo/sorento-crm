@@ -1,9 +1,9 @@
-"""SCM Policy Configuration endpoints — tune the reorder engine's policies from the app.
+"""SCM Policy Configuration endpoints - tune the reorder engine's policies from the app.
 
 Three policy families + a resolution preview, all under ``/api/v1/scm/policies`` behind
 the package's ``require_module_enabled_with_api_key("scm")`` guard. Read AND write are
 both gated ``scm.policy.manage`` (AC-CFG-3): this is an admin/config surface, not a
-dashboard view — the people who read it are the people allowed to change it.
+dashboard view - the people who read it are the people allowed to change it.
 
 Static sub-paths (``/classification``, ``/supplier-scoring``, ``/resolve``) are declared
 BEFORE the parametric ``/{policy_id}`` routes so ``classification`` is never captured as
@@ -124,7 +124,7 @@ def resolve_policy(
     _user: dict = Depends(_MANAGE),
 ):
     """Preview which policy a SKU resolves to (winner + full precedence chain).
-    Produced by the SAME ``resolve_policy_for_sku`` the reorder run uses — never a
+    Produced by the SAME ``resolve_policy_for_sku`` the reorder run uses - never a
     reimplementation (AC-PREV-2). ``warehouse_id`` accepts a warehouse_code."""
     return svc.resolve(db, product_id, warehouse_id)
 

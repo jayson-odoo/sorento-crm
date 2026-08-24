@@ -1,7 +1,7 @@
 """Add excel_upload_accept_extensions to system_settings.
 
 Configurable comma-separated extension list (e.g. ".xlsx,.xls,.xlsm") consumed
-by the Excel uploader UI/server validators. Default includes `.xlsm` — macro
+by the Excel uploader UI/server validators. Default includes `.xlsm` - macro
 workbooks are stripped on intake (see excel_macro_stripper).
 
 Revision ID: 197_system_setting_excel_extensions

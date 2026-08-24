@@ -70,7 +70,7 @@ function isTruncated(
 function JsonPanel({ title, value }: { title: string; value: unknown }) {
   const truncated = isTruncated(value);
   // A truncated payload is the {truncated,byte_size,preview} envelope the
-  // backend substitutes past the byte cap — show the preview + a banner, not
+  // backend substitutes past the byte cap - show the preview + a banner, not
   // the raw envelope blob.
   const text = truncated ? value.preview : pretty(value);
   return (
@@ -78,7 +78,7 @@ function JsonPanel({ title, value }: { title: string; value: unknown }) {
       <p className="mb-1 text-xs font-medium text-muted-foreground">{title}</p>
       {truncated ? (
         <div className="mb-1 rounded-md border border-warning/40 bg-warning/5 px-2 py-1 text-[11px] text-muted-foreground">
-          Truncated — showing first {(value.preview.length / 1000).toFixed(1)} KB of{' '}
+          Truncated - showing first {(value.preview.length / 1000).toFixed(1)} KB of{' '}
           {(value.byte_size / 1000).toFixed(1)} KB.
         </div>
       ) : null}
@@ -114,7 +114,7 @@ function SpanInspector({ span }: { span: TraceSpan }) {
         <span>{span.latency_ms} ms</span>
         {isLLM ? (
           <>
-            <span>model: {span.request_model || '—'}</span>
+            <span>model: {span.request_model || '-'}</span>
             <span>
               tokens: {span.tokens_in} in / {span.tokens_out} out
             </span>

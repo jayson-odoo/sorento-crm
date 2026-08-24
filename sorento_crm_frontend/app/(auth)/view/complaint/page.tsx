@@ -58,7 +58,7 @@ interface ComplaintViewSummary {
 }
 
 function formatDateStr(value: string | null | undefined): string {
-  if (!value) return '—';
+  if (!value) return '-';
   try {
     const d = new Date(value);
     return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString(undefined, { dateStyle: 'medium' });
@@ -68,7 +68,7 @@ function formatDateStr(value: string | null | undefined): string {
 }
 
 function formatDateTimeStr(value: string | null | undefined): string {
-  if (!value) return '—';
+  if (!value) return '-';
   try {
     const d = new Date(value);
     return Number.isNaN(d.getTime()) ? value : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });

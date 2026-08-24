@@ -800,7 +800,7 @@ export default function ConversationSLATrackingDetail({
                   <CardTitle className="text-base">Tracking Information</CardTitle>
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-muted-foreground">
-                      Time elapsed: {getTimeElapsed() ?? '—'}
+                      Time elapsed: {getTimeElapsed() ?? '-'}
                     </span>
                     {trackingOpen ? (
                       <ChevronDown className="size-4 text-muted-foreground" />
@@ -940,7 +940,7 @@ export default function ConversationSLATrackingDetail({
                             <ExternalLink className="size-4" />
                           </a>
                         ) : (
-                          '—'
+                          '-'
                         )}
                       </p>
                     </div>
@@ -959,8 +959,8 @@ export default function ConversationSLATrackingDetail({
                   <div className="flex items-center gap-2">
                     <span className={`text-sm font-medium ${getTimeRemainingResponse()?.includes('overdue') ? 'text-destructive' : ''}`}>
                       {tracking.is_responded
-                        ? (getResponseDuration() ?? (tracking.response_time != null ? formatDuration(tracking.response_time * 3600 * 1000) : '—'))
-                        : (getTimeRemainingResponse() ?? '—')}
+                        ? (getResponseDuration() ?? (tracking.response_time != null ? formatDuration(tracking.response_time * 3600 * 1000) : '-'))
+                        : (getTimeRemainingResponse() ?? '-')}
                     </span>
                     {responseOpen ? (
                       <ChevronDown className="size-4 text-muted-foreground" />
@@ -1022,8 +1022,8 @@ export default function ConversationSLATrackingDetail({
                   <div className="flex items-center gap-2">
                     <span className={`text-sm font-medium ${getTimeRemainingResolution()?.includes('overdue') ? 'text-destructive' : ''}`}>
                       {tracking.is_resolved
-                        ? (getResolutionDuration() ?? (tracking.resolution_duration != null ? formatDuration(tracking.resolution_duration * 3600 * 1000) : '—'))
-                        : (getTimeRemainingResolution() ?? '—')}
+                        ? (getResolutionDuration() ?? (tracking.resolution_duration != null ? formatDuration(tracking.resolution_duration * 3600 * 1000) : '-'))
+                        : (getTimeRemainingResolution() ?? '-')}
                     </span>
                     {resolutionOpen ? (
                       <ChevronDown className="size-4 text-muted-foreground" />

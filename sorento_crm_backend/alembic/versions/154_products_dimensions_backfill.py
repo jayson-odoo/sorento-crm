@@ -3,7 +3,7 @@
 Revision ID: 154_products_dimensions_backfill
 Revises: 153_products_currency_default_myr
 
-Only fills columns that are currently NULL — preserves any existing manually-set values.
+Only fills columns that are currently NULL - preserves any existing manually-set values.
 Source convention: descriptions like 'CABANA HONEYCOMB KITCHEN SINK (650x450x210MM)' use
 length × width × height in mm/cm/m.
 """

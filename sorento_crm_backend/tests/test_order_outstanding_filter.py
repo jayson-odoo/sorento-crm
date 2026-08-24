@@ -1,12 +1,12 @@
 """Service tests for the CRM-003 `order_status` outstanding/delivered bucket filter.
 
 `OrderService.list_orders(order_status=...)`:
-  - 'delivered'   = status delivered/completed AND actual_delivery_date set
-  - 'outstanding' = NOT delivered (New Order, Processing, Cancelled, or a delivery
-    date under a non-delivered status — the flagged Status/date inconsistency)
-  - None / '' / unknown = no filter (all rows), no regression
-  - AND-combines with the existing customer_ids filter
-  - the two buckets partition the scoped set (out + delivered == total)
+ - 'delivered'   = status delivered/completed AND actual_delivery_date set
+ - 'outstanding' = NOT delivered (New Order, Processing, Cancelled, or a delivery
+    date under a non-delivered status - the flagged Status/date inconsistency)
+ - None / '' / unknown = no filter (all rows), no regression
+ - AND-combines with the existing customer_ids filter
+ - the two buckets partition the scoped set (out + delivered == total)
 
 Runs against the live Postgres test DB: seed rows with a unique order_number
 prefix, assert, clean up.

@@ -1,7 +1,7 @@
-"""R2 — CS-routing predicate engine (pure, DB-free).
+"""R2 - CS-routing predicate engine (pure, DB-free).
 
-A CS-routing pin (``respond_contact_cs_routing``) carries ``match_conditions`` — an
-array of ``{field, operator, value}`` predicates, AND-combined — evaluated against a
+A CS-routing pin (``respond_contact_cs_routing``) carries ``match_conditions`` - an
+array of ``{field, operator, value}`` predicates, AND-combined - evaluated against a
 form's own header field values. Resolution picks the matching row with the lowest
 admin-set ``priority`` (``created_at`` tiebreak). An empty condition list is a
 wildcard that always matches.

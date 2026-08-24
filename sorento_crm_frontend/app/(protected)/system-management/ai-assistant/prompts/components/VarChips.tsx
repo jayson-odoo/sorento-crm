@@ -25,21 +25,21 @@ export function VarChips({ validation, declared }: { validation: VarValidation; 
               data-state={missing ? 'missing' : 'present'}
             >
               {`{{${v}}}`}
-              {missing ? ' — missing' : ''}
+              {missing ? ' - missing' : ''}
             </Badge>
           );
         })}
       </div>
       {validation.missing.length > 0 ? (
         <p className="text-xs text-amber-600" data-testid="var-missing-warning">
-          Warning: declared variable(s) not used in the template — {validation.missing.join(', ')}. Save is still
+          Warning: declared variable(s) not used in the template - {validation.missing.join(', ')}. Save is still
           allowed, but the substitution will have nothing to fill.
         </p>
       ) : null}
       {validation.unknown.length > 0 ? (
         <p className="text-xs text-destructive" data-testid="var-unknown-error">
           Unknown token(s): {validation.unknown.map((t) => `{{${t}}}`).join(', ')}. These are not declared for this
-          prompt and would leak literally — remove them before saving.
+          prompt and would leak literally - remove them before saving.
         </p>
       ) : null}
     </div>

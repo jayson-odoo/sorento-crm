@@ -1,4 +1,4 @@
-"""SCM M1 sales-order service — CRUD + create-DO-from-SO.
+"""SCM M1 sales-order service - CRUD + create-DO-from-SO.
 
 The SO is the committed-demand record (feeds ``scm.committed_v`` → net position).
 ``create_do_from_so`` materialises a Delivery Order (``orders`` / ``order_lines``)
@@ -845,7 +845,7 @@ class SalesOrderService:
     def _insert_do_order(self, so: SalesOrder, user_id: Optional[str]) -> Order:
         """Insert the DO ``orders`` row, retrying on ``order_number`` collision.
 
-        There is no dedicated delivery-order numbering rule — real DOs arrive
+        There is no dedicated delivery-order numbering rule - real DOs arrive
         pre-numbered from the source ERP, so the SCM DO number stays *derived*
         from the SO. Two concurrent create-DO calls therefore derive the same
         candidate and race the unique ``orders.order_number`` constraint. Reserve
@@ -882,7 +882,7 @@ class SalesOrderService:
                 savepoint.commit()
                 return order
             except IntegrityError:
-                # A concurrent txn grabbed this number first — try the next suffix.
+                # A concurrent txn grabbed this number first - try the next suffix.
                 savepoint.rollback()
                 n += 1
                 candidate = f"{base}-{n}"

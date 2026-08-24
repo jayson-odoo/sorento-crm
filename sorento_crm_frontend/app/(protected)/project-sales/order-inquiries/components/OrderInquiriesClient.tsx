@@ -130,9 +130,9 @@ const ORDER_INQUIRY_ACTION_PERMISSION = 'projects.order_inquiry.action';
  * Two ways to read the same worklist (D1, reworked - the captain: "vertically I can see by
  * product, by sales order, by customer, by agent etc, then horizontally is the dates, then
  * of course I can view by date, by month, by year"):
- *   - List: their own spreadsheet's columns, their order, unpaged filters including a
+ * - List: their own spreadsheet's columns, their order, unpaged filters including a
  *     delivery-month select. Everything the page has always been.
- *   - Schedule: a 2D matrix like the fulfilment planning board's - rows by product, sales
+ * - Schedule: a 2D matrix like the fulfilment planning board's - rows by product, sales
  *     order, customer or agent, columns by day, week, month or year, built entirely off
  *     the same filtered worklist rows the list already fetches (one request, grouped in
  *     the browser). Clicking a cell narrows the SAME columns below it to that cell's own

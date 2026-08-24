@@ -151,15 +151,15 @@ current code path (`==`), multiple use `IN` (AC-10).
   multi-brand filter, user API scopes; swap FE mock to real. **Done** (migration
   `375_user_discontinued_scopes`, chained onto `374_merge_proj_media_flyer`; still one
   head). Three notes on top of the plan:
-  - `GET /brands/select?company_id=` runs the read under `company_scope(db, {company})`
+ - `GET /brands/select?company_id=` runs the read under `company_scope(db, {company})`
     but first checks the caller can REACH that company (superadmin/admin, or holds the
     grant; the API-key principal is unscoped by design) and 404s the company otherwise,
     mirroring `system/companies.get_company`. The param widens WHICH company is read,
     never WHO may read it - the precedent set by `lookup.resolve`, which refuses to let
     a JWT user re-scope themselves out of a body value.
-  - Scope validation raises `handle_unprocessable` (422) for an unknown company, an
+ - Scope validation raises `handle_unprocessable` (422) for an unknown company, an
     unknown brand, or a brand outside the named company - matching the FE contract.
-  - The three existing discontinued suites seed their subscribers with the all/all scope
+ - The three existing discontinued suites seed their subscribers with the all/all scope
     the migration backfills, since a user with no scope now hears nothing by design.
 - S3 [T, Phase 2]: pytest + vitest suites above. **Done** (5 pytest files, 4 vitest specs).
 - S4 [Review, Phase 3]: reviewer agent + evidence run (AC-19). **Done**; fix-first findings
@@ -251,7 +251,7 @@ killed. Own tab via `tab new`; `get url` re-checked before every trusted read; s
    `No scope set. No discontinued product notices.` Subject 1
    (`f6885bcd-...`) was never actually saved (blocked by the pre-existing role-required
    validation before the fix), and a final reload confirmed it is still at its original baseline
-   - no cleanup needed there.
+ - no cleanup needed there.
 
 9. **Products deep link (AC-17).** Direct URL (the one exception to sidebar-only navigation, per
    task instructions, since the deep link itself is the surface under test):

@@ -32,7 +32,7 @@ TARGET_NEW_STATUS = "pending_purchasing"
 
 def _find_inquiry_id(db, inquiry_number: str) -> str | None:
     """Resolve the stock_inquiry row id from its human number via the audit trail
-    (inquiry_number: — -> SI26-0123 insert), avoiding a hard import of the SI model."""
+    (inquiry_number: - -> SI26-0123 insert), avoiding a hard import of the SI model."""
     row = (
         db.query(AuditLog)
         .filter(
@@ -109,7 +109,7 @@ def main() -> int:
         )
 
         if not args.apply:
-            print("\nDRY RUN — would set is_resolved=True, is_responded=True,")
+            print("\nDRY RUN - would set is_resolved=True, is_responded=True,")
             print(f"  resolved_at = responded_at = {resolve_at}")
             print("  (response_time + resolution_duration auto-computed from initiated_at)")
             print("Re-run with --apply to commit.")

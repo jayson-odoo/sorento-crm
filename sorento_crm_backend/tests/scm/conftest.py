@@ -1,7 +1,7 @@
 """Postgres-backed TestClient fixtures for the SCM M1 route tests.
 
 The dashboard endpoints read the ``scm`` schema views, which only exist on the
-live Postgres DB — so these tests run against the local prod-copy (same source as
+live Postgres DB - so these tests run against the local prod-copy (same source as
 the M0 view/golden tests). Every test runs inside a nested SAVEPOINT joined to an
 outer transaction: the route's own ``db.commit()`` releases the savepoint (a
 restart listener re-opens one), and the whole thing is rolled back on teardown so
@@ -20,7 +20,7 @@ from sqlalchemy.orm import sessionmaker
 
 def _pg_url() -> str | None:
     # A live DATABASE_URL env var wins (CI / container). Fall back to the local
-    # .env file, which is NOT shipped in the CI Docker image (.dockerignore) — so
+    # .env file, which is NOT shipped in the CI Docker image (.dockerignore) - so
     # its absence must never crash collection, only skip the Postgres route tests.
     raw = os.environ.get("DATABASE_URL")
     if not raw:

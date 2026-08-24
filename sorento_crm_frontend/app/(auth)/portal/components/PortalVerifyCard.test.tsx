@@ -31,7 +31,7 @@ beforeEach(() => {
   window.history.pushState({}, '', '/portal/c/SLUG123456/verify');
 });
 
-describe('PortalVerifyCard — slug mode', () => {
+describe('PortalVerifyCard - slug mode', () => {
   it('renders OTP state with masked phone + wa.me hatch, auto-fires OTP', async () => {
     mockSlugInfo.mockResolvedValue({
       contact_id: 'c1',
@@ -147,7 +147,7 @@ describe('PortalVerifyCard — slug mode', () => {
   });
 });
 
-describe('PortalVerifyCard — legacy mode', () => {
+describe('PortalVerifyCard - legacy mode', () => {
   it('shows the link-request CTA when no token exists anywhere', async () => {
     window.history.pushState({}, '', '/portal/verify');
     render(<PortalVerifyCard />);

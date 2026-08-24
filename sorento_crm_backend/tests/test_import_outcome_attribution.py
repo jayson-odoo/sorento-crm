@@ -1,7 +1,7 @@
 """Every skipped / failed import row must carry a reason.
 
 The bug this pins: `delivery_order_detail_import` reported 4,231 rows as
-203 successful / 4,028 skipped while listing only 10 reasons — the other 4,018
+203 successful / 4,028 skipped while listing only 10 reasons - the other 4,018
 skips were the dedup path (`skipped += 1; continue`) which recorded nothing at
 all. A green job that cannot say what it dropped is not observable.
 
@@ -10,13 +10,13 @@ Covers UAC AC-A1..A3 and AC-B1..B4
 
 Runs against a throwaway Postgres schema (tests/_pg_fixture), not sqlite: the
 importer and the outcome recorder use SEPARATE sessions that both commit, so
-the substrate has to be the real one — and `import_jobs.result` is JSONB, which
+the substrate has to be the real one - and `import_jobs.result` is JSONB, which
 sqlite cannot emit at all.
 
 The schema is per-test and dropped afterwards rather than the run-wide
 ``blank_session``: nothing here can be rolled back (the importer commits on its
 own session), and committed rows in the shared blank schema leak into every
-later test that counts them — it broke test_product_discontinued_notify and
+later test that counts them - it broke test_product_discontinued_notify and
 test_notification_dedup_key_split when tried that way.
 """
 from __future__ import annotations
@@ -225,7 +225,7 @@ def test_reimport_attributes_every_duplicate_skip(seeded):
     """THE REGRESSION: re-importing the same file must name every skip.
 
     Before the fix the dedup branch bumped `skipped` with no code, so the
-    reasons list was empty while `skipped_rows == 3` — exactly the reported job.
+    reasons list was empty while `skipped_rows == 3` - exactly the reported job.
     """
     factory, fx = seeded
     user_id = str(uuid.uuid4())

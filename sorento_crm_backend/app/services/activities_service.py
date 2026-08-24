@@ -1,6 +1,6 @@
 """Business logic for the generic Activities & Notes panel.
 
-Stays entity-agnostic — module specifics (visibility, post side-effects,
+Stays entity-agnostic - module specifics (visibility, post side-effects,
 respond contact lookup) are delegated to the adapter registered in
 ``activities_registry``.
 """
@@ -106,7 +106,7 @@ def _notify_mentions(
 
     Looks up an existing ``app.services.notifications_service`` (legacy or
     self-contained module variant) and calls a sensibly-named entry point
-    if one exists. Failures are logged but never bubble up — the activity
+    if one exists. Failures are logged but never bubble up - the activity
     write itself is the source of truth.
     """
     if not mentioned_user_ids:
@@ -264,7 +264,7 @@ def record_system_event(
     body_text: Optional[str] = None,
     commit: bool = False,
 ) -> ActivityEvent:
-    """Append a system row. Callers usually leave commit=False — the caller's
+    """Append a system row. Callers usually leave commit=False - the caller's
     own transaction will commit. Standalone callers can pass commit=True."""
     event = ActivityEvent(
         entity_type=entity_type,
@@ -626,7 +626,7 @@ def send_message(
         error_message = str(e)
         response = None
 
-    # Best-effort integration log entry — don't break the send path on log failure.
+    # Best-effort integration log entry - don't break the send path on log failure.
     try:
         from app.schemas.integration import IntegrationLogCreate
         from app.services.integration_service import IntegrationLogService

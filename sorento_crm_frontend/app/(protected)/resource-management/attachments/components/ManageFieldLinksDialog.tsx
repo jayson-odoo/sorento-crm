@@ -1,9 +1,9 @@
 'use client';
 
 /**
- * ManageFieldLinksDialog — small modal opened from per-row actions in:
- *   - Product Attachments tab (attachment row in product detail)
- *   - AttachmentDetailModal Linkages tabs (each linked product row)
+ * ManageFieldLinksDialog - small modal opened from per-row actions in:
+ * - Product Attachments tab (attachment row in product detail)
+ * - AttachmentDetailModal Linkages tabs (each linked product row)
  *
  * Lets the user pick which product fields the attachment answers. Submits to
  * POST /api/v1/master-data/products/{product_id}/attachments/{attachment_id}/field-links.

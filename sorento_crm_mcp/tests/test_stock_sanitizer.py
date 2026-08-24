@@ -36,7 +36,7 @@ def test_stock_tool_response_hides_non_on_hand_quantities_and_normalizes_updated
 
 
 def test_non_stock_tool_response_normalizes_updated_at():
-    """Every MCP tool — not just stock — must rewrite updated_at to Malaysia time."""
+    """Every MCP tool - not just stock - must rewrite updated_at to Malaysia time."""
     raw = json.dumps(
         {
             "data": [

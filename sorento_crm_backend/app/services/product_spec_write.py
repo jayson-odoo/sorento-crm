@@ -10,9 +10,9 @@ Three things live here because they are the same decision seen from different an
 
   * `merge_authored_over` - what a person set outranks what the rules read, including
     when what they set was "this product does not have this spec" (a tombstone).
-  * `write_spec_row`      - the column assignment, the rendered sentence and the status,
+  * `write_spec_row`    - the column assignment, the rendered sentence and the status,
     computed in one place so precedence cannot drift between callers.
-  * `apply_spec_values`   - the authored write, fanned out to every company copy of the
+  * `apply_spec_values` - the authored write, fanned out to every company copy of the
     code and re-derived in the same transaction so a disagreement surfaces in the same
     click rather than on the next catalogue run.
 

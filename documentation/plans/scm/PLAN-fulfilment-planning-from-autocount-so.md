@@ -1209,7 +1209,7 @@ The rule the FE follows, and the two places it was breaking:
 - **The commit rail reads `orders[]` for `line_count` and `unplannable_count`**, and overlays ONLY
   `decided_count` from the client draft. Built from the cells instead, a forty-line order read
   "3 of 3 lines decided" on the day view and the Confirm beside it promised to leave nothing behind
-  - the exact counter this section exists to make visible. Confirmed live on SO391698 (40 lines) and
+ - the exact counter this section exists to make visible. Confirmed live on SO391698 (40 lines) and
   SO324265 (32 lines): both read the same on week and on day, and "Confirms 1, leaves 39 undecided
   for reorder planning" is stated against the whole order.
 - The key-to-order map behind `decided_count` is **accumulated across every board shown**, not

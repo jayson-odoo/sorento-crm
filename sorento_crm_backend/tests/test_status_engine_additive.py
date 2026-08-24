@@ -1,4 +1,4 @@
-"""S1 gate — the status engine slice is provably ADDITIVE (AC-B6).
+"""S1 gate - the status engine slice is provably ADDITIVE (AC-B6).
 
 The original acceptance criterion asked for "a regression pass proving no existing
 status vocabulary changed", which is proving a negative and unbounded. It was

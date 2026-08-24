@@ -37,10 +37,10 @@ changes.
 ### S3 - Ledger popover (FE, shared PlanLinesGrid)
 
 - Replace the order-qty popover content with the three-block ledger (UAC B). Reuse:
-  - decision composition + Adjust logic (S16, planDecisions/coverPlan) for live cover
+ - decision composition + Adjust logic (S16, planDecisions/coverPlan) for live cover
     lines;
-  - existing derivation copy for auto block one;
-  - "clears in ~X" phrasing from the suggested-qty cell.
+ - existing derivation copy for auto block one;
+ - "clears in ~X" phrasing from the suggested-qty cell.
 - Forecast add-on: propose `demand_rate x review_days` (auto) / `demand_rate x
   level_cover_months` horizon (manual) - label states the horizon; clicking adds a
   buy-part delta to the decision (bounded input, same as Adjust).

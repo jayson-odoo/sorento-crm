@@ -104,7 +104,7 @@ def _html_to_text(raw: str | None) -> str:
     return "\n".join(collapsed).strip()
 
 
-# MCP tools that mutate state — suppressed during a prompt dry-run so a test
+# MCP tools that mutate state - suppressed during a prompt dry-run so a test
 # turn can never persist a real complaint / PR / stock inquiry / ticket / link.
 # Matched by name suffix/substring (the catalog names all end in the verb, e.g.
 # `crm_forms_stock_inquiry_submit`, `crm_it_support_ticket_create`,
@@ -112,7 +112,7 @@ def _html_to_text(raw: str | None) -> str:
 # end in `_get`, so a plain `_link` suffix check is safe.
 #
 # Mutating verbs any write tool name ends in. MUST stay in sync with the
-# write-confirm gate — a record-action tool (e.g. crm_complaint_close,
+# write-confirm gate - a record-action tool (e.g. crm_complaint_close,
 # crm_purchase_request_approve) whose suffix is missing here would execute
 # WITHOUT confirmation. Read tools end in _list/_get/_dashboard/_summary/etc.,
 # never these, so the suffix match cannot gate a read.
@@ -141,13 +141,13 @@ def _current_date_directive() -> str:
     today = now.strftime("%A, %d %B %Y")
     return (
         f"CURRENT DATE: {today} (Asia/Kuala_Lumpur).\n"
-        "When the user's message contains a relative date or period — e.g. "
+        "When the user's message contains a relative date or period - e.g. "
         "\"today\", \"yesterday\", \"tomorrow\", \"last week\", \"this month\", "
-        "\"next 3 days\", or an upcoming weekday — resolve it to absolute "
+        "\"next 3 days\", or an upcoming weekday - resolve it to absolute "
         "calendar dates RELATIVE TO THE CURRENT DATE ABOVE before stating any "
         "date or calling any tool. A single day uses the same start and end "
-        "date; a \"week\" is Monday–Sunday. Never infer the current date from "
-        "your training data — always use CURRENT DATE above."
+        "date; a \"week\" is Monday - Sunday. Never infer the current date from "
+        "your training data - always use CURRENT DATE above."
     )
 
 
@@ -217,7 +217,7 @@ _UUID_RE = re.compile(
 def _norm_entity_key(value: str) -> str:
     """Normalize a name/code for matching against resolver output: lowercase +
     collapse internal whitespace. Kept deliberately light so exact debtor names
-    (which the resolver stores verbatim) match — no dash/punctuation stripping
+    (which the resolver stores verbatim) match - no dash/punctuation stripping
     that could merge two distinct account names."""
     return re.sub(r"\s+", " ", (value or "").strip().lower())
 
@@ -259,11 +259,11 @@ class _TurnToolCache:
     Because the principal (``user_id``), thread (``conversation_id``) and turn
     (``turn_id``) are baked into every key, two different users / contacts /
     turns can NEVER collide on a cache entry even if they call the identical
-    tool with identical args — cross-principal sharing is structurally
+    tool with identical args - cross-principal sharing is structurally
     impossible, not merely avoided by convention.
     """
 
-    _SEP = "\x1f"  # unit separator — cannot appear in JSON / identifiers
+    _SEP = "\x1f"  # unit separator - cannot appear in JSON / identifiers
 
     def __init__(self, *, user_id: str | None, conversation_id: str | None, turn_id: str | None):
         self.user_id = str(user_id or "")
@@ -531,7 +531,7 @@ class AIAssistantChatService:
 
     def _trace_payload_cap(self) -> int:
         """Per-payload truncation cap (bytes) from system_settings; default 16KB.
-        Best-effort — any read failure falls back to the default."""
+        Best-effort - any read failure falls back to the default."""
         from app.services.ai_trace import DEFAULT_MAX_PAYLOAD_BYTES
 
         try:
@@ -629,10 +629,10 @@ class AIAssistantChatService:
         output unchanged on failure / when compression is skipped.
 
         Skipped for ``user_guides_read`` (its markdown carries inline links that
-        MUST reach the model verbatim — compressing would drop the clickable
+        MUST reach the model verbatim - compressing would drop the clickable
         button links). Also skipped for small outputs where compression can't
         pay for itself. Own trace span when it runs."""
-        # Never compress guide markdown — inline links are load-bearing.
+        # Never compress guide markdown - inline links are load-bearing.
         if "user_guides_read" in (tool_name or ""):
             return raw_output
         # Only worth compressing sizeable data payloads.
@@ -783,7 +783,7 @@ class AIAssistantChatService:
         self._prompt_overrides = dict(prompt_overrides or {})
         # M3a write-confirmation gate state (reset per turn). ``_pending_confirmation``
         # is set by the agent loop when it wants to run a write tool. The agent loop
-        # ALWAYS gates writes (this stays False for it) — a Confirm click executes the
+        # ALWAYS gates writes (this stays False for it) - a Confirm click executes the
         # stored call directly via ``_resolve_pending_confirmation``, never by
         # re-running the loop, so a stale/duplicate confirm can never write un-gated.
         self._pending_confirmation: dict[str, Any] | None = None
@@ -867,7 +867,7 @@ class AIAssistantChatService:
         # Item 3b: turn-scoped, strictly-keyed tool/guide result cache. Created
         # fresh per respond() so it can never outlive the turn or leak across
         # users/threads (key includes user_id + conversation_id + turn_id). The
-        # turn id is this user message's id — unique per turn.
+        # turn id is this user message's id - unique per turn.
         turn_cache = _TurnToolCache(
             user_id=user_id,
             conversation_id=str(conv.id),
@@ -917,7 +917,7 @@ class AIAssistantChatService:
         # Capability intent → deterministic catalog answer, no answer-LLM. Gated
         # on the confidence floor: unlike the old tight keyword allowlist, the
         # parser is probabilistic, so a low-confidence "capability" guess must NOT
-        # hijack a real question with the static catalog — let it fall through to
+        # hijack a real question with the static catalog - let it fall through to
         # the agent loop (mirrors _route's floor for every other intent).
         if parse.intent == "capability" and parse.confidence >= _LOW_CONFIDENCE_FLOOR:
             return self._serve_capability_answer(
@@ -946,7 +946,7 @@ class AIAssistantChatService:
         # M3a Clarifier: when the parser flags the turn as too ambiguous to answer
         # well (a wrong guess would be costly AND ambiguity changes the answer), ask
         # ONE question with enumerable options as chips instead of guessing. Max one
-        # round — if the previous assistant turn already clarified, proceed with the
+        # round - if the previous assistant turn already clarified, proceed with the
         # best assumption rather than looping.
         if (
             parse.signals.needs_clarification
@@ -986,7 +986,7 @@ class AIAssistantChatService:
         )
 
         # Assemble the record context whenever the user is viewing a permitted
-        # record — REGARDLESS of the route. The facts are injected into either
+        # record - REGARDLESS of the route. The facts are injected into either
         # branch, so a record-ish agent turn is still grounded. RBAC parity with
         # the HTTP route is enforced inline (§3.5) since this is an internal
         # service call without the FastAPI dependency.
@@ -1021,7 +1021,7 @@ class AIAssistantChatService:
                 )
                 record_ctx = None
 
-        # Deterministic router — pure switch on the parser's params (no LLM).
+        # Deterministic router - pure switch on the parser's params (no LLM).
         # Replaces the record-class classifier + guide keyword gate.
         route = self._route(parse, record_available=record_ctx is not None)
         if self._turn_trace is not None:
@@ -1049,7 +1049,7 @@ class AIAssistantChatService:
             route.skip_rag,
         )
 
-        # RAG tool selection — only for the agent branch that needs live data
+        # RAG tool selection - only for the agent branch that needs live data
         # (skipped for record_answer, smalltalk, definition).
         selected_tools: list[dict[str, Any]] = []
         sources: list[dict[str, Any]] = []
@@ -1202,7 +1202,7 @@ class AIAssistantChatService:
         assistant_msg = self.append_message(conv.id, "assistant", response_text, metadata_json=meta)
         total_ms = (time.perf_counter() - request_started) * 1000
 
-        # Usage logging — best effort, never break the response on telemetry
+        # Usage logging - best effort, never break the response on telemetry
         # failure.
         try:
             self.db.add(
@@ -1259,7 +1259,7 @@ class AIAssistantChatService:
         """Semantic Parser (M0): the single front-of-pipeline LLM node.
 
         Understands the latest turn (with a short history window) and emits a
-        schema-forced ``ParseResult`` — routing PARAMETERS, not prose. Replaces
+        schema-forced ``ParseResult`` - routing PARAMETERS, not prose. Replaces
         the old reformulator (prose) + record-class router (YES/NO) + the two
         keyword gates. Provider structured-output guarantees valid JSON; on any
         failure we retry once, then degrade to ``fallback_parse`` (intent=unknown
@@ -1297,7 +1297,7 @@ class AIAssistantChatService:
 
         last_exc: Exception | None = None
         result: ChatResult | None = None
-        started = time.perf_counter()  # first-attempt clock — reused for the error span
+        started = time.perf_counter()  # first-attempt clock - reused for the error span
         for _attempt in range(2):
             started = time.perf_counter()
             try:
@@ -1338,7 +1338,7 @@ class AIAssistantChatService:
                         max_tokens=512,
                     )
                 return parsed
-            except Exception as exc:  # noqa: BLE001 — parse/provider error, retry then fall back
+            except Exception as exc:  # noqa: BLE001 - parse/provider error, retry then fall back
                 last_exc = exc
 
         logger.warning("Semantic parser failed after retries; degrading to unknown (%s)", last_exc)
@@ -1357,7 +1357,7 @@ class AIAssistantChatService:
         return fallback_parse(raw)
 
     def _route(self, parse: ParseResult, *, record_available: bool) -> "_RouteDecision":
-        """Deterministic router — pure switch on the parser's params. No LLM.
+        """Deterministic router - pure switch on the parser's params. No LLM.
 
         Returns a ``_RouteDecision`` naming which processing branch runs. Low
         confidence on a non-capability intent demotes to the agent loop (the
@@ -1380,7 +1380,7 @@ class AIAssistantChatService:
         if intent == "how_to":
             return _RouteDecision(kind="agent", is_how_to=True)
         if intent == "smalltalk":
-            # Greetings/thanks need no data — skip RAG cost. A mislabelled greeting
+            # Greetings/thanks need no data - skip RAG cost. A mislabelled greeting
             # losing tools is harmless. (definition is NOT skipped: a term question
             # mislabelled from a real data lookup, e.g. "what is DO-123?", must
             # still be able to reach MCP read tools + user_guides_read.)
@@ -1444,7 +1444,7 @@ class AIAssistantChatService:
                 for c in selected_tools
             ],
         )
-        # Sources describe ONLY the bound tool(s) — they are injected into the
+        # Sources describe ONLY the bound tool(s) - they are injected into the
         # agent prompt, so listing unbound runners-up here would advertise tools
         # the agent can't call. Each bound source is is_current=True.
         sources = [
@@ -1465,7 +1465,7 @@ class AIAssistantChatService:
         """Wrap an MCP tool (name, description, inputSchema) as an OpenAI function tool.
 
         ``contact_id`` / ``space_id`` are MCP-server guard params required for
-        n8n/WhatsApp callers but irrelevant for the in-app AI assistant — the
+        n8n/WhatsApp callers but irrelevant for the in-app AI assistant - the
         runtime force-empties them in ``_run_agent_loop`` before calling MCP.
         Surfacing them to the LLM only causes it to ask the user for them
         instead of invoking the tool, so strip them from the schema here.
@@ -1501,7 +1501,7 @@ class AIAssistantChatService:
         message: str,
         request_started: float,
     ) -> tuple[Any, AIAssistantMessage]:
-        """Deterministic capability answer — routed here when the Semantic Parser
+        """Deterministic capability answer - routed here when the Semantic Parser
         classifies ``intent=capability``. Answered straight from the enriched
         capability catalog: NO answer-LLM round-trip, never hallucinated (the one
         parser call already ran to classify). Persists the assistant message +
@@ -1528,7 +1528,7 @@ class AIAssistantChatService:
         )
         total_ms = (time.perf_counter() - request_started) * 1000
         # The answer itself is zero-LLM, but the Semantic Parser call that routed
-        # us here IS billed — count its tokens so capability turns don't undercount.
+        # us here IS billed - count its tokens so capability turns don't undercount.
         parse_usage = getattr(self, "_parse_token_usage", None) or {}
         try:
             self.db.add(
@@ -1573,7 +1573,7 @@ class AIAssistantChatService:
         """Deterministic redirect for an ``ideate`` turn in the in-app WEB brain.
 
         The web assistant is keyed by ``user_id`` + ``AIAssistantConversation``
-        with NO ``respond_contacts`` row and NO ``session_vars`` — the state the
+        with NO ``respond_contacts`` row and NO ``session_vars`` - the state the
         WhatsApp ideation intake needs (D6/D8). So it MUST NOT call
         ``create_idea`` (proper intake is WhatsApp-first via the external
         ideation-turn endpoint). Instead it points the user at the Ideas board.
@@ -1581,7 +1581,7 @@ class AIAssistantChatService:
         short-circuit's persist / usage-log / trace-finalize (AC-06)."""
         redirect_text = (
             "Love the idea! You can capture and track product ideas on the "
-            "Ideas board — open it here: /ideas"
+            "Ideas board - open it here: /ideas"
         )
         if self._turn_trace is not None:
             self._turn_trace.add_span(
@@ -1604,7 +1604,7 @@ class AIAssistantChatService:
         )
         total_ms = (time.perf_counter() - request_started) * 1000
         # The redirect is zero-LLM, but the Semantic Parser call that routed us
-        # here IS billed — count its tokens so ideate turns don't undercount.
+        # here IS billed - count its tokens so ideate turns don't undercount.
         parse_usage = getattr(self, "_parse_token_usage", None) or {}
         try:
             self.db.add(
@@ -1639,7 +1639,7 @@ class AIAssistantChatService:
 
     def _already_clarified(self, history: list[AIAssistantMessage]) -> bool:
         """True if the most recent assistant turn was itself a clarifying question.
-        Enforces the one-round cap — after we've already asked, we answer with the
+        Enforces the one-round cap - after we've already asked, we answer with the
         best assumption rather than looping on ambiguity."""
         for msg in reversed(history):
             if msg.role != "assistant":
@@ -1657,7 +1657,7 @@ class AIAssistantChatService:
         parse: ParseResult,
         request_started: float,
     ) -> tuple[Any, AIAssistantMessage]:
-        """M3a Clarifier — ask ONE clarifying question instead of guessing. The
+        """M3a Clarifier - ask ONE clarifying question instead of guessing. The
         parser already decided (needs_clarification) and produced the question +
         any enumerable options; we just render them. Enumerable options become FE
         chips (metadata.clarify.options); free-form ambiguity is a plain question.
@@ -1704,7 +1704,7 @@ class AIAssistantChatService:
                     total_tokens=int(parse_usage.get("total_tokens", 0) or 0),
                     tool_calls_count=0,
                     response_time_ms=int(total_ms),
-                    # A clarifying question is a valid, intentional turn — not a
+                    # A clarifying question is a valid, intentional turn - not a
                     # failure to answer.
                     was_answered=True,
                 )
@@ -1767,7 +1767,7 @@ class AIAssistantChatService:
         "link", "update", "delete", "add", "send",
     )
     # Real-user permission required to CONFIRM each write tool (checked against the
-    # actual logged-in user before dispatch — see _resolve_pending_confirmation).
+    # actual logged-in user before dispatch - see _resolve_pending_confirmation).
     # Keep in sync with the wrapped endpoints' own permission deps. Absent tool =
     # no extra permission (e.g. anyone may raise a support ticket).
     _WRITE_TOOL_PERMISSIONS = {
@@ -1777,11 +1777,11 @@ class AIAssistantChatService:
         # after the split would let a triage-only user approve via the assistant.
         "crm_purchase_request_approve": "procurement.purchase_requests.approve",
         "crm_purchase_request_reject": "procurement.purchase_requests.approve",
-        # crm_order_cancel: no extra permission — `update_order` (the UI cancel
+        # crm_order_cancel: no extra permission - `update_order` (the UI cancel
         # path) is gated only by authentication, so requiring more here would make
         # chat stricter than the UI. The Confirm click is the gate.
     }
-    # Args that are plumbing, not user intent — never shown in a confirm summary.
+    # Args that are plumbing, not user intent - never shown in a confirm summary.
     _WRITE_INTERNAL_ARGS = frozenset({
         "page", "limit", "sort", "dir", "space_id", "contact_id", "message_id",
         "actor_user_id", "source_channel", "source_conversation_id",
@@ -1790,7 +1790,7 @@ class AIAssistantChatService:
 
     def _summarize_write(self, tool_name: str, args: dict[str, Any]) -> str:
         """Human verb+object+label summary of a pending write, for the confirm
-        prompt. Deterministic — never an LLM call. Derives the action verb from the
+        prompt. Deterministic - never an LLM call. Derives the action verb from the
         tool-name suffix, and a human label from a nested payload_json title (or the
         first meaningful top-level arg), truncated and stripped of plumbing keys."""
         name = tool_name.replace("crm_", "")
@@ -1839,10 +1839,10 @@ class AIAssistantChatService:
         """Render a Confirm/Cancel prompt for a halted write tool. The stored call
         lives in metadata.pending_confirmation; the FE renders two buttons that
         re-POST the same conversation with confirm_action=confirm|cancel. No write
-        happens here — only on an explicit later Confirm."""
+        happens here - only on an explicit later Confirm."""
         summary = pending.get("summary") or "this action"
         question = (
-            f"Just to confirm — you want me to **{summary}**?\n\n"
+            f"Just to confirm - you want me to **{summary}**?\n\n"
             "This will change data in the system. Click **Confirm** to proceed or "
             "**Cancel** to stop."
         )
@@ -1886,7 +1886,7 @@ class AIAssistantChatService:
     def _load_pending_confirmation(self, conversation_id: str) -> dict[str, Any] | None:
         """Find the most recent assistant turn carrying an UNRESOLVED pending write.
         Returns the stored call (+ the message id) or None. Only the latest
-        assistant message counts — an older pending that was superseded by a normal
+        assistant message counts - an older pending that was superseded by a normal
         turn is not resumable."""
         last_assistant = (
             self.db.query(AIAssistantMessage)
@@ -1949,7 +1949,7 @@ class AIAssistantChatService:
         self._mark_confirmation_resolved(pending.get("_message_id"), action)
 
         if action == "cancel":
-            answer = "Okay — cancelled. I won't make that change. Anything else I can help with?"
+            answer = "Okay - cancelled. I won't make that change. Anything else I can help with?"
             if self._turn_trace is not None:
                 self._turn_trace.add_span(
                     kind=KIND_GUARDRAIL,
@@ -1975,7 +1975,7 @@ class AIAssistantChatService:
         # action == "confirm".
         # Real-user RBAC gate (defense-in-depth): the write DISPATCHES through the
         # MCP as the shared act-as principal, so we verify the ACTUAL logged-in user
-        # holds the action's permission before executing — a low-privilege assistant
+        # holds the action's permission before executing - a low-privilege assistant
         # user must not be able to trigger an admin-level write via chat.
         required_perm = self._WRITE_TOOL_PERMISSIONS.get(tool_name)
         if required_perm:
@@ -1993,7 +1993,7 @@ class AIAssistantChatService:
                     )
                 answer = (
                     f"You don't have permission to **{summary}**. This action needs the "
-                    f"`{required_perm}` permission — please ask an administrator, and nothing "
+                    f"`{required_perm}` permission - please ask an administrator, and nothing "
                     "was changed."
                 )
                 meta = {
@@ -2083,7 +2083,7 @@ class AIAssistantChatService:
                         break
         except Exception:
             ref = None
-        base = f"Done — I've completed: **{summary}**."
+        base = f"Done - I've completed: **{summary}**."
         if ref:
             base += f"\n\nReference: `{ref}`"
         return base
@@ -2092,7 +2092,7 @@ class AIAssistantChatService:
         """Render the deterministic capability overview as markdown.
 
         Sourced from `build_novice_capability_overview()` (live catalog, enriched
-        and admin-stripped) — never hallucinated, no LLM call. Returns a friendly
+        and admin-stripped) - never hallucinated, no LLM call. Returns a friendly
         fallback string if the catalog cannot be built for any reason.
         """
         from app.services.mcp_tool_capability_service import (
@@ -2105,7 +2105,7 @@ class AIAssistantChatService:
             logger.exception("Failed to build novice capability overview")
             return (
                 "I can help you look up products, stock, incoming shipments, "
-                "orders and deliveries, promotions, documents, and forms — and "
+                "orders and deliveries, promotions, documents, and forms - and "
                 "help you file complaints, stock inquiries, and purchase "
                 "requests. Just ask in plain language."
             )
@@ -2121,7 +2121,7 @@ class AIAssistantChatService:
         for mod in modules:
             name = str(mod.get("module") or "").strip()
             description = str(mod.get("description") or "").strip()
-            lines.append(f"**{name}** — {description}")
+            lines.append(f"**{name}** - {description}")
             for q in mod.get("example_questions") or []:
                 lines.append(f"- Try: \"{q}\"")
             lines.append("")
@@ -2140,7 +2140,7 @@ class AIAssistantChatService:
         """Invoke an MCP tool, deduplicated within the turn via ``turn_cache``.
 
         When ``turn_cache`` is None (e.g. a direct caller that passes no cache),
-        the call is made directly — behavior is identical to calling
+        the call is made directly - behavior is identical to calling
         ``client.call_tool()``. The cache stores the RAW tool output so any
         downstream transform (e.g. Outline-URL redaction) runs identically on a
         cached or freshly-fetched result.
@@ -2156,9 +2156,9 @@ class AIAssistantChatService:
     ) -> dict[str, dict[str, list[str]]]:
         """Index this turn's resolution as ``{entity_type: {norm_key: [uuid, ...]}}``.
 
-        Keys are every human string the resolver knows for a match — its
+        Keys are every human string the resolver knows for a match - its
         ``canonical_code`` plus any string values in ``display`` (e.g. debtor_name,
-        debtor_code) — so whichever label the LLM echoed back into a tool arg maps
+        debtor_code) - so whichever label the LLM echoed back into a tool arg maps
         to the UUID. A name that matched several rows (the 5 HANLIM accounts) keeps
         ALL their UUIDs, so an ambiguous name expands to every matching id."""
         out: dict[str, dict[str, list[str]]] = {}
@@ -2227,7 +2227,7 @@ class AIAssistantChatService:
 
     def _resolve_value_to_uuids(self, value: str, entity_type: str) -> list[str]:
         """Fallback: resolve a single name/code to UUIDs of ``entity_type`` by
-        reusing ``resolve_references``. Best-effort — any failure yields [].
+        reusing ``resolve_references``. Best-effort - any failure yields [].
 
         The value is passed as a TOKEN LIST, not as a query string. Handed a string,
         ``resolve_references`` runs `extract_candidate_tokens`, which only keeps code-like
@@ -2309,7 +2309,7 @@ class AIAssistantChatService:
                 continue
             openai_tools.append(self._mcp_schema_to_openai_tool(name, tool_catalog[name]))
             bound_tool_names.append(name)
-        # Always make the user guide reader available — the USER GUIDE PROTOCOL
+        # Always make the user guide reader available - the USER GUIDE PROTOCOL
         # requires calling it for any "how do I / how to" question, but RAG does
         # not reliably rank it into the selected set, which left how-to answers
         # without the guide's steps + clickable button deep-links (and risked the
@@ -2354,18 +2354,18 @@ class AIAssistantChatService:
             page_block = (
                 "The user is currently viewing this page. Identify what KIND of record this "
                 "is from the page title and path (e.g. a goods-received note, stock balance, "
-                "promotion, product, form, attachment) and refer to it accurately — do not "
+                "promotion, product, form, attachment) and refer to it accurately - do not "
                 "assume it is an order or sales document.\n"
                 "IMPORTANT: for a question about the VALUE of a field shown below (a status, "
-                "quantity, name, date, amount), answer DIRECTLY from the page — do NOT call a "
+                "quantity, name, date, amount), answer DIRECTLY from the page - do NOT call a "
                 "data/catalog tool to look it up. BUT if the user asks how to do something OR "
                 "what a button / control / feature does or is for (e.g. 'how do I…', 'how "
                 "to…', 'what does the Extend button do', 'what is this for', 'explain …'), you "
                 "MUST call `user_guides_read` to ground the answer in the guide and include "
-                "its clickable button links — do NOT answer such questions from general "
+                "its clickable button links - do NOT answer such questions from general "
                 "knowledge, even if the button is visible here. For the `query`, use a SHORT "
                 "keyword phrase naming the button/feature plus its area (e.g. 'takeover task', "
-                "'extend deadline task', 'reassign task', 'download complaint pdf') — NOT a "
+                "'extend deadline task', 'reassign task', 'download complaint pdf') - NOT a "
                 "full sentence; short keyword queries match the guides far better. If the "
                 "first lookup returns no match, retry ONCE with just the key noun (e.g. "
                 "'takeover').\n\n"
@@ -2392,8 +2392,8 @@ class AIAssistantChatService:
                 }
             )
         # Deterministic guide pre-fetch. The LLM is unreliable about calling
-        # user_guides_read for how-to / explain questions — it may skip it, or
-        # expand the query into a verbose sentence Outline doesn't match — which
+        # user_guides_read for how-to / explain questions - it may skip it, or
+        # expand the query into a verbose sentence Outline doesn't match - which
         # left such questions ungrounded and missing the clickable button links.
         # The user's RAW message matches the guides well, so fetch HERE and inject
         # it; the result is added to tool_calls_log so the deep links get
@@ -2424,7 +2424,7 @@ class AIAssistantChatService:
                     )
                 # Only inject a REAL guide hit. NO_MATCH / OUTLINE_ERROR are not
                 # flagged by _tool_output_is_error, and injecting them would tell
-                # the model "no guide available" — the opposite of the goal.
+                # the model "no guide available" - the opposite of the goal.
                 pf_hit = False
                 try:
                     pf_payload = json.loads(pf_out)
@@ -2660,8 +2660,8 @@ class AIAssistantChatService:
                 # IT-support intake tool: source_channel + actor_user_id are
                 # always known here (we are the in-app AI assistant talking on
                 # behalf of the logged-in user). The MCP tool schema only
-                # surfaces (contact_id, space_id, payload_json) — flat extras
-                # are stripped by FastMCP — so the only place these survive
+                # surfaces (contact_id, space_id, payload_json) - flat extras
+                # are stripped by FastMCP - so the only place these survive
                 # the round trip is inside the payload_json body itself.
                 if tool_name == "crm_it_support_ticket_create":
                     raw_payload = str_args.get("payload_json") or "{}"
@@ -2832,7 +2832,7 @@ class AIAssistantChatService:
         return base.rstrip() + "\n\n" + policy
 
     def _user_guide_protocol_addendum(self) -> str:
-        """DEPRECATED shim — the answer policy is now the ``synthesizer`` key.
+        """DEPRECATED shim - the answer policy is now the ``synthesizer`` key.
         Delegates to the single source in ``app.services.ai_prompt_registry``."""
         return ai_prompt_registry.PROMPT_KEYS["synthesizer"].fallback()
 
@@ -2867,7 +2867,7 @@ class AIAssistantChatService:
             return self._deterministic_fallback(tool_calls_log), tool_calls_log, token_usage
 
         facts_block = json.dumps(record_ctx, ensure_ascii=False, indent=2)
-        # Human label for guide queries — snake_case entity_type ("sponsorship_form")
+        # Human label for guide queries - snake_case entity_type ("sponsorship_form")
         # matches Outline poorly; the spelled-out form ("sponsorship form") hits.
         _ENTITY_LABELS = {
             "complaint": "complaint",
@@ -2890,14 +2890,14 @@ class AIAssistantChatService:
             + "\n\nRECORD CONTEXT (deterministic, authoritative)\n"
             "Answer the user's question using ONLY these record facts. Be concise. Quote "
             "the human-readable `display_ref`, never a UUID. Times are already "
-            "Asia/Kuala_Lumpur — present them as-is, do not re-convert. If a fact is null, "
+            "Asia/Kuala_Lumpur - present them as-is, do not re-convert. If a fact is null, "
             "say it is not set rather than inventing one.\n"
             "If the user is asking what to do next / which button / how to proceed, OR how "
             "this record's process / lifecycle / stages work, you MAY call "
             "`user_guides_read` EXACTLY ONCE to get the procedure, then ground your answer "
             "in `current_state.status` above. When you do, set `query` to the spelled-out "
-            f"record type plus lifecycle/stage so the right guide is found — e.g. "
-            f"\"{entity_label} lifecycle what to do at {cur_status} stage\" — NOT the "
+            f"record type plus lifecycle/stage so the right guide is found - e.g. "
+            f"\"{entity_label} lifecycle what to do at {cur_status} stage\" - NOT the "
             "user's bare words and NOT the snake_case type. For pure fact questions, answer "
             "directly with no tool call.\n\n"
             f"--- Record facts ---\n{facts_block}\n--- End record facts ---"
@@ -2908,7 +2908,7 @@ class AIAssistantChatService:
         # off-screen, e.g. another tab). The visible text carries every other
         # field the user can SEE on the current screen (purpose, dates, line
         # items, addresses, …) so questions about ANY visible field are
-        # answerable — without enumerating fields per entity. Facts win on
+        # answerable - without enumerating fields per entity. Facts win on
         # conflict; the page fills the gaps.
         page_text = (getattr(page_snapshot, "visible_text", "") or "").strip()
         if page_text:
@@ -3193,7 +3193,7 @@ class AIAssistantChatService:
 
     # Static starter pills shown on a fresh conversation. Curated to cover
     # the most common how-to flows backed by user-guides + a couple of
-    # general data lookups. Editing this list ships immediately — no LLM
+    # general data lookups. Editing this list ships immediately - no LLM
     # call, no per-user personalization, no latency.
     _GREETING_SUGGESTIONS: tuple[str, ...] = (
         "How do I upload a packing list?",
@@ -3331,7 +3331,7 @@ class AIAssistantChatService:
             replacement = f"[**{label}**]({route})"
             result = plain_pat.sub(lambda _m, r=replacement: r, result)
         # 2b) Re-inject guide-authored deep links (button targets, etc.).
-        # Bold-only — never plain — so a stray "upload" in prose does not
+        # Bold-only - never plain - so a stray "upload" in prose does not
         # become a button deep link.
         if extra_map:
             for label, url in extra_map:
@@ -3377,7 +3377,7 @@ class AIAssistantChatService:
 
     def _outline_host(self) -> str:
         """Host of the INTERNAL Outline knowledge base (e.g.
-        ``doc.foundryx.my``), derived from ``settings.outline_base_url`` — never
+        ``doc.foundryx.my``), derived from ``settings.outline_base_url`` - never
         hardcoded. Empty string if it cannot be resolved (redaction then no-ops).
         """
         raw = (getattr(settings, "outline_base_url", "") or "").strip()
@@ -3396,10 +3396,10 @@ class AIAssistantChatService:
         """Remove every reference to the internal Outline base URL from a piece
         of text BEFORE it is returned to / persisted for the user.
 
-        - A markdown link pointing at Outline (``[Guide](https://doc.foundryx.my/...)``,
+      - A markdown link pointing at Outline (``[Guide](https://doc.foundryx.my/...)``,
           bold-wrapped or not) collapses to just its (de-bolded) label so the
           sentence still reads.
-        - A bare Outline URL (optionally angle-bracketed) is removed outright.
+      - A bare Outline URL (optionally angle-bracketed) is removed outright.
 
         In-app links (``/resource-management/...``, ``?guide_target=...``) do NOT
         point at the Outline host, so they are left untouched.
@@ -3445,7 +3445,7 @@ class AIAssistantChatService:
         try:
             payload = json.loads(output)
         except Exception:
-            # Not JSON (shouldn't happen for this tool) — plain host strip.
+            # Not JSON (shouldn't happen for this tool) - plain host strip.
             return self._strip_outline_urls(output)
         if isinstance(payload, dict):
             payload.pop("url", None)

@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-# MUST be first app import — resolves circular-import in app.modules.runtime.guards
+# MUST be first app import - resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 from tests._pg_fixture import blank_session
 
@@ -165,7 +165,7 @@ def test_stock_list_uploads_excluded_from_feed(client):
         filename="stock balance - Macro Version.xlsx",
         attachment_type_id=stock_type_id,
     )
-    _add_attachment(db, filename="receipt.pdf")  # untyped — must remain visible
+    _add_attachment(db, filename="receipt.pdf")  # untyped - must remain visible
 
     r = c.get("/api/v1/resource-management/upload-activity")
     assert r.status_code == 200, r.text
@@ -280,7 +280,7 @@ def _add_import_job(db: Session, *, job_type: str, status: str, **kw) -> str:
 
 
 def test_import_job_sessions_in_feed(client):
-    """Excel/data import jobs (stock/DO/GRN/...) render as import_job sessions —
+    """Excel/data import jobs (stock/DO/GRN/...) render as import_job sessions - 
     replaces the per-page LatestImportStatusPanel bar."""
     c, db = client
     running = _add_import_job(
@@ -376,7 +376,7 @@ def test_unsupported_scope_rejected(client):
 
 
 def test_failed_log_surfaces_payload_error_when_column_is_null(client):
-    """n8n's error branch posts only {status, response_payload:{error}} — it
+    """n8n's error branch posts only {status, response_payload:{error}} - it
     never writes the error_message COLUMN that every user-facing surface reads,
     so the drawer used to show a bare "Integration failed" while the real reason
     sat unread in response_payload. Fall back to it.

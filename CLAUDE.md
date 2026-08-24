@@ -179,6 +179,26 @@ Frontend (`sorento_crm_frontend/.env` or `.env.local`): `DATABASE_URL` (Prisma -
 
 MCP (`sorento_crm_mcp/`): `CRM_BASE_URL`, `EXTERNAL_API_KEY`, optional `CRM_MCP_HOST/PORT/TIMEOUT/MAX_RESPONSE_BYTES/LOG_LEVEL`.
 
+## Simplest thing that works (governing)
+
+`PRINCIPLES.md` carries this as its first section and it outranks everything below. Restated
+here because this is the file that gets read while code is being written:
+
+**Build the most direct thing that satisfies the journey, and nothing more.** Two designs that
+both work: the one with fewer moving parts wins.
+
+- A registry, rule engine, abstraction layer, configuration surface or plugin point needs a
+  problem that exists **today**, in this codebase, with evidence. "We might want to configure
+  this later" is not evidence. Name the trigger in the plan instead, so the machinery gets built
+  when the condition actually arrives.
+- One event does not need a registry. One preference does not need a table - add the column.
+  Let the second case pay for the generalisation.
+- A precedent is not evidence. Copy a mechanism only with the justification that earned it.
+- **Check whether it already exists, before designing it.** Read the code; where the claim is
+  about behaviour, measure against real data. Something that ships already and is merely broken
+  needs a repair plan, not a build plan.
+- Push back on review findings that add layers. The reviewer owes the same evidence.
+
 ## Development methodology
 
 **`PRINCIPLES.md` steps 0-6 is the contract; `/feature` (`.claude/skills/feature/SKILL.md`)
@@ -235,6 +255,14 @@ spawn a build "for handoff" on your own initiative.
 - Auth on dev: the dev server must share the backend `JWT_SECRET` via `.env.local`
   (`NEXTAUTH_SECRET`) or NextAuth login flaps on :3000. Fix the env, don't build around it.
 - If HMR wedges: `rm -rf sorento_crm_frontend/.next`, restart `npm run dev`, hard-refresh.
+- **A finished lane gives its `.next` back.** A build cache reaches 2-3G per
+  worktree and never shrinks, so idle lanes cost tens of gigabytes (they reached
+  44G across 23 worktrees on 2026-08-24). It is regenerable, so it must not
+  outlive the work. When a PR merges or a lane is abandoned, run
+  `./scripts/worktree-gc.sh --apply` from the primary checkout (add `--merged` to
+  also drop clean worktrees already in `origin/main`, `--deep` for `node_modules`
+  and `venv`), then `git worktree prune`. The script skips any worktree running
+  `next dev` and never kills a process. This is `/feature` Step 11.
 - **Never `npm run build` while a `next start` serves that same `.next`** - the build replaces chunk
   files under the running server, which keeps its old manifests, so pages come back half-rendered.
   The tell looks like a code defect elsewhere: `tests/test_dealer_kit_pdf_render.py` failed 5 of 7

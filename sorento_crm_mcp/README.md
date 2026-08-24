@@ -4,8 +4,8 @@ Streamable HTTP MCP server that exposes one tool per in-scope **GET** on the Sor
 
 ## Backend prerequisites
 
-1. **`EXTERNAL_API_KEY`** — must match the key this server sends as `X-API-Key`.
-2. **`EXTERNAL_API_KEY_ACT_AS_USER_ID`** — UUID of a **real** `users.id` row. API key auth resolves RBAC as that user (view permissions on modules you need). Without this, the legacy `system` user has no permissions and most routes return 403.
+1. **`EXTERNAL_API_KEY`** - must match the key this server sends as `X-API-Key`.
+2. **`EXTERNAL_API_KEY_ACT_AS_USER_ID`** - UUID of a **real** `users.id` row. API key auth resolves RBAC as that user (view permissions on modules you need). Without this, the legacy `system` user has no permissions and most routes return 403.
 
 Create a dedicated user in the CRM (e.g. `n8n-mcp@internal`), assign a role with **view** permissions for product, order, inventory, procurement, marketing, forms, workflow forms, resources, and SLA (or use an admin/superadmin role in a single-tenant setup). Set `EXTERNAL_API_KEY_ACT_AS_USER_ID` to that user’s id.
 

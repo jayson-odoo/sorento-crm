@@ -1,4 +1,4 @@
-# UAC — Import source-file retention
+# UAC - Import source-file retention
 
 **Slug:** `import-source-file-retention`
 **Status:** Draft (pre-code → in progress)
@@ -19,7 +19,7 @@ File-based import routes that receive an actual `UploadFile` at the backend (raw
 | `spo_import` | `procurement/spo_allocations.py::import_spo_allocations` (per-file) |
 
 **Out of scope (documented gap):** `product_import` + `warehouse_import` parse the Excel to JSON on
-the frontend before upload — no raw file reaches the backend route. Covering them needs a separate
+the frontend before upload - no raw file reaches the backend route. Covering them needs a separate
 FE change to send the raw blob. Tracked as a follow-up, not in this slice.
 
 ## Acceptance criteria
@@ -42,7 +42,7 @@ FE change to send the raw blob. Tracked as a follow-up, not in this slice.
   ownership check).
 - **AC-6** Given an SPO upload with multiple files (one job per file), When jobs are created, Then
   each per-file job stores ITS OWN source file.
-- **AC-7** Store the ORIGINAL uploaded bytes, not the macro-stripped/cleaned workbook — tracing
+- **AC-7** Store the ORIGINAL uploaded bytes, not the macro-stripped/cleaned workbook - tracing
   must reflect exactly what the business sent.
 
 ## Non-goals
@@ -50,4 +50,4 @@ FE change to send the raw blob. Tracked as a follow-up, not in this slice.
 - Bucket lifecycle / auto-expiry (decision: keep indefinitely; cleanup left to a future bucket
   lifecycle rule).
 - Exposing the raw storage key or job UUID in the UI (cursor rule: no UUIDs/keys in UI).
-- Products/warehouses raw-file retention (needs FE passthrough — follow-up).
+- Products/warehouses raw-file retention (needs FE passthrough - follow-up).

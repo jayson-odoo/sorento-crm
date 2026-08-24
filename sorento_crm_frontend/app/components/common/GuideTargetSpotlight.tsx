@@ -8,7 +8,7 @@ const SPOTLIGHT_DURATION_MS = 3200;
 const RETRY_INTERVAL_MS = 200;
 const MAX_RETRIES = 5;
 // After the immediate retry window expires (1s), keep watching the DOM for
-// the target via MutationObserver — covers buttons that only mount when the
+// the target via MutationObserver - covers buttons that only mount when the
 // user opens a dialog. 30s is generous enough for a human to read the chat
 // step and click the parent trigger without the spotlight giving up.
 const OBSERVER_TIMEOUT_MS = 30_000;
@@ -51,7 +51,7 @@ export default function GuideTargetSpotlight() {
 
   // Hash isn't part of `useSearchParams`. Track it explicitly via
   // `hashchange` / `popstate` so URLs like `/path#guide_target=X` (the
-  // Outline-safe form — Outline's editor strips relative URLs that carry a
+  // Outline-safe form - Outline's editor strips relative URLs that carry a
   // query string but tolerates fragments) still trigger the spotlight.
   const [hash, setHash] = useState<string | null>(null);
   useEffect(() => {
@@ -83,7 +83,7 @@ export default function GuideTargetSpotlight() {
       }
       // Never clear state from here. A spurious hashchange (e.g. Next.js
       // stripping the fragment during hydration) must not overwrite a
-      // snapshot we already committed — the spotlight effect handles
+      // snapshot we already committed - the spotlight effect handles
       // clearing its own state after applying.
     };
     update();
@@ -91,7 +91,7 @@ export default function GuideTargetSpotlight() {
     // that runs during HTML parse. Async React chunks can race ahead and
     // mount this component BEFORE the inline script executes, so poll until
     // a positive signal appears (live hash OR sessionStorage snapshot). Never
-    // clear state from the retry path — only positive matches call update().
+    // clear state from the retry path - only positive matches call update().
     let retries = 0;
     let retryTimer: number | null = null;
     const retry = () => {
@@ -263,7 +263,7 @@ export default function GuideTargetSpotlight() {
         retryTimer = window.setTimeout(tryFind, RETRY_INTERVAL_MS);
         return;
       }
-      // Quick-retry exhausted — switch to long-watch via MutationObserver so
+      // Quick-retry exhausted - switch to long-watch via MutationObserver so
       // popup-internal targets that mount only after the user opens a dialog
       // still get spotlighted.
       startObserver();

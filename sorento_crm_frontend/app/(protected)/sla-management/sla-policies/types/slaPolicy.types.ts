@@ -25,7 +25,7 @@ export interface SLAPolicyTier {
   policy_id: string;
   tier_level: number;
   tier_name: string;
-  // Decimal hours — backend serializes as a string ("0.50"); coerce with Number() to display/compute.
+  // Decimal hours - backend serializes as a string ("0.50"); coerce with Number() to display/compute.
   response_hours: number | string;
   resolution_hours: number | string;
   created_at: Date;

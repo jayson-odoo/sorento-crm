@@ -10,10 +10,10 @@
  *   Planning          : Available for planning, Draws stock from
  *
  * Plus the rules the current detail page breaks:
- *   - Created / Last Updated are read-only metadata: page header or meta strip, never a tab body.
- *   - The detail page carries prev/next record navigation (components/common/RecordNavigation).
- *   - Every field renders even when empty; nothing disappears on a missing value.
- *   - No multi-sentence explanatory prose.
+ * - Created / Last Updated are read-only metadata: page header or meta strip, never a tab body.
+ * - The detail page carries prev/next record navigation (components/common/RecordNavigation).
+ * - Every field renders even when empty; nothing disappears on a missing value.
+ * - No multi-sentence explanatory prose.
  *
  * The data layer is mocked at the module boundary; nothing hits the network.
  */

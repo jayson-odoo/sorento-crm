@@ -72,7 +72,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   );
   const { data: product, isLoading } = useProduct(productId);
 
-  // Tab badge counts — same hooks the tab content components use, so React
+  // Tab badge counts - same hooks the tab content components use, so React
   // Query dedupes the request when the user opens the tab.
   const { data: attachmentsData } = useProductAttachmentsByProduct(productId || null);
   const attachmentsCount = Array.isArray(attachmentsData) ? attachmentsData.length : 0;
@@ -538,7 +538,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
               />
             </TabsContent>
 
-            {/* Tab: Specifications — what spec-search derived from this product */}
+            {/* Tab: Specifications - what spec-search derived from this product */}
             <TabsContent value="specifications">
               <ProductSpecificationsTab productId={productId} />
             </TabsContent>

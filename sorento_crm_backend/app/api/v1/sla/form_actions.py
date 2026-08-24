@@ -5,10 +5,10 @@ only for what the domain routes cannot express: what is currently pending on a f
 the two ways to take an action back.
 
 Permission split is deliberate:
-  - cancel (in-grace) has NO permission slug. Nothing has happened yet and the action
+ - cancel (in-grace) has NO permission slug. Nothing has happened yet and the action
     belongs to whoever started it, so requiring a grant to undo your own two-second-old
     click would be theatre.
-  - undo (post-grace) requires `sla_management.form_sla.undo_action`, because by then it
+ - undo (post-grace) requires `sla_management.form_sla.undo_action`, because by then it
     is a compensating reversal that voids someone else's task.
 """
 

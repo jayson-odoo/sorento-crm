@@ -1,9 +1,9 @@
 """Who gets told when a committed form action is reversed (AC-N-1..N-7).
 
 Three audiences, and each is told a different thing:
-  - the person the form went BACK to: you hold this again;
-  - the person whose task was VOIDED: that task is gone, by whom, and why;
-  - the contact: a correction, but only when the committed action had already told
+ - the person the form went BACK to: you hold this again;
+ - the person whose task was VOIDED: that task is gone, by whom, and why;
+ - the contact: a correction, but only when the committed action had already told
     them something (AC-N-5) - an undo of a purely internal transition does not message
     the customer.
 

@@ -6,7 +6,7 @@ those migrations bypassed the seed flow until `OrderService.create_order` /
 idempotent INSERT / UPDATE blocks so existing rows are aligned before the new
 inline upsert takes over.
 
-Safe to run multiple times — every statement is gated on missing / mismatched
+Safe to run multiple times - every statement is gated on missing / mismatched
 state so re-runs are no-ops once the system converges.
 
 Revision ID: 219_resync_orders_customer_transporter
@@ -27,12 +27,12 @@ depends_on = None
 def upgrade() -> None:
     # 0. Drop the legacy column-level UNIQUE(customer_code) up front. The
     #    customer seed below (step 3) intentionally inserts multiple rows that
-    #    share one Sage debtor code under different trading names — that only
+    #    share one Sage debtor code under different trading names - that only
     #    works once the column-unique is gone. Migration 220 also drops it (and
     #    adds the composite functional unique), but 220 runs *after* this one;
     #    on production DBs that already hold a row for a given code, step 3
     #    would hit `customers_customer_code_key` before 220 ever executes. Drop
-    #    here too — IF EXISTS makes it a no-op on fresh DBs and on the 220 pass.
+    #    here too - IF EXISTS makes it a no-op on fresh DBs and on the 220 pass.
     op.execute(
         "ALTER TABLE customers DROP CONSTRAINT IF EXISTS customers_customer_code_key;"
     )
@@ -107,7 +107,7 @@ def upgrade() -> None:
         """
     )
 
-    # 4. Re-point orders.customer_id by the PAIR — matches the pair-level
+    # 4. Re-point orders.customer_id by the PAIR - matches the pair-level
     #    dedup above. Falls back to debtor_name-only match when the order has
     #    no debtor_code so legacy rows still get an FK.
     op.execute(

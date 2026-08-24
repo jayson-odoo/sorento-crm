@@ -235,7 +235,7 @@ def test_assemble_stock_inquiry_rejected(db_session: Session):
     si = _seed_stock_inquiry(
         db_session,
         status="rejected",
-        rejection_reason="Item discontinued — no stock available",
+        rejection_reason="Item discontinued - no stock available",
         rejected_by="c1b27089-bd7f-5e30-b5d6-1fb1ca38dfcb",
         rejected_at=rejected_at,
     )
@@ -253,12 +253,12 @@ def test_assemble_stock_inquiry_rejected(db_session: Session):
     assert out["about"]["salesperson"] == "Lee Wong"
 
     assert out["current_state"]["status"] == "rejected"
-    assert out["current_state"]["reason"] == "Item discontinued — no stock available"
+    assert out["current_state"]["reason"] == "Item discontinued - no stock available"
     assert out["current_state"]["set_by"] == "Nora Aziz"
 
     approval = out["approval"]
     assert approval["status"] == "rejected"
-    assert approval["comments"] == "Item discontinued — no stock available"
+    assert approval["comments"] == "Item discontinued - no stock available"
     assert approval["decided_by"] == "Nora Aziz"
     assert approval["lead_time"]["elapsed_hours"] == pytest.approx(5.5, abs=0.05)
 
@@ -277,7 +277,7 @@ def test_assemble_stock_inquiry_pending_has_no_decision(db_session: Session):
     out = RecordContextService(db_session).assemble("stock_inquiry", si.id)
     assert out["current_state"]["status"] == "pending_purchasing"
     assert out["current_state"]["reason"] is None
-    # Stock inquiry has no approval gate — a non-rejected inquiry is NOT
+    # Stock inquiry has no approval gate - a non-rejected inquiry is NOT
     # "pending approval"; the decision block is null until/unless it is rejected.
     assert out["approval"] is None
     # No response sent yet at this stage.
@@ -339,7 +339,7 @@ def test_pr_display_status_combines_lifecycle_and_approval(
     )
     db_session.commit()
     out = RecordContextService(db_session).assemble("purchase_request", pr.id)
-    # The bubble must present ONE status matching the FE pill — never the raw
+    # The bubble must present ONE status matching the FE pill - never the raw
     # "submitted status + pending approval_status" split that confused the user.
     assert out["current_state"]["status"] == expected
 
@@ -351,7 +351,7 @@ def _seed_request(db: Session, request_type: str, **overrides) -> PurchaseReques
         request_number="PR-2026-0033",
         project_title="HQ Renovation",
         purpose="Procure flooring for level 3",
-        customer_name="Internal — Facilities",
+        customer_name="Internal - Facilities",
         status="draft",
         source="external",
         created_at=datetime(2026, 6, 22, 0, 0, 0),
@@ -387,7 +387,7 @@ def test_assemble_purchase_request_approved(db_session: Session):
     assert "sponsor_subject" not in out["about"]
 
     # PR/SF surface the single user-facing status (combines lifecycle + approval,
-    # mirrors the FE pill) — not the raw lifecycle column.
+    # mirrors the FE pill) - not the raw lifecycle column.
     assert out["current_state"]["status"] == "Approved"
     assert out["current_state"]["set_by"] == "Daniel Ong"
 
@@ -412,7 +412,7 @@ def test_assemble_purchase_request_rejected_uses_approval_comments(db_session: S
         approval_status="rejected",
         approved_at=rejected_at,
         approved_by="manager@example.com",
-        approval_comments="Over budget — resubmit with quotes",
+        approval_comments="Over budget - resubmit with quotes",
     )
     db_session.commit()
 
@@ -420,10 +420,10 @@ def test_assemble_purchase_request_rejected_uses_approval_comments(db_session: S
 
     # User-facing combined status (FE pill), not the raw lifecycle column.
     assert out["current_state"]["status"] == "Rejected"
-    assert out["current_state"]["reason"] == "Over budget — resubmit with quotes"
+    assert out["current_state"]["reason"] == "Over budget - resubmit with quotes"
     approval = out["approval"]
     assert approval["status"] == "rejected"
-    assert approval["comments"] == "Over budget — resubmit with quotes"
+    assert approval["comments"] == "Over budget - resubmit with quotes"
     # No FK user, falls back to the email text.
     assert approval["decided_by"] == "manager@example.com"
 

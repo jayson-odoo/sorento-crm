@@ -1,4 +1,4 @@
-"""Activities & Notes — generic per-entity activity feed, internal notes, mentions.
+"""Activities & Notes - generic per-entity activity feed, internal notes, mentions.
 
 Any consuming module (tickets, complaints, leads, etc.) registers an adapter in
 ``app.services.activities_registry`` and references its rows via
@@ -43,7 +43,7 @@ class ActivityEvent(Base):
 
 
 class InternalNote(Base):
-    """Private note scoped to ``author_id`` only — never visible to other users."""
+    """Private note scoped to ``author_id`` only - never visible to other users."""
 
     __tablename__ = "internal_notes"
 

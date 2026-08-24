@@ -1,5 +1,5 @@
 /**
- * DriveImageThumbnail — lazy image card (UAC G1/G3).
+ * DriveImageThumbnail - lazy image card (UAC G1/G3).
  *
  * Asserts: NO preview-url fetch and NO <img src> until the card intersects the
  * viewport; once it does, the resolved serve URL is set as the src.
@@ -83,7 +83,7 @@ describe('DriveImageThumbnail', () => {
         thumbnailUrl="https://cdn.example/thumb/abc.thumb.jpg"
       />
     );
-    // Rendered right away — never waited for IntersectionObserver.
+    // Rendered right away - never waited for IntersectionObserver.
     const img = await screen.findByRole('img');
     expect(img).toHaveAttribute('src', 'https://cdn.example/thumb/abc.thumb.jpg');
     expect(img).toHaveAttribute('loading', 'lazy');

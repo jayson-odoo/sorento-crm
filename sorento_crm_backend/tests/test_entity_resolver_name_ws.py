@@ -148,7 +148,7 @@ def _codes(matches) -> set[str]:
 
 
 # --------------------------------------------------------------------------- #
-# Tier 1 — customers.customer_name
+# Tier 1 - customers.customer_name
 # --------------------------------------------------------------------------- #
 CUST_NAME = "ZZTMASTILE KLANG SDN BHD"
 
@@ -158,8 +158,8 @@ CUST_NAME = "ZZTMASTILE KLANG SDN BHD"
     [
         "ZZTMASTILEKLANGSDNBHD",  # fully stripped
         "ZZTMASTILEKLANG",        # stripped partial (the reported miss)
-        "ZZTMASTILE KLANG",       # spaced — must keep working
-        "ZZTMASTILE-KLANG",       # dashed — normalizes to the same form
+        "ZZTMASTILE KLANG",       # spaced - must keep working
+        "ZZTMASTILE-KLANG",       # dashed - normalizes to the same form
         "ZZTMASTILE",             # single word, unchanged behaviour
     ],
 )
@@ -189,7 +189,7 @@ def test_customer_name_short_token_does_not_span_words(db):
 
 
 # --------------------------------------------------------------------------- #
-# Tier 1 + Tier 2 — orders.debtor_name
+# Tier 1 + Tier 2 - orders.debtor_name
 # --------------------------------------------------------------------------- #
 DEBTOR_NAME = "ZZTFIRA VENTURE ENTERPRISE"
 
@@ -215,7 +215,7 @@ def test_debtor_name_prefix_probe_normalizes(db):
 
 
 # --------------------------------------------------------------------------- #
-# Tier 1 + Tier 2 — transporters
+# Tier 1 + Tier 2 - transporters
 # --------------------------------------------------------------------------- #
 TRP_NAME = "ZZTGT Delivery Services"
 
@@ -229,7 +229,7 @@ def test_transporter_name_matches_regardless_of_separators(db, token):
 
 
 # --------------------------------------------------------------------------- #
-# Tier 1 + Tier 2 — attachments / attachment types
+# Tier 1 + Tier 2 - attachments / attachment types
 # --------------------------------------------------------------------------- #
 def test_attachment_filename_exact_probe_normalizes(db):
     att = _attachment(db, "ZZT Price List 2026.pdf")
@@ -254,7 +254,7 @@ def test_attachment_type_prefix_probe_normalizes(db):
 
 
 # --------------------------------------------------------------------------- #
-# Tier 2 — forms
+# Tier 2 - forms
 # --------------------------------------------------------------------------- #
 def test_form_prefix_probe_normalizes(db):
     form = _form(db, unique_code("FRM")[:100], "ZZT Sponsorship Request")
@@ -262,7 +262,7 @@ def test_form_prefix_probe_normalizes(db):
 
 
 # --------------------------------------------------------------------------- #
-# Tier 3 — AND-mode probes (every ILIKE funnels through _and_token_match_counts)
+# Tier 3 - AND-mode probes (every ILIKE funnels through _and_token_match_counts)
 # --------------------------------------------------------------------------- #
 def test_and_probe_customer_normalizes(db):
     cust = _customer(db, CUST_NAME)

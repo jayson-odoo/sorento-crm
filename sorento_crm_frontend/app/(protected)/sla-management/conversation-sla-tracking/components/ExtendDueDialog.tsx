@@ -145,14 +145,14 @@ export default function ExtendDueDialog({
 
   const currentDueText = currentDueAt
     ? formatDateTime(parseDateTimeAsUTC(currentDueAt))
-    : '—';
+    : '-';
   const newDueText =
     preview?.new_due_at ? formatDateTime(parseDateTimeAsUTC(preview.new_due_at)) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* The dialog is portaled, but React synthetic events still bubble through the
-          React tree to the pending-task row that owns this button — whose Space/Enter
+          React tree to the pending-task row that owns this button - whose Space/Enter
           and click handlers open the Respond.io inbox. Stop propagation here so typing
           a space in the reason box (or clicking inside the dialog) never activates the
           row. Radix's Escape-to-close uses a document-level listener, so this is safe. */}
@@ -264,7 +264,7 @@ export default function ExtendDueDialog({
             )}
           </div>
 
-          {/* Non-blocking soft-limit warnings — do NOT disable submit (UAC-13/16). */}
+          {/* Non-blocking soft-limit warnings - do NOT disable submit (UAC-13/16). */}
           {preview?.warnings?.length ? (
             <div className="space-y-1.5">
               {preview.warnings.map((w, i) => (

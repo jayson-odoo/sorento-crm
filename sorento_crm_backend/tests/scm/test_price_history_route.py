@@ -99,8 +99,8 @@ def _mk_recommendation(db, run_id, product_id, warehouse_id, supplier_id):
 def _world(db):
     """Two products, each recommended against a supplier with NO purchase of its own:
 
-    - ``other_key``: another supplier HAS a priced purchase of the product -> `other_supplier_price`.
-    - ``no_price_key``: the only purchase on record for the product carries no price
+  - ``other_key``: another supplier HAS a priced purchase of the product -> `other_supplier_price`.
+  - ``no_price_key``: the only purchase on record for the product carries no price
       (a 0.00 line, the structured-extract shape) -> `history_without_price`.
     """
     run_id = str(uuid.uuid4())

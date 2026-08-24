@@ -1,5 +1,5 @@
 /**
- * useDriveContents — the Unified Drive query hook (UAC B1/B2, C6).
+ * useDriveContents - the Unified Drive query hook (UAC B1/B2, C6).
  *
  * Asserts the hook forwards browse vs recursive params + pagination to the
  * service and surfaces the response. The service is mocked (network is covered

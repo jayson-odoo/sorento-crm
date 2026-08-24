@@ -117,7 +117,7 @@ export default function AIUsagePage() {
     return (
       <Container>
         <div className="rounded-md border p-6 text-sm text-muted-foreground">
-          Forbidden — you don&apos;t have permission to view AI assistant usage.
+          Forbidden - you don&apos;t have permission to view AI assistant usage.
         </div>
       </Container>
     );
@@ -282,7 +282,7 @@ export default function AIUsagePage() {
           <Card>
             <CardHeader>
               <CardTitle>Top users</CardTitle>
-              <CardDescription>Internal staff — highest message volume in range</CardDescription>
+              <CardDescription>Internal staff - highest message volume in range</CardDescription>
             </CardHeader>
             <CardContent>
               {topUsersQuery.isLoading ? (
@@ -321,7 +321,7 @@ export default function AIUsagePage() {
             <CardHeader>
               <CardTitle>Top contacts</CardTitle>
               <CardDescription>
-                Portal contacts (by phone) — defaults to AI Extract spend
+                Portal contacts (by phone) - defaults to AI Extract spend
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -349,7 +349,7 @@ export default function AIUsagePage() {
                     {(topContactsQuery.data || []).map((c, i) => (
                       <tr key={c.contact_id} className="border-b last:border-0">
                         <td className="py-2 text-muted-foreground">{i + 1}</td>
-                        <td className="py-2 font-mono text-xs">{c.phone_number || '—'}</td>
+                        <td className="py-2 font-mono text-xs">{c.phone_number || '-'}</td>
                         <td className="py-2">{c.name || <span className="text-muted-foreground italic">unknown</span>}</td>
                         <td className="py-2 text-right tabular-nums">{formatNumber(c.messages)}</td>
                         <td className="py-2 text-right tabular-nums">{formatNumber(c.tokens)}</td>
@@ -396,11 +396,11 @@ export default function AIUsagePage() {
                         // message_id is null for ai_extract rows; key on a stable composite.
                         const rowKey = q.message_id ?? `${q.created_at}-${q.contact_phone ?? q.user_name ?? ''}`;
                         const isExpanded = q.message_id != null && expandedId === q.message_id;
-                        const featureLabel = (q.feature && FEATURE_LABELS[q.feature]) || '—';
+                        const featureLabel = (q.feature && FEATURE_LABELS[q.feature]) || '-';
                         const principal =
                           q.contact_phone || q.contact_name
                             ? `${q.contact_name ?? 'unknown'} · ${q.contact_phone ?? ''}`.trim()
-                            : q.user_name || '—';
+                            : q.user_name || '-';
                         return (
                           <Fragment key={rowKey}>
                             <tr

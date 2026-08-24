@@ -5,11 +5,11 @@ Covers UAC §3 (pre-route discipline) + §4.7 (session-var isolation) for
 
 Two kinds of test, deliberately separated (see memory feedback_no_overfit_llm_nlp):
 
-  * **Routing tests** (offline, deterministic) — stub the classifier verdict and
+  * **Routing tests** (offline, deterministic) - stub the classifier verdict and
     the assembler so we test the FORK LOGIC only: record-class+entity bypasses
     the agent loop; everything else reaches it. This is the regression firewall
     and must run in CI.
-  * **Classifier-quality eval** (live LLM, opt-in) — paraphrase robustness for
+  * **Classifier-quality eval** (live LLM, opt-in) - paraphrase robustness for
     ``intent_is_record_class`` itself. Because the classifier is a GENERAL
     semantic judgment (an LLM call), not a keyword whitelist, its quality can
     only be tested against a real model. Gated behind ``RUN_LLM_EVALS`` so CI
@@ -57,7 +57,7 @@ def _parse(
 ) -> ParseResult:
     """Build a ParseResult driving a deterministic route. Routing tests assert
     on the ParseResult we construct (routing is a pure switch on it), NOT on how
-    the LLM would classify a literal sentence — see feedback_no_overfit_llm_nlp.
+    the LLM would classify a literal sentence - see feedback_no_overfit_llm_nlp.
     """
     return ParseResult(
         standalone_query="standalone",
@@ -188,10 +188,10 @@ def _no_entity_snapshot() -> PageSnapshotPayload:
 
 
 # ===========================================================================
-# Routing tests (offline, deterministic) — the regression firewall
+# Routing tests (offline, deterministic) - the regression firewall
 # ===========================================================================
 
-# --- §3.1 — entity + record-class → assembler, agent loop bypassed ----------
+# --- §3.1 - entity + record-class → assembler, agent loop bypassed ----------
 def test_record_class_with_entity_bypasses_agent_loop(
     seeded_user: str, chat_service: AIAssistantChatService
 ):
@@ -217,7 +217,7 @@ def test_record_class_with_entity_bypasses_agent_loop(
     )
 
 
-# --- §3.2 — entity present but catalog question → agent loop (no theft) ------
+# --- §3.2 - entity present but catalog question → agent loop (no theft) ------
 def test_catalog_question_with_entity_uses_agent_loop(
     seeded_user: str, chat_service: AIAssistantChatService
 ):
@@ -236,12 +236,12 @@ def test_catalog_question_with_entity_uses_agent_loop(
 
     assert agent.called is True, (
         "a catalog question must reach the MCP agent loop even when an entity "
-        "is on screen — the pre-route must not steal §1 operational questions"
+        "is on screen - the pre-route must not steal §1 operational questions"
     )
     assert render.called is False
 
 
-# --- §3.4 — record phrasing but NO entity → agent loop, never assembler ------
+# --- §3.4 - record phrasing but NO entity → agent loop, never assembler ------
 def test_record_phrasing_without_entity_uses_agent_loop(
     seeded_user: str, chat_service: AIAssistantChatService
 ):
@@ -268,7 +268,7 @@ def test_record_phrasing_without_entity_uses_agent_loop(
     assert render.called is False
 
 
-# --- §3.5 — RBAC denial → degrade to agent loop, no record facts leaked ------
+# --- §3.5 - RBAC denial → degrade to agent loop, no record facts leaked ------
 def test_rbac_denied_degrades_to_agent_loop(
     seeded_user: str, chat_service: AIAssistantChatService, monkeypatch
 ):
@@ -301,18 +301,18 @@ def test_rbac_denied_degrades_to_agent_loop(
     assert agent.called is True, "RBAC denial degrades to the agent loop, not a crash"
 
 
-# --- §4.7 — bubble path must never touch respond_contacts.session_vars ------
+# --- §4.7 - bubble path must never touch respond_contacts.session_vars ------
 def test_bubble_path_never_writes_contact_session_vars(
     seeded_user: str, chat_service: AIAssistantChatService
 ):
     """The n8n WhatsApp brain owns ``respond_contacts.session_vars`` (keyed by
     respond_io_id). The bubble (keyed by user_id+conversation_id) must keep its
-    state in ai_assistant_* tables only — never cross into the contact blob.
+    state in ai_assistant_* tables only - never cross into the contact blob.
     """
     import app.services.ai_assistant_service as svc_module
 
     assert not hasattr(svc_module, "overwrite_for_contact"), (
-        "bubble service imported the n8n session-var writer — isolation breach"
+        "bubble service imported the n8n session-var writer - isolation breach"
     )
 
     chat_service._parse_turn = lambda **_k: _parse(  # type: ignore[assignment]
@@ -332,7 +332,7 @@ def test_bubble_path_never_writes_contact_session_vars(
 
 # --- A6 fusion: "what should I do now" must be state-grounded ----------------
 # Routing-only assertion: a next-step question on an entity page must NOT be
-# answered by the bare agent loop — it must take the assembler render path
+# answered by the bare agent loop - it must take the assembler render path
 # (which is permitted one user_guides_read call to fuse guide steps with the
 # record's current state). Classifier verdict stubbed; the live verdict for
 # this phrasing is covered by the opt-in eval below.
@@ -363,7 +363,7 @@ def test_what_should_i_do_now_takes_record_path(
 
 # --- Capability confidence floor (code-review fix) ---------------------------
 # The capability short-circuit serves a static catalog with NO answer-LLM. Unlike
-# the old tight keyword allowlist, the parser is probabilistic — so a LOW-confidence
+# the old tight keyword allowlist, the parser is probabilistic - so a LOW-confidence
 # "capability" guess must NOT hijack a real question. It must fall through to the
 # agent loop. A HIGH-confidence capability is served deterministically.
 def test_low_confidence_capability_falls_through_to_agent(
@@ -448,7 +448,7 @@ def test_second_ambiguous_turn_does_not_loop_clarifying(
     seeded_user: str, chat_service: AIAssistantChatService
 ):
     # Turn 1: clarify. Turn 2 (same conversation, still ambiguous): must proceed
-    # to the agent loop with the best assumption — one clarify round max.
+    # to the agent loop with the best assumption - one clarify round max.
     chat_service._parse_turn = lambda **_k: _clarify_parse(["Product", "Customer"])  # type: ignore[assignment]
     agent = _Spy(("best-assumption answer", [], _USAGE))
     chat_service._run_agent_loop = agent  # type: ignore[assignment]

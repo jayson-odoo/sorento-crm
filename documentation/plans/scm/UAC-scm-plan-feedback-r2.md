@@ -101,13 +101,13 @@ they set themselves, and confidence in what the product is.
   2,548 outstanding-book uploads (`source_system = scm_upload`) and 2,021 of 11,006 sales-
   history uploads. Cause on the outstanding book: the importer reads the debtor code but
   deliberately never linked the customer ("the day a consumer exists"). That day is now:
-  - the outstanding-SO import links `customer_id` by debtor code exactly as the PO side
+ - the outstanding-SO import links `customer_id` by debtor code exactly as the PO side
     links suppliers, and keeps `debtor_code` on the order (new nullable column
     `sales_orders.debtor_code`, written by both SO importers) so an unresolvable code is
     still attributable;
-  - the trend and demand labels fall back in order: customer name -> `Debtor <code>` ->
+ - the trend and demand labels fall back in order: customer name -> `Debtor <code>` ->
     `No customer on order`. "Unnamed customer" is retired;
-  - existing rows: a re-upload of the outstanding book relinks them (S3 async makes that
+ - existing rows: a re-upload of the outstanding book relinks them (S3 async makes that
     cheap). No backfill script - the debtor code was never stored, so there is nothing to
     join on. Stated in the PR.
 - **AC-4.4 (investigated)** "No order history" beside an open SO: the trend reads

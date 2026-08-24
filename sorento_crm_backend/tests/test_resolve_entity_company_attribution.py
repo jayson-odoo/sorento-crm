@@ -2,7 +2,7 @@
 
 Why it exists: on this database EVERY Mocha product code is also a Sorento
 product code (11,390 of them). A caller holding a multi-company scope therefore
-gets two exact matches for one code and the resolver — correctly — reports
+gets two exact matches for one code and the resolver - correctly - reports
 ``ambiguous: true``. Without company attribution the caller can only offer the
 user two identical-looking options ("MWCX8609-RL-S10" vs "MWCX8609-RL-S10"),
 which is not a choice anyone can make.

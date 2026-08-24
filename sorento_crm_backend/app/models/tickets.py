@@ -1,9 +1,9 @@
-"""Tickets — internal Jira-style ticketing.
+"""Tickets - internal Jira-style ticketing.
 
 Status workflow: ``draft -> submitted -> assigned -> responded -> resolved``.
 ``__audit_track__`` is on so every field change auto-writes an ``audit_logs`` row.
 The Activities feed for a ticket is sourced from the generic ``activity_events``
-table (entity_type='ticket') — not a per-module comment table.
+table (entity_type='ticket') - not a per-module comment table.
 """
 from __future__ import annotations
 

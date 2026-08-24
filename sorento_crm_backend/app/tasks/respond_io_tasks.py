@@ -7,7 +7,7 @@ SLA tracking, etc.). Failed sends land in the RQ FailedJobRegistry and an
 
 Sends are 24h-window-aware (``respond_messaging_service.send_text_or_template``):
 window open → plain text; closed → the use case's default WhatsApp template.
-Outside-window plain sends are pointless — Respond.io reports success but
+Outside-window plain sends are pointless - Respond.io reports success but
 WhatsApp silently drops them, which is also why the old per-send delivery
 polling was removed (plan: docs/plans/PLAN-whatsapp-template-fallback.md).
 """
@@ -115,12 +115,12 @@ def _send_and_log(
                 business_table,
                 business_id,
             )
-            # Log what was ACTUALLY attempted (text vs template) — the window-aware
+            # Log what was ACTUALLY attempted (text vs template) - the window-aware
             # send stamps the real payload on the exception. Closed window => the
             # outbox row shows a template attempt, not the default text payload.
             request_payload = getattr(e, "request_payload", request_payload)
             # Capture Respond.io's actual HTTP response (status + body) on 4xx/5xx
-            # so the failure is diagnosable (e.g. WHY a 403 — WAF block vs window
+            # so the failure is diagnosable (e.g. WHY a 403 - WAF block vs window
             # vs channel error) instead of just "403 Forbidden for url ...".
             resp = getattr(e, "response", None)
             resp_code = None
@@ -165,7 +165,7 @@ def send_portal_otp_respond_message(
     """Worker-side: window-aware Respond.io send for a portal login OTP.
 
     Logged in the Respond outbox (``integration_logs``, business_table
-    ``portal_otp_codes``) like every other send — including a ``status='failed'``
+    ``portal_otp_codes``) like every other send - including a ``status='failed'``
     row when the send can't go out (e.g. local dev with no Respond.io
     connectivity), whose ``request_payload`` carries the code so it can be read
     back for testing. Not mirrored into the CRM chat thread (system message).
@@ -227,7 +227,7 @@ def send_stock_inquiry_respond_message(
     """Worker-side: window-aware Respond.io send for a stock inquiry update.
 
     ``verify_delivery`` is accepted for enqueue-signature compatibility but
-    ignored — post-send delivery polling was removed in favour of the up-front
+    ignored - post-send delivery polling was removed in favour of the up-front
     window check.
 
     ``extra_context_vars`` carries the action-specific structured-template vars
@@ -351,7 +351,7 @@ def deliver_manual_template(
 
 # ---------------------------------------------------------------------------
 # Conversation lifecycle ops (close / reassign) for conversation-SLA actions.
-# Unlike the message sends above these are NOT 24h-window-aware — they act on the
+# Unlike the message sends above these are NOT 24h-window-aware - they act on the
 # conversation object itself. Each writes a Respond outbox row (integration_logs)
 # on success AND failure and re-raises so RQ records the job FAILED. business_table
 # = "conversation_sla_tracking", business_id = the tracking id.
@@ -426,7 +426,7 @@ def _log_respond_conversation_op(
             ),
             request_payload_dict=request_payload,
         )
-    except Exception as le:  # noqa: BLE001 — never let logging mask the real outcome
+    except Exception as le:  # noqa: BLE001 - never let logging mask the real outcome
         db.rollback()
         logger.warning("Respond conversation-op outbox write failed: %s", le)
 
@@ -478,7 +478,7 @@ def close_respond_conversation(tracking_id: str) -> dict:
 
 def set_respond_conversation_assignee(tracking_id: str, respond_user_id: str) -> dict:
     """Worker-side: set the Respond.io conversation assignee (owner) for a
-    conversation-SLA tracking — used by reassign, takeover, and escalate. Logged in
+    conversation-SLA tracking - used by reassign, takeover, and escalate. Logged in
     the Respond outbox; re-raises on failure."""
     from app.database import SessionLocal
     from app.models.sla import ConversationSLATracking

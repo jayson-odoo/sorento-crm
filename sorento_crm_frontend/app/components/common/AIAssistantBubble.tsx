@@ -199,7 +199,7 @@ export default function AIAssistantBubble() {
         setGreeting(data.greeting || 'Hi, how can I help you?');
         setGreetingSuggestions(Array.isArray(data.suggestions) ? data.suggestions.slice(0, 5) : []);
       } catch {
-        // Silent fail — fallback strings already set.
+        // Silent fail - fallback strings already set.
       }
     })();
     return () => {
@@ -375,7 +375,7 @@ export default function AIAssistantBubble() {
           window.setTimeout(() => setHighlightedMessageId(null), 4000);
         }
       } catch {
-        // Ignore — keep bubble open at fresh state.
+        // Ignore - keep bubble open at fresh state.
       } finally {
         const sp = new URLSearchParams(searchParams?.toString() ?? '');
         sp.delete('ai_conversation');
@@ -406,7 +406,7 @@ export default function AIAssistantBubble() {
   };
 
   // M3a Write-confirm: Confirm executes the pending write; Cancel drops it. The
-  // message text is cosmetic — the backend keys off confirm_action + the stored
+  // message text is cosmetic - the backend keys off confirm_action + the stored
   // pending call on the prior assistant message.
   const onConfirmWrite = async () => {
     await sendText('Confirm', 'confirm');
@@ -671,7 +671,7 @@ export default function AIAssistantBubble() {
                             </Link>
                           </div>
                         ) : null}
-                        {/* M3a Clarifier — enumerable options as clickable chips.
+                        {/* M3a Clarifier - enumerable options as clickable chips.
                             Only on the latest assistant turn (an older clarify is
                             superseded once answered). */}
                         {m.role === 'assistant' &&
@@ -695,7 +695,7 @@ export default function AIAssistantBubble() {
                             ))}
                           </div>
                         ) : null}
-                        {/* M3a Write-confirm — Confirm/Cancel for a pending write.
+                        {/* M3a Write-confirm - Confirm/Cancel for a pending write.
                             Only status === 'pending' on the latest turn shows buttons;
                             confirmed/cancelled/denied/failed are terminal. */}
                         {m.role === 'assistant' &&
@@ -725,7 +725,7 @@ export default function AIAssistantBubble() {
                           </div>
                         ) : null}
                         {/* Inline markdown links inside the message body are now the only
-                            link surface — the previous "raw URL list" footer was redundant
+                            link surface - the previous "raw URL list" footer was redundant
                             (and confusing when the same URLs were already wrapped in the
                             markdown above). Keep `metadata_json.links` populated server-side
                             for analytics, but stop rendering the duplicate panel here. */}

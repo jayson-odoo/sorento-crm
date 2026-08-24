@@ -1,4 +1,4 @@
-# 1.2-Marketing — Upload a marketing form
+# 1.2-Marketing - Upload a marketing form
 
 Use this flow to upload a marketing-form (e.g. event registration, product-feedback form, dealer signage). The system stores the file, process it, and creates the related lead / submission records automatically.
 
@@ -22,7 +22,7 @@ The marketing-form workflow:
 2. Creates the form records in the relevant module (**Forms Management**).
 3. Calls back into the CRM to attach the original file to the form record.
 
-You don't need to create the marketing form out of the file by hand — the integration handles it.
+You don't need to create the marketing form out of the file by hand - the integration handles it.
 
 ## How you'll be notified
 

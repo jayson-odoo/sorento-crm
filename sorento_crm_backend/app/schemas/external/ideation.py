@@ -20,7 +20,7 @@ class IdeationTurnRequest(BaseModel):
         None,
         description=(
             "Multi-modal capture (DC-7): the parser-extracted reference-positions "
-            "answering an outstanding media menu — e.g. '1,3', 'all', 'none'. Present "
+            "answering an outstanding media menu - e.g. '1,3', 'all', 'none'. Present "
             "ONLY when session_vars.ideation.pending_media is set and the parser found "
             "a position reference; otherwise absent (the turn is a normal ideate turn)."
         ),
@@ -39,7 +39,7 @@ class IdeationTurnRequest(BaseModel):
             "Caller-supplied session state. The ideation pointer is read from "
             "session_vars.ideation (or session_vars.variables.ideation). n8n owns/writes "
             "session_vars, so the endpoint trusts this over its own (possibly stale) DB "
-            "copy — this is what makes the draft accumulate across turns."
+            "copy - this is what makes the draft accumulate across turns."
         ),
     )
 

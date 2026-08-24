@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Collapsible session row — single | multi | bulk_zip.
+ * Collapsible session row - single | multi | bulk_zip.
  *
  * For bulk_zip with >25 files we surface a counts dashboard +
  * "Needs attention" subtab (failed + unlinked); "All files" tab is
@@ -95,8 +95,8 @@ export function UploadSessionRow({
     'needs_action',
   );
 
-  // Excel/data import jobs: no file rows to expand — flat row, whole row
-  // navigates to the import-job detail page. (After all hooks — keep order stable.)
+  // Excel/data import jobs: no file rows to expand - flat row, whole row
+  // navigates to the import-job detail page. (After all hooks - keep order stable.)
   if (session.session_type === 'import_job') {
     return (
       <div className="border-b border-border">
@@ -125,7 +125,15 @@ export function UploadSessionRow({
                 {timeAgo(session.started_at)}
               </span>
             </div>
-            <div className="text-xs text-muted-foreground mt-1 truncate">
+            {/* NOT `truncate`. For a failed import this line is the error itself
+                (`summariseImportJob` returns `job_error` verbatim), and RQ's
+                failure strings are long — "Moved to FailedJobRegistry, due to
+                AbandonedJobError, at ..." was cut mid-timestamp, which is the
+                half a reader needs. Two wrapped lines, the rest on hover. */}
+            <div
+              className="text-xs text-muted-foreground mt-1 break-words line-clamp-2"
+              title={summariseSession(session)}
+            >
               {summariseSession(session)}
             </div>
           </div>
@@ -174,7 +182,11 @@ export function UploadSessionRow({
               {timeAgo(session.started_at)}
             </span>
           </div>
-          <div className="text-xs text-muted-foreground mt-1 truncate">
+          {/* See the import_job branch above: wrapped, not truncated. */}
+          <div
+            className="text-xs text-muted-foreground mt-1 break-words line-clamp-2"
+            title={summariseSession(session)}
+          >
             {summariseSession(session)}
           </div>
         </div>
@@ -245,7 +257,7 @@ export function UploadSessionRow({
                 )}
                 {bulkSubtab === 'all' && session.files.length > 200 && (
                   <div className="px-4 py-2 text-center text-xs text-muted-foreground">
-                    Showing first 200 of {session.files.length} —{' '}
+                    Showing first 200 of {session.files.length} - {' '}
                     <button
                       type="button"
                       onClick={() => {

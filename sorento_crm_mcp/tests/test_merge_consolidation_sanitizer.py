@@ -1,7 +1,7 @@
 """Sanitizer + enrichment coverage for the consolidated (merged) MCP list tools.
 
 - crm_marketing_promotions_list: header-only (row id dropped, header attachment
-  internals scrubbed, filename kept) — products are NOT nested.
+  internals scrubbed, filename kept) - products are NOT nested.
 - crm_master_products_list: confidential cost_price/invoice_price dropped, nested
   attachments[] internal-stripped.
 - enrich grouping: child rows nested under the correct parent id.
@@ -93,7 +93,7 @@ def test_products_list_drops_confidential_and_strips_attachment_internals():
 
 
 # --------------------------------------------------------------------------
-# Enrich half (async fan-out) — stub client returns canned child rows
+# Enrich half (async fan-out) - stub client returns canned child rows
 # --------------------------------------------------------------------------
 class _StubClient:
     def __init__(self, child_payload):

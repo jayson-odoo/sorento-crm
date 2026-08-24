@@ -131,7 +131,7 @@ Our current state: top-down SVG plan (drag corners + wall faces, 50 mm snap, liv
 11. **Ceiling height + opening heights as the only Z inputs** (G14). Two numeric fields; give the 3D box real height. Half a day, prerequisite for G5's 3D payoff.
 12. **Category chips alongside search** (G11). We keep server-side text search (better than IKEA) and add a chip row from product categories. A day. Facet buckets can wait.
 
-Skip for now: free-drag rotation handles, first-person camera, photo-real materials, safety-recommendation content, in-store stock — none are load-bearing to the feel.
+Skip for now: free-drag rotation handles, first-person camera, photo-real materials, safety-recommendation content, in-store stock - none are load-bearing to the feel.
 
 ---
 

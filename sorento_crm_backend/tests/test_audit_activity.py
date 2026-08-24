@@ -1,4 +1,4 @@
-"""Cross-Entity Activity Timeline — GET /api/v1/audit/activity.
+"""Cross-Entity Activity Timeline - GET /api/v1/audit/activity.
 
 Exercises the real label resolver over a blank Postgres schema: seeded
 AuditLog rows plus a couple of live entity rows (complaint, order, user) so

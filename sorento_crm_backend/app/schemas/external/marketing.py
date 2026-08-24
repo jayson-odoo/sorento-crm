@@ -85,9 +85,9 @@ class PromotionRequest(BaseModel):
 
         1. Flat root (preferred): `start_date`, `end_date`, `is_active`,
            `description` live at the root. We hoist them into `promotions`.
-        2. n8n table mirror: `promotions` arrives as a single-element list —
+        2. n8n table mirror: `promotions` arrives as a single-element list - 
            unwrap to the object.
-        3. Strict legacy: `promotions` already an object — passthrough.
+        3. Strict legacy: `promotions` already an object - passthrough.
 
         Root `description` always wins over an empty header `description`
         (the integration sends the source filename at the root).

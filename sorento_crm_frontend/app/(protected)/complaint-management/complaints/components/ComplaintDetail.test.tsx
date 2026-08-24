@@ -1,11 +1,11 @@
 /**
  * ComplaintDetail - two behaviours from UAC-response-attachments.md:
  *
- *  - Group C/D5: the "Edit technical team response" popup uploads staged
+ * - Group C/D5: the "Edit technical team response" popup uploads staged
  *    attachments BEFORE the response text is saved; an upload failure surfaces
  *    a toast and must NOT silently save the response text alone (D2 in the
  *    plan / C5 in the UAC).
- *  - Group H: the gear-menu Reassign item acts on the open form-SLA tracker,
+ * - Group H: the gear-menu Reassign item acts on the open form-SLA tracker,
  *    is hidden with no open tracker and on a voided complaint, and on success
  *    invalidates the form-sla-trackers query AND calls handlingLock.refresh().
  *

@@ -1,4 +1,4 @@
-"""respond_contact_cs_routing — per-salesman → CS PIC pin (pin-point assignment).
+"""respond_contact_cs_routing - per-salesman → CS PIC pin (pin-point assignment).
 
 Overrides round-robin at procurement form-SLA CS-stage spawn. One active pin per
 (respond_contact_id, use_case); use_case ∈ {purchase_request, sponsorship_form}.

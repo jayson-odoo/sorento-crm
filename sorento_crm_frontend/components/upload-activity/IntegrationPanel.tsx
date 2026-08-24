@@ -1,14 +1,14 @@
 'use client';
 
 /**
- * IntegrationPanel — card-less view of the latest integration_log for an
+ * IntegrationPanel - card-less view of the latest integration_log for an
  * attachment. Mounted inside AttachmentDetailModal's tabbed details card.
  *
  * Linked entities are always derived from the attachment object's
  * `linked_products / linked_promotions / linked_form / linked_packing_lists`
  * arrays (already returned by getAttachmentMetadata + kept fresh by the
  * Linkages tab's mutation hooks). The integration_log only contributes the
- * run status, timestamp, and error fields — its `response_payload` is
+ * run status, timestamp, and error fields - its `response_payload` is
  * unreliable in the wild and we never trust it for entity rendering.
  */
 

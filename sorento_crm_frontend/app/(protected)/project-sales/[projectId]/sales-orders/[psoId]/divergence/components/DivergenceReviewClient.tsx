@@ -220,7 +220,7 @@ export function DivergenceReviewClient({
         <div className="min-w-0">
           <h1 className="text-xl font-semibold break-words">
             AutoCount comparison
-            {data.autocount_doc_no ? ` — ${data.autocount_doc_no}` : ''}
+            {data.autocount_doc_no ? ` - ${data.autocount_doc_no}` : ''}
           </h1>
           <p className="text-sm text-muted-foreground break-words">
             {data.project_title} · {data.provisional_ref}

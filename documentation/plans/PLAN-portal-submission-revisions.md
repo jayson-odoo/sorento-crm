@@ -257,9 +257,9 @@ One shared module with **two** functions, so render and parse can never disagree
 
 - `display_document_number(row) -> "SI-26-0184-R2"` - derived from `revision_no`, never stored. Consumed by the list, detail, portal, notifications, chat message builders, **both PDF services** (body + filename), and external API responses (N5: everywhere, integration payloads included).
 - `strip_revision_suffix(value) -> "SI-26-0184"` - applied at **every inbound lookup-by-number** (N6). The call sites that matter:
-  - `procurement_service.py:3441` (`StockInquiry.inquiry_number == lookup`) and `:5409` (`PurchaseRequestHeader.request_number == lookup`) - the **create-or-resubmit** decision behind `POST /api/v1/external/stock-inquiries` and the PR equivalent. A miss here does not 404, it **inserts a duplicate** instead of updating the rejected row.
-  - `external/view_link.py` - **ignore.** Public view links are retired (routes gated by `require_public_view_links_enabled`; the user confirms only in-system view and portal links are used). Do not spend effort there.
-  - Grep `_number ==` before implementing; assume this list is incomplete.
+ - `procurement_service.py:3441` (`StockInquiry.inquiry_number == lookup`) and `:5409` (`PurchaseRequestHeader.request_number == lookup`) - the **create-or-resubmit** decision behind `POST /api/v1/external/stock-inquiries` and the PR equivalent. A miss here does not 404, it **inserts a duplicate** instead of updating the rejected row.
+ - `external/view_link.py` - **ignore.** Public view links are retired (routes gated by `require_public_view_links_enabled`; the user confirms only in-system view and portal links are used). Do not spend effort there.
+ - Grep `_number ==` before implementing; assume this list is incomplete.
 
 The stored `inquiry_number` / `request_number` stays bare, so indexes, imports and existing rows are untouched.
 
@@ -451,7 +451,7 @@ Four gaps between what the frontend was built against and what the backend serve
    generic sentence stand.
 4. **`response_write_allowed` on the stock inquiry and complaint detail responses.**
    A python property on both models reading `response_gate.is_response_status_allowed`
-   - the same module the write path raises from - so the flag and the rule cannot
+ - the same module the write path raises from - so the flag and the rule cannot
    disagree. Declared on `StockInquiryResponse` / `ComplaintResponse` (a
    `response_model` drops what it does not name) and copied into both manual dict
    builders (`get_inquiry_for_response`, `_serialize_complaint`), because

@@ -55,7 +55,7 @@ def test_product_kept_and_member_promo_surfaced(monkeypatch):
 
 
 def test_product_kept_even_when_no_promo_at_all(monkeypatch):
-    """No promo (desc OR membership) — product still returned, never wiped."""
+    """No promo (desc OR membership) - product still returned, never wiped."""
     product = {
         "entity_type": "product",
         "uuid": "p-uuid-2",

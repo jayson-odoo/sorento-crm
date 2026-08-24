@@ -1,4 +1,4 @@
-# MCP Tool Catalog — Phase 3 Implementation Plan
+# MCP Tool Catalog - Phase 3 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -18,7 +18,7 @@
 | Create | `sorento_crm_backend/app/services/mcp_access_service.py` | `evaluate(...)` decision logic + audit-log write |
 | Create | `sorento_crm_backend/app/api/v1/system/mcp_access.py` | `POST /api/v1/system/mcp-access/check`, `GET /api/v1/system/mcp-access/log` |
 | Modify | `sorento_crm_backend/app/api/v1/system/__init__.py` | Mount `mcp_access.router` |
-| Modify | `sorento_crm_backend/app/api/v1/system/mcp_tools.py` | Already exists — extend with admin list endpoint that includes `is_active=false` rows when caller asks (`include_inactive=true`) |
+| Modify | `sorento_crm_backend/app/api/v1/system/mcp_tools.py` | Already exists - extend with admin list endpoint that includes `is_active=false` rows when caller asks (`include_inactive=true`) |
 | Create | `sorento_crm_backend/tests/test_mcp_access_service.py` | 5 decision branches (allow + 4 deny variants) |
 | Create | `sorento_crm_backend/tests/test_mcp_access_endpoint.py` | POST `/check` + GET `/log` integration |
 | Create | `sorento_crm_mcp/sorento_crm_mcp/access_guard.py` | TTL cache + httpx call to backend |
@@ -1003,7 +1003,7 @@ Finally, in `create_mcp_app`'s `lifespan`, expose `settings` so the generated to
             await c.aclose()
 ```
 
-(Settings already lives in scope via the closure — just stash it in the lifespan dict.)
+(Settings already lives in scope via the closure - just stash it in the lifespan dict.)
 
 Verify `Settings` defines `crm_base_url`. If not, find the equivalent base-URL field name and substitute in the generated code. (Check `sorento_crm_mcp/settings.py`.)
 
@@ -1025,7 +1025,7 @@ git commit -m "feat(mcp): require contact_id+space_id and call access guard on e
 
 ---
 
-## Task 5: Admin UI — service + hooks
+## Task 5: Admin UI - service + hooks
 
 **Files:**
 - Create: `sorento_crm_frontend/app/(protected)/system-management/mcp-tools/services/mcpAdminService.ts`
@@ -1127,7 +1127,7 @@ git commit -m "feat(fe): MCP admin service + hooks"
 
 ---
 
-## Task 6: Admin UI — catalog list page
+## Task 6: Admin UI - catalog list page
 
 **Files:**
 - Create: `sorento_crm_frontend/app/(protected)/system-management/mcp-tools/page.tsx`
@@ -1213,7 +1213,7 @@ export function McpToolsList() {
               rows.map((r) => (
                 <TableRow key={r.id}>
                   <TableCell className="font-mono text-xs">{r.tool_name}</TableCell>
-                  <TableCell>{r.module_key || '—'}</TableCell>
+                  <TableCell>{r.module_key || '-'}</TableCell>
                   <TableCell>
                     {r.current_agent_name ? (
                       r.current_agent_name
@@ -1228,7 +1228,7 @@ export function McpToolsList() {
                     />
                   </TableCell>
                   <TableCell className="truncate" title={r.description ?? ''}>
-                    {r.description ?? '—'}
+                    {r.description ?? '-'}
                   </TableCell>
                 </TableRow>
               ))
@@ -1277,7 +1277,7 @@ git commit -m "feat(fe): admin MCP Tools catalog page"
 
 ---
 
-## Task 7: Admin UI — access log page
+## Task 7: Admin UI - access log page
 
 **Files:**
 - Create: `sorento_crm_frontend/app/(protected)/system-management/mcp-tools/access-log/page.tsx`
@@ -1312,10 +1312,10 @@ import { StatusPill } from '@/components/common/StatusPill';
 const DECISIONS = [
   { value: '__all__', label: 'All decisions' },
   { value: 'allow', label: 'Allow' },
-  { value: 'deny_no_access', label: 'Deny — no access' },
-  { value: 'deny_tool_unlinked', label: 'Deny — tool unlinked' },
-  { value: 'deny_unknown_tool', label: 'Deny — unknown tool' },
-  { value: 'deny_unknown_contact', label: 'Deny — unknown contact' },
+  { value: 'deny_no_access', label: 'Deny - no access' },
+  { value: 'deny_tool_unlinked', label: 'Deny - tool unlinked' },
+  { value: 'deny_unknown_tool', label: 'Deny - unknown tool' },
+  { value: 'deny_unknown_contact', label: 'Deny - unknown contact' },
 ];
 
 const COLOR_BY_DECISION: Record<string, string> = {
@@ -1397,10 +1397,10 @@ export function McpAccessLogList() {
                     />
                   </TableCell>
                   <TableCell className="font-mono text-xs">
-                    {r.contact_external_id ?? '—'}
+                    {r.contact_external_id ?? '-'}
                   </TableCell>
                   <TableCell className="font-mono text-xs">
-                    {r.respond_workspace_id ?? '—'}
+                    {r.respond_workspace_id ?? '-'}
                   </TableCell>
                 </TableRow>
               ))
@@ -1496,7 +1496,7 @@ After Task 8 ships:
 - Backend enforces ownership and writes one audit row per call.
 - 60 s in-memory cache on the MCP server reduces DB load.
 - Admins have two read-only pages under System Management → MCP Tools (catalog + access log).
-- Phase 2's AccessAgent UI is unchanged — it's still the only place to ASSIGN tools.
+- Phase 2's AccessAgent UI is unchanged - it's still the only place to ASSIGN tools.
 
 The MCP guard is live. End-to-end: respond.io → contact → access agent → tool → backend.
 

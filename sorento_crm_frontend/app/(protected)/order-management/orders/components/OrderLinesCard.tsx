@@ -219,7 +219,7 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
                             {productLineLabel(line)}
                           </Link>
                         ) : (
-                          <span className="text-muted-foreground">—</span>
+                          <span className="text-muted-foreground"> - </span>
                         )}
                       </TableCell>
                       <TableCell>

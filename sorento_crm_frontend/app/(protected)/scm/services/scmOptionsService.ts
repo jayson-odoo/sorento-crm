@@ -4,11 +4,11 @@
  * ============================================================================
  * SCM has no dedicated option endpoints, so these reuse existing peer routes
  * (all reachable by an admin):
- *   warehouses  - derived from GET /scm/dashboard/warehouses
- *   suppliers   - derived from GET /scm/dashboard/suppliers
- *   categories  - GET /master-data/product-categories/select (value = id)
- *   customers   - GET /order-management/customers/select (value = customer_code)
- *   products    - GET /master-data/products/select (value = product_code)
+ *   warehouses - derived from GET /scm/dashboard/warehouses
+ *   suppliers - derived from GET /scm/dashboard/suppliers
+ *   categories - GET /master-data/product-categories/select (value = id)
+ *   customers - GET /order-management/customers/select (value = customer_code)
+ *   products  - GET /master-data/products/select (value = product_code)
  *   order types - GET /lookup/by-binding?table=sales_orders&column=order_type
  *                 (falls back to a sensible static list when no binding exists)
  * ============================================================================

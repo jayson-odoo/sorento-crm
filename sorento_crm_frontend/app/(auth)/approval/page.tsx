@@ -72,12 +72,12 @@ const APPROVAL_STATUS_LABELS: Record<string, string> = {
 };
 
 function approvalStatusLabel(value: string | null | undefined): string {
-  if (value == null || value === '') return '—';
+  if (value == null || value === '') return '-';
   return APPROVAL_STATUS_LABELS[value.toLowerCase()] ?? value;
 }
 
 function formatDateStr(value: string | null | undefined): string {
-  if (!value) return '—';
+  if (!value) return '-';
   try {
     const d = new Date(value);
     return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString(undefined, { dateStyle: 'medium' });
@@ -240,7 +240,7 @@ function ApprovalContent() {
       className={`min-h-screen w-full mx-auto px-4 py-6 sm:py-8 space-y-6 ${isPr || isSf ? 'max-w-full sm:max-w-5xl xl:max-w-6xl' : 'max-w-lg'}`}
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-xl sm:text-2xl font-semibold leading-tight">{typeLabel} – Approval</h1>
+        <h1 className="text-xl sm:text-2xl font-semibold leading-tight">{typeLabel} - Approval</h1>
         {viewInSystemPath && (
           <Button variant="outline" size="sm" className="shrink-0" asChild>
             <Link href={viewInSystemPath}>
@@ -274,31 +274,31 @@ function ApprovalContent() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4 [&>div]:min-w-0 [&_p]:break-words">
               <div className="py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Sponsorship form number</p>
-                <p className="text-sm font-medium">{summary?.request_number ?? '—'}</p>
+                <p className="text-sm font-medium">{summary?.request_number ?? '-'}</p>
               </div>
               <div className="py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Date</p>
                 <p className="text-sm font-medium">
-                  {summary?.request_date ? formatDateStr(summary.request_date) : '—'}
+                  {summary?.request_date ? formatDateStr(summary.request_date) : '-'}
                 </p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Customer Name</p>
-                <p className="text-sm font-medium break-words">{summary?.customer_name ?? '—'}</p>
+                <p className="text-sm font-medium break-words">{summary?.customer_name ?? '-'}</p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">PIC</p>
-                <p className="text-sm font-medium break-words">{summary?.pic ?? '—'}</p>
+                <p className="text-sm font-medium break-words">{summary?.pic ?? '-'}</p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Delivery Address</p>
                 <p className="text-sm font-medium whitespace-pre-wrap break-words">
-                  {summary?.delivery_address ?? '—'}
+                  {summary?.delivery_address ?? '-'}
                 </p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Project Title</p>
-                <p className="text-sm font-medium break-words">{summary?.project_title ?? '—'}</p>
+                <p className="text-sm font-medium break-words">{summary?.project_title ?? '-'}</p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Total Project Value</p>
@@ -307,19 +307,19 @@ function ApprovalContent() {
                     ? summary.total_project_value_text
                     : summary?.total_project_value != null
                       ? String(summary.total_project_value)
-                      : '—'}
+                      : '-'}
                 </p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Sponsor Subject</p>
-                <p className="text-sm font-medium break-words">{summary?.sponsor_subject ?? '—'}</p>
+                <p className="text-sm font-medium break-words">{summary?.sponsor_subject ?? '-'}</p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Date of Delivery</p>
                 <p className="text-sm font-medium">
                   {summary?.expected_delivery_date
                     ? formatDateStr(summary.expected_delivery_date)
-                    : '—'}
+                    : '-'}
                 </p>
               </div>
             </div>
@@ -328,7 +328,7 @@ function ApprovalContent() {
             <div className="py-2.5 border-b border-border/60">
               <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Link expires</p>
               <p className="text-sm font-medium">
-                {summary?.expires_at ? new Date(summary.expires_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
+                {summary?.expires_at ? new Date(summary.expires_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
               </p>
             </div>
             {summary?.lines && summary.lines.length > 0 && (
@@ -349,10 +349,10 @@ function ApprovalContent() {
                       {summary.lines.map((line, idx) => (
                         <TableRow key={idx}>
                           <TableCell>{idx + 1}</TableCell>
-                          <TableCell className="font-medium">{line.item_code ?? '—'}</TableCell>
-                          <TableCell>{line.quantity != null ? String(line.quantity) : '—'}</TableCell>
-                          <TableCell className="text-right">{line.unit_price != null ? formatCurrency(line.unit_price) : '—'}</TableCell>
-                          <TableCell className="text-right">{line.total != null ? formatCurrency(line.total) : '—'}</TableCell>
+                          <TableCell className="font-medium">{line.item_code ?? '-'}</TableCell>
+                          <TableCell>{line.quantity != null ? String(line.quantity) : '-'}</TableCell>
+                          <TableCell className="text-right">{line.unit_price != null ? formatCurrency(line.unit_price) : '-'}</TableCell>
+                          <TableCell className="text-right">{line.total != null ? formatCurrency(line.total) : '-'}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -404,7 +404,7 @@ function ApprovalContent() {
               <div className="py-2.5 border-b border-border/60 last:border-0">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Link expires</p>
                 <p className="text-sm font-medium">
-                  {summary?.expires_at ? new Date(summary.expires_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
+                  {summary?.expires_at ? new Date(summary.expires_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
                 </p>
               </div>
               {summary?.lines && summary.lines.length > 0 && (
@@ -417,9 +417,9 @@ function ApprovalContent() {
                         className="rounded-md border border-border/60 bg-muted/30 p-3 space-y-1.5"
                       >
                         <p className="text-xs text-muted-foreground uppercase tracking-wide">Product</p>
-                        <p className="text-sm font-medium break-words">{line.item_code ?? '—'}</p>
+                        <p className="text-sm font-medium break-words">{line.item_code ?? '-'}</p>
                         <p className="text-xs text-muted-foreground uppercase tracking-wide mt-1.5">Quantity</p>
-                        <p className="text-sm font-medium">{line.quantity != null ? String(line.quantity) : '—'}</p>
+                        <p className="text-sm font-medium">{line.quantity != null ? String(line.quantity) : '-'}</p>
                         {isPr && (line.remark != null && String(line.remark).trim() !== '') && (
                           <>
                             <p className="text-xs text-muted-foreground uppercase tracking-wide mt-1.5">Remarks</p>

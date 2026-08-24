@@ -52,14 +52,14 @@ PDF name. Nobody maintains a spreadsheet of expiry dates.
 Nine `Certification` attachments exist, 239 `product_attachments` links, 185 distinct products:
 
 ```
-PPS  - IKRAM 04424FC       - EXP 23 DEC 2026     68 links
-PPS  - IKRAM 04324FC       - EXP 23 DEC 2026     16
-PPS  - IKRAM 04224FC       - EXP 23 DEC 2026      0 links   <- existing silent failure
-PPS  - IKRAM 04124FC       -     01 APRIL 2027    8
-PPS  - JBC WCM PC 000321   - EXP 07 JAN 2027     12
-PPS  - JBC WCM PC 000320   - EXP 07 JAN 2027     90
-PPS  - JBC WCM PC 000319   - EXP 07 JAN 2027      8
-PPS  - JBC WCM PC 000318   - EXP 07 JAN 2027     29
+PPS - IKRAM 04424FC     - EXP 23 DEC 2026     68 links
+PPS - IKRAM 04324FC     - EXP 23 DEC 2026     16
+PPS - IKRAM 04224FC     - EXP 23 DEC 2026      0 links   <- existing silent failure
+PPS - IKRAM 04124FC    -   01 APRIL 2027    8
+PPS - JBC WCM PC 000321 - EXP 07 JAN 2027     12
+PPS - JBC WCM PC 000320 - EXP 07 JAN 2027     90
+PPS - JBC WCM PC 000319 - EXP 07 JAN 2027      8
+PPS - JBC WCM PC 000318 - EXP 07 JAN 2027     29
 SPAN - IKRAM 04124FC - IWC - EXP 05 APRIL 2029    8
 ```
 

@@ -3,7 +3,7 @@
 
 Flat keys `{entity_type}/{filename}` collide across folders (two live rows, same type + name,
 different folders → one object → silent clobber). This migration moves each flat object to
-`{entity_type}/{attachment_id}/{filename}` — the uuid dir makes every key unique — and repoints
+`{entity_type}/{attachment_id}/{filename}` - the uuid dir makes every key unique - and repoints
 `file_path` at the new key.
 
 **The old object is KEPT, never deleted.** Old public/CDN links still resolve. A later cleanup
@@ -24,7 +24,7 @@ SAFETY:
 
 NOTE on bucket: the backend talks to whatever R2/S3 bucket the current .env points at. The
 source objects must live there. Local rows whose bytes are only in the prod bucket will report
-SOURCE_MISSING when run against a staging bucket — that's expected; run against the bucket that
+SOURCE_MISSING when run against a staging bucket - that's expected; run against the bucket that
 actually holds the objects.
 """
 from __future__ import annotations
@@ -59,7 +59,7 @@ logger = logging.getLogger("migrate_attachment_keys_to_uuid")
 def _new_key_for(old_key: str, attachment_id: str) -> str | None:
     """Inject the attachment uuid between the prefix and the filename of a FLAT key.
 
-    Returns None for keys that are NOT flat `{prefix}/{filename}` — i.e. already uuid-scoped,
+    Returns None for keys that are NOT flat `{prefix}/{filename}` - i.e. already uuid-scoped,
     promotion `{p}/{entity_id}/{name}`, portal `{portal}/{contact}/{uuid}{ext}`. Those are
     skipped (already collision-safe / already migrated).
     """
@@ -135,7 +135,7 @@ def main() -> int:
 
         for att in rows:
             # Per-row isolation: one bad row (copy error, commit blip) must not
-            # abort the whole run. Roll back its partial state and carry on — the
+            # abort the whole run. Roll back its partial state and carry on - the
             # copy-before-flip + idempotent re-run make this safe (a re-run REPOINTs
             # any row whose object copied but whose file_path never committed).
             try:

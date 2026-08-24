@@ -1,6 +1,6 @@
-# PLAN — Import-tracking master-ref upsert + backfill (customer & transporter)
+# PLAN - Import-tracking master-ref upsert + backfill (customer & transporter)
 
-**Status:** IMPLEMENTED (Part A + B + tests) — backfill not yet run on prod. Uncommitted.
+**Status:** IMPLEMENTED (Part A + B + tests) - backfill not yet run on prod. Uncommitted.
 **Owner:** Claude
 **Date:** 2026-07-06
 
@@ -8,7 +8,7 @@
 
 Prod loads delivery orders via **Actions → Import tracking** (`import_excel_tracking`, RQ task).
 That path writes `debtor_name` / `debtor_code` / `transporter` as free-text but **never**
-populates the `customer_id` / `transporter_id` FKs — so new debtors and transporters never
+populates the `customer_id` / `transporter_id` FKs - so new debtors and transporters never
 land in the `customers` / `transporters` master tables. Symptom reported: new customers from
 DOs missing from Customers table.
 
@@ -22,26 +22,26 @@ never wired into the Excel import path.
 |---|:---:|:---:|:---:|---|
 | `create_order` (API) | ✅ | ✅ | ✅ | yes (single create) |
 | `update_order` (API) | ✅ | ✅ | ✅ | yes (edit) |
-| `import_excel_tracking` (RQ) | ❌ **gap** | ❌ **gap** | ✅ already fires | **yes — the "Import tracking" button** |
-| `bulk_import_orders` | ❌ | ❌ | ❌ | **dead** — dialog unreachable, no button calls `setUploadDialogOpen(true)` |
+| `import_excel_tracking` (RQ) | ❌ **gap** | ❌ **gap** | ✅ already fires | **yes - the "Import tracking" button** |
+| `bulk_import_orders` | ❌ | ❌ | ❌ | **dead** - dialog unreachable, no button calls `setUploadDialogOpen(true)` |
 
 `bulk_import_orders` is dead code (FE `TemplateUploadDialog` never opened). Out of scope; optionally rip out later.
 
 ## Fix
 
-### Part A — wire upsert into `import_excel_tracking`
+### Part A - wire upsert into `import_excel_tracking`
 
 `order_service.py`, method `import_excel_tracking`:
 
-1. **Master sheet — existing-order update branch** (~2282, before the `setattr` loop):
+1. **Master sheet - existing-order update branch** (~2282, before the `setattr` loop):
    `mapped = self._sync_order_master_refs(mapped)` so `customer_id` (+ `transporter_id` if
    master carries it) is applied via the existing `for key,value in mapped.items(): setattr(...)`.
 
-2. **Master sheet — new-order branch** (~2301, before `Order(**mapped)`):
+2. **Master sheet - new-order branch** (~2301, before `Order(**mapped)`):
    `mapped = self._sync_order_master_refs(mapped)`.
 
 3. **Overall Tracking sheet branch** (~2360, before the `setattr` loop):
-   `mapped = self._sync_order_master_refs(mapped)` — the tracking sheet is where `transporter`
+   `mapped = self._sync_order_master_refs(mapped)` - the tracking sheet is where `transporter`
    lives (`tracking_mapping["Transporter"] = "transporter"`), so this is what populates
    `transporter_id`.
 
@@ -49,10 +49,10 @@ never wired into the Excel import path.
 keys present in the dict, so calling it on both sheets is safe (master mapped has debtor,
 tracking mapped has transporter; neither disturbs the other).
 
-**No new helper needed** — reuse `_sync_order_master_refs`, `_upsert_customer_from_debtor`,
+**No new helper needed** - reuse `_sync_order_master_refs`, `_upsert_customer_from_debtor`,
 `_upsert_transporter_from_text` verbatim (same dedupe rules as API path).
 
-### Part B — backfill existing orphans
+### Part B - backfill existing orphans
 
 Idempotent JOIN-based script (per backfill rule: "set to correct value where mismatch", re-runnable).
 
@@ -69,8 +69,8 @@ Idempotent JOIN-based script (per backfill rule: "set to correct value where mis
 - Idempotent: re-run only touches rows still NULL/mismatched.
 
 ## Out of scope
-- `bulk_import_orders` (dead) — leave as-is this PR.
-- Complaint reconcile — already fires in `import_excel_tracking`, untouched.
+- `bulk_import_orders` (dead) - leave as-is this PR.
+- Complaint reconcile - already fires in `import_excel_tracking`, untouched.
 
 ## Verification
 - **pytest:** unit test `import_excel_tracking` with a Master row carrying a brand-new debtor +

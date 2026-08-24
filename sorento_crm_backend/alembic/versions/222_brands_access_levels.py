@@ -4,7 +4,7 @@ Brands now carry the same access-level vocabulary as promotions / attachments
 (`contact_access_types.code`). Used by the resolver's promotion-domain product
 fallback: when a promotion isn't found for the active contact's access levels,
 the fallback product search scopes to products whose brand.access_levels
-intersect the supplied codes — keeps the agent from surfacing products the
+intersect the supplied codes - keeps the agent from surfacing products the
 contact isn't supposed to see.
 
 Default `["dealer","end_user"]` mirrors the existing Attachment + Promotion

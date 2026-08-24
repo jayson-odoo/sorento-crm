@@ -2,7 +2,7 @@
 
 Each test here pins a bug that already reached production once. The lesson text
 is quoted in the docstring so the intent survives even if the implementation
-moves. Keep these cheap and dependency-free — they are the cheapest possible
+moves. Keep these cheap and dependency-free - they are the cheapest possible
 insurance against re-introducing a known-costly bug.
 """
 from __future__ import annotations
@@ -11,7 +11,7 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# LESSON: "GRN↔SPO link weak matcher" — the import path used a slash-only
+# LESSON: "GRN↔SPO link weak matcher" - the import path used a slash-only
 # normalizer while the system-wide `_spo_match_key` strips ALL non-alphanumerics.
 # `SPO-2026/06-0095` and `SPO-202606-0095` compared UNEQUAL under the weak rule,
 # so GRN picking lines were left with `spo_allocation_id` NULL.
@@ -41,7 +41,7 @@ def test_spo_match_key_collapses_every_separator_style(variant):
 
 
 def test_spo_match_key_distinguishes_genuinely_different_numbers():
-    """Normalization must not over-collapse — different SPOs stay different."""
+    """Normalization must not over-collapse - different SPOs stay different."""
     from app.services.procurement_service import _spo_match_key
 
     assert _spo_match_key("SPO-202606-0095") != _spo_match_key("SPO-202606-0096")
@@ -59,7 +59,7 @@ def test_spo_match_key_empty_never_matches_a_real_spo(empty):
 # ---------------------------------------------------------------------------
 # LESSON: "Two SLA systems share `conversation_sla_tracking`, discriminated only
 # by `source_entity_type`." Every contact-keyed conversation query MUST apply
-# `conversation_tracking_scope()` or it falsely matches a form-SLA row — the
+# `conversation_tracking_scope()` or it falsely matches a form-SLA row - the
 # original bug: an active FORM row alone made n8n's conversation-create 409, and
 # thread-assignee lookups could return a form row's assignee.
 # ---------------------------------------------------------------------------

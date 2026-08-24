@@ -1,5 +1,5 @@
 /**
- * Upload Activity drawer — public exports.
+ * Upload Activity drawer - public exports.
  *
  * Phase 1: mocks-driven prototype. Phase 2 will keep these import
  * sites stable and only swap internals.

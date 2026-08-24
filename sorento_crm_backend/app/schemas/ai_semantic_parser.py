@@ -2,7 +2,7 @@
 
 The parser is the single front-of-pipeline LLM: it *understands language and
 emits parameters*, never prose (except ``standalone_query``, which is only an
-embedding seed for RAG — never shown to the user). A deterministic router then
+embedding seed for RAG - never shown to the user). A deterministic router then
 switches on ``intent`` + ``signals``.
 
 See ``documentation/plans/PLAN-ai-assistant-structured-parser.md``.
@@ -19,13 +19,13 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Closed intent set — ONE intent = ONE router branch (domain is a param, not an
+# Closed intent set - ONE intent = ONE router branch (domain is a param, not an
 # intent). Order documents router precedence intent-family, not evaluation order.
 Intent = Literal[
     "capability",       # static capability catalog, no LLM
-    "smalltalk",        # greetings / thanks — no tools
+    "smalltalk",        # greetings / thanks - no tools
     "how_to",           # user guides (Outline)
-    "definition",       # explain a term/status — no live data, no guide
+    "definition",       # explain a term/status - no live data, no guide
     "record_question",  # facts about the OPEN record (already loaded)
     "record_action",    # mutate an existing record: close/cancel/approve (write)
     "data_query",       # live system data via MCP read tools
@@ -72,7 +72,7 @@ class ParseResult(BaseModel):
     standalone_query: str = ""              # RAG embedding seed ONLY (never user-facing)
     intent: Intent = "unknown"
     language: str = "en"                    # detected reply language
-    confidence: float = 0.0                 # parser self-confidence 0–1
+    confidence: float = 0.0                 # parser self-confidence 0 - 1
     form_target: Optional[FormTarget] = None
     entities: ParseEntities = Field(default_factory=ParseEntities)
     signals: ParseSignals = Field(default_factory=ParseSignals)
@@ -87,7 +87,7 @@ def fallback_parse(raw_message: str) -> ParseResult:
 
 
 # --------------------------------------------------------------------------- #
-# JSON Schema — OpenAI strict-mode compliant + Anthropic tool input_schema      #
+# JSON Schema - OpenAI strict-mode compliant + Anthropic tool input_schema      #
 # --------------------------------------------------------------------------- #
 
 _NULLABLE_STR = {"type": ["string", "null"]}

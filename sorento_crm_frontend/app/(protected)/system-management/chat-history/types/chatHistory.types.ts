@@ -1,7 +1,7 @@
 export interface ChatMessageRow {
   id: number;
   channel: string;
-  /** Respond.io contact id. For filtering and thread lookup only — never displayed. */
+  /** Respond.io contact id. For filtering and thread lookup only - never displayed. */
   contact_id: string;
   /** Rendered "Name (+phone)". This is what the UI shows. */
   contact_display: string;
@@ -20,7 +20,7 @@ export interface ChatMessageRow {
   /**
    * Per-turn conversation state transition (v1), on INCOMING rows only and only on
    * the thread (transcript) endpoint. Opaque: {v, before, parser_raw, parser_applied,
-   * after}. `after: null` means the turn wrote no state — a real signal, not `{}`.
+   * after}. `after: null` means the turn wrote no state - a real signal, not `{}`.
    * The transcript derives an entities-lost/gained + cause-flags summary from this and
    * offers the raw document in a searchable JSON viewer.
    */
@@ -63,6 +63,6 @@ export interface ChatHistoryFilters {
  *
  * Server-side, not a rendering choice: the grid is offset-paginated, so unless
  * the API orders group members contiguously the UI could only group within the
- * current page — every page would show fragments of many groups.
+ * current page - every page would show fragments of many groups.
  */
 export type ChatHistoryGroupBy = 'none' | 'date' | 'contact' | 'contact_date';

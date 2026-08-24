@@ -85,7 +85,7 @@ def test_passes_contact_identifier_not_just_message_id(db):
 
 
 def test_skips_rows_already_fully_resolved(db):
-    """Both halves present — nothing left for Respond to tell us."""
+    """Both halves present - nothing left for Respond to tell us."""
     row = _row(db, message_id="m1", respond_ts=NOW)
     row.delivery_status = "delivered"
     db.commit()
@@ -136,7 +136,7 @@ def test_not_found_increments_attempts(db):
 
 
 def test_not_found_at_max_attempts_marks_not_sent(db):
-    """'If not found, it was not sent' — but only after we've stopped believing a retry."""
+    """'If not found, it was not sent' - but only after we've stopped believing a retry."""
     row = _row(db, message_id="ghost", attempts=svc.MAX_RESOLVE_ATTEMPTS - 1)
     client = FakeClient(raises={"ghost": svc.MessageNotFound("404")})
 
@@ -235,14 +235,14 @@ def test_microsecond_message_id_yields_respond_ts():
 
 
 def test_whole_second_incoming_message_id_yields_respond_ts():
-    """Inbound WhatsApp ids land on exact seconds — that granularity is real."""
+    """Inbound WhatsApp ids land on exact seconds - that granularity is real."""
     assert svc.respond_ts_from_message_id(
         "1784602116000000", sent_at=datetime(2026, 7, 21, 2, 48, 36)
     ) == datetime(2026, 7, 21, 2, 48, 36)
 
 
 def test_millisecond_epoch_is_rejected_not_read_as_microseconds():
-    """1784602125363 as microseconds is 1970 — implausible, so refuse it."""
+    """1784602125363 as microseconds is 1970 - implausible, so refuse it."""
     assert svc.respond_ts_from_message_id("1784602125363", sent_at=SENT_AT) is None
 
 

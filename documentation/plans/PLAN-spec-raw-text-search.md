@@ -14,14 +14,14 @@ A customer types a sentence in WhatsApp: "sorento double bowl kitchen sink with 
    parser never modelled ("thickness 1.0mm") can no longer be silently dropped before it
    reaches us.
 2. The CRM answers with, in one response:
-   - ranked products that actually answer the description (never SORENTOBAG / "NOT USE
+ - ranked products that actually answer the description (never SORENTOBAG / "NOT USE
      THIS CODE" as the headline answer),
-   - per-row spec VALUES ("this one is 1.2mm, that one 1.0mm") so the reply can show WHY
+ - per-row spec VALUES ("this one is 1.2mm, that one 1.0mm") so the reply can show WHY
      each product is offered,
-   - honest verdicts: `spec_unmet` (known key, products lack the value: "thickness isn't
+ - honest verdicts: `spec_unmet` (known key, products lack the value: "thickness isn't
      recorded for these"), `unrecognized_terms` (word bound to nothing: "I don't know
      what X means") - two different sentences n8n renders differently,
-   - no false "Couldn't find: double bowl kitchen sink" footer when spec rows DID answer
+ - no false "Couldn't find: double bowl kitchen sink" footer when spec rows DID answer
      that description.
 3. The customer holds a shortlist with visible reasons, or an honest explanation of what
    could not be honoured. Never junk presented as an answer, never a silent drop.

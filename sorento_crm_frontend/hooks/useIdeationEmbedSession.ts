@@ -9,7 +9,7 @@ import {
  *
  * Calls the real BE mint endpoint via `getIdeationEmbedSession` (Slice D). On failure
  * (shared-service down / dormant settings) the query lands in the error state and
- * `IdeationEmbed` renders its explicit error + Retry CTA — never a blank iframe, never
+ * `IdeationEmbed` renders its explicit error + Retry CTA - never a blank iframe, never
  * a leaked URL/secret. `retry: false` so the user's manual Retry button drives refetch.
  * The returned `{ iframe_url, token, expires_at }` shape matches the Phase-1 stub, so
  * the board/detail pages are unchanged.

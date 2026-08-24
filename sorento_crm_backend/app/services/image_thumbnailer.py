@@ -1,7 +1,7 @@
 """Generate small raster thumbnails for the Files grid view.
 
-Product photos are stored at full resolution (routinely 3000–4500 px on the
-long edge — 10–20 MP). The Drive grid renders them into a ~114 px box, so the
+Product photos are stored at full resolution (routinely 3000 - 4500 px on the
+long edge - 10 - 20 MP). The Drive grid renders them into a ~114 px box, so the
 browser downloads and decodes multi-megapixel bitmaps only to paint them at
 thumbnail size. A single 4500×4500 image decodes to ~81 MB of raw bitmap in
 RAM plus a large GPU texture; a page of 90+ such cards drowns the compositor on
@@ -56,7 +56,7 @@ def generate_thumbnail(
 ) -> Optional[bytes]:
     """Return a small RGB JPEG thumbnail of ``content``, or ``None``.
 
-    ``None`` is returned for non-images and for any decode/encode failure — the
+    ``None`` is returned for non-images and for any decode/encode failure - the
     caller must treat that as "no thumbnail" and serve the original. Aspect
     ratio is preserved (``Image.thumbnail`` only ever downscales), so the grid's
     ``object-cover`` crop never distorts.
@@ -76,7 +76,7 @@ def generate_thumbnail(
             out = io.BytesIO()
             im.save(out, format="JPEG", quality=quality, optimize=True)
             return out.getvalue()
-    except Exception as exc:  # noqa: BLE001 — not a decodable image / encode failed
+    except Exception as exc:  # noqa: BLE001 - not a decodable image / encode failed
         logger.warning("Thumbnail generation skipped (mime=%s): %s", mime, exc)
         return None
 
@@ -86,7 +86,7 @@ def store_thumbnail(backend, provider, original_key: str, content: bytes, mime) 
 
     Shared by every upload path (single-file route + bulk-import task). Best-effort:
     a non-image, or any generate/upload failure, returns None so the grid falls back
-    to the original — a failed thumbnail must NEVER fail the upload.
+    to the original - a failed thumbnail must NEVER fail the upload.
     """
     from app.services.storage_router import cdn_base_url
 
@@ -99,6 +99,6 @@ def store_thumbnail(backend, provider, original_key: str, content: bytes, mime) 
             file_content=thumb, file_path=thumb_key, content_type="image/jpeg"
         )
         return cdn_base_url(provider, thumb_key)
-    except Exception as exc:  # noqa: BLE001 — thumbnail is optional, never block upload
+    except Exception as exc:  # noqa: BLE001 - thumbnail is optional, never block upload
         logger.warning("Thumbnail store skipped for key=%s: %s", (original_key or "")[:80], exc)
         return None

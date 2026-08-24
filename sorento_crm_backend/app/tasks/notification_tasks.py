@@ -35,7 +35,7 @@ _NOTIFICATION_TYPE_TO_EVENT_KEY: dict[str, str] = {
     "form_sla:resolved": "form_sla_updated",
     "form_sla_assigned": "form_sla_assigned",
     "form_sla_escalated": "form_sla_escalated",
-    # SLA deadline extended (PLAN-sla-extend-deadline) — next-tier notification. Sent
+    # SLA deadline extended (PLAN-sla-extend-deadline) - next-tier notification. Sent
     # as conversation_sla or form_sla with event_type="deadline_extended"; both map to
     # the same outbox event key / template use case (sla_deadline_extended).
     "form_sla:deadline_extended": "sla_deadline_extended",
@@ -122,7 +122,7 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
 
     Window-aware: open -> text, closed -> the use-case's approved template
     (sla_escalation / sla_assignment). Best-effort: marks the delivery sent/failed
-    and never raises — the originating escalation/assignment already committed.
+    and never raises - the originating escalation/assignment already committed.
     """
     from app.services.respond_link_service import resolve_user_respond_contact
     from app.services.respond_messaging_service import send_text_or_template
@@ -150,7 +150,7 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
     context_vars = data.get("whatsapp_context_vars") if isinstance(data.get("whatsapp_context_vars"), dict) else None
 
     identifier = str(contact.respond_io_id)
-    # Every send writes a respond_io outbox log — success OR failure — same as the
+    # Every send writes a respond_io outbox log - success OR failure - same as the
     # complaint / OTP / SLA-escalation paths via `_send_and_log`. Local testing runs
     # with intentionally-wrong creds, so a 401'd send must still be visible in the
     # Respond outbox, not just flip the delivery row to failed.
@@ -192,7 +192,7 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
         db.commit()
     except Exception as e:  # best-effort: degrade, never raise
         logger.warning("WhatsApp delivery failed for notification %s: %s", notification.id, e)
-        # Log the payload that was ACTUALLY attempted (text vs template) — the
+        # Log the payload that was ACTUALLY attempted (text vs template) - the
         # window-aware send stamps it on the exception. Closed window => template,
         # so a failed closed-window send is logged as a template attempt, not text.
         request_payload = getattr(e, "request_payload", request_payload)
@@ -401,6 +401,57 @@ def _enqueue_coalesced_attachment_email(
     return outbox_id, merged
 
 
+# Push services reject a payload of 4096 bytes or more. The limit is theirs, not
+# ours, and it is enforced per request.
+WEB_PUSH_PAYLOAD_LIMIT_BYTES = 4096
+
+# Keys the service worker actually reads out of `data` (sorento_crm_frontend/public/sw.js:
+# `data.link` on notificationclick, `tag` for coalescing). Everything else in a
+# notification's `data` exists for other channels and has no business on the wire.
+_PUSH_DATA_KEYS = ("link", "tag")
+
+
+def build_push_payload(notification) -> str:
+    """Serialise a notification into a web-push body that always fits.
+
+    Built explicitly rather than by passing `notification.data` through. SLA
+    notifications carry `whatsapp_context_vars` in that dict - the full message,
+    the reason, three URLs - and 13 production pushes were rejected with
+    "binary data passed in the request must be less than 4096 bytes". The push is
+    a poke with a link; everything else is one authenticated fetch away, which is
+    the same argument `conversation_event_bus` makes for its own payload shape.
+
+    The link outranks the body: if the body alone would overflow, it is truncated
+    so the notification still arrives and still goes somewhere useful. Truncation
+    is measured in BYTES, because a CJK body is three bytes per character and a
+    character cap would still overflow.
+    """
+    import json
+
+    source = notification.data or {}
+    data = {k: source[k] for k in _PUSH_DATA_KEYS if source.get(k) is not None}
+    body = notification.body or ""
+
+    def _encode(b: str) -> str:
+        return json.dumps({"title": notification.title, "body": b, "data": data})
+
+    payload = _encode(body)
+    if len(payload.encode("utf-8")) < WEB_PUSH_PAYLOAD_LIMIT_BYTES:
+        return payload
+
+    # Binary-search the longest body that fits, then re-encode once. Slicing by a
+    # fixed byte count would cut mid-character and json.dumps escaping means the
+    # encoded length is not a simple function of the body length.
+    low, high = 0, len(body)
+    while low < high:
+        mid = (low + high + 1) // 2
+        if len(_encode(body[:mid] + "...").encode("utf-8")) < WEB_PUSH_PAYLOAD_LIMIT_BYTES:
+            low = mid
+        else:
+            high = mid - 1
+    return _encode(body[:low] + "..." if low else "")
+
+
 def _send_web_push_for_notification(
     db,
     notification: Notification,
@@ -439,12 +490,7 @@ def _send_web_push_for_notification(
         db.commit()
         return
 
-    import json
-    payload = json.dumps({
-        "title": notification.title,
-        "body": notification.body or "",
-        "data": notification.data or {},
-    })
+    payload = build_push_payload(notification)
     last_error = None
     sent_any = False
     for sub in subs:

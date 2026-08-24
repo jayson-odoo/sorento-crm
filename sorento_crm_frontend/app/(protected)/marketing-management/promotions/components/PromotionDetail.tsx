@@ -60,7 +60,7 @@ function formatFocTiersLabel(group: PromotionGroup): string | null {
   return tiers.map((t) => `Buy ${t.purchase_quantity} get ${t.foc_quantity} free`).join(' · ');
 }
 
-/** User enters 0–100 (% off list); API stores fraction 0–1. */
+/** User enters 0 - 100 (% off list); API stores fraction 0 - 1. */
 function parseDealerDiscountPercentInput(raw: string): { ok: true; fraction: number | null } | { ok: false } {
   const t = raw.trim();
   if (t === '') return { ok: true, fraction: null };
@@ -121,7 +121,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
   const [productCodeSearch, setProductCodeSearch] = useState('');
 
   // Server-search products for the add-product dialog. A pageSize:1000 static list
-  // silently capped the picker at the first 1000 SKUs — anything past that (e.g.
+  // silently capped the picker at the first 1000 SKUs - anything past that (e.g.
   // SRTWC*) was unreachable, showing "No results" for a real product. Drive the
   // catalog search server-side, debounced, like the attachment link picker.
   const [productSearch, setProductSearch] = useState('');
@@ -550,13 +550,13 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
             <div>
               <p className="text-sm text-muted-foreground">Start Date</p>
               <p className="font-medium">
-                {promotion.start_date != null ? formatDateInMalaysia(promotion.start_date) : '—'}
+                {promotion.start_date != null ? formatDateInMalaysia(promotion.start_date) : '-'}
               </p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">End Date</p>
               <p className="font-medium">
-                {promotion.end_date != null ? formatDateInMalaysia(promotion.end_date) : '—'}
+                {promotion.end_date != null ? formatDateInMalaysia(promotion.end_date) : '-'}
               </p>
             </div>
             {promotion.access_levels && promotion.access_levels.length > 0 && (
@@ -826,7 +826,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                 options={[
                   ...sortedGroupsBase.map((g) => ({ value: g.id, label: g.group_name })),
                   ...(sortedGroupsBase.length === 0
-                    ? [{ value: '__no_groups__', label: 'No groups — use Add group first', disabled: true }]
+                    ? [{ value: '__no_groups__', label: 'No groups - use Add group first', disabled: true }]
                     : []),
                 ]}
                 placeholder="Select group"

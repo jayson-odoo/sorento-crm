@@ -1,4 +1,4 @@
-# Per-Contact Portal Link Action — Implementation Plan
+# Per-Contact Portal Link Action - Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -17,23 +17,23 @@
 ## File Structure
 
 **Backend (created/modified):**
-- Modify `sorento_crm_backend/app/rbac/permission_registry.py` — append new permission slug
-- Create `sorento_crm_backend/alembic/versions/160_contact_portal_link_permission.py` — sync new perm
-- Modify `sorento_crm_backend/app/services/portal_service.py` — add `get_or_mint_token`, `send_link_via_respond_io`, `_build_send_message_text`
-- Modify `sorento_crm_backend/app/api/v1/user_management/contacts.py` — add 2 routes
-- Create `sorento_crm_backend/tests/test_portal_link_action.py` — service + endpoint tests
-- Create `sorento_crm_backend/tests/test_contact_portal_link_permission.py` — registry test
+- Modify `sorento_crm_backend/app/rbac/permission_registry.py` - append new permission slug
+- Create `sorento_crm_backend/alembic/versions/160_contact_portal_link_permission.py` - sync new perm
+- Modify `sorento_crm_backend/app/services/portal_service.py` - add `get_or_mint_token`, `send_link_via_respond_io`, `_build_send_message_text`
+- Modify `sorento_crm_backend/app/api/v1/user_management/contacts.py` - add 2 routes
+- Create `sorento_crm_backend/tests/test_portal_link_action.py` - service + endpoint tests
+- Create `sorento_crm_backend/tests/test_contact_portal_link_permission.py` - registry test
 
 **Frontend (created/modified):**
-- Modify `sorento_crm_frontend/package.json` — add `qrcode.react`
+- Modify `sorento_crm_frontend/package.json` - add `qrcode.react`
 - Create `sorento_crm_frontend/services/contactPortalLinkService.ts`
 - Create `sorento_crm_frontend/hooks/useContactPortalLink.ts`
 - Create `sorento_crm_frontend/components/contacts/PortalLinkDialog.tsx`
 - Create `sorento_crm_frontend/components/contacts/PortalLinkButton.tsx`
 - Create `sorento_crm_frontend/components/contacts/PortalLinkDialog.test.tsx`
-- Modify `sorento_crm_frontend/app/(protected)/user-management/contacts/[id]/page.tsx` — add action in toolbar
-- Modify `sorento_crm_frontend/app/(protected)/user-management/contacts/components/ContactsList.tsx` — add row action
-- Modify `sorento_crm_frontend/app/(protected)/sla-management/conversation-sla-tracking/components/ConversationSLATrackingDetail.tsx` — add menu item
+- Modify `sorento_crm_frontend/app/(protected)/user-management/contacts/[id]/page.tsx` - add action in toolbar
+- Modify `sorento_crm_frontend/app/(protected)/user-management/contacts/components/ContactsList.tsx` - add row action
+- Modify `sorento_crm_frontend/app/(protected)/sla-management/conversation-sla-tracking/components/ConversationSLATrackingDetail.tsx` - add menu item
 
 ---
 
@@ -68,13 +68,13 @@ def test_contact_portal_link_permission_has_human_label() -> None:
     assert entry["description"]
 ```
 
-- [ ] **Step 1.2: Run test — expect FAIL**
+- [ ] **Step 1.2: Run test - expect FAIL**
 
 ```bash
 cd sorento_crm_backend && pytest tests/test_contact_portal_link_permission.py -q
 ```
 
-Expected: 2 failures (`AssertionError` — slug not in registry).
+Expected: 2 failures (`AssertionError` - slug not in registry).
 
 - [ ] **Step 1.3: Add permission to registry**
 
@@ -88,7 +88,7 @@ PERMISSION_REGISTRY.append({
 })
 ```
 
-- [ ] **Step 1.4: Run test — expect PASS**
+- [ ] **Step 1.4: Run test - expect PASS**
 
 ```bash
 pytest tests/test_contact_portal_link_permission.py -q
@@ -259,7 +259,7 @@ def test_get_or_mint_token_mints_new_when_revoked(db_session, contact, workspace
 
 NOTE: this assumes the existing test suite provides a `db_session` fixture. If not, copy the fixture pattern from another existing test file (e.g. `tests/test_portal_service.py` if present, otherwise `tests/test_lookup_models.py`).
 
-- [ ] **Step 2.2: Run tests — expect FAIL**
+- [ ] **Step 2.2: Run tests - expect FAIL**
 
 ```bash
 cd sorento_crm_backend && pytest tests/test_portal_link_action.py -q
@@ -297,7 +297,7 @@ In `sorento_crm_backend/app/services/portal_service.py`, locate the `mint_token`
         return self.mint_token(contact_id, space_id), False
 ```
 
-- [ ] **Step 2.4: Run tests — expect PASS**
+- [ ] **Step 2.4: Run tests - expect PASS**
 
 ```bash
 pytest tests/test_portal_link_action.py -q
@@ -385,7 +385,7 @@ def test_send_link_propagates_respond_io_failure(db_session, contact, workspace,
     )
 ```
 
-- [ ] **Step 3.2: Run tests — expect FAIL**
+- [ ] **Step 3.2: Run tests - expect FAIL**
 
 ```bash
 cd sorento_crm_backend && pytest tests/test_portal_link_action.py -q -k send
@@ -447,7 +447,7 @@ Then, AFTER `get_or_mint_token`, add:
 
 If `Optional` is not already imported in this file, add `from typing import Optional` to the imports.
 
-- [ ] **Step 3.4: Run tests — expect PASS**
+- [ ] **Step 3.4: Run tests - expect PASS**
 
 ```bash
 pytest tests/test_portal_link_action.py -q
@@ -526,7 +526,7 @@ def test_portal_link_endpoint_422_when_no_workspace(client, db_session):
 
 NOTE: If your test suite uses a different client/auth pattern, adapt to match (e.g. monkeypatch `get_current_user` and `UserPermissionService.check_user_has_permission`). Look at `tests/test_lookup_permissions.py` for the project's conventional pattern and mirror it.
 
-- [ ] **Step 4.2: Run tests — expect FAIL**
+- [ ] **Step 4.2: Run tests - expect FAIL**
 
 ```bash
 cd sorento_crm_backend && pytest tests/test_portal_link_action.py -q -k portal_link_endpoint
@@ -602,7 +602,7 @@ async def get_contact_portal_link(
     )
 ```
 
-- [ ] **Step 4.4: Run tests — expect PASS**
+- [ ] **Step 4.4: Run tests - expect PASS**
 
 ```bash
 pytest tests/test_portal_link_action.py -q -k portal_link_endpoint
@@ -676,13 +676,13 @@ def test_portal_link_send_endpoint_502_on_upstream_failure(client, contact, work
     assert res.status_code == 502
 ```
 
-- [ ] **Step 5.2: Run tests — expect FAIL**
+- [ ] **Step 5.2: Run tests - expect FAIL**
 
 ```bash
 cd sorento_crm_backend && pytest tests/test_portal_link_action.py -q -k portal_link_send
 ```
 
-Expected: 3 failures (404 — route not registered).
+Expected: 3 failures (404 - route not registered).
 
 - [ ] **Step 5.3: Implement send endpoint**
 
@@ -731,7 +731,7 @@ async def send_contact_portal_link(
     return PortalLinkSendResponse(**result)
 ```
 
-- [ ] **Step 5.4: Run tests — expect PASS**
+- [ ] **Step 5.4: Run tests - expect PASS**
 
 ```bash
 pytest tests/test_portal_link_action.py -q
@@ -978,13 +978,13 @@ describe('PortalLinkDialog', () => {
 });
 ```
 
-- [ ] **Step 7.2: Run tests — expect FAIL**
+- [ ] **Step 7.2: Run tests - expect FAIL**
 
 ```bash
 cd sorento_crm_frontend && npx vitest run components/contacts/PortalLinkDialog.test.tsx
 ```
 
-Expected: failure — module not found.
+Expected: failure - module not found.
 
 - [ ] **Step 7.3: Implement dialog**
 
@@ -1074,7 +1074,7 @@ export default function PortalLinkDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Portal link {contactLabel ? `— ${contactLabel}` : ''}</DialogTitle>
+          <DialogTitle>Portal link {contactLabel ? ` -  ${contactLabel}` : ''}</DialogTitle>
         </DialogHeader>
 
         {linkMutation.isPending && (
@@ -1145,7 +1145,7 @@ export default function PortalLinkDialog({
 }
 ```
 
-- [ ] **Step 7.4: Run tests — expect PASS**
+- [ ] **Step 7.4: Run tests - expect PASS**
 
 ```bash
 npx vitest run components/contacts/PortalLinkDialog.test.tsx
@@ -1299,7 +1299,7 @@ import PortalLinkButton from '@/components/contacts/PortalLinkButton';
 
 - [ ] **Step 9.2: Add button in toolbar actions**
 
-Locate the `ToolbarActions` block (the area containing the Delete contact and Back to contacts buttons — see lines around 162-175). Insert this BEFORE the Delete button:
+Locate the `ToolbarActions` block (the area containing the Delete contact and Back to contacts buttons - see lines around 162-175). Insert this BEFORE the Delete button:
 
 ```tsx
 <PortalLinkButton
@@ -1402,7 +1402,7 @@ Locate the `<DropdownMenuContent ...>` block (around line 340). After the "Open 
 )}
 ```
 
-If the tracking response shape exposes `tracking.contact_id` directly instead of `tracking.contact?.id`, use that instead — verify via the type at `types/conversationSLATracking.types.ts` and the data shape rendered around line 285.
+If the tracking response shape exposes `tracking.contact_id` directly instead of `tracking.contact?.id`, use that instead - verify via the type at `types/conversationSLATracking.types.ts` and the data shape rendered around line 285.
 
 - [ ] **Step 11.3: Type-check**
 
@@ -1486,4 +1486,4 @@ git push -u origin claude/user-submission-portal-VSIDo
 - The backend test suite's exact fixture names (`db_session`, `client`, `client.as_user`) may differ. Look at `tests/test_lookup_permissions.py` and adjacent files to find the project's actual conventions and adapt the test scaffolding accordingly. Do not invent fixtures.
 - `qrcode.react` exports `QRCodeSVG`; if a different export is in use after install, prefer `QRCodeSVG` (named export from the v3+ package).
 - The toolbar / row action insertions specify approximate line numbers from the snapshot; if line numbers have drifted, locate the same structural anchor (Toolbar actions block, actions column cell, gear DropdownMenuContent) by name rather than by line.
-- The new permission auto-applies to superadmin/admin via the existing `require_permission` bypass — no role-grant code needed.
+- The new permission auto-applies to superadmin/admin via the existing `require_permission` bypass - no role-grant code needed.

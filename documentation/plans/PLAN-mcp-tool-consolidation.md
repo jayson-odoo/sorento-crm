@@ -1,30 +1,30 @@
-# PLAN — MCP tool consolidation for deterministic n8n mapping
+# PLAN - MCP tool consolidation for deterministic n8n mapping
 
-**Status:** BUILT (4 merges done, verified, tested) — pending code review + commit
+**Status:** BUILT (4 merges done, verified, tested) - pending code review + commit
 
 ## Build log
-- ✅ **Incoming** — new `IncomingStockService.incoming_list` + `GET /incoming-stock/list`
+- ✅ **Incoming** - new `IncomingStockService.incoming_list` + `GET /incoming-stock/list`
   (shipment-rooted, nested lines, no aggregates). New MCP tool `crm_incoming_stock_list`
-  (UUID/eta narrowers only — free-text `query` omitted to satisfy the catalog guard).
+  (UUID/eta narrowers only - free-text `query` omitted to satisfy the catalog guard).
   Old `by_product` / `shipments` tools kept as aliases. pytest: `test_incoming_list.py`
   (6, green). Verified via MCP client: nested lines, product-filter narrows lines, line
   sums == old aggregates.
-- ✅ **Promotions** — MCP fan-out `_enrich_promotions_with_products` nests `products[]`
+- ✅ **Promotions** - MCP fan-out `_enrich_promotions_with_products` nests `products[]`
   under each promo (batched, paginated). Sanitize slims nested products (confidential
   dropped, promotion_price→selling_price) + strips attachment internals; **header
   attachment filename preserved** (removed the promo browse-strip rule). Verified.
-- ✅ **Products** — MCP fan-out `_enrich_products_with_attachments` nests `attachments[]`
+- ✅ **Products** - MCP fan-out `_enrich_products_with_attachments` nests `attachments[]`
   (dimensions come from product root → dimensions-gap solved). Added confidential
   `cost_price`/`invoice_price` strip (pre-existing leak). Verified with SRTFC2044 (2
   attachments, filename+type, no internal/cost leak).
-- ✅ **Orders** — no-op: `orders_list` already returns full lines (product+warehouse+qty)
+- ✅ **Orders** - no-op: `orders_list` already returns full lines (product+warehouse+qty)
   + all WhatsApp fields; `by_product` kept as alias. (Fold its product-search intent into
   the `orders_list` capability when the aliases are retired.)
 - Tests: MCP `test_merge_consolidation_sanitizer.py` (4, green); full MCP suite 81 green.
   Backend full suite has **pre-existing** cross-test isolation failures (global SQLAlchemy
   listeners + sqlite) unrelated to this change; all touched files pass in isolation.
 
-## Render envelope (`view=render`) — added
+## Render envelope (`view=render`) - added
 - New `sorento_crm_mcp/presenters.py`: per-tool presenters map each tool's sanitized
   data → ONE uniform, markdown-free envelope
   `{result_type, intro, items[{title,fields[{label,value}],flags}], attachments,
@@ -79,7 +79,7 @@ direct MCP node; no LLM picks tools or fields). Reduce 12 tools → 8 by merging
 > **MCP returns complete granular data; n8n derives summaries.**
 
 So aggregate/convenience fields (e.g. `total_remaining_incoming_quantity`,
-`warehouse_allocation_summary`) stay **out** of MCP — n8n sums the per-line rows. This is
+`warehouse_allocation_summary`) stay **out** of MCP - n8n sums the per-line rows. This is
 consistent with the trims already shipped in commit `2de034ad1`.
 
 ### What the sanitizers keep vs drop (unchanged by this plan)
@@ -91,7 +91,7 @@ KEEP (business/hygiene, never caller-dependent):
 - UUID hygiene: strip row `id`/FK UUIDs the agent/WhatsApp must not echo.
 - Vocab renames: `location`→`warehouse`, `warehouse_code`→`system_location`, etc.
 
-DROP from the trimming agenda (superseded — we now return granular):
+DROP from the trimming agenda (superseded - we now return granular):
 - Pure "LLM noise" trims that remove fields a WhatsApp template might map. None identified
   as needed-but-missing today; audit per tool during implementation.
 
@@ -120,10 +120,10 @@ No Alembic migrations. No FE changes.
 | 2 | `crm_marketing_promotions_list` | `/promotions` + `/promotion-products` | promotion → nested `products[]` |
 | 3 | `crm_master_products_list` | `/products` + `/product-attachments` | product → nested `attachments[]` |
 | 4 | `crm_incoming_stock_list` | `/incoming-stock/{by-product,shipments}` | shipment → nested product `lines[]` |
-| 5 | `crm_inventory_stock_balance_list` | unchanged | — |
-| 6 | `crm_resource_attachments_list` | unchanged | — |
-| 7 | `crm_forms_management_forms_list` | unchanged (name + attachment_id) | — |
-| 8 | `crm_portal_link_get` | unchanged | — |
+| 5 | `crm_inventory_stock_balance_list` | unchanged | - |
+| 6 | `crm_resource_attachments_list` | unchanged | - |
+| 7 | `crm_forms_management_forms_list` | unchanged (name + attachment_id) | - |
+| 8 | `crm_portal_link_get` | unchanged | - |
 
 Retired tools: `crm_order_management_orders_by_product_list`,
 `crm_marketing_promotion_products_list`, `crm_master_product_attachments_list`,
@@ -138,7 +138,7 @@ Retired tools: `crm_order_management_orders_by_product_list`,
   All WhatsApp order fields are satisfiable post-sanitizer (verified).
 - **Action:** delete the `by_product` ToolSpec from catalog; fold its product-search intent
   into `orders_list`'s `ToolIntent` (capability service). Keep `/orders/by-product`
-  endpoint for now (no consumer once tool retired) — remove in a later cleanup.
+  endpoint for now (no consumer once tool retired) - remove in a later cleanup.
 - n8n "which orders contain product X" = `orders_list?product_ids=…`, then n8n filters
   `lines[]` to that product if it wants matched-only.
 
@@ -180,13 +180,13 @@ Retired tools: `crm_order_management_orders_by_product_list`,
   ```
 - Serves both: "incoming for product X" (filter shipments by product_ids; n8n keeps the X
   lines and can sum across shipments for a product total) and "shipments this
-  month/supplier" (shipment list directly). No aggregates emitted — n8n derives
+  month/supplier" (shipment list directly). No aggregates emitted - n8n derives
   `total_remaining` / `nearest_eta` / per-warehouse summary.
 - **Trade-off vs today:** loses the product-rooted convenience of `by_product` and the
-  `distinct_products_incoming`/`total_remaining` shipment aggregates — both reconstructable
+  `distinct_products_incoming`/`total_remaining` shipment aggregates - both reconstructable
   in n8n. If product-rooted is strongly preferred for the WhatsApp template, the
   alternative is a conditional root (product-rooted when `product_ids`, else
-  shipment-rooted) — messier contract; not recommended.
+  shipment-rooted) - messier contract; not recommended.
 - Implementation: likely one backend service method that returns shipment→lines (the
   current `incoming_for_product` already computes line-level remaining + warehouse
   allocations; re-group by shipment), exposed on a single MCP-only endpoint, OR stitch two
@@ -195,16 +195,16 @@ Retired tools: `crm_order_management_orders_by_product_list`,
 
 ## Out of scope / unchanged
 - `inventory_stock_balance_list`, `resource_attachments_list`, `forms_list`,
-  `portal_link_get`. Forms stays minimal (name + attachment_id) per prior decision —
+  `portal_link_get`. Forms stays minimal (name + attachment_id) per prior decision - 
   revisit only if an n8n forms template needs more.
 
 ## Methodology note (three-phase loop)
-- **Phase 1 (FE prototype): N/A** — no UI; these are MCP/backend tools. Called out per
+- **Phase 1 (FE prototype): N/A** - no UI; these are MCP/backend tools. Called out per
   CLAUDE.md.
-- **Phase 2:** implement merged tools + sanitizers; add tests —
-  - `sorento_crm_mcp/tests`: per merged tool, assert nested shape + that confidential/UUID
+- **Phase 2:** implement merged tools + sanitizers; add tests - 
+ - `sorento_crm_mcp/tests`: per merged tool, assert nested shape + that confidential/UUID
     fields are absent and WhatsApp-needed fields are present.
-  - `pytest` backend: any new incoming endpoint/service method (happy + auth + validation).
+ - `pytest` backend: any new incoming endpoint/service method (happy + auth + validation).
 - **Phase 3:** `/code-review` the diff before PR.
 
 ## Verification

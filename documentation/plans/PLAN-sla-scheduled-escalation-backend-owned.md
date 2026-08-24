@@ -1,6 +1,6 @@
-# PLAN: Scheduled SLA escalation — backend-owned logging + no raw SQL in n8n
+# PLAN: Scheduled SLA escalation - backend-owned logging + no raw SQL in n8n
 
-Status: Implemented (2026-06-06) — backend + tests done; n8n JSON at
+Status: Implemented (2026-06-06) - backend + tests done; n8n JSON at
 `documentation/n8n/sla-scheduled-escalation.workflow.json`, awaiting manual import.
 
 ## Problem
@@ -32,26 +32,26 @@ minute, but it is fragile:
 ## Backend changes (`sorento_crm_backend`)
 
 1. **New** `GET /api/v1/sla-management/conversation-sla-tracking/integration/due-escalations`
-   - Filter: `conversation_tracking_scope()` AND `is_resolved = false` AND
+ - Filter: `conversation_tracking_scope()` AND `is_resolved = false` AND
      `current_tier IN (1, 2)` AND **split-clock breach** (the response clock stops on
-     response, so escalation must not fire on a stopped clock — the old SQL escalated
+     response, so escalation must not fire on a stopped clock - the old SQL escalated
      responded rows at the response deadline):
-     - not responded → `due_at < now`
-     - responded → `due_at_resolution < now` (never before, even if `due_at` passed)
-   - Response: `{ status, count, items: [...] }`, each item:
+   - not responded → `due_at < now`
+   - responded → `due_at_resolution < now` (never before, even if `due_at` passed)
+ - Response: `{ status, count, items: [...] }`, each item:
      `tracking_id`, `respond_contact_id` (internal), `policy_id`, `current_tier`,
      `breach_type` ("response" | "resolution"), `is_responded`, `due_at`,
      `due_at_resolution` (ISO UTC), `message_id`, `phone_number`, `respond_io_id`,
      `assigned_to_id`, `assigned_to_respond_user_id`, `source_entity_type`, `team_set_code`.
 2. **`escalation_reason` optional** on `ConversationSLAEscalateRequest`. When omitted the
-   service defaults to `"Auto-escalation: tier {from_tier} response due time breached"` —
+   service defaults to `"Auto-escalation: tier {from_tier} response due time breached"` - 
    n8n in signal-only mode doesn't know the tier before the call.
 3. **`escalated_at` added to escalate response** (ISO UTC). Replaces the n8n comment node's
    reference to the now-deleted event-log node's `created_at`.
 4. **Event-log assignee fix**: the escalation event log was written inside
    `escalate_tracking` *before* the route assigned the new tier assignee, so it recorded the
    OLD assignee. Route now passes the resolved assignee into `escalate_tracking`, which sets
-   it pre-flush — the log records the NEW assignee, and the route's post-hoc
+   it pre-flush - the log records the NEW assignee, and the route's post-hoc
    `setattr` + second commit is gone.
 
 ## n8n changes (manual import by user; n8n is not in the repo)
@@ -66,6 +66,6 @@ Removed nodes: 6× postgres SQL, 2× event-log POST, duplicate tier branch.
 
 ## Phases
 
-- Phase 1 (FE prototype): N/A — integration API only, no UI.
+- Phase 1 (FE prototype): N/A - integration API only, no UI.
 - Phase 2: backend endpoint + fixes + pytest. n8n JSON delivered in chat for manual import.
 - Phase 3: /code-review before PR.

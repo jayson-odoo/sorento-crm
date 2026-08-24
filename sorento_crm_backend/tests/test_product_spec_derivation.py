@@ -917,8 +917,8 @@ def test_a_broken_rule_does_not_stop_the_catalog_deriving(db):
 # flyer against the description INSIDE ONE DERIVATION CALL tested an ordering that no
 # longer exists here - `propose_from_text` never sees a description, so "the flyer
 # loses to the description" has no analogue to lift. Removed:
-#   - test_a_lower_rule_on_the_flyer_never_beats_a_higher_rule_on_the_description (:951)
-#   - test_a_size_in_the_description_is_not_overwritten_by_the_flyer (:1007)
+# - test_a_lower_rule_on_the_flyer_never_beats_a_higher_rule_on_the_description (:951)
+# - test_a_size_in_the_description_is_not_overwritten_by_the_flyer (:1007)
 # and test_the_description_beats_the_flyer above (:881) for the same reason. The pass
 # itself (flyer text -> material/finish/dimensions/seat_material) is pinned in
 # tests/test_product_spec_propose_from_text.py instead.

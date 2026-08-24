@@ -1,4 +1,4 @@
-"""products.variant_link_manual — manual variant-curation flag (sticky override).
+"""products.variant_link_manual - manual variant-curation flag (sticky override).
 
 When true, ``reconcile_variant_links`` / ``_adopt_orphans`` / the backfill must
 NOT re-derive or re-point that row's variant link. The partial index keeps the
@@ -27,7 +27,7 @@ def upgrade() -> None:
             server_default=sa.text("false"),
         ),
     )
-    # Partial index — manual rows are the set reconcile/backfill must skip; keeps
+    # Partial index - manual rows are the set reconcile/backfill must skip; keeps
     # the "skip manual" scans cheap on a large products table.
     op.create_index(
         "ix_products_variant_link_manual",

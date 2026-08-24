@@ -35,7 +35,7 @@ describe('TakeoverCountdown', () => {
     const commitAt = new Date(Date.now() + 6_000).toISOString();
     render(<TakeoverCountdown commitAt={commitAt} windowSeconds={60} />);
     const bar = screen.getByTestId('takeover-bar') as HTMLElement;
-    // ~6/60 ≈ 10% — NOT full (the bug showed 100%).
+    // ~6/60 ≈ 10% - NOT full (the bug showed 100%).
     expect(parseFloat(bar.style.width)).toBeLessThan(20);
     expect(screen.getByTestId('takeover-remaining').textContent).toMatch(/0:0[56]/);
   });

@@ -16,7 +16,7 @@ export const CAMPAIGN_STATUSES: { value: CampaignStatus; label: string }[] = [
 
 /** Title-case display for a stored (lowercase) campaign status. */
 export function campaignStatusLabel(status?: string | null): string {
-  if (!status) return '—';
+  if (!status) return '-';
   const found = CAMPAIGN_STATUSES.find((s) => s.value === status.toLowerCase());
   return found ? found.label : status;
 }

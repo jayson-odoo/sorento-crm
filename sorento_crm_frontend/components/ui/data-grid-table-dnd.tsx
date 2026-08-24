@@ -152,7 +152,7 @@ function DataGridTableDnd<TData>({ handleDragEnd }: { handleDragEnd: (event: Dra
               table.getRowModel().rows.map((row: Row<TData>, index) => {
                 // Same optional grouping as the non-draggable DataGridTable.
                 // Both branches need it: columnsDraggable defaults to TRUE, so
-                // this component — not the other one — is what most listings
+                // this component - not the other one - is what most listings
                 // actually render through.
                 const groupHeader = props.renderGroupHeader?.(
                   row.original as TData,

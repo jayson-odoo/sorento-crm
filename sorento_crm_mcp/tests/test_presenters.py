@@ -116,7 +116,7 @@ def test_incoming_list_allocation_flags_and_unallocated_field():
 
     assert b["flags"]["unallocated"] is True
     assert b["flags"]["partially_allocated"] is False
-    # Pending allocation needs no number — the badge alone carries the signal.
+    # Pending allocation needs no number - the badge alone carries the signal.
     assert "Unallocated Quantity" not in {f["label"] for f in b["fields"]}
 
     assert c["flags"]["unallocated"] is False
@@ -167,7 +167,7 @@ def test_incoming_by_product_allocation_flags():
 
 
 def test_incoming_shipments_carry_no_allocation_flags_set():
-    """Shipment-level rows have no allocations — both flags stay false."""
+    """Shipment-level rows have no allocations - both flags stay false."""
     out = env("crm_incoming_stock_shipments", {
         "data": [{"shipment_number": "SH1", "total_remaining_incoming_quantity": 90,
                   "distinct_products_incoming": 2}],
@@ -200,7 +200,7 @@ def test_promotions_header_only_with_pdf():
 
 
 def test_attachment_url_is_file_path_verbatim_not_stored_filename():
-    """The attachment `url` must be the DB `file_path` object key exactly — never
+    """The attachment `url` must be the DB `file_path` object key exactly - never
     reconstructed from `stored_filename` (the editable display name often differs
     from the real key, which produced 404-ing URLs). See presenters de-dupe block."""
     real_key = "http://cdn/promotion/id/CABANA NEW ARRIVAL END USER.pdf"
@@ -590,14 +590,14 @@ def test_render_stock_fields_carry_the_key():
 
 
 def test_render_stock_keeps_the_key_on_the_placeholder_value():
-    """Warehouse / location / quantity always render, "—" when absent, so the row
+    """Warehouse / location / quantity always render, "-" when absent, so the row
     shape never varies. The key rides along, so a consumer that projects on key
     still has to expect a non-numeric value there.
     """
     out = env("crm_inventory_stock_balance_list", {"data": [{"product_code": "X"}]})
     by_key = {f["key"]: f["value"] for f in out["items"][0]["fields"] if "key" in f}
-    assert by_key["quantity_on_hand"] == "—"
-    assert by_key["warehouse"] == "—"
+    assert by_key["quantity_on_hand"] == "-"
+    assert by_key["warehouse"] == "-"
 
 
 def test_render_by_product_fields_carry_the_key():

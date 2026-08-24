@@ -40,7 +40,7 @@ function auditDayHref(date: string): string {
 /**
  * Build the integration-logs drill-down href for a channel's failed rows.
  *
- * The window MUST be the one the dashboard is currently showing — this used to
+ * The window MUST be the one the dashboard is currently showing - this used to
  * hardcode "last 24h", so widening the picker to 30d produced a link that
  * landed on a different (smaller) set of rows than the count you clicked.
  */
@@ -60,7 +60,7 @@ function integrationFailedHref(
 /**
  * Drill-down for ONE cause rather than a whole channel.
  *
- * Narrowed by `status_code` and `filter_terms` on top of the channel filter —
+ * Narrowed by `status_code` and `filter_terms` on top of the channel filter - 
  * a channel mixes several faults, so channel+status alone would land on all of
  * them. `filter_terms` is used rather than the sample message because the sample
  * embeds a record id that differs per row; every term is sent and the backend
@@ -260,7 +260,7 @@ function IntegrationsCard({
                 <TableHead>Channel</TableHead>
                 <TableHead className="text-right">Success</TableHead>
                 <TableHead className="text-right">Failed</TableHead>
-                <TableHead className="text-right" title="Logged as a failure but expected — e.g. an idempotency race">
+                <TableHead className="text-right" title="Logged as a failure but expected - e.g. an idempotency race">
                   Benign
                 </TableHead>
                 <TableHead className="text-right" title="Still in progress (pending/processing)">
@@ -293,7 +293,7 @@ function IntegrationsCard({
                     </TableCell>
                     <TableCell className="text-right text-muted-foreground">
                       {c.benign > 0 ? (
-                        <span title="Expected outcome logged as a failure — not an incident">
+                        <span title="Expected outcome logged as a failure - not an incident">
                           {c.benign}
                         </span>
                       ) : (
@@ -374,7 +374,7 @@ function AuditActivityCard({ data }: { data: AuditActivityHealth | null }) {
                 href={auditDayHref(t.date)}
                 data-testid={`health-audit-day-link-${t.date}`}
                 aria-label={`View ${t.count} audit entries on ${t.date}`}
-                title={`${t.date}: ${t.count} — view entries`}
+                title={`${t.date}: ${t.count} - view entries`}
                 className="group flex flex-1 cursor-pointer flex-col items-center gap-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <div
@@ -506,7 +506,7 @@ export default function HealthDashboard() {
         </div>
         <p className="text-xs text-muted-foreground basis-full">
           Filters records by when they were created. Backlog figures (Pending, task
-          counts) are always as of now — a range cannot apply to a live queue.
+          counts) are always as of now - a range cannot apply to a live queue.
         </p>
       </CardContent>
     </Card>

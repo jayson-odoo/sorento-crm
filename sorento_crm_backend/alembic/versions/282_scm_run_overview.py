@@ -1,4 +1,4 @@
-"""scm reorder_run — cached AI overview column (M5 run-level explainer)
+"""scm reorder_run - cached AI overview column (M5 run-level explainer)
 
 Revision ID: 282_scm_run_overview
 Revises: 281_ai_config_anthropic_key

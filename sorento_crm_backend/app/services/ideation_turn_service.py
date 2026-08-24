@@ -2,19 +2,19 @@
 
 Flow per turn (see ``documentation/plans/ideation/PLAN-ideation-ideate-intent.md`` §2c):
 
-  1. resolve the default workspace's ``ideation_product_id`` — fail-closed (no
+  1. resolve the default workspace's ``ideation_product_id`` - fail-closed (no
      ``create_idea`` call) if it or the shared-service config is unset (AC-31);
   2. read the contact's ``session_vars.ideation`` pointer (``draft_id``/``status``);
   3. run the sorento brain extractor → ``{ fields, remove, confirm }`` (D-CONFIRM);
   4. build the §5.1 input deterministically (``product_id`` from the binding,
      ``submitter`` = contact phone E.164, ``draft_id`` omitted on turn 1) and call
-     shared-service ``create_idea`` over HTTP (server-to-server httpx — NOT MCP);
+     shared-service ``create_idea`` over HTTP (server-to-server httpx - NOT MCP);
   5. read-modify-write ``session_vars``: KEEP ``ideation`` on ``collecting``/``review``,
      DELETE it on ``complete``/``duplicate``, preserving every other CRM key (AC-16);
   6. return ``{ status, reply_text, link?, session_vars }`` (the full updated blob).
 
 Resilience: a shared-service outage returns a graceful ``reply_text`` and NEVER
-mutates ``session_vars`` (AC-19) — mirrors the "always fail soft on the send path"
+mutates ``session_vars`` (AC-19) - mirrors the "always fail soft on the send path"
 posture. Args are built deterministically, so the LLM UUID-arg coercion used on the
 agent path is irrelevant here (AC-18).
 """
@@ -61,8 +61,8 @@ _TERMINAL_STATUSES = {"complete", "duplicate"}
 _TRANSCRIPT_MAX_TURNS = 50
 
 # Intake answer keys the brain extracts into (mirrors the shared-service intake
-# target_schema — problem / proposed_solution / impact / department; no module or
-# who — business submitters don't know the module, and the submitter identifies who).
+# target_schema - problem / proposed_solution / impact / department; no module or
+# who - business submitters don't know the module, and the submitter identifies who).
 _IDEATION_FIELD_LABELS: dict[str, str] = {
     "problem": "Problem statement",
     "proposed_solution": "Proposed solution",
@@ -74,7 +74,7 @@ _IDEATION_FIELD_LABELS: dict[str, str] = {
 class IdeationServiceError(Exception):
     """Raised when the shared-service ``create_idea`` call cannot be completed
     (outage/timeout/HTTP error/malformed body). The caller degrades to a graceful
-    reply — never a 500 on the n8n send sub-flow (AC-19)."""
+    reply - never a 500 on the n8n send sub-flow (AC-19)."""
 
 
 class _ContactState:
@@ -206,7 +206,7 @@ def _default_fetch_recent_messages(db: Session, respond_io_id: str) -> dict[str,
 
         client = RespondClient.for_identifier(db, respond_io_id)
         return client.list_messages(respond_io_id, limit=50)
-    except Exception:  # noqa: BLE001 — lookback is a nicety, never fatal
+    except Exception:  # noqa: BLE001 - lookback is a nicety, never fatal
         logger.warning("ideation media lookback failed for respond_io_id=%s", respond_io_id, exc_info=True)
         return {"items": []}
 
@@ -263,7 +263,7 @@ def handle_turn(
     CRM's respond_contacts row has no name (WS-A). ``media_selection`` /
     ``is_new_idea`` drive multi-modal capture (Group F); ``media_clients`` and
     ``fetch_recent_messages`` are injectable seams (Respond/storage/vision) that
-    default to the real integrations — tests stub them.
+    default to the real integrations - tests stub them.
 
     The prior ideation pointer is read from the CALLER-supplied ``session_vars_in``
     first (n8n owns/writes the column and is the last writer each turn), then falls
@@ -289,7 +289,7 @@ def handle_turn(
     turn_text = (message_text or "").strip()
 
     # (0) is_new_idea restart (DC-10): the user started a genuinely different idea
-    # while an old draft was open. Discard the old draft, start fresh — reset the
+    # while an old draft was open. Discard the old draft, start fresh - reset the
     # pointer, transcript, and any media state so nothing leaks across ideas.
     discard_draft_id: str | None = None
     if is_new_idea and draft_id:
@@ -324,7 +324,7 @@ def handle_turn(
     api_key = config.api_key
     if not config.is_ready:
         return _graceful(
-            "Idea capture isn't set up here yet, so I couldn't log that — please try "
+            "Idea capture isn't set up here yet, so I couldn't log that - please try "
             "again later or reach out to the team.",
             session_vars,
             status="unconfigured",
@@ -356,7 +356,7 @@ def handle_turn(
         fetcher = fetch_recent_messages or (lambda: _default_fetch_recent_messages(db, respond_io_id))
         try:
             payload_msgs = fetcher()
-        except Exception:  # noqa: BLE001 — lookback nicety, never fatal
+        except Exception:  # noqa: BLE001 - lookback nicety, never fatal
             payload_msgs = {"items": []}
         candidates = [
             c for c in extract_media_candidates(payload_msgs or {})
@@ -404,7 +404,7 @@ def handle_turn(
     except IdeationServiceError:
         logger.warning("ideation create_idea outage for respond_io_id=%s", respond_io_id, exc_info=True)
         return _graceful(
-            "Sorry, I couldn't save that idea just now — please try again in a moment.",
+            "Sorry, I couldn't save that idea just now - please try again in a moment.",
             session_vars,
             status="error",
         )
@@ -414,7 +414,7 @@ def handle_turn(
     reply_text = result.get("reply_text") or ""
     link = result.get("link")
 
-    # The media menu is appended to THIS reply (DC-8) — the create_idea echo first,
+    # The media menu is appended to THIS reply (DC-8) - the create_idea echo first,
     # then "which of these files relate?".
     if menu_text:
         reply_text = f"{reply_text}\n\n{menu_text}" if reply_text else menu_text

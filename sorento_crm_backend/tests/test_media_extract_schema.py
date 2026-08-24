@@ -2,18 +2,18 @@
 tolerant parse.
 
 Contract:
-  - UAC S4-01 (entity shape verbatim, no snapping), S4-02 (unhinted values ride
+ - UAC S4-01 (entity shape verbatim, no snapping), S4-02 (unhinted values ride
     `attributes[]`), S4-03 (conflicts are first class and force
     `confident: false`), S4-10 (the cap, stated not silent), S4-12 (this whole
     file - prompt/schema behaviour tested against recorded provider JSON, no
     provider call).
-  - PLAN section 13 records four defects the first corpus run exposed; three of
+ - PLAN section 13 records four defects the first corpus run exposed; three of
     them are regression-guarded here by name:
       defect 1 - conflict confidence leaking across lines by matching on `kind`
         alone (fixed by scoping on `entity_raw`);
       defect 4 - an entity reappearing as a spurious attribute (fixed by
         dropping an attribute whose `raw` duplicates an emitted entity).
-  - PLAN Appendix A amendment 2 - the cap applies to `entities` and
+ - PLAN Appendix A amendment 2 - the cap applies to `entities` and
     `attributes` SEPARATELY, including when the overflow in `attributes` comes
     entirely from entities the parser rescued out of `entities` (schema.py
     module docstring rule 1 / rule 4).

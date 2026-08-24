@@ -291,10 +291,10 @@ class WarehouseService:
         """Upsert warehouses from Excel data, keyed by warehouse_code (case-insensitive).
 
         Column mapping (Excel header → DB field):
-          - "Sytem Location" / "System Location" / "warehouse_code" → warehouse_code
-          - "System Location Descriptions" / "System Location Description" / "warehouse_name" → warehouse_name
-          - "Warehouse Location" / "location" → location
-          - "Status" / "is_active" → is_active (Active|true → True; Inactive|false → False)
+        - "Sytem Location" / "System Location" / "warehouse_code" → warehouse_code
+        - "System Location Descriptions" / "System Location Description" / "warehouse_name" → warehouse_name
+        - "Warehouse Location" / "location" → location
+        - "Status" / "is_active" → is_active (Active|true → True; Inactive|false → False)
 
         Returns dict with created/updated/skipped counts + errors/warnings; if
         validate_only=True returns valid/errors/warnings/summary without writes.
@@ -633,7 +633,7 @@ class StockService:
             sort: Column to sort by (e.g. product_code, product_name, available).
             dir: 'asc' or 'desc'.
             status: Filter by computed status: critical, low, normal, overstock.
-            entities: Free-text bag (product codes, customer/transporter/etc.) — resolved
+            entities: Free-text bag (product codes, customer/transporter/etc.) - resolved
                 via the entity_resolver and applied as additional filters. For stock balance
                 only product matches translate into a filter (Stock.product_id IN ...). Any
                 other resolved type is echoed back but does not narrow the listing because
@@ -669,7 +669,7 @@ class StockService:
             if not entity_buckets.product_codes:
                 # Stock balance can only filter on product. If no product resolved
                 # from `entities`, return empty rather than fall through to the
-                # unfiltered full listing — caller would otherwise read it as
+                # unfiltered full listing - caller would otherwise read it as
                 # "no match" while seeing every row.
                 payload = {
                     "data": [],
@@ -781,7 +781,7 @@ class StockService:
                 q = q.filter(Stock.quantity_available > reorder * 2)
 
         # Hide rows whose on-hand is 0 ONLY because the most recent ledger movement
-        # was a SYSTEM_ADJUSTMENT (e.g. "missing from full stock take") — a real 0
+        # was a SYSTEM_ADJUSTMENT (e.g. "missing from full stock take") - a real 0
         # (last movement a genuine import/sale to zero, or no ledger) is still shown.
         if exclude_zero_system_adjustment:
             latest_txn = (
@@ -829,7 +829,7 @@ class StockService:
                 q = q.order_by(sort_col.desc() if dir == 'desc' else sort_col.asc(), Stock.id.asc())
         if sort_col is None:
             # No/unknown sort: deterministic default so results (and offset
-            # pagination) are stable — product code, then warehouse name.
+            # pagination) are stable - product code, then warehouse name.
             if not need_product_join:
                 q = q.join(Stock.product)
             q = q.join(Stock.warehouse)
@@ -840,7 +840,7 @@ class StockService:
         stock_items = q.offset(offset).limit(limit).all()
 
         # "Data last updated" semantics: report the latest genuine stock UPLOAD
-        # (BULK_IMPORT) time — i.e. when the stock dataset was last refreshed at all,
+        # (BULK_IMPORT) time - i.e. when the stock dataset was last refreshed at all,
         # NOT the raw Stock.updated_at. Two reasons the raw column is wrong here:
         #  1. It is also bumped by SYSTEM_ADJUSTMENT zeroing ("missing from full stock
         #     take"), so a stock-take that zeros a discontinued row masquerades as a
@@ -879,7 +879,7 @@ class StockService:
             payload["resolved_entities"] = entity_buckets.as_echo()
         # Data-miss (§3.3): the query resolved to a real product but returned 0 stock
         # rows. Offer data-bearing variant/neighbour alternatives on the empty path
-        # ONLY — a non-empty result is byte-identical to before (AC-R1).
+        # ONLY - a non-empty result is byte-identical to before (AC-R1).
         if total == 0:
             # Best-effort: a suggestion probe must never turn a legitimately-empty
             # listing into a 500 (AC-R1). The pre-lookup + neighbour query run after
@@ -1081,7 +1081,7 @@ class StockService:
             product_id: Optional product filter
             quantity_operator: One of 'gt', 'gte', 'lt', 'lte', 'eq' for available quantity filtering
             quantity_value: Numeric value to compare against available quantity
-            entities: Free-text bag — resolved product matches narrow Stock.product_id
+            entities: Free-text bag - resolved product matches narrow Stock.product_id
                 (other resolved types are echoed but do not filter).
         """
         from sqlalchemy import func
@@ -1650,7 +1650,7 @@ class StockService:
 
         # Step 5: Create new stock records (dedupe by product_id + warehouse_id, last wins).
         # Stock.id has a python-side UUID default, so ids are assigned at construction
-        # time — no per-row flush needed. Build all instances, add together, single flush.
+        # time - no per-row flush needed. Build all instances, add together, single flush.
         if create_dict:
             try:
                 new_stocks: list[tuple[Stock, int]] = []

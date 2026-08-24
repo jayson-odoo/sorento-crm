@@ -15,8 +15,8 @@ acceptance criteria in docs/plans/PLAN-record-navigation-standardization.md §9:
 Runs against the live Postgres test DB (same pattern as the other order
 tests): seed rows with a unique order_number prefix, assert, clean up.
 
-The neighbours query reuses ``OrderService.list_orders(ids_only=True)`` — the
-exact same filter+sort query object the paginated grid builds — so list and
+The neighbours query reuses ``OrderService.list_orders(ids_only=True)`` - the
+exact same filter+sort query object the paginated grid builds - so list and
 neighbours can never drift.
 """
 from __future__ import annotations
@@ -35,7 +35,7 @@ from app.models.order import Order
 from app.services.order_service import OrderService
 
 # Unique marker so the filter `query=` matches ONLY this test's rows (the list
-# `query` searches order_number among other columns) — keeps the filtered-count
+# `query` searches order_number among other columns) - keeps the filtered-count
 # assertions exact even on the shared DB.
 PREFIX = "ONBR-04-"
 

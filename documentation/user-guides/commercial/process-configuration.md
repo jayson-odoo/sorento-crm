@@ -1,4 +1,4 @@
-# Commercial — Process configuration
+# Commercial - Process configuration
 
 **Process Configuration** is the admin hub for the commercial module: the workflow **stages** every record moves through, the **task templates** applied to projects and quotations, quotation **settings**, and the **reference data** (dropdown lists) used when creating leads. Changes here shape what users see across Leads, Projects, Tenders and Quotations.
 
@@ -15,9 +15,9 @@ Open [**Commercial → Process Configuration**](/commercial-core/process-configu
 
 ## Stages
 
-The **Stages** tab manages the configurable stages that appear as the **Status** column / Kanban columns on each record type. Stages are grouped by **domain** — `lead`, `project`, `tender`, `quotation` (the platform also has `task` and `order` domains). Each stage has a **Code**, **Name** (label), **Order**, a **Terminal** flag (ends the pipeline, e.g. Won / Lost), an **Allows conversion** flag, and an optional colour.
+The **Stages** tab manages the configurable stages that appear as the **Status** column / Kanban columns on each record type. Stages are grouped by **domain** - `lead`, `project`, `tender`, `quotation` (the platform also has `task` and `order` domains). Each stage has a **Code**, **Name** (label), **Order**, a **Terminal** flag (ends the pipeline, e.g. Won / Lost), an **Allows conversion** flag, and an optional colour.
 
-> Lead stages specifically also have a dedicated editor at [**Commercial → Lead Stages**](/commercial/lead-stages) — see [Create and manage leads (and lead stages)](leads-and-stages.md). The same stage data backs both screens.
+> Lead stages specifically also have a dedicated editor at [**Commercial → Lead Stages**](/commercial/lead-stages) - see [Create and manage leads (and lead stages)](leads-and-stages.md). The same stage data backs both screens.
 
 Related configuration reachable from this area includes **lead stages**, **workflow stages**, **tender checkpoint templates**, **activity templates**, **reminder defaults** and quotation **settings**.
 

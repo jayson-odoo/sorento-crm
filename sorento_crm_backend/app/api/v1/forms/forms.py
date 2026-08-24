@@ -33,7 +33,7 @@ async def get_forms(
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     entities: Optional[list[str]] = Query(
         None,
-        description="DEPRECATED — free-text entity bag. Prefer `form_ids`.",
+        description="DEPRECATED - free-text entity bag. Prefer `form_ids`.",
     ),
     form_ids: Optional[list[str]] = Query(
         None,
@@ -71,7 +71,7 @@ async def get_forms(
             or norm
         )
         # API-key / MCP callers without a narrowing filter still get a real
-        # page — caller-supplied `limit` is respected verbatim (already capped
+        # page - caller-supplied `limit` is respected verbatim (already capped
         # to 100 by the Query() validator above). Default sort = updated_at
         # desc so newest forms surface first when the caller didn't pick one.
         is_api_key_caller = (current_user or {}).get("auth_method") == "api_key"
@@ -125,7 +125,7 @@ async def get_form_neighbours(
     id: str = Query(..., description="Form id to resolve neighbours for"),
     entities: Optional[list[str]] = Query(
         None,
-        description="DEPRECATED — free-text entity bag. Prefer `form_ids`.",
+        description="DEPRECATED - free-text entity bag. Prefer `form_ids`.",
     ),
     form_ids: Optional[list[str]] = Query(
         None,

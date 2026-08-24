@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * IntegrationCard — Card-wrapped variant of IntegrationPanel.
+ * IntegrationCard - Card-wrapped variant of IntegrationPanel.
  *
  * Currently unused inside AttachmentDetailModal (the modal embeds
  * IntegrationPanel into a tab instead). Kept here as an exported

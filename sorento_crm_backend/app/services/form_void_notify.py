@@ -1,7 +1,7 @@
 """Best-effort in-app notifications when a form is voided (NTF-1 / NTF-2).
 
 Notifies the form's current SLA assignee and the handling-lock holder
-(``handled_by_id``) via the existing in-app notification system only — the
+(``handled_by_id``) via the existing in-app notification system only - the
 salesperson WhatsApp send (NTF-3) is form-specific and stays in each form
 service. Everything here is best-effort and NEVER raises (NTF-5): a notify
 failure must not roll back the committed void.

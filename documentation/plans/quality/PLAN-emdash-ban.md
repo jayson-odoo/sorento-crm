@@ -5,7 +5,7 @@
 
 ## Goal
 
-Remove em-dash (`—`) and en-dash (`–`) from human-authored source so the UI stops reading as
+Remove em-dash (`-`) and en-dash (` - `) from human-authored source so the UI stops reading as
 LLM-generated, and lock the rule into the governing docs with lint enforcement.
 
 ## Approach
@@ -13,20 +13,20 @@ LLM-generated, and lock the rule into the governing docs with lint enforcement.
 ### 1. ESLint rule (FE) - ED-1, ED-2
 
 - Add a `no-emdash` rule to `sorento_crm_frontend/` eslint config (custom rule or `no-restricted-syntax`
-  matching `Literal` / `TemplateElement` / `JSXText` containing `—` or `–`), severity
+  matching `Literal` / `TemplateElement` / `JSXText` containing `-` or ` - `), severity
   `error`, message: "No em/en dash in UI strings - use a hyphen (-) or reword."
 - Scope: app/component/lib source. Exclude generated files and `node_modules` (ED-5).
 
 ### 2. LLM output strip (FE) - ED-4
 
 - Central post-process where assistant/LLM text is rendered (streaming render + final message
-  formatter): replace `—` / `–` with `-` before display. Single shared helper so every
+  formatter): replace `-` / ` - ` with `-` before display. Single shared helper so every
   surface (AI assistant, generated explanations) uses it.
 
 ### 3. Repo sweep - ED-6
 
 - Codemod / scripted replace over in-scope FE UI strings and BE user-facing strings, replacing
-  `—`/`–` with `-` (or rewording where a hyphen reads wrong). Verify with a grep that returns zero
+  `-`/` - ` with `-` (or rewording where a hyphen reads wrong). Verify with a grep that returns zero
   in-scope hits. Do NOT touch `**/*.md`, comments, `node_modules`, vendored/generated code (ED-5,
   ED-8).
 - BE user-facing surfaces to check: toast/message text, WhatsApp templates, PDF copy, notification
@@ -44,13 +44,13 @@ strip. Verify `npm run lint` green and grep-zero before PR.
 
 ## Risks
 
-- **False positives in the sweep.** Some `–` may be intentional (rare). Review the diff; the sweep is
+- **False positives in the sweep.** Some ` - ` may be intentional (rare). Review the diff; the sweep is
   punctuation-only (ED-8) so review is fast.
 - **Rule scope creep.** Keep the ESLint rule off markdown and comments or it fights legitimate prose.
 - **Hyphen reads wrong.** Where an em-dash joined a clause, reword rather than a bare hyphen.
 
 ## Verification
 
-`npm run lint` fails on a planted em-dash; repo grep for `—`/`–` in-scope returns zero;
+`npm run lint` fails on a planted em-dash; repo grep for `-`/` - ` in-scope returns zero;
 PRINCIPLES.md + CLAUDE.md carry the rule; a sample AI reply containing an em-dash renders with a
 hyphen.

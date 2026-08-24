@@ -1,6 +1,6 @@
 """Company (multi-company data-isolation partition) models.
 
-A ``company`` is a data partition BELOW the (stubbed) tenant — both Sorento and
+A ``company`` is a data partition BELOW the (stubbed) tenant - both Sorento and
 Mocha live under ``tenant="__default__"`` but own disjoint business data
 (products, stock, orders, ...). Users and Respond contacts are SHARED and tagged
 into companies via the M2M grant/membership tables below.
@@ -36,7 +36,7 @@ class Company(Base):
 
 
 class UserCompany(Base):
-    """User -> company grant (M2M). Global role — one role per user across all
+    """User -> company grant (M2M). Global role - one role per user across all
     their companies (RBAC is orthogonal to company). Union of grants = a user's
     switchable company set."""
 

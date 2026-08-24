@@ -29,7 +29,7 @@ State (path → Outline doc id) is stored in `documentation/user-guides/.outline
 
 | Var | Default | Required |
 |---|---|---|
-| `OUTLINE_API_TOKEN` | — | yes |
+| `OUTLINE_API_TOKEN` | - | yes |
 | `OUTLINE_BASE_URL` | `https://doc.foundryx.my` | no |
 | `OUTLINE_COLLECTION_ID` | `18f78b01-bf5a-4032-934c-d5679609d553` | no |
 
@@ -72,8 +72,8 @@ The PR creation step uses `peter-evans/create-pull-request`. The workflow has `c
 
 The MCP server (`sorento_crm_mcp`) exposes two tools that read directly from Outline:
 
-- `user_guides_search(query, limit?)` — full-text search over the collection.
-- `user_guides_read(identifier)` — fetch the full markdown body by Outline doc id or url-id.
+- `user_guides_search(query, limit?)` - full-text search over the collection.
+- `user_guides_read(identifier)` - fetch the full markdown body by Outline doc id or url-id.
 
 These are registered alongside the catalog-driven CRUD tools. Add `OUTLINE_API_TOKEN` to `sorento_crm_mcp/.env` so the tools work in the MCP container.
 

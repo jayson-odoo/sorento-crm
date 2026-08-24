@@ -2,13 +2,13 @@
  * Complaints record-navigation end-to-end (Phase 2).
  *
  * Acceptance criteria exercised (docs/plans/PLAN-record-navigation-standardization.md §9):
- *   - UAC-1  Apply a search filter -> open a row -> the detail pager total equals
+ * - UAC-1  Apply a search filter -> open a row -> the detail pager total equals
  *            the FILTERED count, not the unfiltered total.
- *   - UAC-3  Clicking Next lands on the correct neighbour and the counter
+ * - UAC-3  Clicking Next lands on the correct neighbour and the counter
  *            increments.
- *   - UAC-10 The filter is carried into the detail URL (so the neighbours call
+ * - UAC-10 The filter is carried into the detail URL (so the neighbours call
  *            includes the filter) and preserved when stepping between records.
- *   - Asserts the FE fired GET .../complaints/neighbours?...&query=<filter>
+ * - Asserts the FE fired GET .../complaints/neighbours?...&query=<filter>
  *     (FE -> BE -> DB round-trip via browser_network_requests equivalent).
  *
  * ALWAYS sidebar-navigate (project memory feedback_playwright_via_sidebar), never
