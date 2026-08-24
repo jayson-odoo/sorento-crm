@@ -8,6 +8,7 @@ from sqlalchemy import or_, and_, func
 from typing import Any, Optional, List, Callable, Tuple, Iterable
 from decimal import Decimal
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure, ProductAttachment
+from app.models.product_set import ProductSet, ProductSetMember
 
 logger = logging.getLogger(__name__)
 
@@ -805,7 +806,33 @@ class ProductService:
             raise handle_not_found("Product", product_id)
         _populate_field_attachments(self.db, [product])
         self._populate_variant_graph(product)
+        self._populate_product_sets(product)
         return product
+
+    def _populate_product_sets(self, product) -> None:
+        """Stash the sets this product belongs to, for the detail serializer.
+
+        A DETAIL-only populate, like the variant graph beside it: list rows never
+        call this, so the listing stays free of an extra query per row. Every
+        method that returns the detail shape calls both, or the field is present
+        on one route and absent on the next for no reason a reader could guess.
+
+        Reached through `ProductSet`, which carries `CompanyScopedMixin`, so the
+        session's scope filters it and another company's set can never name this
+        product. `ProductSetMember` is deliberately unscoped and is only ever read
+        through its scoped parent - the same shape as `certificate_products`
+        reached through `Certificate`.
+
+        Ordered by set_code so two reads of one product agree; an unordered list
+        reorders itself between reads and reads as a bug.
+        """
+        product._product_sets = (
+            self.db.query(ProductSet)
+            .join(ProductSetMember, ProductSetMember.product_set_id == ProductSet.id)
+            .filter(ProductSetMember.product_id == product.id)
+            .order_by(ProductSet.set_code.asc())
+            .all()
+        )
 
     def _populate_variant_graph(self, product) -> None:
         """Stash the variant-graph refs the detail serializer reads.
@@ -893,6 +920,7 @@ class ProductService:
         self.db.refresh(product)
         _populate_field_attachments(self.db, [product])
         self._populate_variant_graph(product)
+        self._populate_product_sets(product)
         return product
 
     def unlink_variant(self, product_id: str, updated_by: str):
@@ -911,6 +939,7 @@ class ProductService:
         self.db.refresh(product)
         _populate_field_attachments(self.db, [product])
         self._populate_variant_graph(product)
+        self._populate_product_sets(product)
         return product
 
     def reset_variant_auto(self, product_id: str):
@@ -929,6 +958,7 @@ class ProductService:
         self.db.refresh(product)
         _populate_field_attachments(self.db, [product])
         self._populate_variant_graph(product)
+        self._populate_product_sets(product)
         return product
 
     def _populate_list_variant_fields(self, products: Iterable[Product]) -> None:

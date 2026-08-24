@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -208,6 +209,44 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                     : '-'}
                 </p>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Sets this product is part of.
+              Deliberately a visible card rather than another tab: the whole point
+              is that someone holding a cistern discovers the assembly code the
+              flyer prints, and a tab hides that behind a click. Always a LIST -
+              one cistern serves both the S-trap and the P-trap set. */}
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle>Sets</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {(product.product_sets ?? []).length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  This product is not part of any set.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {(product.product_sets ?? []).map((set) => (
+                    <li key={set.id}>
+                      <Link
+                        href={`/master-data-management/product-sets/${set.id}`}
+                        className="block truncate font-medium text-primary hover:underline"
+                        title={set.set_code}
+                      >
+                        {set.set_code}
+                      </Link>
+                      <span
+                        className="block truncate text-sm text-muted-foreground"
+                        title={set.name}
+                      >
+                        {set.name}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </CardContent>
           </Card>
         </div>

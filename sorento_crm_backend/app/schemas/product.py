@@ -253,6 +253,18 @@ class UnitOfMeasureSimple(BaseModel):
         from_attributes = True
 
 
+class ProductSetRef(BaseModel):
+    """A set this product belongs to.
+
+    Human-readable on purpose: the FE links by `set_code`, never by UUID. Always
+    a LIST on the response - one cistern serves both the S-trap and the P-trap
+    assembly, so a single field would silently show one and hide the other.
+    """
+    id: str
+    set_code: str
+    name: str
+
+
 class ProductVariantRef(BaseModel):
     """Lightweight product reference for the variant graph (parent / children).
 
@@ -295,6 +307,12 @@ class ProductResponse(ProductBase):
     # Direct-child count. On list rows populated by two bounded IN-queries (no N+1);
     # on detail rows set from the loaded children by `_populate_variant_graph`.
     variant_child_count: int = Field(default=0, validation_alias="_variant_child_count")
+    #: Populated by `ProductService._populate_product_sets`. Declared here because
+    #: `response_model` drops anything it was not told about, and a field that is
+    #: populated but undeclared looks exactly like a backend that never sent it.
+    product_sets: List["ProductSetRef"] = Field(
+        default_factory=list, validation_alias="_product_sets"
+    )
 
     @field_validator("is_variant", mode="before")
     @classmethod
