@@ -491,3 +491,67 @@ describe('PoWorklistView - onBack (this report has no row in the buy grid to ret
     expect(onBack).toHaveBeenCalled();
   });
 });
+
+describe('PoWorklistView - the sort arrow sorts (BL-027 / AC-G01)', () => {
+  /** The product code of every rendered row, top to bottom. */
+  function codeOrder(): string[] {
+    return Array.from(document.querySelectorAll('tbody tr')).map(
+      (tr) => tr.querySelector('td')?.textContent?.trim() ?? '',
+    );
+  }
+
+  function threeQuantities() {
+    renderView(
+      state({
+        data: {
+          run_id: 'run-2026-w32',
+          as_of: '2026-08-04',
+          rows: [
+            row({ product_code: 'AAA-9', product_name: null, chosen_qty: 9 }),
+            row({ product_code: 'BBB-10', product_name: null, chosen_qty: 10 }),
+            row({ product_code: 'CCC-2', product_name: null, chosen_qty: 2 }),
+          ],
+        },
+      }),
+    );
+  }
+
+  it('reorders the rows on the quantity a buyer reads, numerically (9 before 10)', () => {
+    threeQuantities();
+    expect(codeOrder()).toEqual(['AAA-9', 'BBB-10', 'CCC-2']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Order qty' }));
+
+    // Lexically 10 would come first; the column carries a quantity, so 2 does.
+    expect(codeOrder()).toEqual(['CCC-2', 'AAA-9', 'BBB-10']);
+  });
+
+  it('reverses on the second click', () => {
+    threeQuantities();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Order qty' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Order qty' }));
+
+    expect(codeOrder()).toEqual(['BBB-10', 'AAA-9', 'CCC-2']);
+  });
+
+  it('sorts a date column chronologically, not by the label it prints', () => {
+    renderView(
+      state({
+        data: {
+          run_id: 'run-2026-w32',
+          as_of: '2026-08-04',
+          rows: [
+            row({ product_code: 'AAA-9', product_name: null, need_by: '2026-10-13' }),
+            row({ product_code: 'BBB-10', product_name: null, need_by: '2026-02-01' }),
+            row({ product_code: 'CCC-2', product_name: null, need_by: '2026-06-30' }),
+          ],
+        },
+      }),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Need by' }));
+
+    expect(codeOrder()).toEqual(['BBB-10', 'CCC-2', 'AAA-9']);
+  });
+});

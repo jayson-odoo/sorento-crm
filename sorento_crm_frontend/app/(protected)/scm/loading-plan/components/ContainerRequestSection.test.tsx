@@ -439,3 +439,45 @@ describe('ContainerRequestSection - SF-4 (reviewer): the sent-requests card surv
     expect(screen.getByText('Requests sent to Foshan Ceramics')).toBeInTheDocument();
   });
 });
+
+describe('ContainerRequestSection - the sort arrow sorts (BL-027 / AC-G01)', () => {
+  /** The item code of every rendered row, top to bottom. */
+  function codeOrder(): string[] {
+    return Array.from(document.querySelectorAll('tbody tr')).map(
+      (tr) => tr.querySelectorAll('td')[1]?.querySelector('span')?.textContent?.trim() ?? '',
+    );
+  }
+
+  function threeHoldings() {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [
+        row({ product_id: 'p1', item_code: 'AAA-9', rank: 1, qty_unfinished: 9 }),
+        row({ product_id: 'p2', item_code: 'BBB-10', rank: 2, qty_unfinished: 10 }),
+        row({ product_id: 'p3', item_code: 'CCC-2', rank: 3, qty_unfinished: 2 }),
+      ],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+  }
+
+  it('reorders on what the supplier holds numerically (9 before 10)', () => {
+    threeHoldings();
+    // Untouched, the table is in the engine's rank order.
+    expect(codeOrder()).toEqual(['AAA-9', 'BBB-10', 'CCC-2']);
+
+    // The shared header always opens a column ascending, so 2 leads, not 10.
+    fireEvent.click(screen.getByRole('button', { name: 'They hold' }));
+
+    expect(codeOrder()).toEqual(['CCC-2', 'AAA-9', 'BBB-10']);
+  });
+
+  it('reverses on the second click', () => {
+    threeHoldings();
+
+    fireEvent.click(screen.getByRole('button', { name: 'They hold' }));
+    fireEvent.click(screen.getByRole('button', { name: 'They hold' }));
+
+    expect(codeOrder()).toEqual(['BBB-10', 'AAA-9', 'CCC-2']);
+  });
+});

@@ -8,6 +8,7 @@ import {
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
+  getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
 import { AlertCircle, ArrowLeft, ClipboardCheck, Search, X } from 'lucide-react';
@@ -464,6 +465,8 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
     onGlobalFilterChange: setSearchQuery,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
+    // Without this the header arrow moved and the rows did not (BL-027).
+    getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     columnResizeMode: 'onChange',
     enableColumnResizing: true,

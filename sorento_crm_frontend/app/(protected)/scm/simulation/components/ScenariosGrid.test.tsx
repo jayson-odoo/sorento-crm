@@ -211,3 +211,54 @@ describe('ScenariosGrid - changed row', () => {
     expect(table.getByText('No baseline')).toBeTruthy();
   });
 });
+
+describe('ScenariosGrid - the sort arrow sorts (BL-027 / AC-G01)', () => {
+  /** The scenario code of every rendered row, top to bottom. */
+  function codeOrder(): string[] {
+    return Array.from(document.querySelectorAll('tbody tr')).map(
+      (tr) => tr.querySelector('td')?.textContent?.trim() ?? '',
+    );
+  }
+
+  function threeQuantities() {
+    const qty = (n: number) => ({
+      rec_type: 'buy',
+      recommended_qty: n,
+      rounded_qty: n,
+      triggered_reason: 'net_below_rop',
+      cash_impact: n,
+    });
+    render(
+      <ScenariosGrid
+        rows={[
+          row({ code: 'AAA-9', current: qty(9), baseline: qty(9) }),
+          row({ code: 'BBB-10', current: qty(10), baseline: qty(10) }),
+          row({ code: 'CCC-2', current: qty(2), baseline: qty(2) }),
+        ]}
+        isLoading={false}
+        isError={false}
+        error={null}
+        onRetry={noop}
+        onSelectRow={noop}
+      />,
+    );
+  }
+
+  it('reorders on the recommended quantity numerically (9 before 10)', () => {
+    threeQuantities();
+    expect(codeOrder()).toEqual(['AAA-9', 'BBB-10', 'CCC-2']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Qty' }));
+
+    expect(codeOrder()).toEqual(['CCC-2', 'AAA-9', 'BBB-10']);
+  });
+
+  it('reverses on the second click', () => {
+    threeQuantities();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Qty' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Qty' }));
+
+    expect(codeOrder()).toEqual(['BBB-10', 'AAA-9', 'CCC-2']);
+  });
+});

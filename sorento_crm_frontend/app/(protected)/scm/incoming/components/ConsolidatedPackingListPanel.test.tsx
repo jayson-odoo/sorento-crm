@@ -373,3 +373,66 @@ describe('ConsolidatedPackingListPanel', () => {
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Export failed'));
   });
 });
+
+describe('ConsolidatedPackingListPanel - the sort arrow sorts (BL-027 / AC-G01)', () => {
+  /** The model code of every rendered row, top to bottom. */
+  function codeOrder(): string[] {
+    return Array.from(document.querySelectorAll('tbody tr')).map(
+      (tr) => tr.querySelector('td')?.textContent?.trim() ?? '',
+    );
+  }
+
+  /** One factory, so the grid under test owns the only "Qty" header on the panel. */
+  function oneFactory() {
+    const line = (code: string, qty: number) => ({
+      ...KAILU_LINE,
+      line_id: `l-${code}`,
+      product_id: `p-${code}`,
+      product_code: code,
+      product_name: null,
+      qty,
+      remarks: null,
+      discrepancies: [],
+    });
+    state.getList = vi.fn().mockResolvedValue(
+      packingList({
+        factories: [
+          {
+            supplier_id: 'sup-a',
+            supplier_code: '400-K029',
+            supplier_name: 'KAILU HARDWARE FACTORY',
+            loading_plan_id: 'lp-1',
+            notice_id: 'n-1',
+            has_pack_plan: true,
+            notice_created_at: '2026-07-28T09:00:00',
+            notice_sent_at: '2026-07-30T11:20:00',
+            lines: [line('AAA-9', 9), line('BBB-10', 10), line('CCC-2', 2)],
+            not_packed: [],
+            subtotal: { lines: 3, qty: 21, cartons: 3, cbm: 0 },
+          },
+        ],
+      }),
+    );
+    renderPanel();
+  }
+
+  it('reorders on quantity numerically (9 before 10)', async () => {
+    oneFactory();
+    expect(await screen.findByText('AAA-9')).toBeInTheDocument();
+    expect(codeOrder()).toEqual(['AAA-9', 'BBB-10', 'CCC-2']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Qty' }));
+
+    expect(codeOrder()).toEqual(['CCC-2', 'AAA-9', 'BBB-10']);
+  });
+
+  it('reverses on the second click', async () => {
+    oneFactory();
+    expect(await screen.findByText('AAA-9')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Qty' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Qty' }));
+
+    expect(codeOrder()).toEqual(['BBB-10', 'AAA-9', 'CCC-2']);
+  });
+});

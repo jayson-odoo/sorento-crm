@@ -1,7 +1,13 @@
 'use client';
 
-import { useMemo } from 'react';
-import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
+import { useMemo, useState } from 'react';
+import {
+  ColumnDef,
+  SortingState,
+  getCoreRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from '@tanstack/react-table';
 import { useMutation } from '@tanstack/react-query';
 import { Download, LoaderCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -126,6 +132,9 @@ function factoryLabel(factory: PackingListFactory): string {
 }
 
 function FactorySection({ factory }: { factory: PackingListFactory }) {
+  // Per factory, so sorting one supplier's block leaves the others as the file listed them.
+  const [sorting, setSorting] = useState<SortingState>([]);
+
   const columns = useMemo<ColumnDef<PackingListLine>[]>(
     () => [
       {
@@ -217,7 +226,11 @@ function FactorySection({ factory }: { factory: PackingListFactory }) {
     data: factory.lines,
     columns,
     getRowId: (r) => r.line_id,
+    state: { sorting },
+    onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
+    // Without this the header arrow moved and the rows did not (BL-027).
+    getSortedRowModel: getSortedRowModel(),
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
