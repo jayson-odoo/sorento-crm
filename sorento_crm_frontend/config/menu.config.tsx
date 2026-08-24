@@ -499,7 +499,7 @@ export const MENU_SIDEBAR: MenuConfig = [
 
   { heading: 'OPERATIONS' },
   {
-    title: 'Complaint Management',
+    title: 'Complaints',
     icon: AlertCircle,
     moduleKey: 'complaints',
     children: [
@@ -520,7 +520,7 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
   {
-    title: 'SLA Management',
+    title: 'SLA',
     icon: Clock,
     moduleKey: 'sla',
     children: [
@@ -583,7 +583,7 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
   {
-    title: 'Forms Management',
+    title: 'Forms',
     icon: FileText,
     moduleKey: 'forms',
     children: [

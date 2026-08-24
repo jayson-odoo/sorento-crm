@@ -334,7 +334,7 @@ describe('menu.config - section headings', () => {
 
 describe('menu.config - Complaint Management', () => {
   it('is a standalone group with moduleKey complaints', () => {
-    const complaints = findGroup(MENU_SIDEBAR, 'Complaint Management');
+    const complaints = findGroup(MENU_SIDEBAR, 'Complaints');
     expect(complaints).toBeDefined();
     expect(complaints!.moduleKey).toBe('complaints');
   });
@@ -342,7 +342,7 @@ describe('menu.config - Complaint Management', () => {
 
 describe('menu.config - SLA Management', () => {
   it('is a standalone group with moduleKey sla', () => {
-    const sla = findGroup(MENU_SIDEBAR, 'SLA Management');
+    const sla = findGroup(MENU_SIDEBAR, 'SLA');
     expect(sla).toBeDefined();
     expect(sla!.moduleKey).toBe('sla');
   });
