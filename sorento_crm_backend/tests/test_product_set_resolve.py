@@ -419,3 +419,78 @@ def test_with_the_gate_off_the_real_dispatcher_does_not_resolve_it_as_a_set(
     assert len(result.resolutions) == 1
     resolution = result.resolutions[0]
     assert all(m.entity_type != "product_set" for m in resolution.matches)
+
+
+# --------------------------------------------------------- n8n's "product" hint
+#
+# n8n sends `domain_hint="product"` for a flyer code - it has no reason to know
+# the glossary term "product_set". `_ENTITY_TYPE_ALIASES` already maps
+# `set` / `kit` / `product_set` to the set probe, but a caller that filters
+# `allowed_entity_types=["product"]` never gets there: `_TIER1_PROBES` only runs
+# a probe when its `produces` set intersects `allowed`, and `product` alone does
+# not intersect `{"product_set"}`. `_expand_entity_types` is what widens it.
+
+
+def test_a_product_hint_reaches_the_set_probe(db: Session, world):
+    """The requirement in the user's own words: WC7605 with hint `product`."""
+    with company_scope(db, frozenset({str(world["company"].id)})):
+        result = entity_resolver.resolve_references(
+            db,
+            [world["set"].set_code],
+            allowed_entity_types=["product"],
+            enable_prefix_fallback=False,
+            enable_embedding_fallback=False,
+        )
+
+    assert len(result.resolutions) == 1
+    resolution = result.resolutions[0]
+    assert resolution.resolved
+    assert len(resolution.matches) == 1
+    entity = resolution.matches[0]
+    assert entity.entity_type == "product_set"
+    assert entity.canonical_code == world["set"].set_code
+    member_codes = {m["product_code"] for m in entity.display["members"]}
+    assert member_codes == {
+        world["pedestal"].product_code,
+        world["cistern"].product_code,
+        world["seat"].product_code,
+    }
+
+
+def test_with_the_gate_off_a_product_hint_resolves_nothing_here(monkeypatch, db: Session, world):
+    """Companion direction: OFF must leave a `product` hint EXACTLY as it was
+    before this change - no set entity reachable through it at all."""
+    monkeypatch.setattr(entity_resolver, "PRODUCT_SET_RESOLVE_ENABLED", False)
+    with company_scope(db, frozenset({str(world["company"].id)})):
+        result = entity_resolver.resolve_references(
+            db,
+            [world["set"].set_code],
+            allowed_entity_types=["product"],
+            enable_prefix_fallback=False,
+            enable_embedding_fallback=False,
+        )
+
+    assert len(result.resolutions) == 1
+    resolution = result.resolutions[0]
+    assert resolution.matches == []
+
+
+def test_a_member_code_alone_under_a_product_hint_still_names_no_set(db: Session, world):
+    """D13 regression guard, specifically against the new expansion: widening
+    `allowed_entity_types=["product"]` to also reach the set probe must not make
+    a MEMBER's own code answer with its parent set. A dealer asking for the
+    cistern by its own code still gets only the cistern."""
+    with company_scope(db, frozenset({str(world["company"].id)})):
+        result = entity_resolver.resolve_references(
+            db,
+            [world["cistern"].product_code],
+            allowed_entity_types=["product"],
+            enable_prefix_fallback=False,
+            enable_embedding_fallback=False,
+        )
+
+    assert len(result.resolutions) == 1
+    resolution = result.resolutions[0]
+    assert resolution.matches
+    assert all(m.entity_type == "product" for m in resolution.matches)
+    assert all("product_set" not in str(m.display) for m in resolution.matches)

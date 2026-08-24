@@ -170,6 +170,18 @@ def _expand_entity_types(
             out.update(expansion)
         else:
             out.add(canon)
+        # n8n's `product` hint has to reach the set probe too: n8n names a
+        # flyer code with domain_hint="product" (it has no reason to know the
+        # glossary term "product_set"), and `_TIER1_PROBES` only runs a probe
+        # when its `produces` set intersects `allowed`. Additive, not a
+        # replacement of `canon` — a caller that filtered on `product` still
+        # gets ordinary products, PLUS the set probe becomes reachable.
+        # Gated by `PRODUCT_SET_RESOLVE_ENABLED` (read here, not baked into
+        # the module-level dict, so `monkeypatch.setattr` in tests takes
+        # effect): the flag is what keeps a `product` hint's Tier-1 behaviour
+        # identical to today's while `sorento-crm-n8n-60` has not shipped.
+        if canon == "product" and PRODUCT_SET_RESOLVE_ENABLED:
+            out.add("product_set")
     return frozenset(out)
 
 

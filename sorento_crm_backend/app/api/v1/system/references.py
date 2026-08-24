@@ -43,6 +43,7 @@ from app.services.entity_resolver import (
 # aliases so callers can pass either the alias or the concrete type.
 _RESOLVER_ENTITY_TYPES: frozenset[str] = frozenset({
     "product",
+    "product_set",
     "customer_order",
     "customer",
     "inbound_shipment",

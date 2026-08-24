@@ -11,6 +11,13 @@ unconditionally, no feature flag, the moment this branch merges and deploys" - n
 running." Only one piece is additionally gated behind a flag once deployed: the `product_set`
 entity type on `/references/resolve` (section 1).
 
+**UPDATE, same branch, later in this pass:** two findings below are now fixed, not open. Surface
+1 finding 1 ("`product` does not auto-expand to include `product_set`") and Surface 5 ("packing
+list create is UNTOUCHED") are both superseded - see
+`documentation/plans/master-data/product-set-n8n-evidence.md` for the real curl evidence. The
+surface sections below are left as-written (they are still an accurate account of what this
+pass found and why), with a pointer added at each fixed spot.
+
 ## Why this feature exists
 
 A two-piece water closet is sold as one thing and stocked as three. The flyer prints
@@ -156,13 +163,19 @@ What else the resolver contract carries, unchanged from the earlier draft:
 
 **Two things this pass found that were not in the earlier draft:**
 
-1. **Unrestricted calls only.** `product_set` only appears when the caller's
-   `allowed_entity_types` is either omitted (`None`, meaning "search everything") or explicitly
-   includes `product_set`/`set`/`kit`. If n8n's stock-answer node already passes
-   `allowed_entity_types: ["product"]` to keep the resolve call narrow, it will keep NOT seeing
-   sets even after the flag flips on - `product` does not auto-expand to include `product_set`
-   the way `brand`/`category` auto-expand to `promotion`. **Confirm what `allowed_entity_types`
-   your stock-answer node currently sends.**
+1. **FIXED, same branch.** `allowed_entity_types: ["product"]` now reaches the set probe too
+   (`_expand_entity_types` in `app/services/entity_resolver.py`, additive - a `product` filter
+   still gets ordinary products, plus the set probe becomes reachable). Gated behind the SAME
+   `PRODUCT_SET_RESOLVE_ENABLED` flag as the rest of this surface, so this changes nothing while
+   the flag stays off. Real evidence:
+   `documentation/plans/master-data/product-set-n8n-evidence.md` command 1/2. What follows
+   describes the bug this fixed, kept for context: `product_set` used to appear only when the
+   caller's `allowed_entity_types` was either omitted (`None`, meaning "search everything") or
+   explicitly included `product_set`/`set`/`kit`. n8n's stock-answer node passing
+   `allowed_entity_types: ["product"]` to keep the resolve call narrow would have kept NOT seeing
+   sets even after the flag flipped on - `product` did not auto-expand to include `product_set`
+   the way `brand`/`category` auto-expand to `promotion`. It now does, for `product_set`
+   specifically, gated the same way.
 2. **AND-mode (`match_mode: "and"`) never returns a `product_set`, flag on or off.** There is no
    `product_set` probe registered in `_AND_PROBES` (`app/services/entity_resolver.py:3617`).
    Only OR-mode (the default, and what the `matches`-per-token examples above use) can surface
@@ -389,27 +402,36 @@ directly) are the ones actually intended.**
 
 ## Surface 5: Packing list create (`/api/v1/external/packing-lists`)
 
-**Status: UNTOUCHED. Verified, not assumed.**
+**Status: FIXED, same branch, superseding this section as originally written.** Real evidence:
+`documentation/plans/master-data/product-set-n8n-evidence.md` command 5.
 
-`create_packing_list` matches `product_code` via `get_products_by_code`
+What follows is the ORIGINAL finding from earlier in this pass, kept for context on why the
+change was made and what it does NOT do:
+
+`create_packing_list` used to match `product_code` via `get_products_by_code`
 (`app/api/v1/external/utils.py:92`) - a plain case-insensitive EXACT match
-(`func.lower(Product.product_code).in_(...)`), nothing more. Grepped the whole file for
-`product_set` and `resolve_codes` - zero hits either way. It does not import, call, or know
-about `resolve_codes_to_products`, `product_code_resolution`, or `ProductSet` in any form.
+(`func.lower(Product.product_code).in_(...)`), nothing more, so a set code landed in
+`skipped_product_codes`/`unknown_product_codes` and that line was dropped from the shipment.
 
-A packing-list line naming a set code (e.g. `SRTWC8608-RL`) behaves exactly as it did before
-this feature: it matches nothing, lands in `skipped_product_codes`/`unknown_product_codes`, and
-that line is dropped from the created shipment with the rest processed normally - unchanged.
+Explicit product decision, from the person who owns this feature, directly overriding that
+finding: a packing-list line naming a set code now fans out to the set's members through the
+SAME shared resolver product attachments and promotions already use
+(`resolve_codes_to_products`) - one helper, one behaviour (D11), rather than packing lists being
+the one surface that still tells a customer/dealer "no such product." **This is NOT the same
+thing `PLAN-product-sets.md` section 11 excludes** ("ordering, quoting or exploding a set onto an
+**order** line") - that exclusion is about a customer's SALES order/quote line, an OUTBOUND
+document. A packing list is INBOUND (what a supplier shipped), a different document with a
+different question ("what physical goods just arrived"), and section 11 says nothing about it.
 
-This is deliberate on the CRM's design side too: `documentation/plans/master-data/PLAN-product-sets.md`
-section 11 explicitly excludes ordering/quoting/exploding a set onto any transactional line, and
-a packing list is exactly that kind of line. A GRN or inbound shipment is never received "as a
-set" - it receives the physical SKUs that arrived, which is what packing lists already model
-correctly with exact-code matching.
+**The quantity decision, stated plainly:** the packing-list line's `quantity` is copied UNCHANGED
+onto every member line - not split across members, not scaled by `ProductSetMember.quantity`
+(how many of that part one assembled set needs). A physical packing slip has no field for "how
+many complete sets" versus "how many of this one part," so scaling would invent a number nobody
+on the slip actually wrote. See the evidence doc for the worked example and the full reasoning.
 
-**n8n action: none. Nothing to confirm, nothing to change. If a supplier's packing list ever
-prints a set/flyer code instead of a real SKU, that is a new, separate problem this feature does
-not solve - not a regression it introduced.**
+**n8n action: if a supplier's packing list ever prints a set/flyer code instead of a real SKU,
+it now creates a line for every member at the code's own stated quantity - confirm that is the
+receiving behaviour you want before this deploys.**
 
 ---
 

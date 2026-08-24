@@ -376,3 +376,117 @@ def test_both_link_tables_can_hold_set_provenance(db: Session, world):
         assert "linked_via_set_id" in sa_inspect(model).columns
         column = sa_inspect(model).columns["linked_via_set_id"]
         assert column.nullable, "a hand-made link legitimately has no set"
+
+
+# ----------------------------------------------------- a third caller: packing lists
+#
+# `packing_lists.create_packing_list` used to call the bare exact-match
+# `get_products_by_code`, so a set code fell straight into `skipped_product_codes`.
+# It now goes through the same `resolve_codes_to_products` the two callers above
+# use - one helper, one behaviour (D11) - so these exercise the real route, not
+# just the shared function again.
+
+
+def _attachment_for(db: Session, company) -> "Attachment":
+    from app.models.resources import Attachment
+
+    row = Attachment(
+        id=str(uuid.uuid4()),
+        original_filename=_uid("packing-list") + ".pdf",
+        stored_filename=_uid("stored") + ".pdf",
+        file_path="zzt://packing-list",
+        company_id=company.id,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _create_packing_list(db: Session, attachment, items: list[tuple[str, int]]):
+    from app.api.v1.external.packing_lists import create_packing_list
+    from app.schemas.external.procurement import (
+        PackingListHeader,
+        PackingListProduct,
+        PackingListRequest,
+    )
+
+    payload = PackingListRequest(
+        packing_list=PackingListHeader(
+            shipment_number=_uid("shp"),
+            attachment_id=attachment.id,
+            shipment_date="2026-08-24",
+        ),
+        packing_list_products=[
+            PackingListProduct(product_code=code, quantity=qty) for code, qty in items
+        ],
+    )
+    return create_packing_list(
+        payload=payload, current_user={"id": str(uuid.uuid4())}, db=db
+    )
+
+
+def test_a_packing_list_set_code_lands_a_line_for_every_member(db: Session, world):
+    """A set code on the slip creates one shipment line PER MEMBER - the same
+    quantity the slip stated for the set code, on every member, not split or
+    scaled by `ProductSetMember.quantity`. See the route's own comment for why:
+    nothing on the slip says "how many complete sets" versus "how many of this
+    one part", so scaling would invent a number nobody wrote."""
+    a = world["a"]
+    attachment = _attachment_for(db, a["company"])
+
+    response = _create_packing_list(db, attachment, [(a["set"].set_code, 5)])
+
+    assert response.skipped_product_codes == []
+    lines = {
+        line.product.product_code: line.quantity_shipped
+        for line in response.shipment.shipment_lines or []
+    }
+    assert lines == {
+        a["pedestal"].product_code: 5,
+        a["cistern"].product_code: 5,
+        a["seat"].product_code: 5,
+    }
+
+
+def test_a_packing_list_ordinary_code_behaves_as_before(db: Session, world):
+    """An exact product code still resolves to exactly its own one line."""
+    a = world["a"]
+    attachment = _attachment_for(db, a["company"])
+
+    response = _create_packing_list(db, attachment, [(a["cistern"].product_code, 12)])
+
+    assert response.skipped_product_codes == []
+    lines = {
+        line.product.product_code: line.quantity_shipped
+        for line in response.shipment.shipment_lines or []
+    }
+    assert lines == {a["cistern"].product_code: 12}
+
+
+def test_a_packing_list_unknown_code_is_still_reported_skipped(db: Session, world):
+    """AC-F.6's guarantee carried through to the packing-list route."""
+    a = world["a"]
+    attachment = _attachment_for(db, a["company"])
+
+    response = _create_packing_list(db, attachment, [("ZZT-NO-SUCH-CODE-AT-ALL", 3)])
+
+    assert response.skipped_product_codes == ["ZZT-NO-SUCH-CODE-AT-ALL"]
+    assert (response.shipment.shipment_lines or []) == []
+
+
+def test_a_packing_list_set_code_only_links_the_scoped_companys_members(db: Session, world):
+    """AC-F.8's guarantee, through the actual route: the attachment's own company
+    pins the scope, so the resolver cannot receive the wrong company's members -
+    the same guarantee product-attachment / promotion linking already have.
+
+    Both companies carry the SAME codes on purpose (`world` builds one 8608
+    family per company with an identical tag) - asserted by ROW, never by code,
+    same as `test_ac_f8_a_set_resolves_only_within_the_scoped_company` above."""
+    a, b = world["a"], world["b"]
+    attachment = _attachment_for(db, b["company"])
+
+    response = _create_packing_list(db, attachment, [(b["set"].set_code, 2)])
+
+    product_ids = {line.product.id for line in response.shipment.shipment_lines or []}
+    assert product_ids == {b["pedestal"].id, b["cistern"].id, b["seat"].id}
+    assert a["pedestal"].id not in product_ids
