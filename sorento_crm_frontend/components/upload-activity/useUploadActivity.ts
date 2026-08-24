@@ -24,6 +24,7 @@ import {
 } from '@/services/uploadActivityService';
 
 import {
+  dismissKey,
   getDismissedServerSnapshot,
   getDismissedSnapshot,
   subscribeDismissed,
@@ -50,14 +51,15 @@ function computeBadgeCount(
 ): number {
   let count = 0;
   for (const s of sessions) {
-    // In-flight always counts, and is never dismissable: it is a live state
-    // that resolves on its own, and if it resolves into a failure the session
-    // becomes `needs_action` and is counted again below.
+    // Dismissed in the state it is still in — silent. The key carries the state,
+    // so a session that CHANGES (a stuck upload that finally fails) no longer
+    // matches its old entry and starts counting again on its own.
+    if (dismissed.has(dismissKey(s))) continue;
     if (s.status === 'uploading' || s.status === 'processing') {
       count += 1;
       continue;
     }
-    if (s.needs_action && !dismissed.has(s.session_id)) count += 1;
+    if (s.needs_action) count += 1;
   }
   return count;
 }

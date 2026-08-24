@@ -21,7 +21,9 @@ import {
 } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
-import { dismissSessions, pruneDismissed } from './dismissedSessions';
+import { Button } from '@/components/ui/button';
+
+import { dismissKey, dismissSessions, pruneDismissed } from './dismissedSessions';
 import { EmptyState } from './EmptyState';
 import { UploadSessionRow } from './UploadSessionRow';
 import { useUploadActivity } from './useUploadActivity';
@@ -29,7 +31,7 @@ import { useUploadManager } from './UploadManagerContext';
 
 export function UploadActivityDrawer() {
   const { state, setDrawerOpen } = useUploadManager();
-  const { sessions, refetch } = useUploadActivity();
+  const { sessions, badgeCount, refetch } = useUploadActivity();
 
   useEffect(() => {
     if (state.isDrawerOpen) refetch();
@@ -43,10 +45,16 @@ export function UploadActivityDrawer() {
   useEffect(() => {
     if (!state.isDrawerOpen || sessions.length === 0) return;
     pruneDismissed(sessions.map((s) => s.session_id));
-    dismissSessions(
-      sessions.filter((s) => s.needs_action).map((s) => s.session_id),
-    );
+    dismissSessions(sessions.filter((s) => s.needs_action).map(dismissKey));
   }, [state.isDrawerOpen, sessions]);
+
+  // The manual out. Auto-marking above only reaches `needs_action`, which cannot
+  // help a session stuck on `processing` — an attachment with no
+  // `integration_log` reads as "Linking…" for ever and pinned the badge with
+  // nothing the user could do. This dismisses everything listed, whatever its
+  // state; because the stored key carries the state, a session that later
+  // changes starts counting again by itself.
+  const dismissAll = () => dismissSessions(sessions.map(dismissKey));
 
   return (
     <Sheet open={state.isDrawerOpen} onOpenChange={(o) => setDrawerOpen(o)}>
@@ -65,6 +73,16 @@ export function UploadActivityDrawer() {
           <SheetDescription className="sr-only">
             Recent uploads and imports, newest first.
           </SheetDescription>
+          {badgeCount > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ms-auto h-7 px-2 text-xs text-muted-foreground"
+              onClick={dismissAll}
+            >
+              Dismiss all
+            </Button>
+          )}
         </SheetHeader>
         <SheetBody className="p-0">
           <ScrollArea className="h-[calc(100vh-12rem)] min-h-[200px]">

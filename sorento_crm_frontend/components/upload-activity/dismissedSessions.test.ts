@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
   clearDismissed,
+  dismissKey,
   dismissSessions,
   getDismissedSnapshot,
   pruneDismissed,
@@ -46,10 +47,27 @@ describe('dismissedSessions', () => {
     expect(calls).toBe(1);
   });
 
-  it('prunes ids the feed no longer returns', () => {
+  it('prunes entries whose session the feed no longer returns', () => {
     dismissSessions(['a', 'b', 'c']);
     pruneDismissed(['b']);
     expect([...getDismissedSnapshot()]).toEqual(['b']);
+  });
+
+  it('prunes on the session id, so a state change does not delete the record', () => {
+    const stuck = { session_id: 'sess-1', status: 'processing', needs_action: false };
+    dismissSessions([dismissKey(stuck)]);
+    pruneDismissed(['sess-1']); // still in the feed, now failed
+    expect([...getDismissedSnapshot()]).toEqual(['sess-1:processing:0']);
+  });
+
+  it('keys on the state, so the same session in a new state is not dismissed', () => {
+    const stuck = { session_id: 'sess-1', status: 'processing', needs_action: false };
+    dismissSessions([dismissKey(stuck)]);
+    const seen = new Set(getDismissedSnapshot());
+    expect(seen.has(dismissKey(stuck))).toBe(true);
+    // The stuck upload finally answers, with an error.
+    const failed = { session_id: 'sess-1', status: 'failed', needs_action: true };
+    expect(seen.has(dismissKey(failed))).toBe(false);
   });
 
   it('survives localStorage throwing', () => {

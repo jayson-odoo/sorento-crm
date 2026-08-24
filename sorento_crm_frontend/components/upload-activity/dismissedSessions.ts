@@ -16,14 +16,41 @@
  * drawer either way, so nothing is hidden, only un-nagged. A migration and a
  * route would buy cross-device sync for a read receipt.
  *
- * Marking happens on drawer open, and ONLY for sessions that are `needs_action`
- * at that moment. That distinction matters: a session still uploading is not
- * `needs_action`, so it is not marked, and if it later fails the badge comes
- * back. Marking every visible session on open would silence exactly the failure
- * the user opened the drawer to watch for.
+ * Two ways in:
+ *
+ * - Opening the drawer marks the sessions that are `needs_action` AT THAT MOMENT.
+ *   A session still uploading is not `needs_action`, so it is not marked; marking
+ *   every visible session on open would silence exactly the failure the user
+ *   opened the drawer to watch for.
+ * - "Dismiss all" in the drawer header marks everything listed, whatever its
+ *   status. This exists because auto-marking cannot reach a session stuck on
+ *   `processing` - an attachment with no `integration_log` row reads as "Linking…"
+ *   for ever, is never `needs_action`, and so pinned the badge with nothing the
+ *   user could do about it.
+ *
+ * An entry is keyed on the session id AND the state it was dismissed in, so a
+ * dismissal is a statement about what the user saw, not a permanent mute. Clear a
+ * stuck upload and the badge goes quiet; if that upload later fails, its key no
+ * longer matches and it speaks up again.
  */
 
 const STORAGE_KEY = 'sorento:upload-activity:dismissed';
+
+/** What a stored entry is keyed on: the session and the state it was seen in. */
+export function dismissKey(session: {
+  session_id: string;
+  status: string;
+  needs_action?: boolean;
+}): string {
+  return `${session.session_id}:${session.status}:${session.needs_action ? 1 : 0}`;
+}
+
+function sessionIdOf(key: string): string {
+  // Session ids are UUIDs and the suffix is appended, so the id is everything
+  // before the last two colons.
+  const parts = key.split(':');
+  return parts.length > 2 ? parts.slice(0, -2).join(':') : key;
+}
 
 /** Ceiling so the entry cannot grow without bound. Newest ids are kept. */
 const MAX_REMEMBERED = 200;
@@ -91,7 +118,7 @@ export function getDismissedServerSnapshot(): readonly string[] {
 
 // ---- mutations -----------------------------------------------------------
 
-/** Remember these session ids as seen. No-op when nothing is new. */
+/** Remember these keys (from `dismissKey`) as seen. No-op when nothing is new. */
 export function dismissSessions(ids: readonly string[]): void {
   if (!ids.length) return;
   const current = getDismissedSnapshot();
@@ -102,16 +129,18 @@ export function dismissSessions(ids: readonly string[]): void {
 }
 
 /**
- * Drop remembered ids that are no longer in the feed.
+ * Drop remembered entries whose session is no longer in the feed.
  *
- * Without this the entry grows for ever and, worse, a session id that ages out
- * of the seven-day window and somehow comes back would still read as seen.
+ * Without this the entry grows for ever and, worse, a session that ages out of
+ * the seven-day window and somehow comes back would still read as seen. Matched
+ * on the session id alone, so an entry survives its session changing state - that
+ * is what lets a state change un-dismiss it rather than deleting the record.
  */
 export function pruneDismissed(liveSessionIds: readonly string[]): void {
   const current = getDismissedSnapshot();
   if (!current.length) return;
   const live = new Set(liveSessionIds);
-  const kept = current.filter((id) => live.has(id));
+  const kept = current.filter((key) => live.has(sessionIdOf(key)));
   if (kept.length === current.length) return;
   commit(kept);
 }
