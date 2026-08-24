@@ -22,7 +22,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.database import SessionLocal
+from app.database import SessionLocal, engine
 from app.models.company import Company
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.product_set import ProductSet, ProductSetMember
@@ -43,22 +43,30 @@ def _uid(stem: str) -> str:
 
 @pytest.fixture()
 def db() -> Session:
-    """A rolled-back session reading ACROSS companies.
+    """A session whose writes are DISCARDED, even when the code under test commits.
 
-    `company_scope(db, None)` is "all companies", not "no scope". Without it the
-    session's scope is UNSET and `do_orm_execute` fail-closes every read of a
-    company-scoped model - `Product` included - to zero rows. That is the right
-    production behaviour and it is why the isolation test below opens its own
-    narrower scope rather than relying on the ambient one.
+    `SessionLocal()` + `begin_nested()` is not enough and it silently leaks: the
+    service calls `db.commit()`, which commits the OUTER transaction rather than
+    releasing a savepoint, so the fixture's rollback has nothing left to undo and
+    every ZZT row lands in the shared database for good. That is what happened
+    here - 99 sets, 407 products and 204 companies had to be swept back out.
+
+    Binding to a connection that already holds a transaction, with
+    `join_transaction_mode="create_savepoint"`, is what makes a committing test
+    safe: its commits land on a savepoint inside the outer transaction, visible
+    to the test and to the code under it, and the outer rollback still discards
+    everything. Same approach as `tests/_pg_fixture.blank_session`.
     """
-    session = SessionLocal()
-    session.begin_nested()  # SAVEPOINT, rolled back at teardown
+    connection = engine.connect()
+    transaction = connection.begin()
+    session = Session(bind=connection, join_transaction_mode="create_savepoint")
     try:
         with company_scope(session, None):
             yield session
     finally:
-        session.rollback()
         session.close()
+        transaction.rollback()
+        connection.close()
 
 
 @pytest.fixture()

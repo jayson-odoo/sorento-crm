@@ -20,6 +20,7 @@ Design notes
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -71,6 +72,12 @@ _ENTITY_TYPE_ALIASES: dict[str, str] = {
     "sales_order": "customer_order",
     # Product-domain hints. Caller uses these labels as `domain_hint` to scope
     # ambiguous aliases (brand / category) to product probes.
+    # Product sets: the flyer code that names an assembly. "kit" is what people
+    # say out loud; the glossary term is Product Set.
+    "product_set": "product_set",
+    "product_sets": "product_set",
+    "set": "product_set",
+    "kit": "product_set",
     "product_attachment": "product",
     "product_attachments": "product",
     "master_products": "product",
@@ -797,6 +804,124 @@ def _probe_product(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEnt
                 uuid=str(pid) if pid else None,
                 match_field="product_code",
                 display={"product_name": name, "is_active": bool(is_active)},
+            )
+        )
+    return result
+
+
+#: `product_set` is a NEW value on the FROZEN `/references/resolve` contract, so
+#: the probe ships OFF and the CRM can deploy before n8n has learned the type.
+#: Turning it on is a deliberate act coordinated with `sorento-crm-n8n-60`, not a
+#: side effect of a release. Remove this flag once they have shipped.
+PRODUCT_SET_RESOLVE_ENABLED = os.environ.get("PRODUCT_SET_RESOLVE_ENABLED", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+
+def _probe_product_set(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """A flyer code answers with ONE entity carrying its members.
+
+    `SRTWC8608-RL` is printed on a flyer and asked for on WhatsApp, but no product
+    carries it - the catalogue holds a pedestal, a cistern and a seat cover. The
+    exact product probe finds nothing and the customer is told the product does
+    not exist. This is the probe that answers instead.
+
+    NOT a fan-out. Three top-level product entities would lose the thing the
+    customer named, and once a set carries a price of its own it IS an entity.
+
+    NO PRICE in the response: a stock question gets stock, and the price path has
+    its own entitlement gates (UAC D7).
+
+    ORM only. Company isolation is injected by the `do_orm_execute` listener into
+    every ORM SELECT touching a `CompanyScopedMixin` model; `ProductSet` carries
+    it, so another company's set is invisible here and its members are never
+    reached. `ProductSetMember` is deliberately unscoped and is read only THROUGH
+    its scoped parent, the same shape as `certificate_products` through
+    `Certificate`. A raw `text()` query would bypass the listener entirely.
+    """
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens or not PRODUCT_SET_RESOLVE_ENABLED:
+        return result
+
+    from app.models.product_set import ProductSet, ProductSetMember
+
+    normalized_tokens = [_strip_all_ws(t.lower()) for t in tokens]
+    norm_to_token = dict(zip(normalized_tokens, tokens))
+
+    rows = (
+        db.query(ProductSet)
+        .filter(_ws_insensitive_lower(ProductSet.set_code).in_(list(norm_to_token.keys())))
+        .all()
+    )
+    if not rows:
+        return result
+
+    members_by_set: dict[str, list] = {}
+    for product_set in rows:
+        members_by_set[product_set.id] = (
+            db.query(ProductSetMember)
+            .filter(ProductSetMember.product_set_id == product_set.id)
+            .order_by(ProductSetMember.sort_order)
+            .all()
+        )
+
+    product_ids = [m.product_id for members in members_by_set.values() for m in members]
+    available: dict[str, int] = {}
+    if product_ids:
+        from app.models.inventory import Stock
+
+        for pid, total in (
+            db.query(Stock.product_id, func.sum(Stock.quantity_available))
+            .filter(Stock.product_id.in_(list(set(product_ids))))
+            .group_by(Stock.product_id)
+            .all()
+        ):
+            available[str(pid)] = int(total or 0)
+
+    for product_set in rows:
+        token = norm_to_token.get(_strip_all_ws(str(product_set.set_code).lower()))
+        if not token:
+            continue
+
+        rendered = []
+        complete = None
+        limiting = None
+        for member in members_by_set.get(product_set.id, []):
+            product = member.product
+            if product is None:
+                continue
+            have = available.get(str(member.product_id), 0)
+            quantity = member.quantity or 1
+            rendered.append(
+                {
+                    "product_code": product.product_code,
+                    "description": product.description or product.product_name,
+                    "quantity": float(quantity),
+                    "available": have,
+                    "is_discontinued": bool(product.is_discontinued),
+                }
+            )
+            # A discontinued member supplies nothing: the set survives it, but it
+            # cannot be completed, and the reason is that member's own code.
+            supplies = 0 if product.is_discontinued else int(have // float(quantity))
+            if complete is None or supplies < complete:
+                complete, limiting = supplies, product.product_code
+
+        result[token].append(
+            ResolvedEntity(
+                entity_type="product_set",
+                canonical_code=product_set.set_code,
+                uuid=str(product_set.id),
+                match_field="set_code",
+                display={
+                    "name": product_set.name,
+                    "member_count": len(rendered),
+                    "complete_sets": complete,
+                    "limiting_member": limiting,
+                    "members": rendered,
+                },
             )
         )
     return result
@@ -4247,6 +4372,7 @@ def _probe_user(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity
 
 _TIER1_PROBES: tuple[tuple[Callable[[Session, list[str]], dict[str, list[ResolvedEntity]]], frozenset[str]], ...] = (
     (_probe_product, frozenset({"product"})),
+    (_probe_product_set, frozenset({"product_set"})),
     (_probe_customer_order, frozenset({"customer_order"})),
     (_probe_inbound_shipment, frozenset({"inbound_shipment"})),
     (_probe_spo, frozenset({"spo_allocation"})),
