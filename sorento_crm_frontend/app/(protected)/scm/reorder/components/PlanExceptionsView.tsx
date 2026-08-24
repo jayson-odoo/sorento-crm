@@ -139,7 +139,10 @@ export function PlanExceptionsView({ runId = null, onBack }: PlanExceptionsViewP
         meta: { headerTitle: 'Product', skeleton: <Skeleton className="h-8 w-40" /> },
       },
       {
-        accessorKey: 'exception_type',
+        id: 'exception_type',
+        // Sorts on the label the cell prints, not the code (AC-G02): the codes and the
+        // labels do not share an alphabetical order.
+        accessorFn: (r) => EXCEPTION_TYPE_LABELS[r.exception_type],
         header: ({ column }) => <DataGridColumnHeader title="What disagrees" column={column} />,
         cell: ({ row }) => (
           <span

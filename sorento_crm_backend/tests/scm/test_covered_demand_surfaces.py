@@ -260,20 +260,65 @@ def test_a_buy_under_netting_off_still_names_what_the_pool_holds(sibling_stock_n
     assert "5 available at ZZTW-SIBROOT" in (buy["triggered_reason"] or "")
 
 
-def test_the_bin_holding_the_stock_is_not_told_about_itself(sibling_stock_netting_off):
+def test_a_bin_with_no_pool_siblings_is_not_told_about_its_own_stock(scm_app):
     """GUARD: the sibling total is what OTHER bins hold, never the row's own stock.
 
-    Counting a bin's own on-hand as sibling cover would put the hint on every row in the
-    plan, and a hint that fires everywhere is read nowhere.
+    One warehouse, no pool, 5 on hand against 10 committed: the shortage is real, so the
+    only way a hint could appear is by counting the bin's own 5 as a sibling. Counting a
+    bin's own on-hand would put the hint on every short row in the plan, and a hint that
+    fires everywhere is read nowhere.
     """
-    db, pid, root, _bin = sibling_stock_netting_off
-    created = svc.create_run(db, ["ZZTW-SIBROOT", "ZZTW-SIBBIN"], enqueue=False)
+    _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = false"))
+    lone = _mk_warehouse(db, "ZZTW-LONE")
+    pid = _mk_product(db, f"ZZTP-LONE-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, lone, 5)
+    _mk_demand(db, pid, lone, 0.0)
+    _commit_demand(db, pid, lone, 10, demand_class="retail")
+    _link(db, pid, _mk_supplier(db, "ZZT Lone Supplier"), moq=None, mult=None, cost=40)
+    db.flush()
+
+    created = svc.create_run(db, ["ZZTW-LONE"], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
 
-    for row in _recs(db, created["run_id"], pid):
-        if str(row["warehouse_id"]) == root:
-            assert row["inputs"].get("sibling_available") is None
-            assert "available at" not in (row["triggered_reason"] or "")
+    buy = _row_at([r for r in _recs(db, created["run_id"], pid) if r["rec_type"] == "buy"],
+                  lone)
+    assert buy["inputs"].get("sibling_available") is None
+    assert "available at" not in (buy["triggered_reason"] or "")
+
+
+def test_a_sibling_lends_only_what_it_has_not_promised(scm_app):
+    """A root holding 5 with 5 of its own committed has nothing to lend.
+
+    Naming its 5 on the short bin's row would contradict the Buy the same run emits for
+    the root itself: two rows, one screen, telling the planner the same 5 units are both
+    spoken for and available.
+    """
+    _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = false"))
+    root = _mk_warehouse(db, "ZZTW-BUSYROOT")
+    bin_ = _mk_warehouse(db, "ZZTW-BUSYBIN")
+    _pool(db, root, root)
+    _pool(db, bin_, root)
+    pid = _mk_product(db, f"ZZTP-BUSY-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, root, 5)
+    _mk_stock(db, pid, bin_, 0)
+    _mk_demand(db, pid, root, 0.0)
+    _mk_demand(db, pid, bin_, 0.0)
+    _commit_demand(db, pid, root, 5, demand_class="retail")
+    _commit_demand(db, pid, bin_, 1, demand_class="retail")
+    _link(db, pid, _mk_supplier(db, "ZZT Busy Supplier"), moq=None, mult=None, cost=40)
+    db.flush()
+
+    created = svc.create_run(db, ["ZZTW-BUSYROOT", "ZZTW-BUSYBIN"], enqueue=False)
+    svc.run_reorder(created["run_id"], db=db)
+
+    buy = _row_at([r for r in _recs(db, created["run_id"], pid) if r["rec_type"] == "buy"],
+                  bin_)
+    assert buy["inputs"].get("sibling_available") is None
+    assert "available at" not in (buy["triggered_reason"] or "")
 
 
 def test_a_shortage_no_sibling_can_cover_says_nothing_extra(scm_app):
@@ -308,12 +353,13 @@ def test_a_shortage_no_sibling_can_cover_says_nothing_extra(scm_app):
     assert "available at" not in (buy["triggered_reason"] or "")
 
 
-def test_a_long_trigger_reason_gives_way_rather_than_cutting_the_note_in_half():
-    """``triggered_reason`` is 100 characters wide, and half a sentence says nothing.
+def test_the_note_is_appended_whole_and_only_the_column_clips_it():
+    """The whole sentence is the row's record; the 100-character column is a display width.
 
-    Pure function, no run needed: the budget is the point. The trigger's wording is also
-    carried whole in ``inputs.reason_label``, while the sibling figures exist nowhere else
-    on the row, so it is the trigger that gives way.
+    Pure function: ``_with_sibling_note`` appends and never cuts. ``_build_rec`` freezes
+    that whole string in ``inputs.reason_label`` and clips only ``triggered_reason``, so a
+    long trigger loses wording in the column and nothing anywhere else - the sibling
+    figures are frozen on their own keys regardless.
     """
     cell = {
         "reason_label": "periodic_review: net -1 < order-up-to 0 on review cadence "
@@ -324,6 +370,6 @@ def test_a_long_trigger_reason_gives_way_rather_than_cutting_the_note_in_half():
 
     label = svc._with_sibling_note(cell)
 
-    assert len(label) <= 100
-    assert label.endswith("5 available at ZZTW-SIBROOT (netting off)")
-    assert label.startswith("periodic_review: net -1")
+    assert label == cell["reason_label"] + "; 5 available at ZZTW-SIBROOT (netting off)"
+    assert svc._with_sibling_note({"reason_label": None, "sibling_available": 5.0,
+                                   "sibling_pool_code": "P"}) == "5 available at P (netting off)"

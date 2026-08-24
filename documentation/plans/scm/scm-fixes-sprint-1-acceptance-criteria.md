@@ -114,16 +114,18 @@ fixture repair in S1 plus one new guard (AC-A06). See the plan, section 1.
   `pool_netting` and self-references the pool root, as production does.
 - **AC-E03 [BE][T]** (gated on grill Q1) Given pool netting OFF, a bin short by 1 and a
   sibling bin of the same pool holding 5, When the run completes, Then the bin's row is
-  still a `buy` of 1 AND carries `inputs.sibling_available == 5`,
+  still a `buy` of 1 AND carries `inputs.sibling_available == 5` (a sibling lends only
+  what it has not itself committed; a run scoped to the short bin alone sees no siblings),
   `inputs.sibling_pool_code == <pool code>`, and its `triggered_reason` names the 5.
 - **AC-E04 [E2E]** The Reorder Planning row shows that reason text in the browser, reached
   by sidebar clicks.
 
 ### Group F: hygiene
 
-- **AC-F01 [BE][T]** `Supplier` model declares `UniqueConstraint("company_id",
-  "supplier_code")` in `__table_args__` and no column-level `unique=True`; the name matches
-  migration 305 (`uq_suppliers_company_supplier_code`). No new migration.
+- **AC-F01 [BE][T]** `Supplier` model declares the per-company key in `__table_args__` in
+  the SAME form migration 305 created it (`Index(..., unique=True)` named
+  `uq_suppliers_company_supplier_code`, since 305 emitted CREATE UNIQUE INDEX) and no
+  column-level `unique=True`, so autogenerate reflects no diff. No new migration.
 - **AC-F02 [BE][T]** The probe-and-skip at
   `tests/scm/test_outstanding_import_company_isolation.py:611` is deleted and
   `test_a_creditor_code_owned_only_by_another_company_gets_its_own_row_back_created` runs

@@ -893,9 +893,19 @@ def _note_sibling_cover(prows: list[dict], computed: list[dict],
     holding 2 is still short 38 after any transfer, so naming the 2 is noise on a row whose
     decision it cannot change. The shortage is measured the way ``_covered_rec`` measures
     cover - committed against on hand plus what is already coming - and the sibling total is
-    on-hand only, because stock on the water at another bin cannot be fetched today.
+    on-hand only, because stock on the water at another bin cannot be fetched today. Each
+    sibling counts net of its OWN commitments: a root holding 5 with 5 promised has nothing
+    to lend, and naming it would contradict the Buy row the same run emits for it.
+
+    Scope-limited, the way the transfer flags are: siblings are read from the rows this run
+    planned, so a run scoped to the short bin alone sees no siblings and says nothing. The
+    pool's name still resolves (``_pool_codes`` reads ``warehouses`` directly).
     """
     on_hand = {str(r["warehouse_id"]): float(r["quantity_on_hand"] or 0.0) for r in prows}
+    # What a sibling could actually part with: its stock less what it has already promised.
+    lendable = {str(r["warehouse_id"]):
+                max(float(r["quantity_on_hand"] or 0.0) - float(r["committed"] or 0.0), 0.0)
+                for r in prows}
     for r, c in zip(prows, computed):
         wid = str(r["warehouse_id"])
         pool_id = str(pool_of.get(wid, wid))
@@ -909,7 +919,7 @@ def _note_sibling_cover(prows: list[dict], computed: list[dict],
         )
         if shortage <= 0:
             continue
-        siblings = sum(qty for other, qty in on_hand.items()
+        siblings = sum(qty for other, qty in lendable.items()
                        if other != wid and str(pool_of.get(other, other)) == pool_id)
         if siblings < shortage:
             continue
@@ -920,10 +930,10 @@ def _note_sibling_cover(prows: list[dict], computed: list[dict],
 def _with_sibling_note(c: dict) -> Optional[str]:
     """This cell's reason label, with the sibling-stock sentence appended when there is one.
 
-    ``triggered_reason`` is stored truncated to 100 characters, and a sentence that is cut
-    in half says nothing, so the trigger's own wording gives way rather than the note: the
-    reason is also carried whole in ``inputs.reason_label`` while the sibling figures exist
-    nowhere else on the row.
+    Returned whole. ``_build_rec`` freezes the whole sentence in ``inputs.reason_label`` and
+    cuts only the ``triggered_reason`` column to its 100 characters; the sibling figures
+    themselves live in ``inputs.sibling_available`` / ``inputs.sibling_pool_code``, so a
+    clipped column loses wording, never the fact.
     """
     available = c.get("sibling_available")
     pool_code = c.get("sibling_pool_code")
@@ -931,10 +941,7 @@ def _with_sibling_note(c: dict) -> Optional[str]:
     if not available or not pool_code:
         return label
     note = f"{_qty_label(float(available))} available at {pool_code} (netting off)"
-    if not label:
-        return note
-    room = _REASON_MAX_CHARS - len(note) - 2
-    return f"{label[:room].rstrip()}; {note}" if room > 0 else note
+    return f"{label}; {note}" if label else note
 
 
 def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: list[dict],

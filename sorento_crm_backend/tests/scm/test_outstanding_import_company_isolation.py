@@ -564,18 +564,19 @@ def test_the_model_scopes_supplier_code_to_the_company_the_way_production_does()
 
     A `create_all` schema is built from the model, so CI was stricter than production: two
     companies could not each hold a creditor code there, and the back-create test below had
-    to probe-and-skip rather than run. The name is asserted, not just the columns - the
-    migration named it, and a model that recreates the same pair under a different name
-    would read as a second constraint to `alembic revision --autogenerate`.
+    to probe-and-skip rather than run. The name AND the kind are asserted: migration 305
+    emitted CREATE UNIQUE INDEX, so a model UniqueConstraint of the same name would still
+    read to `alembic revision --autogenerate` as drop-index plus add-constraint.
     """
     uniques = {
-        c.name: tuple(col.name for col in c.columns)
-        for c in Supplier.__table__.constraints
-        if isinstance(c, UniqueConstraint)
+        i.name: tuple(col.name for col in i.columns)
+        for i in Supplier.__table__.indexes
+        if i.unique
     }
     assert uniques == {
         "uq_suppliers_company_supplier_code": ("company_id", "supplier_code")
-    }
+    }, "the same unique INDEX migration 305 created, so autogenerate sees no diff"
+    assert not [c for c in Supplier.__table__.constraints if isinstance(c, UniqueConstraint)]
     assert Supplier.__table__.c.supplier_code.unique is not True
 
 

@@ -1,6 +1,6 @@
 # PLAN: SCM fixes sprint 1 - retire the red tests, close the sibling-stock gap, hygiene
 
-**Status:** GRILLED 24 August 2026 (Q1 = A, Q2 = project + order_inquiry origin, Q4 = add BL-027 as S5; Q3 pending the captain's go). Implementation in progress.
+**Status:** GRILLED 24 August 2026 (Q1 = A, Q2 = project + order_inquiry origin, Q4 = add BL-027 as S5; Q3 pending the captain's go). S1-S5 built, reviewed, review findings applied; F05 waits for the captain.
 **UAC:** `scm-fixes-sprint-1-acceptance-criteria.md`
 **Branch:** `feat/scm-fixes-improvements` (worktree `.claude/worktrees/scm-fixes`, FE 3020 / BE 8020)
 **Base:** `origin/main` e6ccd915c

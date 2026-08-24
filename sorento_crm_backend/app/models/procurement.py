@@ -69,10 +69,10 @@ class Supplier(Base, CompanyScopedMixin):
         # since migration 305 (`uq_suppliers_company_supplier_code`); the model kept a bare
         # column-level `unique=True`, so every `create_all` schema (CI, the blank scratch
         # schemas) was stricter than production and rejected the second company's row.
-        # Same name as the migration, so the two schemas describe one constraint. BL-036.
-        UniqueConstraint(
-            "company_id", "supplier_code", name="uq_suppliers_company_supplier_code"
-        ),
+        # Declared as a unique INDEX, not a UniqueConstraint: migration 305 emitted
+        # CREATE UNIQUE INDEX, so this is the form autogenerate reflects back as no diff.
+        # Same name, so the two schemas describe one key. BL-036.
+        Index("uq_suppliers_company_supplier_code", "company_id", "supplier_code", unique=True),
         Index("ix_suppliers_is_active", "is_active"),
         Index("ix_suppliers_country", "country"),
         Index("ix_suppliers_city", "city"),
