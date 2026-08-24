@@ -144,6 +144,20 @@ def test_qs_c4_two_customers_are_counted_and_named(db, scenario):
     assert s["delivered_to"] == "2026-08-01"
 
 
+def test_qs_c4b_customer_count_is_not_capped_by_the_named_list(db, scenario):
+    """Reviewer F-1: the count must be a COUNT(DISTINCT), never len() of the capped list."""
+    cust, prod, wh = scenario
+    for i in range(6):
+        c = customer(db, company_id=DEFAULT_COMPANY_ID, name=f"CUSTOMER {i:02d} SDN BHD")
+        _do(db, cust=c, prod=prod, wh=wh, qty=1, status_code="DELIVERED", delivered_on=date(2026, 8, 1))
+    db.commit()
+
+    s = OrderService(db).list_orders(product_ids=[prod.id])["summary"]
+    assert s["customer_count"] == 7          # ECO WORLD + 6
+    assert len(s["customers"]) == 3          # the named list stays short
+    assert s["customers"] == sorted(s["customers"])
+
+
 def test_qs_c5_empty_result_carries_no_summary(db, scenario):
     _, prod, _ = scenario
     ghost = customer(db, company_id=DEFAULT_COMPANY_ID, name="NOBODY SDN BHD")

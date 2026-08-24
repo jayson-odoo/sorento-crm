@@ -161,18 +161,17 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
         n_delivered = int(n_delivered or 0)
 
         name_col = func.btrim(func.coalesce(Order.debtor_name, Customer.customer_name))
-        name_rows = (
+        names_q = (
             db.query(name_col)
             .select_from(Order)
             .outerjoin(Customer, Customer.id == Order.customer_id)
             .filter(in_ids)
             .filter(name_col.is_not(None), name_col != "")
-            .distinct()
-            .order_by(name_col.asc())
-            .limit(50)
-            .all()
         )
-        names = [r[0] for r in name_rows]
+        # The COUNT is its own query over every distinct name; the LIST is capped.
+        # Counting the capped list would say "50 customers" for 200 (reviewer F-1).
+        customer_count = int(names_q.with_entities(func.count(func.distinct(name_col))).scalar() or 0)
+        names = [r[0] for r in names_q.distinct().order_by(name_col.asc()).limit(3).all()]
 
         summary: dict[str, Any] = {
             "scope": "filter",
@@ -180,8 +179,8 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
             "order_count": total,
             "delivered_count": n_delivered,
             "pending_count": total - n_delivered,
-            "customers": names[:3],
-            "customer_count": len(names),
+            "customers": names,
+            "customer_count": customer_count,
         }
         if n_delivered and d_from is not None and d_to is not None:
             summary["delivered_from"] = d_from.isoformat()
