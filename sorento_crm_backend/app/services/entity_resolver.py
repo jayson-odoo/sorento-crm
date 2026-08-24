@@ -913,6 +913,14 @@ def _probe_product_set(db: Session, tokens: list[str]) -> dict[str, list[Resolve
                     "quantity": float(quantity),
                     "available": have,
                     "is_discontinued": bool(product.is_discontinued),
+                    # For n8n's fan-out: the existing per-product MCP tools
+                    # (`crm_inventory_stock_balance_list`, `crm_master_products_list`,
+                    # `crm_marketing_promotion_products_list`,
+                    # `crm_incoming_stock_by_product`) already take `product_ids`.
+                    # This is what feeds them - no new tool needed. Machine payload,
+                    # not UI, so the UUID rule does not apply (matches.uuid already
+                    # carries one at the top level).
+                    "product_id": str(member.product_id),
                 }
             )
             # A discontinued member supplies nothing: the set survives it, but it
@@ -3959,6 +3967,7 @@ def _company_scoped_models() -> dict[str, Any]:
         Supplier,
     )
     from app.models.product import Product
+    from app.models.product_set import ProductSet
     from app.models.resources import Attachment
 
     return {
@@ -3974,6 +3983,7 @@ def _company_scoped_models() -> dict[str, Any]:
         "promotion": Promotion,
         "certificate": Certificate,
         "attachment": Attachment,
+        "product_set": ProductSet,
     }
 
 

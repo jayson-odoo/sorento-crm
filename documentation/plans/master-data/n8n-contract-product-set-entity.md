@@ -115,15 +115,17 @@ stock, none discontinued):
       "canonical_code": "SRTWC8608-RL",
       "uuid": "608d64d6-93fe-4fa7-a84b-70879589b84c",
       "match_field": "set_code",
+      "company_id": "00000000-0000-0000-0000-000000000001",
+      "company_name": "Sorento",
       "display": {
         "name": "Washdown with rimless flushing, S-trap",
         "member_count": 3,
         "complete_sets": 1629,
         "limiting_member": "SRTWCX8608-RL",
         "members": [
-          {"product_code": "SRTWCX8608-RL", "description": "SORENTO CLOSE COUPLED PEDESTAL (S-TRAP 250MM) SRTWCX8608-RL", "quantity": 1.0, "available": 1629, "is_discontinued": false},
-          {"product_code": "SRTWCY8608",    "description": "SORENTO CLOSE-COUPLED CISTERN ONLY (S-TRAP).  SRTWCY8608",    "quantity": 1.0, "available": 2051, "is_discontinued": false},
-          {"product_code": "SRTWC8608-SC",  "description": "SORENTO SRTWC8608-SC SEAT COVER ONLY",                         "quantity": 1.0, "available": 2044, "is_discontinued": false}
+          {"product_code": "SRTWCX8608-RL", "description": "SORENTO CLOSE COUPLED PEDESTAL (S-TRAP 250MM) SRTWCX8608-RL", "quantity": 1.0, "available": 1629, "is_discontinued": false, "product_id": "0fb2507c-c6f3-47a1-ad10-296a3604aaea"},
+          {"product_code": "SRTWCY8608",    "description": "SORENTO CLOSE-COUPLED CISTERN ONLY (S-TRAP).  SRTWCY8608",    "quantity": 1.0, "available": 2051, "is_discontinued": false, "product_id": "732adbfb-06cb-499f-8cd3-88bd16678655"},
+          {"product_code": "SRTWC8608-SC",  "description": "SORENTO SRTWC8608-SC SEAT COVER ONLY",                         "quantity": 1.0, "available": 2044, "is_discontinued": false, "product_id": "ed83a177-81c0-46e7-9989-d484e54b9c9d"}
         ]
       }
     },
@@ -140,6 +142,11 @@ stock, none discontinued):
 }
 ```
 
+(The `product_id`/`company_id`/`company_name` values above are the real ids for this set and its
+members, already proven live against `:8050` in Surface 3/4/5's evidence - they are not
+re-captured here from a fresh curl. See "NEW in this pass" below for how `:8050` stood at the
+time this section was last updated.)
+
 **Important correction to the earlier draft of this note: this is not an isolated new entity
 type appearing in a vacuum.** For any token that already matches something else today (an
 attachment filename, in this real example), turning the flag on makes `matches` grow to
@@ -148,6 +155,21 @@ carry BOTH. `resolved` stays `true` (its definition is `bool(matches) and not am
 rows of the SAME entity type collide, which product-vs-set is guarded against but
 set-vs-attachment is not. **n8n's renderer has to handle a `matches` array that mixes
 `product_set` with other types for one token, not assume `product_set` arrives alone.**
+
+**NEW in this pass, answering the standing fan-out question directly: every member object in
+`display.members` now carries `product_id` - that MEMBER's own product UUID (the top-level
+`uuid` on the match is the SET's id, not any member's). This is exactly what feeds n8n's
+fan-out: read `product_id` off each member and pass that list straight into the existing
+per-product MCP tools' `product_ids` param - `crm_inventory_stock_balance_list`,
+`crm_master_products_list`, `crm_marketing_promotion_products_list`,
+`crm_incoming_stock_by_product` - all four already accept a list of product UUIDs there. No new
+MCP tool is needed for this (UAC D12 stands, unchanged). This is additive only: the five
+existing member keys (`product_code`, `description`, `quantity`, `available`,
+`is_discontinued`) are unchanged. Also new in this pass: a `product_set` match now carries
+`company_id`/`company_name` like every other entity type on this contract (previously always
+`null` - `product_set` was missing from the resolver's `_company_scoped_models` registry, fixed
+in `app/services/entity_resolver.py`). This is attribution only; which rows come back was
+already correctly company-scoped before this fix.**
 
 What else the resolver contract carries, unchanged from the earlier draft:
 

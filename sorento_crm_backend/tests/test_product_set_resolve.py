@@ -204,6 +204,33 @@ def test_ac_e2_every_member_carries_its_code_and_its_own_stock(db: Session, worl
     assert all(m["description"] for m in members)
 
 
+def test_every_member_carries_its_product_id(db: Session, world):
+    """n8n's fan-out needs the MEMBER'S uuid, not the set's - `matches[].uuid`
+    already names the set. Asserted against the real seeded row, not merely
+    "is not None"."""
+    members = _probe(db, world["company"], world["set"].set_code)[0].display["members"]
+
+    by_code = {m["product_code"]: m for m in members}
+    assert by_code[world["pedestal"].product_code]["product_id"] == world["pedestal"].id
+    assert by_code[world["cistern"].product_code]["product_id"] == world["cistern"].id
+    assert by_code[world["seat"].product_code]["product_id"] == world["seat"].id
+
+
+def test_member_keys_are_the_frozen_five_plus_product_id(db: Session, world):
+    """Frozen-contract guard - `product_id` is ADDED, every existing key stays."""
+    members = _probe(db, world["company"], world["set"].set_code)[0].display["members"]
+
+    for member in members:
+        assert set(member.keys()) == {
+            "product_code",
+            "description",
+            "quantity",
+            "available",
+            "is_discontinued",
+            "product_id",
+        }
+
+
 def test_ac_e3_complete_sets_is_zero_and_names_the_member_that_limits_it(db, world):
     """AC-E.3 - a bare 0 reads as a bug when 40 pedestals sit in the warehouse."""
     display = _probe(db, world["company"], world["set"].set_code)[0].display
@@ -306,6 +333,25 @@ def test_ac_e8_a_scoped_caller_gets_their_own_companys_set(db: Session, world):
     assert hits[0].uuid != world["set"].id
 
 
+def test_a_scoped_callers_member_product_ids_never_cross_companies(db: Session, world):
+    """Same-code twin, member-id direction: each company's caller gets its OWN
+    members' product ids, never the other company's."""
+    other_product = world["product"]("ZZT-OTHER-PED", "1.00", world["other"].id)
+    twin = world["make_set"](world["set"].set_code, world["other"].id, [(other_product, 1)])
+
+    hits = _probe(db, world["company"], world["set"].set_code)
+    assert len(hits) == 1
+    member_ids = {m["product_id"] for m in hits[0].display["members"]}
+    assert member_ids == {world["pedestal"].id, world["cistern"].id, world["seat"].id}
+    assert other_product.id not in member_ids
+
+    other_hits = _probe(db, world["other"], world["set"].set_code)
+    assert len(other_hits) == 1
+    assert other_hits[0].uuid == twin.id
+    other_member_ids = {m["product_id"] for m in other_hits[0].display["members"]}
+    assert other_member_ids == {other_product.id}
+
+
 def test_another_companys_set_is_invisible_when_this_one_has_none(db: Session, world):
     """Fail-closed: an unknown-here code resolves to nothing, never borrowed."""
     assert _probe(db, world["other"], world["set"].set_code) == []
@@ -400,6 +446,23 @@ def test_the_real_dispatcher_resolves_a_set_code_to_one_product_set_entity(
     # path too, not only the direct probe call.
     assert "price" not in entity.display
     assert "1180" not in str(entity.display)
+
+
+def test_a_set_match_carries_its_company(db: Session, world):
+    """Change 2 - `product_set` is registered in `_company_scoped_models`, so a
+    set match is stamped exactly like every other entity type. Only company
+    attribution is checked here, not which rows come back (that is AC-E.8)."""
+    with company_scope(db, frozenset({str(world["company"].id)})):
+        result = entity_resolver.resolve_references(
+            db,
+            [world["set"].set_code],
+            enable_prefix_fallback=False,
+            enable_embedding_fallback=False,
+        )
+
+    entity = result.resolutions[0].matches[0]
+    assert entity.company_id == world["company"].id
+    assert entity.company_name == world["company"].name
 
 
 def test_with_the_gate_off_the_real_dispatcher_does_not_resolve_it_as_a_set(
