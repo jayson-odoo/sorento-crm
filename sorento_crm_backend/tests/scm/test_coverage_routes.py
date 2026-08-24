@@ -32,6 +32,7 @@ from fastapi.testclient import TestClient
 from zoneinfo import ZoneInfo
 
 from app.models.inventory import Warehouse
+from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import (
     InboundShipment,
     InboundShipmentLine,
@@ -47,6 +48,7 @@ from app.models.user import (
     UserRoleAssignment,
     UserRolePermission,
 )
+from app.services.scm.demand import ORDER_INQUIRY_ORIGIN, PROJECT_CLASS
 from tests._pg_fixture import unique_code
 from tests.scm.conftest import requires_pg
 from tests.scm.test_coverage_service import _po_line, _so_line, _stock
@@ -440,6 +442,75 @@ def test_a_purchase_order_does_not_reach_the_payload_but_its_shipment_does(scm_a
     assert [row["event"]["supply_stage"] for row in body["rows"]] == [None, "in_transit"]
     assert [row["balance"] for row in body["rows"]] == [0, 60]
     assert body["closing_balance"] == 60
+
+
+# =========================================================================== #
+# 4b. rows the data cannot place at a site
+# =========================================================================== #
+
+def _line_with_no_warehouse(db, product, qty, when):
+    """One open SO line and one open PO line for ``product``, both naming no warehouse.
+
+    ``warehouse_id`` is nullable on both tables and an import leaves it empty whenever the
+    source sheet had no location column, so neither row reaches any pool. Seeded here rather
+    than through the shared helpers because those take a warehouse and dereference it.
+    """
+    cust = Customer(id=_u(), customer_code=unique_code("C"), customer_name="TUJU RESIDENCE")
+    db.add(cust)
+    db.flush()
+    so = SalesOrder(
+        id=_u(), so_number=unique_code("SO"), status="open", customer_id=cust.id,
+        demand_class=PROJECT_CLASS, demand_origin=ORDER_INQUIRY_ORIGIN,
+    )
+    db.add(so)
+    db.flush()
+    db.add(SalesOrderLine(
+        id=_u(), sales_order_id=so.id, product_id=product.id, warehouse_id=None,
+        qty_ordered=qty, qty_delivered=0, line_status="open", required_date=when,
+    ))
+    sup = Supplier(id=_u(), supplier_code=unique_code("S"), supplier_name="KAILU")
+    db.add(sup)
+    db.flush()
+    po = PurchaseOrder(id=_u(), po_number=unique_code("PO"), supplier_id=sup.id,
+                       status="active")
+    db.add(po)
+    db.flush()
+    db.add(PurchaseOrderLine(
+        id=_u(), purchase_order_id=po.id, product_id=product.id, warehouse_id=None,
+        qty_ordered=500, qty_received=0, expected_date=when, line_status="open",
+    ))
+    db.flush()
+    return so, po
+
+
+def test_unplaceable_demand_and_on_order_quantities_reach_the_wire(scm_app):
+    """A commitment in none of the figures is worse than one in the wrong figure.
+
+    The service reports both quantities, but ``response_model`` drops any field the schema
+    does not declare, so a figure computed in the service and absent from
+    ``CoverageTimelineResult`` reaches the browser as nothing at all and the screen goes
+    back to swallowing them in silence. Asserted on the WIRE, with real quantities rather
+    than key presence, so the payload cannot satisfy this by carrying a hard zero.
+    """
+    app, db, gcu, gcuk = scm_app
+    client = _client(scm_app)
+    chain = _chain(db)
+    _line_with_no_warehouse(db, chain["product"], 80, date(2026, 9, 1))
+
+    r = _get(client, product_code=chain["product"].product_code,
+             pool_code=chain["pool"].warehouse_code)
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    assert body["unplaceable_demand_qty"] == 80
+    assert body["unplaceable_on_order_qty"] == 500
+    # Reported BESIDE the balance, never netted into whichever pool was asked: neither row
+    # belongs to this pool, and adding them would invent cover at a site the data never
+    # named.
+    assert [row["event"]["kind"] for row in body["rows"]] == ["opening"]
+    assert body["closing_balance"] == 0
+    assert body["buy_qty"] == 0
 
 
 # =========================================================================== #

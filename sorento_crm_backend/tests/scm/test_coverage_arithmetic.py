@@ -1,39 +1,43 @@
-"""Seven confirmed defects in the Coverage arithmetic, stated as failing tests.
+"""The arithmetic contract the Coverage panel owes its reader.
 
-Every case here is written from the purchasing decision backwards. The Coverage panel is
-read by one person deciding whether to spend money on a container, and each of these defects
-makes that panel state a quantity the timeline beside it contradicts. A screen that
-contradicts itself is not a smaller problem than a screen that is simply wrong: the planner
-stops believing both figures, and the tool is abandoned in week one.
+Every case here is written from the purchasing decision backwards. The panel is read by one
+person deciding whether to spend money on a container, and its two halves - the verdict and
+the dated timeline beside it - must state one number, not two. A screen that contradicts
+itself is not a smaller problem than a screen that is simply wrong: the planner stops
+believing both figures, and the tool is abandoned in week one.
 
-The defects, in the order they appear below:
+The contract, clause by clause, in the order the cases appear below:
 
-1. ``buy_qty`` is resolved against CURRENT stock only, ignoring dated supply, so the panel
-   recommends a purchase the timeline says is unnecessary.
-2. Reserved stock is subtracted by ``availability`` AND counted again as a demand event, so
-   the same reservation reduces cover twice.
-3. A partial receipt is capped per pool rather than across pools, and
-   ``spo_allocations.quantity_received`` is ignored, so 40 units still on the water are
-   reported as 80 units of cover.
-4. An allocation to a warehouse that belongs to no pool is dropped from every timeline AND
-   reported as nothing, which is the one outcome the design rules out.
-5. Shipment status is a whitelist where the rest of the repo uses a blacklist, so a
-   ``partial_received`` shipment's outstanding quantity disappears; and the shipment half
-   never applies a line-status predicate the purchase-order half applies.
-6. A sales-order or purchase-order line with a NULL warehouse is swallowed by
-   ``warehouse_id.in_(...)``, so unplaceable demand and unplaceable on-order supply vanish
-   from every figure instead of being reported the way unplaceable in-transit stock is.
-7. (in ``test_coverage_timeline.py``) the shortfall epsilon and the deficit rounding
-   disagree, so a gap under 5e-5 prints "short 0 today" beside a tile reading 0.
+1. ``buy_qty`` IS the timeline's ``peak_deficit``. Not demand minus current stock: dated
+   supply arriving before the demand covers it, and dated supply arriving after it does
+   not, so only the dated walk can size the purchase. A buy that reads high recommends a
+   container already on the water; one that reads low is discovered on the delivery date.
+2. Availability and the opening balance share ONE basis: on hand. The timeline is the only
+   place a promise is subtracted, so a reservation is demand once rather than twice.
+3. In-transit supply is attributed per allocation and clamped to what is still on the
+   water, so one container cannot be counted as cover by two pools.
+4. Stock allocated to a bin in no pool counts for no pool AND is reported, because
+   "silently dropped" is the one outcome the design rules out.
+5. Shipment status and shipment line status are read the way the rest of the repo reads
+   them: a ``partially_received`` container still contributes what is outstanding, a
+   ``fully_received`` or ``closed`` one contributes nothing.
+6. A sales-order or purchase-order line with a NULL warehouse reaches no pool's balance and
+   is reported under ``unplaceable_demand_qty`` / ``unplaceable_on_order_qty``, the same
+   treatment unplaceable in-transit stock already had.
+7. The pool keeps its name in the verdict even when the pool warehouse itself is
+   ``counts_as_available = False``.
 
-Plus one reporting pin: ``pool_code`` comes back empty when the pool warehouse itself is
-``counts_as_available = False``, so the verdict loses the pool's name.
+Plus the S13b demand rule the whole file rests on: a project-class order is demand only
+where the Order Inquiry named it (``demand_origin = scm_order_inquiry``). ``_so_line``
+stamps that origin, and one case pins the negative so the next fixture drift fails at the
+reader rather than two weeks later in a plan run.
 
-TEST-FIRST. These are expected red on the current behaviour, and red on a WRONG NUMBER or an
-ABSENT REPORT, never on a seeding error - every product, warehouse, supplier, customer, SO,
-PO, shipment and allocation is created here under the ``ZZT`` marker inside a rolled-back
-transaction. Nothing is borrowed with ``LIMIT 1``: CI's database is empty, so a borrowed row
-is the difference between green locally and a NOT NULL violation in CI.
+These clauses were red once (the defects #222 fixed) and are green now. They stay here as
+the pin: each fails on a WRONG NUMBER or an ABSENT REPORT, never on a seeding error - every
+product, warehouse, supplier, customer, SO, PO, shipment and allocation is created here
+under the ``ZZT`` marker inside a rolled-back transaction. Nothing is borrowed with
+``LIMIT 1``: CI's database is empty, so a borrowed row is the difference between green
+locally and a NOT NULL violation in CI.
 """
 from __future__ import annotations
 
@@ -55,6 +59,7 @@ from app.models.procurement import (
 )
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.scm.coverage_service import CoverageService
+from app.services.scm.demand import ORDER_INQUIRY_ORIGIN, PROJECT_CLASS
 from app.services.scm.coverage_timeline import (
     SOURCE_ORDER,
     SOURCE_POOL,
@@ -155,14 +160,24 @@ def _stock(db, product, wh, on_hand, reserved=0) -> Stock:
     return row
 
 
-def _so_line(db, product, wh, qty, when, *, line_status="open") -> SalesOrder:
-    """One open SO carrying one open line. ``wh`` may be None: the column is nullable."""
+def _so_line(
+    db, product, wh, qty, when, *, line_status="open", demand_origin=ORDER_INQUIRY_ORIGIN
+) -> SalesOrder:
+    """One open SO carrying one open line. ``wh`` may be None: the column is nullable.
+
+    The customer is a project customer (TUJU RESIDENCE), so the order is project-class, and
+    S13b says a project-class order is demand only where the Order Inquiry named it. The
+    origin stamp is therefore part of the seed, not decoration: without it every case below
+    would resolve against zero demand and would be proving nothing about the arithmetic.
+    ``demand_origin=None`` is the one case that WANTS the line set aside - see
+    ``test_a_project_line_the_order_inquiry_never_named_is_not_demand``.
+    """
     cust = Customer(id=_u(), customer_code=unique_code("C"), customer_name="TUJU RESIDENCE")
     db.add(cust)
     db.flush()
     so = SalesOrder(
         id=_u(), so_number=unique_code("SO"), status="open",
-        customer_id=cust.id, demand_class="project",
+        customer_id=cust.id, demand_class=PROJECT_CLASS, demand_origin=demand_origin,
     )
     db.add(so)
     db.flush()
@@ -237,26 +252,75 @@ def _in_transit_qty(cov) -> float:
 
 
 # =========================================================================== #
-# DEFECT 1: buy_qty ignores dated supply
+# CLAUSE 0: what counts as demand at all (S13b)
 #
-# `coverage_for` resolves allocations with `resolve_sources(pool_demand, availability)` -
-# total demand against CURRENT stock. Dated supply never enters that comparison, so the
-# residual is a dateless figure printed beside a dated timeline that disagrees with it.
-# What must be bought is what DATED supply cannot cover, which the timeline already
-# computes: `peak_deficit` against the floor.
+# Every case below seeds a project customer, so every case below depends on the origin
+# stamp `_so_line` writes. Pinned first, in both directions, because the failure it guards
+# is silent: a project line the Order Inquiry never named is correctly set aside, and a
+# fixture that forgets the stamp turns every arithmetic case underneath into an assertion
+# about zero demand that happens to be green.
 # =========================================================================== #
 
 
-@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): pins a confirmed coverage-timeline defect; red until the engine slice lands", strict=False)
+def test_a_project_line_the_order_inquiry_never_named_is_not_demand(db, chain):
+    """CS decides what purchasing sees on the project side; the book does not.
+
+    A project-class sales order carrying no `demand_origin` was never named by the Order
+    Inquiry, which is CS saying "not yet". It stays on the customer's order (they are still
+    owed it) and it is not a commitment the engine plans against, so it puts nothing on the
+    timeline and buys nothing. The whole of this file rests on that rule holding, which is
+    why it is asserted here rather than assumed.
+    """
+    product = chain["product"]
+    _so_line(db, product, chain["bin_a"], 100, _today() + timedelta(days=30),
+             demand_origin=None)
+
+    cov = CoverageService(db).coverage_for(product.id, pool_id=chain["pool"].id)
+
+    assert [r.event.kind for r in cov.timeline.rows if r.event.kind == "demand"] == [], (
+        "a project line the Order Inquiry never named is not a demand event"
+    )
+    assert cov.timeline.closing_balance == 0
+    assert cov.timeline.peak_deficit == 0
+    assert cov.buy_qty == 0
+
+
+def test_the_same_line_named_by_the_order_inquiry_is_demand(db, chain):
+    """The positive half, so "count nothing" cannot pass for the rule above.
+
+    One character of difference from the case above - the origin stamp - and the same 100
+    units are a commitment the engine plans against. Without this pair, an engine that
+    dropped project demand entirely would satisfy the guard and quietly stop buying for
+    every project in the book.
+    """
+    product = chain["product"]
+    _so_line(db, product, chain["bin_a"], 100, _today() + timedelta(days=30))
+
+    cov = CoverageService(db).coverage_for(product.id, pool_id=chain["pool"].id)
+
+    assert cov.timeline.peak_deficit == 100
+    assert cov.buy_qty == 100
+
+
+# =========================================================================== #
+# CLAUSE 1: buy_qty is the timeline's peak deficit
+#
+# What must be bought is what DATED supply cannot cover, which the timeline already
+# computes: `peak_deficit` against the floor. Sizing the buy on total demand against
+# CURRENT stock instead prints a dateless residual beside a dated timeline that disagrees
+# with it, which is what these cases exist to stop coming back.
+# =========================================================================== #
+
+
 def test_supply_arriving_before_the_demand_means_nothing_has_to_be_bought(db, chain):
     """Buying a second container because the first one is not on this screen is real money.
 
     500 units land ten days from now, 100 are due thirty days from now, and the pool holds
-    nothing today. The timeline closes at 400 and never dips below zero, so the correct
-    advice is "it is covered, do not buy". The panel instead prints "Buy 100" in an alarm
-    colour beside a healthy balance, and the two figures sit two inches apart on one screen.
-    A planner who acts on the loud one orders a container that is already on the water; a
-    planner who learns to ignore it stops reading the panel at all.
+    nothing today. The timeline closes at 400 and never dips below zero, so the only correct
+    advice is "it is covered, do not buy". A panel that prints "Buy 100" in an alarm colour
+    beside a healthy balance puts the two figures two inches apart on one screen: a planner
+    who acts on the loud one orders a container that is already on the water, and a planner
+    who learns to ignore it stops reading the panel at all.
     """
     product = chain["product"]
     # An allocated shipment, not a purchase order: PO -> SPO -> GRN, and only the allocation
@@ -280,7 +344,6 @@ def test_supply_arriving_before_the_demand_means_nothing_has_to_be_bought(db, ch
     assert cov.use_stock is True
 
 
-@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): pins a confirmed coverage-timeline defect; red until the engine slice lands", strict=False)
 def test_supply_arriving_after_the_demand_still_has_to_be_bought(db, chain):
     """The opposite direction, so "always trust the closing balance" cannot pass for a fix.
 
@@ -305,7 +368,6 @@ def test_supply_arriving_after_the_demand_still_has_to_be_bought(db, chain):
     assert cov.use_stock is False
 
 
-@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): pins a confirmed coverage-timeline defect; red until the engine slice lands", strict=False)
 def test_with_no_supply_at_all_the_whole_shortfall_is_bought(db, chain):
     """The base case, pinned so a fix cannot reach zero by ignoring demand instead.
 
@@ -324,7 +386,6 @@ def test_with_no_supply_at_all_the_whole_shortfall_is_bought(db, chain):
     assert cov.use_stock is False
 
 
-@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): pins a confirmed coverage-timeline defect; red until the engine slice lands", strict=False)
 def test_the_allocations_still_say_where_todays_cover_comes_from_when_nothing_is_bought(
     db, chain
 ):
@@ -384,26 +445,25 @@ def test_the_buy_is_sized_on_the_floor_the_timeline_was_given(db, chain):
 
 
 # =========================================================================== #
-# DEFECT 2: reserved stock is counted twice
+# CLAUSE 2: a reservation is demand once
 #
-# `availability()` reads `Stock.quantity_available` (a GENERATED column: on hand minus
-# reserved) while `_opening()` reads `quantity_on_hand`, and the SO line that DID the
-# reserving is already a demand event on the timeline. So the reservation is subtracted
-# once by the database and once by the timeline.
+# `availability()` and `_opening()` share one basis, on hand, because the SO line that DID
+# the reserving is already a demand event on the timeline. Reading the GENERATED
+# `Stock.quantity_available` (on hand minus reserved) in one half and `quantity_on_hand` in
+# the other subtracts the same reservation twice.
 # =========================================================================== #
 
 
-@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): pins a confirmed coverage-timeline defect; red until the engine slice lands", strict=False)
 def test_a_reservation_is_demand_once_not_twice(db, chain):
-    """Every reserved unit currently reads as a unit that has to be bought.
+    """A reserved unit must not read as a unit that has to be bought.
 
     100 sit in the pool, all 100 reserved against one open order for 100. The timeline is
-    exactly right: opening 100, demand 100, balance 0, nothing short. The panel beside it
-    reads opening 100, own 0, pool 0, "Buy 100" - because ``availability`` asked the database
-    for on-hand-minus-reserved and the timeline then subtracted the very same order again.
-    Reserving stock is the normal state of a healthy order book, so this does not fire on an
-    edge case: it fires on every SKU with a live reservation, and it recommends re-buying
-    stock that is already standing in the warehouse with the customer's name on it.
+    exactly right: opening 100, demand 100, balance 0, nothing short. A panel that answered
+    opening 100, own 0, pool 0, "Buy 100" would be asking the database for
+    on-hand-minus-reserved and then subtracting the very same order again on the timeline.
+    Reserving stock is the normal state of a healthy order book, so that does not misfire on
+    an edge case: it fires on every SKU with a live reservation, and it recommends re-buying
+    stock already standing in the warehouse with the customer's name on it.
     """
     product = chain["product"]
     _stock(db, product, chain["pool"], 100, reserved=100)
@@ -423,7 +483,6 @@ def test_a_reservation_is_demand_once_not_twice(db, chain):
     assert cov.use_stock is True
 
 
-@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): pins a confirmed coverage-timeline defect; red until the engine slice lands", strict=False)
 def test_partly_reserved_stock_reports_the_whole_on_hand_quantity(db, chain):
     """The same rule where only part of the pool is spoken for, so no cancellation hides it.
 
@@ -446,12 +505,13 @@ def test_partly_reserved_stock_reports_the_whole_on_hand_quantity(db, chain):
 
 
 # =========================================================================== #
-# DEFECT 3: a partial receipt over-counts in-transit supply ACROSS pools
+# CLAUSE 3: a partial receipt is attributed per allocation, across pools
 #
-# `here = min(entry["here"], outstanding)` caps per pool, not across them, and
 # `spo_allocations.allocated_quantity` is never decremented on receipt
-# (incoming_stock_service.py:78-80) while `spo_allocations.quantity_received` exists and is
-# ignored. So each pool independently claims the whole outstanding quantity.
+# (incoming_stock_service.py:78-80), so the quantity still coming to a site is its
+# allocation minus its own `quantity_received`, and the total attributed is clamped to what
+# the line still owes. A per-pool cap lets every pool claim the whole outstanding quantity
+# and one container becomes cover twice.
 # =========================================================================== #
 
 
@@ -510,11 +570,12 @@ def test_the_attributed_total_never_exceeds_what_is_still_on_the_water(db, two_p
 
 
 # =========================================================================== #
-# DEFECT 4: an allocation to a warehouse in NO pool vanishes AND is reported as nothing
+# CLAUSE 4: an allocation to a warehouse in NO pool is reported, not dropped
 #
-# `pool_members()` filters `counts_as_available`, so a quarantine bin belongs to no pool -
-# yet `entry["allocated"]` counts it, so `unattributed_in_transit_qty` computes to 0. The
-# stock is on no timeline and on no report.
+# `pool_members()` filters `counts_as_available`, so a quarantine bin belongs to no pool and
+# is rightly on no pool's timeline. It must therefore reach `unattributed_in_transit_qty`:
+# counting it as "placed" for that total as well leaves the stock on no timeline AND on no
+# report, which is the one outcome the design rules out.
 # =========================================================================== #
 
 
@@ -549,13 +610,15 @@ def test_stock_allocated_to_a_bin_in_no_pool_is_reported_rather_than_dropped(db,
 
 
 # =========================================================================== #
-# DEFECT 5: shipment status is a whitelist where the rest of the repo uses a blacklist
+# CLAUSE 5: shipment status is read the way the rest of the repo reads it
 #
-# `_INBOUND_SHIPMENT_STATUSES` lists five values. The column's real vocabulary is fixed by
-# the `inbound_shipments_shipment_status_check` constraint (in_transit, arrived_at_port,
-# at_warehouse, partially_received, fully_received, closed), and `incoming_stock_service.
-# _still_incoming_filter` and `procurement_service._is_received_status` both test against
-# received rather than for a known-good list.
+# The column's vocabulary is fixed by the `inbound_shipments_shipment_status_check`
+# constraint (in_transit, arrived_at_port, at_warehouse, partially_received,
+# fully_received, closed), and `incoming_stock_service._still_incoming_filter` and
+# `procurement_service._is_received_status` both test against RECEIVED rather than for a
+# known-good list. A whitelist here drops the most common live state, `partially_received`,
+# and the shipment half must apply a line-status predicate the purchase-order half already
+# applies.
 # =========================================================================== #
 
 
@@ -650,12 +713,12 @@ def test_a_closed_shipment_is_not_in_transit_supply(db, chain):
 
 
 # =========================================================================== #
-# DEFECT 6: a line with a NULL warehouse is dropped in silence
+# CLAUSE 6: a line with a NULL warehouse is reported, never dropped in silence
 #
 # Both `sales_order_lines.warehouse_id` and `purchase_order_lines.warehouse_id` are nullable,
-# and `warehouse_id.in_(wh_ids)` evaluates to NULL for them, so the row matches nothing. The
+# and `warehouse_id.in_(wh_ids)` evaluates to NULL for them, so the row matches no pool. The
 # module already reports in-transit stock it cannot place; demand and on-order supply it
-# cannot place must be reported the same way rather than vanishing.
+# cannot place are reported the same way rather than vanishing.
 #
 # SHAPE. The quantity is what is pinned, not the field name: the tests below accept a scalar
 # quantity field OR a tuple of records carrying `.qty`, under any of a small set of names
@@ -698,14 +761,14 @@ def _reported_qty(cov, names: Sequence[str]) -> Optional[float]:
     return None
 
 
-@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): pins a confirmed coverage-timeline defect; red until the engine slice lands", strict=False)
 def test_demand_with_no_warehouse_is_reported_rather_than_swallowed(db, chain):
-    """Eighty units of real commitment leave the plan without a trace.
+    """Eighty units of real commitment must not leave the plan without a trace.
 
     ``warehouse_id`` is nullable and imports leave it empty whenever the source sheet had no
     location column, so this is not a theoretical row. ``warehouse_id.in_(...)`` is NULL for
-    it, NULL is not TRUE, and the line matches no pool - so a customer order the company has
-    accepted contributes to no balance, triggers no shortfall and appears on no screen. The
+    it, NULL is not TRUE, and the line matches no pool - so unless it is reported, a customer
+    order the company has accepted contributes to no balance, triggers no shortfall and
+    appears on no screen. The
     module already refuses to guess a DATE for a commitment (``undated_demand``) precisely
     because guessing fabricates a shortfall; refusing to guess a LOCATION has to be reported
     the same way, or the same commitment silently disappears instead.
@@ -761,7 +824,6 @@ def test_unplaceable_rows_stay_out_of_the_pool_balance(db, chain):
     assert [r.event.ref for r in cov.timeline.rows] == [""]
 
 
-@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): pins a confirmed coverage-timeline defect; red until the engine slice lands", strict=False)
 def test_a_line_that_does_have_a_warehouse_is_not_reported_as_unplaceable(db, chain):
     """GUARD: the new report must not fire on the ordinary case.
 
