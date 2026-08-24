@@ -10,9 +10,8 @@ own it IS an entity, and pretending otherwise costs a branch in the resolver plu
 a contract change we do not avoid.
 
 `entity_type: "product_set"` is a NEW value on the frozen `/references/resolve`
-contract, so the probe is gated OFF by default and ships inert until
-`sorento-crm-n8n-60` confirms. The gate is the flag, not the code: everything
-below runs with it on.
+contract. It resolves unconditionally - there is no flag, so every test below
+exercises what any caller sees from the moment this ships.
 
 UAC group E. Plan: `documentation/plans/master-data/PLAN-product-sets.md` section 4.
 """
@@ -43,16 +42,6 @@ pytestmark = pytest.mark.skipif(
 
 def _uid(stem: str) -> str:
     return f"ZZT-{stem}-{uuid.uuid4().hex[:8]}"
-
-
-@pytest.fixture(autouse=True)
-def resolve_enabled(monkeypatch):
-    """Every test here runs with the contract gate OPEN.
-
-    The gate exists so the CRM can deploy before n8n is ready, not to make the
-    behaviour optional - so it is turned on here rather than tested around.
-    """
-    monkeypatch.setattr(entity_resolver, "PRODUCT_SET_RESOLVE_ENABLED", True)
 
 
 @pytest.fixture()
@@ -378,30 +367,6 @@ def test_ac_e10_the_probe_runs_through_the_orm_so_scope_is_injected(db, world):
     assert "text" not in called, "the set probe must stay ORM-only"
 
 
-# ----------------------------------------------------------- the contract gate
-
-
-def test_the_probe_is_gated_off_by_default(monkeypatch, db: Session, world):
-    """`product_set` is a new value on a FROZEN contract.
-
-    The CRM must be deployable before n8n has learned the type, so the default is
-    off and turning it on is a deliberate act coordinated with them.
-    """
-    monkeypatch.setattr(entity_resolver, "PRODUCT_SET_RESOLVE_ENABLED", False)
-    assert _probe(db, world["company"], world["set"].set_code) == []
-
-
-def test_the_default_really_is_off_in_the_module(db: Session):
-    """Read the module's own default, not the fixture's override."""
-    import importlib
-
-    fresh = importlib.reload(entity_resolver)
-    try:
-        assert fresh.PRODUCT_SET_RESOLVE_ENABLED is False
-    finally:
-        importlib.reload(entity_resolver)
-
-
 # ---------------------------------------------------- through the real dispatcher
 #
 # Every test above calls `entity_resolver._probe_product_set` directly, which
@@ -465,25 +430,6 @@ def test_a_set_match_carries_its_company(db: Session, world):
     assert entity.company_name == world["company"].name
 
 
-def test_with_the_gate_off_the_real_dispatcher_does_not_resolve_it_as_a_set(
-    monkeypatch, db: Session, world
-):
-    """The companion direction: OFF must hold through the dispatcher too, not
-    only when the probe is called directly."""
-    monkeypatch.setattr(entity_resolver, "PRODUCT_SET_RESOLVE_ENABLED", False)
-    with company_scope(db, frozenset({str(world["company"].id)})):
-        result = entity_resolver.resolve_references(
-            db,
-            [world["set"].set_code],
-            enable_prefix_fallback=False,
-            enable_embedding_fallback=False,
-        )
-
-    assert len(result.resolutions) == 1
-    resolution = result.resolutions[0]
-    assert all(m.entity_type != "product_set" for m in resolution.matches)
-
-
 # --------------------------------------------------------- n8n's "product" hint
 #
 # n8n sends `domain_hint="product"` for a flyer code - it has no reason to know
@@ -518,24 +464,6 @@ def test_a_product_hint_reaches_the_set_probe(db: Session, world):
         world["cistern"].product_code,
         world["seat"].product_code,
     }
-
-
-def test_with_the_gate_off_a_product_hint_resolves_nothing_here(monkeypatch, db: Session, world):
-    """Companion direction: OFF must leave a `product` hint EXACTLY as it was
-    before this change - no set entity reachable through it at all."""
-    monkeypatch.setattr(entity_resolver, "PRODUCT_SET_RESOLVE_ENABLED", False)
-    with company_scope(db, frozenset({str(world["company"].id)})):
-        result = entity_resolver.resolve_references(
-            db,
-            [world["set"].set_code],
-            allowed_entity_types=["product"],
-            enable_prefix_fallback=False,
-            enable_embedding_fallback=False,
-        )
-
-    assert len(result.resolutions) == 1
-    resolution = result.resolutions[0]
-    assert resolution.matches == []
 
 
 def test_a_member_code_alone_under_a_product_hint_still_names_no_set(db: Session, world):

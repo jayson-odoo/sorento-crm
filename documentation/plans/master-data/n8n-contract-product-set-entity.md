@@ -4,12 +4,19 @@
 **From:** the CRM side, branch `feat/product-sets`, HEAD `59dc69314`
 **Status:** DRAFT, awaiting n8n confirmation.
 
-**Nothing in this document is deployed yet.** The whole Product Sets feature, including the
-parts marked "live" below, is still on the unmerged branch `feat/product-sets`. Nothing on this
-branch exists on `main` or in production today. "Live" in this document means "ships
-unconditionally, no feature flag, the moment this branch merges and deploys" - not "already
-running." Only one piece is additionally gated behind a flag once deployed: the `product_set`
-entity type on `/references/resolve` (section 1).
+**Nothing in this document is deployed yet.** The whole Product Sets feature, including every
+surface below, is still on the unmerged branch `feat/product-sets`. Nothing on this branch
+exists on `main` or in production today. "Live" in this document means "ships unconditionally,
+no feature flag, the moment this branch merges and deploys" - not "already running." There is
+no longer a flag anywhere in this feature: `PRODUCT_SET_RESOLVE_ENABLED` gated the `product_set`
+entity type on `/references/resolve` (Surface 1) while this branch was in progress, so the CRM
+side could deploy before n8n had learned the type. It has been removed - a set code resolves to
+nothing today because no product carries it, so there was nothing a runtime switch was
+protecting a caller from. From the moment this branch merges, EVERY surface below, including
+Surface 1, is live unconditionally. That does not remove the coordination obligation with n8n,
+it changes its nature: it is no longer enforced by code, so it is now a human coordination step
+required BEFORE this branch merges and deploys, not a switch flipped afterwards. See "Rollout,
+updated" at the bottom.
 
 **UPDATE, same branch, later in this pass:** two findings below are now fixed, not open. Surface
 1 finding 1 ("`product` does not auto-expand to include `product_set`") and Surface 5 ("packing
@@ -43,13 +50,13 @@ other ~46 families has not run yet - see the pre-launch checklist.
 
 ## Surface 1: `/references/resolve`, the `product_set` entity type
 
-**Status: GATED.** Behind `PRODUCT_SET_RESOLVE_ENABLED`, an env var, default off. Confirmed off
-in the running dev backend (unset in `.env`). Route: `POST /api/v1/system/references/resolve`
-(also a `GET` variant), guarded per-request by `get_external_api_user` (X-API-Key or Bearer).
+**Status: LIVE the moment this branch deploys.** No flag - `PRODUCT_SET_RESOLVE_ENABLED` has been
+removed. Route: `POST /api/v1/system/references/resolve` (also a `GET` variant), guarded
+per-request by `get_external_api_user` (X-API-Key or Bearer).
 
-### With the flag off (today, and what a caller has always seen)
+### Before this branch (what every caller has seen until now)
 
-Curled directly against the running backend:
+Curled directly against the running backend, before this change landed:
 
 ```
 curl -s -X POST http://localhost:8050/api/v1/system/references/resolve \
@@ -91,16 +98,17 @@ No product, no set: only a technical-drawing attachment whose filename happens t
 the code. This is the failure mode the feature fixes - not "nothing found" but "a customer
 gets an unrelated PDF instead of a stock answer."
 
-The `_probe_product_set` function is registered and runs on every call (it is not removed by
-the flag), but returns nothing while `PRODUCT_SET_RESOLVE_ENABLED` is unset, so this response
-is byte-identical to what n8n has always received. Nothing else about the endpoint's shape,
-tiers or aliases changes with the flag off.
+The `_probe_product_set` function is registered and runs on every call. Before this branch it
+returned nothing because no `product_set` row existed for a code a caller happened to ask about
+(and, briefly during development, because `PRODUCT_SET_RESOLVE_ENABLED` gated it off) - either
+way this response is what n8n has always received. Once this branch merges, the probe's answer
+is whatever the database holds, unconditionally: no gate left to hold it back.
 
-### With the flag on (traced through the code, not curled - restarting this dev backend to flip
-the env var was out of scope for this pass; the trace below is checked line-for-line against
-`app/services/entity_resolver.py` and the same DB row above)
+### From the moment this branch merges (traced through the code, not curled - restarting this
+dev backend to prove it live was out of scope for this pass; the trace below is checked
+line-for-line against `app/services/entity_resolver.py` and the same DB row above)
 
-The same call would add a `product_set` match to the SAME token's `matches` array, alongside
+The same call adds a `product_set` match to the SAME token's `matches` array, alongside
 whatever already matched. Read from the live DB row for `SRTWC8608-RL` (3 members, all in
 stock, none discontinued):
 
@@ -149,12 +157,18 @@ time this section was last updated.)
 
 **Important correction to the earlier draft of this note: this is not an isolated new entity
 type appearing in a vacuum.** For any token that already matches something else today (an
-attachment filename, in this real example), turning the flag on makes `matches` grow to
+attachment filename, in this real example), the set probe running makes `matches` grow to
 carry BOTH. `resolved` stays `true` (its definition is `bool(matches) and not ambiguous`, not
 "exactly one match" - see `TokenResolution.resolved`), and `ambiguous` is only set when two
 rows of the SAME entity type collide, which product-vs-set is guarded against but
 set-vs-attachment is not. **n8n's renderer has to handle a `matches` array that mixes
-`product_set` with other types for one token, not assume `product_set` arrives alone.**
+`product_set` with other types for one token, not assume `product_set` arrives alone.** The one
+case worth stating plainly: a token that matches BOTH a real product AND a set now returns an
+extra entry in `matches[]` for the set. The product itself stays `confident_match`
+(`_TIER1_PROBES` runs `_probe_product` before `_probe_product_set`), so a caller reading only
+`matches[0]` is unaffected; only a caller iterating the whole array sees one more entry than it
+used to. This is the one shape most likely to surprise a caller that already handles `product`
+today.
 
 **NEW in this pass, answering the standing fan-out question directly: every member object in
 `display.members` now carries `uuid` - that MEMBER's own product UUID (the top-level
@@ -188,25 +202,24 @@ What else the resolver contract carries, unchanged from the earlier draft:
 
 1. **FIXED, same branch.** `allowed_entity_types: ["product"]` now reaches the set probe too
    (`_expand_entity_types` in `app/services/entity_resolver.py`, additive - a `product` filter
-   still gets ordinary products, plus the set probe becomes reachable). Gated behind the SAME
-   `PRODUCT_SET_RESOLVE_ENABLED` flag as the rest of this surface, so this changes nothing while
-   the flag stays off. Real evidence:
+   still gets ordinary products, plus the set probe becomes reachable), unconditionally - no
+   flag gates this. Real evidence:
    `documentation/plans/master-data/product-set-n8n-evidence.md` command 1/2. What follows
    describes the bug this fixed, kept for context: `product_set` used to appear only when the
    caller's `allowed_entity_types` was either omitted (`None`, meaning "search everything") or
    explicitly included `product_set`/`set`/`kit`. n8n's stock-answer node passing
    `allowed_entity_types: ["product"]` to keep the resolve call narrow would have kept NOT seeing
-   sets even after the flag flipped on - `product` did not auto-expand to include `product_set`
-   the way `brand`/`category` auto-expand to `promotion`. It now does, for `product_set`
-   specifically, gated the same way.
-2. **AND-mode (`match_mode: "and"`) never returns a `product_set`, flag on or off.** There is no
-   `product_set` probe registered in `_AND_PROBES` (`app/services/entity_resolver.py:3617`).
-   Only OR-mode (the default, and what the `matches`-per-token examples above use) can surface
-   one. If any n8n flow uses AND mode for compound stock queries, a set code inside it is
-   invisible however the flag is set. Not fixed here (reported, not a defect in scope for this
-   pass to change) - worth a decision on whether AND-mode needs it.
+   sets - `product` did not auto-expand to include `product_set` the way `brand`/`category`
+   auto-expand to `promotion`. It now does, for `product_set` specifically, from the moment this
+   branch merges.
+2. **AND-mode (`match_mode: "and"`) never returns a `product_set`.** There is no `product_set`
+   probe registered in `_AND_PROBES` (`app/services/entity_resolver.py:3617`). Only OR-mode (the
+   default, and what the `matches`-per-token examples above use) can surface one. If any n8n flow
+   uses AND mode for compound stock queries, a set code inside it is invisible there regardless.
+   Not fixed here (reported, not a defect in scope for this pass to change) - worth a decision on
+   whether AND-mode needs it.
 
-### Multi-company scope: read this before turning the flag on
+### Multi-company scope: read this before this deploys
 
 `X-API-Key` calls resolve to **all-companies scope (`None`, no company filter at all)** unless
 the request ALSO carries `contact_id` AND `space_id` query params
@@ -515,21 +528,35 @@ CRM will match it. Two things sharpen this question versus the earlier draft:
    matches of other types? The CRM has NOT built that suppression - flagging it as a design
    choice for n8n to weigh in on, not something already decided.
 2. Confirm whether your stock-answer node's `allowed_entity_types` (if it sends one) needs
-   `product_set` added explicitly once the flag flips, per the finding in Surface 1.
+   `product_set` added explicitly - it does, per the finding in Surface 1, and there is no flag
+   to wait on: `product_set` becomes reachable through `allowed_entity_types: ["product"]` the
+   moment this branch merges.
 
 ## Rollout, updated
 
-1. This document (plus the answer to the open question) goes to n8n for review.
-2. This branch merges and deploys. `PRODUCT_SET_RESOLVE_ENABLED` stays unset, so Surface 1 is a
-   no-op; Surfaces 3, 4, 5, 6 go live exactly as described above (Surface 5: no-op by design;
-   Surfaces 3/4/6: live, no flag). This is the point at which n8n runs the Surface 4 evidence
-   pass against production data.
-3. n8n ships whatever the stock renderer needs for `product_set` (per the open question).
-4. `PRODUCT_SET_RESOLVE_ENABLED` is turned on, coordinated, and Surface 1's behaviour appears.
-5. The flag is deleted once it has been on for a while.
+There is no longer a flag anywhere in this rollout. `PRODUCT_SET_RESOLVE_ENABLED` has been
+removed from the code: a set code resolves to nothing today because no product carries it, so
+there was no existing lookup a runtime switch was protecting, and removing it only turns a
+failure into an answer. That does not remove the coordination obligation with n8n - it changes
+its nature. It is no longer enforced by code, so it is now a human coordination step required
+BEFORE this branch merges and deploys, not a switch someone flips afterwards.
+
+1. This document (plus the answer to the open question above) goes to n8n for review and
+   confirmation IN WRITING, before this branch merges. This is the whole of the coordination
+   step now - there is no later "flip the switch" step to fall back on.
+2. This branch merges and deploys. EVERY surface goes live at once, unconditionally: Surface 1
+   (`product_set` on `/references/resolve`) exactly as described above, alongside Surfaces 3, 4,
+   5 and 6. From this point, `entity_type: "product_set"` can appear on any
+   `/references/resolve` response with no switch. If n8n's renderer is not ready for it, it
+   needs to tolerate an unknown entity type gracefully - a `product_set` match sitting unrendered
+   in `matches[]` is a safe failure mode; crashing or dropping the whole response on an
+   unrecognised `entity_type` is not. This is also the point at which n8n runs the Surface 4
+   evidence pass against production data.
+3. n8n ships whatever the stock renderer needs for `product_set` (per the open question), on
+   its own schedule, since Surface 1 is already live and answering by the time this step
+   happens.
 
 There remains a standing obligation to ping this workflow before any deploy touching
-`/references/resolve`, so a no-change byte-parity snapshot can be taken. Step 2 above is
-NOT that deploy for Surface 1 (the flag stays off through it) but IS the live deploy for
-Surfaces 3, 4 and 6 - those have no such snapshot step today because they were never framed as
-gated.
+`/references/resolve`, so a no-change byte-parity snapshot can be taken. Step 2 above IS that
+deploy, for every surface in this document at once - there is no separate "Surface 1 stays off"
+carve-out left, since there is no flag left to hold it off.

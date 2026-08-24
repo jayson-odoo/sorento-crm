@@ -8,13 +8,17 @@
 **Status:** IMPLEMENTED - all six slices S0 to S5 are built, tested and browser-verified as of
 2026-08-24, and migration `414_product_set_grant_sweep` mirrors the `master_data.products.*` grants
 onto `master_data.product_sets.*`, which closes DoD item 3 (before it, the four permissions existed
-and no role held them, so every non-admin was locked out of a finished feature). What remains is
-outside the code: `sorento-crm-n8n-60` must hold the `product_set` contract in writing and confirm
-before S3 deploys, S2 still owes the promotion-payload evidence run its own-PR carve-out was for,
-and the seeding backfill has not been applied - and note that the proposal pass offers materially
-more than the UAC's sizing, 98 candidates for Sorento alone against 47 families and roughly 94 rows
-across both companies, after the discontinued-member and accessory-token fixes; that is a number to
-confirm against the catalogue before the backfill runs, not a defect.
+and no role held them, so every non-admin was locked out of a finished feature). The
+`PRODUCT_SET_RESOLVE_ENABLED` flag has been removed: S3 now resolves `product_set` unconditionally,
+with no runtime switch. That does not remove the coordination obligation with `sorento-crm-n8n-60`,
+it changes its nature - it is no longer enforced by code, so it is now a human coordination step
+required BEFORE this change merges to `main` and deploys, not a switch flipped afterwards. What
+remains outside the code: `sorento-crm-n8n-60` must hold the `product_set` contract in writing and
+confirm before this merges, S2 still owes the promotion-payload evidence run its own-PR carve-out
+was for, and the seeding backfill has not been applied - and note that the proposal pass offers
+materially more than the UAC's sizing, 98 candidates for Sorento alone against 47 families and
+roughly 94 rows across both companies, after the discontinued-member and accessory-token fixes;
+that is a number to confirm against the catalogue before the backfill runs, not a defect.
 Sign-off history: APPROVED - captain sign-off 2026-08-23 via Lavish review, verdict "Approved, start
 S0". All five flagged calls confirmed: rename `product_set_service.py` in the same PR; S2 ships as
 its own PR; S3 ships inert pending n8n confirmation; `linked_via_set_id` added; "Product Set" is the
@@ -150,9 +154,20 @@ defect: report it as ambiguous rather than silently preferring one. The multi-ro
 does this for products; the set probe joins the same mechanism.
 
 **Contract.** `entity_type: "product_set"` is a new value on the frozen `/references/resolve`
-contract. `sorento-crm-n8n-60` must have it in writing and confirm before S3 deploys, and the
-CRM side ships inert until they are ready. This is the same standing obligation that already
-applies to any deploy touching that endpoint.
+contract, and it resolves unconditionally - there is no runtime flag gating it. A set code
+resolves to nothing today because no product carries it, so removing the gate cannot break a
+lookup that currently works; it only turns a failure into an answer. The one real exposure is a
+token that matches both a real product and a set, which now returns an extra entry in
+`matches[]` - the product itself stays `confident_match` (`_TIER1_PROBES` runs `_probe_product`
+before `_probe_product_set`), so a caller reading `matches[0]` is unaffected and only a caller
+iterating the array sees one more entry. `sorento-crm-n8n-60` must have the contract in writing
+and confirm BEFORE this merges to `main` and deploys - that obligation is no longer enforced by
+code, so it is now purely a human coordination step ahead of the merge, not a switch someone
+flips afterwards. From the moment this merges, `entity_type: "product_set"` can appear on any
+`/references/resolve` response with no switch; n8n's renderer needs to tolerate an unknown
+entity type gracefully if it is not ready for it. See
+`documentation/plans/master-data/n8n-contract-product-set-entity.md` for the surface-by-surface
+detail.
 
 ## 5. The shared code-resolution helper
 
@@ -235,7 +250,7 @@ and a regex that writes without review would have propagated that across 94 rows
 | S0 | Tables, migration, company scope, computed price with override | Backend only. No surface yet. |
 | S1 | Master-data CRUD, list and detail | Phase 1 mock first, then wired. |
 | S2 | Shared code-resolution helper, replacing both divergent ones, plus `linked_via_set_id` | **Own PR.** Changes promotion behaviour independently of sets. |
-| S3 | Resolver `product_set` entity and the stock answer | **Coordinated release with n8n.** Ships inert until they confirm. |
+| S3 | Resolver `product_set` entity and the stock answer | **Coordinated release with n8n.** Resolves unconditionally, no runtime flag - the contract must be confirmed in writing BEFORE merge, not switched on after. |
 | S4 | Sets section on product detail | |
 | S5 | Proposal-and-review seeding over the 47 families | |
 

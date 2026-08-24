@@ -20,7 +20,6 @@ Design notes
 from __future__ import annotations
 
 import logging
-import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -176,11 +175,7 @@ def _expand_entity_types(
         # when its `produces` set intersects `allowed`. Additive, not a
         # replacement of `canon` — a caller that filtered on `product` still
         # gets ordinary products, PLUS the set probe becomes reachable.
-        # Gated by `PRODUCT_SET_RESOLVE_ENABLED` (read here, not baked into
-        # the module-level dict, so `monkeypatch.setattr` in tests takes
-        # effect): the flag is what keeps a `product` hint's Tier-1 behaviour
-        # identical to today's while `sorento-crm-n8n-60` has not shipped.
-        if canon == "product" and PRODUCT_SET_RESOLVE_ENABLED:
+        if canon == "product":
             out.add("product_set")
     return frozenset(out)
 
@@ -821,17 +816,6 @@ def _probe_product(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEnt
     return result
 
 
-#: `product_set` is a NEW value on the FROZEN `/references/resolve` contract, so
-#: the probe ships OFF and the CRM can deploy before n8n has learned the type.
-#: Turning it on is a deliberate act coordinated with `sorento-crm-n8n-60`, not a
-#: side effect of a release. Remove this flag once they have shipped.
-PRODUCT_SET_RESOLVE_ENABLED = os.environ.get("PRODUCT_SET_RESOLVE_ENABLED", "").lower() in (
-    "1",
-    "true",
-    "yes",
-)
-
-
 def _probe_product_set(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
     """A flyer code answers with ONE entity carrying its members.
 
@@ -854,7 +838,7 @@ def _probe_product_set(db: Session, tokens: list[str]) -> dict[str, list[Resolve
     `Certificate`. A raw `text()` query would bypass the listener entirely.
     """
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
-    if not tokens or not PRODUCT_SET_RESOLVE_ENABLED:
+    if not tokens:
         return result
 
     from app.models.product_set import ProductSet, ProductSetMember

@@ -18,6 +18,14 @@ command 1's response now also carries `uuid` on every member and a populated
 `company_id`/`company_name` on the match - see the note directly above that response for what
 was and was not re-curled for this update.
 
+**Later still: `PRODUCT_SET_RESOLVE_ENABLED` has been removed from the code entirely.** Command
+1 below ("flag ON") is now simply what every caller gets, unconditionally, from the moment this
+branch merges - there is no flag left to turn on. Command 2 ("flag OFF") is kept as-is because
+it is real, captured evidence of the failure mode this feature fixes (a set code answering with
+nothing but trigram "did you mean" noise); it is no longer reachable by flipping anything once
+this branch merges, since the gate it demonstrates no longer exists in the code. Read it as
+"what every caller saw before this feature", not as a state you can still reproduce today.
+
 ## Env vars you need, without printing their values
 
 - `EXTERNAL_API_KEY` - the shared integration key. Read it from your own `sorento_crm_backend/.env`
@@ -34,23 +42,15 @@ was and was not re-curled for this update.
 export EXTERNAL_API_KEY=$(grep '^EXTERNAL_API_KEY=' sorento_crm_backend/.env | cut -d= -f2)
 ```
 
-**Runtime state:** this run temporarily added `PRODUCT_SET_RESOLVE_ENABLED=true` to
-`sorento_crm_backend/.env` (gitignored, local to this worktree) to capture command 1's ON
-response, then removed the line again afterward - the flag is OFF on the running `:8050` backend
-right now, same as it was before this run, and the same as the module's own committed default
-(`PRODUCT_SET_RESOLVE_ENABLED` in `app/services/entity_resolver.py`). Reason it was reverted, not
-left on: leaving it set in `.env` bled into the backend test suite too - `app/main.py` calls
+**Runtime state at the time this section was captured:** this run temporarily added
+`PRODUCT_SET_RESOLVE_ENABLED=true` to `sorento_crm_backend/.env` (gitignored, local to this
+worktree) to capture command 1's ON response, then removed the line again afterward, because
+leaving it set in `.env` bled into the backend test suite too - `app/main.py` calls
 `load_dotenv(override=True)`, and any test that imports `app.main` (several do, via `TestClient`)
-picked up the same env var, breaking `test_the_default_really_is_off_in_the_module`'s assumption
-that the module's default is off. To try command 1 yourself:
-
-```bash
-echo 'PRODUCT_SET_RESOLVE_ENABLED=true' >> sorento_crm_backend/.env
-touch sorento_crm_backend/app/main.py   # forces the --reload worker to pick it up, no restart
-```
-
-and reverse both lines (delete the `.env` line, `touch` again) before running the backend test
-suite, or `test_the_default_really_is_off_in_the_module` will fail for the same reason.
+picked up the same env var. That whole workaround is now moot: the flag has since been removed
+from `app/services/entity_resolver.py`, so command 1's response is simply what
+`/references/resolve` returns, unconditionally, once this branch merges - no `.env` edit, no
+reload, no bleed to worry about.
 
 ---
 
@@ -72,11 +72,12 @@ values are the real per-member product ids already proven live in commands 3/4/5
 (`SRTWCX8608-RL` = `0fb2507c-c6f3-47a1-ad10-296a3604aaea`, `SRTWCY8608` =
 `732adbfb-06cb-499f-8cd3-88bd16678655`, `SRTWC8608-SC` = `ed83a177-81c0-46e7-9989-d484e54b9c9d`),
 and `company_id`/`company_name` are Sorento's, the same company every other command in this
-document runs against. Re-curl this command against a live `:8050` (flag on) before relying on
-this exact byte shape.
+document runs against. Re-curl this command against a live `:8050` before relying on this exact
+byte shape - the `:8050` process needs restarting to pick up the `.env` edit that removed the
+flag before a fresh curl proves anything.
 
-Response (flag ON, member `uuid`/`company_id`/`company_name` reconstructed as described above -
-everything else is the real capture):
+Response (member `uuid`/`company_id`/`company_name` reconstructed as described above -
+everything else is the real capture; this is the unconditional response, no flag involved):
 
 ```json
 {
@@ -125,19 +126,23 @@ is what n8n fans out with - pass that list straight into the existing per-produc
 `crm_marketing_promotion_products_list`, `crm_incoming_stock_by_product`); no new MCP tool
 needed.
 
-## 2. Same call, flag OFF - today's behaviour, unchanged
+## 2. Same call, before this feature existed - the failure mode this feature fixes
+
+Historical only: this is what the same call returned before the `product_set` probe existed
+(captured while it was still gated behind `PRODUCT_SET_RESOLVE_ENABLED`, unset). The flag no
+longer exists, so this response cannot be reproduced by editing `.env` any more - it is kept
+here as evidence of the failure mode the feature fixes, not as a state you can toggle back into.
 
 ```bash
-# with PRODUCT_SET_RESOLVE_ENABLED unset/false in sorento_crm_backend/.env, then
-# touch sorento_crm_backend/app/main.py to force the reload worker to pick it up
 curl -s -X POST http://localhost:8050/api/v1/system/references/resolve \
   -H "X-API-Key: $EXTERNAL_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"query":"SRTWC8608-RL","allowed_entity_types":["product"]}'
 ```
 
-Real response (flag OFF, captured mid-run by editing `.env` and forcing a reload, then restored
-to ON before command 1's snapshot above was retaken to confirm it still works):
+Real response, captured before the set probe was reachable (mid-run, by editing `.env` and
+forcing a reload, then restored before command 1's snapshot above was retaken to confirm it
+still works):
 
 ```json
 {
