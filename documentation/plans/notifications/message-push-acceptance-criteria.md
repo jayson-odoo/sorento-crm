@@ -31,6 +31,9 @@ no bell entry, sends no email, and changes no SLA clock.
 IN: one event (inbound WhatsApp message on a conversation), delivered to web push only,
 governed by one per-user scope dropdown.
 
+("inbound" throughout this document means `chat_histories.type = 'incoming'` -
+see the correction under AC-M11.)
+
 OUT (backlog): admin-configurable event registry, per-event templates, quiet hours,
 mention notifications (`ticket_comments.mentioned_user_ids` exists and is the obvious
 second event), call notifications, sound settings, retro-governing the ~40 existing
@@ -94,8 +97,14 @@ still are.
 have no assignee, then only `all_contacts` users are recipients; nobody is pushed by
 fallback to a team or a tier.
 
-**AC-M11** [BE] Given the message row is not inbound (`type != 'inbound'` - an agent
-reply, a bot reply, a template send), then no push is sent to anyone.
+**AC-M11** [BE] Given the message row is not inbound (`chat_histories.type != 'incoming'`
+- an agent reply, a bot reply, a template send), then no push is sent to anyone.
+
+> Contract correction, S2: this AC was written as `type != 'inbound'`. The column has
+> never held that value - `chat_histories.type` is `incoming` / `outgoing` and nothing
+> else (2811 rows on the dev copy of production, and every reader in the backend
+> compares against `'incoming'`). Implemented against `incoming`; `inbound` would have
+> matched no row and pushed nobody, forever, silently.
 
 **AC-M12** [BE] Recipients are de-duplicated: a user who qualifies as both assignee and
 coverer, or as assignee of two of the contact's open tickets, receives exactly one push

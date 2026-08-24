@@ -93,8 +93,10 @@ publisher moves - the hook below is on the committed row, not on the transport.
 
 ### Recipient resolution (`app/services/message_push_service.py`)
 
-Inbound only. `type != 'inbound'` returns no recipients (AC-M11) - an agent reply, a bot
-reply and a template send all reach the same ingest endpoint.
+Inbound only. `type != 'incoming'` returns no recipients (AC-M11) - an agent reply, a
+bot reply and a template send all reach the same ingest endpoint. The AC originally said
+`'inbound'`; the column has only ever held `incoming` / `outgoing`, so S2 corrected both
+sides (see the note under AC-M11).
 
 1. Resolve **every open** conversation tracking for the contact - not one. Conversation
    SLA is no longer max-one-open-per-contact (`sla_service.py`, AC-F1 multi-open
@@ -279,6 +281,59 @@ S2 blocks S3. S4 is independent of S1 to S3 and can run in parallel.
   a per-contact rate limit belongs in `message_push_service`, not the worker.
 - **`all_contacts` fan-out** grows with the number of users who choose it. Bounded in
   practice; if it stops being bounded, the fix is a cap plus a warning, not a queue.
+
+## Evidence run, S1 to S3 (2026-08-23, agent-browser)
+
+Recorded here rather than as a Playwright spec, per the repo standing order. Stack:
+backend on :8031 and `npm run dev` on :3031, both from the `feat/message-push-backend`
+worktree, against the shared dev database (a copy of production). Walked by clicking,
+never by opening a deep URL.
+
+1. Sign in at `http://localhost:3031`, avatar menu -> **My Account** -> **Profile &
+   Settings**, landing on `/user-management/account`.
+2. The **Message Notifications** card renders `Contacts assigned to me and my coverage`,
+   read from the REAL route: `GET /api/v1/notifications/preferences/channels -> 200`
+   (three calls, one per component reading the route; the S0 note about folding them
+   onto one key still applies and still is not worth doing).
+3. Pick **All contacts** -> `PATCH .../preferences/channels -> 200`, the select shows the
+   new value, a full reload still shows it, and the column reads `all_contacts` in the
+   database. **Off** was then saved and read back the same way, and the account was
+   restored to the default at the end of the run.
+4. AC-M27 on real data: the additive column landed on 3485 existing users, every one of
+   them `assigned_and_coverage`, with no backfill script.
+5. Ingest the SAME message twice (the dual-lane mirror), by hand against the real route:
+
+   ```
+   POST /api/v1/external/chat-history/messages  ->  {"id":36710,"status":"created"}
+   POST /api/v1/external/chat-history/messages  ->  {"id":36710,"status":"duplicate"}
+   ```
+
+   Contact `437264483` holds TWO open conversation tickets with DIFFERENT assignees, so
+   this is the multi-open case on live data. Result: **two** notifications, one per
+   assignee, each linked to their OWN ticket, and **not** four:
+
+   ```
+   Agnes           | Jayson | Can I get the price for the 900mm hood?
+                   | link=/sla-management/conversation-sla-tracking/8c88750b-...
+   Jayson Personal | Jayson | Can I get the price for the 900mm hood?
+                   | link=/sla-management/conversation-sla-tracking/0f444728-...
+   tag=contact-437264483 on both
+   ```
+
+   Deliveries per notification: `in_app` sent, `web_push` sent, **no email row**. Neither
+   user has a `push_subscriptions` row, so the web push was attempted and sent nothing
+   without raising (AC-M17).
+6. Ingest an OUTGOING message on the same contact: 201, and zero notifications (AC-M11).
+7. The bell then shows exactly what the phone would have shown: title `Jayson`, body
+   `Can I get the price for the 900mm hood?`.
+8. No page errors and no console errors at any point. The card was re-checked at 375x812
+   and 1280x800 with the real saved value; no horizontal overflow.
+
+What this run could NOT show: a real push arriving on a device. The headless browser has
+no push subscription and the environment has no registered service worker, so the last
+hop is covered by the delivery row plus the pinned behaviour of
+`_send_web_push_for_notification` rather than by a buzz. That hop, plus the coalescing
+and visible-thread suppression, is S4's evidence.
 
 ## Definition of Done (PRINCIPLES.md gate)
 
