@@ -121,3 +121,8 @@ one engine decision (section 4, Q1). Nothing in this sprint needs a migration.
 
 Ladder v2 rule questions, section-13 board scoring, BL-043/044, dead mock stores, Stage 3
 AC-F04 rollup: sprint 2 per the inventory.
+
+## 6. Evidence
+
+- **AC-G04 (24 Aug, agent-browser on :3020, sidebar route Supply Chain > Incoming Containers > BEAU4776828, 43 lines):** Qty header click 1 ordered the column 20, 24, 60, 78, 90, 100 (numeric, not lexical); click 2 ordered it 6,000, 6,000, 5,000, 5,000, 4,000, 3,500. `errors` empty. The PO worklist on the current run is empty (nothing decided), so its sort is covered by vitest only.
+- Incidental: during the run Postgres briefly entered recovery; `GET /scm/inbound-shipments` returned 401 (auth dependency maps a DB error to 401) and the page painted "No container read yet" over it. Logged as BL-045 candidate: an unreachable database should read as 503, and the empty state must not mask a failed read.
