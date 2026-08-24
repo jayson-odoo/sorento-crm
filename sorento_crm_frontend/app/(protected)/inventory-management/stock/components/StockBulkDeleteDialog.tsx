@@ -45,7 +45,7 @@ export default function StockBulkDeleteDialog({
         </DialogHeader>
         <DialogDescription>
           Permanently delete {stockIds.length} stock record
-          {stockIds.length !== 1 ? 's' : ''} (product–warehouse balance)? This action cannot be undone.
+          {stockIds.length !== 1 ? 's' : ''} (product - warehouse balance)? This action cannot be undone.
         </DialogDescription>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

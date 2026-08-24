@@ -1,7 +1,7 @@
 """Per-form-key field registry for AI extract.
 
 Source of truth for the *complaint* portal form mirrors the FE registry at
-``sorento_crm_frontend/app/(auth)/portal/components/SubmissionForm.tsx`` —
+``sorento_crm_frontend/app/(auth)/portal/components/SubmissionForm.tsx``  - 
 keep both in sync; the BE side here is authoritative for the LLM prompt.
 
 Registering a new form is a one-line addition: append a list of
@@ -54,7 +54,7 @@ _PORTAL_COMPLAINT: list[ExtractFieldSpec] = [
         label="Customer name",
         kind="fk_customer",
         note=(
-            "The BUYER / end-customer company being billed — the debtor name as "
+            "The BUYER / end-customer company being billed - the debtor name as "
             "printed on the DO 'Bill To' / 'Sold To' / 'Customer' line. This is NOT "
             "the supplier/seller issuing the document (e.g. Sorento or our own "
             "company letterhead), NOT the salesperson, and NOT the project/site "
@@ -92,7 +92,7 @@ _PORTAL_COMPLAINT: list[ExtractFieldSpec] = [
         note=(
             "SKU as it appears in the product master (examples supplied; follow that "
             "pattern). List EACH affected product as a separate entry in the top-level "
-            "`products` array with its own quantity — do not pack multiple codes here. "
+            "`products` array with its own quantity - do not pack multiple codes here. "
             "You may leave this top-level field blank when you populate `products`."
         ),
     ),
@@ -110,7 +110,7 @@ _PORTAL_COMPLAINT: list[ExtractFieldSpec] = [
         label="Product type",
         kind="text",
         note=(
-            "Do not extract — auto-derived server-side from the product master "
+            "Do not extract - auto-derived server-side from the product master "
             "category for the resolved product_code(s). Omit this field."
         ),
     ),
@@ -151,7 +151,7 @@ _PORTAL_COMPLAINT: list[ExtractFieldSpec] = [
         kind="text",
         note=(
             "The PROJECT or site/development name (e.g. a building, township, or "
-            "job title) — NOT the customer company and NOT the salesperson. Leave "
+            "job title) - NOT the customer company and NOT the salesperson. Leave "
             "blank if only a customer company is shown with no distinct project."
         ),
         examples=["Pavilion Damansara Heights", "Lot 12 Bungalow"],
@@ -193,7 +193,7 @@ _PORTAL_STOCK_INQUIRY: list[ExtractFieldSpec] = [
         label="Project customer",
         kind="fk_customer",
         note=(
-            "The BUYER / end-customer company (debtor) the inquiry is for — NOT the "
+            "The BUYER / end-customer company (debtor) the inquiry is for - NOT the "
             "supplier/seller issuing the document, NOT the salesperson, and NOT the "
             "project/site name. The project or site name goes in project_name. "
             "Return the company name only."
@@ -205,7 +205,7 @@ _PORTAL_STOCK_INQUIRY: list[ExtractFieldSpec] = [
         label="Project name",
         kind="text",
         note=(
-            "The PROJECT or site/development name — NOT the customer company. Leave "
+            "The PROJECT or site/development name - NOT the customer company. Leave "
             "blank if no distinct project name appears."
         ),
         examples=["Pavilion Damansara Heights", "Lot 12 Bungalow"],
@@ -222,7 +222,7 @@ _PORTAL_PURCHASE_REQUEST: list[ExtractFieldSpec] = [
         label="Customer name",
         kind="fk_customer",
         note=(
-            "The BUYER / end-customer company (debtor) on the request header — NOT "
+            "The BUYER / end-customer company (debtor) on the request header - NOT "
             "the supplier/seller issuing the document, NOT the salesperson, and NOT "
             "the project/site name (that goes in project_title). Company name only."
         ),
@@ -233,13 +233,13 @@ _PORTAL_PURCHASE_REQUEST: list[ExtractFieldSpec] = [
         label="PIC",
         kind="text",
         note=(
-            "The person in charge AT THE DELIVERY SITE — who the driver asks for "
-            "on arrival — together with their phone number if one is printed. "
+            "The person in charge AT THE DELIVERY SITE - who the driver asks for "
+            "on arrival - together with their phone number if one is printed. "
             "Usually appears near the delivery address as 'Contact:', 'Attn:', "
             "'PIC' or 'c/o'. This is NOT the salesperson / sales rep, NOT the "
             "person raising the request, and NOT the company name. Return the "
             "name and number as written, e.g. 'Ah Meng (01X-XXX XXXX)'. Leave "
-            "empty when no site contact is named — most documents do not have one."
+            "empty when no site contact is named - most documents do not have one."
         ),
         examples=["Site contact name (mobile number)", "Attn: store keeper, office line"],
     ),
@@ -248,7 +248,7 @@ _PORTAL_PURCHASE_REQUEST: list[ExtractFieldSpec] = [
         label="Project title",
         kind="text",
         note=(
-            "The PROJECT or site/development name — NOT the customer company. Leave "
+            "The PROJECT or site/development name - NOT the customer company. Leave "
             "blank if no distinct project name appears."
         ),
         examples=["Pavilion Damansara Heights", "Lot 12 Bungalow"],
@@ -294,7 +294,7 @@ _PORTAL_SPONSORSHIP_FORM: list[ExtractFieldSpec] = [
         kind="fk_customer",
         note=(
             "The BUYER / end-customer company (debtor) on the sponsorship request "
-            "header — NOT the supplier/seller issuing the document, NOT the "
+            "header - NOT the supplier/seller issuing the document, NOT the "
             "salesperson, and NOT the project/site name (that goes in "
             "project_title). Company name only."
         ),
@@ -305,13 +305,13 @@ _PORTAL_SPONSORSHIP_FORM: list[ExtractFieldSpec] = [
         label="PIC",
         kind="text",
         note=(
-            "The person in charge AT THE DELIVERY SITE — who the driver asks for "
-            "on arrival — together with their phone number if one is printed. "
+            "The person in charge AT THE DELIVERY SITE - who the driver asks for "
+            "on arrival - together with their phone number if one is printed. "
             "Usually appears near the delivery address as 'Contact:', 'Attn:', "
             "'PIC' or 'c/o'. This is NOT the salesperson / sales rep, NOT the "
             "person raising the request, and NOT the company name. Return the "
             "name and number as written, e.g. 'Ah Meng (01X-XXX XXXX)'. Leave "
-            "empty when no site contact is named — most documents do not have one."
+            "empty when no site contact is named - most documents do not have one."
         ),
         examples=["Site contact name (mobile number)", "Attn: store keeper, office line"],
     ),
@@ -320,7 +320,7 @@ _PORTAL_SPONSORSHIP_FORM: list[ExtractFieldSpec] = [
         label="Project title",
         kind="text",
         note=(
-            "The PROJECT or site/development name — NOT the customer company. Leave "
+            "The PROJECT or site/development name - NOT the customer company. Leave "
             "blank if no distinct project name appears."
         ),
         examples=["Pavilion Damansara Heights", "Lot 12 Bungalow"],
@@ -329,7 +329,7 @@ _PORTAL_SPONSORSHIP_FORM: list[ExtractFieldSpec] = [
         name="sponsor_subject",
         label="Sponsor subject",
         kind="text",
-        note="Short subject of the sponsorship — e.g. showroom, mockup, others.",
+        note="Short subject of the sponsorship - e.g. showroom, mockup, others.",
     ),
     ExtractFieldSpec(
         name="purpose",
@@ -396,7 +396,7 @@ FORM_SCHEMAS: dict[str, list[ExtractFieldSpec]] = {
 }
 
 
-# Registry-driven master form keys — built lazily so we don't import the
+# Registry-driven master form keys - built lazily so we don't import the
 # field_linkage registry at module load time (avoids import cycles during
 # Alembic discovery).
 _MASTER_FORM_KEY_TO_ENTITY: dict[str, str] = {

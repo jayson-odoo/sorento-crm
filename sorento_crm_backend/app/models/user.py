@@ -29,7 +29,7 @@ class User(Base):
     contact_number = Column(String, nullable=True)
     # Intentionally String, NOT SQLEnum, even though production types this column
     # as the native `UserStatus` enum. A SQLEnum column returns an enum MEMBER, and
-    # call sites compare with `str(user.status) != "ACTIVE"` — in Python 3.12+ that
+    # call sites compare with `str(user.status) != "ACTIVE"` - in Python 3.12+ that
     # renders as "UserStatus.ACTIVE", so the comparison fails and every login is
     # rejected with "Account not activated" (auth.py). Switching the column type
     # means auditing every `.status` read first.
@@ -355,19 +355,19 @@ class SystemSetting(Base):
     # one. Per-task override lives in scheduled_tasks.metadata->>'grace_percent'.
     health_task_grace_percent = Column(Integer, nullable=False, server_default="25", default=25)
     # WhatsApp round-trip SLA: user presses send -> our reply is accepted by Respond.
-    # The clock stops at "sent", not delivered — see chat_latency_service.
+    # The clock stops at "sent", not delivered - see chat_latency_service.
     chat_latency_p99_target_seconds = Column(Integer, nullable=False, server_default="10", default=10)
     # A single turn past target x this multiplier alerts on its own, with no minimum
     # sample size: at volume, one stalled turn would never move a windowed percentile.
     chat_latency_ceiling_multiplier = Column(Integer, nullable=False, server_default="3", default=3)
-    # An incoming with no reply after this long is the shape a dropped webhook takes —
+    # An incoming with no reply after this long is the shape a dropped webhook takes  - 
     # the turn never completes, so it never enters the latency distribution at all.
     chat_latency_no_reply_minutes = Column(Integer, nullable=False, server_default="5", default=5)
     # Below this many paired turns a window percentile is noise, so fleet-level
     # breach alerting stays quiet.
     chat_latency_min_sample = Column(Integer, nullable=False, server_default="30", default=30)
     # Which computed percentile the watchdog holds to the target. Policy, not
-    # implementation — a chattier channel may reasonably choose p95.
+    # implementation - a chattier channel may reasonably choose p95.
     chat_latency_percentile = Column(Integer, nullable=False, server_default="99", default=99)
     # My Downloads retention. Nothing purged this table before chat-history CSV exports
     # made the storage cost real; the purge applies to every download kind.
@@ -423,7 +423,7 @@ class SystemSetting(Base):
     ai_trace_max_payload_bytes = Column(Integer, nullable=False, server_default="16384", default=16384)
     # M2.5 role split: when true, the agent loop runs an explicit planner node up
     # front and compresses raw tool JSON via the semantic_compressor node before
-    # feeding it back. Default off — behavioral change, opt-in per PLAN Q7.
+    # feeding it back. Default off - behavioral change, opt-in per PLAN Q7.
     ai_assistant_role_split_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
 
     # Form handling-lock (PLAN-form-handling-lock): CSV of the source_entity_types the

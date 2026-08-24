@@ -58,4 +58,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     for idx_name, _, _ in ALL_INDEXES:
         op.execute(f"DROP INDEX IF EXISTS {idx_name};")
-    # Leave pg_trgm extension installed — other features may rely on it.
+    # Leave pg_trgm extension installed - other features may rely on it.

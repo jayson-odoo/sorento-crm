@@ -7,7 +7,7 @@ The table is high-volume and holds raw customer message content, so:
   walk cheap at any depth. `id` breaks ties so identical timestamps still paginate
   deterministically instead of repeating or dropping rows.
 - **No opaque identifiers surfaced.** `contact_id` is the Respond.io id string, not
-  `respond_contacts.id`, and is meaningless to a human — rows carry a rendered
+  `respond_contacts.id`, and is meaningless to a human - rows carry a rendered
   `contact_display` built from the stored name and phone instead.
 - **Latency is attached to the reply**, not the message that triggered it, which is what
   an admin scanning the grid expects to read.
@@ -77,7 +77,7 @@ def decode_cursor(cursor: str) -> Optional[tuple[datetime, int]]:
 def _latencies_from_rows(rows: list[ChatHistory]) -> dict[str, float]:
     """Turn latency from an already-fetched, respond_ts-ordered row set.
 
-    Computed from `respond_ts` only — a row still awaiting resolution has no honest
+    Computed from `respond_ts` only - a row still awaiting resolution has no honest
     clock, and approximating from `sent_at` would fabricate the number.
     """
     starts: dict[str, datetime] = {}
@@ -220,7 +220,7 @@ def list_messages_page(
     """Offset page of messages plus the total, for the standard DataGrid.
 
     Uses offset paging (not keyset) because the DataGrid lets the user jump to an
-    arbitrary page and needs a total to render the pager — both of which keyset
+    arbitrary page and needs a total to render the pager - both of which keyset
     cannot serve. The date filter bounds the scan, so offset is acceptable here;
     the keyset path (`list_messages`) is retained for the unbounded CSV export.
     """
@@ -257,16 +257,16 @@ def list_messages_page(
     ordering = sort_col.asc() if dir_ == "asc" else sort_col.desc()
 
     # Grouping is a server-ordering concern. The listing is offset-paginated, so
-    # unless group members are contiguous the UI can only group *within a page* —
+    # unless group members are contiguous the UI can only group *within a page*  - 
     # every page then shows fragments of many groups and the header counts lie.
     #
     # `date` deliberately keeps the default ordering: a fixed +8h offset preserves
     # ordering, so `sent_at desc` already yields contiguous Malaysia calendar
     # dates. Re-ordering would change behaviour for no gain.
-    # "contact_date" is contact-outer, date-inner — the same ordering, with the
+    # "contact_date" is contact-outer, date-inner - the same ordering, with the
     # frontend drawing date subheaders inside each contact run.
     if group_by in ("contact", "contact_date"):
-        # phone_number, not first_name — a display name is nullable and not
+        # phone_number, not first_name - a display name is nullable and not
         # unique, so it cannot define a group boundary.
         page_rows = (
             q.order_by(
@@ -366,7 +366,7 @@ def get_thread(
     """One contact's transcript around an anchor message, oldest-first.
 
     Oldest-first because a transcript reads top-down, whereas the grid reads
-    newest-first — the two orders are deliberately different.
+    newest-first - the two orders are deliberately different.
     """
     anchor = None
     if anchor_id is not None:
@@ -407,5 +407,5 @@ def get_thread(
         rows = list(reversed(older)) + [anchor] + newer
 
     latencies = _turn_latencies(db, rows)
-    # Transcript is the diagnosis surface — carry the state trace here (and only here).
+    # Transcript is the diagnosis surface - carry the state trace here (and only here).
     return [_to_row(row, latencies, include_state_trace=True) for row in rows]

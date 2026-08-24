@@ -3,7 +3,7 @@
 Regression for the HANLIM trace: the resolver mapped the customer name to UUIDs,
 but the LLM passed the NAME into ``customer_ids`` → backend 400 INVALID_UUID.
 ``_coerce_uuid_args`` substitutes the resolver's UUIDs at dispatch. Pure unit
-tests — no DB, no MCP (the fallback resolve is exercised only on a turn-map miss
+tests - no DB, no MCP (the fallback resolve is exercised only on a turn-map miss
 and degrades to [] without a DB).
 """
 from __future__ import annotations

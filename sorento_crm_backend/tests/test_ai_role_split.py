@@ -3,11 +3,11 @@
 Covers the three ``AIAssistantChatService`` methods added for the explicit
 planner / semantic-compressor decomposition:
 
-- ``_role_split_enabled`` — reads the ``ai_assistant_role_split_enabled`` flag
+- ``_role_split_enabled`` - reads the ``ai_assistant_role_split_enabled`` flag
   off the ``system_settings`` singleton (default / missing-row → False).
-- ``_run_planner`` — one LLM call producing an ordered tool plan, with a
+- ``_run_planner`` - one LLM call producing an ordered tool plan, with a
   ``planner`` trace span; provider failure → None + error span, never raises.
-- ``_compress_tool_output`` — semantic compression of sizeable tool JSON, with
+- ``_compress_tool_output`` - semantic compression of sizeable tool JSON, with
   a ``semantic_compressor <tool>`` span; skipped for ``user_guides_read`` (link
   preservation) and for < 400-char payloads; provider failure → raw unchanged +
   error span, never raises.

@@ -319,7 +319,7 @@ export default function AccessAgentFormModal({
                                     }}
                                     placeholder="Select SLA policy"
                                     options={[
-                                      { value: NO_POLICY, label: '— No policy —' },
+                                      { value: NO_POLICY, label: ' -  No policy  - ' },
                                       ...slaPolicies.map((policy) => ({
                                         value: policy.id,
                                         label: `${policy.name} (${policy.code})`,
@@ -360,9 +360,9 @@ export default function AccessAgentFormModal({
                                           };
                                           setAssignmentGroups(next);
                                         }}
-                                        placeholder="—"
+                                        placeholder="-"
                                         options={[
-                                          { value: '__none__', label: '—' },
+                                          { value: '__none__', label: '-' },
                                           { value: '1', label: '1', disabled: usedTiers.has(1) },
                                           { value: '2', label: '2', disabled: usedTiers.has(2) },
                                           { value: '3', label: '3', disabled: usedTiers.has(3) },

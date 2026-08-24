@@ -38,7 +38,7 @@ export default function ProtectedLayout({
       // landed on (path + query + hash), not just the pathname, so any internal
       // link survives the sign-in round-trip. The signin page reads callbackUrl
       // and only honours same-origin relative paths (starts with '/', not '//').
-      // This is staff/NextAuth only — the portal contact OTP flow uses public
+      // This is staff/NextAuth only - the portal contact OTP flow uses public
       // /view links + confirm-identity and never hits this protected layout.
       const loc = typeof window !== 'undefined' ? window.location : null;
       const target = loc

@@ -181,7 +181,7 @@ def test_stale_revision_is_refused_on_every_stock_inquiry_write(client, method, 
     message = response.json()["message"]
     assert "revised while you were working on it" in message
     assert "revision 2" in message
-    assert "—" not in message and "–" not in message  # no em / en dashes
+    assert "-" not in message and " - " not in message  # no em / en dashes
 
     # Nothing happened: same status, same response, still there.
     db.rollback()

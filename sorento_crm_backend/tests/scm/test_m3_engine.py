@@ -1,8 +1,8 @@
-"""SCM M3 reorder engine — PURE-FUNCTION golden set (TDD centrepiece, AC-M3.1..3.12).
+"""SCM M3 reorder engine - PURE-FUNCTION golden set (TDD centrepiece, AC-M3.1..3.12).
 
 Every number here is asserted against ``fixtures/golden_m3.json``, which is blessed
 INDEPENDENTLY by ``scripts/scm_m3_golden_derive.py`` (plain-Python arithmetic +
-NormalDist — a different code path than the engine, so the test is not circular). No
+NormalDist - a different code path than the engine, so the test is not circular). No
 DB: the maths take plain values. The resolver's M1/M2 reads are covered separately by
 ``test_m3_resolver.py``.
 """
@@ -142,7 +142,7 @@ def test_case_G_network_buy_below_total_deficit():
 def test_case_N_network_no_trigger_in_rop_oup_band():
     """#1/#4: a reorder_point network aggregate whose net sits ABOVE ROP but BELOW OUP
     must NOT trigger a buy (sizing OUP-net>0 is not a trigger). The trigger gate is
-    net<=ROP on the aggregate — same as per-warehouse."""
+    net<=ROP on the aggregate - same as per-warehouse."""
     g = GOLDEN["case_N_network_no_trigger_in_band"]
     whs = [{"warehouse_id": wid, "demand_rate": d, "net": n}
            for wid, d, n in zip(g["warehouses"], g["demand_rates"], g["nets"])]
@@ -194,7 +194,7 @@ def test_single_supplier_used():
 @pytest.mark.parametrize("selection", ["primary", "best_score", "lowest_cost"])
 def test_supplier_tie_break_is_deterministic(selection):
     """#2: two suppliers tied on EVERY ranking factor (primary flag + composite score +
-    unit cost) resolve to the SAME winner every call — supplier_id is the final stable
+    unit cost) resolve to the SAME winner every call - supplier_id is the final stable
     tiebreak, never DB row order."""
     a = {"supplier_id": "aaaa1111", "is_primary": True, "unit_cost": 100,
          "lead_time_days": 30, "composite_score": 0.8}

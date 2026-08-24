@@ -1,5 +1,5 @@
 /**
- * useFieldLinkageSchema — fetches the per-entity-type field registry the
+ * useFieldLinkageSchema - fetches the per-entity-type field registry the
  * backend exposes at GET /api/v1/master-data/field-linkage-schema.
  *
  * Used by:

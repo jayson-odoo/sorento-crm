@@ -64,7 +64,7 @@ def api():
         state = {"acting_as": admin.id}
 
         def _override_real_user():
-            # Always returns whoever state["acting_as"] points at — represents the JWT principal.
+            # Always returns whoever state["acting_as"] points at - represents the JWT principal.
             u = db.query(User).filter(User.id == state["acting_as"]).first()
             slug_row = (
                 db.query(UserRole.slug)
@@ -210,7 +210,7 @@ def test_starting_again_auto_ends_prior(api):
         json={"target_user_id": api["target"].id},
     )
     assert r1.status_code == 200
-    # Start a second session targeting the same user — defensive cleanup must end the first.
+    # Start a second session targeting the same user - defensive cleanup must end the first.
     r2 = api["client"].post(
         "/api/v1/user-management/impersonation/start",
         json={"target_user_id": api["target"].id},

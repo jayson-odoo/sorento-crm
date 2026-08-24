@@ -10,7 +10,7 @@ of UUIDs) by:
   1. Returning it as-is if the value is already a valid UUID.
   2. Doing a case-insensitive exact match on a business-code column.
   3. Falling back to a case-insensitive `ILIKE %value%` search on one or
-     more secondary columns (e.g. name) when *fuzzy=True* — useful for
+     more secondary columns (e.g. name) when *fuzzy=True* - useful for
      natural-language filters like `supplier="Acme"`.
 
 Returns `None` when the value is blank. Returns an empty list when the

@@ -2,7 +2,7 @@
 
 Calls the central ``sync_permissions`` helper after the registry has been
 extended with ticket slugs (``tickets.tickets.{view,add,edit,delete,view_all,
-assign,export}``). Idempotent — safe to re-run.
+assign,export}``). Idempotent - safe to re-run.
 
 Revision ID: 168_seed_tickets_rbac
 Revises: 167_create_tickets_module

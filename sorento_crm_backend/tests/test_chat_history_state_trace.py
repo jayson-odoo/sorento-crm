@@ -2,7 +2,7 @@
 
 Covers the CRM-side acceptance cases of the state-transition-monitor plan:
 
-- UAC-CRM-1: a POSTed state_trace actually PERSISTS (not validated-then-dropped —
+- UAC-CRM-1: a POSTed state_trace actually PERSISTS (not validated-then-dropped  - 
   the blocker was that the raw INSERT has an explicit column list, so the pydantic
   field alone is insufficient). Asserting 201 is NOT enough; we read the row back.
 - UAC-CRM-2: `after: null` round-trips as a present key with a null value, not `{}`
@@ -157,7 +157,7 @@ def _seed(db, **kw) -> ChatHistory:
 
 
 def test_thread_carries_state_trace(db):
-    """The transcript is the diagnosis surface — it exposes the trace."""
+    """The transcript is the diagnosis surface - it exposes the trace."""
     _seed(db, turn_id="t1", state_trace=TRACE)
     rows = svc.get_thread(db, contact_id=RESPOND_IO_ID)
     assert len(rows) == 1

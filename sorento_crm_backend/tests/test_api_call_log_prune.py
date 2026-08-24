@@ -49,7 +49,7 @@ def test_payloads_are_nulled_past_the_payload_window(db):
     _row(db, days_ago=45)
     prune_api_call_log(db, payload_retention_days=30, row_retention_days=180)
     row = db.query(ApiCallLog).one()
-    # Row survives — the metadata is the long-lived part.
+    # Row survives - the metadata is the long-lived part.
     assert row.request_payload is None
     assert row.response_payload is None
     assert row.endpoint == "/api/v1/external/thing"
@@ -76,7 +76,7 @@ def test_both_stages_in_one_run(db):
 
 
 def test_already_nulled_payloads_are_not_recounted(db):
-    """Re-running must report 0 cleared, not re-clear the same rows forever —
+    """Re-running must report 0 cleared, not re-clear the same rows forever  - 
     otherwise the task's own output implies work that is not happening."""
     _row(db, days_ago=45)
     prune_api_call_log(db, payload_retention_days=30, row_retention_days=180)

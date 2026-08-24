@@ -1,13 +1,13 @@
 """Idempotent seed for the AI prompt registry.
 
 Extracted from the alembic migration so it can be unit-tested against sqlite and
-re-run safely (JOIN-based set-to-correct-value, per the backfill rule — running
+re-run safely (JOIN-based set-to-correct-value, per the backfill rule - running
 it twice never spawns duplicate versions or labels).
 
 Seeds each of the 9 PROMPT_KEYS at version 1 from its hardcoded fallback, with a
 ``production`` label → v1. If ``ai_assistant_configs.system_prompt`` holds a
 non-empty custom value, it is seeded as ``agent_system`` v2 and ``production``
-points at v2 (UAC A6 — preserve the admin's prior prompt, no silent loss).
+points at v2 (UAC A6 - preserve the admin's prior prompt, no silent loss).
 """
 from __future__ import annotations
 
@@ -101,14 +101,14 @@ def _max_version(session: Session, name: str) -> int:
 
 def bump_prompt_to_fallback(bind: Connection, name: str) -> None:
     """Idempotently publish the current hardcoded ``fallback()`` text for ``name``
-    as a NEW immutable version and move the ``production`` label to it — but ONLY
+    as a NEW immutable version and move the ``production`` label to it - but ONLY
     when the live production text differs from the fallback.
 
     Existing installs already hold a seeded v1 (or a later admin edit) as the
     ``production`` version; the plain ``seed_prompt_registry`` only inserts a v1
     when missing, so it can never update a live row. This publishes a fresh
-    version (immutable-versions + movable-labels model) so a fallback change —
-    e.g. adding the ``ideate`` intent line to ``semantic_parser`` — actually
+    version (immutable-versions + movable-labels model) so a fallback change  - 
+    e.g. adding the ``ideate`` intent line to ``semantic_parser`` - actually
     reaches the runtime. Safe to re-run: a second call is a no-op because the
     production text now equals the fallback.
     """
@@ -130,7 +130,7 @@ def bump_prompt_to_fallback(bind: Connection, name: str) -> None:
                 .first()
             )
             if current is not None and (current.template or "") == fallback_text:
-                return  # already published — idempotent no-op
+                return  # already published - idempotent no-op
         # Publish the fallback as the next version and point production at it.
         next_version = _max_version(session, name) + 1
         new_row = _ensure_version(

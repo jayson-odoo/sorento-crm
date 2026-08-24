@@ -1,10 +1,10 @@
-"""SCM M3 reorder RUN JOB — drives the deterministic engine over a background run.
+"""SCM M3 reorder RUN JOB - drives the deterministic engine over a background run.
 
 The pure maths + resolver live in ``reorder_engine`` (golden-tested). This module is
 the ORCHESTRATION layer: it enumerates the planning SKUs in the selected warehouses,
 calls the engine per SKU×warehouse (or aggregated when ``buy_scope='network'``), and
 PERSISTS one ``scm.reorder_recommendation`` per emitted rec with its FROZEN inputs
-(AC-M3.11 — reproducible without stat versioning), plus a ``scm.reorder_run`` log with
+(AC-M3.11 - reproducible without stat versioning), plus a ``scm.reorder_run`` log with
 status transitions + counts.
 
 Flow:
@@ -12,13 +12,13 @@ Flow:
     the RQ ``run_reorder(run_id)`` task on the ``imports`` queue (drained by the worker).
   * ``run_reorder`` (the worker task body) loads the run, evaluates all planning SKUs,
     writes the recommendations, and flips the run to ``completed`` (+ run-log counts) or
-    ``failed`` (+ error_text) — it NEVER crashes the worker.
-  * A re-run always creates a NEW run_id — runs are immutable history.
+    ``failed`` (+ error_text) - it NEVER crashes the worker.
+  * A re-run always creates a NEW run_id - runs are immutable history.
 
 Two recommendation types (M3-D5):
-  * ``buy`` — a triggered reorder (per policy trigger); ``disposition`` — dead/overstock.
+  * ``buy`` - a triggered reorder (per policy trigger); ``disposition`` - dead/overstock.
   * A no-supplier SKU that WOULD trigger a buy emits an ``exception`` rec (never silently
-    skipped — AC-M3.6).
+    skipped - AC-M3.6).
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ _STAGES = ("resolving_policies", "computing_reorder_points",
 
 
 # ===========================================================================
-# create_run — insert the run + enqueue the job
+# create_run - insert the run + enqueue the job
 # ===========================================================================
 
 def create_run(db: Session, warehouse_codes: Optional[list[str]],
@@ -82,7 +82,7 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
     creates a NEW run_id (runs are immutable). ``enqueue=False`` skips the RQ enqueue
     (tests call ``run_reorder`` synchronously).
 
-    ``buy_scope`` is no longer a manual-plan input (M8-D5) — it defaults to
+    ``buy_scope`` is no longer a manual-plan input (M8-D5) - it defaults to
     ``warehouse`` (per-warehouse planning; each buy is tied to a real warehouse, not
     an aggregated ``Network`` row). The HTTP request schema dropped it. Direct service
     callers may still pass ``network`` explicitly.
@@ -128,7 +128,7 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
             from app.services.queue_service import enqueue_job
             from app.tasks.reorder_tasks import run_reorder_job
             enqueue_job(run_reorder_job, run_id, queue_name="imports")
-        except Exception:  # noqa: BLE001 — the run row exists; a broken broker must
+        except Exception:  # noqa: BLE001 - the run row exists; a broken broker must
             # not 500 the request. The run can be driven manually / by the next tick.
             log.exception("create_run: failed to enqueue run_reorder for %s", run_id)
 
@@ -182,7 +182,7 @@ def _resolve_warehouse_ids(db: Session, warehouse_codes: Optional[list[str]]) ->
 
 
 # ===========================================================================
-# today's plan — the run the reorder page opens to (M8-D3/D4)
+# today's plan - the run the reorder page opens to (M8-D3/D4)
 # ===========================================================================
 
 _KL_TZ = ZoneInfo("Asia/Kuala_Lumpur")
@@ -212,8 +212,8 @@ def today_or_latest_run(db: Session, today: Optional[date] = None) -> Optional[d
     """Pick the run the reorder page opens to WITHOUT knowing an id (M8-D3/D4).
 
     Returns ``{"row": <run mapping>, "is_today": bool}`` where the row is the
-    most-recent NON-FAILED run STARTED today (Malaysia wall-clock) — the day's
-    scheduled snapshot; else the most-recent COMPLETED run overall — the last
+    most-recent NON-FAILED run STARTED today (Malaysia wall-clock) - the day's
+    scheduled snapshot; else the most-recent COMPLETED run overall - the last
     available snapshot fallback when today's run has not fired (or failed). Returns
     ``None`` only when no run exists at all (fresh install → FE shows the empty page +
     Manual plan). ``today`` overrides the KL calendar date (tests only).
@@ -302,13 +302,13 @@ def assert_run_visible(db: Session, run_id: str) -> None:
 
 
 # ===========================================================================
-# run_reorder — the worker task body
+# run_reorder - the worker task body
 # ===========================================================================
 
 def run_reorder(run_id: str, db: Optional[Session] = None) -> dict:
     """Worker entry: evaluate all planning SKUs for ``run_id`` and persist the
     recommendations. Creates its own session when called from the worker; tests pass
-    ``db`` to run inside their rolled-back savepoint. Never raises — a failure is
+    ``db`` to run inside their rolled-back savepoint. Never raises - a failure is
     recorded on the run (status='failed' + error_text) so the worker survives."""
     own = db is None
     if own:
@@ -377,7 +377,7 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
     # The heavy evaluation runs inside a SAVEPOINT: on failure we roll back ONLY the
     # planning work (partial recommendations, seeded policy) and keep the already-
     # committed run row so we can still stamp it 'failed' + error_text. The worker
-    # never sees an exception — a broken run is recorded, not crashed.
+    # never sees an exception - a broken run is recorded, not crashed.
     sp = db.begin_nested()
     try:
         eng.ensure_reorder_policy_defaults(db)
@@ -419,7 +419,7 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
                                        levels=levels, last_cost=last_cost,
                                        horizon=run.plan_horizon_date)
 
-        # M4 cash stage — compute + FREEZE each buy's rank_score / rank / rank_factors
+        # M4 cash stage - compute + FREEZE each buy's rank_score / rank / rank_factors
         # (funded/deferred is computed live at view-time against a budget, not here).
         # M7: opt-in market-trend priority factor (per-run flag).
         _apply_cash_stage(db, recs, include_market=bool(run.include_market))
@@ -461,7 +461,7 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
             log.exception("run_reorder %s: failed to refresh level suggestions", run_id)
 
         return {"run_id": run_id, "status": "completed", **counts}
-    except Exception as exc:  # noqa: BLE001 — record, never crash the worker
+    except Exception as exc:  # noqa: BLE001 - record, never crash the worker
         log.exception("run_reorder %s failed", run_id)
         try:
             sp.rollback()
@@ -1524,7 +1524,7 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         "suggestion_basis": level_row.get("suggestion_basis"),
         "needs_level": needs_level,
         # M4 cash-ranking factor inputs (list_price read-only from products; committed
-        # from the net-position view) — frozen into `inputs` for the cash stage.
+        # from the net-position view) - frozen into `inputs` for the cash stage.
         "list_price": _fnum(row.get("list_price")),
         "committed": _fnum(row.get("committed")),
         # S10 - the figures the buyer looks up by hand before deciding. Carried on the cell
@@ -1572,10 +1572,10 @@ def _emit_cell(run_id: str, row: dict, c: dict,
                            recommended=recommended, rounded=rounded)
 
     # #8: a cell classified for disposition (dead OR overstock) must NOT also emit a buy
-    # — buying more of dead/overstocked stock is contradictory. The disposition rec
+    # - buying more of dead/overstocked stock is contradictory. The disposition rec
     # below is the single action for that cell.
     # A triggered cell whose order qty rounds to 0 (net already at/above order-up-to
-    # once MOQ/multiple are applied) is NOT an actionable buy — "buy 0" is noise, so
+    # once MOQ/multiple are applied) is NOT an actionable buy - "buy 0" is noise, so
     # emit nothing. Mirrors the network path's `rounded > 0` gate (line ~516).
     rounded = c["rounded"] or 0
     if not disp and c.get("needs_level"):
@@ -1796,7 +1796,7 @@ def _network_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
     honest (no hardcoded "net ≤ ROP").
     """
     agg_demand = agg["agg_demand"]
-    # #9: match the per-warehouse supplier-adequacy definition — a chosen supplier only
+    # #9: match the per-warehouse supplier-adequacy definition - a chosen supplier only
     # counts as adequate when its measured confidence is high|medium.
     supplier_adequate = bool(chosen) and (chosen.get("supplier_confidence") in ("high", "medium"))
     return {
@@ -2121,7 +2121,7 @@ def _supplier_choice(cand: Optional[dict]) -> Optional[dict]:
         "lead_time_days": _fnum(cand.get("lead_time_days")),
         "composite_score": _fnum(cand.get("composite_score")),
         "is_primary": bool(cand.get("is_primary")),
-        # M5-prep — scorecard detail for the "why this supplier" popover (all already
+        # M5-prep - scorecard detail for the "why this supplier" popover (all already
         # on the candidate from the M2 supplier_performance join). Frozen at run time.
         "sample_size": (int(cand["supplier_sample_size"])
                         if cand.get("supplier_sample_size") is not None else None),
@@ -2211,7 +2211,7 @@ def _cash_impact_in_base(rounded, unit_cost, currency, rate, rate_as_of) -> Opti
 
 
 # ===========================================================================
-# M4 cash stage — freeze rank_score + rank on the buy recommendations
+# M4 cash stage - freeze rank_score + rank on the buy recommendations
 # ===========================================================================
 
 def load_cash_weights(db: Session) -> dict:
@@ -2292,11 +2292,11 @@ def _apply_cash_stage(
     each buy's graceful-degrade ``rank_score`` + its factor vector + days-to-stockout
     (into ``inputs``), then a dense ``rank`` by rank_score desc (tiebreak cash_impact
     then product_code). Non-buy recs are untouched. Funded/deferred is NOT decided
-    here — it is applied live at view-time against a budget (M4-D2/D3).
+    here - it is applied live at view-time against a budget (M4-D2/D3).
 
     ``include_market`` (M7): when true, each buy's category is matched to the latest
     market signal and a bounded market-trend factor joins the rank score (order qty is
-    untouched — only the funding order shifts). When false, no market factor is added
+    untouched - only the funding order shifts). When false, no market factor is added
     and the score is byte-identical to pre-M7."""
     weights = load_cash_weights(db)
     buys = [r for r in recs if r.rec_type == "buy"]
@@ -2332,7 +2332,7 @@ def _apply_cash_stage(
 
 
 # ===========================================================================
-# M4 funding allocation — greedy-by-rank over a run's buys (view-time + persist)
+# M4 funding allocation - greedy-by-rank over a run's buys (view-time + persist)
 # ===========================================================================
 
 def _load_run_buys(db: Session, run_id: str) -> list[cash_ranking.Buy]:
@@ -2363,7 +2363,7 @@ def _decision_split(db: Session, run_id: str) -> tuple[set[str], set[str]]:
 
 def allocate_run_budget(db: Session, run_id: str,
                         budget: Optional[float]) -> cash_ranking.AllocationResult:
-    """Greedy funding over the run's buys for ``budget`` — VIEW-TIME, no persistence.
+    """Greedy funding over the run's buys for ``budget`` - VIEW-TIME, no persistence.
     Applies the decision overlay (pins win, rejects excluded) so the live view matches
     the persisted split (M8-C3)."""
     pinned, rejected = _decision_split(db, run_id)
@@ -2389,7 +2389,7 @@ def apply_run_budget(db: Session, run_id: str, budget: Optional[float],
         db.execute(text(
             "UPDATE scm.reorder_recommendation SET funding_status = :s WHERE id = :id"
         ), {"s": status, "id": rec_id})
-    # Rejected buys are out of the plan — clear any stale funding_status so a later read
+    # Rejected buys are out of the plan - clear any stale funding_status so a later read
     # never shows a dismissed rec as funded/deferred (it reads the decision overlay).
     if rejected:
         db.execute(text(
@@ -2417,12 +2417,12 @@ def explain_net(db: Session, rec_id: str) -> dict:
 
     Returns the five position components (on_hand / on_order / po_ordered / committed /
     net) for the rec's product×warehouse plus the OPEN sales-order lines behind
-    ``committed`` — each navigable (SO number, customer, qty, order date) rather than a
+    ``committed`` - each navigable (SO number, customer, qty, order date) rather than a
     pre-aggregated total.
 
     Positions come from ``scm.net_position_v`` (the SAME source the run froze
     ``net_position`` from) plus ``scm.po_ordered_v`` for the ``po_ordered`` leg (21 Aug
-    fix — the sizing engine has netted this leg into the recommendation's own ``net``
+    fix - the sizing engine has netted this leg into the recommendation's own ``net``
     since ``_compute_cell`` started adding it; the drill now matches); the committed
     lines come from the base ``sales_order_lines`` tables. All apply the identical filter
     (``status='open' AND qty_ordered > qty_delivered``) so the listed line qtys sum to
@@ -2625,8 +2625,8 @@ def set_moq_override(db: Session, rec_id: str, moq: Optional[float]) -> dict:
 
 def _summarise(recs: list[ReorderRecommendation]) -> dict:
     # Buy count = ORDERABLE buys only (a supplier cost exists). Uncosted buys can't be
-    # bought — they're the "N products skipped, no supplier cost" banner, not part of
-    # the plan — so they must not inflate the Buy tile (mirrors the FE needs-cost split).
+    # bought - they're the "N products skipped, no supplier cost" banner, not part of
+    # the plan - so they must not inflate the Buy tile (mirrors the FE needs-cost split).
     buy = sum(1 for r in recs if r.rec_type == "buy" and r.unit_cost is not None)
     disposition = sum(1 for r in recs if r.rec_type == "disposition")
     exceptions = sum(1 for r in recs if r.rec_type == "exception")

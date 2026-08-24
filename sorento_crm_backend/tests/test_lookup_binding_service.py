@@ -74,7 +74,7 @@ def test_reject_duplicate_binding(db_session):
 
 
 def test_reject_injection_style_identifier(db_session):
-    """An injection-style table/column never reaches SQL — eligibility
+    """An injection-style table/column never reaches SQL - eligibility
     validation rejects it first (unchanged behaviour, defense-in-depth)."""
     s = LookupSetService(db_session).create(LookupSetCreate(set_key="op", name="x"))
     svc = LookupBindingService(db_session)

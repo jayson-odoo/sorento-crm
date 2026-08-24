@@ -1,4 +1,4 @@
-"""SCM M0 — view-correctness regressions (found in review).
+"""SCM M0 - view-correctness regressions (found in review).
 
 #1 on_order_v must NOT count draft POs as supply (M4-D5: drafts are not on_order).
 #2 net_position_v must surface a (product,warehouse) that has committed/on_order
@@ -59,7 +59,7 @@ def _a_product_warehouse_without_stock(conn):
 
 
 def test_on_order_v_excludes_draft_po(conn):
-    """#1 — a draft PO line must NOT show up as on_order."""
+    """#1 - a draft PO line must NOT show up as on_order."""
     pid = conn.execute(text("select id from products limit 1")).scalar()
     wid = conn.execute(text("select id from warehouses limit 1")).scalar()
     sp = conn.begin_nested()
@@ -84,7 +84,7 @@ def test_on_order_v_excludes_draft_po(conn):
 
 
 def test_net_position_v_surfaces_demand_without_stock_row(conn):
-    """#2 — an open SO on a (product,warehouse) with no stock row must appear."""
+    """#2 - an open SO on a (product,warehouse) with no stock row must appear."""
     pid, wid = _a_product_warehouse_without_stock(conn)
     if pid is None:
         pytest.skip("no product/warehouse pair without a stock row")

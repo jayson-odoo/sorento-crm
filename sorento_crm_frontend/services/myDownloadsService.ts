@@ -1,5 +1,5 @@
 /**
- * myDownloadsService — per-user async exports surfaced in the My Downloads drawer.
+ * myDownloadsService - per-user async exports surfaced in the My Downloads drawer.
  *
  * Backend contract:
  *   GET  /api/v1/downloads            -> { downloads: MyDownload[] }

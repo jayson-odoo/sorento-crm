@@ -1,21 +1,21 @@
-"""SCM M3 reorder engine — the deterministic core (no LLM, pure maths).
+"""SCM M3 reorder engine - the deterministic core (no LLM, pure maths).
 
 Turns M2's stored inputs (``scm.demand_stat``, ``scm.item_classification``,
 ``scm.supplier_performance``, ``product_suppliers``) + M1's net position
-(``scm.net_position_v``) into reorder decisions — *when* (trigger) and *how much*
-(qty) — driven by the resolved ``scm.reorder_policy`` ruleset. Produces buy +
+(``scm.net_position_v``) into reorder decisions - *when* (trigger) and *how much*
+(qty) - driven by the resolved ``scm.reorder_policy`` ruleset. Produces buy +
 disposition recommendation dicts (frozen inputs) reproducible without stat versioning.
 
 Two layers:
-  1. **Pure maths** (top of file) — take plain values, no I/O, golden-testable in
+  1. **Pure maths** (top of file) - take plain values, no I/O, golden-testable in
      isolation (``tests/scm/test_m3_engine.py`` asserts them against the blessed
      ``fixtures/golden_m3.json`` derived independently by
      ``scripts/scm_m3_golden_derive.py``). This is the TDD centrepiece.
-  2. **Resolver** (bottom) — reads the M1/M2 tables the same way the dashboard does
+  2. **Resolver** (bottom) - reads the M1/M2 tables the same way the dashboard does
      and feeds the pure maths (``tests/scm/test_m3_resolver.py``, Postgres savepoints).
 
 The background run job that loops all planning SKUs and PERSISTS ``reorder_run`` +
-``reorder_recommendation`` rows is a SEPARATE slice — this module only computes.
+``reorder_recommendation`` rows is a SEPARATE slice - this module only computes.
 
 LOCKED formulae (UAC M3-D1..D5):
   SS(fixed_days)  = demand_rate * safety_days
@@ -69,7 +69,7 @@ _SEED = "engine"
 
 
 # ===========================================================================
-# Pure maths — no I/O, golden-testable in isolation
+# Pure maths - no I/O, golden-testable in isolation
 # ===========================================================================
 
 def z_score(service_level: Optional[float]) -> float:
@@ -564,7 +564,7 @@ def _g(v) -> str:
 
 
 # ===========================================================================
-# Policy defaults (idempotent ensure — never rely on an empty policy table)
+# Policy defaults (idempotent ensure - never rely on an empty policy table)
 # ===========================================================================
 
 def ensure_reorder_policy_defaults(db: Session) -> None:
@@ -572,7 +572,7 @@ def ensure_reorder_policy_defaults(db: Session) -> None:
 
     Idempotent: only inserts when no global row exists at all, so re-runs and
     hand-edited values are never clobbered. The two engine toggles that have no
-    dedicated column — ``supplier_selection`` and ``lead_time_default_days`` — ride in
+    dedicated column - ``supplier_selection`` and ``lead_time_default_days`` - ride in
     the existing ``factor_toggles`` JSONB (no migration).
     """
     if global_policy_row(db) is not None:
@@ -595,7 +595,7 @@ def ensure_reorder_policy_defaults(db: Session) -> None:
 
 
 # ===========================================================================
-# Resolver — reads M1/M2 tables and feeds the pure maths
+# Resolver - reads M1/M2 tables and feeds the pure maths
 # ===========================================================================
 
 def load_policies(db: Session) -> list[dict]:

@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * ManageFieldLinksDialog — small modal opened from per-row actions in:
+ * ManageFieldLinksDialog - small modal opened from per-row actions in:
  *   - Product Attachments tab (attachment row in product detail)
  *   - AttachmentDetailModal Linkages tabs (each linked product row)
  *

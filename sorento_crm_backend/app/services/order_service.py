@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 DATE_RELAX_LIMIT = 3
 
 # Canonical "handed to the customer" status codes. Mirrors
-# ComplaintFulfilmentService.DELIVERED_STATUS_CODES — an order counts as
+# ComplaintFulfilmentService.DELIVERED_STATUS_CODES - an order counts as
 # delivered ONLY when its status is one of these AND actual_delivery_date is set
 # (a Status alone without a date, or a date under a non-delivered status like
 # "New Order", does NOT count as delivered). Drives the `order_status`
@@ -502,7 +502,7 @@ class OrderService:
         # Date-axis relaxation (§3.4): the customer (and any product/status scope)
         # resolved but had zero DOs on the asked delivery date. Offer the nearest
         # delivery dates that DO carry a DO for the same scope. Only on the empty
-        # path — a non-empty result stays byte-identical (AC-R1).
+        # path - a non-empty result stays byte-identical (AC-R1).
         if total == 0 and _asked_delivery_date is not None and _customer_scoped:
             alternatives = self._nearest_delivery_date_alternatives(
                 scope_filters=filters,
@@ -524,7 +524,7 @@ class OrderService:
 
         `scope_filters` are the non-date entity/scope clauses already built for the
         main query (customer / product / status / transporter), so the substitute
-        dates stay within the SAME scope the user asked about — only the date axis
+        dates stay within the SAME scope the user asked about - only the date axis
         is relaxed. Rows are ranked by absolute distance from ``asked_date`` (either
         side) and deduped to at most ``limit`` DISTINCT delivery dates. Best-effort:
         a probe failure never turns the already-computed empty result into a 500.
@@ -589,7 +589,7 @@ class OrderService:
         """Translate resolved entity buckets into SQL filter clauses for Order queries.
 
         Same-type entities are OR'd (e.g. two product codes → IN). Different types are
-        returned as separate clauses so the caller AND's them across types — the user
+        returned as separate clauses so the caller AND's them across types - the user
         said "orders for X and product Y" should intersect, not union. When the caller
         has already joined OrderLine + Product (e.g. list_orders_by_product), pass
         `product_join_already_present=True` so the product clause filters on the
@@ -733,8 +733,8 @@ class OrderService:
     ) -> dict:
         """Resolve prev/next neighbours for ``order_id`` within the active list query.
 
-        Reuses ``list_orders(ids_only=True)`` — the exact same filter+sort query the
-        paginated grid builds — so the pager and list can never drift. Selects only
+        Reuses ``list_orders(ids_only=True)`` - the exact same filter+sort query the
+        paginated grid builds - so the pager and list can never drift. Selects only
         the ordered ids, then defers the position/wrap math to the pure
         ``compute_neighbours`` helper. If the record is not in the filtered set (deep
         link, or filtered out after an edit), falls back to the unfiltered,
@@ -811,7 +811,7 @@ class OrderService:
         group_by buckets the result by customer (debtor_name), product
         (product_code), calendar month (order_date YYYY-MM), or none (single
         overall figure). Returns ranked group rows + an order-level overall total.
-        Only aggregates are exposed — never per-order pricing / cost fields.
+        Only aggregates are exposed - never per-order pricing / cost fields.
         """
         from app.services.error_handler import AppException
         from fastapi import status as _status
@@ -882,8 +882,8 @@ class OrderService:
             return q
 
         # Order value = header total_amount when set, else the sum of the order's
-        # line totals. In this dataset orders.total_amount is 0 across the board —
-        # the real monetary value lives on the order lines — so we coalesce to the
+        # line totals. In this dataset orders.total_amount is 0 across the board  - 
+        # the real monetary value lives on the order lines - so we coalesce to the
         # line sum to return a truthful figure (spec said SUM(total_amount); the
         # header is unpopulated, so this is the honest equivalent).
         line_sum_subq = (
@@ -1002,7 +1002,7 @@ class OrderService:
                     key,
                     {
                         "label": (
-                            f"{r.product_code} — {r.product_name}"
+                            f"{r.product_code} - {r.product_name}"
                             if r.product_name
                             else (r.product_code or "(unknown)")
                         ),
@@ -1101,7 +1101,7 @@ class OrderService:
         """List distinct orders matched by product search.
 
         `entities` is the single-bag entity filter (see list_orders). At least one
-        entity must resolve to a product — the endpoint is product-centric and falls
+        entity must resolve to a product - the endpoint is product-centric and falls
         back to empty otherwise. Customer / transporter / order_number entities are
         applied as additional AND filters.
         """
@@ -1183,7 +1183,7 @@ class OrderService:
         filters = []
         product_match_filters: list = []
 
-        # Drive matched_products enrichment off the typed UUID filter too —
+        # Drive matched_products enrichment off the typed UUID filter too  - 
         # otherwise rows come back with matched_products=[] when the caller
         # narrows by `product_ids` (the MCP/typed path) instead of the legacy
         # `product_id` token resolver below. The order-level filter is applied
@@ -1228,7 +1228,7 @@ class OrderService:
                 if ids:
                     product_ids.extend(ids)
                     continue
-                # Prefix / substring ILIKE on product_code — deterministic
+                # Prefix / substring ILIKE on product_code - deterministic
                 # match for partial SKUs like "SRTWC8608" → "SRTWC8608-SC",
                 # "SRTWC8608-SC-UF". Capped to avoid runaway broad tokens.
                 like_rows = (
@@ -1494,8 +1494,8 @@ class OrderService:
     ) -> Optional[str]:
         """Find-or-create a Customer row from order debtor fields, return its id.
 
-        Match key is the (customer_code, customer_name) PAIR — case + whitespace
-        insensitive — because one Sage code can carry multiple distinct debtor
+        Match key is the (customer_code, customer_name) PAIR - case + whitespace
+        insensitive - because one Sage code can carry multiple distinct debtor
         names (e.g. "300-D093" maps to both "Deluxe Home Center (KTN)" and
         "Deluxe Home Center AC (I)"). Each unique pair gets its own customers
         row. Matches the composite unique index created in migration 220.
@@ -1538,7 +1538,7 @@ class OrderService:
         """Find-or-create a Transporter row keyed by normalized_name, return id.
 
         Mirrors migration 200's seeding rule. `normalized_name = lower(btrim(...))`
-        is the unique key — code + name default to the raw stripped text on
+        is the unique key - code + name default to the raw stripped text on
         first sight.
         """
         raw = (transporter_text or "").strip()
@@ -1615,8 +1615,8 @@ class OrderService:
         # Complaint <-> DO auto-fulfilment on CREATE: a DO born with a Remarks CS
         # reference (optionally already delivered/cancelled) must link + (re)fulfil
         # immediately, mirroring update_order. Only run when there's something to
-        # link — a blank Remarks CS on a fresh order can't affect any complaint.
-        # Best-effort — never fail the create.
+        # link - a blank Remarks CS on a fresh order can't affect any complaint.
+        # Best-effort - never fail the create.
         if (order.remarks_cs or "").strip():
             try:
                 from app.services.complaint_fulfilment_service import (
@@ -1643,7 +1643,7 @@ class OrderService:
             update_data = self._normalize_uuid_fields(update_data)
 
             # Freeze guard: a delivered DO linked to a complaint has historical,
-            # already-notified fulfilment — its Remarks CS is read-only. Reject any
+            # already-notified fulfilment - its Remarks CS is read-only. Reject any
             # change rather than silently keep the old value (FE renders it readonly).
             old_remarks_cs = order.remarks_cs
             remarks_cs_changing = (
@@ -1716,7 +1716,7 @@ class OrderService:
 
             # Complaint <-> DO auto-fulfilment: a Remarks CS, delivery-date, or
             # is_cancelled change can (un)link complaints, (re)fulfil them, and
-            # fire a per-DO delivery notice. Best-effort — never fail the update.
+            # fire a per-DO delivery notice. Best-effort - never fail the update.
             try:
                 fulfilment_relevant = (
                     remarks_cs_changing
@@ -2178,7 +2178,7 @@ class OrderService:
                 linked_order_ids.add(str(oid))
                 linked_complaints_by_order.setdefault(str(oid), []).append(cnum)
         # Pre-change snapshot per order (remarks / delivered / cancelled), keyed by
-        # lower order_number — captured BEFORE any setattr so the reconcile pass can
+        # lower order_number - captured BEFORE any setattr so the reconcile pass can
         # diff old vs new and run delta-only.
         pre_state: dict[str, dict] = {}
 
@@ -2313,7 +2313,7 @@ class OrderService:
                     # Snapshot BEFORE mutation for the delta-only reconcile pass.
                     _snapshot_order(existing_order, number_lower)
                     # Freeze guard: a delivered DO linked to a complaint has historical,
-                    # already-notified fulfilment — keep the DB Remarks CS, skip that
+                    # already-notified fulfilment - keep the DB Remarks CS, skip that
                     # field only, and warn (surfaces in test + real import alike).
                     if (
                         "remarks_cs" in mapped
@@ -2329,7 +2329,7 @@ class OrderService:
                         warnings.append({
                             "row": row_idx,
                             "warning": (
-                                f"Order {order_number}: Remarks CS change ignored — "
+                                f"Order {order_number}: Remarks CS change ignored - "
                                 f"delivery order delivered and linked to complaint {_nums}"
                             ),
                             "data": row_data,
@@ -2346,7 +2346,7 @@ class OrderService:
                     # "delivered" where applicable. But the Master sheet re-imports the FULL
                     # order history on every run while the Overall Tracking tab is only a
                     # partial/rolling window (real import_logs: master_rows routinely far
-                    # exceeds tracking_rows) — resetting unconditionally wiped out a delivery
+                    # exceeds tracking_rows) - resetting unconditionally wiped out a delivery
                     # already recorded by an earlier run just because this run's Tracking tab
                     # doesn't happen to include the order again. Only reset when the order
                     # doesn't already carry a real delivery.
@@ -2462,7 +2462,7 @@ class OrderService:
                         mapped["actual_delivery_date"] = datetime.combine(d, dt_time.min)
                     delivery_date = mapped["actual_delivery_date"]
 
-                # Overall Tracking sheet carries the transporter text — upsert the
+                # Overall Tracking sheet carries the transporter text - upsert the
                 # transporter master row + FK here (parity with update_order). Idempotent.
                 mapped = self._sync_order_master_refs(mapped)
                 for key, value in mapped.items():
@@ -2645,7 +2645,7 @@ class OrderService:
             errors.append({"row": None, "error": f"Database error: {exc}", "data": None})
             logger.exception("Order tracking import: database commit failed")
 
-        # Per-DO delivery notifications (customer + Complaint team) — only after the
+        # Per-DO delivery notifications (customer + Complaint team) - only after the
         # link/status writes committed. Best-effort; never fail the import.
         if _import_commit_ok and fulfilment_notify_payloads:
             try:
@@ -2919,8 +2919,8 @@ class CustomerService:
     def create_customer(self, customer_data: CustomerCreate):
         """Create a new customer.
 
-        Uniqueness is on the (customer_code, customer_name) pair — case +
-        whitespace insensitive — so the same Sage code can legitimately host
+        Uniqueness is on the (customer_code, customer_name) pair - case +
+        whitespace insensitive - so the same Sage code can legitimately host
         multiple debtor names (e.g. "300-D093" for "Deluxe Home Center (KTN)"
         and "Deluxe Home Center AC (I)").
         """

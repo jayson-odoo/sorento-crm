@@ -63,7 +63,7 @@ def _rr_user_id_key(value: Optional[object]) -> str:
     """
     Canonical string key for round-robin user id comparisons.
     Cursor.last_assigned_user_id is a string FK; TeamMember.user_id may come back as UUID or str
-    from the driver — mixing them breaks list.index() and stuck rotation on index 0.
+    from the driver - mixing them breaks list.index() and stuck rotation on index 0.
     """
     if value is None:
         return ""
@@ -976,7 +976,7 @@ import time as _time
 class _RbacCache:
     """Per-process TTL cache for permission/role lookups.
 
-    Each gunicorn worker has its own instance — keys never cross workers.
+    Each gunicorn worker has its own instance - keys never cross workers.
     RBAC writes must call ``invalidate_rbac_cache(user_id)`` (or pass None
     to clear all). Default TTL = 30s, override via RBAC_CACHE_TTL_SECONDS.
     """
@@ -1027,7 +1027,7 @@ def invalidate_rbac_cache(user_id=None):
     """Drop cached permission/role lookups. Call after RBAC writes.
 
     With ``user_id=None`` clear entire cache (use for bulk RBAC migrations).
-    With a specific user_id, drop only that user's entries — other users keep
+    With a specific user_id, drop only that user's entries - other users keep
     their warm cache.
     """
     if user_id is None:
@@ -1180,7 +1180,7 @@ class UserPermissionService:
 
         Cached for ``RBAC_CACHE_TTL_SECONDS`` (default 30s). Cache miss runs a
         single targeted query that joins user_role_assignments → role_permissions
-        → permissions WHERE permissions.slug = ? — no full-permission-set fetch.
+        → permissions WHERE permissions.slug = ? - no full-permission-set fetch.
         """
         cache_key = ("perm", str(user_id), permission_slug)
         if _RBAC_CACHE_ENABLED:
@@ -1624,7 +1624,7 @@ class AccessAgentService:
         members (serve all). The rotation then uses a segment-scoped cursor
         (``segment_key`` = sorted '|'-joined codes) so each segment rotates independently.
         When ``None`` / empty (the normal path, incl. every non-CS agent), the pool and
-        the ``segment_key=''`` cursor are exactly as before — no behaviour change.
+        the ``segment_key=''`` cursor are exactly as before - no behaviour change.
         An empty filtered pool falls back to the full team on the '' cursor.
 
         ``brand_code`` (opt-in): the SECOND axis, same rule and ANDed with the first -
@@ -1788,7 +1788,7 @@ class AccessAgentService:
         store ids/names and later pass a preferred_assignee_id to next-assignee).
 
         When ``contact_segments`` is a non-empty set, the roster is filtered to members
-        whose served market segments intersect it — plus untagged members (no segments =
+        whose served market segments intersect it - plus untagged members (no segments =
         serves all). If that filter yields nobody, fall back to the full active roster so
         a conversation always resolves to someone. ``None`` / empty set = no filter
         (byte-identical to the pre-segment behaviour).
@@ -2003,7 +2003,7 @@ class AccessAgentService:
     def _peek_next_assignee(self, agent_id: str, team_id: str) -> tuple[Optional[str], Optional[str]]:
         """Return (last_assigned_user_id, next_user_id) without updating the cursor.
         Next-in-line considers only RR-eligible members (include_in_round_robin),
-        matching get_next_assignee — excluded members are never auto-assigned."""
+        matching get_next_assignee - excluded members are never auto-assigned."""
         members = (
             self.db.query(TeamMember)
             .filter(
@@ -2125,7 +2125,7 @@ class AccessAgentService:
 
         # Only CONVERSATION-SLA agents' tier-1 links count (see membership-invariant
         # docstring). If THIS agent owns a form-SLA pipeline, its tier-1 links never
-        # constrain membership — skip the whole check.
+        # constrain membership - skip the whole check.
         form_codes = form_sla_agent_codes(self.db)
         this_agent = self.db.query(AccessAgent).filter(AccessAgent.id == agent_id).first()
         if this_agent and form_codes and this_agent.code in form_codes:
@@ -2168,7 +2168,7 @@ class AccessAgentService:
                     AgentTeam.company_id == self._active_company_id(),
                 )
             )
-            # A conflict against a FORM-SLA agent's tier-1 team must NOT block —
+            # A conflict against a FORM-SLA agent's tier-1 team must NOT block  - 
             # only conversation-SLA tier-1 membership is unique.
             if form_codes:
                 other_links_q = other_links_q.filter(AccessAgent.code.notin_(form_codes))
@@ -2681,7 +2681,7 @@ class AccessAgentService:
 
         Reusable for BOTH initial SLA assignment (start_tier=1) and escalation
         (start_tier=current_tier+1): a missing intermediate tier is skipped instead
-        of blocking — e.g. assign at tier 1 but only tier 2 exists -> use tier 2;
+        of blocking - e.g. assign at tier 1 but only tier 2 exists -> use tier 2;
         escalate to tier 2 but only tier 3 exists -> use tier 3. Caps at tier 3.
         """
         try:
@@ -2763,7 +2763,7 @@ def descendant_team_ids(db: Session, team_ids) -> set:
             )
             rows = db.execute(sql, params).fetchall()
             return {str(r[0]) for r in rows}
-        except Exception:  # noqa: BLE001 — fall back to the ORM BFS
+        except Exception:  # noqa: BLE001 - fall back to the ORM BFS
             db.rollback()
 
     edges = db.query(Team.id, Team.parent_team_id).all()

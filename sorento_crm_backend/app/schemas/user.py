@@ -485,11 +485,11 @@ class ContactAccessTypeResponse(ContactAccessTypeBase):
 
 
 # ---------------------------------------------------------------------------
-# MCP tool catalog (Phase 2 — AccessAgent ↔ Tool ownership)
+# MCP tool catalog (Phase 2 - AccessAgent ↔ Tool ownership)
 # ---------------------------------------------------------------------------
 
 class McpToolOut(BaseModel):
-    """One row of the MCP tool catalog. Pure catalog — tools carry no agent
+    """One row of the MCP tool catalog. Pure catalog - tools carry no agent
     ownership; contact access is enforced per-agent (see
     ``app.services.mcp_access_service``)."""
     id: str

@@ -41,7 +41,7 @@ interface SLAPolicyTiersTableProps {
 
 /** Hours come from the backend as a Decimal string ("0.50"); show trimmed (0.5, 24). */
 function formatHours(v: number | string | null | undefined): string {
-  if (v === null || v === undefined || v === '') return '—';
+  if (v === null || v === undefined || v === '') return '-';
   const n = Number(v);
   return Number.isFinite(n) ? String(n) : String(v);
 }
@@ -110,7 +110,7 @@ function TierUsersSheetContent({ tierLevel }: { tierLevel: number }) {
           <TableBody>
             {users.map((u) => (
               <TableRow key={u.id}>
-                <TableCell className="font-medium">{u.name?.trim() || '—'}</TableCell>
+                <TableCell className="font-medium">{u.name?.trim() || '-'}</TableCell>
                 <TableCell className="text-muted-foreground">{u.email}</TableCell>
               </TableRow>
             ))}
@@ -302,7 +302,7 @@ export default function SLAPolicyTiersTable({ policyId }: SLAPolicyTiersTablePro
         <SheetContent className="flex flex-col sm:max-w-lg">
           <SheetHeader>
             <SheetTitle>
-              {usersSheetTier ? `Users in Tier ${usersSheetTier.level} – ${usersSheetTier.name}` : 'Users'}
+              {usersSheetTier ? `Users in Tier ${usersSheetTier.level} - ${usersSheetTier.name}` : 'Users'}
             </SheetTitle>
           </SheetHeader>
           {usersSheetTier && (

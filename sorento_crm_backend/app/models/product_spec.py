@@ -57,7 +57,7 @@ class ProductSpecRegistry(Base):
     # Values that EXIST in the catalog but are not things a customer searches for.
     # `brand` holds OTHERS and NO LOGO, which record the absence of a brand; offered to
     # a model as options they read as "none of the above", so any word it could not
-    # place got filed under one — "interlignet wc" came back branded OTHERS. Excluded
+    # place got filed under one - "interlignet wc" came back branded OTHERS. Excluded
     # here they are simply not offered, and the unplaceable word stays a free term.
     # A tuning knob, not vocabulary: seeded once, then owned by whoever tunes it.
     excluded_values = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
@@ -83,7 +83,7 @@ class ProductSpecRegistry(Base):
     #   match_decay     : distance at which the score reaches zero. 0 means
     #                     exact-or-nothing, which is what a COUNT needs.
     #
-    # Defaulted from `unit` at seed time, then owned by whoever tunes them — the same
+    # Defaulted from `unit` at seed time, then owned by whoever tunes them - the same
     # split as rank_weight.
     match_tolerance = Column(Numeric(10, 3), nullable=False, server_default=text("0"))
     match_decay = Column(Numeric(10, 3), nullable=False, server_default=text("0"))
@@ -94,7 +94,7 @@ class ProductSpecRegistry(Base):
     # parser never extracts it and the ranker never weights it.
     is_active = Column(Boolean, nullable=False, server_default=text("true"), default=True)
     # `seed` | `user`. The seed REPAIRS drift on every deploy so the CRM ranker and the
-    # n8n parser can never disagree about what a value is called — that guarantee is
+    # n8n parser can never disagree about what a value is called - that guarantee is
     # why this table exists. A user-created key has no seed to drift from, so it is
     # never touched. Without the flag, "editable from the UI" and "repaired on deploy"
     # are the same row fighting each other, and the deploy always wins.

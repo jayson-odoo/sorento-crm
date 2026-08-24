@@ -32,7 +32,7 @@ vi.mock('../../suppliers/hooks/useSupplierSelectQuery', () => ({
   useSupplierSelectQuery: () => ({ data: [] }),
 }));
 
-// The catalog page the combobox holds never contains these lines' products — the
+// The catalog page the combobox holds never contains these lines' products - the
 // normal case with a 10k+ catalog and a 100-row page, which is what makes every
 // saved line depend on the fallback rather than on the fetched list.
 const { getProductsMock } = vi.hoisted(() => ({

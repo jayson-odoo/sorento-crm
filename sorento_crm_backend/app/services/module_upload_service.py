@@ -121,14 +121,14 @@ def _purge_module_orm_state(module_path: str, Base) -> None:
     can re-execute ``models.py`` against a clean ``Base.metadata`` /
     ``Base.registry``.
 
-    Touches only in-memory SQLAlchemy registries — DB rows and on-disk schema
+    Touches only in-memory SQLAlchemy registries - DB rows and on-disk schema
     are untouched (Alembic already ran any forward migrations before this).
 
     Caveat: dependent modules (anything that previously declared
     ``relationship("ClassFromThisModule")``) keep cached Mapper references to
     the now-disposed classes. After this purge + reload, their ORM access
     paths are unsafe in this process. The upload flow returns
-    ``restart_required: True`` for that reason — this function is the
+    ``restart_required: True`` for that reason - this function is the
     pre-restart verification step, not a hot-swap.
     """
     import sys
@@ -149,7 +149,7 @@ def _purge_module_orm_state(module_path: str, Base) -> None:
             if attr is Base or not issubclass(attr, Base):
                 continue
             if attr.__module__ != sm_name:
-                continue  # imported from elsewhere — not ours to drop
+                continue  # imported from elsewhere - not ours to drop
             classes_to_drop.append(attr)
 
     # 1) Remove tables from MetaData (by identity).
@@ -331,7 +331,7 @@ def install_uploaded_zip(zip_path: Path, *, run_migrations: bool = True) -> Uplo
 
         # 5) verify the new module's mappers actually configure.
         # Without this, a string-based relationship() that resolves to a missing
-        # class poisons SQLAlchemy's mapper registry — every ORM-backed route 500s.
+        # class poisons SQLAlchemy's mapper registry - every ORM-backed route 500s.
         # Import the module's models, then call configure_mappers(); roll back on failure.
         _verify_module_mappers(module_key, backend_dest)
 

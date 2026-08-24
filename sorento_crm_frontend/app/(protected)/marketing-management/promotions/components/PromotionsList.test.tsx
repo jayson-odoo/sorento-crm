@@ -1,5 +1,5 @@
 /**
- * PromotionsList — expiry-batch deep link behaviour.
+ * PromotionsList - expiry-batch deep link behaviour.
  *
  * Verifies the `?expiry_notify_batch_id=` deep link filters the list query,
  * renders the dismissable banner, and that Clear strips the param
@@ -8,7 +8,7 @@
  * The data hooks / services and next/navigation are mocked. NOTE: the shared
  * DataGrid never settles past its skeleton rows under jsdom (it depends on
  * layout measurement absent there), so row selection + the Compile-PDF bulk
- * action can't be exercised at component level — that path is covered by
+ * action can't be exercised at component level - that path is covered by
  * `useCompilePromotionsPdf.test.tsx` (mutation → ordered ids, toast, invalidate)
  * and by the Playwright spec `e2e/promo-expiry-compile.spec.ts`.
  */
@@ -101,7 +101,7 @@ beforeEach(() => {
   Element.prototype.hasPointerCapture = vi.fn();
 });
 
-describe('PromotionsList — expiry batch deep link', () => {
+describe('PromotionsList - expiry batch deep link', () => {
   it('renders the banner and passes the batch id into the query when deep-linked', async () => {
     searchParamValue = 'batch-123';
     renderList();
@@ -137,7 +137,7 @@ describe('PromotionsList — expiry batch deep link', () => {
   });
 });
 
-describe('PromotionsList — Resubmit gate', () => {
+describe('PromotionsList - Resubmit gate', () => {
   it('gates on a slug the backend registry actually issues', async () => {
     // `marketing.promotions.update` does not exist - `_crud` emits view/add/edit/
     // delete. Asking for a slug nobody holds silently drops the action from the

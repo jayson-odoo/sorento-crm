@@ -34,7 +34,7 @@ export interface ReassignDialogProps {
 /**
  * Shared reassign picker (the widget, the ticket drawer - never a fork).
  *
- * User list is scope-B (visible-users endpoint) — only colleagues the actor can
+ * User list is scope-B (visible-users endpoint) - only colleagues the actor can
  * see. Names only, no UUIDs.
  *
  * AC-N7: each colleague says whether they are Respond-linked, and the list can

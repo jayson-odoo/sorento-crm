@@ -45,7 +45,7 @@ describe('PersonLink', () => {
   it('renders a UUID-looking name verbatim as text and never uses it as an href (UUID-2)', () => {
     const uuid = '3f2504e0-4f89-11d3-9a0c-0305e82c3301';
     const { container } = render(<PersonLink name={uuid} waPhone={null} />);
-    // The component does not fabricate — it shows exactly what it was given...
+    // The component does not fabricate - it shows exactly what it was given...
     expect(screen.getByText(uuid)).toBeInTheDocument();
     // ...but never as a link (no phone), and never inside an href.
     expect(container.querySelector('a')).toBeNull();

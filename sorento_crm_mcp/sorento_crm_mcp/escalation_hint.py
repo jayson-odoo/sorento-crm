@@ -5,7 +5,7 @@ not-found, we lookup the tool's routing (team/agent) via the backend
 `/api/v1/system/mcp-routing` endpoint and embed a single-shot escalation
 hint directly in the response payload. This removes the need for the LLM
 agent to chain a second tool call to formulate "would you like me to route
-you to team X?" — small models (gpt-4.1-mini) drop those second calls
+you to team X?" - small models (gpt-4.1-mini) drop those second calls
 unreliably, so the data must arrive in the first tool's response.
 
 Lookups are cached per tool name for 5 minutes (routing rarely changes).
@@ -127,7 +127,7 @@ def _is_empty_response(data: Any) -> bool:
         return True
 
     if "error" in data and not any(k in data for k in ("data", "items")):
-        # Generic error payload (non-access) — treat as empty for escalation purposes.
+        # Generic error payload (non-access) - treat as empty for escalation purposes.
         return True
 
     return False

@@ -69,7 +69,7 @@ export function PortalImpersonationBanner() {
     try {
       await stopPortalImpersonation();
     } catch {
-      // ignore — token revoke is best-effort
+      // ignore - token revoke is best-effort
     } finally {
       // Session-scoped clear only: the admin's own device-trust token (if they
       // are also a portal contact on this browser) must survive the exit.

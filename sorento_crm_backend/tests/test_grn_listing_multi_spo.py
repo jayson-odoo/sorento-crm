@@ -196,7 +196,7 @@ def test_one_failing_row_does_not_fail_the_rest_of_the_file(db):
     assert result["successful"] == 2
     assert _header(db, before).spo_number == "SPO-2026/06-0020"
     assert _header(db, after).spo_number == "SPO-2026/06-0022", (
-        "the row AFTER the failure was lost — the session was never rolled back"
+        "the row AFTER the failure was lost - the session was never rolled back"
     )
     assert not any(
         "previous exception" in e for e in result["errors"]

@@ -1,4 +1,4 @@
-"""Phase C — master data ingest (UAC Group B, masters half).
+"""Phase C - master data ingest (UAC Group B, masters half).
 
   AC-AC-11  canonical shapes; unknown fields rejected, not silently ignored
   AC-AC-12  idempotent on the source reference; created vs updated distinguished

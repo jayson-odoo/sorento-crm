@@ -1,4 +1,4 @@
-"""Ideas iframe embed-session mint (SSO) — sorento side of §5.3 (D7/D17).
+"""Ideas iframe embed-session mint (SSO) - sorento side of §5.3 (D7/D17).
 
 A logged-in sorento user opening ``/ideas`` (board) or ``/ideas/{id}`` (detail) needs
 to iframe the shared-service ideation UI with seamless auth. This service:
@@ -9,7 +9,7 @@ to iframe the shared-service ideation UI with seamless auth. This service:
   2. POSTs it to ``{ideation_shared_service_url}/embed/session`` (server-to-server httpx)
      which returns an embed token (``typ="embed"``);
   3. returns ``{ iframe_url, token, expires_at }`` where ``iframe_url`` =
-     ``{shared}/embed/ideas[/{id}]`` — the FE iframes that URL and passes the token per
+     ``{shared}/embed/ideas[/{id}]`` - the FE iframes that URL and passes the token per
      the embed framework.
 
 DORMANT when any of the three settings is blank (``IdeationEmbedNotConfigured`` → the
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 _EMBED_SESSION_PATH = "/embed/session"
 _EMBED_IDEAS_PATH = "/embed/ideas"
 _ASSERTION_AUDIENCE = "ideation-embed"
-_ASSERTION_TTL_SECONDS = 120  # short-lived — exchanged immediately for an embed token
+_ASSERTION_TTL_SECONDS = 120  # short-lived - exchanged immediately for an embed token
 _TIMEOUT_SECONDS = 15
 
 
@@ -65,7 +65,7 @@ class _EmbedConfig:
     ``POST /embed/session``; ``fe_base_url`` is the shared-service FRONTEND root the
     iframe points at. They are DIFFERENT values and must never be collapsed (AC-E-3).
     ``secret`` is the plaintext signing secret (decrypted from the DB ciphertext or
-    read from ``.env``) — never logged.
+    read from ``.env``) - never logged.
     """
 
     __slots__ = ("base_url", "fe_base_url", "connection_id", "secret")
@@ -200,7 +200,7 @@ def create_embed_session(
     try:
         data = post_embed_session(config.base_url, request_payload)
     except IdeationEmbedUpstreamError:
-        # Log WITHOUT the assertion/secret/token — just the failure fact.
+        # Log WITHOUT the assertion/secret/token - just the failure fact.
         logger.warning("ideation embed session mint failed (shared-service upstream).", exc_info=True)
         raise
 

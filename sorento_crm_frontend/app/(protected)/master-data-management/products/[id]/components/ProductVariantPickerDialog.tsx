@@ -31,12 +31,12 @@ export interface ProductVariantPickerDialogProps {
 }
 
 function displayProduct(p: ProductVariantRef): string {
-  return `${p.product_code} — ${p.product_name}`;
+  return `${p.product_code} - ${p.product_name}`;
 }
 
 /**
  * Shared product search combobox for variant curation (set/change parent + add
- * child). Resolves to a human-readable `code — name` label — never a raw UUID.
+ * child). Resolves to a human-readable `code - name` label - never a raw UUID.
  */
 export default function ProductVariantPickerDialog({
   open,

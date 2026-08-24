@@ -88,7 +88,7 @@ def _message_id_from_respond_response(resp: Optional[dict]) -> Optional[int]:
 
 
 def _is_crm_user_uuid(value: str) -> bool:
-    """True if value looks like users.id (UUID) — must not be sent as Respond user id to n8n."""
+    """True if value looks like users.id (UUID) - must not be sent as Respond user id to n8n."""
     s = str(value).strip()
     if len(s) != 36:
         return False

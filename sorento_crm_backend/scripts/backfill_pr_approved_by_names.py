@@ -67,7 +67,7 @@ def main() -> int:
                 unresolved += 1
                 print(
                     f"  UNRESOLVED  {h.request_number or h.id}: approved_by={uid} "
-                    "matches no user — left as-is"
+                    "matches no user - left as-is"
                 )
                 continue
             name = ((user.name or "").strip() or user.email or "").strip()
@@ -75,7 +75,7 @@ def main() -> int:
                 unresolved += 1
                 print(
                     f"  UNRESOLVED  {h.request_number or h.id}: user {uid} has no "
-                    "name/email — left as-is"
+                    "name/email - left as-is"
                 )
                 continue
             print(f"  {h.request_number or h.id}: {uid} -> {name}")

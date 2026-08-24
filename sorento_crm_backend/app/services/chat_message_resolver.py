@@ -1,13 +1,13 @@
 """Resolve the authoritative Respond-side timestamp for chat messages.
 
-`chat_histories.sent_at` is whatever n8n supplied — historically `new Date().getTime()`,
+`chat_histories.sent_at` is whatever n8n supplied - historically `new Date().getTime()`,
 i.e. n8n's clock at save time. Latency measured from that is meaningless (on production
 rows an outgoing `sent_at` can precede the incoming it answers). This service fills
 `respond_ts` from Respond itself, so both ends of the SLA share one clock.
 
 Targeted lookup rather than polling: `GET /v2/contact/{id}/message/{messageId}` for rows
-that carry a `message_id`. A 404 is meaningful in its own right — a message we believed
-we sent does not exist on Respond's side — but only after enough attempts that a
+that carry a `message_id`. A 404 is meaningful in its own right - a message we believed
+we sent does not exist on Respond's side - but only after enough attempts that a
 transient failure has been ruled out. A 500 must never be read as "never sent".
 
 Runs from the `chat_message_resolver` scheduled task, so its throughput and failures show
@@ -40,7 +40,7 @@ _MESSAGE_ID_CLOCK_TOLERANCE = timedelta(days=1)
 
 
 class MessageNotFound(Exception):
-    """Respond has no such message — distinct from a transient API failure."""
+    """Respond has no such message - distinct from a transient API failure."""
 
 
 def respond_ts_from_message_id(
@@ -50,11 +50,11 @@ def respond_ts_from_message_id(
 
     Respond mints `messageId` as the message's epoch-MICROSECOND timestamp, so the
     SLA clock arrives with the ingest payload and needs no `GET /message/{id}` call.
-    Inbound WhatsApp ids land on exact seconds (trailing zeros) — that granularity
+    Inbound WhatsApp ids land on exact seconds (trailing zeros) - that granularity
     is Respond's, not a rounding artefact of ours.
 
     Deliberately NOT `_epoch_to_naive_utc`: that helper reads anything above 1e12 as
-    milliseconds, which turns a microsecond id into the year 58,000 — the exact trap
+    milliseconds, which turns a microsecond id into the year 58,000 - the exact trap
     its own docstring warns about.
 
     Returns None rather than a guess whenever the id is not a plausible timestamp;
@@ -109,7 +109,7 @@ def _pending_rows(db: Session, limit: int) -> list[ChatHistory]:
     """Rows still missing something Respond owns.
 
     `respond_ts` now normally arrives at ingest (derived from the message id), so the
-    common reason to call Respond is a missing `delivery_status` — which only Respond
+    common reason to call Respond is a missing `delivery_status` - which only Respond
     can supply. Rows whose id wasn't a usable timestamp still come through the
     `respond_ts IS NULL` arm.
     """
@@ -134,7 +134,7 @@ def _apply_payload(row: ChatHistory, payload: dict) -> bool:
     """Write what Respond told us. Returns True if a timestamp was resolved."""
     ts = _epoch_to_naive_utc(payload.get("timestamp"))
     if ts is None:
-        # No clock in the response — leave unresolved rather than substituting now(),
+        # No clock in the response - leave unresolved rather than substituting now(),
         # which would fabricate a latency figure.
         return False
 

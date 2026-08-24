@@ -239,7 +239,7 @@ export default function StockBalanceGrid() {
   };
 
   // All-records (server) export: fetch the full filtered set, build the xlsx with
-  // the chosen columns. Decoupled from the grid — the page never loads all rows. (D4/F)
+  // the chosen columns. Decoupled from the grid - the page never loads all rows. (D4/F)
   const exportAllRecords = async (chosenColumnIds: string[]) => {
     const all = await exportStockBalance({ warehouse_id: warehouseId || undefined, status: statusFilter || undefined });
     const rows = all.map(normalizeStock).map((item) => {

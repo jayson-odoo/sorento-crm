@@ -1,4 +1,4 @@
-"""Project type and template configuration API — UAC Group C (AC-C1, AC-C2)."""
+"""Project type and template configuration API - UAC Group C (AC-C1, AC-C2)."""
 from __future__ import annotations
 
 from typing import Optional

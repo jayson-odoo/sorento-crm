@@ -71,9 +71,9 @@ export function McpToolsList() {
               rows.map((r) => (
                 <TableRow key={r.id}>
                   <TableCell className="font-mono text-xs">{r.tool_name}</TableCell>
-                  <TableCell>{r.module_key || '—'}</TableCell>
+                  <TableCell>{r.module_key || '-'}</TableCell>
                   <TableCell className="truncate" title={r.description ?? ''}>
-                    {r.description ?? '—'}
+                    {r.description ?? '-'}
                   </TableCell>
                 </TableRow>
               ))

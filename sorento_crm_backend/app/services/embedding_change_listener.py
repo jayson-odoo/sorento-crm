@@ -120,7 +120,7 @@ def build_queue_payload(
 
     ``company_id`` (the source entity's company, multi-company isolation) is
     threaded through so the embedding worker can stamp fresh document/chunk rows
-    even before it re-loads the source — AC-I5: a fresh embedding must never be
+    even before it re-loads the source - AC-I5: a fresh embedding must never be
     company-less when its source has a company. Extracted (from the inline dict
     ``_queue_from_mapper`` used to build) so it is unit-testable without a DB.
     """
@@ -143,7 +143,7 @@ def _queue_from_mapper(
     if source_type in _suppressed_set():
         return
     if not _embedding_queue_exists(connection):
-        return  # subset schema (e.g. sqlite tests) — nothing to enqueue into
+        return  # subset schema (e.g. sqlite tests) - nothing to enqueue into
     connection.execute(
         EmbeddingQueue.__table__.insert().values(
             id=str(uuid.uuid4()),

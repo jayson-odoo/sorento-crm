@@ -28,7 +28,7 @@ const TimezoneSelect = ({
         value: itemValue,
         label,
         // The old picker matched on the IANA id ("Asia/Kuala_Lumpur"), not the label,
-        // so keep both searchable — neither spelling should stop working.
+        // so keep both searchable - neither spelling should stop working.
         searchText: `${itemValue} ${label}`,
       }))}
     />

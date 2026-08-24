@@ -3,7 +3,7 @@
 The bug this guards: WhatsApp `.jpeg` uploads land with a NULL or generic
 (`application/octet-stream`) mime_type, so a mime-only check dropped them out of
 the PHOTOS section into OTHER ATTACHMENTS. `_image_mime` adds an extension
-fallback. Pure function — no DB / WeasyPrint needed.
+fallback. Pure function - no DB / WeasyPrint needed.
 """
 from types import SimpleNamespace
 

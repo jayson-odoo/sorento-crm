@@ -7,7 +7,7 @@ On the Attachment Directories page, allow users to **drag an attachment row** fr
 ## Tech Stack
 
 - **@dnd-kit/core** (already in the project): `DndContext`, `useDraggable`, `useDroppable`, `PointerSensor`/`MouseSensor`/`TouchSensor`, `DragEndEvent`, `DragOverEvent` (optional).
-- No need for `@dnd-kit/sortable` here—we are not reordering; we are drag-from-table, drop-on-folder.
+- No need for `@dnd-kit/sortable` here - we are not reordering; we are drag-from-table, drop-on-folder.
 
 ## Data Model for DnD
 

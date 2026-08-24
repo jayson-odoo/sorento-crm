@@ -1,4 +1,4 @@
-"""SCM M5 — semantic explainer request/response schemas (bounded LLM flow)."""
+"""SCM M5 - semantic explainer request/response schemas (bounded LLM flow)."""
 from __future__ import annotations
 
 from typing import Optional
@@ -44,7 +44,7 @@ class RunChatRequest(BaseModel):
 class ActionProposalLine(BaseModel):
     """One confirm-gated per-line decision the assistant proposes from a natural-language
     plan instruction (M8-F16). ``rec_id`` is a REAL recommendation the FE routes through
-    the existing /accept · /reject · /adjust endpoints on Apply — the LLM proposes the
+    the existing /accept · /reject · /adjust endpoints on Apply - the LLM proposes the
     line + the decision, the human confirms, no numeric field is ever written by the LLM."""
 
     rec_id: str
@@ -52,7 +52,7 @@ class ActionProposalLine(BaseModel):
     product_name: Optional[str] = None
     action: str  # accept | reject | adjust
     current_qty: Optional[float] = None
-    new_qty: Optional[float] = None  # adjust only — the proposed qty (still confirmed via /adjust)
+    new_qty: Optional[float] = None  # adjust only - the proposed qty (still confirmed via /adjust)
     reason: str
 
 
@@ -97,13 +97,13 @@ class PlanComparison(BaseModel):
 
 class RunChatResult(BaseModel):
     answer: str
-    # M8-F6: attached only when a live market scan mapped a signal onto plan lines —
+    # M8-F6: attached only when a live market scan mapped a signal onto plan lines  - 
     # the same confirm-gated proposal card the standalone market-proposal returned.
     proposal: Optional[MarketProposalResult] = None
     # M8-F16: attached when the question is a natural-language plan INSTRUCTION the
     # assistant resolved into per-line accept/reject/adjust decisions to Apply.
     action_proposal: Optional[ActionProposal] = None
-    # M8-F: attached when the question asks how this plan compares to previous plans —
+    # M8-F: attached when the question asks how this plan compares to previous plans  - 
     # a DETERMINISTIC per-product diff (numbers computed in Python, never the LLM).
     comparison: Optional[PlanComparison] = None
 

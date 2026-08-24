@@ -3,10 +3,10 @@
 Two nullable FK columns so form-detail banners can show WHO did the thing and
 link to their wa.me:
 
-1. conversation_sla_event_log.from_assigned_to_id — the PRIOR assignee snapshotted
+1. conversation_sla_event_log.from_assigned_to_id - the PRIOR assignee snapshotted
    at escalation time (BEFORE the new assignee overwrites assigned_to_id). The
    escalation banner reads the latest escalation event's from_assigned_to_id.
-2. purchase_requests.rejected_by_id — the CRM user who rejected the PR (dedicated
+2. purchase_requests.rejected_by_id - the CRM user who rejected the PR (dedicated
    column; approved_by holds only a display-name string). NULL for external-email
    approvers and legacy rejections (banner falls back to plain text).
 

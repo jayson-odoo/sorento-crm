@@ -13,7 +13,7 @@ def _normalize_entities(raw: Optional[list[str]]) -> Optional[list[str]]:
     """Flatten an `entities` query param into a clean list[str].
 
     Accepts None, a list of strings (repeated query param), or a single-element list
-    containing a JSON array or comma-separated string — all forms n8n / curl callers
+    containing a JSON array or comma-separated string - all forms n8n / curl callers
     produce depending on how they encode the param.
     """
     if raw is None:
@@ -79,7 +79,7 @@ def get_stock_balance(
     entities: Optional[list[str]] = Query(
         None,
         description=(
-            "DEPRECATED — free-text entity bag. Prefer `product_ids` (canonical UUID csv/list). "
+            "DEPRECATED - free-text entity bag. Prefer `product_ids` (canonical UUID csv/list). "
             "Free-text resolution should go through `/api/v1/system/references/resolve` first."
         ),
     ),
@@ -136,7 +136,7 @@ def get_stock_balance(
         )
         # Data-miss path (§3.3): when the service attached `alternatives` /
         # `relaxed_axis` (only on an empty result), bypass the strict
-        # `ListResponse` response_model — which would silently drop those keys —
+        # `ListResponse` response_model - which would silently drop those keys  - 
         # and emit the raw dict. `data` is always [] here, so encoding is trivial
         # and the with-data path stays byte-identical (AC-R1).
         if isinstance(result, dict) and result.get("alternatives"):
@@ -197,7 +197,7 @@ def export_stock_balance(
     entities: Optional[list[str]] = Query(
         None,
         description=(
-            "DEPRECATED — free-text entity bag. Prefer `product_ids`. Free-text resolution "
+            "DEPRECATED - free-text entity bag. Prefer `product_ids`. Free-text resolution "
             "should go through `/api/v1/system/references/resolve` first."
         ),
     ),

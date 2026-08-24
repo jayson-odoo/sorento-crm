@@ -3,7 +3,7 @@ import type { Attachment } from '../types/attachment.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
 /**
- * Filterable list query for attachments — the DataGrid params plus the same
+ * Filterable list query for attachments - the DataGrid params plus the same
  * resource filters the list GET accepts. Reused by the list fetch AND by the
  * neighbours nav so the two cannot drift.
  */

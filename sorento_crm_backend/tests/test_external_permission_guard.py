@@ -1,4 +1,4 @@
-"""Slice 7 of AutoCount Group A — permission enforcement on /external.
+"""Slice 7 of AutoCount Group A - permission enforcement on /external.
 
   AC-AC-05 every external endpoint enforces the caller's permissions
 

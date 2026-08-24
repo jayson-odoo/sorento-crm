@@ -1,4 +1,4 @@
-# PLAN — Project Sales Pipeline (module `projects`)
+# PLAN - Project Sales Pipeline (module `projects`)
 
 > **Table names in this document predate the schema move.** On 2026-08-15 the projects
 > module's 47 tables moved into a dedicated `projects` Postgres schema and the 34 that
@@ -11,7 +11,7 @@
 **Status:** **In build.** Drafted from grill session 2026-07-25, review rounds 1-2 applied
 (numbering / delivery lag / loss reasons made configurable; sponsorship flag pinned to
 `respond_contacts`; task management added and decided - see §7).
-Built: **S0, S1, S2, S2b, S2c, S3, S4, S5a, S5b, S6a, S6b** — every planned slice (see §4
+Built: **S0, S1, S2, S2b, S2c, S3, S4, S5a, S5b, S6a, S6b** - every planned slice (see §4
 for what each landed and what it discovered), plus a **hardening pass** over S5/S6 on
 `chore/project-sales-hardening` (§5h: nineteen findings, each pinned by a test that fails on
 the code as it shipped). Remaining known gaps are listed in the UAC
@@ -48,11 +48,11 @@ tender → master-quotation CRM with nothing fitted to how Sorento sells. See AD
 
 Two layers, shipped together (ADR-0003):
 
-**Generic skeleton** — mirrors `dreamz_ems/modules/ems` so the two products converge:
+**Generic skeleton** - mirrors `dreamz_ems/modules/ems` so the two products converge:
 `project_types` · `project_templates` (+ `project_template_roles`) · `projects` ·
 `project_stakeholders` · `project_parties` · activities adapter.
 
-**Sorento sales extension** — explicitly named, no pretence of generality:
+**Sorento sales extension** - explicitly named, no pretence of generality:
 `project_sales_profile` · `project_quotations` → `project_quotation_versions` →
 `project_quotation_lines` · `project_samples` · `project_purchase_orders` (+ lines) ·
 `project_series` · `price_floor_rules` · sponsorship link.
@@ -115,14 +115,14 @@ per-contact sponsorship rollout flag.
 
 ## 4. Slices
 
-**S0 — Prereq. DONE.** `app/rule_engine` turned out to be on `main` already, so the blocker
+**S0 - Prereq. DONE.** `app/rule_engine` turned out to be on `main` already, so the blocker
 was stale; only `aggregates.py` and a shared `lazy_once` needed porting. The
 resolver is company-scoped as well as owner-scoped (defense in depth: a fact feeding an
 automatic transition must not lean on one layer). `rule_engine/registry.py`'s private
 `_lazy_once` now delegates to the shared helper rather than forking it.
 *Gate: 11 aggregate tests + 30 dependent tests green, no import cycle.*
 
-**S1 — DONE.** Notes below; original scope statement retained after them.
+**S1 - DONE.** Notes below; original scope statement retained after them.
 
 Four things the build changed or found, worth carrying forward:
 
@@ -163,7 +163,7 @@ registry + transition service + admin screens. Drop `workflow_stages`. `category
 Entity-default graph with per-template copy-on-write fork. Manual transitions only.
 Regression pass proving no existing status vocabulary changed. → UAC Group B.
 
-**S2 — Registration + parties + stakeholders + pipeline.** — **CORE DONE**, two items
+**S2 - Registration + parties + stakeholders + pipeline.** - **CORE DONE**, two items
 deferred (below). Types, templates, template roles, projects, sales profile, parties,
 stakeholders, brands M2M, the `pg_trgm` clash lock with the block/join/dispute flow,
 board+grid, detail tabs (empty tabs render), project numbering. → UAC Groups A, C, D, G, J.
@@ -171,7 +171,7 @@ board+grid, detail tabs (empty tabs render), project numbering. → UAC Groups A
 *Gate: 61 backend tests green (18 clash matcher, 4 registration, 10 access, 10 lifecycle,
 5 status entity, 9 seed, 5 pre-existing engine files unaffected) + 16 vitest; single alembic
 head (`310_project_clash_thresholds`); browser-verified through the sidebar with 0 console
-errors — register dialog live clash preview blocking + context, sibling phase correctly NOT
+errors - register dialog live clash preview blocking + context, sibling phase correctly NOT
 blocking, board with 8 seeded columns, detail page 9 tabs all rendering, 375px width with no
 page overflow and a reachable submit button.*
 
@@ -191,16 +191,16 @@ page overflow and a reachable submit button.*
 | # | Finding | Resolution |
 |---|---------|------------|
 | F1 | Trigram similarity ranks sibling phases (`Phase 3A` vs `3B`, **0.818**) HIGHER than genuine abbreviations (`Ph 3B` vs `Phase 3B`, **0.762**). No single threshold separates them. | Blocking is not a function of similarity alone. Digit-bearing tokens are the discriminator: siblings when neither title's designator set contains the other's. |
-| F2 | Symmetric `similarity()` scores a short title against its verbose twin at **0.312** — a real duplicate would sail through, since the live data has titles like `KSL Setia Alam Project  (733 units service apartment)`. | Score is `GREATEST(similarity, strict_word_similarity both directions)`. Containment now scores 1.0. |
-| F3 | Calibrating over all **63 distinct live project titles** showed unrelated pairs sharing a generic noun (`IKI Hotel` / `The Jerai Hotel` 0.600, `Kami Residence` / `The Wyn Residence` 0.667) sitting above a single 0.55 bar. | **Two bars**, not one: surface at 0.55 (generous — a missed duplicate is silent), block at 0.70 (strict — a false block fired often teaches users to dismiss the warning). Both are `system_settings` columns per AC-C5. Final calibration on the real corpus: **1 block (the genuine reordered duplicate `Helicopter Centre in Subang` / `Subang Helicopter Centre`), 0 false blocks.** |
+| F2 | Symmetric `similarity()` scores a short title against its verbose twin at **0.312** - a real duplicate would sail through, since the live data has titles like `KSL Setia Alam Project  (733 units service apartment)`. | Score is `GREATEST(similarity, strict_word_similarity both directions)`. Containment now scores 1.0. |
+| F3 | Calibrating over all **63 distinct live project titles** showed unrelated pairs sharing a generic noun (`IKI Hotel` / `The Jerai Hotel` 0.600, `Kami Residence` / `The Wyn Residence` 0.667) sitting above a single 0.55 bar. | **Two bars**, not one: surface at 0.55 (generous - a missed duplicate is silent), block at 0.70 (strict - a false block fired often teaches users to dismiss the warning). Both are `system_settings` columns per AC-C5. Final calibration on the real corpus: **1 block (the genuine reordered duplicate `Helicopter Centre in Subang` / `Subang Helicopter Centre`), 0 false blocks.** |
 | F4 | The title is typed BEFORE the developer is picked, so a developer-scoped check stayed silent on the most common path. | The preview widens to every developer (`include_other_developers`); widened rows are context-only and can never block, since identity needs the developer. |
-| F5 | A rename bypassed the lock entirely — register something innocuous, then rename onto a colleague's project. The DB unique index catches only the exact-key case. | The matcher runs on edit as well as create, excluding the project itself. |
-| F6 | `tests/_pg_fixture.py` pins `search_path` to the scratch schemas, so `public.similarity` was invisible. | Schema-qualified the call in app code rather than widening `search_path` — that guard is what stops test SQL writing to the real prod-copy tables. |
+| F5 | A rename bypassed the lock entirely - register something innocuous, then rename onto a colleague's project. The DB unique index catches only the exact-key case. | The matcher runs on edit as well as create, excluding the project itself. |
+| F6 | `tests/_pg_fixture.py` pins `search_path` to the scratch schemas, so `public.similarity` was invisible. | Schema-qualified the call in app code rather than widening `search_path` - that guard is what stops test SQL writing to the real prod-copy tables. |
 | F7 | The status-engine test fixtures snapshot `_REGISTRY` BEFORE its lazy population fires, so restoring an empty snapshot permanently emptied the registry for the rest of the session (and `lazy_once` never re-runs). Only visible as another file failing when run after them. | Fixtures force `list_status_entities()` before snapshotting. |
-| F8 | A per-type "create if missing" seeder resurrects a project type the team deliberately deleted, on every restart. | Seeding is skipped wholesale once the company has any type — same guard shape as the funnel. Pinned by a test. |
+| F8 | A per-type "create if missing" seeder resurrects a project type the team deliberately deleted, on every restart. | Seeding is skipped wholesale once the company has any type - same guard shape as the funnel. Pinned by a test. |
 | F9 | Core knowing which modules supply status entities would violate ADR-0001. | Core knows a CONVENTION instead: `app/modules/<key>/status_entities.py` exposing `register()`, discovered generically. |
 
-**S2b — Task management** (§7). **BUILT 2026-07-26.** Template task checklists,
+**S2b - Task management** (§7). **BUILT 2026-07-26.** Template task checklists,
 `project_tasks` on the status engine as entity #2, work-stream sections + timeline + per-task
 history, "My Tasks", and the template checklist admin screen (Project Sales -> Setup).
 
@@ -214,7 +214,7 @@ history, "My Tasks", and the template checklist admin screen (Project Sales -> S
 | F13 | The delete confirm for an in-use checklist item told the user it could not be deleted and then offered a Delete button the server was certain to refuse with a 409. | Two dialogs: the ordinary confirm when nothing has copied the item, and a "cannot delete" notice offering **Deactivate instead** (which is the action the copy recommends) when something has. |
 | F14 | AC-N6 says a project's next action is derived from its earliest open task, but nothing surfaced it in the pipeline: the board card and grid predated tasks. | Board card and grid both show it, styled destructive when overdue, with an explicit "N open, none dated" state -- undated open work is not the same as nothing to do. |
 
-**S2c — Leads** (§5a). **BUILT 2026-07-26.** `project_leads` on the status engine as
+**S2c - Leads** (§5a). **BUILT 2026-07-26.** `project_leads` on the status engine as
 entity #3, select-or-create Customer wizard, qualify → runs the clash check and creates a
 Project, disqualify + reason from a lookup set, lead→project conversion metric, and the
 customer portfolio endpoint behind the account view.
@@ -229,7 +229,7 @@ customer portfolio endpoint behind the account view.
 | F18 | The qualify route 500'd with `serialize_projects() got an unexpected keyword argument 'user_id'` while every service test passed: the lead serializer took `user_id` and the project one took `actor_user_id`, and the route mixed them. | Renamed the lead serializer's argument to `actor_user_id` so the two agree, and added `tests/test_project_lead_routes.py` -- route-level tests through FastAPI, which is the seam the service tests could not cover. Verified by reintroducing the bug and watching the new test fail. |
 | F19 | The company-scope resolver runs as a router-level dependency and re-stamps the scope from the REQUEST, so a TestClient with no active company silently overwrote the fixture's pin with UNSET and every route returned 400. | The route-test fixture overrides `apply_company_scope`, which is what a real JWT carrying `active_company_id` does. Documented in the fixture so the next route-test author does not spend the same hour on it. |
 
-**S3 — Quotations** (§5b). **BUILT 2026-07-26.** Quotations per scope, versions
+**S3 - Quotations** (§5b). **BUILT 2026-07-26.** Quotations per scope, versions
 (edit-in-place + Revise-freezes), lines with product snapshots, Project Series (category
 allowlist), price floor rules (3 levels x percent|absolute), the two alerts stored on the
 line, outcomes + loss reasons from a lookup set, derived project outcome. Pricing policy
@@ -248,7 +248,7 @@ The management fan-out on a floor breach LOGS today and is wired to notification
 | F25 | The mutation hook toasted on a successful delete and so did `ConfirmDeleteDialog`, putting two notifications on screen for one action. | The quotation `remove` mutation raises no toast: the dialog owns success and error messaging because it is the only caller. |
 | F26 | Resolving the floor in the browser to preview it would be a second implementation of the ancestry walk, and the two would eventually disagree. | The dialog does not evaluate the floor at all. The price is sent, and the answer that comes back is what the line shows -- with the rule that produced it named ("set on a parent category"), so the salesperson knows whose policy to argue with. |
 
-**S4 — Samples, sponsorship link, POs** (§5c). **BUILT 2026-07-26.** Samples bound to
+**S4 - Samples, sponsorship link, POs** (§5c). **BUILT 2026-07-26.** Samples bound to
 versions with the superseded block; Project POs in their own table with the two mismatch
 flags, the erosion figure and the auto edge to PO Received; sponsorship `project_id` +
 per-contact rollout flag + mandatory picker with a hard block, plus the spend rollup and
@@ -266,45 +266,45 @@ sponsorship-to-PO conversion. → UAC Group F.
 | F32 | `contact_to_response_dict` is built by hand, so the new rollout flag reached the DB but never the FE -- the toggle would have rendered its default forever. | Added to the manual dict, pinned by a test. Same family as the `get_user` / `get_me` drop-fields bug already in the lessons list. |
 | F33 | `purchase_requests` has no `company_id`, so the conversion metric could not be scoped the way every other project number is. | Scoped through `projects` instead, which is the company that matters anyway; conversion is counted per PROJECT, not per form, so two sponsorships on one development that yields one PO is one conversion rather than two. |
 
-**S5 — Forecast, staleness, worklist.** Split in two, because the forecast maths and the
+**S5 - Forecast, staleness, worklist.** Split in two, because the forecast maths and the
 staleness ladder share nothing but a slice number: the first is a read model over data that
 already exists, the second is scheduling.
 
-- **S5a — DONE.** Three-number forecast, per-status probability, configurable delivery lag
+- **S5a - DONE.** Three-number forecast, per-status probability, configurable delivery lag
   with per-project override, management dashboard (Forecast &amp; Reports). Notes in §5d.
   → UAC Group I.
-- **S5b — DONE.** Activity adapter + meaningful-activity whitelist, per-status staleness
+- **S5b - DONE.** Activity adapter + meaningful-activity whitelist, per-status staleness
   thresholds with fork-copy and reapply-defaults, the daily sweep on the existing scheduler,
   the three-rung ladder, and the notification fan-out S3 and S4 had only logged. Notes in
   §5e. → UAC Group H. **Not built:** "My Follow-ups" as a separate screen, because AC-H7's
   My Tasks (shipped in S2b) already answers "what do I owe, soonest first" and a second
   worklist reading the same tasks would be two places to keep in step.
 
-**S6 — MCP read tools; then PR + Complaint linkage.** Split:
+**S6 - MCP read tools; then PR + Complaint linkage.** Split:
 
-- **S6a — DONE.** Four read-only MCP tools, the resolver probes and UUID-coercion entries
+- **S6a - DONE.** Four read-only MCP tools, the resolver probes and UUID-coercion entries
   behind them, and the bootstrap that enables them. Notes in §5f. → UAC Group K.
-- **S6b — DONE.** `project_id` on complaints (migration 318), the office-side picker on both
+- **S6b - DONE.** `project_id` on complaints (migration 318), the office-side picker on both
   the complaint and the PR / sponsorship form, and a resolved project CODE on both detail
   pages. Notes in §5g. → UAC AC-L3.
 
-**S6 — MCP read tools; then PR + Complaint linkage.** → UAC Groups K, L.
+**S6 - MCP read tools; then PR + Complaint linkage.** → UAC Groups K, L.
 
 ## 5. Three-phase execution (per slice)
 
-1. **FE prototype** against mocks — every state (loading / empty / error / partial), verified
+1. **FE prototype** against mocks - every state (loading / empty / error / partial), verified
    in-browser via Playwright MCP by clicking through the sidebar, never a deep URL. Contract
    documented at the top of the feature service file.
-2. **BE wiring + tests** — models, migrations, schemas, services, routes matching the Phase-1
+2. **BE wiring + tests** - models, migrations, schemas, services, routes matching the Phase-1
    contract exactly; FE off mocks. pytest + vitest + playwright land here, never deferred.
    TDD: golden-set tests for the clash matcher, floor resolution and forecast maths are
    written failing first.
-3. **Review** — `/code-review`, then PR.
+3. **Review** - `/code-review`, then PR.
 
 ## 5a. Leads (slice S2c)
 
-Ecohub's `Client → Lead → Project[]` chain, adapted. `dreamz_ems` expects the same shape —
-its `Project` already reserves `lead_id` and `client_id` as soft-ref seams "set on lead Won" —
+Ecohub's `Client → Lead → Project[]` chain, adapted. `dreamz_ems` expects the same shape  - 
+its `Project` already reserves `lead_id` and `client_id` as soft-ref seams "set on lead Won"  - 
 so this is a convergence point across all three products, not a Sorento-only bolt-on.
 
 ```
@@ -314,7 +314,7 @@ project_leads(id, company_id, lead_code, customer_id→customers,
         owner_user_id, outcome, disqualified_reason,
         qualified_at, created_by, created_at, updated_at)
 
-projects.lead_id → project_leads  (nullable — a project may be registered directly)
+projects.lead_id → project_leads  (nullable - a project may be registered directly)
 ```
 
 **Decisions**
@@ -332,7 +332,7 @@ projects.lead_id → project_leads  (nullable — a project may be registered di
   `project_task`.
 - Company-scoped like everything else in the module.
 
-**Consequence — accepted, with a mitigation.** This partly reverses the reasoning behind
+**Consequence - accepted, with a mitigation.** This partly reverses the reasoning behind
 `project_parties`: we kept organisations out of `customers` to protect a 2,391-row buying
 ledger, and now the lead wizard can create customer rows for non-buyers. The real data
 supports it (`KHOO SOON LEE REALTY`, `GLOBAL INGRESS`, `DBI CONCEPT DESIGN` are already
@@ -340,7 +340,7 @@ customers), so lead-created rows get a `source` marker and order/invoice pickers
 prospects out if the noise becomes real.
 
 **Slice placement: S2c**, after S2b. Registration must exist before anything can convert into
-it, and leads are purely additive upstream — nothing downstream waits on them.
+it, and leads are purely additive upstream - nothing downstream waits on them.
 
 ## 5b. Quotations (slice S3)
 
@@ -658,10 +658,10 @@ Twenty-two findings from grilling this plan against the code it ports. Resolutio
 
 | # | Finding | Resolution |
 |---|---------|------------|
-| G1 | "Won" meant both a status rung and a derived outcome; a project with a PO on one scope and an open quotation on another read as finished | Terminal rung renamed **"PO Received"** — status describes what happened, not that the pursuit ended. Outcome stays derived and is what every metric reads. |
-| G2 | `UNIQUE (company_id, developer_party_id, normalised_title)` spanned two tables — unbuildable | `developer_party_id` + `normalised_title` moved onto `projects`. Slight dent in generic purity (EMS leaves it null); the constraint is now real. |
-| G3 | ADR-0001 grouped by `category`, which the source model documents as *"LEGACY cosmetic mirror … behavior branches on the trait flags, never here"* | Group cross-template reporting by **`key`** — documented stable per entity_type, and part of the `(entity_type, tenant_id, scope_id, key)` unique constraint. `category` stays nullable and cosmetic. |
-| G4 | Status engine carries `tenant_id`; sorento partitions on `company_id`. Never decided | Statuses stay **global** — not `CompanyScopedMixin`. SRT and MOCHA share one pipeline definition. |
+| G1 | "Won" meant both a status rung and a derived outcome; a project with a PO on one scope and an open quotation on another read as finished | Terminal rung renamed **"PO Received"** - status describes what happened, not that the pursuit ended. Outcome stays derived and is what every metric reads. |
+| G2 | `UNIQUE (company_id, developer_party_id, normalised_title)` spanned two tables - unbuildable | `developer_party_id` + `normalised_title` moved onto `projects`. Slight dent in generic purity (EMS leaves it null); the constraint is now real. |
+| G3 | ADR-0001 grouped by `category`, which the source model documents as *"LEGACY cosmetic mirror … behavior branches on the trait flags, never here"* | Group cross-template reporting by **`key`** - documented stable per entity_type, and part of the `(entity_type, tenant_id, scope_id, key)` unique constraint. `category` stays nullable and cosmetic. |
+| G4 | Status engine carries `tenant_id`; sorento partitions on `company_id`. Never decided | Statuses stay **global** - not `CompanyScopedMixin`. SRT and MOCHA share one pipeline definition. |
 | G5 | Ported `statuses.id` is `Column(String)`, violating the uuid-id principle that broke `user_sessions.id` on prod | Port all PKs/FKs as `UUID(as_uuid=False)`. |
 | G6 | `product_categories.parent_category_id` exists; floors and series ignored the hierarchy | Both resolve **up the tree**: a price floor checks product → its category → ancestors → system. Nominating a parent category into a Project Series **covers all descendants**. |
 | G7 | PDF says PO price matches the *initial* quotation; plan said the bound version, unflagged | Flag against the **bound version** (the price last shown), and additionally surface **drift from v1** so price erosion across the negotiation is visible. Two signals. |
@@ -674,7 +674,7 @@ Twenty-two findings from grilling this plan against the code it ports. Resolutio
 | G14 | Staleness thresholds on forked status graphs never get later default changes | Fork copies thresholds; an explicit admin **"reapply defaults"** action exists. No silent propagation. |
 | G15 | Which forecast number gets year-bucketed? | **Committed** by default (the PDF's own worked example). Pipeline and Weighted can be bucketed but render as a visually separate speculative band. |
 | G16 | Weighted applies a project-level probability to quotation-level values | Stated explicitly: the project's status probability is applied to each of its open quotations. |
-| G17 | MCP read tools have no user context | Tri-state company scope, no-contact resolves to all companies — the existing convention. |
+| G17 | MCP read tools have no user context | Tri-state company scope, no-contact resolves to all companies - the existing convention. |
 | G18 | Template edit/delete semantics | Roles and template tasks are referenced by id: removing one that is in use is blocked (deactivate instead). Graph changes never retro-apply to existing projects. |
 | G19 | Project delete undefined | Blocked while any Project PO exists; Archive instead. Hard delete otherwise, with confirmation. |
 | G20 | "Management" defined twice (`.reassign` vs `.view_all_financials`) | One definition: management = `projects.projects.view_all_financials`. `.reassign` is a separate grant normally held by the same role. |
@@ -688,7 +688,7 @@ Twenty-two findings from grilling this plan against the code it ports. Resolutio
 - **Clash-lock fairness.** Enforced from day one with no amnesty window. Ownership is decided
   in the migration spreadsheet; disputes route to managers. Watch for land-grab behaviour in
   the first month.
-- **Category-level Project Series is coarse** — a premium one-off inside a nominated category
+- **Category-level Project Series is coarse** - a premium one-off inside a nominated category
   won't flag as non-standard. Accepted knowingly; revisit if the alert proves too quiet.
 - **Editable current version.** A sample submitted against the live version can drift if the
   version is edited before Revise. Audit trail covers it; frozen versions are exact.
@@ -712,7 +712,7 @@ Twenty-two findings from grilling this plan against the code it ports. Resolutio
   SHARED table, which belongs on a branch that owns that table rather than on a module hardening
   branch, where an extra migration would fork the alembic head.
 
-## 7. Task management — added scope, decided
+## 7. Task management - added scope, decided
 
 Ecohub's task tooling is proven and substantial: `TaskTemplateSet` → `TaskTemplateItem`
 applied to a project as `ProjectTask` (assignee, `escalatedTo`, `stuckReason`, start/end,
@@ -721,7 +721,7 @@ applied to a project as `ProjectTask` (assignee, `escalatedTo`, `stuckReason`, s
 Two findings that shape how it folds in:
 
 - **It fits the template layer we already have.** `TaskTemplateSet` maps onto
-  `project_templates`, which already owns Stakeholder roles — so a template can also own a
+  `project_templates`, which already owns Stakeholder roles - so a template can also own a
   task checklist. "Property Development" ships a standard pursuit checklist, "Renovation" a
   shorter one, an EMS event template ships event-run tasks. No new generic concept, and the
   EMS convergence still holds.
@@ -734,7 +734,7 @@ Two findings that shape how it folds in:
 
 1. **Both pursuit and delivery tasks**, separated by `task_category` (`pursuit` = visit the
    architect, submit the quote, deliver the sample, chase the PO; `delivery` = post-win
-   execution, ecohub-style). One table, one board, filtered by category — the project detail
+   execution, ecohub-style). One table, one board, filtered by category - the project detail
    Tasks tab defaults to the category matching the project's outcome (pursuit while open,
    delivery once won).
 2. **Task status rides the status engine as entity #2** (`project_task`). Configurable per
@@ -742,7 +742,7 @@ Two findings that shape how it folds in:
    rather than a year later.
 3. **`next_action_date` is dropped.** Next action = the earliest open task's due date, derived.
    One source of truth. "My Follow-ups" becomes **"My Tasks"**.
-4. **Full ecohub parity** — list, board, gantt, task history, template checklists — as its own
+4. **Full ecohub parity** - list, board, gantt, task history, template checklists - as its own
    slice **S2b**, immediately after S2.
 
 ```
@@ -756,7 +756,7 @@ project_tasks(id, company_id, project_id, name, description,
         linked_entity_type, linked_entity_id)   -- quotation_version | sample | po
 ```
 
-**Ecohub reference pass** (done after the first draft — it corrected three things):
+**Ecohub reference pass** (done after the first draft - it corrected three things):
 
 - The board **groups by `category` in collapsible sections** with per-task status, *not* status
   columns. The first draft got this wrong.
@@ -768,20 +768,20 @@ project_tasks(id, company_id, project_id, name, description,
   render it on the card. Guarded server-side, not just in the UI.
 - Ported: the task-template **admin screen**. Adapted: ecohub's task→invoice link becomes a link
   to a quotation version / sample / PO. Not ported: `isServiceTask` (their service-job domain).
-- **"My Tasks" does not exist in ecohub** — tasks live only inside a project there. It is a
+- **"My Tasks" does not exist in ecohub** - tasks live only inside a project there. It is a
   deliberate Sorento addition, justified by 10+ salespeople holding dozens of concurrent
   pursuits.
 
 Task history is delivered as a **view**, backed by the existing audit listeners (which already
 capture per-field diffs) rather than a bespoke `project_task_history` table. If the audit trail
-can't render a per-task timeline cleanly, a dedicated table is the fallback — decided during
+can't render a per-task timeline cleanly, a dedicated table is the fallback - decided during
 S2b implementation, not now.
 
 ### Ordering consequence
 
 Because `next_action_date` is gone, the staleness nudge has nothing to key on until tasks
 exist. **S2b must land before S5**, which it does. Between S2 and S2b there is deliberately no
-next-action mechanism — that window is registration-only and short.
+next-action mechanism - that window is registration-only and short.
 
 ### Revised slice order
 

@@ -2,7 +2,7 @@
 
 WhatsApp only delivers free-form messages inside the 24-hour customer service
 window (contact's last *incoming* message < 24h ago). Respond.io still returns
-success for sends outside the window — they are silently dropped. So every
+success for sends outside the window - they are silently dropped. So every
 auto-send branches up front:
 
 - window open  → plain text (existing behaviour)
@@ -36,7 +36,7 @@ def _button_url_suffix(base: str, full_url: str) -> str:
     Meta dynamic URL buttons are host+prefix-locked to ``base`` (e.g.
     ``https://fe-sorento.foundryx.my/``); the button parameter supplies only the
     rest of the path. The resolved CRM link (portal_url / form_url / …) can carry
-    a DIFFERENT host than the button base — locally ``FRONTEND_BASE_URL`` is
+    a DIFFERENT host than the button base - locally ``FRONTEND_BASE_URL`` is
     ``http://localhost:3000`` while the approved template's button is the prod
     domain. A literal prefix strip then fails and the WHOLE link (scheme+host
     included) is appended, producing
@@ -115,7 +115,7 @@ class TemplateSendSkipped(Exception):
 def _attach_send_context(exc: Exception, request_payload: dict, window: dict, sent_as: str) -> None:
     """Stamp the attempted payload / window / branch onto a send exception so the
     caller's outbox log reflects what was actually attempted (text vs template),
-    instead of a hardcoded default. Best-effort — never raises."""
+    instead of a hardcoded default. Best-effort - never raises."""
     try:
         exc.request_payload = request_payload  # type: ignore[attr-defined]
         exc.window_state = window  # type: ignore[attr-defined]
@@ -131,11 +131,11 @@ def sanitize_param(
 
     ``flatten=True`` (WhatsApp template params): newlines/tabs/4+ spaces are
     rejected by WhatsApp, so newlines collapse to a single space and runs collapse.
-    (Was ``" | "`` — dropped 2026-06-22 once the portal link moved to a dynamic URL
+    (Was ``" | "`` - dropped 2026-06-22 once the portal link moved to a dynamic URL
     button, so a flattened body reads as prose, not a piped run-on. See
     PLAN-whatsapp-url-button-templates.md.)
     ``flatten=False`` (in-window free text): newlines are legal and nicer, so
-    keep them — only normalise tabs and bound length. See PLAN-whatsapp-inwindow-
+    keep them - only normalise tabs and bound length. See PLAN-whatsapp-inwindow-
     template-uniformity.md (richer-multiline decision).
     """
     text = str(value or "").strip()
@@ -178,7 +178,7 @@ def _message_timestamp(item: dict) -> Optional[datetime]:
     Outgoing messages carry delivery ``status`` entries (epoch ms); incoming
     messages have ``status: []`` and instead encode their time in ``messageId``,
     which Respond emits as epoch MICROSECONDS. The earlier code only read
-    ``status[0].timestamp`` and so silently dropped every inbound message —
+    ``status[0].timestamp`` and so silently dropped every inbound message  - 
     making the 24h window look permanently closed even right after a reply.
     """
     statuses = item.get("status") or []
@@ -233,7 +233,7 @@ def _last_incoming_from_chat_history(
     chat_histories.contact_id stores the Respond.io id (e.g. "437264483"), NOT
     the internal respond_contacts.id (UUID). The send path passes the Respond
     ``identifier`` (the respond_io_id, optionally ``id:`` / ``phone:`` prefixed)
-    but usually NOT respond_contact_id — so derive the respond_io_id straight
+    but usually NOT respond_contact_id - so derive the respond_io_id straight
     from the identifier and match on it (+ phone when the contact resolves).
     Comparing the internal UUID directly never matched, so the fallback always
     returned None and the window falsely read CLOSED (template) on every
@@ -440,9 +440,9 @@ def send_template_for_use_case(
         param_count=template.param_count,
         context_vars=context_vars,
     )
-    # Full resolved template payload — identical shape whether the send below
+    # Full resolved template payload - identical shape whether the send below
     # succeeds OR fails, so the Respond outbox renders the template name + filled
-    # params (not "—") in every case. body_text lets the UI render the message
+    # params (not "-") in every case. body_text lets the UI render the message
     # with variables substituted.
     request_payload = {
         "message": {
@@ -493,7 +493,7 @@ def render_in_window_text(
     send, so the message reads the same as the out-of-window template.
 
     Returns ``fallback_text`` unchanged when the use case has no valid configured
-    default — uniformity rolls out per use-case, never breaks an unconfigured one.
+    default - uniformity rolls out per use-case, never breaks an unconfigured one.
     Newlines in values are preserved (``flatten=False``). Best-effort: any
     resolution error degrades to the raw text.
     """
@@ -554,13 +554,13 @@ def send_text_or_template(
     """The choke point for every CRM auto-send to a Respond.io contact.
 
     Returns {sent_as, response, window_state, template_name?, request_payload}
-    — callers attach ``request_payload`` to their integration log so template
+    - callers attach ``request_payload`` to their integration log so template
     sends are distinguishable. Raises on Respond errors and on
     TemplateSendSkipped (so RQ/json callers record a failed log).
 
     Variable resolution (``message`` / ``portal_url`` defaulting) happens ONCE,
     before the window branch, so in-window text and out-of-window template render
-    from identical context — the uniformity guarantee.
+    from identical context - the uniformity guarantee.
     """
     from app.services.integration_service import RespondClient
 
@@ -573,7 +573,7 @@ def send_text_or_template(
         if url:
             vars_resolved["portal_url"] = url
 
-    # Conversation SLA has no entity number — when a template maps a slot to
+    # Conversation SLA has no entity number - when a template maps a slot to
     # `entity_number`, fill it with the SLA's contact name / phone instead of "-".
     # (Form SLA rows already carry a real entity_number, so this never overrides them.)
     if use_case in ("sla_assignment", "sla_escalation") and not vars_resolved.get("entity_number"):
@@ -661,7 +661,7 @@ def send_text_or_template(
             )
         raise
     # Render the template body with the resolved params, so callers can echo the
-    # exact message the contact received (params filled) — same render as the
+    # exact message the contact received (params filled) - same render as the
     # manual-template path (render_filled_body over {{n}} slots).
     from app.services.respond_chat_template_service import render_filled_body
 
@@ -696,7 +696,7 @@ def build_context_vars(
 ) -> Dict[str, Any]:
     """Best-effort variable resolution for auto-sends (RQ tasks / sync sites).
 
-    Never raises — a missing var resolves to "-" at param fill time.
+    Never raises - a missing var resolves to "-" at param fill time.
     """
     vars_out: Dict[str, Any] = {}
     try:
@@ -719,7 +719,7 @@ def build_context_vars(
 
     try:
         # The chat panels use ``<base>_chat`` use cases (stock_inquiry_chat, …) but
-        # the entity lookup keys off the base name — normalize so a chat template's
+        # the entity lookup keys off the base name - normalize so a chat template's
         # {{entity_number}} etc. resolves the same as the status-update send.
         entity_use_case = use_case[:-5] if use_case.endswith("_chat") else use_case
         if entity_use_case == "complaint":
@@ -734,7 +734,7 @@ def build_context_vars(
                 # Customer / Delivery Order lines). Unambiguous row columns, so
                 # auto-resolved here; the action-specific `update` core + portal_url
                 # are threaded via extra_context_vars (can't be reconstructed from
-                # the row — reply vs status-change touch the same row).
+                # the row - reply vs status-change touch the same row).
                 vars_out["project"] = row.project_title
                 vars_out["customer"] = row.customer_name
                 vars_out["delivery_order"] = row.delivery_order_number
@@ -769,7 +769,7 @@ def build_context_vars(
                 # approval flows write the reviewer's note there).
                 vars_out["reason"] = row.approval_comments
                 # Discrete fields for the structured PR/SF template (Customer /
-                # Project lines) — same unambiguous row columns as complaint.
+                # Project lines) - same unambiguous row columns as complaint.
                 vars_out["customer"] = row.customer_name
                 vars_out["project"] = row.project_title
     except Exception:

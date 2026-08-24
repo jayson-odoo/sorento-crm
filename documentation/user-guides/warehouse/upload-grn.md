@@ -1,4 +1,4 @@
-# 1.2-Warehouse — Upload GRN (Goods Received Note)
+# 1.2-Warehouse - Upload GRN (Goods Received Note)
 
 Use this flow to record the receiving of incoming stock against a supplier packing list. A GRN consists of a **header** (one document number + receiving date + optional SPO link) and a set of **lines** (product + warehouse + quantity received). Both are uploaded as separate Excel files.
 
@@ -8,11 +8,11 @@ Open **[Procurement → GRN](/procurement-management/grn)** (URL: `/procurement-
 
 Toolbar:
 
-* **[Import options](/procurement-management/grn#guide_target=procurement.grn.import-options-button)** (the upload-icon button on the toolbar) — opens a dropdown with **Upload GRN** (header) and **Upload GRN Lines** (lines).
-* **Create GRN** — manual single-record creation.
-* **Filters** / **Export** / **Columns** — DataGrid tools.
+* **[Import options](/procurement-management/grn#guide_target=procurement.grn.import-options-button)** (the upload-icon button on the toolbar) - opens a dropdown with **Upload GRN** (header) and **Upload GRN Lines** (lines).
+* **Create GRN** - manual single-record creation.
+* **Filters** / **Export** / **Columns** - DataGrid tools.
 
-## Step 1 — Upload GRN header
+## Step 1 - Upload GRN header
 
 
 1. Click **[Import options](/procurement-management/grn#guide_target=procurement.grn.import-options-button)** → **Upload GRN**.
@@ -28,7 +28,7 @@ Toolbar:
 | **Transfer From** / **SPO Number** / **From Doc No.** / **From Document No.** | Optional | Links the GRN to a source SPO. |
 | **Date** / **Picking Date** | Optional | If missing, defaults to today. Accepted formats: ISO, `YYYY-MM-DD`, `DD/MM/YYYY`, `MM/DD/YYYY`. |
 
-## Step 2 — Upload GRN lines
+## Step 2 - Upload GRN lines
 
 After the header import finishes:
 
@@ -54,8 +54,8 @@ The SPO number a line states is kept on the line even when its SPO allocations h
 
 The **GRN** page shows two status panels above the table while jobs are running:
 
-* **Latest GRN listing import** — for `grn_listing_import` (header).
-* **Latest GRN lines import** — for `grn_lines_import` (lines).
+* **Latest GRN listing import** - for `grn_listing_import` (header).
+* **Latest GRN lines import** - for `grn_lines_import` (lines).
 
 Each panel updates with `queued` → `running` → `finished` (or `failed`) and row counts.
 
@@ -71,5 +71,5 @@ A GRN moves through: **Draft** → **Approved** (or **Rejected**). Newly importe
 ## See also
 
 * [Upload Delivery Orders (Order Tracking)](upload-delivery-orders.md)
-* [Purchasing — Upload SPO](../purchasing/upload-spo.md)
-* [Purchasing — Upload packing list](../purchasing/upload-packing-list.md)
+* [Purchasing - Upload SPO](../purchasing/upload-spo.md)
+* [Purchasing - Upload packing list](../purchasing/upload-packing-list.md)

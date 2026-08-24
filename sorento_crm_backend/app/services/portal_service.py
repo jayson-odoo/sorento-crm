@@ -132,7 +132,7 @@ class PortalService:
     def get_or_create_slug(self, contact: RespondContact) -> str:
         """Return the contact's stable portal slug, lazily minting it.
 
-        The slug is immutable once minted — it is the bookmarkable identity
+        The slug is immutable once minted - it is the bookmarkable identity
         behind /portal/c/{slug}. Retries on the (astronomically unlikely)
         unique collision.
         """
@@ -203,7 +203,7 @@ class PortalService:
         Returns just enough to render the verify page: who to OTP
         (contact/space ids), a masked phone for recognition, and the business
         WhatsApp number for the escape hatch. 404s with no detail on unknown
-        slugs — never confirm revoked-vs-missing.
+        slugs - never confirm revoked-vs-missing.
         """
         contact = self.contact_by_slug(slug)
         if contact is None:
@@ -404,7 +404,7 @@ class PortalService:
     ) -> str:
         """Build the link sent to contacts.
 
-        Durable form: /portal/c/{slug}?token={token} — the token half expires,
+        Durable form: /portal/c/{slug}?token={token} - the token half expires,
         the slug half keeps working as a bookmarkable re-entry point. Falls
         back to the legacy /portal?token= shape when the token row or slug
         cannot be resolved (e.g. unit tests minting bare tokens).
@@ -457,7 +457,7 @@ class PortalService:
         they can act/resubmit (portal auth handled by the route via OTP). When
         ``entity_id`` is omitted it links to the type's portal index
         ``/portal/c/{slug}/{type}``. Returns None when the contact/slug can't be
-        resolved — callers fall back to the read-only view link.
+        resolved - callers fall back to the read-only view link.
         """
         try:
             cid = (str(contact_id) if contact_id else "").strip()
@@ -901,7 +901,7 @@ class PortalService:
                         "This submission can only be changed through Revise."
                     )
                 raise handle_validation_error(
-                    "This submission must be resent via Submit — draft saves are disabled."
+                    "This submission must be resent via Submit - draft saves are disabled."
                 )
             self._apply_payload(kind, row, payload)
             row.portal_draft_at = _utcnow()

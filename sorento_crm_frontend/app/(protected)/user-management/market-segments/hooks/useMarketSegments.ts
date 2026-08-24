@@ -21,7 +21,7 @@ export function useMarketSegments(activeOnly = false) {
   });
 }
 
-/** Catalog create/update/delete mutations — invalidate + toast, mirrors the CRUD standard. */
+/** Catalog create/update/delete mutations - invalidate + toast, mirrors the CRUD standard. */
 export function useMarketSegmentMutations() {
   const queryClient = useQueryClient();
 

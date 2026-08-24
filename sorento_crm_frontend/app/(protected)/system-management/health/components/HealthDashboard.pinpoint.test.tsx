@@ -1,9 +1,9 @@
 /**
- * Covers UAC OBS-S1-13, OBS-S1-15 and OBS-S1-16 — making a failure count actionable.
+ * Covers UAC OBS-S1-13, OBS-S1-15 and OBS-S1-16 - making a failure count actionable.
  *
  * "5 failed" is a fact, not a lead. Two things have to hold before the number
  * is worth anything: the causes behind it are visible without navigating away,
- * and the drill-down link lands on exactly the rows that produced the count —
+ * and the drill-down link lands on exactly the rows that produced the count  - 
  * which it previously did not, because the href hardcoded a 24h window while
  * the dashboard could be showing 30 days.
  */
@@ -116,7 +116,7 @@ describe('HealthDashboard: pinpointing an integration failure', () => {
   });
 
   it('shows the un-masked sample message, not the normalised signature', () => {
-    // The signature is a grouping key with ids blanked out — useless to paste
+    // The signature is a grouping key with ids blanked out - useless to paste
     // into a log search. The operator needs a message that actually occurred.
     renderWith(withFailures);
     const list = screen.getByTestId('health-integration-failures-respond_io');
@@ -168,7 +168,7 @@ describe('HealthDashboard: pinpointing an integration failure', () => {
   it('omits error_contains when no stable substring exists', () => {
     // An all-volatile message yields no stable terms. Sending an empty term
     // would be a no-op filter that silently widens the result to the whole
-    // channel — better to omit it and let the status code do the narrowing.
+    // channel - better to omit it and let the status code do the narrowing.
     renderWith({
       ...base,
       integrations: {

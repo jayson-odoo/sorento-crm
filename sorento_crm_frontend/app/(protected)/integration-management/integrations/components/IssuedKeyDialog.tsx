@@ -16,7 +16,7 @@ import type { IssuedKey } from '../types/integration.types';
 
 /**
  * Shows a freshly minted key. This is the only moment it exists anywhere
- * outside the caller's own configuration — the server stores a hash and cannot
+ * outside the caller's own configuration - the server stores a hash and cannot
  * return it again.
  *
  * The dialog therefore refuses to be dismissed casually: no click-outside, no
@@ -64,7 +64,7 @@ export function IssuedKeyDialog({
         <DialogHeader>
           <DialogTitle>Copy your API key</DialogTitle>
           <DialogDescription>
-            This key is shown once. It cannot be retrieved later — only replaced by
+            This key is shown once. It cannot be retrieved later - only replaced by
             rotating it.
           </DialogDescription>
         </DialogHeader>

@@ -55,7 +55,7 @@ export interface ProductSpecDetail {
   product_id: string;
   product_code: string;
   category_code: string | null;
-  /** True only when a spec row exists — i.e. the chatbot can actually find this. */
+  /** True only when a spec row exists - i.e. the chatbot can actually find this. */
   searchable: boolean;
   diagnosis: {
     reason: SpecDiagnosisReason;
@@ -143,12 +143,12 @@ export interface SpecRegistryKey {
    * under one.
    */
   excluded_values: string[];
-  /** Values staff added to a shipped key — the removable half of `allowed_values`. */
+  /** Values staff added to a shipped key - the removable half of `allowed_values`. */
   user_values: string[];
   /** Shipped values this business has taken away. Already subtracted from `allowed_values`. */
   suppressed_values: string[];
   /**
-   * A standing preference for particular values of this key ({ SORENTO: 1.5 }) —
+   * A standing preference for particular values of this key ({ SORENTO: 1.5 })  - 
    * applied to any product carrying the value, except when the customer named the key
    * themselves.
    */
@@ -158,7 +158,7 @@ export interface SpecRegistryKey {
   /**
    * The rules that ACTUALLY run. Equal to `derivation_rules` once a key has been
    * edited; before that it is the set that ships in code, which derivation falls back
-   * to — so a key with an empty column is not a key with no rules.
+   * to - so a key with an empty column is not a key with no rules.
    */
   effective_rules: SpecDerivationRule[];
   /** True while this key is still running the shipped rules rather than its own. */
@@ -167,17 +167,17 @@ export interface SpecRegistryKey {
   synonyms: Record<string, string[]>;
   applies_when: Record<string, string[]>;
   /**
-   * `rules` — filled in by the derivation rules below.
-   * `measurement_then_rules` — the size in the description comes first; rules fill the
+   * `rules` - filled in by the derivation rules below.
+   * `measurement_then_rules` - the size in the description comes first; rules fill the
    * gap when it states none, which is how the flyer's "L680xW375xH770mm" gets in.
-   * `product_record` — read off the product itself. Brand only; no rule can change it.
+   * `product_record` - read off the product itself. Brand only; no rule can change it.
    */
   read_from: 'rules' | 'measurement_then_rules' | 'product_record';
   rank_weight: number | null;
   measured_coverage: number | null;
   /**
    * `seed` ships with the product and is repaired on every deploy, so its values
-   * cannot be edited here — only extended. `user` keys are owned by whoever made them.
+   * cannot be edited here - only extended. `user` keys are owned by whoever made them.
    */
   source: 'seed' | 'user';
   /** Staff-added phrasings only, i.e. the editable half of `synonyms`. */

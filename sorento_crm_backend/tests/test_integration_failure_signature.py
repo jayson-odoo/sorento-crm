@@ -2,7 +2,7 @@
 
 Covers UAC OBS-S1-11 .. OBS-S1-14.
 
-Knowing a channel failed 5 times is not actionable — the dashboard has to say
+Knowing a channel failed 5 times is not actionable - the dashboard has to say
 *what* failed. Raw `error_message` cannot be the grouping key: it carries record
 ids, timestamps and payload echoes, so 5 instances of one fault render as 5
 distinct one-off errors. Normalising the volatile parts collapses them back into
@@ -10,7 +10,7 @@ the single signature they actually are.
 
 The opposite failure matters just as much: over-normalising merges two genuinely
 different faults into one line and hides the rarer one. So only demonstrably
-volatile tokens are masked (uuids, digit runs, quoted timestamps) — never words.
+volatile tokens are masked (uuids, digit runs, quoted timestamps) - never words.
 """
 import pytest
 
@@ -18,7 +18,7 @@ from app.services.integration_failure_signature import normalize, top_failures
 
 
 # --------------------------------------------------------------------------- #
-# Normalisation — collapse volatile tokens                                    #
+# Normalisation - collapse volatile tokens                                    #
 # --------------------------------------------------------------------------- #
 def test_uuids_are_masked():
     a = normalize("Order 3f2b1c4e-9a1d-4f7e-88aa-1b2c3d4e5f60 not found")
@@ -59,7 +59,7 @@ def test_none_message_is_stable():
 
 
 # --------------------------------------------------------------------------- #
-# Aggregation — what the card renders                                         #
+# Aggregation - what the card renders                                         #
 # --------------------------------------------------------------------------- #
 class _Row:
     def __init__(self, status_code=None, error_message=None, count=1):
@@ -92,7 +92,7 @@ def test_limit_caps_the_list():
 
 
 def test_sample_message_keeps_the_readable_original():
-    """Group by the normalised key, but show a real message — a masked string
+    """Group by the normalised key, but show a real message - a masked string
     like 'order <id> failed' is not something you can paste into a search."""
     rows = [_Row(status_code=500, error_message="Order 3f2b1c4e-9a1d-4f7e-88aa-1b2c3d4e5f60 failed", count=1)]
     assert "3f2b1c4e" in top_failures(rows)[0].sample_message
@@ -131,13 +131,13 @@ def test_trimming_never_eats_the_leading_error():
 
 
 # --------------------------------------------------------------------------- #
-# filter_text — the substring that selects the whole group in the log list     #
+# filter_text - the substring that selects the whole group in the log list     #
 # --------------------------------------------------------------------------- #
 _RESPOND_401 = (
     "Client error '401 Unauthorized' for url "
     "'https://api.respond.io/v2/contact/id:55555/message'"
 )
-# Same channel, same code, same opening prose — different endpoint. This is the
+# Same channel, same code, same opening prose - different endpoint. This is the
 # real pair that exposed the single-term bug.
 _RESPOND_401_OTHER_ENDPOINT = (
     "Client error '401 Unauthorized' for url "
@@ -155,7 +155,7 @@ def test_filter_terms_exclude_volatile_tokens():
 
 def test_filter_terms_are_literal_substrings_of_the_original():
     """They are fed to a SQL LIKE, so each must appear verbatim in every row of
-    the group — a normalised form with `<id>` placeholders would match nothing."""
+    the group - a normalised form with `<id>` placeholders would match nothing."""
     terms = top_failures([_Row(status_code=403, error_message=_RESPOND_401)])[0].filter_terms
     for t in terms:
         assert t in _RESPOND_401

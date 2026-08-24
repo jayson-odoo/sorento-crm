@@ -2,13 +2,13 @@
 
 The gap this closes: editing a derivation rule changes how a product WOULD be read, and
 nothing re-reads it. Rules are saved, the screen says saved, and every search keeps
-returning the old values — because the values live on 22,805 stored rows that were
+returning the old values - because the values live on 22,805 stored rows that were
 derived under the old rules. Someone changed `FREE STANDING` from `floor_standing` to
 `free_standing`, saved, searched, and correctly concluded the setting did nothing.
 
 Derivation touches every product code and takes minutes, so it cannot run inside the
 request. It runs on a background thread with a status anyone can poll, and the registry
-carries a fingerprint of the rules it was last run against — which is what lets the UI
+carries a fingerprint of the rules it was last run against - which is what lets the UI
 say "the rules have changed since this was last read" instead of leaving people to
 guess.
 

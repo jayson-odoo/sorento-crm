@@ -1,5 +1,5 @@
 /**
- * ProductsList — variant columns + default filter.
+ * ProductsList - variant columns + default filter.
  *
  * Covers the variant-manual-curation list additions:
  *  - the "Variant of" column renders the parent's human-readable code (never a UUID),
@@ -9,7 +9,7 @@
  * The real DataGrid infinitely re-renders in jsdom (virtualization + ResizeObserver
  * measurement), so it is stubbed to capture the react-table instance ProductsList
  * builds. We then invoke the REAL column `cell` renderers (variant_of /
- * variant_child_count) directly against the captured column defs — exercising the
+ * variant_child_count) directly against the captured column defs - exercising the
  * shipped rendering logic without mounting the heavy grid.
  *
  * The Base/Variant/All filter's param mapping + refetch-on-change is covered at the
@@ -42,7 +42,7 @@ vi.mock('../services/productService', () => ({
   validateProductsImport: vi.fn(),
 }));
 
-// Stable instances — ProductsList's params-restore effect depends on
+// Stable instances - ProductsList's params-restore effect depends on
 // searchParams + router; returning fresh objects each render re-fires the effect
 // which setStates → infinite render loop (hang).
 const nav = vi.hoisted(() => ({
@@ -131,8 +131,8 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
-describe('ProductsList — variant columns', () => {
-  it('"Variant of" column renders the parent code human-readable (base shows —), no UUID', async () => {
+describe('ProductsList - variant columns', () => {
+  it('"Variant of" column renders the parent code human-readable (base shows  - ), no UUID', async () => {
     renderList();
     await waitFor(() => expect(grid.table).not.toBeNull());
 
@@ -144,7 +144,7 @@ describe('ProductsList — variant columns', () => {
 
     // Base row → em dash placeholder.
     renderCell('variant_of', BASE_ROW);
-    expect(screen.getByText('—')).toBeInTheDocument();
+    expect(screen.getByText('-')).toBeInTheDocument();
   });
 
   it('"Variants" column renders the child count', async () => {

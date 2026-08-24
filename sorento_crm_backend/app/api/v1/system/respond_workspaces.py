@@ -39,7 +39,7 @@ def list_ideation_products(
     db: Session = Depends(get_db),
 ) -> dict:
     """Proxy the shared-service software-product catalog for the Ideation-product
-    dropdown. Degrades gracefully — ALWAYS 200 with ``{products, error}``; never 500.
+    dropdown. Degrades gracefully - ALWAYS 200 with ``{products, error}``; never 500.
 
     Resolution (live-preview wins over the saved workspace):
       - ``base_url`` + ``api_key`` query overrides (admin typed them but hasn't

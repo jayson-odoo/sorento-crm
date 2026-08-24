@@ -17,7 +17,7 @@ import type { SpecDerivationRule, SpecRegistryKey } from '../types/productSpec.t
  * Edit one spec key.
  *
  * Everything the vocabulary can be is editable here, including the parts that ship with
- * the product. Shipped values and words are not deleted when you remove them — they are
+ * the product. Shipped values and words are not deleted when you remove them - they are
  * suppressed, which is the difference between "this business does not use that" and
  * "that never existed". Suppressed entries stay on screen, struck through, with a way
  * back, so the vocabulary you can see is the whole vocabulary.
@@ -103,7 +103,7 @@ export default function SpecKeyEditor({
   );
 
   // Every value that could carry customer wording. A numeric key like bowl_count has no
-  // `allowed_values` at all, yet ships words for 1, 2 and 3 — reading the rows off the
+  // `allowed_values` at all, yet ships words for 1, 2 and 3 - reading the rows off the
   // value list alone rendered an empty section for exactly the keys whose wording
   // matters most. Open vocabularies (brand, class) are the same story.
   //
@@ -180,7 +180,7 @@ export default function SpecKeyEditor({
    * Retire a whole value's wording.
    *
    * Shipped words are suppressed rather than deleted, so the row stays on screen with
-   * everything struck through and a way back — the same bargain as a single word. A row
+   * everything struck through and a way back - the same bargain as a single word. A row
    * staff typed themselves just disappears, because there is nothing to come back to.
    */
   const clearWordRow = (value: string) => {
@@ -391,14 +391,14 @@ export default function SpecKeyEditor({
           {specKey.rules_are_default && rules.length > 0 && (
             <p className="text-xs text-muted-foreground">
               These {rules.length} rules ship with the product and are what this key is
-              read with today. Change one and they become yours — this key stops taking
+              read with today. Change one and they become yours - this key stops taking
               future updates to the shipped set.
             </p>
           )}
           {specKey.read_from === 'measurement_then_rules' && (
             <p className="text-xs text-muted-foreground">
               The size written in the product description is read first and always wins.
-              These rules fill the gap when it states none — which is how a flyer&apos;s
+              These rules fill the gap when it states none - which is how a flyer&apos;s
               &quot;L680xW375xH770mm&quot; gets in. Set a rule&apos;s source to
               &quot;Flyer only&quot; to keep it out of the description.
             </p>
@@ -434,7 +434,7 @@ export default function SpecKeyEditor({
         label="Words customers say"
         hint={
           isOpenVocabulary
-            ? 'This key has no fixed list of values — whatever the catalogue holds becomes one. Name a value below to give it wording.'
+            ? 'This key has no fixed list of values - whatever the catalogue holds becomes one. Name a value below to give it wording.'
             : undefined
         }
       >
@@ -456,7 +456,7 @@ export default function SpecKeyEditor({
                   {value === 'true' && isBoolean ? 'When true' : readable(value)}
                 </span>
                 {/* Clearing a row is the only way to retire a value on a key with no
-                    value list of its own — a numeric key's values exist ONLY as these
+                    value list of its own - a numeric key's values exist ONLY as these
                     rows, so with no control here a 4 typed by mistake was permanent. */}
                 <button
                   type="button"

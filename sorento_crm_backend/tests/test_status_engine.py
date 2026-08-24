@@ -1,4 +1,4 @@
-"""S1 gate — status engine (UAC Group B, ADR-0001).
+"""S1 gate - status engine (UAC Group B, ADR-0001).
 
 Covers the engine contract: graph resolution, the two-tier default/fork model,
 the server-side transition guard, structural validation, and the

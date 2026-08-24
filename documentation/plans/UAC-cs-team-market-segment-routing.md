@@ -1,4 +1,4 @@
-# UAC — CS team market-segment routing (retail / project)
+# UAC - CS team market-segment routing (retail / project)
 
 Acceptance criteria for `PLAN-cs-team-market-segment-routing.md`. Every line must pass (BE + FE)
 with an automated test or a scripted check before manual eyeball. Regression lines are hard blockers.

@@ -1,12 +1,12 @@
 /**
- * Tests for the real `useHandlingLock` hook (Phase 2 — off mocks).
+ * Tests for the real `useHandlingLock` hook (Phase 2 - off mocks).
  *
  * Verifies the hook:
  *  - sources the active (first unresolved) tracker from `getFormHandlingTrackers`,
  *  - maps the API row (`tracking_id` → lock `id`) and feeds `resolveHandlingLockState`
  *    with the viewer-scoped `viewer_eligible` / `viewer_is_admin` / `flag_enabled`,
  *  - passes the CURRENT holder's `handled_by_id` as the take-over `expected_handler_id`
- *    (optimistic-concurrency guard — the backend 409s on a null/mismatched expectation).
+ *    (optimistic-concurrency guard - the backend 409s on a null/mismatched expectation).
  *
  * The pure resolver + banner are covered by handlingLock.test.ts / HandlingLockBanner.test.tsx.
  */
@@ -133,7 +133,7 @@ describe('useHandlingLock', () => {
 
   it('refresh() refetches the handling query (lock banner appears after an external escalate)', async () => {
     // Escalating from the form's gear menu is an external side effect that does not touch
-    // this query's key — refresh() must invalidate + refetch so the lock banner shows
+    // this query's key - refresh() must invalidate + refetch so the lock banner shows
     // without a page reload. Regression: escalate only invalidated form-sla-trackers.
     getFormHandlingTrackers.mockResolvedValue([row({ handled_by_id: null })]);
     const { result } = renderHook(

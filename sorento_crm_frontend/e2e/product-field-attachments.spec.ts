@@ -69,7 +69,7 @@ test('upload tech-spec → link to product → field badges → AI Extract → c
   await page.getByRole('button', { name: /create attachment|upload/i }).click();
   await expect(page.getByText('Create Attachment')).toBeVisible();
 
-  // Pick attachment type — first option will do for the test.
+  // Pick attachment type - first option will do for the test.
   await page.locator('#attachment-type').click();
   await page.getByRole('option').first().click();
 
@@ -97,7 +97,7 @@ test('upload tech-spec → link to product → field badges → AI Extract → c
   await page.getByRole('tab', { name: /^Products/ }).click();
   await page.getByRole('button', { name: /^Link$/ }).click();
   await page.getByPlaceholder(/search|product/i).fill(PRODUCT_CODE!);
-  // Click the matching option — fallback to first result.
+  // Click the matching option - fallback to first result.
   const option = page.getByRole('option', { name: new RegExp(PRODUCT_CODE!, 'i') }).first();
   await option.waitFor({ state: 'visible', timeout: 10_000 });
   await option.click();
@@ -118,12 +118,12 @@ test('upload tech-spec → link to product → field badges → AI Extract → c
   await page.getByText(PRODUCT_CODE!).first().click();
   await page.waitForURL(/\/master-data-management\/products\/[^/]+/);
 
-  // 9. Attachments tab — field badges visible.
+  // 9. Attachments tab - field badges visible.
   await page.getByRole('tab', { name: /Attachments/ }).click();
   await expect(page.getByText(/^Weight$/i).first()).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(/Length|Width|Height/).first()).toBeVisible();
 
-  // 10. Overview tab — paperclip next to Dimensions group.
+  // 10. Overview tab - paperclip next to Dimensions group.
   await page.getByRole('tab', { name: /Overview/ }).click();
   const dimsTrigger = page.getByTestId(
     'field-attachment-trigger-dimensions_length-dimensions_width-dimensions_height',

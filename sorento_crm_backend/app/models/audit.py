@@ -13,7 +13,7 @@ class AuditLog(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     entity_type = Column(String(100), nullable=False, index=True)
     # Polymorphic: holds whatever the audited entity's PK is, which is NOT always a
-    # UUID (e.g. MarketSegment's PK is a `code` like 'MSEG-A'). Must stay text —
+    # UUID (e.g. MarketSegment's PK is a `code` like 'MSEG-A'). Must stay text  - 
     # production currently types this column `uuid`, which silently rejects those
     # rows, so market-segment changes have never been audited. See migration 297.
     entity_id = Column(String(100), nullable=False, index=True)
@@ -33,7 +33,7 @@ class AuditLog(Base):
     trace_id = Column(String(64), nullable=True, index=True)
     # Multi-company: copied from the CHANGED entity's own company_id by the flush
     # listener (see audit_service._session_before_flush). DELIBERATELY NOT a
-    # CompanyScopedMixin — it is written by the global audit listener and must not
+    # CompanyScopedMixin - it is written by the global audit listener and must not
     # be auto-stamped/auto-filtered. NULL => the audited entity has no company_id
     # (or a historical row from before this column existed). Filtered ONLY by the
     # admin audit listing via ``admin_listing_company_filter``.

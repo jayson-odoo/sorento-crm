@@ -1,4 +1,4 @@
-"""Bug A1 follow-on — MarketingCampaignResponse must accept UUID-typed fields.
+"""Bug A1 follow-on - MarketingCampaignResponse must accept UUID-typed fields.
 
 A freshly-created campaign row holds `created_by` as a UUID object
 (current_user["id"]) before any re-fetch. The str-typed response field would

@@ -1,6 +1,6 @@
 """Regression tests for the shared Total Project Value validator.
 
-One guard rail for portal + system forms — see
+One guard rail for portal + system forms - see
 docs/plans/PLAN-project-value-centralized-validation.md.
 """
 from decimal import Decimal

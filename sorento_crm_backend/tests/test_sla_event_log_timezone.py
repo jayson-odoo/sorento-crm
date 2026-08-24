@@ -3,7 +3,7 @@
 `ConversationSLATracking` datetime columns (`due_at`, etc.) are stored as
 NAIVE UTC. They are copied into event-log payloads and `create_event_log`
 runs them through `_normalize_api_datetime_to_utc`, which treats a NAIVE
-value as Asia/Kuala_Lumpur (UTC+8) and converts to UTC — i.e. it subtracts
+value as Asia/Kuala_Lumpur (UTC+8) and converts to UTC - i.e. it subtracts
 8h from a naive-UTC instant. The call sites must therefore pass an
 aware-UTC datetime (`_to_aware_utc(...)`) so the normalize step is a no-op,
 not an 8h shift.

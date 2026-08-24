@@ -162,11 +162,11 @@ export default function EmailTemplateForm({ open, onOpenChange, template, onSave
                 onChange={setBodyHtml}
                 onEditorReady={setBodyEditor}
                 minHeight={260}
-                placeholder="Compose the email — use the Variables panel to insert {{ promotion.code }} etc."
+                placeholder="Compose the email - use the Variables panel to insert {{ promotion.code }} etc."
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="et-body-text">Body plain text (optional — auto-derived from HTML if empty)</Label>
+              <Label htmlFor="et-body-text">Body plain text (optional - auto-derived from HTML if empty)</Label>
               <Textarea
                 id="et-body-text"
                 value={bodyText}

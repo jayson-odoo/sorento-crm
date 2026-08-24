@@ -1,4 +1,4 @@
-# PLAN — HoD coverage + coverage on the dashboard
+# PLAN - HoD coverage + coverage on the dashboard
 
 **Status:** Draft → Phase 1 (FE prototype) next
 **Owner:** jayson
@@ -7,10 +7,10 @@
 ## Problem
 
 Two gaps:
-1. Coverage management lives at `/account/notifications` — separate from where staff
+1. Coverage management lives at `/account/notifications` - separate from where staff
    actually work (the dashboard `app/(protected)/page.tsx`, which renders
    `MyPendingSLAWidget`). Users want **one page** to run tasks + coverage.
-2. Coverage is **self-service only** — the API hardcodes `current_user["id"]` as the
+2. Coverage is **self-service only** - the API hardcodes `current_user["id"]` as the
    coverer (`subscriber_id`). A Head-of-Dept cannot set up coverage **for** team
    members (assign A to cover B). Today the only flow is "I cover for X".
 
@@ -32,21 +32,21 @@ Two gaps:
 `subscriber_id` (coverer) · `target_user_id` (covered) · `redirect_assignments`
 (auto-assign vs notify-only) · `expires_at` · `is_active`. Unique active per
 `(subscriber_id, target_user_id)`. Routing hooks already handle both modes
-(`active_coverer_for` redirect, `fan_out_coverage_copies` notify) — **no change to
+(`active_coverer_for` redirect, `fan_out_coverage_copies` notify) - **no change to
 routing logic needed**; HoD-created rows flow through the same machinery.
 
 ## Backend changes
 
 ### Schema
 - Add `created_by_id` (nullable FK `users.id`, SET NULL) to `notification_subscriptions`
-  — audit trail: distinguishes self-created (`= subscriber_id` or NULL) from
+  - audit trail: distinguishes self-created (`= subscriber_id` or NULL) from
   HoD-assigned (`= the HoD`). Alembic migration required.
 
 ### Permission
 - `notifications.coverage.manage_team` → `permission_registry.py`. Auto-seeded at
   startup (`sync_permissions`).
 
-### Service — `coverage_subscription_service.py`
+### Service - `coverage_subscription_service.py`
 - `subscribe(...)` gains optional `subscriber_id` (the coverer) + `created_by_id`.
   - When the coverer == actor → current self-service path (unchanged).
   - When coverer != actor → caller must have already passed the permission gate.
@@ -59,14 +59,14 @@ routing logic needed**; HoD-created rows flow through the same machinery.
   row when the actor owns it (coverer == actor) OR `can_manage` and both endpoints ∈
   scope-B.
 
-### Routes — `app/api/v1/notifications/coverage.py`
-- `POST /` — extend `_SubscribeRequest` with optional `subscriber_id`. If present and
+### Routes - `app/api/v1/notifications/coverage.py`
+- `POST /` - extend `_SubscribeRequest` with optional `subscriber_id`. If present and
   != current_user → `Depends(require_permission("notifications.coverage.manage_team"))`
   via a branch (or a second route `POST /assign`). Cleanest: dedicated
   **`POST /assign`** gated by the slug, body `{coverer_id, target_user_id, expires_at?,
   redirect_assignments}`. Keeps the self-service `POST /` untouched.
-- `GET /team` — `require_permission("…manage_team")`. Team coverage list.
-- `DELETE /manage/{subscription_id}` — deactivate by id (owner or manage_team + scope).
+- `GET /team` - `require_permission("…manage_team")`. Team coverage list.
+- `DELETE /manage/{subscription_id}` - deactivate by id (owner or manage_team + scope).
 
 Keep existing `GET /`, `POST /`, `DELETE /{target_user_id}` for self-service.
 
@@ -75,13 +75,13 @@ Keep existing `GET /`, `POST /`, `DELETE /{target_user_id}` for self-service.
 ### Move/surface coverage on the dashboard (`app/(protected)/page.tsx`)
 - Add a **Coverage** card beside/under `MyPendingSLAWidget`. Reuse the logic in
   `account/notifications/components/coverage-section.tsx` (lift shared bits into a
-  shared component rather than duplicate — see CLAUDE.md "don't duplicate panels").
-- Section 1 **My coverage** (self-service) — the existing picker + list, as-is.
+  shared component rather than duplicate - see CLAUDE.md "don't duplicate panels").
+- Section 1 **My coverage** (self-service) - the existing picker + list, as-is.
 - Section 2 **Team coverage** (only if `useHasPermission('notifications.coverage.manage_team')`):
   - Assign form: pick **Coverer** + **Covered** (both from scope-B users) + mode
     toggle + optional until → `POST /assign`.
   - List of team coverages with "assigned by" + revoke (`DELETE /manage/{id}`).
-- Keep `/account/notifications` coverage section too (or link to the dashboard) — TBD,
+- Keep `/account/notifications` coverage section too (or link to the dashboard) - TBD,
   default keep both pointing at the same shared component.
 
 ### Services / hooks
@@ -89,11 +89,11 @@ Keep existing `GET /`, `POST /`, `DELETE /{target_user_id}` for self-service.
   `useTeamCoverage()`, `useAssignCoverage()`, `useRevokeCoverageById()`.
 
 ## Tests (Phase 2)
-- **pytest:** `POST /assign` — 200 as HoD for in-scope coverer+covered; 403 without
+- **pytest:** `POST /assign` - 200 as HoD for in-scope coverer+covered; 403 without
   `manage_team`; 422/404 when either user out of scope; self-service `POST /` still
   works; coverer gets notified (assert notification row). `GET /team` scope. `DELETE
   /manage/{id}` owner vs HoD vs forbidden.
-- **vitest:** dashboard Coverage card — Team section hidden without the slug; assign
+- **vitest:** dashboard Coverage card - Team section hidden without the slug; assign
   form posts the right payload; list renders.
 - **playwright:** as a HoD, assign A→cover→B from the dashboard, assert the
   `/api/v1/notifications/coverage/assign` call + the row appears.

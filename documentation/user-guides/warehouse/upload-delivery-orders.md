@@ -1,4 +1,4 @@
-# 1.3-Warehouse — Upload Delivery Orders (order tracking + lines)
+# 1.3-Warehouse - Upload Delivery Orders (order tracking + lines)
 
 Use this flow to bulk-import delivery orders and their line items. The flow has two imports: the **tracking** import (one row per order: dates, customer, totals) and the **delivery order lines** import (one row per product line on each order).
 
@@ -8,11 +8,11 @@ Open **[Delivery Order Management → Delivery Orders](/order-management/orders)
 
 Toolbar:
 
-* **[Import](/order-management/orders#guide_target=order-management.delivery-orders.import-button)** — dropdown with **Import tracking** and **Import delivery order lines**.
-* **Create Delivery Order** — manual single-record creation.
-* **Quick filters** / **Filters** / **Export** / **Columns** / **Refresh** — DataGrid tools.
+* **[Import](/order-management/orders#guide_target=order-management.delivery-orders.import-button)** - dropdown with **Import tracking** and **Import delivery order lines**.
+* **Create Delivery Order** - manual single-record creation.
+* **Quick filters** / **Filters** / **Export** / **Columns** / **Refresh** - DataGrid tools.
 
-## Step 1 — Import tracking (order header)
+## Step 1 - Import tracking (order header)
 
 
 1. Click **[Import](/order-management/orders#guide_target=order-management.delivery-orders.import-button)** → **Import tracking**.
@@ -40,7 +40,7 @@ Toolbar:
 
 Accepted date formats: ISO, `YYYY-MM-DD`, `DD/MM/YYYY`, `MM/DD/YYYY`. Numeric fields tolerate currency symbols (`RM`, `$`), commas, and spaces.
 
-## Step 2 — Import delivery order lines
+## Step 2 - Import delivery order lines
 
 After the tracking import finishes:
 
@@ -65,14 +65,14 @@ After the tracking import finishes:
 | **Total Excluding Tax** | Optional | Decimal. |
 | **Total Including Tax** | Optional | Decimal. |
 
-Duplicate lines on the same order with the same product + warehouse combination are kept as **separate sequenced lines** — they are not aggregated.
+Duplicate lines on the same order with the same product + warehouse combination are kept as **separate sequenced lines** - they are not aggregated.
 
 ## How you'll see progress
 
 The **Delivery Orders** page shows two status panels above the table:
 
-* **Latest tracking import** — for `order_tracking_import`.
-* **Latest delivery order lines import** — for `delivery_order_detail_import`.
+* **Latest tracking import** - for `order_tracking_import`.
+* **Latest delivery order lines import** - for `delivery_order_detail_import`.
 
 Each panel updates with `queued` → `running` → `finished` (or `failed`) and row counts.
 

@@ -1,4 +1,4 @@
-"""Shared field validators — single source of truth across portal + system forms.
+"""Shared field validators - single source of truth across portal + system forms.
 
 Keeping these here (not inline per route/service) guarantees portal save and
 system save enforce identical rules. See

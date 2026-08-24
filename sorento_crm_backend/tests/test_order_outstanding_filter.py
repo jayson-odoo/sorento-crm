@@ -3,7 +3,7 @@
 `OrderService.list_orders(order_status=...)`:
   - 'delivered'   = status delivered/completed AND actual_delivery_date set
   - 'outstanding' = NOT delivered (New Order, Processing, Cancelled, or a delivery
-    date under a non-delivered status — the flagged Status/date inconsistency)
+    date under a non-delivered status - the flagged Status/date inconsistency)
   - None / '' / unknown = no filter (all rows), no regression
   - AND-combines with the existing customer_ids filter
   - the two buckets partition the scoped set (out + delivered == total)

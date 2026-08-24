@@ -108,7 +108,7 @@ def test_stock_inquiry_response_write_refused_outside_response_stage(db, status)
     assert "purchasing response" in message
     # One sentence that names the state and says what to do instead.
     assert "Chat Records" in message
-    assert "—" not in message and "–" not in message  # no em/en dashes
+    assert "-" not in message and " - " not in message  # no em/en dashes
 
     db.rollback()
     db.refresh(inquiry)

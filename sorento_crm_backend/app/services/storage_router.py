@@ -123,10 +123,10 @@ def get_backend(provider: Optional[str]) -> StorageBackend:
     (presign, preview, download, upload, webhook) pays that. Constructing one is
     not cheap and none of it is per-request work:
 
-      * ``boto3.client(...)`` — ~350ms on the first build in a process (botocore
+      * ``boto3.client(...)`` - ~350ms on the first build in a process (botocore
         loads its service model JSON from disk), ~3ms on every build after.
       * ``S3Service`` additionally builds a ``CloudFrontSigner``, which reads the
-        RSA private key from disk and parses it — ~225ms EVERY time, because the
+        RSA private key from disk and parses it - ~225ms EVERY time, because the
         parse is not cached anywhere. Its own docstring says "key loaded once",
         which was true per instance and defeated by rebuilding the instance per
         request.
@@ -154,7 +154,7 @@ def warm_backends() -> None:
     """Build the default provider's backend at startup.
 
     Without this the cost above lands on whichever unlucky request arrives first
-    after a worker starts — and a worker that keeps being recycled pays it again
+    after a worker starts - and a worker that keeps being recycled pays it again
     every time, so under load the "first request" penalty is not rare.
     Best-effort: a misconfigured provider must not stop the app booting, it will
     surface on the first real call exactly as it does today.
@@ -353,7 +353,7 @@ def copy_object_verified(provider: str, old_key: str, new_key: str) -> None:
     """Server-side copy old_key -> new_key, then verify new exists. No byte download.
 
     Raises AppException(409) if an object already lives at new_key (never clobber),
-    AppException(500) if the copy can't be verified. Does NOT delete the old object —
+    AppException(500) if the copy can't be verified. Does NOT delete the old object  - 
     caller deletes after its DB commit so the DB never points at a missing object.
     """
     from app.services.error_handler import AppException

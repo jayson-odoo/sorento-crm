@@ -14,7 +14,7 @@ Two layers:
      ``get_current_user_or_api_key``); delegation + RBAC gating + no-creds 401 are
      proven with a spy that raises a 418 sentinel the instant it is reached, so we
      assert past-auth/past-RBAC without seeding the whole entity + serializer.
-  B. Real-DB throwaway (SessionLocal, prefix cleanup — mirrors
+  B. Real-DB throwaway (SessionLocal, prefix cleanup - mirrors
      test_complaint_resolve / test_purchase_request_approval): the actual state
      transitions + preconditions, and the new /cancel flip + complaint re-eval.
 """
@@ -28,7 +28,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 # Import app.main first so the full module graph (dependencies, guards, models)
-# initializes in the right order — avoids a partially-initialized circular import.
+# initializes in the right order - avoids a partially-initialized circular import.
 from app.main import app
 import app.dependencies as deps
 from app.database import SessionLocal, engine
@@ -97,7 +97,7 @@ def api(monkeypatch) -> Iterator[tuple[TestClient, set]]:
     """TestClient on an empty sqlite session with a controllable permission gate.
 
     Service methods are spied (see individual tests) so no real entity/serializer
-    is needed — the endpoint is exercised only up to the point it reaches the
+    is needed - the endpoint is exercised only up to the point it reaches the
     service, which is exactly the auth + RBAC + delegation surface under test.
     """
     with blank_session() as sess:
@@ -123,7 +123,7 @@ def api(monkeypatch) -> Iterator[tuple[TestClient, set]]:
 
 def _spy_raise_418(monkeypatch, target_cls, method_name):
     """Replace a service method with a spy that records kwargs then raises a 418
-    sentinel — proving the endpoint reached it past auth + RBAC."""
+    sentinel - proving the endpoint reached it past auth + RBAC."""
     captured: dict = {}
 
     def _spy(self, *args, **kwargs):
@@ -365,7 +365,7 @@ def test_order_cancel_service_flips_and_reruns_complaint_reeval(db, monkeypatch)
 
     monkeypatch.setattr(cfs_mod.ComplaintFulfilmentService, "apply_for_orders", _spy_apply)
 
-    # orders.updated_by is a UUID column — use a real existing user id.
+    # orders.updated_by is a UUID column - use a real existing user id.
     real_user_id = settings.external_api_key_act_as_user_id
     o = Order(id=str(uuid.uuid4()), order_number=f"ZZRA-{uuid.uuid4().hex[:6]}", is_cancelled=False)
     db.add(o)

@@ -57,7 +57,7 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
     )
 
     if not user:
-        # Count a miss too — don't let attackers probe emails for free.
+        # Count a miss too - don't let attackers probe emails for free.
         login_throttle.record_failure(payload.email, ip)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -93,7 +93,7 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
             detail="Account not activated. Please verify your email.",
         )
 
-    # Successful auth — clear the throttle counter.
+    # Successful auth - clear the throttle counter.
     login_throttle.clear(payload.email, ip)
 
     # Store naive UTC (DB columns are timezone=False)
@@ -226,7 +226,7 @@ async def signup(
         # TODO: Send verification email (can be done via integration service)
         
         # Return the SAME shape as the already-registered branch (empty id, echoed
-        # email/name) so the two are byte-identical — no enumeration tell. The FE
+        # email/name) so the two are byte-identical - no enumeration tell. The FE
         # only checks response.ok then redirects; it never reads these fields.
         return SignupResponse(
             id="",
@@ -268,7 +268,7 @@ async def reset_password(
 
         user = db.query(User).filter(User.email == payload.email).first()
         if not user:
-            # Don't reveal that the account is missing — same response as success.
+            # Don't reveal that the account is missing - same response as success.
             return ResetPasswordResponse(message=_GENERIC_RESET_MSG)
 
         # Generate reset token
@@ -471,7 +471,7 @@ def logout(request: Request, current_user: dict = Depends(get_current_user), db:
 
 @router.get("/sessions", response_model=list[SessionInfo])
 def list_sessions(request: Request, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> list[SessionInfo]:
-    """Active sessions for the signed-in user — the "your devices" list.
+    """Active sessions for the signed-in user - the "your devices" list.
 
     Keyed on the REAL user (not the impersonated target), so an admin browsing as
     someone else still sees and manages their own devices.
@@ -493,7 +493,7 @@ def list_sessions(request: Request, current_user: dict = Depends(get_current_use
 
 @router.delete("/sessions/{session_id}", response_model=MessageResponse)
 def revoke_one_session(session_id: str, request: Request, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> MessageResponse:
-    """Revoke a single session — only if it belongs to the signed-in (real) user."""
+    """Revoke a single session - only if it belongs to the signed-in (real) user."""
     from app.models.user_session import UserSession
 
     row = (

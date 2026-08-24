@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * FieldAttachmentTooltip — paperclip popover next to a Specifications field
+ * FieldAttachmentTooltip - paperclip popover next to a Specifications field
  * that has at least one linked doc. Shows:
  *   - filename(s) of linked doc(s) with an inline preview link.
  *   - "AI Extract" button that opens AIExtractFieldDialog against the doc and
@@ -69,7 +69,7 @@ export default function FieldAttachmentTooltip({
       const url = await getAttachmentPreviewUrl(attachmentId);
       if (url) window.open(url, '_blank');
     } catch {
-      // silent — user can still trigger AI Extract.
+      // silent - user can still trigger AI Extract.
     }
   };
 

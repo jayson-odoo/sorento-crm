@@ -12,7 +12,7 @@ interface ExtendDueButtonProps {
    *  unknown on this surface (see gating notes); when null, there is no resolution
    *  deadline and the button is hidden. */
   currentDueAt?: string | null;
-  /** Whether the row is resolved — Extend only applies to unresolved rows. */
+  /** Whether the row is resolved - Extend only applies to unresolved rows. */
   isResolved: boolean;
   /**
    * Whether the current user is the assignee. Extend is assignee-only (the backend
@@ -21,7 +21,7 @@ interface ExtendDueButtonProps {
    * assignee id is not separately available.
    */
   isAssignee: boolean;
-  /** A takeover is pending on this row — Extend is locked (mirrors Reassign). */
+  /** A takeover is pending on this row - Extend is locked (mirrors Reassign). */
   takeoverPending?: boolean;
   /**
    * Controls how a missing (`undefined`) `currentDueAt` is treated:

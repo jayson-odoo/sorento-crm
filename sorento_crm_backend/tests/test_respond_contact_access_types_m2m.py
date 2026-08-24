@@ -5,7 +5,7 @@ Pure-Python coverage of ``PromotionService._filter_attachments_by_codes`` overla
 
 The pivot CRUD (``set_contact_access_codes`` / ``get_contact_access_codes`` / ``resolve_contact_access_codes``)
 and the SQL-level JSONB ``?|`` overlap filter are covered by the live integration test against the
-running backend (Postgres) — they cannot be exercised in the SQLite test setup because the existing
+running backend (Postgres) - they cannot be exercised in the SQLite test setup because the existing
 models depend on PostgreSQL ``JSONB`` columns and PostgreSQL-only ``::jsonb`` cast defaults.
 
 Run with: pytest tests/test_respond_contact_access_types_m2m.py -v
@@ -25,13 +25,13 @@ def _make_attachment(levels):
 
 
 def test_filter_attachments_by_codes_none_keeps_everything():
-    """codes=None means no contact context was supplied — keep everything."""
+    """codes=None means no contact context was supplied - keep everything."""
     atts = [_make_attachment(["dealer"]), _make_attachment([])]
     assert PromotionService._filter_attachments_by_codes(atts, None) == atts
 
 
 def test_filter_attachments_by_codes_empty_codes_drops_everything():
-    """codes=[] means contact has no assigned access types — overlap impossible."""
+    """codes=[] means contact has no assigned access types - overlap impossible."""
     atts = [_make_attachment(["dealer"]), _make_attachment(["end_user"])]
     assert PromotionService._filter_attachments_by_codes(atts, []) == []
 
@@ -56,7 +56,7 @@ def test_filter_attachments_by_codes_no_overlap_returns_nothing():
 
 
 def test_filter_attachments_by_codes_multi_code_overlap():
-    """Contact with multiple access types — kept if ANY overlaps."""
+    """Contact with multiple access types - kept if ANY overlaps."""
     atts = [
         _make_attachment(["dealer"]),         # overlaps via dealer
         _make_attachment(["end_user"]),       # overlaps via end_user

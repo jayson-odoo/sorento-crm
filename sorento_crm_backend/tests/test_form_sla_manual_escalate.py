@@ -1,9 +1,9 @@
-"""TCK-2026-000028 — form SLA auto-scan tier-progression fix + manual escalate.
+"""TCK-2026-000028 - form SLA auto-scan tier-progression fix + manual escalate.
 
 Covers AC-28-F1 (tier2->3), F2 (self-idempotent), F3 (top-tier stop),
 F4 (manual), F5 (422 guards + unchanged), F6/B1 (shape + trigger), D1 (trigger cols).
 
-Assignee resolution (AccessAgentService) and _notify_assignee are monkeypatched —
+Assignee resolution (AccessAgentService) and _notify_assignee are monkeypatched  - 
 this isolates the escalation/tier logic, which is what TCK-28 changes.
 
 Run: pytest tests/test_form_sla_manual_escalate.py -v

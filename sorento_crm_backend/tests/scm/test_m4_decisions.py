@@ -1,11 +1,11 @@
-"""SCM M4 Slice B — decisions (Accept / Adjust / Reject) + PO draft→confirm→GR flow.
+"""SCM M4 Slice B - decisions (Accept / Adjust / Reject) + PO draft→confirm→GR flow.
 
 Drives the real ``decision_service`` / ``purchase_order_service`` against controlled
 fixtures inside the ``scm_app`` savepoint (mirrors ``test_m4_cash`` / ``test_m3_run``).
 Every expected number is hand-authored, derived INDEPENDENTLY of the service output.
 
 Covered UAC: draft-PO consolidation (AC-M4.5), on_order excludes-draft/includes-active
-BOTH directions (AC-M4.6 — the highest-risk test), confirm renumber, adjust
+BOTH directions (AC-M4.6 - the highest-risk test), confirm renumber, adjust
 append-only + supplier switch/recompute (AC-M4.7), reject (AC-M4.8), bulk accept +
 bulk confirm + create-GR (AC-M4.9), auth denial.
 """
@@ -106,7 +106,7 @@ def _seed_two_supplier_product(db):
 
 
 # ===========================================================================
-# Staged decisions — Accept/Adjust create NO PO until Confirm decisions (M4 slice-B)
+# Staged decisions - Accept/Adjust create NO PO until Confirm decisions (M4 slice-B)
 # ===========================================================================
 
 def test_accept_stages_no_po_until_confirm(scm_app):
@@ -117,11 +117,11 @@ def test_accept_stages_no_po_until_confirm(scm_app):
 
     res = dsvc.accept_recommendation(db, recs[a]["id"], actor="tester")
     db.flush()
-    # STAGED — status flips, but no PO exists yet (the overview-before-order model)
+    # STAGED - status flips, but no PO exists yet (the overview-before-order model)
     assert res["draft_po_id"] is None and res["draft_po_number"] is None
     assert db.execute(text("SELECT status FROM scm.reorder_recommendation WHERE id = :id"),
                       {"id": recs[a]["id"]}).scalar() == "accepted"
-    # scoped to this rec — no line/PO materialised before Confirm decisions
+    # scoped to this rec - no line/PO materialised before Confirm decisions
     assert _po_id_for_rec(db, recs[a]["id"]) is None
 
 
@@ -176,7 +176,7 @@ def test_moq_override_reaches_the_draft_po_at_confirm(scm_app):
 
 
 # ===========================================================================
-# AC-M4.5 — Confirm decisions consolidates a draft PO per supplier
+# AC-M4.5 - Confirm decisions consolidates a draft PO per supplier
 # ===========================================================================
 
 def test_confirm_consolidates_one_draft_po_per_supplier(scm_app):
@@ -209,7 +209,7 @@ def test_confirm_consolidates_one_draft_po_per_supplier(scm_app):
     ), {"id": po_a}).scalar()
     assert n_lines == 2
 
-    # confirm is idempotent — re-running doesn't duplicate lines
+    # confirm is idempotent - re-running doesn't duplicate lines
     dsvc.confirm_decisions(db, run_id, ids=None, actor="tester")
     assert db.execute(text(
         "SELECT count(*) FROM purchase_order_lines WHERE purchase_order_id = :id"
@@ -217,7 +217,7 @@ def test_confirm_consolidates_one_draft_po_per_supplier(scm_app):
 
 
 # ===========================================================================
-# AC-M4.6 — on_order excludes a draft; includes it once confirmed (BOTH directions)
+# AC-M4.6 - on_order excludes a draft; includes it once confirmed (BOTH directions)
 # ===========================================================================
 
 def _ordered(db, product_id, warehouse_id) -> float:
@@ -310,7 +310,7 @@ def test_confirm_is_idempotent(scm_app):
 
 
 # ===========================================================================
-# AC-M4.7 — Adjust: append-only override + supplier switch/recompute
+# AC-M4.7 - Adjust: append-only override + supplier switch/recompute
 # ===========================================================================
 
 def test_adjust_switches_supplier_and_appends_override(scm_app):
@@ -335,7 +335,7 @@ def test_adjust_switches_supplier_and_appends_override(scm_app):
         db, rec_id, override_qty=override_qty,
         override_supplier_code=alt["supplier_code"],
         reason_text="cheaper supplier, buy less", actor="t")
-    # adjust is STAGED — no PO yet
+    # adjust is STAGED - no PO yet
     assert res["draft_po_id"] is None
 
     # exactly ONE override row, append-only; original recommendation untouched
@@ -398,7 +398,7 @@ def test_adjust_rejects_non_positive_qty(scm_app):
 
 
 # ===========================================================================
-# AC-M4.8 — Reject dismisses + stores reason
+# AC-M4.8 - Reject dismisses + stores reason
 # ===========================================================================
 
 def test_reject_dismisses_and_stores_reason(scm_app):
@@ -428,7 +428,7 @@ def test_reject_dismisses_and_stores_reason(scm_app):
 
 
 # ===========================================================================
-# AC-M4.9 — bulk accept + bulk confirm + create-GR
+# AC-M4.9 - bulk accept + bulk confirm + create-GR
 # ===========================================================================
 
 def test_bulk_accept_then_bulk_confirm(scm_app):
@@ -440,7 +440,7 @@ def test_bulk_accept_then_bulk_confirm(scm_app):
 
     res = dsvc.bulk_accept(db, run_id, ids, actor="t")
     assert res["accepted_count"] == 3
-    assert res["po_count"] == 0   # staged only — no PO until Confirm decisions
+    assert res["po_count"] == 0   # staged only - no PO until Confirm decisions
 
     conf = dsvc.confirm_decisions(db, run_id, ids=None, actor="t")
     assert conf["confirmed_count"] == 3

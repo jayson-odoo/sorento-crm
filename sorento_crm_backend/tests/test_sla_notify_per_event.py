@@ -83,6 +83,6 @@ def test_email_gate_honours_user_pref_attr():
         return None
 
     # Patch the heavy body: just assert the email-gate logic by calling the real
-    # method up to the point it would create — easier: re-implement the gate check.
+    # method up to the point it would create - easier: re-implement the gate check.
     # Here we verify getattr-based gate directly.
     assert getattr(user, "notify_email_on_assignment", True) is False

@@ -2,15 +2,15 @@
 
 Keys back to ``documentation/plans/ideation/ideation-embed-sso-acceptance-criteria.md``:
 
-- **AC-E-1** — the three embed fields live on the ``RespondWorkspace`` row: connection
+- **AC-E-1** - the three embed fields live on the ``RespondWorkspace`` row: connection
   id + FE base URL (plain) and the signing secret (Fernet-encrypted ``..._ciphertext``,
   masked on read, never plaintext).
-- **AC-E-2** — ``_resolve_embed_config`` reads DB-first from the DEFAULT workspace
+- **AC-E-2** - ``_resolve_embed_config`` reads DB-first from the DEFAULT workspace
   (decrypting the secret); ``.env`` is a per-field fallback only.
-- **AC-E-3** — backend base (``ideation_shared_service_url``) and FE base
+- **AC-E-3** - backend base (``ideation_shared_service_url``) and FE base
   (``ideation_embed_fe_base_url``) resolve to distinct values.
-- **AC-E-4** — any blank required field => not ready (dormant).
-- **AC-E-12** — the signing secret is never returned plaintext (masked only).
+- **AC-E-4** - any blank required field => not ready (dormant).
+- **AC-E-12** - the signing secret is never returned plaintext (masked only).
 
 All deterministic (a rolled-back Postgres session + static file inspection); no
 LLM. The database work runs on a blank copy of the real schema, so the column
@@ -43,7 +43,7 @@ def session():
 
 
 # ===========================================================================
-# Model — three new nullable columns (AC-E-1)
+# Model - three new nullable columns (AC-E-1)
 # ===========================================================================
 def test_workspace_model_has_embed_config_columns():
     cols = RespondWorkspace.__table__.columns
@@ -58,7 +58,7 @@ def test_workspace_model_has_embed_config_columns():
 
 
 # ===========================================================================
-# Migration — idempotent + chains onto the committed head (287) + single head
+# Migration - idempotent + chains onto the committed head (287) + single head
 # ===========================================================================
 def _embed_migration() -> Path:
     matches = list(_MIGRATIONS.glob("*ideation_embed_config*.py"))
@@ -93,7 +93,7 @@ def test_alembic_has_single_head():
 
 
 # ===========================================================================
-# Service — encrypt round-trip + masked output + decrypt helper (AC-E-1/E-12)
+# Service - encrypt round-trip + masked output + decrypt helper (AC-E-1/E-12)
 # ===========================================================================
 def test_create_encrypts_and_masks_embed_secret(session):
     svc = RespondWorkspaceService(session)
@@ -170,7 +170,7 @@ def test_decrypt_embed_secret_helper(session):
 
 
 # ===========================================================================
-# Config resolution — DB over .env, per-field fallback, dormant (AC-E-2/E-3/E-4)
+# Config resolution - DB over .env, per-field fallback, dormant (AC-E-2/E-3/E-4)
 # ===========================================================================
 def test_resolve_embed_config_prefers_db_over_settings(session, monkeypatch):
     svc = RespondWorkspaceService(session)
@@ -185,7 +185,7 @@ def test_resolve_embed_config_prefers_db_over_settings(session, monkeypatch):
             ideation_embed_signing_secret="db-secret-333333",
         )
     )
-    # settings hold different (legacy .env) values — DB must win
+    # settings hold different (legacy .env) values - DB must win
     monkeypatch.setattr(embed_svc.settings, "ideation_shared_service_url", "https://env.example.com/be")
     monkeypatch.setattr(embed_svc.settings, "ideation_embed_fe_base_url", "https://env.example.com")
     monkeypatch.setattr(embed_svc.settings, "ideation_embed_connection_id", "env-conn")

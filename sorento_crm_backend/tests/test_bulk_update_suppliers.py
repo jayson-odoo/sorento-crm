@@ -1,4 +1,4 @@
-"""Whitelisted bulk-update — suppliers (`is_active`).
+"""Whitelisted bulk-update - suppliers (`is_active`).
 
 Verifies the safe bulk-edit contract:
   - happy path: N rows updated via the NORMAL service update path (audit fires
@@ -61,7 +61,7 @@ def client(monkeypatch):
 
 def _spy_update(monkeypatch):
     """Patch the REAL single-record service update and return the recorded calls,
-    proving bulk edits route through the normal (audited) path — not a raw write."""
+    proving bulk edits route through the normal (audited) path - not a raw write."""
     calls: list[tuple] = []
 
     def _update(self, supplier_id, supplier_data):

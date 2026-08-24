@@ -947,7 +947,7 @@
           - generic [ref=e2220]:
             - text: Description
             - generic [ref=e2221]:
-              - paragraph [ref=e2222]: —
+              - paragraph [ref=e2222]:  - 
               - button "Add" [ref=e2223] [cursor=pointer]
           - generic [ref=e2224]:
             - text: Access levels
@@ -981,9 +981,9 @@
                     - columnheader "Description" [ref=e2266]
                     - columnheader "Action" [ref=e2267]
                 - rowgroup [ref=e2268]:
-                  - row "EITU1378046 — View Unlink" [ref=e2269]:
+                  - row "EITU1378046 - View Unlink" [ref=e2269]:
                     - cell "EITU1378046" [ref=e2270]
-                    - cell "—" [ref=e2271]
+                    - cell "-" [ref=e2271]
                     - cell "View Unlink" [ref=e2272]:
                       - generic [ref=e2273]:
                         - link "View" [ref=e2274] [cursor=pointer]:

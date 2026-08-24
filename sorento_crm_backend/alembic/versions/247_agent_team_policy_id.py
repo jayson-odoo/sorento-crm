@@ -1,4 +1,4 @@
-"""agent_teams.policy_id — backend-owned conversation SLA policy binding.
+"""agent_teams.policy_id - backend-owned conversation SLA policy binding.
 
 Revision ID: 247_agent_team_policy_id
 Revises: 246_sla_tier_hours_decimal

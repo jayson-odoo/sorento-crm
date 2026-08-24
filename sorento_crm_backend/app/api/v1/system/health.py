@@ -1,7 +1,7 @@
-"""Admin health dashboard — one aggregation endpoint over operational tables.
+"""Admin health dashboard - one aggregation endpoint over operational tables.
 
 `GET /api/v1/system/health/summary` returns an at-a-glance operational health
-view for admins. All queries are set-based (func.count + group_by) — no N+1.
+view for admins. All queries are set-based (func.count + group_by) - no N+1.
 
 Each metric block is computed inside its own guarded helper: if a source table
 or model is missing (legacy install) the block is omitted from the response
@@ -40,7 +40,7 @@ router = APIRouter()
 # Response schema
 # ---------------------------------------------------------------------------
 class EmailOutboxHealth(BaseModel):
-    # Lifetime totals — these are backlog/ledger figures, not windowed. Rendering
+    # Lifetime totals - these are backlog/ledger figures, not windowed. Rendering
     # them without the windowed count is what made 63 all-time failures read as a
     # live incident.
     pending: int = 0
@@ -71,7 +71,7 @@ class FailureSignatureOut(BaseModel):
     status_code: Optional[int] = None
     count: int = 0
     # Literal substrings shared by the whole group, AND-ed by the log-list
-    # drill-down. A list, not one substring — see integration_failure_signature.
+    # drill-down. A list, not one substring - see integration_failure_signature.
     filter_terms: list[str] = []
 
 
@@ -79,7 +79,7 @@ class IntegrationChannelHealth(BaseModel):
     channel: str
     success: int = 0
     failed: int = 0
-    # Logged as a failure but expected — e.g. an idempotency race. Broken out so a
+    # Logged as a failure but expected - e.g. an idempotency race. Broken out so a
     # benign outcome stops reading as an incident.
     benign: int = 0
     # Still in progress (pending/processing/queued). Previously counted in `total`
@@ -115,7 +115,7 @@ class HealthSummaryResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Metric builders — each guarded so a missing model omits its block
+# Metric builders - each guarded so a missing model omits its block
 # ---------------------------------------------------------------------------
 def _email_outbox_health(db: Session, cutoff: datetime, window_end: datetime) -> Optional[EmailOutboxHealth]:
     try:
@@ -144,7 +144,7 @@ def _email_outbox_health(db: Session, cutoff: datetime, window_end: datetime) ->
             failed_in_window=int(failed_24h),
             failed_last_24h=int(failed_24h),
         )
-    except Exception:  # noqa: BLE001 — a missing/legacy table omits the block, never 500s
+    except Exception:  # noqa: BLE001 - a missing/legacy table omits the block, never 500s
         return None
 
 
@@ -220,7 +220,7 @@ def _integrations_health(db: Session, cutoff: datetime, window_end: datetime) ->
             .filter(
                 IntegrationLog.created_at >= cutoff,
                 IntegrationLog.created_at <= window_end,
-                # Liveness probes are not a business integration channel — the
+                # Liveness probes are not a business integration channel - the
                 # watchdog/digest surface their status separately.
                 IntegrationLog.integration_channel != HEALTHCHECK_CHANNEL,
             )
@@ -233,7 +233,7 @@ def _integrations_health(db: Session, cutoff: datetime, window_end: datetime) ->
             .all()
         )
         by_channel: dict[str, IntegrationChannelHealth] = {}
-        # Only rows classified FAILED feed the signature list — a benign row
+        # Only rows classified FAILED feed the signature list - a benign row
         # carries an error_message too, and surfacing it as a "fault to chase"
         # would undo the classification work upstream.
         failed_rows: dict[str, list[SimpleNamespace]] = {}
@@ -330,7 +330,7 @@ async def get_health_summary(
     now = now_aware.replace(tzinfo=None)  # naive UTC to match stored columns
 
     # Windowed metrics honour the caller's range and filter on `created_at`.
-    # Point-in-time figures (queue backlogs, task counts) are always "as of now" —
+    # Point-in-time figures (queue backlogs, task counts) are always "as of now"  - 
     # a date range cannot meaningfully apply to a live backlog, and the response
     # labels them so the UI can say so rather than implying they were filtered.
     if date_from is not None or date_to is not None:

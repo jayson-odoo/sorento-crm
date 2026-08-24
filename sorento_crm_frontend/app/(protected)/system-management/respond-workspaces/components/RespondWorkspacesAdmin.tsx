@@ -131,10 +131,10 @@ export default function RespondWorkspacesAdmin() {
   }, [dialogOpen, canFetchIdeationProducts, editing?.id]);
 
   // Options: a clear entry + fetched products + the stored id (so the trigger
-  // shows a name even before a fetch resolves) — never a raw bare UUID.
+  // shows a name even before a fetch resolves) - never a raw bare UUID.
   const ideationProductSelectOptions: SearchableSelectOption[] = useMemo(() => {
     const opts: SearchableSelectOption[] = [
-      { value: '', label: '— None —' },
+      { value: '', label: ' -  None  - ' },
       ...ideationProductOptions,
     ];
     const sel = form.ideation_product_id;
@@ -283,7 +283,7 @@ export default function RespondWorkspacesAdmin() {
         enableSorting: false,
         meta: { headerTitle: 'Name', skeleton: <Skeleton className="h-4 w-32" /> },
         cell: ({ row }) => (
-          <span className="font-medium">{row.original.name || '—'}</span>
+          <span className="font-medium">{row.original.name || '-'}</span>
         ),
       },
       {
@@ -304,7 +304,7 @@ export default function RespondWorkspacesAdmin() {
         meta: { headerTitle: 'Base URL', skeleton: <Skeleton className="h-4 w-40" /> },
         cell: ({ row }) => (
           <span className="truncate" title={row.original.base_url ?? ''}>
-            {row.original.base_url || '—'}
+            {row.original.base_url || '-'}
           </span>
         ),
       },
@@ -317,7 +317,7 @@ export default function RespondWorkspacesAdmin() {
         meta: { headerTitle: 'WhatsApp', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => (
           <span className="font-mono truncate" title={row.original.whatsapp_number ?? ''}>
-            {row.original.whatsapp_number || '—'}
+            {row.original.whatsapp_number || '-'}
           </span>
         ),
       },
@@ -328,7 +328,7 @@ export default function RespondWorkspacesAdmin() {
         size: 140,
         enableSorting: false,
         meta: { headerTitle: 'API Key', skeleton: <Skeleton className="h-4 w-20" /> },
-        cell: ({ row }) => <span className="font-mono">{row.original.api_key_masked ?? '—'}</span>,
+        cell: ({ row }) => <span className="font-mono">{row.original.api_key_masked ?? '-'}</span>,
       },
       {
         id: 'is_active',
@@ -649,7 +649,7 @@ export default function RespondWorkspacesAdmin() {
                 onCheckedChange={(v) => setForm((f) => ({ ...f, is_default: v === true }))}
               />
               <Label htmlFor="ws-default">
-                Set as default — new contacts from sync land here when no workspace is set.
+                Set as default - new contacts from sync land here when no workspace is set.
               </Label>
             </div>
           </div>

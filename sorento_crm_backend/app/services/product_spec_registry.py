@@ -1069,7 +1069,7 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "label": "Has an overflow",
         "data_type": "boolean",
         "synonyms": {"true": ["overflow", "with overflow", "c/w overflow", "overflow hole"]},
-        # 137 write it joined, 5 split ("OVER FLOW") — both read by the same rule.
+        # 137 write it joined, 5 split ("OVER FLOW") - both read by the same rule.
         "measured_coverage": 142,
         "rank_weight": 1.5,
     },
@@ -1164,7 +1164,7 @@ def seed_spec_registry(db: Session, *, commit: bool = False) -> dict:
         #
         # Without this, shipped vocabulary could never reach an install again. Migration
         # 311i materialised every key's rules into the column, and `configured_rules`
-        # prefers the column over the shipped table — so adding 17 product types to the
+        # prefers the column over the shipped table - so adding 17 product types to the
         # table moved the value list and changed nothing about what gets derived. The
         # symptom is the worst kind: the screen lists `bidet` as a value, the catalogue
         # has 715 bidets, and not one of them carries it.
@@ -1219,7 +1219,7 @@ def merged_allowed_values(row: ProductSpecRegistry) -> list:
 
     Suppression is applied LAST and matches on the exact stored value, so taking a
     shipped value away and adding one back under the same name both work, in either
-    order — the same bargain `merged_synonyms` strikes for words.
+    order - the same bargain `merged_synonyms` strikes for words.
     """
     merged = list(row.allowed_values or [])
     for value in row.user_values or []:
@@ -1312,7 +1312,7 @@ def merged_synonyms(row: ProductSpecRegistry) -> dict:
     """Seed synonyms with the staff-added ones folded in, per value.
 
     Additions are additive: a word added here can never remove one the n8n parser is
-    relying on. Removals are explicit and separate — `suppressed_synonyms` says "this
+    relying on. Removals are explicit and separate - `suppressed_synonyms` says "this
     business does not use that word for that value", which is what "matte black" needed:
     it ships as a word for `black`, and while it is bound there it cannot mean a colour
     of its own however many values you add.

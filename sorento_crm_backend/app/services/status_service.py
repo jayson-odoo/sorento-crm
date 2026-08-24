@@ -1,4 +1,4 @@
-"""Status engine service — graph resolution, validation, transitions (ADR-0001).
+"""Status engine service - graph resolution, validation, transitions (ADR-0001).
 
 The one rule that matters: **a transition not present in the graph is rejected
 server-side**, whatever the client sends. A board that lets a card be dragged

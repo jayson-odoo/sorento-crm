@@ -46,7 +46,7 @@ def global_policy_row(db: Session):
     """The single canonical global reorder_policy row.
 
     Active rows win over inactive ones; among ties the oldest (``created_at ASC``)
-    wins — deterministic, and stable as new duplicates get appended.
+    wins - deterministic, and stable as new duplicates get appended.
 
     Columns are appended, never reordered: callers read this by index.
     """

@@ -301,7 +301,7 @@ export default function TicketDraftPortalPage({ params }: PageProps) {
               dangerouslySetInnerHTML={sanitizedHtml(ticket.description_html)}
             />
           ) : (
-            <p className="text-sm whitespace-pre-wrap">{ticket.description_text ?? '—'}</p>
+            <p className="text-sm whitespace-pre-wrap">{ticket.description_text ?? '-'}</p>
           )}
         </CardContent>
       </Card>

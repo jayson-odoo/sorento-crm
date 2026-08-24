@@ -947,7 +947,7 @@
           - generic [ref=e2220]:
             - text: Description
             - generic [ref=e2221]:
-              - paragraph [ref=e2222]: —
+              - paragraph [ref=e2222]:  - 
               - button "Add" [ref=e2223] [cursor=pointer]
           - generic [ref=e2224]:
             - text: Access levels

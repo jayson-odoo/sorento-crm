@@ -83,7 +83,7 @@ _STATUS_LABELS = {
 
 def _fmt(value) -> str:
     if value is None:
-        return "—"
+        return "-"
     # Timestamps are stored naive UTC; the page must read as the Malaysia wall
     # clock every other surface shows (a date column is left alone).
     value = in_malaysia(value)
@@ -92,7 +92,7 @@ def _fmt(value) -> str:
     if isinstance(value, date):
         return value.strftime("%d/%m/%Y")
     s = str(value).strip()
-    return escape(s) if s else "—"
+    return escape(s) if s else "-"
 
 
 def _row(label: str, value) -> str:
@@ -140,7 +140,7 @@ class StockInquiryPDFService:
     def _status_label(self, inquiry: StockInquiry) -> str:
         raw = (getattr(inquiry, "status", None) or "").strip()
         if not raw:
-            return "—"
+            return "-"
         return _STATUS_LABELS.get(raw, raw.replace("_", " ").title())
 
     def _form_rows(self, inquiry: StockInquiry) -> str:

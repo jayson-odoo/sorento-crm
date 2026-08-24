@@ -1,4 +1,4 @@
-"""SCM M5 Part B — market research service (advisory-only web-search signals).
+"""SCM M5 Part B - market research service (advisory-only web-search signals).
 
 Two halves, with a hard line between them:
 
@@ -7,12 +7,12 @@ Two halves, with a hard line between them:
   observability row. These persist and serialize deterministically.
 - **Key-gated (Anthropic web search):** ``_web_search_topic`` is the ONLY part
   that reaches the network. Without ``ANTHROPIC_API_KEY`` it returns ``[]`` and
-  ``run_research`` records a ``status='failed'`` run with a clear error — never a
+  ``run_research`` records a ``status='failed'`` run with a clear error - never a
   crash. Tests monkeypatch ``_web_search_topic`` to inject synthetic signals and
   exercise the whole persistence path with no network.
 
 LLM boundary (AC-M5.8): this service writes ONLY the ``scm.market_signal`` table
-(+ its run log). It NEVER writes a numeric field on ``reorder_recommendation`` —
+(+ its run log). It NEVER writes a numeric field on ``reorder_recommendation``  - 
 signals are their own advisory-only table; the deterministic engine never reads
 them.
 
@@ -54,7 +54,7 @@ _VALID_TRENDS = {"up", "down", "flat"}
 # ---------------------------------------------------------------------------
 
 def _anthropic_api_key(db: Session) -> Optional[str]:
-    """Anthropic key for the market web search — DB-configured (assistant config,
+    """Anthropic key for the market web search - DB-configured (assistant config,
     same place the OpenAI key lives), falling back to the env only if the DB is
     empty. NOT an env-only setting (user preference)."""
     from app.models.ai_assistant import AIAssistantConfig
@@ -70,7 +70,7 @@ def _anthropic_api_key(db: Session) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# serializers (no UUID in any display field — topic_label, not topic_id)
+# serializers (no UUID in any display field - topic_label, not topic_id)
 # ---------------------------------------------------------------------------
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:
@@ -193,7 +193,7 @@ def list_signals(db: Session) -> list[dict]:
         )
         .all()
     )
-    return [_signal_out(s, label or "—") for s, label in rows]
+    return [_signal_out(s, label or "-") for s, label in rows]
 
 
 def get_run(db: Session, run_id: str) -> dict:
@@ -424,8 +424,8 @@ def _web_search_topic(db: Session, topic: MarketResearchTopic) -> list[dict]:
 def _anthropic_web_search(prompt: str, api_key: str) -> tuple[str, list[dict]]:
     """Raw Anthropic SDK call with the web-search SERVER tool. Returns the model's
     concatenated text output (which cites the figures/URLs it found) AND the list of
-    citation sources ``[{url, title}]`` harvested from the response — both the text
-    blocks' inline citations and the web_search_tool_result blocks — deduped by url.
+    citation sources ``[{url, title}]`` harvested from the response - both the text
+    blocks' inline citations and the web_search_tool_result blocks - deduped by url.
 
     ⚠ The tool version string + model id are pinned to authoring-time values and MUST
     be re-confirmed against current Anthropic docs before enabling in prod.
@@ -477,7 +477,7 @@ _EXTRACT_SYSTEM = (
     "chain tool. Return ONLY JSON of the form "
     '{"signals": [{"value": <number|null>, "trend": "up"|"down"|"flat"|null, '
     '"summary": <one-line string>, "source_url": <url|null>}]}. '
-    "Use only figures that appear in the given text — never invent or compute a number. "
+    "Use only figures that appear in the given text - never invent or compute a number. "
     "If the text has no usable figure, still emit a signal with value=null and a "
     "qualitative summary. Output at most 2 signals."
 )
@@ -486,7 +486,7 @@ _EXTRACT_SYSTEM = (
 def _extract_signals(db: Session, topic: MarketResearchTopic, search_text: str) -> list[dict]:
     """Second pass: schema-forced JSON extraction from the web-search prose. Uses the
     shared assistant provider (OpenAI is fine for extraction). Never fabricates a
-    number — it only lifts figures already present in ``search_text``."""
+    number - it only lifts figures already present in ``search_text``."""
     provider, model = explainer_service._provider_and_model(db)
     if provider is None:
         return []

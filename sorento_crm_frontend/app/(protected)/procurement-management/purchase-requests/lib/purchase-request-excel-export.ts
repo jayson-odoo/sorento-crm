@@ -111,7 +111,7 @@ export function buildPurchaseRequestAoa(
     ['#', 'Item Code', 'Qty', 'Remark'],
   ];
 
-  // Emit exactly the line items — no blank padding rows.
+  // Emit exactly the line items - no blank padding rows.
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     aoa.push([
@@ -202,7 +202,7 @@ export function buildSponsorshipFormAoa(request: PurchaseRequest): (string | num
   ];
 
   let grandTotal = 0;
-  // Emit exactly the line items — no blank padding rows.
+  // Emit exactly the line items - no blank padding rows.
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const qty = line != null && line.quantity != null ? Number(line.quantity) : 0;

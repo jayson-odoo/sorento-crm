@@ -20,7 +20,7 @@ from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
 
-# Mistaken MCP usage: query="promotion_id='<uuid>'" or query="<uuid>" — treat as promotion filter when promotion_id is omitted.
+# Mistaken MCP usage: query="promotion_id='<uuid>'" or query="<uuid>" - treat as promotion filter when promotion_id is omitted.
 _PROMOTION_ID_ASSIGN_RE = re.compile(
     r"^\s*promotion_id\s*=\s*(?:'|\")?([0-9a-fA-F-]{36})(?:'|\")?\s*$",
     re.IGNORECASE,
@@ -60,16 +60,16 @@ _AXIS_WORDS = {
 _AXIS_WORD_TO_KEY = {w: k for k, ws in _AXIS_WORDS.items() for w in ws}
 
 # Single-letter axis directly attached to digits: L600, W365, H140
-_AXIS_LETTER_RE = re.compile(r"(?i)(?<![a-z])([lwh])\s*(\d{2,5})(?:\s*[-–]\s*(\d{2,5}))?(?:\s*mm)?\b")
+_AXIS_LETTER_RE = re.compile(r"(?i)(?<![a-z])([lwh])\s*(\d{2,5})(?:\s*[- - ]\s*(\d{2,5}))?(?:\s*mm)?\b")
 # Number ± axis word: "365 width", "365 mm wide", "width 365", "600mm long"
 _NUM_AXIS_RE = re.compile(
-    r"(?i)(?:(\d{2,5})(?:\s*[-–]\s*(\d{2,5}))?\s*(?:mm)?\s+(length|long|width|wide|height|tall|high)"
-    r"|(length|long|width|wide|height|tall|high)\s+(\d{2,5})(?:\s*[-–]\s*(\d{2,5}))?(?:\s*mm)?)"
+    r"(?i)(?:(\d{2,5})(?:\s*[- - ]\s*(\d{2,5}))?\s*(?:mm)?\s+(length|long|width|wide|height|tall|high)"
+    r"|(length|long|width|wide|height|tall|high)\s+(\d{2,5})(?:\s*[- - ]\s*(\d{2,5}))?(?:\s*mm)?)"
 )
 # Plain number with mm and no axis: "365mm", "365 mm"
-_NUM_MM_RE = re.compile(r"(?i)\b(\d{2,5})(?:\s*[-–]\s*(\d{2,5}))?\s*mm\b")
+_NUM_MM_RE = re.compile(r"(?i)\b(\d{2,5})(?:\s*[- - ]\s*(\d{2,5}))?\s*mm\b")
 # Price: "rm150", "MYR 200", "price 100-200"
-_PRICE_RE = re.compile(r"(?i)(?:rm|myr|price|cost)\s*(\d{1,7})(?:\s*[-–]\s*(\d{1,7}))?")
+_PRICE_RE = re.compile(r"(?i)(?:rm|myr|price|cost)\s*(\d{1,7})(?:\s*[- - ]\s*(\d{1,7}))?")
 
 
 def _apply_axis_range(target: dict, axis: str, lo: float, hi: float) -> None:
@@ -217,7 +217,7 @@ async def list_all_promotion_products(
     ),
     entities: Optional[list[str]] = Query(
         None,
-        description="DEPRECATED — free-text entity bag. Prefer `promotion_ids` / `product_ids`.",
+        description="DEPRECATED - free-text entity bag. Prefer `promotion_ids` / `product_ids`.",
     ),
     promotion_ids: Optional[list[str]] = Query(
         None,
@@ -242,7 +242,7 @@ async def list_all_promotion_products(
     active: Optional[bool] = Query(
         None,
         description=(
-            "Parent-promotion active filter (NOT product status — that's `status`). "
+            "Parent-promotion active filter (NOT product status - that's `status`). "
             "Omit: full catalog for interactive callers; API-key/MCP callers default "
             "to active-first. true: active-promotion lines (is_active and today within "
             "start/end), falling back to inactive-promotion lines when a narrowing "
@@ -379,7 +379,7 @@ async def list_all_promotion_products(
 
         # MCP/API-key callers default to active-first + inactive fallback (parent
         # promotion). Interactive (JWT) callers keep the full catalog unless they
-        # pass `active` explicitly — preserves the FE DataGrid's "show all" listing.
+        # pass `active` explicitly - preserves the FE DataGrid's "show all" listing.
         if active is None and is_api_key_caller:
             active = True
 

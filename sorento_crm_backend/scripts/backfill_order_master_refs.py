@@ -4,7 +4,7 @@
 PLAN-import-tracking-master-ref-upsert-backfill: the "Import tracking" path
 (`import_excel_tracking`) historically wrote `debtor_name` / `debtor_code` /
 `transporter` as free-text but never populated the `customer_id` / `transporter_id`
-FKs — so debtors/transporters that only ever arrived via import are missing from the
+FKs - so debtors/transporters that only ever arrived via import are missing from the
 `customers` / `transporters` master tables. This script reconciles every affected
 order using the SAME helpers the live create/update path uses.
 

@@ -1,4 +1,4 @@
-"""SCM M4 Slice B — decision + PO draft/confirm/GR flow numbering rules.
+"""SCM M4 Slice B - decision + PO draft/confirm/GR flow numbering rules.
 
 The M4 decision tables (``scm.recommendation_override``, ``cash_ranking_policy``,
 ``override_reason``, ``reason_action_map``) already exist from the M0 module schema
@@ -9,11 +9,11 @@ migration.
 The only new persistent artefact is two document-numbering rules the decision flow
 reuses via ``NumberingService`` (the same helper that stamps SO/PO numbers, mig 274):
 
-  * ``purchase_order_draft`` → ``PO-DRAFT-####`` — provisional number a draft PO
+  * ``purchase_order_draft`` → ``PO-DRAFT-####`` - provisional number a draft PO
     (status ``draft_recommendation``) carries until it is confirmed. Confirm assigns
     the CANONICAL ``PO-{year}/{month:02d}-####`` from the existing ``purchase_order``
-    rule (mig 274) — the draft number is throwaway, so it never resets.
-  * ``goods_received`` → ``GR-######`` — the reference stamped on a goods receipt
+    rule (mig 274) - the draft number is throwaway, so it never resets.
+  * ``goods_received`` → ``GR-######`` - the reference stamped on a goods receipt
     (``picking_headers`` ``picking_type='goods_received'``) created from an active PO.
 
 Both seeds are idempotent (``ON CONFLICT (doc_type) DO NOTHING``) so re-running never

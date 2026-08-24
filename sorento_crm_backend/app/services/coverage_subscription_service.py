@@ -41,7 +41,7 @@ def coverage_role_view(
     """Role-explicit projection of a coverage row, shared by every list serializer.
 
     Coverage has THREE distinct people and the raw columns name them after the
-    table (subscriber / target / created_by), not the role — which lets an LLM (or
+    table (subscriber / target / created_by), not the role - which lets an LLM (or
     any reader) swap "covers for" with "assigned by". This returns role-named keys
     PLUS a single natural-language ``summary`` sentence built from the same facts,
     so a consumer answers any phrasing from one authoritative line instead of
@@ -49,9 +49,9 @@ def coverage_role_view(
     together here, so they can never drift.
 
     Roles:
-      - coverer       — handles the covered colleague's tasks while they're away
-      - covers_for    — the colleague being covered (the away person)
-      - assigned_by   — who set the coverage up (a HoD); None when self-subscribed
+      - coverer       - handles the covered colleague's tasks while they're away
+      - covers_for    - the colleague being covered (the away person)
+      - assigned_by   - who set the coverage up (a HoD); None when self-subscribed
     """
     mode = "auto-assign" if redirect_assignments else "notify-only"
     coverer = coverer_name or "Someone"
@@ -252,7 +252,7 @@ class CoverageSubscriptionService:
         redirect_assignments: bool = False,
     ) -> NotificationSubscription:
         """Self-service: I (``target_id``) nominate ``coverer_id`` to cover ME while
-        I'm away. No ``manage_team`` permission required — the coverer must simply be
+        I'm away. No ``manage_team`` permission required - the coverer must simply be
         in my scope-B. Mirrors :meth:`assign_coverage` with the actor covering
         themselves; the coverer is notified best-effort."""
         target_id = str(target_id)
@@ -473,7 +473,7 @@ class CoverageSubscriptionService:
                 email_pref_attr="notify_email_on_assignment",
                 whatsapp_pref_attr="notify_whatsapp_on_assignment",
             )
-        except Exception as e:  # noqa: BLE001 — notification is best-effort
+        except Exception as e:  # noqa: BLE001 - notification is best-effort
             logger.warning(
                 "coverage-assigned notify to %s failed: %s", getattr(coverer, "id", "?"), e
             )
@@ -512,7 +512,7 @@ class CoverageSubscriptionService:
         out = []
         for r in rows:
             created_by = str(r.created_by_id) if getattr(r, "created_by_id", None) else None
-            # assigned_by is the HoD who set it up — only when it differs from the
+            # assigned_by is the HoD who set it up - only when it differs from the
             # coverer (self-subscribed rows have no assigner).
             assigned_by_name = (
                 name_by_id.get(created_by)
@@ -578,7 +578,7 @@ class CoverageSubscriptionService:
     def unsubscribe(self, subscriber_id: str, target_user_id: str) -> None:
         """Hard-delete the (subscriber, target) subscription (ADR: DELETE = hard delete).
 
-        The user no longer covers this colleague, so the row is removed entirely —
+        The user no longer covers this colleague, so the row is removed entirely  - 
         it must not linger in the list as an "Inactive" row. Re-subscribing simply
         creates a fresh row; natural expiry still soft-deactivates via
         ``deactivate_expired_subscriptions``.
@@ -678,7 +678,7 @@ def resolve_assignee_with_coverage(
     coverer and stamp the coverage context onto the event log. Otherwise return
     ``(assignee, None)``.
 
-    ONE HOP: coverage is resolved exactly once — the coverer is NOT re-resolved even
+    ONE HOP: coverage is resolved exactly once - the coverer is NOT re-resolved even
     if they are themselves covered (avoids transitive chains / loops, decision 5).
 
     Best-effort: any lookup error degrades to ``(assignee, None)`` so routing never
@@ -702,7 +702,7 @@ def resolve_assignee_with_coverage(
             from app.services.user_service import AccessAgentService
 
             coverer_dict = AccessAgentService(db)._user_info(coverer)
-        except Exception:  # noqa: BLE001 — fall back to a minimal dict
+        except Exception:  # noqa: BLE001 - fall back to a minimal dict
             coverer_dict = None
         if not coverer_dict:
             rid = getattr(coverer, "respond_user_id", None)
@@ -713,7 +713,7 @@ def resolve_assignee_with_coverage(
                 "respond_user_id": (str(rid).strip() if rid else None) or None,
             }
         return coverer_dict, covered_id
-    except Exception as e:  # noqa: BLE001 — coverage redirect is best-effort
+    except Exception as e:  # noqa: BLE001 - coverage redirect is best-effort
         logger.warning(
             "coverage redirect lookup failed for assignee %s: %s",
             (assignee or {}).get("id"),
@@ -764,14 +764,14 @@ def fan_out_coverage_copies(
     notification to every active subscriber of ``target_user_id``.
 
     For NOTIFY-ONLY coverage the task is assigned to the covered colleague, NOT to the
-    subscriber — so callers should pass ``cover_title`` / ``cover_body`` worded as
+    subscriber - so callers should pass ``cover_title`` / ``cover_body`` worded as
     "assigned to <colleague>". When omitted, falls back to prefixing the assignee's text
     with "(covering for <Name>)" (legacy). When ``cover_body`` + ``tracking`` are given,
     the WhatsApp params are rebuilt PER SUBSCRIBER (recipient = the subscriber, message =
     the coverage body) so WhatsApp doesn't say "to you" either.
 
     - In-app always; email/WhatsApp gated by the SUBSCRIBER's own per-event toggles.
-    - Deduped: skips the actual assignee (``target_user_id``) and the actor — if the
+    - Deduped: skips the actual assignee (``target_user_id``) and the actor - if the
       subscriber already gets the notification directly, no double-send (AC-CS-6).
     - Best-effort: never raises (the primary notification already committed).
     - Distinct source_entity_type prefix ('coverage:') so the per-(user,source,event)
@@ -818,7 +818,7 @@ def fan_out_coverage_copies(
                                 use_case=whatsapp_use_case,
                             ),
                         }
-                    except Exception:  # noqa: BLE001 — keep assignee data as fallback
+                    except Exception:  # noqa: BLE001 - keep assignee data as fallback
                         pass
                 NotificationService(db).create_with_channel_preferences(
                     user_id=str(sub_id),
@@ -835,12 +835,12 @@ def fan_out_coverage_copies(
                     email_pref_attr=email_pref_attr,
                     whatsapp_pref_attr=whatsapp_pref_attr,
                 )
-            except Exception as e:  # noqa: BLE001 — per-subscriber best-effort
+            except Exception as e:  # noqa: BLE001 - per-subscriber best-effort
                 logger.warning(
                     "coverage fan-out to %s for target %s failed: %s",
                     sub_id,
                     target_user_id,
                     e,
                 )
-    except Exception as e:  # noqa: BLE001 — fan-out is best-effort
+    except Exception as e:  # noqa: BLE001 - fan-out is best-effort
         logger.warning("coverage fan-out failed for target %s: %s", target_user_id, e)

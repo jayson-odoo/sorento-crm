@@ -1,4 +1,4 @@
-"""API call log admin API — external + MCP request telemetry.
+"""API call log admin API - external + MCP request telemetry.
 
 Read-only. Rows are written by `ApiCallLogMiddleware`, never by a route, so there
 is no create/update/delete surface to expose.

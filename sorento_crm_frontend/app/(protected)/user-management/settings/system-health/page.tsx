@@ -25,7 +25,7 @@ import { Switch } from '@/components/ui/switch';
 import { useSettings } from '../components/settings-context';
 
 /** Clamp a free-text number field to a positive integer (>= 1).
- *  These settings are durations and counts — 0 is not a meaningful value and
+ *  These settings are durations and counts - 0 is not a meaningful value and
  *  would either disable the check silently or divide the window to nothing. */
 function toPositiveInt(raw: string, fallback: number): number {
   const n = parseInt(raw, 10);
@@ -299,7 +299,7 @@ const SystemHealthSettingsPage = () => {
               <RiErrorWarningFill />
             </AlertIcon>
             <AlertTitle>
-              No roles or users selected — the digest and alerts fall back to superadmin and admin users.
+              No roles or users selected - the digest and alerts fall back to superadmin and admin users.
             </AlertTitle>
           </Alert>
         )}
@@ -345,7 +345,7 @@ const SystemHealthSettingsPage = () => {
             <p className="text-muted-foreground text-2sm mt-1">
               Measures the user pressing send to our reply being accepted by Respond,
               on Respond&apos;s clock. Three independent triggers: the percentile below,
-              a per-turn hard ceiling, and turns that never get a reply at all — a
+              a per-turn hard ceiling, and turns that never get a reply at all - a
               percentile alone cannot see a turn that never completes.
             </p>
           </div>
@@ -426,7 +426,7 @@ const SystemHealthSettingsPage = () => {
                 onChange={(e) => setLatencyMinSample(e.target.value)}
               />
               <div className="text-muted-foreground text-2sm">
-                Below this many turns in the hour, no percentile is claimed — a p99
+                Below this many turns in the hour, no percentile is claimed - a p99
                 over six turns is just the slowest of six.
               </div>
             </div>

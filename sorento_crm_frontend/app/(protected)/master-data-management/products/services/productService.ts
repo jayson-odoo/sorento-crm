@@ -32,7 +32,7 @@ export interface GetProductsParams extends DataGridApiFetchParams {
   item_type?: string;
   /** Filter by position in the variant graph. Default 'all' (no filter). */
   variant_filter?: 'base' | 'variant' | 'all';
-  /** Deep link from a "products discontinued" notification — show only that batch. */
+  /** Deep link from a "products discontinued" notification - show only that batch. */
   discontinued_batch_id?: string;
 }
 

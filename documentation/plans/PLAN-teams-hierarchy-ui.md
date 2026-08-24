@@ -1,6 +1,6 @@
-# PLAN — Teams hierarchy UI (tree + members popover + drag-drop reparent)
+# PLAN - Teams hierarchy UI (tree + members popover + drag-drop reparent)
 
-Status: **Done — verified in browser** (2026-06-28). BE enrich + FE tree/popover/drag-drop shipped; pytest (9) + vitest (6) green; reparent PUT 200 confirmed via Playwright MCP.
+Status: **Done - verified in browser** (2026-06-28). BE enrich + FE tree/popover/drag-drop shipped; pytest (9) + vitest (6) green; reparent PUT 200 confirmed via Playwright MCP.
 
 ## Goal
 

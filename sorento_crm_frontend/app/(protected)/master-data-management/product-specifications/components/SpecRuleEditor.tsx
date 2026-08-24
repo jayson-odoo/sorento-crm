@@ -31,7 +31,7 @@ import type { SpecDerivationRule } from '../types/productSpec.types';
  *
  * This is the half that used to be a Python list, which made "add a spec key" a button
  * that created a key nothing would ever fill in. Rules are tried in order and the first
- * one to match wins, so the list is a priority list — "stainless steel" has to sit
+ * one to match wins, so the list is a priority list - "stainless steel" has to sit
  * above "steel" or every stainless product reads as plain steel.
  *
  * Order is set by dragging. It was a pair of arrow buttons, which is a fine way to
@@ -46,7 +46,7 @@ const MATCH_KINDS: { value: string; label: string; hint: string }[] = [
   {
     value: 'ends_with',
     label: 'Text ends with',
-    hint: 'The last thing named. "SQUATTING PAN" — an earlier word describes what it is FOR.',
+    hint: 'The last thing named. "SQUATTING PAN" - an earlier word describes what it is FOR.',
   },
   {
     value: 'present',
@@ -61,7 +61,7 @@ const MATCH_KINDS: { value: string; label: string; hint: string }[] = [
   {
     value: 'code_contains',
     label: 'Product code contains',
-    hint: 'Anywhere in the code. "SRTSC" matches SRTSCBD312 — for facts only the code states.',
+    hint: 'Anywhere in the code. "SRTSC" matches SRTSCBD312 - for facts only the code states.',
   },
   {
     value: 'code_starts_with',

@@ -6,7 +6,7 @@ import the scope sentinel/helpers from here without a circular import (the
 event-registration + predicate machinery lives in
 ``app/services/company_scope.py``, which DOES pull in models).
 
-Multi-company data isolation — see
+Multi-company data isolation - see
 ``documentation/plans/PLAN-multi-company-isolation.md``.
 """
 from __future__ import annotations
@@ -98,7 +98,7 @@ class CompanyScopedMixin:
     model with a ``company_id`` column is a subclass of this mixin.
 
     ``company_id`` is nullable for the backfill window; a later migration flips it
-    NOT NULL for every owned table EXCEPT attachments (which stay nullable — a
+    NOT NULL for every owned table EXCEPT attachments (which stay nullable - a
     null company means a shared form attachment). Models that must remain
     permanently nullable/shared set ``__company_shared__ = True``.
 
@@ -107,7 +107,7 @@ class CompanyScopedMixin:
     every owned table (except attachments), but this column stays
     ``nullable=True`` at the ORM level ON PURPOSE. The test suite builds its
     schema with sqlite ``Base.metadata.create_all`` (no alembic), and owned-row
-    fixtures insert before the request-time auto-stamp would fire — a model-level
+    fixtures insert before the request-time auto-stamp would fire - a model-level
     NOT NULL would break those inserts. Runtime safety does NOT depend on this
     flag: the ``before_insert`` auto-stamp + ``do_orm_execute`` scope filter
     already guarantee no null-company write escapes on Postgres, where the hard

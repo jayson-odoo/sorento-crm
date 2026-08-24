@@ -5,7 +5,7 @@
  * docs/plans/PLAN-record-navigation-standardization.md). Covers:
  *  - renders "index / total"
  *  - Prev disabled when prevId == null; Next disabled when nextId == null
- *  - "— / total" when index is null (out-of-position)
+ *  - " -  / total" when index is null (out-of-position)
  *  - isLoading -> "… / total"
  * Plus a smoke test that the legacy array (list) mode still renders, so the
  * dual-mode contract isn't broken.
@@ -21,7 +21,7 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push }),
 }));
 
-describe('RecordNavigation — IDs mode', () => {
+describe('RecordNavigation - IDs mode', () => {
   it('renders the "index / total" counter', () => {
     render(
       <RecordNavigation
@@ -79,7 +79,7 @@ describe('RecordNavigation — IDs mode', () => {
     expect(screen.getByLabelText('Next record')).toBeDisabled();
   });
 
-  it('renders "— / total" when index is null (position unknown)', () => {
+  it('renders " -  / total" when index is null (position unknown)', () => {
     render(
       <RecordNavigation
         basePath="/x"
@@ -89,7 +89,7 @@ describe('RecordNavigation — IDs mode', () => {
         // currentIndex omitted -> index unknown
       />,
     );
-    expect(screen.getByText('— / 23')).toBeInTheDocument();
+    expect(screen.getByText(' -  / 23')).toBeInTheDocument();
   });
 
   it('renders "… / total" while loading', () => {
@@ -138,7 +138,7 @@ describe('RecordNavigation — IDs mode', () => {
   });
 });
 
-describe('RecordNavigation — list (array) mode still works', () => {
+describe('RecordNavigation - list (array) mode still works', () => {
   it('computes prev/next from items and renders the counter', () => {
     const items = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
     render(

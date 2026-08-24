@@ -22,7 +22,7 @@ export const metadata: Metadata = {
 };
 
 // The `{id}` param is opaque plumbing (the product-domain deep-link shape, §5.3);
-// it is NOT rendered as visible UI text — the human-readable content is the iframe's (AC-41/D-8).
+// it is NOT rendered as visible UI text - the human-readable content is the iframe's (AC-41/D-8).
 export default async function IdeaDetailPage({
   params,
 }: {

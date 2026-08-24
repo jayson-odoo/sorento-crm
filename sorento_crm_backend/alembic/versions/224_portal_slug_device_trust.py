@@ -1,12 +1,12 @@
 """Bookmarkable portal links + device trust.
 
-- `respond_contacts.portal_slug` — stable per-contact slug for the
+- `respond_contacts.portal_slug` - stable per-contact slug for the
   bookmarkable portal URL `/portal/c/{slug}`. Lazily minted on the next
   portal-link request, hence nullable with a partial unique index.
-- `portal_tokens.is_impersonation` — admin "view as contact" tokens are
+- `portal_tokens.is_impersonation` - admin "view as contact" tokens are
   excluded from the sliding 30-day TTL and never persist on the admin's
   machine. Backfilled from `contact_impersonation_sessions`.
-- `respond_workspaces.whatsapp_number` — the business WhatsApp number used
+- `respond_workspaces.whatsapp_number` - the business WhatsApp number used
   for the verify page's wa.me click-to-chat escape hatch (1 workspace =
   1 WhatsApp channel). Env `PORTAL_WHATSAPP_NUMBER` acts as fallback.
 
@@ -46,7 +46,7 @@ def upgrade() -> None:
         """
     )
     # Backfill: any token ever referenced by an impersonation session is an
-    # impersonation token (JOIN-based "set to correct value where mismatch" —
+    # impersonation token (JOIN-based "set to correct value where mismatch"  - 
     # safe to re-run).
     op.execute(
         """

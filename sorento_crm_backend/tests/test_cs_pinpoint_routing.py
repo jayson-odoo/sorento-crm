@@ -1,7 +1,7 @@
 """Per-salesman → CS PIC pin-point routing + procurement CS handoff finalize.
 
 Covers (PLAN-procurement-cs-handoff-and-pinpoint-routing.md):
-  - FormSLAOrchestrator._resolve_pinned_assignee branches (D1–D6): not-pinnable
+  - FormSLAOrchestrator._resolve_pinned_assignee branches (D1 - D6): not-pinnable
     use_case, no contact, no pin, stale pin (non-member), inactive user, valid pin.
   - CsRoutingService.upsert validation (D4/D5): use_case + team-membership.
   - PurchaseRequestService finalize (D9): status guard, idempotency, happy path

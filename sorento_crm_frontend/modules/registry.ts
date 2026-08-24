@@ -3,7 +3,7 @@
  *
  * Each migrated module ships a directory under `modules/<key>/` containing JSON metadata
  * (menu, routes, purge tables). Because Next.js builds are static, a generated registry
- * file lists every module's assets via static imports — Webpack inlines them at build time.
+ * file lists every module's assets via static imports - Webpack inlines them at build time.
  *
  * To add a module: drop a folder here with `menu.json`, `routes.json`, `purge_tables.json`,
  * then append it to `MODULE_REGISTRY` below. Phase 8 (upload flow) edits this file

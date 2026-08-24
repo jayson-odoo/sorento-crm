@@ -129,7 +129,7 @@ def _channel_prefs(user) -> dict:
             getattr(user, "notify_push_message_scope", None) or DEFAULT_MESSAGE_PUSH_SCOPE
         ),
     }
-    # Email defaults true, whatsapp false — match the column server_defaults.
+    # Email defaults true, whatsapp false - match the column server_defaults.
     for f in _SLA_NOTIFY_FIELDS:
         out[f] = bool(getattr(user, f, f.startswith("notify_email")))
     return out
@@ -153,7 +153,7 @@ async def set_channel_preferences(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Update the current user's own channel toggles. Self-service only — a user
+    """Update the current user's own channel toggles. Self-service only - a user
     can only change their own preferences (keyed off the authenticated id)."""
     user = db.query(User).filter(User.id == current_user["id"]).first()
     if not user:

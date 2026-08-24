@@ -31,7 +31,7 @@ vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => hasPermission(),
 }));
 
-// DataGrid persists column prefs via this hook (fires network) — stub it.
+// DataGrid persists column prefs via this hook (fires network) - stub it.
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
@@ -142,7 +142,7 @@ describe('SLA KPI Dashboard (TCK-32 UX1)', () => {
     expect((getKpiTrend as any).mock.calls[0][1]).toEqual(summaryWindow);
 
     await waitFor(() => expect(getKpiTasks).toHaveBeenCalled());
-    // getKpiTasks(scope, pagination, sorting, view, state, window) — window is arg 6.
+    // getKpiTasks(scope, pagination, sorting, view, state, window) - window is arg 6.
     expect((getKpiTasks as any).mock.calls[0][5]).toEqual(summaryWindow);
   });
 

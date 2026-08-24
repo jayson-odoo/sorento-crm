@@ -87,7 +87,7 @@ def main() -> int:
                 db.commit()
                 made += 1
                 logger.info("Thumb %s -> %s (%d bytes).", att.id, thumb_key, len(thumb))
-            except Exception as exc:  # noqa: BLE001 — one bad row must not abort the batch
+            except Exception as exc:  # noqa: BLE001 - one bad row must not abort the batch
                 db.rollback()
                 failed += 1
                 logger.error("Failed %s: %s", att.id, exc)

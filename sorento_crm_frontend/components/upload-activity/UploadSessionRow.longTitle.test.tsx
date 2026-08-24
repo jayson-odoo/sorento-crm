@@ -34,7 +34,7 @@ function titleEl() {
   return screen.getByTitle(LONG_TITLE);
 }
 
-describe('UploadSessionRow — long filenames', () => {
+describe('UploadSessionRow - long filenames', () => {
   it('shows the whole filename rather than clipping it', () => {
     render(<UploadSessionRow session={session()} />);
     expect(titleEl()).toHaveTextContent(LONG_TITLE);

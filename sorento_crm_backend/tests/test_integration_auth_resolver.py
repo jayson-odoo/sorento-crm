@@ -1,4 +1,4 @@
-"""Slice 4 of AutoCount Group A — resolving a key to an RBAC principal.
+"""Slice 4 of AutoCount Group A - resolving a key to an RBAC principal.
 
 This is the join between the key lifecycle and Sorento's existing RBAC: a
 presented key becomes the ``users`` row the integration acts as, and from there

@@ -50,7 +50,7 @@ function filterMenuByPermission(items: MenuConfig, permissionSet: Set<string>): 
   });
 }
 
-/** Hide superadmin-only entries from non-superadmins. `isSuperadmin` null = still loading — show all (avoids flicker for real superadmins). */
+/** Hide superadmin-only entries from non-superadmins. `isSuperadmin` null = still loading - show all (avoids flicker for real superadmins). */
 function filterMenuBySuperadmin(items: MenuConfig, isSuperadmin: boolean | null): MenuConfig {
   if (isSuperadmin === null || isSuperadmin) return items;
   return items
@@ -69,7 +69,7 @@ function filterMenuBySuperadmin(items: MenuConfig, isSuperadmin: boolean | null)
     );
 }
 
-/** Hide menu branches tied to disabled tenant modules (null = still loading / error — show all). */
+/** Hide menu branches tied to disabled tenant modules (null = still loading / error - show all). */
 function filterMenuByModule(items: MenuConfig, enabledModuleKeys: Set<string> | null): MenuConfig {
   if (!enabledModuleKeys) return items;
   return items
@@ -97,7 +97,7 @@ export function SidebarMenu() {
   const { permissionSet, isLoading } = usePermissions();
   const { enabledModuleKeys, isLoading: modulesLoading } = useTenantModules();
   const wfModuleEnabled = enabledModuleKeys?.has('workflow_forms') ?? false;
-  /** Avoid calling published-for-submission without RBAC — global QueryCache onError would toast 403 on every page. */
+  /** Avoid calling published-for-submission without RBAC - global QueryCache onError would toast 403 on every page. */
   const canFetchPublishedWorkflowForms = useHasAnyPermission(
     [...WORKFLOW_PUBLISHED_FOR_SUBMISSION_PERMISSIONS],
   );

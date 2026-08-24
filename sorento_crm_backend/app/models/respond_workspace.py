@@ -2,7 +2,7 @@
 
 The `commercial_leads` reciprocal relationship is added at runtime by
 `app/modules/commercial_core/_base_patches.py` when the commercial_core
-module is enabled — keeps this base class commercial-free.
+module is enabled - keeps this base class commercial-free.
 """
 from __future__ import annotations
 
@@ -36,16 +36,16 @@ class RespondWorkspace(Base):
     # Stored as a UUID string; server-side only, NEVER rendered in the FE.
     # NULL keeps ideation dormant/fail-closed for this workspace (no create_idea).
     ideation_product_id = Column(String(64), nullable=True)
-    # Ideation shared-service connection (DB-driven, per workspace — mirrors the
+    # Ideation shared-service connection (DB-driven, per workspace - mirrors the
     # respond.io api_key encrypted pattern). base URL in plain text; the intake
     # API key stored Fernet-encrypted (decrypt server-side for the create_idea
     # call). Blank => fall back to app.config settings, then fail-closed.
     ideation_shared_service_url = Column(String(512), nullable=True)
     ideation_intake_api_key_ciphertext = Column(Text, nullable=True)
-    # Ideas iframe embed SSO (DB-driven, per workspace — mirrors the intake-key
+    # Ideas iframe embed SSO (DB-driven, per workspace - mirrors the intake-key
     # pattern above). connection_id + FE base URL in plain text; the signing secret
     # stored Fernet-encrypted (decrypt server-side to mint the SSO assertion). The
-    # FE base URL is the shared-service FRONTEND root the iframe points at — distinct
+    # FE base URL is the shared-service FRONTEND root the iframe points at - distinct
     # from ideation_shared_service_url (the backend base for POST /embed/session).
     # Any blank => fall back to app.config settings, then embed stays dormant.
     ideation_embed_connection_id = Column(String(128), nullable=True)

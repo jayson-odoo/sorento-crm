@@ -47,7 +47,7 @@ class ForkSafeWorker(Worker):
     work-horse before running the job.
 
     RQ forks a work-horse per job. The child inherits the parent's open DB
-    sockets — and when ``ENABLE_SCHEDULER=true`` the parent's APScheduler
+    sockets - and when ``ENABLE_SCHEDULER=true`` the parent's APScheduler
     threads are frequently mid-query, so a live connection is shared across the
     fork. Two processes on one libpq socket corrupts the protocol, surfacing far
     from the cause as "This result object does not return rows. It has been
@@ -80,7 +80,7 @@ def _maybe_start_scheduler():
         # Fail fast: this container is the single owner of all cron ticks
         # (email outbox drainer, scheduled tasks heartbeat). Running on with a
         # dead scheduler silently strands work (e.g. email_outbox rows pending
-        # forever) — crash instead so `restart: unless-stopped` surfaces it.
+        # forever) - crash instead so `restart: unless-stopped` surfaces it.
         logger.exception("Failed to start APScheduler; exiting so the container restarts visibly")
         sys.exit(1)
 
@@ -160,7 +160,7 @@ if __name__ == '__main__':
     # auto-stamp here too. The worker never runs the API's startup_event, and
     # RQ forks a work-horse per job that inherits these Session-class listeners
     # from the parent. NOTE: worker jobs must set the session scope from the
-    # ImportJob company snapshot (later slice) — until then owned-table writes in
+    # ImportJob company snapshot (later slice) - until then owned-table writes in
     # jobs are fail-closed (rejected). See app/services/company_scope.py.
     from app.services.company_scope import register_company_scope_listeners
     register_company_scope_listeners()

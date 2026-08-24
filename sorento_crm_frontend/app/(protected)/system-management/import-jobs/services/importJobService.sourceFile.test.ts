@@ -15,7 +15,7 @@ function okResponse(body: unknown): Response {
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('getImportJobSourceUrl — retained source-file download', () => {
+describe('getImportJobSourceUrl - retained source-file download', () => {
   it('hits the /jobs/{id}/source endpoint and returns the signed url payload', async () => {
     mockedFetch.mockResolvedValue(
       okResponse({ url: 'https://signed.test/import-sources/abc/f.xlsx?sig=1', filename: 'f.xlsx', size: 123 }),

@@ -1,4 +1,4 @@
-"""Eligibility listing endpoint — returns registered (table, column) pairs for the FE binding picker."""
+"""Eligibility listing endpoint - returns registered (table, column) pairs for the FE binding picker."""
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from app.database import get_db

@@ -1,8 +1,8 @@
-"""C3 — UUIDPath allowlist sweep (PLAN-fix-security-cluster.md).
+"""C3 - UUIDPath allowlist sweep (PLAN-fix-security-cluster.md).
 
 Two concerns are pinned here, both sqlite-free (no app/DB boot required):
 
-1. Behaviour of the shared guard `validate_uuid_path` — a non-UUID id raises a
+1. Behaviour of the shared guard `validate_uuid_path` - a non-UUID id raises a
    clean HTTP 404 (existing convention), a real UUID is accepted + lowercased.
    Every allowlisted detail handler calls this as the first line of its `try`,
    so this is the unit-level proof of "bad id -> 404, not 500".
@@ -10,7 +10,7 @@ Two concerns are pinned here, both sqlite-free (no app/DB boot required):
 2. Source-introspection guardrails: the guard IS wired onto strictly-internal
    UUID PK params, and is NOT wired onto the excluded params (respond_io_id /
    code-or-uuid resolvers / dual-id contact routes / already-UUID-typed params).
-   These would 422/404 otherwise-valid n8n / portal calls — see the CRITICAL
+   These would 422/404 otherwise-valid n8n / portal calls - see the CRITICAL
    EXCLUSION LIST in the plan.
 """
 from __future__ import annotations
@@ -114,13 +114,13 @@ def test_guard_applied_to_allowlisted_param(rel, param):
 # 2b. Guard is NOT applied to excluded params (would break n8n / portal)       #
 # --------------------------------------------------------------------------- #
 def test_external_conversation_variables_respond_io_id_untouched():
-    """Respond.io contact id (not a UUID) is a VALID value — must stay a string."""
+    """Respond.io contact id (not a UUID) is a VALID value - must stay a string."""
     s = _src("external/conversation_variables.py")
     assert "validate_uuid_path" not in s
 
 
 def test_orders_order_id_not_guarded():
-    """get_order resolves UUID OR order_number — a non-UUID is valid."""
+    """get_order resolves UUID OR order_number - a non-UUID is valid."""
     assert "validate_uuid_path(order_id" not in _src("order_management/orders.py")
 
 
@@ -145,7 +145,7 @@ def test_code_or_uuid_resolvers_not_guarded(rel, param):
 
 
 def test_user_management_contacts_contact_id_not_guarded():
-    """contact_id is heavily overloaded (respond_io_id confusion) — excluded."""
+    """contact_id is heavily overloaded (respond_io_id confusion) - excluded."""
     assert "validate_uuid_path(contact_id" not in _src("user_management/contacts.py")
 
 
@@ -168,7 +168,7 @@ def test_sla_tracking_tracking_id_not_guarded():
     ],
 )
 def test_conversation_dual_id_contact_lookup_preserved(rel):
-    """The RespondContact (respond_io_id OR internal id) fallback must remain —
+    """The RespondContact (respond_io_id OR internal id) fallback must remain  - 
     the sweep only guarded the entity PK path param, never this contact lookup."""
     s = _src(rel)
     assert "respond_io_id == contact_id_val" in s

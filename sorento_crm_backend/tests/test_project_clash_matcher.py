@@ -1,4 +1,4 @@
-"""S2 golden set — project registration clash matcher (ADR-0004, AC-C5/C6).
+"""S2 golden set - project registration clash matcher (ADR-0004, AC-C5/C6).
 
 This is the module that decides whether a salesperson may claim a development, so a
 wrong answer here either lets two people work the same tender (the problem the module

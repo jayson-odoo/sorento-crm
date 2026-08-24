@@ -35,7 +35,7 @@ _NOTIFICATION_TYPE_TO_EVENT_KEY: dict[str, str] = {
     "form_sla:resolved": "form_sla_updated",
     "form_sla_assigned": "form_sla_assigned",
     "form_sla_escalated": "form_sla_escalated",
-    # SLA deadline extended (PLAN-sla-extend-deadline) — next-tier notification. Sent
+    # SLA deadline extended (PLAN-sla-extend-deadline) - next-tier notification. Sent
     # as conversation_sla or form_sla with event_type="deadline_extended"; both map to
     # the same outbox event key / template use case (sla_deadline_extended).
     "form_sla:deadline_extended": "sla_deadline_extended",
@@ -122,7 +122,7 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
 
     Window-aware: open -> text, closed -> the use-case's approved template
     (sla_escalation / sla_assignment). Best-effort: marks the delivery sent/failed
-    and never raises — the originating escalation/assignment already committed.
+    and never raises - the originating escalation/assignment already committed.
     """
     from app.services.respond_link_service import resolve_user_respond_contact
     from app.services.respond_messaging_service import send_text_or_template
@@ -150,7 +150,7 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
     context_vars = data.get("whatsapp_context_vars") if isinstance(data.get("whatsapp_context_vars"), dict) else None
 
     identifier = str(contact.respond_io_id)
-    # Every send writes a respond_io outbox log — success OR failure — same as the
+    # Every send writes a respond_io outbox log - success OR failure - same as the
     # complaint / OTP / SLA-escalation paths via `_send_and_log`. Local testing runs
     # with intentionally-wrong creds, so a 401'd send must still be visible in the
     # Respond outbox, not just flip the delivery row to failed.
@@ -192,7 +192,7 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
         db.commit()
     except Exception as e:  # best-effort: degrade, never raise
         logger.warning("WhatsApp delivery failed for notification %s: %s", notification.id, e)
-        # Log the payload that was ACTUALLY attempted (text vs template) — the
+        # Log the payload that was ACTUALLY attempted (text vs template) - the
         # window-aware send stamps it on the exception. Closed window => template,
         # so a failed closed-window send is logged as a template attempt, not text.
         request_payload = getattr(e, "request_payload", request_payload)

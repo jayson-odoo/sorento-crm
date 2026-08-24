@@ -80,7 +80,7 @@ def _seed_chat_default(db, use_case="complaint_chat", *, mapping=None):
 
 
 class _FakeTemplateSend:
-    """Stand-in for send_template_for_use_case — captures kwargs, canned result."""
+    """Stand-in for send_template_for_use_case - captures kwargs, canned result."""
 
     def __init__(self, result=None, raises=None):
         self.result = result
@@ -107,7 +107,7 @@ def _template_result(params=("Jay", "Ms Ang", "hi there")):
 
 
 class _FakeClient:
-    """Stand-in for RespondClient — records send_message(identifier, text) calls."""
+    """Stand-in for RespondClient - records send_message(identifier, text) calls."""
 
     def __init__(self, response=None, raises=None):
         self.response = response if response is not None else {"id": "m-text"}
@@ -306,7 +306,7 @@ def test_single_line_not_flattened_in_either_window(db):
 
 def test_in_window_delivers_raw_text_even_when_chat_template_configured(db):
     """Regression: in-window must deliver the RAW multiline text verbatim, NOT the
-    rendered template body — even when a valid *_chat default IS configured. This is
+    rendered template body - even when a valid *_chat default IS configured. This is
     the exact bug the fix addressed (the old choke point rendered the body in-window)."""
     from app.services import respond_chat_template_service as svc
 
@@ -332,7 +332,7 @@ def test_in_window_delivers_raw_text_even_when_chat_template_configured(db):
         )
     assert out["sent_as"] == "text"
     assert out["flattened"] is False
-    # Contact received the RAW multiline text — the template body was NOT rendered.
+    # Contact received the RAW multiline text - the template body was NOT rendered.
     assert client.send_message_calls == [("id:60123", raw)]
     assert tmpl.calls == []
 
@@ -545,7 +545,7 @@ def test_chat_template_preview_no_valid_default_returns_not_configured(db):
 
 
 def test_chat_template_preview_context_builder_failure_is_guarded(db):
-    """A context_builder that raises must not break the preview — configured stays
+    """A context_builder that raises must not break the preview - configured stays
     True and non-message slots depending on it resolve to "" instead of 500ing."""
     from app.services import respond_chat_template_service as svc
 

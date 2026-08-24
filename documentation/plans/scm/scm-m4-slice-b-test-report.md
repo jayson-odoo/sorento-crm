@@ -1,10 +1,10 @@
-# SCM M4 Slice B — Test Report (decisions + PO draft/confirm/GR)
+# SCM M4 Slice B - Test Report (decisions + PO draft/confirm/GR)
 
-> **Revised 2026-07-16 (M4-D17..D23, slice-B UX grill).** Decisions are now STAGED — Accept/Adjust/
+> **Revised 2026-07-16 (M4-D17..D23, slice-B UX grill).** Decisions are now STAGED - Accept/Adjust/
 > Reject set status only; a new **Confirm decisions** step materialises the consolidated draft POs
 > (`decision_service.confirm_decisions`, idempotent). Adjusted qty reflects in the grid; rank shows a
 > clean 1..N; the "Apply budget" button is gone (live funding); sections are collapsible; the past-run
-> banner is a slim text line. pytest reworked to the staged model — **16 pass**
+> banner is a slim text line. pytest reworked to the staged model - **16 pass**
 > (`tests/scm/test_m4_decisions.py`, incl. `confirm_decisions` consolidation/idempotency/on-order +
 > a confirm-decisions endpoint + auth). Full flow re-verified via Playwright-MCP on the BRW-IB run
 > (81 buys): Adjust FT-B 768→100 (grid shows struck 768→100, cash RM168,192→RM21,900, badge Adjusted,
@@ -14,8 +14,8 @@
 Keyed to `scm-m4-cash-copilot-acceptance-criteria.md`. Suites: **pytest 13**
 (`tests/scm/test_m4_decisions.py`), **vitest 71** (12 files under `app/(protected)/scm/**`;
 full SCM vitest suite 213 green, no regressions), **playwright 1**
-(`e2e/scm-m4-copilot.spec.ts` — written; authenticates + drives the flow on prod but times out
-on the heavy 609-buy grid; the loop itself is Playwright-MCP-verified — see AC-M4.15).
+(`e2e/scm-m4-copilot.spec.ts` - written; authenticates + drives the flow on prod but times out
+on the heavy 609-buy grid; the loop itself is Playwright-MCP-verified - see AC-M4.15).
 Stack: FE :3000 (dev/HMR during build; prod for handoff), BE :8005, worker, live prod-copy DB.
 Phase-3 reviewer verdict: **READY, no blockers**.
 
@@ -28,15 +28,15 @@ Phase-3 reviewer verdict: **READY, no blockers**.
 | AC-M4.9 (bulk accept funded / bulk confirm via shared bulk-action + count-confirm) | PASS | vitest + browser: unified `BulkActionsMenu` Actions dropdown, count-bearing confirm ("Accept N", "Confirm N drafts"); select-all-all-rows, action scoped to applicable subset, hidden when none apply. |
 | AC-M4.14 (no-orphan: PO list/detail CRUD, DataGrid, no UUID, SearchableSelect, extractApiError, buildDataGridParams) | PASS | vitest: PO list (drafts+active, hyperlink, select-all, Create-GR per-row on active), PO detail (all sections + empty states); services use shared helpers; no UUID rendered. |
 | AC-M4.15 (Playwright full loop, 375+1280, console clean) | PARTIAL (MCP-verified) | The full loop (accept → consolidated draft POs → confirm → renumber `PO-YYYY/MM-####` → create GR) is **verified end-to-end via Playwright-MCP on real data, console 0 errors**. The persisted spec `e2e/scm-m4-copilot.spec.ts` authenticates + drives the flow correctly but **times out (~4.2m > 240s budget) on the heavy real-data reorder grid (609-buy run)**. Follow-up: point the spec at a light run (e.g. a few-buy warehouse) or a seeded fixture so it completes in budget. Not a feature defect. |
-| Numbering (M4-D6) | PASS | Confirm assigns via canonical `NumberingService` ("purchase_order") — `PO-YYYY/MM-####`, FOR UPDATE lock, no NaN/collision. Seed-counter offset = data artifact. |
+| Numbering (M4-D6) | PASS | Confirm assigns via canonical `NumberingService` ("purchase_order") - `PO-YYYY/MM-####`, FOR UPDATE lock, no NaN/collision. Seed-counter offset = data artifact. |
 | create-GR (M4-D6) | PASS | pytest + browser: creates `picking_headers` goods_received (`picking_status='posted'`, in the check-constraint set), stamps `qty_received`, rejects GR-from-draft, links via source_entity. |
 | Auth (RBAC) | PASS | pytest: reads `scm.dashboard.view`, writes `scm.reorder.run`; denial covered. |
 
 ## Review fixes applied
 - Confirm/create-GR now invalidate the on-order dashboard caches (net-position/rollups/products/
-  warehouses/suppliers), not just the PO list — stale-on-order after confirm fixed.
+  warehouses/suppliers), not just the PO list - stale-on-order after confirm fixed.
 - Accept-response contract doc corrected (`draft_po_id`).
 
-## Deferred hardening (reviewer should-fix, low exposure — see PLAN "Slice B Phase-3 review follow-ups")
+## Deferred hardening (reviewer should-fix, low exposure - see PLAN "Slice B Phase-3 review follow-ups")
 Draft-consolidation concurrency guard; re-accept-of-confirmed-PO line guard; fractional-qty GR
 rounding; `override_supplier_id`→`_code` rename.

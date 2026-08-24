@@ -1,5 +1,5 @@
 /**
- * Bookmarkable portal links — public states (no credentials required).
+ * Bookmarkable portal links - public states (no credentials required).
  *
  * The authed golden path (token link → slug redirect → device trust →
  * logout) needs a live OTP/WhatsApp loop, so it is covered by pytest at the
@@ -8,7 +8,7 @@
  */
 import { expect, test } from '@playwright/test';
 
-test.describe('portal slug links — public states', () => {
+test.describe('portal slug links - public states', () => {
   test('plain /portal with no session shows the link-request card', async ({ page }) => {
     await page.goto('/portal');
     await expect(page.getByText('No portal session on this device.')).toBeVisible();

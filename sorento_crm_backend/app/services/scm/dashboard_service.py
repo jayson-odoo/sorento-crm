@@ -5,14 +5,14 @@ canonical ``public`` master data, and computes per SKU×warehouse **health statu
 **valuation**, **imbalance**, and the attention ranking that drives the default sort.
 
 Health status (per SKU×warehouse or per aggregated product) precedence:
-  1. ``stockout``  — quantity_on_hand == 0 (rendered "Out of stock", M8-B7)
-  2. ``dead``      — on_hand > 0 AND last outbound movement older than the resolved
+  1. ``stockout``  - quantity_on_hand == 0 (rendered "Out of stock", M8-B7)
+  2. ``dead``      - on_hand > 0 AND last outbound movement older than the resolved
                      ``reorder_policy.dead_stock_days`` (or never moved)
-  3. ``low``       — on_hand > 0, not dead, and ``net <= reorder_point`` (the demand-aware
+  3. ``low``       - on_hand > 0, not dead, and ``net <= reorder_point`` (the demand-aware
                      engine ROP from the latest completed run); rendered "Low stock" (M8-B7)
-  4. ``incoming``  — on_hand > 0, not dead/low, and supply is on its way (``on_order`` from
+  4. ``incoming``  - on_hand > 0, not dead/low, and supply is on its way (``on_order`` from
      ``scm.net_position_v``, which reads SPO ALLOCATIONS, not purchase orders)
-  5. ``healthy``   — otherwise
+  5. ``healthy``   - otherwise
 
 ``stockout_with_committed`` = on_hand == 0 AND committed > 0 (the reorder-signal
 attention badge). ``imbalance`` = the same SKU is stocked-out in one warehouse while
@@ -40,7 +40,7 @@ from app.services.scm.reorder_policy import (
     resolve_global_overstock_days,
 )
 
-# ABC value class rank (A most valuable) — used to pick a product-level class
+# ABC value class rank (A most valuable) - used to pick a product-level class
 # across its per-warehouse classification rows.
 _ABC_RANK = {"A": 0, "B": 1, "C": 2}
 
@@ -65,7 +65,7 @@ class ScmFilters:
     # reachable rather than silently hidden.
     abc: Optional[str] = None
     xyz: Optional[str] = None
-    # Product-lifecycle scope. DEFAULTS are the FOCUSED view — active + ongoing —
+    # Product-lifecycle scope. DEFAULTS are the FOCUSED view - active + ongoing  - 
     # so inactive/discontinued SKUs never inflate headline counts/valuations unless
     # the user explicitly widens the scope. active_status ∈ {active,inactive,all}
     # → products.is_active; lifecycle ∈ {ongoing,discontinued,all} → is_discontinued.
@@ -86,7 +86,7 @@ def _compute_status(on_hand: float, on_order: float, committed: float,
     if last_movement is None or (today - last_movement).days > dead_days:
         return "dead"
     # M8-B7: a stocked, non-dead SKU sitting at/under its demand-aware reorder point
-    # reads as ``low`` (Low stock) rather than healthy/incoming — reorder is the signal
+    # reads as ``low`` (Low stock) rather than healthy/incoming - reorder is the signal
     # that matters. ``net`` already folds in on_order, so an inbound PO that still leaves
     # net at/under ROP is genuinely low. A null reorder_point (no completed run / no rec)
     # skips this branch, so an un-planned SKU never falsely reads as low.
@@ -106,7 +106,7 @@ def _attention_rank(status: str, stockout_with_committed: bool) -> int:
 def _days_of_cover(net_position: float, avg_daily_demand: Optional[float]) -> Optional[float]:
     """Whole days of forward cover = net_position ÷ avg_daily_demand.
 
-    ``None`` when there is no forward cover to quote — either no demand
+    ``None`` when there is no forward cover to quote - either no demand
     (avg_daily_demand 0/None, so cover is effectively infinite; the FE renders ∞
     when there is stock) or a deficit (net_position < 0, nothing to cover with).
     """
@@ -122,13 +122,13 @@ def _is_overstock(on_hand: float, days_of_cover: Optional[float],
     """Overstock = over-invested inventory. A stocked SKU qualifies TWO ways:
 
       * finite forward cover above the ceiling (``days_of_cover > ceiling``), OR
-      * INFINITE cover with stock — ``on_hand > 0`` but no demand
+      * INFINITE cover with stock - ``on_hand > 0`` but no demand
         (``avg_daily_demand`` 0/None, so days-of-cover is ∞): capital parked on a
         non-mover is over-invested too.
 
     Zero-stock rows never count (nothing is invested). Keeping the ∞ case here makes
     the grid colour, the rollup count/valuation and the ``health=overstock`` filter all
-    agree (S1) — previously the grid painted ∞-cover overstock while the count excluded it.
+    agree (S1) - previously the grid painted ∞-cover overstock while the count excluded it.
     """
     if on_hand <= 0:
         return False
@@ -142,7 +142,7 @@ def _is_below_rop(on_hand: float, net: float, reorder_point: Optional[float]) ->
     reorder point (engine ROP from the latest completed run, NOT a static min qty).
 
     ``on_hand > 0`` keeps stockout precedence (M8-B2: an ``on_hand <= 0`` product is
-    ``stockout``, never ``low`` — counted in the Stockouts tile only). A null
+    ``stockout``, never ``low`` - counted in the Stockouts tile only). A null
     ``reorder_point`` (no completed run, or no rec for this product) never counts, so
     an un-planned SKU is simply absent from the low set rather than falsely flagged."""
     if reorder_point is None:
@@ -197,8 +197,8 @@ def _dominant_class(rows: List[dict], class_key: str, weight_key: str) -> Option
     """Pick a single product-level ABC/XYZ class across per-warehouse rows.
 
     Chooses the class of the warehouse row carrying the largest ``weight_key``
-    (annual_value for ABC, avg_daily_demand for XYZ) — the dominant value/demand
-    location — so a product classed A anywhere it matters surfaces as A. Ties
+    (annual_value for ABC, avg_daily_demand for XYZ) - the dominant value/demand
+    location - so a product classed A anywhere it matters surfaces as A. Ties
     break on the value class rank then warehouse_code for determinism.
     """
     best: Optional[dict] = None
@@ -247,8 +247,8 @@ class ScmDashboardService:
     def _latest_completed_run_id(self) -> Optional[str]:
         """Id of the most recent completed reorder run, whose frozen
         ``reorder_recommendation.reorder_point`` values drive the low-stock signal
-        (M8-B). The engine is NOT re-run — this is a read of the last snapshot. Ordered
-        by finish time (falling back to creation) so the freshest plan wins — the SAME
+        (M8-B). The engine is NOT re-run - this is a read of the last snapshot. Ordered
+        by finish time (falling back to creation) so the freshest plan wins - the SAME
         ordering key ``reorder_run_service.today_or_latest_run`` uses for its
         latest-completed fallback, so the dashboard ROP source and the reorder page
         reference the same run. ``None`` when no run has ever completed (low-stock then
@@ -434,7 +434,7 @@ class ScmDashboardService:
             cost = r["cost_price"]
             valuation = float(cost) * on_hand if cost is not None else None
             # M2 demand / classification (per SKU×warehouse). avg_daily_demand 0/None
-            # → treated as "no demand" (null) so days-of-cover reads as ∞/— on the FE.
+            # → treated as "no demand" (null) so days-of-cover reads as ∞/ -  on the FE.
             add_raw = r["avg_daily_demand"]
             add = float(add_raw) if add_raw is not None and float(add_raw) > 0 else None
             doc = _days_of_cover(net, add)
@@ -654,7 +654,7 @@ class ScmDashboardService:
                 "xyz_class": xyz_class,
                 "overstock": product_overstock,
                 # Reorder-point column stays deferred on the net-position grid (renders
-                # "—"); the aggregate ROP is used only to drive the `low` status +
+                # "-"); the aggregate ROP is used only to drive the `low` status +
                 # ``below_rop`` health filter at product level (mirrors the per-wh flag).
                 "reorder_point": None,
                 "below_rop": product_below_rop,
@@ -677,8 +677,8 @@ class ScmDashboardService:
                     reverse=reverse,
                 )
             else:
-                # Nulls sort LAST regardless of direction (a null metric — e.g. no
-                # demand → no days-of-cover — is "no data", never the top hit).
+                # Nulls sort LAST regardless of direction (a null metric - e.g. no
+                # demand → no days-of-cover - is "no data", never the top hit).
                 present = [p for p in products if p[sort] is not None]
                 absent = [p for p in products if p[sort] is None]
                 present.sort(key=lambda p: (p[sort], p["sku"]), reverse=reverse)
@@ -746,8 +746,8 @@ class ScmDashboardService:
 
     def _supplier_performance_map(self, supplier_codes: List[str]) -> Dict[str, dict]:
         """Supplier-level scorecard (``supplier_performance`` where product_id IS NULL)
-        keyed by supplier_code. Composite is scaled 0–100 for display; the 0–1 rate
-        fields (on_time / reject / fill) stay 0–1 (the FE formats them as %). Suppliers
+        keyed by supplier_code. Composite is scaled 0 - 100 for display; the 0 - 1 rate
+        fields (on_time / reject / fill) stay 0 - 1 (the FE formats them as %). Suppliers
         with no computed row are simply absent → the caller returns ``performance`` null
         rather than fabricating a score."""
         if not supplier_codes:
@@ -917,7 +917,7 @@ class ScmDashboardService:
                 overstock_count += 1
             # Below-reorder-point (M8-B): stocked SKU at/under the engine ROP. The
             # ``on_hand>0`` guard inside ``below_rop`` means a stockout is never also
-            # counted here (M8-B2 precedence) — the two tiles partition the SKUs.
+            # counted here (M8-B2 precedence) - the two tiles partition the SKUs.
             if r["below_rop"]:
                 below_rop_count += 1
 
@@ -939,7 +939,7 @@ class ScmDashboardService:
 
     # Metric columns the drill-down popup can sort by (plus code / status).
     # ``abc_class``/``xyz_class`` (the "Value"/"Demand" headers) sort by class letter
-    # A<B<C / X<Y<Z — the raw letter compares in that order — with nulls (unknown)
+    # A<B<C / X<Y<Z - the raw letter compares in that order - with nulls (unknown)
     # last in either direction via the shared present/absent split below.
     _PRODUCT_SORTABLE = {
         "sku", "status", "net_position", "on_hand", "on_order", "committed",
@@ -968,7 +968,7 @@ class ScmDashboardService:
             out.append({
                 "sku": r["sku"],
                 "product_name": r["product_name"],
-                # UUIDs carried for the avg-daily-demand explain fetch only (M8-B9) —
+                # UUIDs carried for the avg-daily-demand explain fetch only (M8-B9)  - 
                 # never displayed; the drill resolves them to DO numbers server-side.
                 "product_id": str(r["product_id"]) if r["product_id"] is not None else None,
                 "warehouse_id": str(r["warehouse_id"]) if r["warehouse_id"] is not None else None,
@@ -986,9 +986,9 @@ class ScmDashboardService:
                 "days_of_cover": r["days_of_cover"],
                 "abc_class": r["abc_class"],
                 "xyz_class": r["xyz_class"],
-                # M8-B — engine reorder point (latest completed run); null when un-planned.
+                # M8-B - engine reorder point (latest completed run); null when un-planned.
                 "reorder_point": r["reorder_point"],
-                # M8-F10 — the ROP inputs from the same rec; shown with a plain definition
+                # M8-F10 - the ROP inputs from the same rec; shown with a plain definition
                 # in the Low-stock reorder-point (i). Null when un-planned.
                 "safety_stock": r["safety_stock"],
                 "lead_time_days": r["lead_time_days"],
@@ -1018,7 +1018,7 @@ class ScmDashboardService:
 
     # -- demand trend series (expandable product row viz) ---------------------
 
-    # 12 MONTHLY buckets — the "last 12 months" trend horizon the user asked for,
+    # 12 MONTHLY buckets - the "last 12 months" trend horizon the user asked for,
     # distinct from the 90-day weekly analytics rate window. Reads the same DO
     # consumption source (scm.consumption_v).
     _SERIES_MONTHS = 12
@@ -1026,7 +1026,7 @@ class ScmDashboardService:
     def demand_series(self, sku: str, warehouse: Optional[str] = None) -> dict:
         """~12 monthly buckets of DO outflow for one SKU (optionally one warehouse).
 
-        Feeds the expandable product row's "Demand — last 12 months" sparkline.
+        Feeds the expandable product row's "Demand - last 12 months" sparkline.
         Returns the oldest→newest monthly buckets (zero-filled) plus the SKU's
         xyz_class + plain-language demand label so the caption can echo it.
         """

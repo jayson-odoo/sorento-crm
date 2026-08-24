@@ -11,7 +11,7 @@ export type ProductItemType = 'product' | 'bundle' | 'service' | 'other';
 export type ProductStatus = 'active' | 'inactive';
 
 // Lightweight reference to a product in the variant graph (parent / child).
-// Only human-readable fields are exposed — never surface the UUID in the UI.
+// Only human-readable fields are exposed - never surface the UUID in the UI.
 export interface ProductVariantRef {
   id: string;
   product_code: string;

@@ -8,7 +8,7 @@ WHY THIS EXISTS RATHER THAN `alembic upgrade head`
 --------------------------------------------------
 The migration chain cannot build the schema from zero. Its first revision
 (``001_add_is_responded_to_sla_tracking``) *alters* ``conversation_sla_tracking``,
-and no migration ever creates that table — the original database was built by
+and no migration ever creates that table - the original database was built by
 SQLAlchemy ``create_all`` and every migration since has only ALTERed it. Running
 ``alembic upgrade head`` against an empty database therefore dies at revision
 ``008`` with "relation conversation_sla_tracking does not exist".
@@ -20,7 +20,7 @@ apply normally.
 
 Squashing the historical migrations into a real baseline revision would let
 ``alembic upgrade head`` work from zero and is the better long-term fix, but it
-requires re-stamping existing databases — a separate, coordinated change.
+requires re-stamping existing databases - a separate, coordinated change.
 
 USAGE
 -----
@@ -56,7 +56,7 @@ def create_schema() -> None:
     ``schema "projects" does not exist`` - a failure that never reproduces on a
     developer machine, where migration 273 or 354 already made the schema.
     """
-    import app.models  # noqa: F401  — registers every model on Base.metadata
+    import app.models  # noqa: F401  - registers every model on Base.metadata
     from sqlalchemy import text
 
     from app.database import Base, engine
@@ -151,7 +151,7 @@ def _fix_committed_v() -> None:
     """Bring ``scm.committed_v`` current past migration 337.
 
     ``create_views()`` above only replays the view DDL embedded in migrations 274, 311,
-    327 and 337 — the ones that ship their body as a module-level constant. Migrations
+    327 and 337 - the ones that ship their body as a module-level constant. Migrations
     340 and 346 redefine ``scm.committed_v`` again (the ``qty_required`` /
     ``purchasing_status`` / ``demand_class`` / ``demand_origin`` rules) but inline their
     ``op.execute(...)`` DDL instead of exporting a constant, so a bootstrapped database
@@ -159,8 +159,8 @@ def _fix_committed_v() -> None:
 
     Rather than add a fifth migration to the replay list (and a sixth, a seventh, every
     time the view is touched again), this imports the CURRENT view body from
-    ``app.services.scm.demand.COMMITTED_V_SQL`` — the single source of truth the demand
-    service itself relies on — and lays it down with ``CREATE OR REPLACE``. That module
+    ``app.services.scm.demand.COMMITTED_V_SQL`` - the single source of truth the demand
+    service itself relies on - and lays it down with ``CREATE OR REPLACE``. That module
     is edited whenever the view changes, so this call always reflects the latest rule
     with no migration bookkeeping required. Verified by asserting ``demand_origin``
     (the newest rule) actually appears in the resulting view definition.
@@ -432,7 +432,7 @@ def _seed_default_company() -> None:
     """Idempotently insert the fixed Sorento company row (mirrors migration 302).
 
     Needed because bootstrap builds the schema from the models and only *stamps*
-    alembic at head — migration 302's data seed is never executed. Without this
+    alembic at head - migration 302's data seed is never executed. Without this
     row the ``*_company_id_fkey`` constraints reject every owned insert once the
     scope layer auto-stamps the incumbent company.
     """

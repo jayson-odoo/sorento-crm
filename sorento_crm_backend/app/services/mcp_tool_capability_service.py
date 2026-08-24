@@ -9,7 +9,7 @@ For every MCP tool we emit:
   - alias phrases derived from the tool name.
 
 Both the body and the question bank are chunked and embedded, so the tool's real
-purpose — not just hand-picked phrases — drives retrieval.
+purpose - not just hand-picked phrases - drives retrieval.
 """
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ _EMBEDDING_SKIP_TOOLS: set[str] = {
     "crm_workflow_forms_submissions_list",
     "crm_workflow_forms_submissions_get",
     "crm_workflow_forms_submissions_allowed_transitions",
-    # Discontinued — removed from MCP catalog. Skip set keeps the persisted
+    # Discontinued - removed from MCP catalog. Skip set keeps the persisted
     # mcp_tools row out of RAG + auto-removes it from ai_assistant_configs
     # enabled_tools on the next `_sync_enabled_tools` pass.
     "crm_incoming_stock_grn",
@@ -95,7 +95,7 @@ _EMBEDDING_SKIP_TOOLS: set[str] = {
 
 TOOL_INTENTS: dict[str, ToolIntent] = {
     # ==================================================================
-    # MASTER DATA — product catalog, brands, categories, UOMs, attachments
+    # MASTER DATA - product catalog, brands, categories, UOMs, attachments
     # ==================================================================
     "crm_master_products_list": ToolIntent(
         category="general_enquiries.product",
@@ -103,22 +103,22 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         description=(
             "Search and list rows from the structured product master table (SKU / product_code / "
             "product_name / description / brand / category / price / dimensions). Use this when the "
-            "user wants STRUCTURED PRODUCT ROWS — by keyword (e.g. 'matte black kitchen sink'), brand, "
+            "user wants STRUCTURED PRODUCT ROWS - by keyword (e.g. 'matte black kitchen sink'), brand, "
             "category, price range, or physical size."
-            "`query` is a free-text LIKE search over product_code/product_name/description ONLY — NEVER pass "
+            "`query` is a free-text LIKE search over product_code/product_name/description ONLY - NEVER pass "
             "numeric or comparison expressions like 'price > 100' or 'dimensions > 300mm' as `query`; use the "
             "dedicated parameters instead. "
             "PRICE: price_min, price_max (MYR). "
             "DIMENSIONS (millimetres, populated from descriptions like '(650x450x210MM)'): per-axis "
             "length_min/length_max, width_min/width_max, height_min/height_max. For axis-agnostic asks like "
             "'products with dimensions over 300mm' or 'anything bigger than 1m on any side', use "
-            "any_dimension_min / any_dimension_max — these match when ANY of L/W/H is in range. "
-            "FILTERS vs SORT — keep these separate: any_dimension_min/max, length_min/max, width_min/max, "
+            "any_dimension_min / any_dimension_max - these match when ANY of L/W/H is in range. "
+            "FILTERS vs SORT - keep these separate: any_dimension_min/max, length_min/max, width_min/max, "
             "height_min/max, price_min/max are FILTERS (range caps), NOT valid sort keys; passing them as "
             "`sort` falls back to created_at silently. "
             "Sortable fields: created_at, updated_at, product_code, product_name, list_price (alias: price), "
             "cost_price, invoice_price, is_active, dimensions_length (alias: length), dimensions_width "
-            "(alias: width), dimensions_height (alias: height), largest_dimension (GREATEST(L,W,H) per row — "
+            "(alias: width), dimensions_height (alias: height), largest_dimension (GREATEST(L,W,H) per row - "
             "use sort=largest_dimension&dir=desc for 'biggest product on any side'), smallest_dimension "
             "(LEAST(L,W,H) per row). Combine with dir=asc|desc. NULL dimensions sort to the bottom either way. "
             "Each row carries an ISO 4217 `currency` (default MYR for all Sorento product rows). "
@@ -141,7 +141,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Find products with height under 200mm.",
             "Any products with dimensions larger than 1 metre on any side?",
             "Products that are at least 600mm long.",
-            "List products by size — anything between 400 and 800mm.",
+            "List products by size - anything between 400 and 800mm.",
             "Which products fit within 500mm x 500mm x 500mm?",
             "Show me products under MYR 100.",
             "Products priced between RM500 and RM2000.",
@@ -174,7 +174,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "relations, and full pricing fields. Use AFTER crm_master_products_list has resolved a "
             "product's UUID, or when the user pastes a UUID. For keyword / SKU / name searches use "
             "crm_master_products_list instead. The response includes `is_discontinued` (auto-derived "
-            "from descriptions starting with `****`) — surface this in the answer when True."
+            "from descriptions starting with `****`) - surface this in the answer when True."
         ),
         typical_user_questions=(
             "Show full product detail for this product id.",
@@ -284,10 +284,10 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         description=(
             "List product↔attachment links filtered by product_ids (canonical product UUIDs), "
             "attachment_ids (canonical attachment UUIDs), and / or attachment_type_ids (canonical "
-            "AttachmentType UUIDs — narrows to a doc class such as brochure, spec sheet, datasheet, "
+            "AttachmentType UUIDs - narrows to a doc class such as brochure, spec sheet, datasheet, "
             "manual, installation guide, or certificate). Use this when the user asks for product "
             "brochures, datasheets, certificates, test reports, or installation guides tied to a SKU "
-            "— combine product_ids + attachment_type_ids to fetch only the SKU's brochure (or only its "
+            " -  combine product_ids + attachment_type_ids to fetch only the SKU's brochure (or only its "
             "spec sheet, etc.). Not for global stock-list documents (use "
             "crm_resource_attachments_current_stock_list) and not for promotion flyers (use "
             "crm_marketing_promotion_attachments_list)."
@@ -327,7 +327,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         intent="Get one product-attachment link by id; also serves product photo / image / visual look-up requests.",
         description=(
             "Single product-attachment link record. Also the entry point when the user asks to see the "
-            "product's photo, image, or how the product looks — the returned attachment carries the "
+            "product's photo, image, or how the product looks - the returned attachment carries the "
             "preview/CDN URL the agent renders inline."
         ),
         typical_user_questions=(
@@ -343,28 +343,28 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         aliases=("product photo", "product image", "product picture", "product look"),
     ),
     # ==================================================================
-    # MARKETING — promotions, promotion products, promo attachments, campaigns
+    # MARKETING - promotions, promotion products, promo attachments, campaigns
     # ==================================================================
     "crm_marketing_promotions_list": ToolIntent(
         category="general_enquiries.promotion",
         intent="List and search promotions; defaults to active with auto-fallback to historical when none match.",
         description=(
             "List promotion headers (summary fields + linked attachments inline; no product lines). "
-            "Each row carries its `attachments` array — the agent does NOT need to call "
+            "Each row carries its `attachments` array - the agent does NOT need to call "
             "crm_marketing_promotion_attachments_* afterwards to get the promotion document. "
             "Default returns ACTIVE promotions (is_active=true AND today within start_date/end_date); "
             "when the caller passes a narrowing filter (query, period_from/period_to, "
             "user_type) and zero active match, the tool automatically falls back to INACTIVE matches "
             "and sets fallback_used=true on the response so the agent can phrase the answer accordingly. "
             "Every row carries `is_expired` (true = not currently live: flag off or today outside "
-            "start/end) — when true, tell the user the promotion was FOUND but is EXPIRED; never "
+            "start/end) - when true, tell the user the promotion was FOUND but is EXPIRED; never "
             "present an is_expired row as live. Pass active=false when the user explicitly asks for "
             "inactive / expired / historical promotions (no fallback). Use period_from / period_to "
             "(YYYY-MM-DD) to scope by date; `date_mode` picks which promotion date the window tests: "
             "`overlap` (default) = promotion active any time during the window ('promotions valid/running "
             "during X'); `started` = start_date within the window ('promotions released/launched/new in "
             "the last X days'); `ended` = end_date within the window ('promotions that ended/expired in "
-            "X'). started/ended automatically include BOTH active and historical rows — do not pass "
+            "X'). started/ended automatically include BOTH active and historical rows - do not pass "
             "`active` with them unless the user explicitly narrows to one state. For SKU coverage / "
             "promotion line items use crm_marketing_promotion_products_list."
         ),
@@ -387,8 +387,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         intent="Fetch one promotion's metadata, groups, and attachments by id.",
         description=(
             "Get promotion metadata (name, start/end dates, FOC tiers/groups) AND linked "
-            "attachments inline on the same response — no second tool call needed for the promotion "
-            "document. Does not include product lines by default — set include_products=true only if "
+            "attachments inline on the same response - no second tool call needed for the promotion "
+            "document. Does not include product lines by default - set include_products=true only if "
             "the user is asking specifically about the SKU coverage."
         ),
         typical_user_questions=(
@@ -403,7 +403,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         intent="Paged promotion product lines (which SKUs are under which promo).",
         description=(
             "Promotion product lines, paginated. Each row carries the parent promotion's "
-            "`promotion_attachments` array inline — the agent does NOT need to call "
+            "`promotion_attachments` array inline - the agent does NOT need to call "
             "crm_marketing_promotion_attachments_* afterwards to surface the promotion document. "
             "Optional promotion_id scopes to one promotion (UUID). Optional query "
             "filters by SKU/name/promotion description and can run without promotion_id to discover which "
@@ -423,7 +423,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         description=(
             "Products linked to a promotion, returned nested under the promotion id. Each line "
             "carries the parent promotion's `promotion_attachments` inline so the agent has the "
-            "promotion document on the same response — no follow-up tool call required."
+            "promotion document on the same response - no follow-up tool call required."
         ),
         typical_user_questions=(
             "Give me every product under this one promotion.",
@@ -490,7 +490,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         typical_user_questions=("Get this campaign type.",),
     ),
     # ==================================================================
-    # RESOURCE MANAGEMENT — global attachments & directories (stock list, global docs)
+    # RESOURCE MANAGEMENT - global attachments & directories (stock list, global docs)
     # ==================================================================
     "crm_resource_attachments_list": ToolIntent(
         category="general_enquiries.attachment",
@@ -498,7 +498,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         description=(
             "List file attachments across entities with filters: free-text query, entity_type, "
             "entity_id, directory_id, is_deleted. THIS IS THE PRIMARY TOOL FOR PRODUCT CATALOGUE / "
-            "CATALOG / BROCHURE / PRICE LIST DOCUMENT REQUESTS — the full Sorento product catalogue "
+            "CATALOG / BROCHURE / PRICE LIST DOCUMENT REQUESTS - the full Sorento product catalogue "
             "PDF lives in the global document library, not on individual SKU rows. Use this tool "
             "whenever the user asks for 'the catalogue', 'catalog', 'product catalogue', 'master "
             "catalogue', 'brochure PDF', 'price list document', or any general company document. "
@@ -540,7 +540,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "AttachmentType=catalogue (the Sorento product catalogue PDFs). "
             "n8n's catalogue-hinted agent passes one or more known attachment "
             "UUIDs in `attachment_ids` (csv / JSON / repeated) and gets back "
-            "the catalogue rows for those UUIDs only — non-catalogue UUIDs are "
+            "the catalogue rows for those UUIDs only - non-catalogue UUIDs are "
             "dropped by the backend code filter. REQUIRED: `attachment_ids`; "
             "without UUIDs the tool returns an empty page (it does NOT browse "
             "the catalogue library). For free-text catalogue / brochure / "
@@ -641,7 +641,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         typical_user_questions=("Open this directory.",),
     ),
     # ==================================================================
-    # INVENTORY — stock balance, alerts, dashboard, ledger, batches
+    # INVENTORY - stock balance, alerts, dashboard, ledger, batches
     # ==================================================================
     "crm_inventory_stock_balance_list": ToolIntent(
         category="general_enquiries.stock",
@@ -649,7 +649,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         description=(
             "Paged stock balances with warehouse / product / quantity filters. Use for 'how much "
             "stock do we have', 'stock availability', 'sufficient stock?', warehouse-level balance. "
-            "THIS IS NOT FOR TRANSACTION / MOVEMENT HISTORY — use crm_inventory_stock_ledger_list "
+            "THIS IS NOT FOR TRANSACTION / MOVEMENT HISTORY - use crm_inventory_stock_ledger_list "
             "for stock movement/ledger;"
         ),
         typical_user_questions=(
@@ -712,7 +712,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         category="general_enquiries.stock_ledger",
         intent="Stock ledger for one specific product in one specific warehouse.",
         description=(
-            "Ledger (transaction history) for one product in one warehouse. Not for balance — "
+            "Ledger (transaction history) for one product in one warehouse. Not for balance - "
             "use crm_inventory_stock_balance_list for current on-hand quantity."
         ),
         typical_user_questions=(
@@ -769,7 +769,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         typical_user_questions=("Open this storage zone.",),
     ),
     # ==================================================================
-    # ORDER MANAGEMENT — order status, delivery, logistics, orders by product
+    # ORDER MANAGEMENT - order status, delivery, logistics, orders by product
     # ==================================================================
     "crm_order_management_orders_list": ToolIntent(
         category="order_enquiries",
@@ -779,16 +779,16 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "range / optional actual delivery date / free-text `query` over order_number, debtor_code, "
             "debtor_name, customer name/code). "
             "External/AI-agent callers are HARD-CAPPED at limit=10 server-side regardless of the value "
-            "sent — narrow with customer_query / product_query / order_date_from / order_date_to instead "
+            "sent - narrow with customer_query / product_query / order_date_from / order_date_to instead "
             "of asking for more rows. "
             "Also supports delivery-order lookup filters: `customer_query` (debtor/customer partial), "
             "`product_query` (product code/name partial), and order_date range. "
             "FILTER REQUIREMENT: customer (customer_id / customer_query), product (product_query), and "
             "order date range (order_date_from / order_date_to) are NOT all required together. ANY ONE "
-            "of them is enough — call the tool as soon as the user supplies at least one. Combine more "
+            "of them is enough - call the tool as soon as the user supplies at least one. Combine more "
             "filters only when the user explicitly provides them. Do NOT block on missing filters. "
             "DEFAULT SORT: results are returned latest order first (sort=order_date, dir=desc) so the "
-            "most recent matching order surfaces at the top — do not pass sort/dir unless the user "
+            "most recent matching order surfaces at the top - do not pass sort/dir unless the user "
             "explicitly asks for a different order. "
             "DATE FILTER RULE: For DO discovery and any bare 'orders in [today/yesterday/this week/"
             "month/period/date range]' question, DEFAULT to actual_delivery_date_from/"
@@ -804,7 +804,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Use this tool whenever the user asks to search/find DO numbers from customer OR product OR "
             "date range filters (any one is sufficient). "
             "Use for 'order status', 'track my order', 'delivery date', 'lorry / transporter / driver', "
-            "and customer-based order searches. NOT for orders filtered by a specific product — use "
+            "and customer-based order searches. NOT for orders filtered by a specific product - use "
             "crm_order_management_orders_by_product_list for that."
         ),
         typical_user_questions=(
@@ -835,7 +835,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "a CODE that the resolver has identified as entity_type=customer_order (e.g. RF2601-025, "
             "ORD-2026-001). Pass the canonical_code from the Resolved references block as "
             "`order_id`; the endpoint accepts either a UUID or an order_number. Do NOT call this "
-            "tool with product codes, shipment numbers, SPO numbers, or GRN numbers — use the "
+            "tool with product codes, shipment numbers, SPO numbers, or GRN numbers - use the "
             "corresponding tool for those entity types instead."
         ),
         typical_user_questions=(
@@ -873,7 +873,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "ISO datetime, 'YYYY-MM', 'MM/YYYY', or 'Month YYYY' (e.g. 'February 2026'). "
             "Each matched product line carries product_code / product_name, the ordered quantity, "
             "and the warehouse it ships from (warehouse_code / warehouse_name). "
-            "This is about OUTGOING orders sold to customers — it is NOT about incoming stock, "
+            "This is about OUTGOING orders sold to customers - it is NOT about incoming stock, "
             "inbound shipments, SPO, PO, GRN, or procurement. For 'any incoming for product X' / "
             "'when is product X arriving' use crm_incoming_stock_by_product. For a single order "
             "lookup by order_number, use crm_order_management_orders_get."
@@ -901,19 +901,19 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     "crm_order_analytics": ToolIntent(
         category="order_enquiries",
         intent=(
-            "Compute an AGGREGATE over customer sales orders — total order value / revenue, average "
-            "delivery time, or order count — optionally grouped by customer, product, or month."
+            "Compute an AGGREGATE over customer sales orders - total order value / revenue, average "
+            "delivery time, or order count - optionally grouped by customer, product, or month."
         ),
         description=(
             "ANALYTICAL / AGGREGATION tool for orders. Returns a computed number (or ranked buckets), "
-            "NOT a list of order rows — use it whenever the user asks for a SUM, TOTAL, AVERAGE, COUNT "
+            "NOT a list of order rows - use it whenever the user asks for a SUM, TOTAL, AVERAGE, COUNT "
             "or REVENUE figure rather than to see the underlying orders. "
             "metric=total_value sums orders.total_amount (the money value / revenue of orders); "
             "metric=avg_delivery_days averages (actual_delivery_date - order_date) in days (delivery "
             "time / lead time / how long orders take to deliver); metric=count counts matching orders. "
             "group_by=customer|product|month|none buckets the result (default none = one overall figure); "
             "group_by=product uses per-product line revenue for total_value. Filter by customer_ids "
-            "(canonical customer UUIDs — the customer name/debtor is resolved to a UUID upstream), "
+            "(canonical customer UUIDs - the customer name/debtor is resolved to a UUID upstream), "
             "product_ids / product_code, and a date_from/date_to window over order_date (a bare year "
             "like '2026', a 'YYYY-MM' month, or YYYY-MM-DD). This is the correct tool for 'total order "
             "value for customer X', 'how much did X spend', 'average delivery time', 'how long do our "
@@ -953,7 +953,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         ),
     ),
     # ==================================================================
-    # INCOMING STOCK — user-facing tools (redacted, business-rule compliant).
+    # INCOMING STOCK - user-facing tools (redacted, business-rule compliant).
     # These are the PRIMARY tools for user enquiries about incoming stock. They hide
     # received/rejected quantities, SPO numbers, internal IDs; they compute
     # remaining_incoming_quantity and warehouse allocation summaries.
@@ -968,7 +968,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "shipment_number, shipping_container_number, ETA, batch_number, remaining_incoming_quantity "
             "(computed as quantity_shipped - quantity_received; fully-received lines are auto-filtered "
             "out), packing-list attachment, that shipment's warehouse_allocations (warehouse_code, "
-            "warehouse_name, allocated_quantity from SPO allocations), and unallocated_quantity — how "
+            "warehouse_name, allocated_quantity from SPO allocations), and unallocated_quantity - how "
             "much of the line no salesperson has claimed to a warehouse yet (empty warehouse_allocations "
             "= pending allocation; a positive unallocated_quantity beside allocations = partly allocated; "
             "null = fully allocated); (2) nearest "
@@ -1034,7 +1034,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "packing-list attachment) with a nested `lines[]` array \u2014 each line carries "
             "product_code, product_name, batch_number, remaining_incoming_quantity, and "
             "warehouse_allocations (warehouse_code, warehouse_name, allocated_quantity), and "
-            "unallocated_quantity — how much of the line no salesperson has claimed to a warehouse "
+            "unallocated_quantity - how much of the line no salesperson has claimed to a warehouse "
             "yet (empty warehouse_allocations = pending allocation; a positive unallocated_quantity "
             "beside allocations = partly allocated; null = fully allocated). "
             "For 'any incoming for product X / SKU X', pass `product_ids` (UUID or product_code) \u2014 "
@@ -1115,14 +1115,14 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     # `crm_incoming_stock_by_product` (which already exposes per-shipment GRN
     # context in its response).
     # ==================================================================
-    # PROCUREMENT — ADMIN / INTERNAL raw data (do NOT use for user enquiries).
+    # PROCUREMENT - ADMIN / INTERNAL raw data (do NOT use for user enquiries).
     # These expose received/rejected quantities, SPO numbers, internal IDs. Kept
     # for back-office operations only. Category `internal_admin.procurement` keeps
     # them out of user-question retrieval.
     # ==================================================================
     "crm_procurement_packing_lists_list": ToolIntent(
         category="internal_admin.procurement",
-        intent="ADMIN ONLY — raw packing list / inbound shipment headers with received quantity data.",
+        intent="ADMIN ONLY - raw packing list / inbound shipment headers with received quantity data.",
         description=(
             "Raw inbound shipment headers including received quantities, SPO allocation counts, "
             "and internal IDs. For user-facing 'any incoming shipments?' use "
@@ -1136,7 +1136,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     ),
     "crm_procurement_packing_lists_get": ToolIntent(
         category="internal_admin.procurement",
-        intent="ADMIN ONLY — raw inbound shipment detail with received quantities, SPO allocations, and linked GRNs.",
+        intent="ADMIN ONLY - raw inbound shipment detail with received quantities, SPO allocations, and linked GRNs.",
         description=(
             "Raw shipment detail including quantity_received, SPO allocations, linked GRNs and "
             "internal IDs. For user-facing 'products still incoming on this shipment' use "
@@ -1150,7 +1150,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     ),
     "crm_procurement_spo_allocations_grouped_by_shipment": ToolIntent(
         category="internal_admin.procurement",
-        intent="ADMIN ONLY — raw SPO allocation aggregates per shipment.",
+        intent="ADMIN ONLY - raw SPO allocation aggregates per shipment.",
         description=(
             "Raw SPO allocation summaries grouped by shipment including receipt_status. For user-"
             "facing 'any incoming for product X' use crm_incoming_stock_by_product instead."
@@ -1160,14 +1160,14 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     ),
     "crm_procurement_spo_allocations_grouped_by_spo": ToolIntent(
         category="internal_admin.procurement",
-        intent="ADMIN ONLY — SPO allocations grouped by SPO number.",
+        intent="ADMIN ONLY - SPO allocations grouped by SPO number.",
         description="Raw SPO allocation groups by SPO number. Admin / back-office use only.",
         typical_user_questions=("Admin: group raw allocations by SPO number.",),
         aliases=("admin raw spo by number",),
     ),
     "crm_procurement_spo_allocations_list": ToolIntent(
         category="internal_admin.procurement",
-        intent="ADMIN ONLY — flat list of raw SPO allocation rows with receipt_status and received/rejected quantities.",
+        intent="ADMIN ONLY - flat list of raw SPO allocation rows with receipt_status and received/rejected quantities.",
         description=(
             "Raw SPO allocation rows exposing spo_number, allocated_quantity, quantity_received, "
             "quantity_rejected, receipt_status. For user-facing incoming-stock enquiries use the "
@@ -1178,14 +1178,14 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     ),
     "crm_procurement_spo_allocations_get": ToolIntent(
         category="internal_admin.procurement",
-        intent="ADMIN ONLY — single raw SPO allocation with linked GRNs and receipt fields.",
+        intent="ADMIN ONLY - single raw SPO allocation with linked GRNs and receipt fields.",
         description="Raw SPO allocation detail. Admin / back-office use only.",
         typical_user_questions=("Admin: open one raw SPO allocation with GRN context.",),
         aliases=("admin raw spo detail",),
     ),
     "crm_procurement_grn_list": ToolIntent(
         category="internal_admin.procurement",
-        intent="ADMIN ONLY — raw GRN / picking header list with statuses and totals.",
+        intent="ADMIN ONLY - raw GRN / picking header list with statuses and totals.",
         description=(
             "Raw GRN / picking headers with picking_status, inspection_status, totals. For user-"
             "facing 'has a GRN been created?' use crm_incoming_stock_by_product (the per-shipment "
@@ -1196,20 +1196,20 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     ),
     "crm_procurement_grn_get": ToolIntent(
         category="internal_admin.procurement",
-        intent="ADMIN ONLY — full raw GRN detail including picking lines and quantities.",
+        intent="ADMIN ONLY - full raw GRN detail including picking lines and quantities.",
         description="Raw GRN with picking lines, quantity_expected, quantity_picked. Admin only.",
         typical_user_questions=("Admin: open one GRN with picking lines.",),
         aliases=("admin raw GRN detail",),
     ),
     "crm_procurement_picking_lines_list": ToolIntent(
         category="internal_admin.procurement",
-        intent="ADMIN ONLY — raw picking (receipt) lines with quantities and discrepancies.",
+        intent="ADMIN ONLY - raw picking (receipt) lines with quantities and discrepancies.",
         description="Raw picking lines. Admin / back-office use only.",
         typical_user_questions=("Admin: raw picking / receipt lines.",),
         aliases=("admin raw picking lines",),
     ),
     # ==================================================================
-    # FORMS (marketing agent — marketing assets / application form lookup)
+    # FORMS (marketing agent - marketing assets / application form lookup)
     # ==================================================================
     "crm_forms_management_forms_list": ToolIntent(
         category="marketing_agent.marketing_assets",
@@ -1219,7 +1219,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "List application forms with optional query, language, and status filters. "
             "Free-text query matches code, name, and purpose. "
             "Returns ONLY the form name and its attachment_id (no code, purpose, type, language, "
-            "version, or active flag) — the name to refer to it, the attachment_id to deliver the file."
+            "version, or active flag) - the name to refer to it, the attachment_id to deliver the file."
         ),
         typical_user_questions=(
             "What forms do you have?",
@@ -1248,7 +1248,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         description=(
             "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. "
             "List workflow form definitions. Use q for search (alias `query` is also accepted and "
-            "mapped to q). Different from forms — these drive workflow submissions."
+            "mapped to q). Different from forms - these drive workflow submissions."
         ),
         typical_user_questions=(
             "List workflow form definitions.",
@@ -1338,14 +1338,14 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         typical_user_questions=("What transitions can I do on this workflow submission?",),
     ),
     # ==================================================================
-    # FORM SUBMISSIONS — stock inquiry (purchasing escalation)
+    # FORM SUBMISSIONS - stock inquiry (purchasing escalation)
     # ==================================================================
     "crm_portal_link_get": ToolIntent(
         category="user_submission_portal",
         intent="Hand the contact a 7-day portal link for filing complaints, stock inquiries (a.k.a. stock enquiries / product enquiries), purchase requests, or sponsorship forms.",
         description=(
             "POST /api/v1/external/portal-tokens/ with payload_json containing contact_id, space_id, "
-            "and (strongly preferred) submission_type — one of complaint, stock_inquiry, purchase_request, "
+            "and (strongly preferred) submission_type - one of complaint, stock_inquiry, purchase_request, "
             "sponsorship_form. submission_type makes the portal open directly on the matching tab after "
             "the contact verifies, so always derive it from the user's request. "
             "Returns a `portal_url` to send to the user. The portal lets them save drafts, attach photos "
@@ -1397,7 +1397,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         ),
     ),
     # ==================================================================
-    # FORM SUBMISSIONS — stock inquiry / purchase request / complaint tools
+    # FORM SUBMISSIONS - stock inquiry / purchase request / complaint tools
     # removed from Tool-RAG (per ops decision: not in active use; keeping out
     # of the RAG noise so the assistant doesn't surface them as candidates).
     # MCP catalog entries remain so existing callers / n8n flows still work,
@@ -1412,8 +1412,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "downloadable templates, blank marketing forms, or marketing attachments. "
             "POST /api/v1/external/entity-attachments/ to create and link an attachment to an "
             "entity (complaint / stock_inquiry / purchase_request). Use AFTER the parent "
-            "submission is confirmed — e.g. after a complaint is filed, to attach defect photos "
-            "or videos. Not for browsing existing attachments — use crm_resource_attachments_* "
+            "submission is confirmed - e.g. after a complaint is filed, to attach defect photos "
+            "or videos. Not for browsing existing attachments - use crm_resource_attachments_* "
             "or crm_master_product_attachments_* instead."
         ),
         typical_user_questions=(
@@ -1426,7 +1426,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         aliases=("attach file to complaint", "upload complaint evidence", "link attachment to submission"),
     ),
     # ==================================================================
-    # SLA MANAGEMENT — internal tooling
+    # SLA MANAGEMENT - internal tooling
     # ==================================================================
     "crm_sla_policies_list": ToolIntent(
         category="sla_management",
@@ -1493,10 +1493,10 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         intent="List or search distinct customers/debtors aggregated from the orders table.",
         description=(
             "Distinct customers/debtors derived from orders.debtor_name (the customers master table is not "
-            "actively used by the business — the real customer identity is the debtor on each order). "
+            "actively used by the business - the real customer identity is the debtor on each order). "
             "Each row returns debtor_name, debtor_code, and order_count (how many orders that customer "
             "placed), deduplicated by debtor_name (case-insensitive trim). "
-            "THIS TOOL AGGREGATES AND RANKS CUSTOMERS BY ORDER COUNT — it is the correct tool (NOT the "
+            "THIS TOOL AGGREGATES AND RANKS CUSTOMERS BY ORDER COUNT - it is the correct tool (NOT the "
             "orders list) for 'top customers', 'top 5 / top N customers by order count', 'busiest "
             "customers', 'which customers have the most orders', 'rank customers by orders', 'customer "
             "order counts', 'who orders the most'. To get the top N, pass sort=order_count with dir=desc "
@@ -1549,7 +1549,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         aliases=("get customer by id", "customer detail", "developer detail"),
     ),
     # ==================================================================
-    # COMPLAINTS — customer complaint / defect / warranty enquiries
+    # COMPLAINTS - customer complaint / defect / warranty enquiries
     # ==================================================================
     "crm_complaints_list": ToolIntent(
         category="general_enquiries.complaint",
@@ -1563,7 +1563,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "resolution_name.\n\n"
             "Use for 'show me open complaints', 'list complaints', 'unresolved / pending complaints', "
             "'recent complaints', 'complaints about <customer>', 'complaints for product <code>', "
-            "'complaint status', 'how many complaints do we have'. All filters are OPTIONAL — call "
+            "'complaint status', 'how many complaints do we have'. All filters are OPTIONAL - call "
             "with none to get the newest complaints page.\n\n"
             "`status` is an EXACT single value; known statuses are draft, submitted, new, responded, "
             "updated, approved, rejected, processed_by_cs, fulfilled, settled_on_site, closed. There "
@@ -1612,21 +1612,21 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     "crm_complaint_analytics": ToolIntent(
         category="general_enquiries.complaint",
         intent=(
-            "Compute complaint COUNTS in aggregate — total, or ranked by product / status / month — "
+            "Compute complaint COUNTS in aggregate - total, or ranked by product / status / month - "
             "e.g. which product has the most complaints, or how many complaints were resolved last month."
         ),
         description=(
             "ANALYTICAL / AGGREGATION tool for complaints. Returns COUNTS (a single number or ranked "
-            "buckets), NOT a list of complaint rows — use it whenever the user asks 'how many "
+            "buckets), NOT a list of complaint rows - use it whenever the user asks 'how many "
             "complaints', a ranking, or a per-product / per-status / per-month breakdown, rather than to "
             "see the complaints themselves. "
-            "group_by=product ranks products by number of complaints (descending) — the top row answers "
+            "group_by=product ranks products by number of complaints (descending) - the top row answers "
             "'which product has the most complaints' / 'most complained-about product' / 'complaints by "
             "product'. group_by=status and group_by=month give status and monthly breakdowns. "
             "date_field selects which date the window and monthly grouping use: complaint_date (when the "
             "complaint was raised, default) or resolved_at (when it was resolved). For 'how many "
             "complaints were resolved last month / in <period>' pass date_field=resolved_at with a "
-            "date_from/date_to window (resolved rows have resolved_at set — do NOT filter status=resolved, "
+            "date_from/date_to window (resolved rows have resolved_at set - do NOT filter status=resolved, "
             "there is no such status). status filters an exact complaint status; date_from/date_to accept "
             "YYYY-MM-DD, DD/MM/YYYY, or 'YYYY-MM'. For LISTING complaints (with defect text, assignee, "
             "status of a specific complaint) use crm_complaints_list instead."
@@ -1640,7 +1640,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Count of complaints resolved in June 2026.",
             "How many complaints did we get this month?",
             "How many complaints in total?",
-            "Complaints by status — how many in each state?",
+            "Complaints by status - how many in each state?",
             "Monthly complaint counts for this year.",
             "Which product gets complained about the most?",
             "How many complaints were closed last month?",
@@ -1751,12 +1751,12 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         ),
     ),
     # ==================================================================
-    # RECORD ACTIONS — staff write tools (assistant gates each with a confirm)
+    # RECORD ACTIONS - staff write tools (assistant gates each with a confirm)
     # ==================================================================
     "crm_complaint_close": ToolIntent(
         category="complaint.record_action",
         intent=(
-            "Close / resolve / finalise a complaint — set its status to closed "
+            "Close / resolve / finalise a complaint - set its status to closed "
             "and end its customer-service SLA stage."
         ),
         description=(
@@ -1786,7 +1786,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     "crm_order_cancel": ToolIntent(
         category="order.record_action",
         intent=(
-            "Cancel an order / delivery order — mark it cancelled and re-evaluate "
+            "Cancel an order / delivery order - mark it cancelled and re-evaluate "
             "any complaints linked to it."
         ),
         description=(
@@ -1816,7 +1816,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         category="purchase_request.record_action",
         intent=(
             "Approve a purchase request or sponsorship form that is pending "
-            "approval — record an in-system approval decision."
+            "approval - record an in-system approval decision."
         ),
         description=(
             "Approve a pending purchase request (PR) or sponsorship form, "
@@ -1846,7 +1846,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         category="purchase_request.record_action",
         intent=(
             "Reject a purchase request or sponsorship form that is pending "
-            "approval — record an in-system rejection decision."
+            "approval - record an in-system rejection decision."
         ),
         description=(
             "Reject a pending purchase request (PR) or sponsorship form, "
@@ -1975,7 +1975,7 @@ _ENVELOPE_MATCH_PHRASES: dict[str, tuple[str, ...]] = {
         "DO check. DO lookup. DO search. DO query. DO list. DO listing.",
         "find delivery order. search delivery order. check delivery order.",
         "list DO. list delivery orders. DO numbers. delivery order numbers.",
-        # Delivery / outbound shipment status phrasing — outbound customer sales, NOT inbound stock.
+        # Delivery / outbound shipment status phrasing - outbound customer sales, NOT inbound stock.
         "check delivery status. delivery status. check status of delivery. status of delivery.",
         "check delivery status for order. check delivery status for customer.",
         "where is my delivery. is my order delivered. has order been delivered.",
@@ -2282,7 +2282,7 @@ def build_live_capability_summary(*, include_tools: bool = True) -> dict[str, An
 #     tool (so admin / discontinued tools never surface),
 #   - drops meta / internal categories not listed in `_NOVICE_MODULES`
 #     (e.g. `sla_management`, `commercial`, `general_enquiries.capabilities`,
-#     `user_guides`, `it_support`) — held / staff-only surfaces stay hidden,
+#     `user_guides`, `it_support`) - held / staff-only surfaces stay hidden,
 #   - maps machine category codes -> friendly module names,
 #   - attaches 2-3 plain-language example questions per module.
 #
@@ -2290,7 +2290,7 @@ def build_live_capability_summary(*, include_tools: bool = True) -> dict[str, An
 #
 # Example questions are seeded from the module `data-analysis.md` user guides
 # (the source of truth) but baked into code so the answer is deterministic and
-# available at runtime — prod containers do not ship the markdown.
+# available at runtime - prod containers do not ship the markdown.
 
 
 @dataclass(frozen=True)
@@ -2305,7 +2305,7 @@ _NOVICE_MODULES: tuple[_NoviceModule, ...] = (
     _NoviceModule(
         name="Products & catalogue",
         description=(
-            "Search the product catalogue — find items by name, brand, category, "
+            "Search the product catalogue - find items by name, brand, category, "
             "price, or size, and pull up full product details."
         ),
         categories=("general_enquiries.product",),
@@ -2331,7 +2331,7 @@ _NOVICE_MODULES: tuple[_NoviceModule, ...] = (
     _NoviceModule(
         name="Incoming stock & shipments",
         description=(
-            "See what stock is on the way — pending quantities, shipment ETAs, "
+            "See what stock is on the way - pending quantities, shipment ETAs, "
             "packing lists, and which warehouse it's allocated to."
         ),
         categories=("general_enquiries.incoming_stock",),
@@ -2370,7 +2370,7 @@ _NOVICE_MODULES: tuple[_NoviceModule, ...] = (
     _NoviceModule(
         name="Documents & files",
         description=(
-            "Find documents — the product catalogue, brochures, datasheets, price "
+            "Find documents - the product catalogue, brochures, datasheets, price "
             "lists, the stock list, and other uploaded files."
         ),
         categories=("general_enquiries.attachment",),
@@ -2383,8 +2383,8 @@ _NOVICE_MODULES: tuple[_NoviceModule, ...] = (
     _NoviceModule(
         name="Forms & applications",
         description=(
-            "Find application and marketing forms — sponsorship, flower stand, "
-            "exhibition, and renovation forms — to download."
+            "Find application and marketing forms - sponsorship, flower stand, "
+            "exhibition, and renovation forms - to download."
         ),
         categories=("marketing_agent.marketing_assets",),
         example_questions=(
@@ -2396,8 +2396,8 @@ _NOVICE_MODULES: tuple[_NoviceModule, ...] = (
     _NoviceModule(
         name="Submitting requests & forms",
         description=(
-            "Get a secure link to file and follow up on requests — complaints, "
-            "stock inquiries, purchase requests, and sponsorship forms — and "
+            "Get a secure link to file and follow up on requests - complaints, "
+            "stock inquiries, purchase requests, and sponsorship forms - and "
             "attach photos or files to them."
         ),
         categories=("user_submission_portal", "complaint.form_submission"),
@@ -2416,7 +2416,7 @@ def build_novice_capability_overview() -> dict[str, Any]:
     Drops admin/internal tools (`internal_admin.*`) + embedding skip-tools, maps
     machine category codes to friendly module names, and attaches example
     questions. The output NEVER contains tool slugs, UUIDs, raw category codes,
-    HTTP methods, or API paths — only friendly module names, plain-English
+    HTTP methods, or API paths - only friendly module names, plain-English
     descriptions, and example questions.
 
     A module is included only when the live catalog has at least one user-facing
@@ -2453,7 +2453,7 @@ def build_novice_capability_overview() -> dict[str, Any]:
         "intro": "Here's what I can help you with:",
         "modules": modules,
         "closing": (
-            "Just ask in plain language — for example, any of the questions "
+            "Just ask in plain language - for example, any of the questions "
             "above. You can also ask me how to do something step by step."
         ),
         "source": "live_capability_catalog",

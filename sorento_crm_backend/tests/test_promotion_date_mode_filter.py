@@ -127,7 +127,7 @@ def test_unknown_date_mode_falls_back_to_overlap(db, seeded):
 
 
 def test_started_one_sided_window_since_date(db, seeded):
-    # "released since 10 days ago" — only period_from supplied.
+    # "released since 10 days ago" - only period_from supplied.
     ids = _list_ids(
         db, status="all", date_mode="started",
         period_from=TODAY - timedelta(days=10),
@@ -137,7 +137,7 @@ def test_started_one_sided_window_since_date(db, seeded):
 
 def test_started_default_includes_both_active_and_already_ended_releases(db):
     # Two promos released inside the window: one still running, one already
-    # ended. started/ended skip the active gate by default — both must come
+    # ended. started/ended skip the active gate by default - both must come
     # back in ONE call (the active-first fallback alone would silently drop
     # the ended one whenever any active row matches).
     running = _seed_promotion(

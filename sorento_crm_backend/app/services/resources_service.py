@@ -238,7 +238,7 @@ class AttachmentDirectoryService:
         (or every non-deleted folder when ``directory_ids`` is None).
 
         Resolves the whole closure in ONE pass over a single fetch of all
-        directories — O(folders), never per-row (UAC D2: no N+1). The path of a
+        directories - O(folders), never per-row (UAC D2: no N+1). The path of a
         folder is its OWN chain root→self.
         """
         all_dirs = self.db.query(
@@ -983,7 +983,7 @@ class AttachmentService:
         """True when any FILE-ATTRIBUTE filter is set.
 
         Folders carry none of these attributes, so any such filter hides folders
-        from the Drive listing (UAC C3 — "they can't match"). A plain text
+        from the Drive listing (UAC C3 - "they can't match"). A plain text
         ``query`` is NOT a hide-folders trigger: folder NAMES are matched against
         it, so matching folders still appear in recursive search results (UAC B4 /
         plan D5). Plain browse (no filter) shows folders (UAC C4).
@@ -1144,7 +1144,7 @@ class AttachmentService:
 
         # Pull lightweight (id, sort_value, name) tuples for both kinds, order in
         # Python over the small combined keyset, THEN page. The keyset is the
-        # union of folder ids + file ids — pagination is over the true combined
+        # union of folder ids + file ids - pagination is over the true combined
         # set so no row is duplicated or dropped across pages (UAC C6). Full rows
         # are fetched only for the requested page.
         file_sort_attr = {
@@ -1168,7 +1168,7 @@ class AttachmentService:
         # Numeric/date sorts need a type-consistent key; string sorts lower-case.
         numeric_sort = sort_key in {"size", "file_size_bytes"}
 
-        # "Uploaded By" sorts on the uploader's DISPLAY NAME, not the raw UUID —
+        # "Uploaded By" sorts on the uploader's DISPLAY NAME, not the raw UUID  - 
         # sorting by UUID is meaningless AND the column returns a mix of UUID
         # objects / strings / None that raise "'<' not supported between 'UUID'
         # and 'str'" when compared. Batch-resolve id -> name up front.
@@ -1199,7 +1199,7 @@ class AttachmentService:
                 return v.lower()
             if numeric_sort:
                 return v
-            # Any other non-string, non-numeric value (e.g. a UUID) — stringify so
+            # Any other non-string, non-numeric value (e.g. a UUID) - stringify so
             # the sort key stays type-consistent and never raises on mixed compares.
             return str(v).lower()
 
@@ -1807,12 +1807,12 @@ class AttachmentService:
 
         # Multi-company: stamp the ACTIVE company on a positively-owned attachment.
         # Attachments are ``__company_shared__``, so the before_insert auto-stamp
-        # deliberately skips them entirely — every upload, in every company, landed
+        # deliberately skips them entirely - every upload, in every company, landed
         # with company_id NULL. For attachments NULL means SHARED (the predicate is
         # ``company_id IS NULL OR company_id IN (scope)``), so a file uploaded while
-        # switched into Mocha was visible from Sorento too, and — because
+        # switched into Mocha was visible from Sorento too, and - because
         # ``scope_to_attachment_company`` pins the n8n binding scope off this column
-        # — the packing list n8n created from it stamped the incumbent company
+        # - the packing list n8n created from it stamped the incumbent company
         # instead of Mocha.
         #
         # "Positively owned" mirrors migration 302's own backfill predicate
@@ -1869,7 +1869,7 @@ class AttachmentService:
             update_data["full_directory_path"] = dir_service.get_full_directory_path(new_directory_id)
 
         # Rename is DB-only and edits stored_filename (the user-facing label). original_filename
-        # is immutable (it is the object-key basename — uuid-segregated key, independent of the
+        # is immutable (it is the object-key basename - uuid-segregated key, independent of the
         # name, like portal submissions). The generic setattr loop applies stored_filename
         # directly; no storage work. See docs/plans/PLAN-attachment-key-uuid-segregation.md.
         for key, value in update_data.items():

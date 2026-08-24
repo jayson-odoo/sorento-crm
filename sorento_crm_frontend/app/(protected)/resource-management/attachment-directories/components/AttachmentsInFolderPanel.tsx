@@ -219,7 +219,7 @@ export default function AttachmentsInFolderPanel({
     directoryId?.startsWith(TRASH_FOLDER_PREFIX) ? directoryId.slice(TRASH_FOLDER_PREFIX.length) : null;
 
   // "All attachments"/root: omit directory_id so the drive returns root contents.
-  // Trash sentinels (__trash__, trash:<id>) never leak as a real folder id —
+  // Trash sentinels (__trash__, trash:<id>) never leak as a real folder id  - 
   // they resolve to null here; the drive call below applies is_deleted instead.
   const effectiveDirectoryId =
     directoryId === null || directoryId === FOLDER_ALL_ID || isTrashView
@@ -573,7 +573,7 @@ export default function AttachmentsInFolderPanel({
         accessorFn: (row) => (isFileItem(row) ? row.attachment_type?.type_name : null),
         cell: ({ row }) => {
           const item = row.original;
-          if (isFolderItem(item)) return <span className="text-muted-foreground">—</span>;
+          if (isFolderItem(item)) return <span className="text-muted-foreground"> - </span>;
           return item.attachment_type?.type_name ?? '-';
         },
         size: 150,
@@ -585,7 +585,7 @@ export default function AttachmentsInFolderPanel({
         accessorFn: (row) => (isFileItem(row) ? row.file_size_bytes : null),
         cell: ({ row }) => {
           const item = row.original;
-          if (isFolderItem(item)) return <span className="text-muted-foreground">—</span>;
+          if (isFolderItem(item)) return <span className="text-muted-foreground"> - </span>;
           return item.file_size_bytes ? formatFileSize(item.file_size_bytes) : '-';
         },
         size: 100,
@@ -598,7 +598,7 @@ export default function AttachmentsInFolderPanel({
           isFileItem(row) ? row.uploaded_by_user?.name ?? row.uploaded_by_user?.email : null,
         cell: ({ row }) => {
           const item = row.original;
-          if (isFolderItem(item)) return <span className="text-muted-foreground">—</span>;
+          if (isFolderItem(item)) return <span className="text-muted-foreground"> - </span>;
           return item.uploaded_by_user?.name ?? item.uploaded_by_user?.email ?? '-';
         },
         size: 150,
@@ -611,7 +611,7 @@ export default function AttachmentsInFolderPanel({
         cell: ({ row }) => {
           const item = row.original;
           const ts = isFileItem(item) ? item.uploaded_at : item.created_at;
-          return ts ? formatDateTimeInMalaysia(ts as string) : '—';
+          return ts ? formatDateTimeInMalaysia(ts as string) : '-';
         },
         size: 180,
         meta: { headerTitle: 'Modified' },
@@ -697,7 +697,7 @@ export default function AttachmentsInFolderPanel({
   }
 
   // Single "Action" dropdown for the bulk strip (UAC F2): EVERY bulk action lives
-  // here — Export selected, Set access levels, Set attachment type, Resubmit,
+  // here - Export selected, Set access levels, Set attachment type, Resubmit,
   // Delete, Move. File-only actions are disabled when a folder is selected (F3).
   // Rendered as a function so it can reuse the toolbar's selected-rows export.
   const renderBulkActionsSlot = ({ openExport }: { openExport: () => void }) => {
@@ -858,7 +858,7 @@ export default function AttachmentsInFolderPanel({
     });
   }, [folderDeleteTarget, deleteDirectoryMutation, queryClient]);
 
-  // Per-row context menu (right-click / long-press) — replaces the actions
+  // Per-row context menu (right-click / long-press) - replaces the actions
   // column. Reuses the exact handlers the old "..." menu wired up (review C).
   const renderRowContextMenu = useCallback(
     (item: DriveItem) => (

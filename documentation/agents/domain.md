@@ -4,10 +4,10 @@ How the engineering skills should consume this repo's domain documentation when 
 
 ## Before exploring, read these
 
-- **`CONTEXT-MAP.md`** at the repo root — this repo is multi-context. The map lists
+- **`CONTEXT-MAP.md`** at the repo root - this repo is multi-context. The map lists
   each glossary and what it covers. Read the one covering your area; read both when
   a change crosses them.
-- **`documentation/adr/`** — read ADRs that touch the area you're about to work in.
+- **`documentation/adr/`** - read ADRs that touch the area you're about to work in.
   All ADRs live here, system-wide and module-scoped alike; there are no per-context
   ADR directories.
 
@@ -39,26 +39,26 @@ Note this repo uses `documentation/`, not `docs/`. Anything in a skill that says
 `docs/adr/` means `documentation/adr/` here.
 
 The four-sibling monorepo layout (frontend / backend / mcp / root compose) is a
-deployment boundary, not a context boundary — the glossaries cut across it by
+deployment boundary, not a context boundary - the glossaries cut across it by
 domain, not by service.
 
 ## Use the glossary's vocabulary
 
 When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in the relevant `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
 
-If the concept you need isn't in the glossary yet, that's a signal — either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/grill-with-docs`).
+If the concept you need isn't in the glossary yet, that's a signal - either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/grill-with-docs`).
 
 ## Flag ADR conflicts
 
 If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
 
-> _Contradicts ADR-0007 (a dealer is a customer, not a company) — but worth reopening because…_
+> _Contradicts ADR-0007 (a dealer is a customer, not a company) - but worth reopening because…_
 
 ## Related binding docs
 
 These are not glossaries, but they constrain implementation and are treated as
 binding by `CLAUDE.md`:
 
-- `documentation/reference/ADR-PRODUCT-STANDARDS.md` — CRUD UX standard
-- `documentation/reference/PR-CHECKLIST.md` — reviewer checklist
-- `PRINCIPLES.md` — governing process rules (step 0: guided user experience first)
+- `documentation/reference/ADR-PRODUCT-STANDARDS.md` - CRUD UX standard
+- `documentation/reference/PR-CHECKLIST.md` - reviewer checklist
+- `PRINCIPLES.md` - governing process rules (step 0: guided user experience first)

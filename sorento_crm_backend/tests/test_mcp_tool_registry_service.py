@@ -164,13 +164,13 @@ def test_sync_catalog_preserves_agent_id(db: Session, monkeypatch, cleanup_tool_
     row.agent_id = agent.id
     db.commit()
 
-    # Re-run sync with the same spec — agent_id must NOT be cleared.
+    # Re-run sync with the same spec - agent_id must NOT be cleared.
     svc.sync_catalog(db)
     db.commit()
     db.refresh(row)
     assert row.agent_id == agent.id
 
-    # Re-run sync with the spec removed — tool is deactivated but agent_id
+    # Re-run sync with the spec removed - tool is deactivated but agent_id
     # is preserved (admin can still see who used to own it).
     monkeypatch.setattr(svc, "_load_specs", lambda: ())
     svc.sync_catalog(db)

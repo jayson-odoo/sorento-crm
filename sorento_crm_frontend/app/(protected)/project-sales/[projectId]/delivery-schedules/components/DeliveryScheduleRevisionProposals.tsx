@@ -143,16 +143,16 @@ function ProposalCard({
               <tr key={`${cell.phase_id ?? index}`} className="border-t border-border/60">
                 <td className="px-1.5 py-1">{cell.phase_label ?? 'Unlabeled phase'}</td>
                 <td className="px-1.5 py-1 tabular-nums">
-                  {cell.qty ? formatQty(cell.qty) : '—'}
+                  {cell.qty ? formatQty(cell.qty) : '-'}
                 </td>
                 <td className="px-1.5 py-1">
                   <span className="flex items-center gap-1.5 tabular-nums">
                     <span className="text-muted-foreground line-through">
-                      {cell.old_date ? formatDateInMalaysia(cell.old_date) : '—'}
+                      {cell.old_date ? formatDateInMalaysia(cell.old_date) : '-'}
                     </span>
                     <ArrowRight className="size-3 shrink-0" aria-hidden />
                     <span className="font-medium">
-                      {cell.new_date ? formatDateInMalaysia(cell.new_date) : '—'}
+                      {cell.new_date ? formatDateInMalaysia(cell.new_date) : '-'}
                     </span>
                   </span>
                 </td>

@@ -290,7 +290,7 @@
                     - generic [ref=e263]: Responded
                     - generic "13/05/2026, 01:42:44" [ref=e264]: "Overdue: 13/05/2026, 01:42:44"
           - generic [ref=e265]:
-            - generic [ref=e266]: 1–5 of 23
+            - generic [ref=e266]: 1 - 5 of 23
             - generic [ref=e267]:
               - button "Previous page" [disabled]:
                 - img

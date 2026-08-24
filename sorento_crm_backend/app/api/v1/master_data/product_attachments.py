@@ -156,7 +156,7 @@ async def get_product_attachments(
     query: Optional[str] = Query(None, description="Free-text search: product code/name, filename, attachment type."),
     entities: Optional[list[str]] = Query(
         None,
-        description="DEPRECATED — free-text entity bag. Prefer `product_ids` / `attachment_ids`.",
+        description="DEPRECATED - free-text entity bag. Prefer `product_ids` / `attachment_ids`.",
     ),
     product_ids: Optional[list[str]] = Query(
         None,
@@ -168,12 +168,12 @@ async def get_product_attachments(
     ),
     attachment_type_ids: Optional[list[str]] = Query(
         None,
-        description="Canonical AttachmentType UUIDs (csv/JSON/repeated) — narrows to brochure/spec sheet/installation guide/etc.",
+        description="Canonical AttachmentType UUIDs (csv/JSON/repeated) - narrows to brochure/spec sheet/installation guide/etc.",
     ),
     certificate_ids: Optional[list[str]] = Query(
         None,
         description=(
-            "Canonical Certificate UUIDs (csv/JSON/repeated) — the product↔file rows whose file is a "
+            "Canonical Certificate UUIDs (csv/JSON/repeated) - the product↔file rows whose file is a "
             "filed revision of those certificates. Superseded revisions are included; read "
             "`certificate.is_current_revision` on each row to tell them apart."
         ),
@@ -206,7 +206,7 @@ async def get_product_attachments(
         )
         # Entity-axis relaxation (§3.4 M5): when the service attached `alternatives`
         # / `relaxed_axis` (only on an empty result), bypass the strict
-        # `ListResponse` response_model — which would silently drop those keys — and
+        # `ListResponse` response_model - which would silently drop those keys - and
         # emit the raw dict. `data` is always [] here so encoding is trivial, and the
         # with-data path stays byte-identical (AC-R1).
         if isinstance(result, dict) and result.get("alternatives"):

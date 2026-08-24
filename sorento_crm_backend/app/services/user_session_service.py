@@ -1,4 +1,4 @@
-"""Staff session lifecycle — mint, resolve (with sliding extension), revoke.
+"""Staff session lifecycle - mint, resolve (with sliding extension), revoke.
 
 Mirrors the contact portal's device-trust model (``portal_service.resolve_token``)
 for internal CRM users. The opaque token is the credential; the DB row is the
@@ -44,7 +44,7 @@ class SessionAuthError(Exception):
 
 
 def _utcnow() -> datetime:
-    """Naive UTC — matches the timezone=False columns (same as portal_service)."""
+    """Naive UTC - matches the timezone=False columns (same as portal_service)."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 

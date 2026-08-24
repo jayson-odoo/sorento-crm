@@ -4,14 +4,14 @@ A replacement / fulfilment Delivery Order (DO) names the complaint number(s) it
 fulfils in its ``remarks_cs`` field. This service is the single place that:
 
 1. **Reconciles links** (delta-only) from a DO's Remarks CS to the named
-   complaints — gated so only ``processed_by_cs`` / ``fulfilled`` complaints link.
-2. **Recomputes status** — a ``processed_by_cs`` complaint becomes ``fulfilled``
+   complaints - gated so only ``processed_by_cs`` / ``fulfilled`` complaints link.
+2. **Recomputes status** - a ``processed_by_cs`` complaint becomes ``fulfilled``
    once every non-cancelled linked DO is delivered; a ``fulfilled`` complaint
    reopens to ``processed_by_cs`` if a non-delivered DO links (or a delivered one
    un-delivers). ``closed`` / ``rejected`` are sticky and never touched.
 3. **Emits per-DO delivery notifications** (customer Respond/WhatsApp + Complaint
    team in-app/email), once per ``(complaint, DO)`` via the
-   ``delivery_notified_at`` stamp — best-effort, post-commit, never "fulfilled".
+   ``delivery_notified_at`` stamp - best-effort, post-commit, never "fulfilled".
 
 Triggered from order import, ``PUT /orders/{id}``, and ``is_cancelled`` flips.
 Batched + delta-only so a no-change import issues no per-row complaint queries.
@@ -75,7 +75,7 @@ class ComplaintFulfilmentService:
         return (value or "").strip()
 
     # ------------------------------------------------------------------ #
-    # Delivered-state — date AND delivered/completed status (decision 2026-06-30)
+    # Delivered-state - date AND delivered/completed status (decision 2026-06-30)
     # ------------------------------------------------------------------ #
     @staticmethod
     def _status_is_delivered(status_code: Optional[str]) -> bool:
@@ -152,12 +152,12 @@ class ComplaintFulfilmentService:
     ) -> tuple[list[str], list[dict]]:
         """Reconcile links + recompute fulfilment for a batch of changed orders.
 
-        ``changes`` = ``[{"order": Order, "old_remarks": str|None}]`` — only orders
+        ``changes`` = ``[{"order": Order, "old_remarks": str|None}]`` - only orders
         whose Remarks CS / delivery / cancel actually changed should be passed
         (delta-only; an unchanged import passes an empty list).
 
         Mutates the session (link inserts/deletes, complaint.status, link
-        ``delivery_notified_at`` stamps) but does NOT commit — the caller owns the
+        ``delivery_notified_at`` stamps) but does NOT commit - the caller owns the
         commit. On ``dry_run=True`` (validate-only import) it computes warnings only
         and writes nothing.
 
@@ -231,7 +231,7 @@ class ComplaintFulfilmentService:
                     warnings.append(
                         f"Order {order.order_number}: complaint "
                         f"{complaint.complaint_number} not yet processed by CS / is "
-                        f"{status or 'unknown'} — not linked"
+                        f"{status or 'unknown'} - not linked"
                     )
                     continue
                 desired_cids.add(str(complaint.id))
@@ -258,7 +258,7 @@ class ComplaintFulfilmentService:
 
         db.flush()
 
-        # 4. Recompute every complaint linked to ANY changed order — a delivery-date
+        # 4. Recompute every complaint linked to ANY changed order - a delivery-date
         #    or cancel change flips fulfilment even when remarks are unchanged.
         if order_ids:
             for link in (
@@ -361,7 +361,7 @@ class ComplaintFulfilmentService:
                 "resolved",
                 contact_id=getattr(complaint, "contact_id", None),
             )
-        except Exception as exc:  # best-effort — status is the source of truth
+        except Exception as exc:  # best-effort - status is the source of truth
             logger.warning(
                 "Fulfilment: SLA 'resolved' emit failed for complaint %s: %s",
                 complaint.id,
@@ -372,7 +372,7 @@ class ComplaintFulfilmentService:
     # Notification dispatch (post-commit, best-effort)
     # ------------------------------------------------------------------ #
     def dispatch_delivery_notifications(self, notify_payloads: list[dict]) -> None:
-        """Send per-DO delivery notices (customer + Complaint team). Best-effort —
+        """Send per-DO delivery notices (customer + Complaint team). Best-effort  - 
         each send is isolated so one failure never aborts the rest, and never
         propagates (the import/PUT already committed)."""
         if not notify_payloads:

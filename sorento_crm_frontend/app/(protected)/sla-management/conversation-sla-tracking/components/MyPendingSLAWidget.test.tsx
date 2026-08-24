@@ -150,7 +150,7 @@ const convoItem: MyPendingSLAItem = {
 };
 
 // A ticket is a form-SLA type the FE route map does NOT know, yet it has a Respond
-// contact — the case that used to be mis-classified as a conversation.
+// contact - the case that used to be mis-classified as a conversation.
 const ticketItem: MyPendingSLAItem = {
   id: 'tk1',
   source_entity_type: 'ticket',
@@ -205,7 +205,7 @@ const teamItem: TeamPendingItem = {
   assignee_id: 'u-charissa',
   assignee_name: 'Charissa',
   team_id: 'team-1',
-  team_label: 'Marketing – Product',
+  team_label: 'Marketing - Product',
   source_entity_type: null,
   source_entity_id: null,
   is_form_sla: false,
@@ -301,7 +301,7 @@ describe('MyPendingSLAWidget clickable rows', () => {
 
     await waitFor(() => expect(screen.getByText('Ticket')).toBeInTheDocument());
     // Form-SLA stage: no conversation Escalate/Resolve (handled at the form). Note the
-    // row subline reads "Mark CS resolved" — a substring match on the row's accessible
+    // row subline reads "Mark CS resolved" - a substring match on the row's accessible
     // name, not a real action <button>, so we filter to actual buttons.
     expect(hasActionButton(/Escalate/i)).toBe(false);
     expect(hasActionButton(/Resolve/i)).toBe(false);
@@ -352,7 +352,7 @@ describe('MyPendingSLAWidget clickable rows', () => {
     fireEvent.click(screen.getByRole('button', { name: /My Team/i }));
 
     await waitFor(() => expect(screen.getByText(/Charissa/)).toBeInTheDocument());
-    expect(screen.getByText(/Marketing – Product/)).toBeInTheDocument();
+    expect(screen.getByText(/Marketing - Product/)).toBeInTheDocument();
     expect(getActionButton(/Takeover/i)).toBeInTheDocument();
     expect(getActionButton(/Reassign/i)).toBeInTheDocument();
   });
@@ -487,7 +487,7 @@ describe('MyPendingSLAWidget clickable rows', () => {
     expect(confirm).toBeDisabled();
   });
 
-  // ---- per-action RBAC gating (UAC A2–A7) --------------------------------
+  // ---- per-action RBAC gating (UAC A2 - A7) --------------------------------
 
   const SLUG = 'sla_management.conversation_sla_tracking';
 

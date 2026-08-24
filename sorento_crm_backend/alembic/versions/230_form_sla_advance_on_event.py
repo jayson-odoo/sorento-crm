@@ -1,4 +1,4 @@
-"""Form SLA: advance_on_event — spawn the next stage only on a specific resolve event.
+"""Form SLA: advance_on_event - spawn the next stage only on a specific resolve event.
 
 Lets a stage close on multiple resolve events (e.g. 'approved,rejected') while
 advancing to the next stage (next_config_id) only on one of them (e.g. 'approved'),

@@ -3,10 +3,10 @@
 Covers the UAC notify lines of docs/plans/PLAN-complaint-do-auto-fulfilment.md that
 are NOT exercised by the reconcile-boundary tests in test_complaint_do_fulfilment.py:
 
-  N1 — customer Respond/WhatsApp delivery FACT names complaint#, DO#, items
-  N3 — Complaint team (Tier 1+2) in-app + email, same per-delivery content
-  N5 — contact_id (respond_inbox_url) null -> customer notify skipped gracefully
-  N6 — wording is a delivery fact, NEVER "fulfilled"
+  N1 - customer Respond/WhatsApp delivery FACT names complaint#, DO#, items
+  N3 - Complaint team (Tier 1+2) in-app + email, same per-delivery content
+  N5 - contact_id (respond_inbox_url) null -> customer notify skipped gracefully
+  N6 - wording is a delivery fact, NEVER "fulfilled"
 
 The external Respond.io send is enqueued onto the ``respond_io`` RQ queue, so we stub
 ``queue_service.enqueue_job`` to capture the payload without a worker. The team fan-out
@@ -283,7 +283,7 @@ def test_N3_team_no_members_noop(db: Session, monkeypatch) -> None:
 
 
 def test_N8_notify_failure_does_not_propagate(db: Session, monkeypatch) -> None:
-    """UAC-N8: a raising notify send is swallowed by dispatch_delivery_notifications —
+    """UAC-N8: a raising notify send is swallowed by dispatch_delivery_notifications  - 
     it never propagates, so the already-committed import/PUT is not 500'd. Both the
     customer and team send raise; dispatch must still return normally."""
     from app.services.complaint_fulfilment_service import ComplaintFulfilmentService

@@ -4,7 +4,7 @@ Adds ``products.variant_of_id`` (self-referential FK, ondelete SET NULL so
 deleting a parent never blocks) + a btree index on it, and the GIN trigram
 indexes the resolver's ``_trgm_lookup`` probe needs (products.product_code /
 product_name, orders.debtor_name / debtor_code). ``pg_trgm`` is created here
-too (idempotent — already installed manually in the target DB). Plain
+too (idempotent - already installed manually in the target DB). Plain
 CREATE INDEX is fully transactional at this catalog size (~11k products);
 CONCURRENTLY is not needed. See
 ``docs/plans/PLAN-suggest-on-miss-variant-graph.md`` §1 + §5.
@@ -28,7 +28,7 @@ def upgrade() -> None:
     bind = op.get_bind()
     insp = sa.inspect(bind)
 
-    # pg_trgm extension (idempotent — already installed manually in prod/staging).
+    # pg_trgm extension (idempotent - already installed manually in prod/staging).
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
 
     # products.variant_of_id self-FK (SET NULL) + btree index.

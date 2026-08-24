@@ -175,7 +175,7 @@ _QUANTITY_RE = re.compile(
 _QUANTITY_BINDING_WINDOW = 20
 
 # Inside a key's `synonyms` map, this pseudo-value holds the words that name the KEY
-# ITSELF rather than one of its values — "thickness", "trap", "length". Enum keys have
+# ITSELF rather than one of its values - "thickness", "trap", "length". Enum keys have
 # no use for it; numeric keys have no values to hang synonyms off, so without it there
 # is no way to write down what a customer calls the measurement.
 SELF_SYNONYM_KEY = "_self"
@@ -202,7 +202,7 @@ def _extract_quantities(haystack: str) -> list[tuple[float, int, int, str]]:
     """Every (value_in_mm, start, end, evidence) in the phrase.
 
     A bare number carries no unit and is returned unconverted: "200" and "200mm" mean
-    the same thing in a millimetre catalog, but 8 does not become 8mm — see the caller,
+    the same thing in a millimetre catalog, but 8 does not become 8mm - see the caller,
     which only binds a unitless number when a key's word is adjacent.
     """
     found: list[tuple[float, int, int, str]] = []
@@ -260,7 +260,7 @@ def _resolve_quantities(
     Nothing here guesses. A quantity is only claimed when a key's synonym is within
     `_QUANTITY_BINDING_WINDOW` characters of it, so "S trap 8\" (200mm)" reaches
     `trap_length` while a stray number in a product code reaches nothing. The
-    alternative — binding an unqualified number to the class's "obvious" dimension —
+    alternative - binding an unqualified number to the class's "obvious" dimension  - 
     is exactly the kind of guess that puts a wrong product in front of a customer.
     """
     quantities = _extract_quantities(haystack)
@@ -489,7 +489,7 @@ def resolve_terms_to_specs_with_spans(
         spans["brand"] = [brand_span] if brand_span else []
 
     # Numbers the customer typed: "trap 200mm", "thickness 1.2mm", 'S trap 8"'.
-    # A value stated in WORDS wins over one bound by proximity — "double bowl" is a
+    # A value stated in WORDS wins over one bound by proximity - "double bowl" is a
     # direct statement, a nearby number is an inference about which measurement was
     # meant.
     already = {entry["key"] for entry in resolved}
@@ -674,7 +674,7 @@ def unrecognized_terms(
 
 
 def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: list[str] | None = None) -> dict:
-    """The described set as a MEMBERSHIP clause — shape B's filter leg.
+    """The described set as a MEMBERSHIP clause - shape B's filter leg.
 
     Class-only by decision: class coverage is broad, so a class filter is safe;
     spec-VALUE derivation is partial, so a value filter silently undercounts, and
@@ -724,8 +724,8 @@ def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: li
     if labels:
         # Scalar branch is case-insensitive, matching the ranker's `_states`. The
         # containment branch (case-sensitive, against the stored spelling the
-        # resolvers returned) exists because a value may be a LIST — two finishes
-        # on one product — and `#>>` renders a list as its JSON text.
+        # resolvers returned) exists because a value may be a LIST - two finishes
+        # on one product - and `#>>` renders a list as its JSON text.
         lowered = [label.lower() for label in labels]
         scalar = func.lower(ProductSpecifications.values["class"]["value"].astext).in_(lowered)
         contained = [
@@ -984,7 +984,7 @@ def search_specs(
                         matched.append(key)
                 else:
                     # Stated, stored, and outside the window entirely. A number can
-                    # contradict exactly as an enum can — without this a one-bowl sink
+                    # contradict exactly as an enum can - without this a one-bowl sink
                     # merely scored zero on bowl_count and still won on its other
                     # signals, which is what put it above real double-bowl sinks.
                     penalty += mismatch_penalty

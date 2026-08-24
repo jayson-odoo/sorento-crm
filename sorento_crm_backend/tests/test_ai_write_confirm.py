@@ -1,4 +1,4 @@
-"""M3a write-confirmation gate — unit tests.
+"""M3a write-confirmation gate - unit tests.
 
 Covers PLAN-ai-assistant-evals-guardrails §11 U7: a write tool NEVER executes
 without an explicit Confirm. These test the deterministic gate mechanism
@@ -55,7 +55,7 @@ _TICKET_ARGS = {
 
 
 # --------------------------------------------------------------------------- #
-# _summarize_write — human verb+object+label, plumbing dropped                 #
+# _summarize_write - human verb+object+label, plumbing dropped                 #
 # --------------------------------------------------------------------------- #
 def test_summarize_uses_payload_title_and_verb(svc: AIAssistantChatService):
     out = svc._summarize_write("crm_it_support_ticket_create", _TICKET_ARGS)
@@ -192,7 +192,7 @@ def test_double_confirm_is_idempotent(svc, conv, monkeypatch):
 
 def test_confirm_denied_when_user_lacks_permission(svc, conv, monkeypatch):
     """Real-user RBAC gate: a mapped write tool must NOT execute when the actual
-    logged-in user lacks the permission — even though dispatch would run as the
+    logged-in user lacks the permission - even though dispatch would run as the
     shared act-as principal."""
     import app.services.ai_assistant_service as m
     import app.services.user_service as us

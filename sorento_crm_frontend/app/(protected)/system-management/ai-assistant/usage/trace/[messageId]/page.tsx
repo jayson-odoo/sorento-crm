@@ -28,7 +28,7 @@ export default function TracePage({
     return (
       <Container>
         <div className="rounded-md border p-6 text-sm text-muted-foreground">
-          Forbidden — you don&apos;t have permission to view AI assistant traces.
+          Forbidden - you don&apos;t have permission to view AI assistant traces.
         </div>
       </Container>
     );

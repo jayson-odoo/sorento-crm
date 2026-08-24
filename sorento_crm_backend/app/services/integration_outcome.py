@@ -5,7 +5,7 @@ whether it is still in flight, and whether a non-2xx response was actually a pro
 Counting raw `status == 'failed'` therefore over-reports: on the live DB every historical
 `sla_management` failure is one benign idempotency race ("Conversation is already
 responded."), and rows sitting in `pending` / `processing` were counted in the channel
-total while appearing in neither bucket — which is why `n8n_crm_chat_outbound` rendered
+total while appearing in neither bucket - which is why `n8n_crm_chat_outbound` rendered
 as success 0 / failed 0 / total 13.
 
 Four buckets, and they must sum to the channel total.
@@ -26,7 +26,7 @@ OUTCOME_IN_FLIGHT = "in_flight"
 # Statuses the app writes when a call demonstrably worked.
 _SUCCESS_STATUSES = frozenset({"success", "sent", "delivered"})
 
-# Statuses meaning "expected non-action" — nothing went wrong and nothing was owed.
+# Statuses meaning "expected non-action" - nothing went wrong and nothing was owed.
 _BENIGN_STATUSES = frozenset({"skipped", "idempotent_already_active", "noop"})
 
 # Statuses meaning the call is still in progress.
@@ -62,5 +62,5 @@ def classify(row: Any) -> str:
         return OUTCOME_IN_FLIGHT
 
     # Unrecognised status: treat as in-flight rather than success. An unknown value
-    # must never inflate the success count — that is how a regression hides.
+    # must never inflate the success count - that is how a regression hides.
     return OUTCOME_IN_FLIGHT

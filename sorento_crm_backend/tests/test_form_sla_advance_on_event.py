@@ -1,7 +1,7 @@
 """Regression: a stage advances to its next stage only on advance_on_event.
 
 So a complaint stage that resolves on 'approved,rejected' but has
-advance_on_event='approved' spawns the customer-service stage on approval only —
+advance_on_event='approved' spawns the customer-service stage on approval only  - 
 rejection closes the stage without advancing.
 """
 from types import SimpleNamespace

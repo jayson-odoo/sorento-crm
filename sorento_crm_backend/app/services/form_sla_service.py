@@ -3,7 +3,7 @@
 Forms supported (source_entity_type values): stock_inquiry, purchase_request,
 sponsorship_form, complaint. Configuration lives in form_sla_configs and is
 queried by source_entity_type. Trackers themselves reuse conversation_sla_tracking
-(same table) — a tracker for a form has source_entity_type set to the form's
+(same table) - a tracker for a form has source_entity_type set to the form's
 type, source_entity_id set to the form row's id.
 
 A single emit_event() call is dropped at every form-service state transition;
@@ -46,7 +46,7 @@ def form_sla_agent_codes(db: Session) -> set[str]:
     """Agent codes that own a form-SLA pipeline (any row in form_sla_configs).
 
     Data-driven classifier: an AccessAgent is a FORM-SLA agent iff its code
-    appears in form_sla_configs.agent_code — its routing is driven by
+    appears in form_sla_configs.agent_code - its routing is driven by
     FormSLAConfig stages, never by assignee→team membership derivation. Every
     other agent is a CONVERSATION-SLA agent (routing derived from the assignee's
     tier-1 team membership).
@@ -71,7 +71,7 @@ def _working_clock_start_naive(db: Session, start_dt: datetime) -> datetime:
 
     A form submitted when nobody is working (weekend, public holiday, before open,
     after close) starts its clock at the next window open instead of the raw submit
-    instant — so the responder gets the whole window the policy promises. Returns
+    instant - so the responder gets the whole window the policy promises. Returns
     naive UTC to match the tracker columns; a start already inside a window is
     returned unchanged. Falls back to ``start_dt`` if the work calendar is
     unavailable/misconfigured."""
@@ -248,7 +248,7 @@ def build_sla_whatsapp_data(
 ) -> dict:
     """Build the ``whatsapp_*`` keys for a notification's ``data`` so the WhatsApp
     delivery (``_send_whatsapp_for_notification``) renders the approved template
-    out-of-window and sends ``body`` as text in-window — identical to the canonical
+    out-of-window and sends ``body`` as text in-window - identical to the canonical
     SLA-assignment path (``_notify_assignee``). Works for both form and conversation
     trackers (conversation rows have no entity number → falls back to a generic ref).
     """
@@ -333,7 +333,7 @@ class FormSLAOrchestrator:
     ) -> None:
         """Evaluate every active config for this form type and dispatch matching action.
 
-        Errors are logged but never propagated — SLA orchestration must not block
+        Errors are logged but never propagated - SLA orchestration must not block
         the underlying state transition.
         """
         if not source_entity_type or not source_entity_id or not event_name:
@@ -705,7 +705,7 @@ class FormSLAOrchestrator:
 
     def _stage_notifies_on_escalation(self, tracker: ConversationSLATracking) -> bool:
         """Whether this tracker's stage config opts into escalation notifications.
-        Stage matched by (source_entity_type, team_set_code) — same key used for
+        Stage matched by (source_entity_type, team_set_code) - same key used for
         the next-action derivation. Defaults True when no config matches."""
         try:
             cfg = (
@@ -716,7 +716,7 @@ class FormSLAOrchestrator:
                 )
                 .first()
             )
-        except Exception:  # noqa: BLE001 — missing table in a partial schema, etc.
+        except Exception:  # noqa: BLE001 - missing table in a partial schema, etc.
             self.db.rollback()
             return True
         if cfg is None:
@@ -1060,7 +1060,7 @@ class FormSLAOrchestrator:
         self, source_entity_type: Optional[str], source_entity_id: Optional[str]
     ) -> dict:
         """Return the form header row's own fields as a plain dict (for predicate
-        evaluation). Empty dict on any miss — never raises."""
+        evaluation). Empty dict on any miss - never raises."""
         src = _ENTITY_NUMBER_SOURCE.get(source_entity_type or "")
         if not src or not source_entity_id:
             return {}
@@ -1148,7 +1148,7 @@ class FormSLAOrchestrator:
         assignee dict shaped like ``get_next_assignee`` so the caller is
         branch-agnostic. Returns None (→ round-robin) when there is no contact, no
         matching pin, or the chosen user is missing / inactive / not a member of the
-        stage's tier-1 team. Never raises — every failure degrades to round-robin so
+        stage's tier-1 team. Never raises - every failure degrades to round-robin so
         approval can't 500.
         """
         if not contact_id or not source_entity_type:

@@ -1,5 +1,5 @@
 /**
- * AccessLevelsCell — single-line access badges + "+N" overflow popover (review A).
+ * AccessLevelsCell - single-line access badges + "+N" overflow popover (review A).
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

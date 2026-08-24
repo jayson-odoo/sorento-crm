@@ -56,7 +56,7 @@ export default function AttachmentUploadDialog({
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const [isUploading, setIsUploading] = useState(false);
   // Field-linkage template (shown only when there's no entity_type forced
-  // by the parent — e.g. opened from Resource Management → Files — AND the
+  // by the parent - e.g. opened from Resource Management → Files - AND the
   // selected attachment type is a product photo, since that's the only type
   // whose row link is meaningful here).
   const [targetEntityType, setTargetEntityType] = useState<FieldLinkageEntityType | ''>('');
@@ -71,7 +71,7 @@ export default function AttachmentUploadDialog({
   // attachment_id on resolve, or a post_failed state on reject.
   const uploadMutation = useUploadAttachment();
   // confirmConflict prompts Replace / Create copy while the modal is still
-  // open (a pre-flight, before the background upload session starts — the
+  // open (a pre-flight, before the background upload session starts - the
   // session itself can't surface a 409 interactively).
   const { ConflictDialog, confirmConflict } = useUploadConflict();
   const uploadManager = useUploadManager();
@@ -107,7 +107,7 @@ export default function AttachmentUploadDialog({
   }, [targetEntityType]);
 
   // Defaults are seeded by the open-effect above. Re-filling whenever the
-  // user clears the selection would defeat "Clear all" — leave it alone.
+  // user clears the selection would defeat "Clear all" - leave it alone.
 
   // Update validation when type or files change
   useEffect(() => {
@@ -233,7 +233,7 @@ export default function AttachmentUploadDialog({
           : null,
     };
 
-    // Pre-flight conflict resolution — done HERE, while the modal is still open,
+    // Pre-flight conflict resolution - done HERE, while the modal is still open,
     // because the background upload session can't surface a 409 interactively.
     // For each file colliding on (folder, name) we prompt Replace / Create copy /
     // Cancel; the chosen resolution is threaded into the session per file.
@@ -241,7 +241,7 @@ export default function AttachmentUploadDialog({
     const filesToUpload: File[] = [];
     for (const file of selectedFiles) {
       let resolution: AttachmentConflictResolution | undefined;
-      // Check both folder uploads AND no-folder ("All attachments") uploads —
+      // Check both folder uploads AND no-folder ("All attachments") uploads  - 
       // an undefined directory id checks the NULL-directory scope server-side.
       const check = await checkAttachmentCollision(file.name, snapshot.directoryId);
       if (check.collides) {
@@ -256,7 +256,7 @@ export default function AttachmentUploadDialog({
       filesToUpload.push(file);
     }
     if (filesToUpload.length === 0) {
-      return; // every file cancelled — keep the modal open
+      return; // every file cancelled - keep the modal open
     }
 
     uploadManager.startSession({
@@ -380,7 +380,7 @@ export default function AttachmentUploadDialog({
                 <div className="space-y-2">
                   <Label>Linked Fields</Label>
                   <p className="text-xs text-muted-foreground">
-                    Tag the fields this document answers — they appear on the row&apos;s
+                    Tag the fields this document answers - they appear on the row&apos;s
                     detail page tooltip and inline in the AI agent response.
                   </p>
                   <div className="space-y-2 max-h-48 overflow-y-auto pr-1">

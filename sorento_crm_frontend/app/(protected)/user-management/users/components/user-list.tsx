@@ -340,7 +340,7 @@ const UserList = () => {
         size: 180,
         cell: ({ row }) => {
           const roles = row.original.roles ?? [];
-          if (!roles.length) return <span className="text-muted-foreground">—</span>;
+          if (!roles.length) return <span className="text-muted-foreground"> - </span>;
           return (
             <span className="inline-flex flex-wrap gap-1">
               {roles.map((r: { id: string; name: string }) => (

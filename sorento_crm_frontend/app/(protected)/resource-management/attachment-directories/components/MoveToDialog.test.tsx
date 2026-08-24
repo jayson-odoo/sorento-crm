@@ -1,5 +1,5 @@
 /**
- * MoveToDialog — universal non-drag move path (UAC E5) + cycle-guard target
+ * MoveToDialog - universal non-drag move path (UAC E5) + cycle-guard target
  * disabling (toward E4).
  */
 import React from 'react';
@@ -70,7 +70,7 @@ describe('MoveToDialog', () => {
     // Clicking the moved folder must NOT set it as the target.
     fireEvent.click(screen.getByText('Marketing'));
     fireEvent.click(screen.getByRole('button', { name: /move here/i }));
-    // target stayed null (root) — Marketing was blocked.
+    // target stayed null (root) - Marketing was blocked.
     expect(onMove).toHaveBeenCalledWith(null);
   });
 

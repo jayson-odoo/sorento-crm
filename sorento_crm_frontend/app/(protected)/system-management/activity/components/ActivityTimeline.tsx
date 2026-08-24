@@ -382,10 +382,10 @@ function TimelineRow({
                   >
                     <span className="font-medium">{c.field}:</span>
                     <span className="text-muted-foreground line-through">
-                      {c.from ?? '—'}
+                      {c.from ?? '-'}
                     </span>
                     <span aria-hidden>→</span>
-                    <span>{c.to ?? '—'}</span>
+                    <span>{c.to ?? '-'}</span>
                   </span>
                 ))}
               </div>

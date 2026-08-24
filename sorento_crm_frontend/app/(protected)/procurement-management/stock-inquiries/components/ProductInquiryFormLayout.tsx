@@ -59,7 +59,7 @@ export function InquiryFormTableRow({
 
 export function InquiryReadValue({
   children,
-  empty = '—',
+  empty = '-',
   className,
 }: {
   children: React.ReactNode;

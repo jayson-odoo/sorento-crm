@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 #
 # `imports` is intentionally NOT here: the dedicated worker container runs a
 # blocking RQ Worker on ['imports', 'respond_io'] and picks jobs up instantly,
-# so in-process draining adds no latency — it only risks running a heavy,
+# so in-process draining adds no latency - it only risks running a heavy,
 # many-query import on a daemon thread inside the multithreaded uvicorn process,
 # sharing the global engine pool with request threads. That cross-thread use of
 # pooled psycopg2 connections corrupts the libpq protocol ("PGRES_TUPLES_OK and

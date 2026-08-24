@@ -1,10 +1,10 @@
-"""SCM M3 reorder-run endpoints — launch a background planning run, poll its status,
+"""SCM M3 reorder-run endpoints - launch a background planning run, poll its status,
 and page its recommendations.
 
 Launching a run is a planning action (``scm.reorder.run``); reading status + the
 read-only results grid is a dashboard view (``scm.dashboard.view``). Matches the
 Phase-1 FE contract in ``services/reorderRunService.ts``. No UUIDs surface in display
-fields — SKU/warehouse/supplier resolve to human codes/names.
+fields - SKU/warehouse/supplier resolve to human codes/names.
 """
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ def create_reorder_run(
     _user: dict = Depends(_RUN),
 ):
     """Launch a reorder planning run in the background (RQ). Returns 202 with the
-    run_id — the UI then polls ``GET /reorder-runs/{run_id}`` until completed/failed."""
+    run_id - the UI then polls ``GET /reorder-runs/{run_id}`` until completed/failed."""
     result = svc.create_run(
         db,
         warehouse_codes=payload.warehouse_codes or [],
@@ -105,10 +105,10 @@ def list_reorder_runs(
     _user: dict = Depends(_VIEW),
 ):
     """Newest-first paginated run history. Each row carries its scope (warehouse
-    codes + count), lifecycle timestamps, and — once completed — the roll-up
+    codes + count), lifecycle timestamps, and - once completed - the roll-up
     summary counts read from the immutable ``run_log``. The FE loads a past run's
     detail by reusing ``GET /{id}`` (summary) + ``/{id}/recommendations`` (grid).
-    No UUIDs surface — runs are identified by time + warehouses."""
+    No UUIDs surface - runs are identified by time + warehouses."""
     # Raw SQL, so the ORM isolation filter never sees it: this company's run history only.
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="crl")
     where = f"WHERE {co}" if co else ""
@@ -207,14 +207,14 @@ def _iso(dt) -> Optional[str]:
     return dt.isoformat() if dt is not None else None
 
 
-# NOTE: this static route MUST stay ABOVE ``/reorder-runs/{run_id}`` — declared after
+# NOTE: this static route MUST stay ABOVE ``/reorder-runs/{run_id}`` - declared after
 # it, FastAPI would capture "today" as ``run_id`` (route-shadowing).
 @router.get("/reorder-runs/today", response_model=Optional[ReorderRunTodayResponse])
 def get_today_reorder_run(
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    """M8-D3/D4 — the run the reorder page opens to without knowing an id: today's
+    """M8-D3/D4 - the run the reorder page opens to without knowing an id: today's
     scheduled snapshot when present, else the most-recent completed run (last available
     snapshot). ``is_today`` distinguishes the two so the FE header shows "Today's plan"
     vs that run's date+time (M8-D11). ``null`` when no run exists yet (fresh install →
@@ -719,7 +719,7 @@ def list_recommendations(
     dir: str = Query("asc"),
     query: Optional[str] = Query(None),
     type: Optional[str] = Query(None),  # buy | covered | disposition | exception | needs_level
-    budget: Optional[float] = Query(None, ge=0),  # M4 — live funding what-if
+    budget: Optional[float] = Query(None, ge=0),  # M4 - live funding what-if
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
@@ -729,7 +729,7 @@ def list_recommendations(
 
     M4: when ``budget`` is supplied, buy rows carry a LIVE ``funding_status``
     (funded|deferred|needs_cost) from the greedy skip-overflow allocation over the
-    run's FROZEN rank_score — no engine re-run, no persistence. Omitting ``budget``
+    run's FROZEN rank_score - no engine re-run, no persistence. Omitting ``budget``
     returns the last persisted funding_status (or null for costed buys never funded)."""
     svc.assert_run_visible(db, run_id)
 
@@ -813,8 +813,8 @@ def apply_reorder_run_budget(
     each buy rec + ``budget_amount`` on the run so a shared run shows ONE funded set.
     Persisting funding + budget is a planning action (mutates run state) → ``scm.reorder.run``.
 
-    Full-budget request (``full: true`` OR a null ``budget``) funds every costed buy — the
-    daily-cron / 'fund all' path — and stamps a null ``budget_amount``."""
+    Full-budget request (``full: true`` OR a null ``budget``) funds every costed buy - the
+    daily-cron / 'fund all' path - and stamps a null ``budget_amount``."""
     svc.assert_run_visible(db, run_id)
     budget = payload.get("budget")
     if payload.get("full") or budget is None:
@@ -857,9 +857,9 @@ def explain_recommendation_net(
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    """M8-A1 — net-breakdown drill: ``on_hand`` / ``on_order`` / ``po_ordered`` /
+    """M8-A1 - net-breakdown drill: ``on_hand`` / ``on_order`` / ``po_ordered`` /
     ``committed`` / ``net`` for the rec's product×warehouse plus the list of OPEN
-    sales-order lines behind ``committed`` (each navigable — SO number, customer, qty,
+    sales-order lines behind ``committed`` (each navigable - SO number, customer, qty,
     order date), summing to the committed figure. ``po_ordered`` (21 Aug fix) is the
     outstanding PO leg the sizing engine already nets into ``net``, so
     ``on_hand + on_order + po_ordered - committed == net``. Read-only; no numeric write.
@@ -959,7 +959,7 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         "disposition_action": inp.get("disposition_action"),
         "transfer_flag": inp.get("transfer_flag"),
         # --- frozen derivation inputs (drive the plain-language explanation popup) ---
-        # All already frozen at run time in `inputs` (AC-M3.11) — surfaced read-only,
+        # All already frozen at run time in `inputs` (AC-M3.11) - surfaced read-only,
         # never recomputed on the client.
         "forecast_daily_demand": inp.get("demand_rate"),
         "lead_time_days": inp.get("lead_time_days"),
@@ -1052,7 +1052,7 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         "funding_status": _funding_status(r, is_buy, funding_by_id),
         "days_to_stockout": inp.get("days_to_stockout") if is_buy else None,
         "rank_factors": (inp.get("rank_factors") or []) if is_buy else [],
-        # M7 — the market signal that moved this rank (only when the run opted in and a
+        # M7 - the market signal that moved this rank (only when the run opted in and a
         # signal matched); a one-line summary for "why this rank". No UUID.
         "market_signal": (
             (inp.get("market_factor") or {}).get("summary") if is_buy else None
@@ -1087,7 +1087,7 @@ def _funding_status(r, is_buy: bool,
         return None
     if funding_by_id is not None:
         return funding_by_id.get(str(r["id"]))
-    # No budget in the query — an uncosted buy is always needs_cost (M4-D16); a costed
+    # No budget in the query - an uncosted buy is always needs_cost (M4-D16); a costed
     # buy shows its last persisted funding_status (null when never funded).
     if r["cash_impact"] is None:
         return "needs_cost"

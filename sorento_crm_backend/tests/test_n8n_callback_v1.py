@@ -63,7 +63,7 @@ def test_v1_payload_partial_outcome_supported():
 
 def test_v1_payload_invalid_outcome_rejected():
     bad = {"schema_version": 1, "outcome": "not-an-outcome", "summary": "x"}
-    with pytest.raises(Exception):  # noqa: PT011 — pydantic ValidationError or ValueError
+    with pytest.raises(Exception):  # noqa: PT011 - pydantic ValidationError or ValueError
         IntegrationLogUpdateRequest(status="success", response_payload=bad)
 
 

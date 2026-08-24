@@ -1,15 +1,15 @@
 """Rejecting a stock inquiry must not depend on the contact notification.
 
 Both reject paths used to call `_send_stock_inquiry_contact_message(...)` BEFORE
-mutating status and committing. A contact with no reachable Respond.io inbox —
+mutating status and committing. A contact with no reachable Respond.io inbox  - 
 e.g. a `respond_contacts` row missing `respond_io_id`, which leaves
-`respond_inbox_url` NULL on every form created for that contact — makes that
+`respond_inbox_url` NULL on every form created for that contact - makes that
 send raise. The exception propagated out of the service, the route turned it
 into a 400, and the inquiry stayed pending. The form could never be rejected at
 all: the user got an error, retried, and hit the same wall every time.
 
 `submit_inquiry_for_project_sales` and `project_sales_approve_inquiry` already
-had the right shape — commit first, then notify best-effort. These tests pin
+had the right shape - commit first, then notify best-effort. These tests pin
 that the two reject paths now match, so the messaging side effect can fail
 without taking the business action down with it.
 

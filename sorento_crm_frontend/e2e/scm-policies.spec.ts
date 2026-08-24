@@ -1,5 +1,5 @@
 /**
- * SCM Policy Configuration e2e — FE → BE → DB round-trip against the real
+ * SCM Policy Configuration e2e - FE → BE → DB round-trip against the real
  * `scm` policy API. Exercises the reorder-policy CRUD + the resolution preview.
  *
  * Run against a running stack (FE :3000 + BE :8005 with the `scm` module
@@ -16,7 +16,7 @@
  * broken menu gate (moduleKey / permission) fails the test (AC-NAV-1).
  *
  * A product_class override is used for the create flow: categories are few, so
- * the SearchableSelect (client-filtered, first-100 cap) reliably lists one — the
+ * the SearchableSelect (client-filtered, first-100 cap) reliably lists one - the
  * SKU picker's 100-cap would be flaky here. Any listed product is fine for the
  * resolve step.
  */
@@ -39,7 +39,7 @@ async function login(page: Page) {
 
 /**
  * Confirm the Supply Chain sidebar group + leaf render (catches missing-entry /
- * wrong-moduleKey / permission-gating bugs — AC-NAV-1), then navigate via the
+ * wrong-moduleKey / permission-gating bugs - AC-NAV-1), then navigate via the
  * leaf's resolved href. Clicking the <Link> directly hangs: the protected layout
  * fires a localhost:7242 ingest fetch that holds the page in a pre-load state and
  * intercepts Playwright's click auto-wait (established repo workaround).
@@ -70,7 +70,7 @@ function openPopover(page: Page) {
 /**
  * Pick a value in a SearchableSelect identified by its current trigger text,
  * within `root` (the modal or the page). Options are scoped to the OPEN popover
- * — a just-closed SearchableSelect keeps its content mounted, so an unscoped
+ * - a just-closed SearchableSelect keeps its content mounted, so an unscoped
  * `getByRole('option')` would leak the previous select's options.
  */
 async function chooseInSearchable(
@@ -100,7 +100,7 @@ test('policies: sidebar → create/edit/delete a product_class override + resolv
 
   await login(page);
 
-  // AC-NAV-1 — the Policies leaf renders under Supply Chain and routes.
+  // AC-NAV-1 - the Policies leaf renders under Supply Chain and routes.
   await openScmLeaf(page, /^Policies$/);
   await page.waitForURL(/\/scm\/policies$/);
 

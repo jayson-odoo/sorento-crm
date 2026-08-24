@@ -6,7 +6,7 @@ and AI extract pre-fill calls.
 
 - contact_id: FK -> respond_contacts.id (Text PK), ON DELETE SET NULL.
   Stores the internal respond_contacts.id, NOT respond_io_id.
-- feature: "ai_assistant" | "ai_extract" — discriminator for reporting.
+- feature: "ai_assistant" | "ai_extract" - discriminator for reporting.
 - form_key: portal form key when feature="ai_extract" (e.g. "portal.complaint").
 
 Existing rows remain valid (all three columns are nullable). The reporting

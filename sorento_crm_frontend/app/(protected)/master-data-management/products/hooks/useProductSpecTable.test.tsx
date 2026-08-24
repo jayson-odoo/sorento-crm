@@ -1,5 +1,5 @@
 /**
- * Tests for useProductSpecTable — the tab's error state.
+ * Tests for useProductSpecTable - the tab's error state.
  *
  * A failed applicable-keys fetch must surface as the tab's error, not silently render
  * every stored row as "Not in the registry": with an empty registry the table reads

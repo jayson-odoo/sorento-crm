@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Portal landing content — shared by the stable slug tree
+ * Portal landing content - shared by the stable slug tree
  * (`/portal/c/{slug}`) and the legacy `/portal` tree (impersonation + old
  * links). All navigation goes through lib/portal-paths so links stay inside
  * the active tree.
@@ -273,7 +273,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
           sponsorship_form: lists[3],
         });
         setError(null);
-        // Token validated — clear the freshness stamp so subsequent transient
+        // Token validated - clear the freshness stamp so subsequent transient
         // 401s (e.g. real expiry) bounce back immediately without retry.
         if (typeof window !== 'undefined') {
           window.sessionStorage.removeItem('sorento.portalTokenWrittenAt');
@@ -334,7 +334,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
 
   const handleLogout = useCallback(async () => {
     const t = readPortalToken();
-    // Revoke server-side first (best-effort) — clearing storage alone would
+    // Revoke server-side first (best-effort) - clearing storage alone would
     // leave a copied token valid until expiry.
     try {
       await portalLogout();
@@ -381,7 +381,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
 
   return (
     <div className="w-full px-3 pt-3 pb-4 space-y-3">
-      {/* Header — Welcome centered, Log out anchored to top-right. */}
+      {/* Header - Welcome centered, Log out anchored to top-right. */}
       <div className="relative flex items-center justify-center min-h-[2.75rem]">
         <h1 className="text-lg font-semibold text-center break-words px-12">
           Welcome{contact?.name ? `, ${contact.name}` : ''}
@@ -617,7 +617,7 @@ function SubmissionCard({
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
   const meta = pickCardMeta(row);
-  const primary = row.document_number ?? row.title ?? '—';
+  const primary = row.document_number ?? row.title ?? '-';
   const tintClass = statusCardClass(row);
 
   const startPress = () => {

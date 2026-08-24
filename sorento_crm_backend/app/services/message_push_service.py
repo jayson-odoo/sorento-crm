@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 INBOUND_TYPE = "incoming"
 
 TRACKING_LINK = "/sla-management/conversation-sla-tracking"
+_CHAT_SUFFIX = "?chat=1"
 
 # The lock screen shows about this much anyway, and the rest is a battery cost.
 BODY_MAX_CHARS = 120
@@ -160,7 +161,7 @@ def build_message_push(db: Session, row) -> Optional[MessagePush]:
     # recently updated open one, or on the contact-filtered list when none is open
     # (the list already reads `?contact=` - no new route needed). AC-M14a.
     fallback_link = (
-        f"{TRACKING_LINK}/{trackings[0].id}"
+        f"{TRACKING_LINK}/{trackings[0].id}{_CHAT_SUFFIX}"
         if trackings
         else f"{TRACKING_LINK}?contact={respond_io_id}"
     )
@@ -181,7 +182,7 @@ def build_message_push(db: Session, row) -> Optional[MessagePush]:
             # fallback and no tier walk: an unassigned thread is an SLA problem,
             # and the SLA system raises it through its own events (AC-M10b).
             continue
-        link = f"{TRACKING_LINK}/{tracking.id}"
+        link = f"{TRACKING_LINK}/{tracking.id}{_CHAT_SUFFIX}"
         offers.append((assignee, link, _SCOPES_HEARING_OWN_ASSIGNMENT))
         for coverer in coverage.active_subscribers_for(assignee):
             coverage_offers.append((str(coverer), link, _SCOPES_HEARING_COVERAGE))

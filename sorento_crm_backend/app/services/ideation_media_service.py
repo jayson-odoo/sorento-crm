@@ -1,8 +1,8 @@
-"""Multi-modal ideation capture — media lookback, selection, snapshot + vision
+"""Multi-modal ideation capture - media lookback, selection, snapshot + vision
 (DC-1..DC-9; PLAN-ideation-ideate-intent.md Group F / Phase 2f).
 
 The binding problem: WhatsApp is a stream of separate messages and media carries
-no intent of its own. Solved **ideate-branch-contained** — no aggregation window
+no intent of its own. Solved **ideate-branch-contained** - no aggregation window
 over the live classifier:
 
 - **Lookback (DC-1/2/3):** on the first ideate turn, PULL the contact's recent
@@ -10,7 +10,7 @@ over the live classifier:
   and surface a numbered menu of recent inbound media for the human to pick from.
 - **Selection (DC-7):** the parser extracts reference-positions ('1,3'/'all'/'none');
   this module resolves them against the pending candidates. The human filter means
-  a complaint's photo appearing in the menu is simply not picked — no cross-intent
+  a complaint's photo appearing in the menu is simply not picked - no cross-intent
   bookkeeping needed.
 - **Snapshot + vision (DC-4/6):** the picked media's bytes are fetched from the
   (expiring) Respond CDN and stored durably via ``storage_router`` (R2/S3); images
@@ -46,7 +46,7 @@ class MediaCandidate:
 
     source_msg_id: str
     kind: str  # image | video | file | audio
-    url: str  # Respond CDN url (transient — snapshotted on pick)
+    url: str  # Respond CDN url (transient - snapshotted on pick)
     filename: Optional[str] = None
     received_at: Optional[datetime] = None
 
@@ -164,7 +164,7 @@ def _relative_time(received_at: Optional[datetime], *, now: Optional[datetime] =
 
 def build_menu_text(candidates: list[MediaCandidate], *, now: Optional[datetime] = None) -> str:
     """The numbered media menu appended to the first reply (DC-8). Type icon +
-    filename (if any) + relative time — no thumbnails (WhatsApp text)."""
+    filename (if any) + relative time - no thumbnails (WhatsApp text)."""
     lines = []
     for i, c in enumerate(candidates, start=1):
         icon = _KIND_ICON.get(c.kind, "📎")
@@ -173,7 +173,7 @@ def build_menu_text(candidates: list[MediaCandidate], *, now: Optional[datetime]
     body = "\n".join(lines)
     return (
         f"I also saw {len(candidates)} recent file"
-        f"{'s' if len(candidates) != 1 else ''} — which relate to this idea?\n"
+        f"{'s' if len(candidates) != 1 else ''} - which relate to this idea?\n"
         f"{body}\n"
         f"Reply with the numbers (e.g. 1,3), 'all', or 'none'."
     )
@@ -182,7 +182,7 @@ def build_menu_text(candidates: list[MediaCandidate], *, now: Optional[datetime]
 def parse_selection(selection: Optional[str], candidates: list[MediaCandidate]) -> list[MediaCandidate]:
     """Resolve a parser-extracted reference-position string to the picked candidates.
     ``all`` → every candidate; ``none``/empty/no digits → []; otherwise the 1-indexed
-    positions present in the string (deduped, out-of-range ignored). Deterministic —
+    positions present in the string (deduped, out-of-range ignored). Deterministic  - 
     never an LLM call (DC-7)."""
     if not candidates:
         return []
@@ -221,12 +221,12 @@ def snapshot_and_caption(
 ) -> list[dict[str, Any]]:
     """Durably capture each picked candidate → the §5.1 ``attachments[]`` element
     ``{source_msg_id, url, type, filename?, caption?}`` (DC-4/6/9). Per-item failures
-    are logged + skipped (never fail the whole turn — D-5 resilience)."""
+    are logged + skipped (never fail the whole turn - D-5 resilience)."""
     out: list[dict[str, Any]] = []
     for c in candidates:
         try:
             data, content_type = clients.fetch_bytes(c.url)
-        except Exception:  # noqa: BLE001 — a dead CDN url must not fail the turn
+        except Exception:  # noqa: BLE001 - a dead CDN url must not fail the turn
             logger.warning("ideation media fetch failed for msg=%s", c.source_msg_id, exc_info=True)
             continue
         key = _storage_key(c)
@@ -239,7 +239,7 @@ def snapshot_and_caption(
         if c.kind == "image":
             try:
                 caption = clients.caption_image(data, content_type)
-            except Exception:  # noqa: BLE001 — vision is best-effort (DC-6)
+            except Exception:  # noqa: BLE001 - vision is best-effort (DC-6)
                 logger.warning("ideation vision caption failed for msg=%s", c.source_msg_id, exc_info=True)
                 caption = None
         element: dict[str, Any] = {

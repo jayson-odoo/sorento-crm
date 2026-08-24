@@ -1,17 +1,17 @@
-"""SCM M8 Slice E (E10 + E11) — cross-run history + market signal -> qty proposal.
+"""SCM M8 Slice E (E10 + E11) - cross-run history + market signal -> qty proposal.
 
 Two features, both read-only against the recommendation table:
 
-  * E10 ``query_past_plans`` — prior COMPLETED-run lines for the same SKU, its
+  * E10 ``query_past_plans`` - prior COMPLETED-run lines for the same SKU, its
     category siblings (category id-OR-code), and its ``variant_of_id`` neighbours;
     newest run first, bounded, empty on no history. Also wired into the plan-chat
     context so the LLM can answer "how did we handle X before".
-  * E11 market-proposal — a market signal maps to the run's matching BUY recs and
+  * E11 market-proposal - a market signal maps to the run's matching BUY recs and
     returns a per-line qty-uplift PROPOSAL (bounded +12%, recomputed cash delta,
     reason from the signal). Ambiguous matches are LISTED, not collapsed.
 
 HARD GUARDRAIL (M8-E7): the proposal writes NOTHING to ``reorder_recommendation``
-and never re-runs the engine — asserted byte-identical before/after the endpoint.
+and never re-runs the engine - asserted byte-identical before/after the endpoint.
 
 Fixtures reuse the ``scm_app`` savepoint + the M4 seed helpers + the M5 explainer
 fake-provider pattern. Nothing here reaches the network (market search is stubbed).
@@ -41,7 +41,7 @@ pytestmark = requires_pg
 
 
 # ===========================================================================
-# direct-insert helpers (E10 history — precise control of category + variants)
+# direct-insert helpers (E10 history - precise control of category + variants)
 # ===========================================================================
 
 def _distinct_cat_uom(db, n=2):
@@ -110,7 +110,7 @@ def _mk_hist_rec(db, run_id, product_id, *, rounded_qty=100, funding_status="fun
 
 
 # ===========================================================================
-# E10 — query_past_plans: same SKU + category siblings across runs
+# E10 - query_past_plans: same SKU + category siblings across runs
 # ===========================================================================
 
 def test_past_plans_same_sku_and_category_siblings_newest_first(scm_app):
@@ -219,7 +219,7 @@ def test_past_plans_bounded_by_limit(scm_app):
 
 
 # ===========================================================================
-# E10 — plan-chat context injection: past_plans block present when SKU mentioned
+# E10 - plan-chat context injection: past_plans block present when SKU mentioned
 # ===========================================================================
 
 def test_chat_injects_past_plans_when_sku_mentioned(scm_app, monkeypatch):
@@ -276,7 +276,7 @@ def test_past_plans_endpoint_denied_without_dashboard_view(scm_app):
 
 
 # ===========================================================================
-# E11 — _proposed_qty pure rule (bounded +12%, never below original)
+# E11 - _proposed_qty pure rule (bounded +12%, never below original)
 # ===========================================================================
 
 def test_proposed_qty_uplift_and_multiple_rounding():
@@ -291,7 +291,7 @@ def test_proposed_qty_uplift_and_multiple_rounding():
 
 
 # ===========================================================================
-# E11 — proposal maps a signal to the run's matching BUY recs (service)
+# E11 - proposal maps a signal to the run's matching BUY recs (service)
 # ===========================================================================
 
 def _seed_run_with_category(db):
@@ -388,7 +388,7 @@ def test_market_proposal_missing_signal_404(scm_app):
 
 
 # ===========================================================================
-# E11 — GUARDRAIL (M8-E7): the proposal endpoint writes NO recommendation column
+# E11 - GUARDRAIL (M8-E7): the proposal endpoint writes NO recommendation column
 # ===========================================================================
 
 _REC_COLS = (
@@ -426,7 +426,7 @@ def test_market_proposal_endpoint_writes_no_recommendation_column(scm_app):
     assert res.status_code == 200, res.text
     assert len(res.json()["lines"]) == 2
 
-    # re-read from the DB — every recommendation column is byte-identical (proposal only)
+    # re-read from the DB - every recommendation column is byte-identical (proposal only)
     db.expire_all()
     after = _run_rec_snapshot(db, run_id)
     assert after == before, "the market proposal must not write any recommendation column"
@@ -443,7 +443,7 @@ def test_market_proposal_endpoint_denied_without_run_perm(scm_app):
 
 
 # ===========================================================================
-# M8-F6 — unified assistant: ONE Ask input auto-routes a live market search and
+# M8-F6 - unified assistant: ONE Ask input auto-routes a live market search and
 # attaches a confirm-gated proposal to the SAME chat response when lines match.
 # ===========================================================================
 
@@ -560,7 +560,7 @@ def test_chat_endpoint_plain_question_has_null_proposal(scm_app, monkeypatch):
 
 
 # ===========================================================================
-# M8-F7 — past-plans for a no-SKU "previous / similar plans" question + prompt
+# M8-F7 - past-plans for a no-SKU "previous / similar plans" question + prompt
 # hygiene (no implementation internals leaked; business-language no-history line).
 # ===========================================================================
 
@@ -615,7 +615,7 @@ def test_chat_uses_hygienic_system_prompt(scm_app, monkeypatch):
 
 
 # ===========================================================================
-# M8-F16 — assistant action pipeline: a natural-language plan INSTRUCTION becomes
+# M8-F16 - assistant action pipeline: a natural-language plan INSTRUCTION becomes
 # a STRUCTURED accept/reject/adjust proposal resolved to REAL rec ids. The LLM
 # proposes which lines + which decision (schema-forced structured output); the
 # human clicks Apply; NOTHING is written by the chat call (guardrail).

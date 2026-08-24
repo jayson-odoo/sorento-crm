@@ -6,7 +6,7 @@ Revises: 149_forms_form_type
 
 Cherry-picks the base-platform pieces from ijm_icp_crm migrations 161, 166,
 170, 171 (commercial-specific tables and seed-data INSERTs are intentionally
-excluded — they live in commercial_core's own migration). The
+excluded - they live in commercial_core's own migration). The
 `commercial_lead_respond_contacts` junction and `commercial_leads.respond_workspace_id`
 column also belong to commercial_core and are added there.
 """

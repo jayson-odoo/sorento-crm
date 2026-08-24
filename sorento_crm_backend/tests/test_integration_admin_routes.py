@@ -1,4 +1,4 @@
-"""Slice 8 of AutoCount Group A — the integration management API (AC-AC-08).
+"""Slice 8 of AutoCount Group A - the integration management API (AC-AC-08).
 
   AC-AC-03  plaintext shown once at creation, never retrievable
   AC-AC-06  rotation with a grace window; immediate revoke

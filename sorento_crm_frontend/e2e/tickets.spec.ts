@@ -1,5 +1,5 @@
 /**
- * Tickets module e2e — covers the verification steps from
+ * Tickets module e2e - covers the verification steps from
  * docs/TICKETING-SYSTEM-PLAN.md.
  *
  * Run against a deployed (or local) instance:
@@ -165,7 +165,7 @@ test('list/board view toggle persists in localStorage', async ({ page }) => {
   await boardToggle.click();
   await expect(page.getByText('Draft', { exact: false }).first()).toBeVisible();
 
-  // Reload — should land back on board.
+  // Reload - should land back on board.
   await page.reload();
   await page.waitForLoadState('networkidle');
   // The board has explicit column headers labelled Draft/Submitted/...

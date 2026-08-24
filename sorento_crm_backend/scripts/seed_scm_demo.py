@@ -1,4 +1,4 @@
-"""SCM M0 demo seed (CP3) — curated demo on REAL products, idempotent.
+"""SCM M0 demo seed (CP3) - curated demo on REAL products, idempotent.
 
 Lays a curated, re-runnable demo on top of the local prod-copy DB so the M0
 position/consumption views (``scm.net_position_v``, ``scm.committed_v``,
@@ -7,11 +7,11 @@ non-trivial numbers and the M1+ engine has realistic inputs.
 
 Everything this script writes is tagged ``source_system='seed'`` (on tables that
 carry the column) or with an ``SCM-SEED-`` code prefix (suppliers, goods-receipts)
-so a re-run first tears its own rows down and re-inserts — counts stay stable,
+so a re-run first tears its own rows down and re-inserts - counts stay stable,
 no duplicates.
 
 DATA REALITY honored here (confirmed against the live copy):
-- ``stock_ledger`` is snapshot/bulk-import only — it carries NO per-DO outflow.
+- ``stock_ledger`` is snapshot/bulk-import only - it carries NO per-DO outflow.
   Real consumption lives in ``order_lines`` (delivery orders). SKU movement is
   therefore picked from ``order_lines``, never the ledger.
 - EVERY product ships with null/0 ``cost_price``. Valuation / ABC / cash all
@@ -21,14 +21,14 @@ DATA REALITY honored here (confirmed against the live copy):
   off a stable md5 of the product_code (re-runs identical). A re-run resets
   these back to NULL first. This keeps ``product_suppliers.unit_cost``, stock
   valuation and ABC value non-zero for every demo SKU.
-- ``market_segments`` has ``retail`` + ``project`` with null ``demand_nature`` —
+- ``market_segments`` has ``retail`` + ``project`` with null ``demand_nature``  - 
   step 1 fills them (retail→continuous, project→spike).
 
 Run (from sorento_crm_backend/, DB up):
 
     venv/bin/python scripts/seed_scm_demo.py
 
-Idempotent — run it twice; the second run prints identical counts.
+Idempotent - run it twice; the second run prints identical counts.
 """
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ def _cost_for(list_price, product_code: str) -> Decimal:
 
     Most SKUs carry a real ``list_price`` → cost = 60% of it. But many fast
     movers (WESERP10B, CWCY605, M-FH12-BLUE, ...) have ``list_price = 0/NULL``
-    in the prod copy, which would zero out valuation / unit_cost / ABC / cash —
+    in the prod copy, which would zero out valuation / unit_cost / ABC / cash  - 
     a demo killer. For those we assign a DETERMINISTIC plausible fallback in
     RM 20-300 keyed off a STABLE hash of the product_code (md5, NOT Python's
     salted ``hash()``) so re-runs stay identical.
@@ -90,7 +90,7 @@ def _cost_for(list_price, product_code: str) -> Decimal:
 
 
 # ---------------------------------------------------------------------------
-# 1. Representative SKU selection (deterministic — stable ORDER BY + product_code
+# 1. Representative SKU selection (deterministic - stable ORDER BY + product_code
 #    tie-break so re-runs pick the same set). Returns ordered, de-duplicated list
 #    of dicts: {product_id, product_code, list_price, warehouse_id, pattern}.
 # ---------------------------------------------------------------------------
@@ -146,7 +146,7 @@ def pick_demo_skus(db) -> list[dict]:
             }
             n += 1
 
-    # 6 fast movers — top by SUM(order_lines.quantity) on non-cancelled DOs,
+    # 6 fast movers - top by SUM(order_lines.quantity) on non-cancelled DOs,
     # restricted to genuinely high-frequency SKUs (>= 50 DOs) so a lumpy
     # big-qty/few-DO SKU doesn't masquerade as fast.
     fast = db.execute(
@@ -165,7 +165,7 @@ def pick_demo_skus(db) -> list[dict]:
     ).fetchall()
     add(fast, "fast", 6)
 
-    # 4 multi-warehouse — on-hand > 0 across >= 2 warehouses.
+    # 4 multi-warehouse - on-hand > 0 across >= 2 warehouses.
     multi = db.execute(
         text(
             """
@@ -181,7 +181,7 @@ def pick_demo_skus(db) -> list[dict]:
     ).fetchall()
     add(multi, "multi_warehouse", 4)
 
-    # 4 stockout-with-history — total on-hand = 0 everywhere but has DO history.
+    # 4 stockout-with-history - total on-hand = 0 everywhere but has DO history.
     stockout = db.execute(
         text(
             """
@@ -199,7 +199,7 @@ def pick_demo_skus(db) -> list[dict]:
     ).fetchall()
     add(stockout, "stockout", 4)
 
-    # 3 dead — on-hand > 0, never appeared on any order line.
+    # 3 dead - on-hand > 0, never appeared on any order line.
     dead = db.execute(
         text(
             """
@@ -215,7 +215,7 @@ def pick_demo_skus(db) -> list[dict]:
     ).fetchall()
     add(dead, "dead", 3)
 
-    # 3 lumpy/normal — big qty spread over few DOs (bursty demand signal).
+    # 3 lumpy/normal - big qty spread over few DOs (bursty demand signal).
     lumpy = db.execute(
         text(
             """
@@ -265,7 +265,7 @@ def _segment_for(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Cleanup — remove this script's own prior output so a re-run is idempotent.
+# Cleanup - remove this script's own prior output so a re-run is idempotent.
 # ---------------------------------------------------------------------------
 
 _SCM_SEED_TABLES = [
@@ -310,7 +310,7 @@ def cleanup(db) -> None:
             text("UPDATE customers SET market_segment_code = NULL WHERE id = :id AND market_segment_code IS NOT NULL"),
             {"id": cust["id"]},
         )
-    # 3. Goods-receipts (picking_headers) this script created — cascade drops lines.
+    # 3. Goods-receipts (picking_headers) this script created - cascade drops lines.
     db.execute(
         text("DELETE FROM picking_headers WHERE picking_number LIKE :pfx"),
         {"pfx": GRN_PREFIX + "%"},
@@ -481,7 +481,7 @@ def seed(db) -> dict:
         sol_count += 1
 
     # --- Step 5b: committed demand ON a stockout SKU (attention signal) -------
-    # A stockout WITH open committed demand is the sharpest reorder signal —
+    # A stockout WITH open committed demand is the sharpest reorder signal  - 
     # on-hand 0 everywhere but real customers are already waiting. The general
     # step-5 loop only reaches the first ~10 (fast+multi) SKUs, so the stockout
     # bucket (e.g. C-FH24) never gets an SO. Give every stockout demo SKU its
@@ -541,7 +541,7 @@ def seed(db) -> dict:
 
     po_count = pol_count = grn_count = grl_count = 0
 
-    # PO1 — ACTIVE, one open line on a FAST mover → non-zero on_order.
+    # PO1 - ACTIVE, one open line on a FAST mover → non-zero on_order.
     po1_sku = nth_fast(0)
     po1_no = numbering.get_next_number("purchase_order", commit_rule=False)
     po1 = PurchaseOrder(
@@ -574,7 +574,7 @@ def seed(db) -> dict:
     po_count += 1
     pol_count += 1
 
-    # PO2/3/4 — fully received, each with a matching goods-receipt whose lead time
+    # PO2/3/4 - fully received, each with a matching goods-receipt whose lead time
     # (picking_date - issue_date) is staggered so receipt_lead_v varies by supplier.
     received_specs = [
         # (supplier_idx, lead_days, [(sku, qty, reject)])
@@ -647,7 +647,7 @@ def seed(db) -> dict:
         # lands. A runtime GR post would fire
         # ``analytics_service.on_goods_receipt_posted(db, po.supplier_id, pol.product_id)``
         # here to refresh just this supplier×product. The seed skips per-GR refresh on
-        # purpose — callers run one full ``run_analytics`` after seeding instead.
+        # purpose - callers run one full ``run_analytics`` after seeding instead.
         po_count += 1
         grn_count += 1
     counts["purchase_orders"] = po_count
@@ -930,7 +930,7 @@ def _guard_not_prod() -> None:
     This is a DEMO seed: it writes cost_price onto real product rows and tags
     market_segments / customers. That is fine on the local prod-copy but must
     NEVER touch real production. Deploy applies migrations 273/274 + the CREATE
-    grant only — never this script.
+    grant only - never this script.
     """
     import os
     import re

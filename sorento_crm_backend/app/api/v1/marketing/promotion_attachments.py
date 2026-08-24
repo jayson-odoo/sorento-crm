@@ -34,7 +34,7 @@ async def get_promotion_attachments(
     dir: Optional[str] = Query("asc"),
     entities: Optional[list[str]] = Query(
         None,
-        description="DEPRECATED — free-text entity bag. Prefer `promotion_ids` / `attachment_ids`.",
+        description="DEPRECATED - free-text entity bag. Prefer `promotion_ids` / `attachment_ids`.",
     ),
     promotion_ids: Optional[list[str]] = Query(
         None,
@@ -118,7 +118,7 @@ async def get_promotion_attachments(
 
         # MCP/API-key callers default to active-first + inactive fallback (parent
         # promotion). Interactive (JWT) callers keep the full catalog unless they
-        # pass `active` explicitly — preserves the FE DataGrid's "show all" listing.
+        # pass `active` explicitly - preserves the FE DataGrid's "show all" listing.
         if active is None and is_api_key_caller:
             active = True
 

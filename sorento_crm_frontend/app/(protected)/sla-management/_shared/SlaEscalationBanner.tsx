@@ -9,7 +9,7 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
  * Shows the LATEST escalation reason of the form's CURRENT (active, unresolved)
  * SLA stage tracker. Because it reads the active tracker's `escalation_reason`
  * field (overwritten on every escalation), it always reflects the most recent
- * escalation — and disappears automatically when the stage resolves and the next
+ * escalation - and disappears automatically when the stage resolves and the next
  * stage spawns (a fresh tracker with no escalation). Renders nothing if the
  * current stage has not been escalated.
  *
@@ -49,7 +49,7 @@ export function SlaEscalationBanner({
       <AlertTriangle className="mt-0.5 size-4 shrink-0" />
       <p className="min-w-0">
         <span className="font-medium">
-          SLA escalated{metaPrefix ? ` — ${metaPrefix}` : ''}
+          SLA escalated{metaPrefix ? ` - ${metaPrefix}` : ''}
           {assignee ? (
             <>
               {' · now assigned to '}
@@ -63,7 +63,7 @@ export function SlaEscalationBanner({
             </>
           ) : null}
         </span>
-        <span> — {clean}</span>
+        <span> - {clean}</span>
       </p>
     </div>
   );

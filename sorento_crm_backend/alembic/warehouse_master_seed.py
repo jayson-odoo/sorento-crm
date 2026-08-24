@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 import sqlalchemy as sa
 
-# (loc_code, warehouse_key_from_sheet, remarks, remarks2) — sheet Warehouse "-" → N/A
+# (loc_code, warehouse_key_from_sheet, remarks, remarks2) - sheet Warehouse "-" → N/A
 WAREHOUSE_MASTER_ROWS: list[tuple[str, str, str, str]] = [
     ("ACT-S", "WH3", "STOCK", ""),
     ("BRW", "BRW", "STOCK", "SHOW"),
@@ -96,7 +96,7 @@ def _warehouse_display_name(loc: str, remarks: str, r2: str) -> str:
     base = f"{loc} ({r2})" if r2 else loc
     ru = remarks.upper()
     if remarks and ru not in ("STOCK", ""):
-        return f"{base} — {remarks}"
+        return f"{base} - {remarks}"
     return base
 
 

@@ -76,7 +76,7 @@ export function PredicateBuilder({
     <div className="space-y-2">
       {predicates.length === 0 ? (
         <p className="text-xs text-muted-foreground">
-          No conditions — this rule matches <span className="font-medium">all</span> forms
+          No conditions - this rule matches <span className="font-medium">all</span> forms
           (wildcard).
         </p>
       ) : (

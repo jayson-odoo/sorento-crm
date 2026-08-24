@@ -3,7 +3,7 @@ import { extractApiError } from '@/lib/api-client';
 import type { ConversationSLATrackingDetail } from '@/app/(protected)/sla-management/conversation-sla-tracking/types/conversationSLATracking.types';
 
 /* -------------------------------------------------------------------------------------
- * "I'm handling this" handling-lock (PLAN-form-handling-lock.md §8) — LIVE (Phase 2).
+ * "I'm handling this" handling-lock (PLAN-form-handling-lock.md §8) - LIVE (Phase 2).
  *
  * The lock is a SEPARATE field (`handled_by_id`) from the assignee and is distinct from
  * the existing reassign-`takeover`. It only bites while a FORM-SLA tracker is escalated
@@ -24,7 +24,7 @@ import type { ConversationSLATrackingDetail } from '@/app/(protected)/sla-manage
  *     errors: 409 already claimed; 403 not eligible / not escalated / flag off.
  *
  *   POST .../{tracking_id}/take-over
- *     req:  { expected_handler_id: string }  (optimistic-concurrency guard — ALWAYS the
+ *     req:  { expected_handler_id: string }  (optimistic-concurrency guard - ALWAYS the
  *                                             current holder's id; 409 if null/omitted)
  *     res:  200 { handled_by_id (=actor), handled_by_name, handled_at, previous_handler_id }
  *     guard: same eligibility; conditional UPDATE ... WHERE handled_by_id = expected_handler_id.
@@ -41,7 +41,7 @@ import type { ConversationSLATrackingDetail } from '@/app/(protected)/sla-manage
  *   - else require actor.id == handled_by_id OR (actor admin/superadmin AND handled_by_id IS NULL).
  *   - else 403 "This form is being handled by <name>. Take over to act."
  *
- * PR/SF share a FE component — gate on the ACTIVE tracker's `source_entity_type`, not a
+ * PR/SF share a FE component - gate on the ACTIVE tracker's `source_entity_type`, not a
  * hardcoded form name. The BE re-checks every guard server-side (never trust the FE).
  * ----------------------------------------------------------------------------------- */
 
@@ -142,7 +142,7 @@ export interface FormHandlingTracker {
 /**
  * Active (unresolved) handling-lock stage rows for a form entity. The active stage is the
  * first `is_resolved === false` row. Carries `flag_enabled` / `viewer_eligible` /
- * `viewer_is_admin` — the inputs `resolveHandlingLockState` cannot compute client-side.
+ * `viewer_is_admin` - the inputs `resolveHandlingLockState` cannot compute client-side.
  */
 export async function getFormHandlingTrackers(
   sourceEntityType: FormSLASourceType,
@@ -172,7 +172,7 @@ export async function claimHandling(trackingId: string): Promise<FormHandlingTra
 
 /**
  * Take over the handling lock from the current holder. `expectedHandlerId` MUST be the
- * current holder's id (optimistic-concurrency guard) — the backend 409s on mismatch or
+ * current holder's id (optimistic-concurrency guard) - the backend 409s on mismatch or
  * when it is null/omitted, so callers always pass the tracker's current `handled_by_id`.
  */
 export async function takeOverHandling(

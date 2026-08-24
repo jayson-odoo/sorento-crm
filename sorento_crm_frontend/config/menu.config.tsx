@@ -62,14 +62,14 @@ import { type MenuConfig } from './types';
 
 export const MENU_SIDEBAR: MenuConfig = [
   {
-    // Dashboards is the system's default landing page — a direct, clickable link
+    // Dashboards is the system's default landing page - a direct, clickable link
     // (no submenu) to '/'.
     title: 'Dashboards',
     icon: LayoutGrid,
     path: '/',
   },
   {
-    // Ideas — hosts the shared-service ideation board/detail inside an iframe.
+    // Ideas - hosts the shared-service ideation board/detail inside an iframe.
     // Leaf link to '/ideas' (detail lives at '/ideas/{id}').
     title: 'Ideas',
     icon: Lightbulb,
@@ -364,7 +364,7 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
   {
-    // Supply Chain (SCM) — net-position dashboard + sales orders.
+    // Supply Chain (SCM) - net-position dashboard + sales orders.
     // Gated behind `moduleKey: 'scm'` and, per leaf, the `scm.dashboard.view`
     // read permission that actually protects all three read endpoints (the SO
     // and PO list routes share that read gate; writes use `scm.reorder.run`).
@@ -425,13 +425,13 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
   {
-    // Dealer Kit — the catalogue page builder.
+    // Dealer Kit - the catalogue page builder.
     //
     // Deliberately carries NO `moduleKey` and NO `permission` yet. The sidebar
     // hides any branch whose moduleKey is absent from the tenant's enabled set,
     // so declaring `dealer_kit` before the backend seeds its catalogue row would
     // hide this entry outright. Both gates land in S1 phase 2, together with the
-    // module row and the permission slugs that actually enforce them — a gate
+    // module row and the permission slugs that actually enforce them - a gate
     // added before its enforcement exists is a gate that lies.
     title: 'Dealer Kit',
     icon: BookOpen,

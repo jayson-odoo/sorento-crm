@@ -1,4 +1,4 @@
-"""Bug B — lookup read endpoints must be readable by any AUTHENTICATED user.
+"""Bug B - lookup read endpoints must be readable by any AUTHENTICATED user.
 
 Plan: PLAN-fix-broken-creates-and-lookup403.md (Bug B). The 3 read endpoints
 (/by-binding, /{set_key}/options, /resolve) drop the
@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-# MUST be first app import — resolves circular-import in app.modules.runtime.guards
+# MUST be first app import - resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 
 from tests._pg_fixture import blank_session
@@ -102,7 +102,7 @@ def test_resolve_200_for_nonadmin(nonadmin_client):
     assert r.json()["value"] == "enquiry"
 
 
-# ---- B-4 : regression pin — admin SETS screen stays gated ----
+# ---- B-4 : regression pin - admin SETS screen stays gated ----
 
 def test_admin_sets_list_403_for_nonadmin(nonadmin_client):
     r = nonadmin_client.get("/api/v1/master-data/lookup-sets/")

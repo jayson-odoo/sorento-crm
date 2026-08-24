@@ -11,8 +11,8 @@ import { sessionTokenCookieName } from '@/lib/auth-cookie';
  * Base URL for server-side calls from Next.js to FastAPI (not browser-facing).
  *
  * Resolution order:
- *   1. FASTAPI_INTERNAL_URL  — runtime override for server-side calls
- *   2. NEXT_PUBLIC_API_URL   — baked at build time
+ *   1. FASTAPI_INTERNAL_URL  - runtime override for server-side calls
+ *   2. NEXT_PUBLIC_API_URL   - baked at build time
  *   3. production            → http://backend:8000  (Docker compose service name)
  *   4. development           → throw (avoid silent localhost:8000 fallback that breaks
  *                              multi-instance dev where alt ports are in use)

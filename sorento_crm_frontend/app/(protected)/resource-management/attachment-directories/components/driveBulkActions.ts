@@ -9,10 +9,10 @@ import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
  *  - Mixed folder+file selections are allowed (F1).
  *  - Shared actions (Move, Delete) stay enabled on any selection.
  *  - File-only actions (Export selected, Set access levels, Set attachment type,
- *    Resubmit) are DISABLED when the selection contains a folder (F3) — folders
+ *    Resubmit) are DISABLED when the selection contains a folder (F3) - folders
  *    have no such attributes.
  *  - Trash exposes Restore + Delete only.
- *  - Single-only actions (Rename, Replace) are not in the bulk menu at all (F6) —
+ *  - Single-only actions (Rename, Replace) are not in the bulk menu at all (F6)  - 
  *    they live on the per-row menu.
  *
  * Export here is the SELECTED-rows xlsx export (reuses the toolbar's export

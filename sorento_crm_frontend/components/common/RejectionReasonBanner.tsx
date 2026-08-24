@@ -13,11 +13,11 @@ import { PersonLink } from './PersonLink';
  * scrolling.
  *
  * When `rejectedByName` is present the copy reads
- * "Rejected by {PersonLink} · {when} — {reason}" — the name links to
+ * "Rejected by {PersonLink} · {when} - {reason}" - the name links to
  * `wa.me/{digits}` when `rejectedByWaPhone` resolves, else plain text (FB-1).
- * With no rejecter it falls back to today's "Rejected — {reason}" copy.
+ * With no rejecter it falls back to today's "Rejected - {reason}" copy.
  *
- * Render only when the entity is actually rejected — caller gates on the status
+ * Render only when the entity is actually rejected - caller gates on the status
  * field. Renders nothing if no reason text is present.
  */
 export function RejectionReasonBanner({
@@ -46,7 +46,7 @@ export function RejectionReasonBanner({
         ) : (
           <span className="font-medium">Rejected</span>
         )}
-        <span> — {reason.trim()}</span>
+        <span> - {reason.trim()}</span>
       </p>
     </div>
   );

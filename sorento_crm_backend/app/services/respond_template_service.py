@@ -41,9 +41,9 @@ PARAM_VARIABLES = (
     "reason",
     "portal_url",
     "message",
-    # Portal OTP code — used by the ``portal_otp`` use case template.
+    # Portal OTP code - used by the ``portal_otp`` use case template.
     "otp_code",
-    # SLA daily summary counts — keys match the context_vars emitted by
+    # SLA daily summary counts - keys match the context_vars emitted by
     # user_sla_daily_summary_service (``outstanding`` / ``escalated_last_24h`` /
     # ``resolved_last_24h``); the deep link maps to ``portal_url``.
     "outstanding",
@@ -58,15 +58,15 @@ PARAM_VARIABLES = (
     # the CRM base URL. Each use case's service must supply these in context_vars.
     "today_date",
     "system_url",
-    # SLA assignment / escalation deadlines (KL wall time) — "Respond by" / "Resolve by".
+    # SLA assignment / escalation deadlines (KL wall time) - "Respond by" / "Resolve by".
     "respond_due_at",
     "resolve_due_at",
     # SLA assignment / escalation destination link: the form record for routed types,
-    # or the Respond inbox for ticket / conversation — same target as clicking the task.
+    # or the Respond inbox for ticket / conversation - same target as clicking the task.
     "form_url",
     # Structured complaint update template (PLAN-complaint-structured-update-template.md):
     # discrete fields so the body reads as labelled lines (Project / Customer / DO) with
-    # the bare action core after "Update:" — instead of one verbose run-on sentence.
+    # the bare action core after "Update:" - instead of one verbose run-on sentence.
     # ``update`` = the bare core (tech response / status change / resolution);
     # ``project`` / ``customer`` / ``delivery_order`` auto-resolve from the complaint row.
     "update",
@@ -75,17 +75,17 @@ PARAM_VARIABLES = (
     "delivery_order",
     # Stock-inquiry product code line.
     "product_code",
-    # Read-only public view link (token URL) — distinct from ``portal_url`` which
+    # Read-only public view link (token URL) - distinct from ``portal_url`` which
     # is the interactive portal the contact can act/resubmit on. Complaint sends
     # thread both via extra_context_vars.
     "view_url",
-    # SLA takeover: the initiator (teammate who started the takeover) — the
+    # SLA takeover: the initiator (teammate who started the takeover) - the
     # "Requested by" line in the takeover-pending template.
     "initiator",
     # Form handling-lock: the staff member who currently holds (or just claimed /
     # released) the "I'm handling this" lock. Used by the sla_handling_* templates.
     "handler_name",
-    # Sender name — the staff member who replied. Runtime-filled from the logged-in
+    # Sender name - the staff member who replied. Runtime-filled from the logged-in
     # user's ``users.name`` (falls back to "Customer Service" for API-key/system
     # principals). Used by the chat reply templates so the contact knows who replied.
     "sender_name",
@@ -93,7 +93,7 @@ PARAM_VARIABLES = (
 
 # Use cases whose template MUST map a slot to a specific variable, or the message
 # loses its whole point. portal_otp without ``otp_code`` mapped renders a login
-# message with no code — locking users out — yet would otherwise pass the
+# message with no code - locking users out - yet would otherwise pass the
 # "every slot mapped to *something*" check. Enforced in set_default.
 REQUIRED_PARAM_VARIABLE: Dict[str, str] = {
     "portal_otp": "otp_code",
@@ -129,7 +129,7 @@ def url_button_of(components: List[dict]) -> Optional[dict]:
 
     respond.io shape: ``{"type":"buttons","buttons":[{"type":"url",
     "url":"https://x/{{1}}","parameters":[...]}]}``. "Dynamic" = the url carries a
-    ``{{n}}`` placeholder; a static url button (no placeholder) is ignored — there
+    ``{{n}}`` placeholder; a static url button (no placeholder) is ignored - there
     is nothing to fill at send time.
     """
     for comp in components or []:
@@ -158,7 +158,7 @@ def is_copy_code_button(button: Optional[dict]) -> bool:
     """True for a WhatsApp Authentication COPY_CODE button.
 
     These render as a dynamic URL button (the url carries ``{{1}}``), but the
-    param is the OTP code itself — Meta copies the button parameter, not a CRM
+    param is the OTP code itself - Meta copies the button parameter, not a CRM
     link. Admins must NOT map a link variable for it; the send path reuses the
     code already mapped to the body. Detected by the copy-code URL signature.
     """
@@ -369,7 +369,7 @@ def _default_is_valid(row: Optional[RespondTemplateDefault]) -> bool:
         return False
     # A dynamic URL button needs its link variable mapped, or the button has
     # nothing to fill (Meta rejects a missing button param). COPY_CODE auth
-    # buttons are exempt — their param is the OTP code, auto-filled at send.
+    # buttons are exempt - their param is the OTP code, auto-filled at send.
     _btn = url_button_of(getattr(row.template, "components", None))
     if _btn and not is_copy_code_button(_btn) and not mapping.get(BUTTON_URL_KEY):
         return False
@@ -475,13 +475,13 @@ def set_default(
             f"Unknown param variables: {', '.join(invalid_vars)}. Allowed: {', '.join(PARAM_VARIABLES)}"
         )
     # Drop mapping entries beyond the template's params (stale keys from a
-    # previously-selected template). Keep the reserved BUTTON_URL_KEY — it is not
+    # previously-selected template). Keep the reserved BUTTON_URL_KEY - it is not
     # a positional body slot.
     mapping = {k: v for k, v in mapping.items() if k in needed or k == BUTTON_URL_KEY}
 
     # Dynamic URL button: require its link variable mapped (else Meta rejects the
     # button param). No button → drop a stale button_url key. COPY_CODE auth
-    # buttons are exempt — their param is the OTP code (auto-filled at send), so
+    # buttons are exempt - their param is the OTP code (auto-filled at send), so
     # admins map no link variable; drop any stale key.
     _url_btn = url_button_of(template.components)
     if _url_btn and not is_copy_code_button(_url_btn):
@@ -502,7 +502,7 @@ def set_default(
             f"The '{use_case}' template must map a parameter to '{required_var}'."
         )
 
-    # Chat reply templates carry the admin's typed message in a body param — a
+    # Chat reply templates carry the admin's typed message in a body param - a
     # default with no slot mapped to ``message`` would drop the reply entirely.
     # ``sender_name`` unmapped is allowed (it only labels who replied), so do NOT
     # hard-fail on it here (the FE surfaces a soft warning).

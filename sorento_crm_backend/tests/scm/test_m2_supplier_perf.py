@@ -1,4 +1,4 @@
-"""SCM M2 — supplier performance (AC-M2.8/2.9/2.10/2.11).
+"""SCM M2 - supplier performance (AC-M2.8/2.9/2.10/2.11).
 
 Supplier metrics run off PO -> GR pairs. To keep the golden numbers deterministic and
 independent of whatever demo seed is (or isn't) loaded, each test builds a small
@@ -102,17 +102,17 @@ def _build_fixture(db):
     s1, s2 = _mk_supplier(db, "M2 Supplier One"), _mk_supplier(db, "M2 Supplier Two")
     exp = D0 + timedelta(days=10)
 
-    # S1 x P1 — three completed single-GR lines
+    # S1 x P1 - three completed single-GR lines
     for lead, rej in ((10, 0), (13, 10), (11, 0)):
         pol = _mk_po_line(db, s1, p1, wid, 100, D0, exp)
         _mk_gr(db, pol, p1, wid, D0 + timedelta(days=lead), 100, 100 - rej, rej)
 
-    # S1 x P2 — one line received over two GRs; completing GR at d0+15
+    # S1 x P2 - one line received over two GRs; completing GR at d0+15
     pol2 = _mk_po_line(db, s1, p2, wid, 200, D0, exp)
     _mk_gr(db, pol2, p2, wid, D0 + timedelta(days=8), 120, 120, 0)   # partial
     _mk_gr(db, pol2, p2, wid, D0 + timedelta(days=15), 80, 80, 0)    # completing
 
-    # S2 x P3 — single thin line
+    # S2 x P3 - single thin line
     pol3 = _mk_po_line(db, s2, p3, wid, 50, D0, exp)
     _mk_gr(db, pol3, p3, wid, D0 + timedelta(days=20), 50, 50, 0)
     db.flush()
@@ -215,7 +215,7 @@ def test_grace_and_weights_are_configurable(scm_app):
 def test_null_issue_date_group_does_not_crash(scm_app):
     """B2: a supplier group whose completing receipts ALL have a null PO issue_date must
     still compute (period_start / lead null) without raising ValueError from min()/max()
-    on an empty date sequence — a null issue_date row can never fail the whole run."""
+    on an empty date sequence - a null issue_date row can never fail the whole run."""
     _, db, _, _ = scm_app
     wid = _warehouse(db)
     (p1,) = _products(db, 1)

@@ -1,8 +1,8 @@
-# PLAN — Portal cross-device "log in with this number" + OTP template
+# PLAN - Portal cross-device "log in with this number" + OTP template
 
 **Status:** Implemented + verified (2026-06-18). Pending: admin maps the
 `portal_otp` template default in Respond.io template-defaults screen (out-of-window
-OTP won't send until mapped). Confirm the approved template's category — if it's a
+OTP won't send until mapped). Confirm the approved template's category - if it's a
 WhatsApp *authentication* template, `send_template_message` needs the copy-code
 button component added.
 
@@ -17,7 +17,7 @@ invalid input syntax for type uuid: "0dfe4390-...-f9197bce7069%3A"
 
 Two distinct issues, plus a requested UX change.
 
-### A. The crash (root cause — not auth)
+### A. The crash (root cause - not auth)
 
 Customer status messages are built as `...{portal_url}: status changed to ...`.
 `_complaint_status_link_part` (complaints_service.py:605) returns ` {url}` and the
@@ -34,7 +34,7 @@ When the second device 401s on load, `SubmissionForm` redirects to
 `portalVerifyPath({reason})` with **no slug**. `portalBase(undefined)` reads empty
 localStorage → falls to legacy `/portal/verify` → verify card has no token →
 `request-link` state ("message us on WhatsApp"). The user never sees the
-"this belongs to {name} — log in with this number?" OTP path even though the slug
+"this belongs to {name} - log in with this number?" OTP path even though the slug
 is right there in the URL.
 
 ### C. Requested UX
@@ -49,7 +49,7 @@ is right there in the URL.
 
 - OTP template **already approved** in Respond.io → wire `request_otp` through the
   window-aware `send_text_or_template`.
-- Show **full name** on the verify card (slug is shareable — accepted tradeoff).
+- Show **full name** on the verify card (slug is shareable - accepted tradeoff).
 - Keep the wa.me "message us" button as a **fallback**, below the OTP flow.
 
 ## Changes
@@ -64,11 +64,11 @@ is right there in the URL.
      not absorb punctuation.
    - (FE guard below is the belt to this suspenders.)
 
-2. **Expose name** — `PortalService.identity_hint` adds `name` (full contact
+2. **Expose name** - `PortalService.identity_hint` adds `name` (full contact
    name). Propagates to `slug_info` + `token_info`; add `name` to
    `PortalSlugInfoResponse` / `PortalTokenInfoResponse`.
 
-3. **OTP via template** —
+3. **OTP via template**  - 
    - `models/respond_template.py`: add `"portal_otp"` to
      `TEMPLATE_DEFAULT_USE_CASES` (auto-appears in the admin template-defaults
      screen via `get_defaults`).
@@ -104,7 +104,7 @@ is right there in the URL.
   `extract_first_url` strips trailing punctuation.
 - vitest: `PortalVerifyCard` confirm-identity state renders name + type and
   fires OTP only after confirm.
-- playwright: cross-device flow — note creds gap (`USER_GUIDE_E2E_*` not in env),
+- playwright: cross-device flow - note creds gap (`USER_GUIDE_E2E_*` not in env),
   fall back to MCP interactive if available.
 
 ## Verification

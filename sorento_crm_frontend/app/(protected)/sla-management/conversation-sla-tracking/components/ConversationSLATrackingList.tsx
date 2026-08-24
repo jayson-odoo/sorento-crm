@@ -171,7 +171,7 @@ export default function ConversationSLATrackingList() {
     return now > due;
   };
 
-  /** Time elapsed: same logic as detail view — stops only when resolved; until then, now - initiated_at. */
+  /** Time elapsed: same logic as detail view - stops only when resolved; until then, now - initiated_at. */
   const getTimeElapsed = (o: ConversationSLATracking): string => {
     if (o.is_resolved && o.resolved_at && o.initiated_at) {
       const ms = parseDateTimeAsUTC(o.resolved_at).getTime() - parseDateTimeAsUTC(o.initiated_at).getTime();
@@ -189,11 +189,11 @@ export default function ConversationSLATrackingList() {
   };
 
   const formatSecondsToDuration = (seconds: number | null | undefined) => {
-    if (seconds == null) return '—';
+    if (seconds == null) return '-';
     return formatDuration(seconds * 1000);
   };
   const formatSecondsToDurationWithSeconds = (seconds: number | null | undefined) => {
-    if (seconds == null) return '—';
+    if (seconds == null) return '-';
     return formatDurationWithSeconds(seconds * 1000);
   };
 
@@ -305,7 +305,7 @@ export default function ConversationSLATrackingList() {
         cell: ({ row }) => {
           const o = row.original;
           const dueRes = o.due_at_resolution ?? o.resolution_due_at;
-          if (!dueRes) return '—';
+          if (!dueRes) return '-';
           const overdue = isResolutionOverdue(o);
           return (
             <div className="space-y-1">
@@ -345,7 +345,7 @@ export default function ConversationSLATrackingList() {
               getResponseDuration(o) ??
               (o.response_time != null
                 ? formatDurationWithSeconds(Number(o.response_time) * 3600 * 1000)
-                : '—');
+                : '-');
             return (
               <div className="space-y-0.5">
                 <div className="text-xs text-muted-foreground">Response time</div>

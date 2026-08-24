@@ -1,4 +1,4 @@
-# PLAN — Team tasks, takeover/reassign, coverage subscriptions, team hierarchy & RR toggle
+# PLAN - Team tasks, takeover/reassign, coverage subscriptions, team hierarchy & RR toggle
 
 **Status:** Implemented + verified 2026-06-22. Migrations 238/239/240 applied. 35 pytest + 26 vitest + 32 live-API ACs (real postgres) + Playwright on every FE surface. Added `GET /visible-users` (scope-B picker source) beyond original plan.
 
@@ -16,8 +16,8 @@ team hierarchy (parent teams), and per-member round-robin opt-out.
   `assigned_to_id`, `from_tier`, `to_tier`, `reason`.
 - Teams: `teams`, `team_members` (user_id, team_id, sort_order; unique per pair),
   `agent_teams` (agent_id, code=team_set, team_id, tier 1/2/3), `agent_team_round_robin_cursors`.
-- `AccessAgentService.get_next_assignee(agent_id, team_id)` — round-robin pick.
-- `RespondClient.set_conversation_assignee(identifier, assignee_id)` — **exists, never called**;
+- `AccessAgentService.get_next_assignee(agent_id, team_id)` - round-robin pick.
+- `RespondClient.set_conversation_assignee(identifier, assignee_id)` - **exists, never called**;
   POSTs `/v2/contact/{id}/conversation/assignee`, payload `{"assigneeId": ...}`, `""` to unassign.
 - `User.respond_user_id` maps CRM user → Respond agent.
 - My Pending widget: `MyPendingSLAWidget.tsx` → `GET /sla-management/conversation-sla-tracking/my-pending`
@@ -30,7 +30,7 @@ team hierarchy (parent teams), and per-member round-robin opt-out.
 
 **Decision:** add self-FK `teams.parent_team_id` (nullable). Configured in team create/edit UI
 (a "Parent team" dropdown). Full-recursive descendants (parent → child → grandchild → any depth),
-membership-driven — being a member of a parent team IS the manager grant (no separate role).
+membership-driven - being a member of a parent team IS the manager grant (no separate role).
 
 - Migration: add `parent_team_id` nullable FK `teams.id` (`ondelete SET NULL`), index it.
 - Helper: recursive CTE `descendant_team_ids(team_ids)` → all teams at-or-below a set.
@@ -56,14 +56,14 @@ in My Pending).
   pagination, Takeover/Reassign per row.
 
 **Endpoints (new):**
-- `GET /sla-management/conversation-sla-tracking/team-pending?assignee=&team=&page=&limit=` —
+- `GET /sla-management/conversation-sla-tracking/team-pending?assignee=&team=&page=&limit=`  - 
   visible-team tasks, optional assignee/team filter, soonest-due first. Returns assignee name +
   team label per row (resolve UUIDs → human-readable; no UUIDs in UI).
 - Service `list_team_pending(user_id, filters)` on `ConversationSLATrackingService`.
 
 ## C. Takeover (grab a visible task for myself)
 
-Only on Team Tasks (not My Pending — already mine). **Permission = visibility** (anyone who can see
+Only on Team Tasks (not My Pending - already mine). **Permission = visibility** (anyone who can see
 the task can take it; no RBAC slug).
 
 **Mutation:**
@@ -72,7 +72,7 @@ the task can take it; no RBAC slug).
   shown under a specific team queue; set `team_set_code` / `agent_id` / `current_tier` from **that
   team's `agent_teams` link** (the team I'm taking it on behalf of). Future escalation then follows
   my team's chain. The FE passes the team context (team_id) with the takeover call.
-- **Do NOT reset the clock** — `due_at` / `due_at_resolution` / `current_tier_started_at` unchanged.
+- **Do NOT reset the clock** - `due_at` / `due_at_resolution` / `current_tier_started_at` unchanged.
   (Customer already waiting; covering shouldn't move the deadline.) → this needs a NEW code path,
   NOT `apply_assignee_team_derivation` (which resets the clock).
 - Event log: `event_type='reassignment'`, `trigger='manual'`, `triggered_by_id=me`,
@@ -81,13 +81,13 @@ the task can take it; no RBAC slug).
 
 **Endpoint:** `POST /sla-management/conversation-sla-tracking/{id}/takeover` body `{ team_id }`.
 
-## D. Reassign (hand a task to a chosen person) — renamed from "defer"
+## D. Reassign (hand a task to a chosen person) - renamed from "defer"
 
 On **both** My Pending and My Team Tasks.
 
 **Picker scope (B):** choose from users **I can see** (members of visibleTeams).
 
-**Mutation (decision ii — keep original team):**
+**Mutation (decision ii - keep original team):**
 - `assigned_to_id` → target; `assigned_to` → target.`respond_user_id`.
 - **Keep** original `team_set_code` / `current_tier` / `agent_id` (hand the work item to a person,
   don't re-home the queue → avoids multi-team derivation ambiguity).
@@ -118,15 +118,15 @@ Reuse `create_with_channel_preferences` + `notify_*_on_assignment` toggles; in-a
 ## G. Coverage subscriptions (forward-looking delegation)
 
 Subscribe to a colleague so their FUTURE assignments/escalations also ping me. Separate from takeover
-(which grabs an existing task). Loop: RR still assigns to the absent person (no leave flag — not HRMS),
+(which grabs an existing task). Loop: RR still assigns to the absent person (no leave flag - not HRMS),
 subscription fans the notice to the cover, cover hits Takeover.
 
-**Model — new table `notification_subscriptions`:**
+**Model - new table `notification_subscriptions`:**
 `id, subscriber_id (FK users), target_user_id (FK users), is_active bool, expires_at nullable,
 created_at`. Unique active (subscriber, target). One subscriber → many targets; one target → many
 subscribers.
 
-**Event scope (A):** only the target's **SLA assignment + escalation** notifications fan out — NOT
+**Event scope (A):** only the target's **SLA assignment + escalation** notifications fan out - NOT
 the target's unrelated account notifications. Applies to both conversation and form SLA
 assignment/escalation.
 
@@ -137,11 +137,11 @@ Message labeled "(covering for <Name>)".
 **Who can subscribe to whom:** scope-B (users in visibleTeams).
 
 **Fan-out hook:** at the central SLA assignment/escalation notify path, after notifying the target,
-look up active non-expired subscriptions for that target and emit a copy per subscriber (deduped — if
+look up active non-expired subscriptions for that target and emit a copy per subscriber (deduped - if
 subscriber == the actual assignee/actor, don't double-send). Guard against self-subscription.
 
 **Management UI:** "Coverage" section in `account/notifications` (the page already open:
-`other-notifications.tsx`) — list "users I'm covering for", add via scope-B picker, remove, optional
+`other-notifications.tsx`) - list "users I'm covering for", add via scope-B picker, remove, optional
 end-date (`expires_at`). Quick **Subscribe** action from a teammate's row in My Team Tasks.
 
 **Expiry:** optional `expires_at`; manual unsubscribe always available. Daily check deactivates
@@ -149,7 +149,7 @@ past-expiry rows.
 
 ## H. Round-robin per-member opt-out
 
-**Decision:** add `team_members.include_in_round_robin` bool, default `true` (per-team, NOT on users —
+**Decision:** add `team_members.include_in_round_robin` bool, default `true` (per-team, NOT on users  - 
 multi-team member can be RR-eligible in one team, excluded in another).
 
 - `get_next_assignee` filters to members where `include_in_round_robin = true`.
@@ -192,7 +192,7 @@ appears in notification settings.
 
 ## Open implementation notes
 
-- Takeover's team-context re-derive is a NEW path (clock-preserving) — do not reuse
+- Takeover's team-context re-derive is a NEW path (clock-preserving) - do not reuse
   `apply_assignee_team_derivation` (resets clock + bails on multi-team tier-1).
 - Cycle guard on `parent_team_id` (no self/descendant as parent).
 - Reuse `descendant_team_ids` CTE for both Team Tasks visibility and coverage picker scope.

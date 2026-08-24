@@ -1,5 +1,5 @@
 /**
- * ProductsList — Status + Discontinued status pills.
+ * ProductsList - Status + Discontinued status pills.
  *
  * Covers the design-language alignment for the boolean status columns:
  *  - Status (is_active) renders "Active"/"Inactive",
@@ -111,7 +111,7 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
-describe('ProductsList — status + discontinued pills', () => {
+describe('ProductsList - status + discontinued pills', () => {
   it('Status column renders Active/Inactive from is_active', async () => {
     renderList();
     await waitFor(() => expect(grid.table).not.toBeNull());

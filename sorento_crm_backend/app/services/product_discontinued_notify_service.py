@@ -1,6 +1,6 @@
 """Product-discontinued batch notification (scheduled task ``product_discontinued_check``).
 
-Each tick reports products that became discontinued since the last run — exactly
+Each tick reports products that became discontinued since the last run - exactly
 once, based on CURRENT state. A discontinue-then-revert before the tick is never
 reported (the reverted product has ``is_discontinued = False``). Subscribed staff
 (admin-configured per-user toggles) get ONE message with the COUNT of newly
@@ -275,7 +275,7 @@ def _run_for_company(
 
     prefix = f"{company_name}: " if (label_with_company and company_name) else ""
     scope_label = f" for {company_name}" if (label_with_company and company_name) else ""
-    # Date the batch is reported, in Malaysia local time (DD/MM/YYYY) — matches the
+    # Date the batch is reported, in Malaysia local time (DD/MM/YYYY) - matches the
     # daily-summary label so templates can read "Discontinued summary at {{date}}".
     today_date = datetime.now(MALAYSIA_TZ).strftime("%d/%m/%Y")
 
@@ -320,7 +320,7 @@ def _run_for_company(
         # rollback only discards the failing iteration's own partial flush.)
         try:
             # contact_name is the RECIPIENT (this batch goes to staff, not a contact),
-            # so it varies per subscriber — merge it onto the shared context here.
+            # so it varies per subscriber - merge it onto the shared context here.
             recipient_name = (user.name or user.email or "there").strip() or "there"
             user_context_vars = {**context_vars, "contact_name": recipient_name}
             notifier.create_with_channel_preferences(
@@ -346,7 +346,7 @@ def _run_for_company(
                 whatsapp_pref_attr=WHATSAPP_PREF,
             )
             notified_users += 1
-        except Exception as e:  # noqa: BLE001 — best-effort fan-out
+        except Exception as e:  # noqa: BLE001 - best-effort fan-out
             db.rollback()
             logger.warning(
                 "product_discontinued notify failed for user %s (batch %s): %s",

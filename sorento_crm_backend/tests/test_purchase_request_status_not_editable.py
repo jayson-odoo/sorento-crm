@@ -120,7 +120,7 @@ def test_update_request_refuses_a_status_move(db, attempted):
     assert "purchase request" in message
     # The sentence ends with what to do instead.
     assert "action" in message
-    assert "—" not in message and "–" not in message  # no em/en dashes
+    assert "-" not in message and " - " not in message  # no em/en dashes
 
     # Nothing landed: the whole save is refused, not half-applied.
     db.rollback()
@@ -299,7 +299,7 @@ def test_update_and_reply_refuses_a_status_move(db, attempted):
     message = ei.value.detail["message"]
     assert "purchase request" in message
     assert "action" in message
-    assert "—" not in message and "–" not in message  # no em/en dashes
+    assert "-" not in message and " - " not in message  # no em/en dashes
 
     # Refused before anything ran: no reply left the building, no field landed.
     assert send.calls == []

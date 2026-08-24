@@ -99,7 +99,7 @@ EMAIL_EVENT_REGISTRY: list[EventDef] = [
         "external_product_attachment",
         "Product attachment linkage (external API)",
         "Notifies attachment uploaders when n8n / external API links files to a product. "
-        "Coalesced because bulk uploads can fire many callbacks in seconds — this is the "
+        "Coalesced because bulk uploads can fire many callbacks in seconds - this is the "
         "code path that caused the mail-server incident.",
         coalesce_window_seconds=20,
     ),
@@ -206,7 +206,7 @@ def get_event_def(event_key: str) -> Optional[EventDef]:
 
 
 def seed_event_configs(db: Session) -> int:
-    """Idempotent upsert. Returns number of rows inserted (existing rows are NOT overwritten —
+    """Idempotent upsert. Returns number of rows inserted (existing rows are NOT overwritten  - 
     operators may have toggled `enabled` off or set overrides we must preserve)."""
     existing = {row.event_key for row in db.query(EmailEventConfig.event_key).all()}
     created = 0

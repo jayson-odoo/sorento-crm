@@ -1,4 +1,4 @@
-"""SCM LIVE demo seed — additive-only, production-safe, fully reversible.
+"""SCM LIVE demo seed - additive-only, production-safe, fully reversible.
 
 Unlike ``scripts/seed_scm_demo.py`` (which MUTATES real ``products.cost_price`` /
 ``customers.market_segment_code`` / ``market_segments.demand_nature`` and is hard-locked
@@ -8,7 +8,7 @@ reorder demo, then tear the whole thing back out with a single ``cleanup()`` key
 on stable demo prefixes.
 
 WHAT IT CREATES (all net-new, all tagged):
-  * 1 isolation warehouse  ``warehouse_code = 'SCM-DEMO-WH'`` — ALL demo stock + all demo
+  * 1 isolation warehouse  ``warehouse_code = 'SCM-DEMO-WH'`` - ALL demo stock + all demo
     delivery-order (consumption) history lives here, so nothing bleeds into real warehouses.
   * 1 product category ``SCM-DEMO-CAT`` (namespace for the demo SKUs).
   * 6 suppliers   ``supplier_code LIKE 'SCM-DEMO-SUP-%'`` (realistic MYR/CNY lead profiles).
@@ -26,12 +26,12 @@ WHAT IT NEVER DOES:
   * Never SELECTs a real SKU / customer / supplier as a demo subject.
   * Never UPDATEs / DELETEs an existing row. Every scm.* policy insert is guarded on
     existence so it never duplicates what a migration already seeded.
-  * Never runs analytics or a reorder run — it only stages inputs. The operator runs
+  * Never runs analytics or a reorder run - it only stages inputs. The operator runs
     ``analytics_service.run_analytics(db)`` then triggers a reorder run afterward (printed
     reminder at the end).
 
 SCENARIOS (numbers chosen so the deterministic engine, after analytics, emits the
-intended outcome under the locked global policy — fixed_days SS 7d, service 0.95,
+intended outcome under the locked global policy - fixed_days SS 7d, service 0.95,
 overstock 120d, dead 180d):
   * BUY (6):        low on-hand + steady recent DO history → net_position <= ROP → buy rec.
   * STOCKOUT (2):   on-hand 0 + recent DO history + an OPEN sales-order line (committed>0)
@@ -45,7 +45,7 @@ Run (from sorento_crm_backend/, DB reachable):
 
     SCM_LIVE_DEMO_SEED=1 venv/bin/python scripts/seed_scm_live_demo.py
 
-Idempotent — a re-run tears its own rows down first (by prefix / source_system) and
+Idempotent - a re-run tears its own rows down first (by prefix / source_system) and
 re-inserts, so counts stay stable and nothing duplicates.
 """
 from __future__ import annotations
@@ -189,7 +189,7 @@ RECV_POS: list[dict[str, Any]] = [
 
 
 # ---------------------------------------------------------------------------
-# Cleanup — remove this script's own prior output (idempotent, prefix-keyed).
+# Cleanup - remove this script's own prior output (idempotent, prefix-keyed).
 # ---------------------------------------------------------------------------
 
 # Product / supplier id sub-selects reused across the analytics-teardown deletes.
@@ -200,7 +200,7 @@ _DEMO_SUPPLIERS = f"SELECT id FROM suppliers WHERE supplier_code LIKE '{SUPPLIER
 def cleanup(db) -> None:
     """Delete strictly the rows this script created, in FK-safe order.
 
-    Keyed ONLY on the demo prefixes / warehouse / ``source_system='scm_demo'`` — it can
+    Keyed ONLY on the demo prefixes / warehouse / ``source_system='scm_demo'`` - it can
     never touch a real row. Also removes any analytics-derived rows the operator's
     ``run_analytics`` / reorder run produced FOR the demo products/suppliers (they carry
     ``source_system='engine'``/``'scm'`` so they are matched by demo product/supplier id,
@@ -209,11 +209,11 @@ def cleanup(db) -> None:
     stmts = [
         # 1. delivery-order demand history (order_lines cascade on the order delete).
         f"DELETE FROM orders WHERE order_number LIKE '{DO_PREFIX}%'",
-        # 2. open sales orders (committed demand) — lines cascade.
+        # 2. open sales orders (committed demand) - lines cascade.
         f"DELETE FROM sales_orders WHERE source_system = '{SOURCE}'",
         # 3. goods-received pickings (picking_lines cascade) BEFORE their POs.
         f"DELETE FROM picking_headers WHERE picking_number LIKE '{GRN_PREFIX}%'",
-        # 4. purchase orders — lines cascade.
+        # 4. purchase orders - lines cascade.
         f"DELETE FROM purchase_orders WHERE source_system = '{SOURCE}'",
         # 5. analytics artifacts for demo subjects (recommendations, demand, class, perf).
         f"DELETE FROM scm.reorder_recommendation WHERE product_id IN ({_DEMO_PRODUCTS})",
@@ -534,7 +534,7 @@ def seed(db) -> dict:
     counts["goods_receipts"] = grn_count
     counts["goods_receipt_lines"] = grl_count
 
-    # --- scm.* policies (guarded — only create when absent; never duplicate) --
+    # --- scm.* policies (guarded - only create when absent; never duplicate) --
     counts["reorder_policy_created"] = _ensure_reorder_policy(db)
     counts["cash_ranking_policy_created"] = _ensure_cash_ranking_policy(db)
     counts["purchasing_budget_created"] = _ensure_purchasing_budget(db)
@@ -603,7 +603,7 @@ def _ensure_purchasing_budget(db) -> int:
 
 def _banner() -> None:
     print("=" * 78)
-    print("SCM LIVE DEMO SEED — additive-only, production-safe")
+    print("SCM LIVE DEMO SEED - additive-only, production-safe")
     print("-" * 78)
     print("Creates NET-NEW rows only; NEVER updates or deletes a real row.")
     print(f"  warehouse   : {WAREHOUSE_CODE}")
@@ -670,7 +670,7 @@ def main() -> None:
         print(f"  sales/purchase orders + scm.* policies  source_system = '{SOURCE}'")
         print("  Re-run this script (it calls cleanup() first) to tear down + re-seed.")
 
-        print("\n=== NEXT STEPS (operator runs these — the seed does NOT) ===")
+        print("\n=== NEXT STEPS (operator runs these - the seed does NOT) ===")
         print("  1. Refresh analytics so demand_stat / classification / supplier scores populate:")
         print("       from app.services.scm import analytics_service")
         print("       analytics_service.run_analytics(db)")

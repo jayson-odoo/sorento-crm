@@ -1,4 +1,4 @@
-"""SCM M2 — analytics job observability, backfill, explain endpoint, auth
+"""SCM M2 - analytics job observability, backfill, explain endpoint, auth
 (AC-M2.11/2.12/2.13/2.14).
 """
 from __future__ import annotations
@@ -55,7 +55,7 @@ def test_run_writes_analytics_run_log_with_counts_and_coverage(scm_app):
 
 def test_first_run_backfills_all_planning_skus(scm_app):
     """AC-M2.14: every planning SKUxwarehouse in scope gets a demand_stat + a
-    classification row on the first run — including keys with no outflow."""
+    classification row on the first run - including keys with no outflow."""
     _, db, _, _ = scm_app
     # pick a product that spans several warehouses in the planning grid
     pid = db.execute(text(
@@ -95,7 +95,7 @@ def test_rerun_is_idempotent_no_duplicates(scm_app):
 def test_null_warehouse_key_upsert_is_idempotent(scm_app):
     """S2: warehouse_id is nullable and Postgres treats NULLs as DISTINCT, so an
     ON CONFLICT (product_id, warehouse_id) never dedupes a network-level (warehouse_id
-    IS NULL) row — it duplicated every run and multiplied the dashboard LEFT JOIN. The
+    IS NULL) row - it duplicated every run and multiplied the dashboard LEFT JOIN. The
     delete-then-insert upsert must yield exactly ONE demand_stat + ONE classification
     row across re-runs for a null-warehouse key."""
     _, db, _, _ = scm_app

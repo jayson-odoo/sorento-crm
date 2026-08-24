@@ -2,7 +2,7 @@
 
 Two SQLAlchemy events, registered ONCE at import time (via
 ``register_company_scope_listeners()`` called from ``app/main.py`` AND the worker
-path) so BOTH the API process and the RQ worker enforce isolation — the worker
+path) so BOTH the API process and the RQ worker enforce isolation - the worker
 never runs ``main.py``'s ``startup_event``, so anything registered only there is
 absent in the worker (mirrors ``lookup_write_listener``).
 
@@ -20,7 +20,7 @@ Four-state scope (PLAN §3 F2):
 
 Attachments (``__company_shared__``) are nullable/shared: under any non-None
 scope the predicate is ``company_id IS NULL OR company_id IN (ids)`` and under
-UNSET/empty it is ``company_id IS NULL`` — shared (form) attachments stay visible
+UNSET/empty it is ``company_id IS NULL`` - shared (form) attachments stay visible
 by definition (AC-H5).
 """
 from __future__ import annotations
@@ -104,7 +104,7 @@ def build_company_predicate(cls, scope: CompanyScope) -> Optional[ColumnElement]
     """Return the WHERE predicate for entity ``cls`` under ``scope`` (or None for
     "no predicate"). Exposed for the four-state unit test (AC-H3).
 
-    Empty scope compiles to ``false()`` — never ``.in_([])`` (that footgun renders
+    Empty scope compiles to ``false()`` - never ``.in_([])`` (that footgun renders
     an always-false ``IN ()`` on some backends but is easy to break)."""
     shared = _is_shared(cls)
 
@@ -127,12 +127,12 @@ def admin_listing_company_filter(db, column) -> Optional[ColumnElement]:
 
     Used by tables that carry a ``company_id`` but are DELIBERATELY NOT
     ``CompanyScopedMixin`` (``forms``, ``import_logs``, ``audit_logs``,
-    ``import_jobs``) — other consumers of those tables (portal / workflow /
+    ``import_jobs``) - other consumers of those tables (portal / workflow /
     public / worker reads) must keep working under ANY scope, so we never
     globally auto-filter them via ``do_orm_execute``. Instead each staff LISTING
     splices this predicate onto its own query by hand.
 
-    Four-state — intentionally NOT fail-closed (unlike ``build_company_predicate``):
+    Four-state - intentionally NOT fail-closed (unlike ``build_company_predicate``):
       None                    -> None (no predicate, all companies)
       frozenset({ids})        -> company_id IN (ids) OR company_id IS NULL
       UNSET / empty frozenset -> None (no predicate; role-gated fallback)
@@ -154,7 +154,7 @@ def admin_listing_company_filter(db, column) -> Optional[ColumnElement]:
 
 
 # Kill-switch for the runtime enforcement (filter + auto-stamp). Default ON.
-# ``COMPANY_SCOPE_ENFORCE=0`` disables both listeners — used ONLY to measure the
+# ``COMPANY_SCOPE_ENFORCE=0`` disables both listeners - used ONLY to measure the
 # pre-multi-company test baseline. The DB schema (NOT NULL + DEFAULT Sorento from
 # migrations 305/306) is unaffected, so disabling this just reverts read/write
 # behaviour to "all companies / DB-default company". Never set in production.
@@ -265,7 +265,7 @@ def register_company_scope_listeners() -> None:
 
         scope = state.session.info.get("company_scope", UNSET)
         if scope is None:
-            return  # all companies — add nothing
+            return  # all companies - add nothing
 
         targets = [
             m.class_
@@ -274,7 +274,7 @@ def register_company_scope_listeners() -> None:
         ]
         if not targets:
             # ``.count()`` and other subquery-wrapped statements report no
-            # top-level mappers. Fall back to every scoped entity — with_loader_criteria
+            # top-level mappers. Fall back to every scoped entity - with_loader_criteria
             # is a no-op for entities not present in the statement, so this stays
             # correct (just adds unused options to the less-frequent count path).
             targets = _all_scoped_classes()
@@ -286,7 +286,7 @@ def register_company_scope_listeners() -> None:
             # Pass the CONCRETE predicate (not a lambda). A lambda triggers
             # SQLAlchemy's lambda-statement caching, which bakes the first scope's
             # STRUCTURE (false() vs IN vs IS NULL OR IN) and reuses it for other
-            # scopes — silently leaking. A concrete clause becomes part of the
+            # scopes - silently leaking. A concrete clause becomes part of the
             # statement cache key, so each scope structure caches distinctly.
             # include_aliases still adapts the clause to aliased occurrences.
             state.statement = state.statement.options(
@@ -303,9 +303,9 @@ def register_company_scope_listeners() -> None:
             return
 
         # ``None`` = the deliberate system / all-companies principal (a valid
-        # X-API-Key call with NO contact_id/space_id — the n8n backward-compat
+        # X-API-Key call with NO contact_id/space_id - the n8n backward-compat
         # path). Such a caller writing an owned row belongs to the INCUMBENT
-        # company (Sorento) — this matches migration 306's DB DEFAULT and the
+        # company (Sorento) - this matches migration 306's DB DEFAULT and the
         # pre-multi-company behaviour where every write went to the single
         # company. Without this, n8n owned-writes (SPO / GRN / packing-list
         # creates that come in with no contact identity) would be rejected

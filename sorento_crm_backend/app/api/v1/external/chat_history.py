@@ -134,11 +134,11 @@ def ingest_chat_message(
                 "reply_to_message_id": payload.reply_to_message_id,
                 "reply_to_message": payload.reply_to_message,
                 "turn_id": payload.turn_id,
-                # Our clock at ingest. Never the SLA clock — its only job is to make
+                # Our clock at ingest. Never the SLA clock - its only job is to make
                 # webhook lag (ingest_at - respond_ts) separable from agent time.
                 "ingest_at": datetime.now(tz=timezone.utc).replace(tzinfo=None),
                 # Respond's `messageId` IS the message's epoch-microsecond timestamp,
-                # so the SLA clock is already in this payload — no resolver round trip
+                # so the SLA clock is already in this payload - no resolver round trip
                 # needed for it. Null when the id isn't a plausible timestamp; the
                 # resolver still backstops those rows.
                 "respond_ts": respond_ts_from_message_id(
@@ -146,7 +146,7 @@ def ingest_chat_message(
                 ),
                 # `is not None`, NOT truthiness: a `{}` trace (or `{"after": null}`)
                 # must round-trip, so the guard must not be what drops it. json.dumps
-                # of {"after": None} emits "after": null — the signal the view keys on.
+                # of {"after": None} emits "after": null - the signal the view keys on.
                 "state_trace": json.dumps(payload.state_trace)
                 if payload.state_trace is not None
                 else None,

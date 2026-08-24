@@ -14,7 +14,7 @@ import {
  *  - the SLA tracking list / detail (`conversation-sla-tracking*`)
  *  - the in-form active-tracker query on PR / stock-inquiry / complaint details
  *    (`form-sla-trackers`)
- *  - the tracker event log (`conversation-sla-event-logs`) — the extend writes one.
+ *  - the tracker event log (`conversation-sla-event-logs`) - the extend writes one.
  */
 export function useExtendSLATracking() {
   const queryClient = useQueryClient();

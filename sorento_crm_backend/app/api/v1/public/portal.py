@@ -210,7 +210,7 @@ def portal_slug_info(slug: str = Path(..., min_length=4, max_length=32), db: Ses
     Public by design: the slug is bookmarkable/shareable. Knowing it grants
     nothing beyond the ability to trigger an OTP that goes to the contact's
     own WhatsApp (cooldown + daily cap enforced in request_otp). 404 carries
-    no detail — never confirm revoked-vs-missing.
+    no detail - never confirm revoked-vs-missing.
     """
     return PortalSlugInfoResponse(**PortalService(db).slug_info(slug))
 
@@ -221,7 +221,7 @@ def portal_logout(
     db: Session = Depends(get_db),
 ):
     """Server-side logout: revoke the presented token. Idempotent, and accepts
-    expired/unverified tokens too — clearing client storage alone would leave
+    expired/unverified tokens too - clearing client storage alone would leave
     a copied token valid until natural expiry.
     """
     raw = (x_portal_token or "").strip()

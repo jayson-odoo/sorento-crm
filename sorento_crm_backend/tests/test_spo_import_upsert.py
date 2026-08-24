@@ -1,4 +1,4 @@
-"""SPOAllocationService.upsert_allocation — SPO import upserts instead of skipping.
+"""SPOAllocationService.upsert_allocation - SPO import upserts instead of skipping.
 
 Re-importing a corrected SPO file overwrites the existing allocation's
 allocated_quantity (file is source of truth) instead of skipping the row. A
@@ -246,7 +246,7 @@ def test_guard_new_qty_below_received_raises_and_no_change(db, stub_refresh):
     stub_refresh.assert_not_called()
 
 
-# AC-SPO-6 — mixed file drives process_spo_import counter aggregation
+# AC-SPO-6 - mixed file drives process_spo_import counter aggregation
 def test_mixed_file_counters(db, stub_refresh):
     """One new + one higher-qty update + one identical + one guarded row, in a
     single SPO file → created:1, updated:1, unchanged excluded from updated, the

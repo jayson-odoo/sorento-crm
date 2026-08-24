@@ -1,4 +1,4 @@
-"""SCM M1 — add sales_orders.requested_delivery_date.
+"""SCM M1 - add sales_orders.requested_delivery_date.
 
 The M1 sales-order surface (D14) surfaces a customer-requested delivery date
 distinct from ``order_date`` (when the SO was raised). Adds a nullable Date

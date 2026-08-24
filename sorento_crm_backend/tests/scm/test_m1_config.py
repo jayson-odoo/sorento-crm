@@ -1,4 +1,4 @@
-"""SCM M1 — dead-stock-days quick setting endpoint tests.
+"""SCM M1 - dead-stock-days quick setting endpoint tests.
 
 Covers, against the seeded demo (global reorder_policy, dead_stock_days=180):
   * GET returns the global policy's value,

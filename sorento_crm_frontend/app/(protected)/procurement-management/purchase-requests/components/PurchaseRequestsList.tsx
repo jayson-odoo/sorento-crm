@@ -67,7 +67,7 @@ function getDisplayStatus(row: PurchaseRequest): string {
   if (a === 'pending') return 'Pending approval';
   if (a === 'approved') return 'Approved';
   if (a === 'rejected') return 'Rejected';
-  // No approval decision yet — reflect the lifecycle status so a portal-submitted
+  // No approval decision yet - reflect the lifecycle status so a portal-submitted
   // request shows "Submitted" (tallies with the portal), not "Draft".
   if (s === 'submitted') return 'Submitted';
   return 'Draft';
@@ -248,7 +248,7 @@ export default function PurchaseRequestsList({
           );
           return (
             <span className="truncate font-medium tabular-nums" title={number ?? undefined}>
-              {number ?? '—'}
+              {number ?? '-'}
             </span>
           );
         },
@@ -263,7 +263,7 @@ export default function PurchaseRequestsList({
         // Denormalized on the row - no per-row query (UAC H4).
         cell: ({ row }) => {
           const label = revisionBadgeLabel(row.original.revision_no);
-          if (!label) return <span className="text-muted-foreground">—</span>;
+          if (!label) return <span className="text-muted-foreground"> - </span>;
           return (
             <Badge variant="secondary" title={label}>
               {label}

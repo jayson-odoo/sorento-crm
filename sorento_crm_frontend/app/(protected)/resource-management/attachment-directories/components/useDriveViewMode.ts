@@ -35,7 +35,7 @@ export function useDriveViewMode(): [DriveViewMode, (mode: DriveViewMode) => voi
     try {
       window.localStorage.setItem(STORAGE_KEY, next);
     } catch {
-      // ignore — non-persistent fallback is acceptable
+      // ignore - non-persistent fallback is acceptable
     }
   }, []);
 

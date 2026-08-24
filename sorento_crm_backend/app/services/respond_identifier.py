@@ -19,9 +19,9 @@ def resolve_respond_io_id(db: Session, value: Optional[str]) -> Optional[str]:
     """Return the numeric `respond_io_id` for the given value.
 
     Accepts:
-      * internal `RespondContact.id` (UUID) — the common stored value;
-      * numeric `respond_io_id` already — returned unchanged if it matches a row;
-      * `None`/empty — returns None.
+      * internal `RespondContact.id` (UUID) - the common stored value;
+      * numeric `respond_io_id` already - returned unchanged if it matches a row;
+      * `None`/empty - returns None.
 
     Looks up RespondContact by either column so callers don't need to know which
     representation they have.

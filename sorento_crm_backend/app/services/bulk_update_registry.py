@@ -3,7 +3,7 @@
 The whole point of this module is that there is **no** generic "write any column"
 path. Each resource registers a small allow-list of editable fields (and, for
 enum/bool fields, their allowed values) plus a per-row updater that goes through
-that resource's **existing service update method** — so validation, business
+that resource's **existing service update method** - so validation, business
 rules, side effects and audit all run exactly as they do for a single-record
 edit. Rows the normal path rejects come back in ``skipped`` with a human reason;
 the rest commit. Partial success, never all-or-nothing.
@@ -16,7 +16,7 @@ Contract (see the FE service header for the mirrored FE contract):
     400:  field not on the whitelist, or value not allowed for the field
 
 A resource opts in by calling :func:`register_bulk_resource`. The endpoint layer
-just calls :func:`run_bulk_update` — it never touches columns directly.
+just calls :func:`run_bulk_update` - it never touches columns directly.
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ class BulkField:
 
     ``coerce`` takes the raw JSON value and returns the value handed to
     ``update_one`` (already validated / normalized). It MUST raise ``ValueError``
-    when the value isn't allowed for this field — a globally-invalid value is a
+    when the value isn't allowed for this field - a globally-invalid value is a
     request error (400), not a silent per-row skip.
     """
 
@@ -103,7 +103,7 @@ def run_bulk_update(
     """
     res = get_bulk_resource(resource_key)
     if res is None:
-        # Programmer error — a route wired to an unregistered resource.
+        # Programmer error - a route wired to an unregistered resource.
         raise handle_validation_error(f"Bulk update is not configured for '{resource_key}'.")
 
     spec = res.fields.get(field)
@@ -146,7 +146,7 @@ def run_bulk_update(
             # Normal update path rejected this row (validation / business rule).
             db.rollback()
             skipped.append({"id": rid, "label": label, "reason": _exc_message(exc)})
-        except Exception as exc:  # noqa: BLE001 — one bad row must not abort the batch
+        except Exception as exc:  # noqa: BLE001 - one bad row must not abort the batch
             db.rollback()
             skipped.append({"id": rid, "label": label, "reason": _exc_message(exc)})
 
@@ -189,7 +189,7 @@ def _supplier_label(row) -> str:
 
 def _supplier_update_one(db: Session, row, field: str, value: Any, user: Optional[dict]) -> None:
     # Route through the EXISTING single-record update service so validation,
-    # `updated_at`, and the `__audit_track__` audit-log listener all fire — no raw
+    # `updated_at`, and the `__audit_track__` audit-log listener all fire - no raw
     # setattr+commit here.
     from app.schemas.procurement import SupplierUpdate
     from app.services.procurement_service import SupplierService

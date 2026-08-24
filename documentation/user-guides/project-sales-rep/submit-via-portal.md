@@ -1,8 +1,8 @@
-# Project Sales Rep — Submit a complaint, stock inquiry, purchase request, or sponsorship form
+# Project Sales Rep - Submit a complaint, stock inquiry, purchase request, or sponsorship form
 
-This guide walks you through filing a new submission from the portal. The four submission types share the same form shape, so the steps below apply to all of them — only the specific fields differ.
+This guide walks you through filing a new submission from the portal. The four submission types share the same form shape, so the steps below apply to all of them - only the specific fields differ.
 
-> **Before you start:** make sure you can reach the portal dashboard — see [Portal overview](portal-overview.md) for how to get the link via WhatsApp and verify with OTP.
+> **Before you start:** make sure you can reach the portal dashboard - see [Portal overview](portal-overview.md) for how to get the link via WhatsApp and verify with OTP.
 
 ## Open a new submission
 
@@ -14,11 +14,11 @@ This guide walks you through filing a new submission from the portal. The four s
 
 The form is split into sections (some only show for certain types):
 
-* **Header** — project / customer / contact references and notes.
-* **Items** — the product table. Add a row per product, set the quantity, and any per-line fields shown.
-* **Attachments** — photos, drawings, supplier quotes, etc.
+* **Header** - project / customer / contact references and notes.
+* **Items** - the product table. Add a row per product, set the quantity, and any per-line fields shown.
+* **Attachments** - photos, drawings, supplier quotes, etc.
 
-Type into each field. Required fields are marked. The form auto-saves nothing — see **Save as draft** below to keep your progress.
+Type into each field. Required fields are marked. The form auto-saves nothing - see **Save as draft** below to keep your progress.
 
 ## AI Extract (complaint only)
 
@@ -37,7 +37,7 @@ If the upload doesn't return useful values, dismiss the dialog and fill the form
 
 ## Save as draft
 
-Click **Save as draft** at the bottom of the form. Toast: *"Draft saved."* The submission keeps the **Draft** status — visible to you on the dashboard, not yet visible to project sales admin / manager / purchasing.
+Click **Save as draft** at the bottom of the form. Toast: *"Draft saved."* The submission keeps the **Draft** status - visible to you on the dashboard, not yet visible to project sales admin / manager / purchasing.
 
 You can re-open the draft, edit it, and save again as many times as needed.
 
@@ -64,7 +64,7 @@ To delete a draft you no longer need, open it from the dashboard and use the del
 
 ## How you'll be notified
 
-All notifications come on **WhatsApp** through Respond.io to your registered number — there is no in-portal inbox.
+All notifications come on **WhatsApp** through Respond.io to your registered number - there is no in-portal inbox.
 
 | Submission | You receive a WhatsApp when… |
 |----|----|
@@ -82,5 +82,5 @@ If a submission is rejected, the form is unlocked. Open it from the dashboard, f
 ## See also
 
 * [Portal overview](portal-overview.md)
-* [Project Sales Admin — Review a purchase request](../project-sales-admin/review-purchase-request.md)
-* [Project Sales Manager — Flow stock inquiry to purchasing](../project-sales-manager/flow-stock-inquiry.md)
+* [Project Sales Admin - Review a purchase request](../project-sales-admin/review-purchase-request.md)
+* [Project Sales Manager - Flow stock inquiry to purchasing](../project-sales-manager/flow-stock-inquiry.md)

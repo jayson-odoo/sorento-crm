@@ -1,12 +1,12 @@
-# MCP Tool Catalog — Phase 1 Implementation Plan
+# MCP Tool Catalog - Phase 1 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Persist the MCP tool catalog into a `mcp_tools` table that auto-syncs from the code catalog (`sorento_crm_mcp.catalog.CATALOG` + `merged_catalog` per-module overlay) on backend startup and after every module upload. Add a `mcp_access_log` table that later phases will write to.
 
-**Architecture:** Phase 1 of the design in `documentation/superpowers/specs/2026-05-01-mcp-tool-access-guard-design.md`. Two new tables in the platform `base` module (alongside `access_agents` in `app/models/access.py`). One new service `mcp_tool_registry_service.sync_catalog(db)` is the single sync entry point — wired from `app/main.py::startup_event` and from `app/services/module_upload_service.py::install_uploaded_zip` after migrations run. **No enforcement, no admin UI, no access-check endpoint** — those are Phase 2 and 3.
+**Architecture:** Phase 1 of the design in `documentation/superpowers/specs/2026-05-01-mcp-tool-access-guard-design.md`. Two new tables in the platform `base` module (alongside `access_agents` in `app/models/access.py`). One new service `mcp_tool_registry_service.sync_catalog(db)` is the single sync entry point - wired from `app/main.py::startup_event` and from `app/services/module_upload_service.py::install_uploaded_zip` after migrations run. **No enforcement, no admin UI, no access-check endpoint** - those are Phase 2 and 3.
 
-**Tech Stack:** FastAPI, SQLAlchemy 2.x, Alembic, Postgres, pytest. Backend imports `sorento_crm_mcp.catalog` directly (already available — confirmed: `python -c "from sorento_crm_mcp.catalog import CATALOG; ..."` returns 105 tools).
+**Tech Stack:** FastAPI, SQLAlchemy 2.x, Alembic, Postgres, pytest. Backend imports `sorento_crm_mcp.catalog` directly (already available - confirmed: `python -c "from sorento_crm_mcp.catalog import CATALOG; ..."` returns 105 tools).
 
 ---
 
@@ -149,7 +149,7 @@ git commit -m "feat(db): add mcp_tools + mcp_access_log tables"
 
 ---
 
-## Task 2: ORM models — `McpTool`, `McpAccessLog`, `AccessAgent.mcp_tools`
+## Task 2: ORM models - `McpTool`, `McpAccessLog`, `AccessAgent.mcp_tools`
 
 **Files:**
 - Modify: `sorento_crm_backend/app/models/access.py` (append after the existing `AgentTeamRoundRobinCursor` class around line 228)
@@ -243,7 +243,7 @@ cd sorento_crm_backend
 pytest tests/test_mcp_models.py -v
 ```
 
-Expected: ImportError — `cannot import name 'McpTool' from 'app.models.access'`.
+Expected: ImportError - `cannot import name 'McpTool' from 'app.models.access'`.
 
 - [ ] **Step 3: Add the ORM models**
 
@@ -254,7 +254,7 @@ class McpTool(Base):
     """Persisted catalog row for one MCP tool. Synced from code catalog by
     `app.services.mcp_tool_registry_service.sync_catalog`.
 
-    Ownership is N:1 — a tool belongs to at most one access agent (`agent_id`
+    Ownership is N:1 - a tool belongs to at most one access agent (`agent_id`
     nullable). Sync NEVER overwrites `agent_id`; only admins do.
     """
 
@@ -315,7 +315,7 @@ Then add the reverse relationship to `AccessAgent`. In the existing `AccessAgent
     agent_teams = relationship("AgentTeam", back_populates="agent", cascade="all, delete-orphan")
 ```
 
-and append (no cascade — the FK uses `ON DELETE SET NULL`, so deleting an agent releases its tools rather than deleting them):
+and append (no cascade - the FK uses `ON DELETE SET NULL`, so deleting an agent releases its tools rather than deleting them):
 
 ```python
     mcp_tools = relationship("McpTool", back_populates="agent")
@@ -339,13 +339,13 @@ git commit -m "feat(models): add McpTool + McpAccessLog ORM models"
 
 ---
 
-## Task 3: `sync_catalog` service — happy-path insert
+## Task 3: `sync_catalog` service - happy-path insert
 
 **Files:**
 - Create: `sorento_crm_backend/app/services/mcp_tool_registry_service.py`
 - Create: `sorento_crm_backend/tests/test_mcp_tool_registry_service.py`
 
-This task implements the simplest sync behavior: every `ToolSpec` in the live code catalog becomes a `mcp_tools` row with `is_active=true`. Tasks 4–6 layer on update, deactivate, and `agent_id` preservation behavior.
+This task implements the simplest sync behavior: every `ToolSpec` in the live code catalog becomes a `mcp_tools` row with `is_active=true`. Tasks 4 - 6 layer on update, deactivate, and `agent_id` preservation behavior.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -428,7 +428,7 @@ cd sorento_crm_backend
 pytest tests/test_mcp_tool_registry_service.py::test_sync_catalog_inserts_new_tools -v
 ```
 
-Expected: ImportError — `app.services.mcp_tool_registry_service` does not exist.
+Expected: ImportError - `app.services.mcp_tool_registry_service` does not exist.
 
 - [ ] **Step 3: Write the minimal service**
 
@@ -551,7 +551,7 @@ git commit -m "feat(services): add sync_catalog (insert path)"
 
 ---
 
-## Task 4: `sync_catalog` — update path
+## Task 4: `sync_catalog` - update path
 
 **Files:**
 - Modify: `sorento_crm_backend/tests/test_mcp_tool_registry_service.py`
@@ -611,7 +611,7 @@ git commit -m "test(services): cover sync_catalog update path"
 
 ---
 
-## Task 5: `sync_catalog` — deactivate stragglers
+## Task 5: `sync_catalog` - deactivate stragglers
 
 **Files:**
 - Modify: `sorento_crm_backend/tests/test_mcp_tool_registry_service.py`
@@ -677,7 +677,7 @@ git commit -m "test(services): cover sync_catalog deactivate + revive"
 
 ---
 
-## Task 6: `sync_catalog` — preserve `agent_id` across syncs
+## Task 6: `sync_catalog` - preserve `agent_id` across syncs
 
 **Files:**
 - Modify: `sorento_crm_backend/tests/test_mcp_tool_registry_service.py`
@@ -718,13 +718,13 @@ def test_sync_catalog_preserves_agent_id(db: Session, monkeypatch, cleanup_tool_
     row.agent_id = agent.id
     db.commit()
 
-    # Re-run sync with the same spec — agent_id must NOT be cleared.
+    # Re-run sync with the same spec - agent_id must NOT be cleared.
     svc.sync_catalog(db)
     db.commit()
     db.refresh(row)
     assert row.agent_id == agent.id
 
-    # Re-run sync with the spec removed — tool is deactivated but agent_id
+    # Re-run sync with the spec removed - tool is deactivated but agent_id
     # is preserved (admin can still see who used to own it).
     monkeypatch.setattr(svc, "_load_specs", lambda: ())
     svc.sync_catalog(db)
@@ -767,7 +767,7 @@ git commit -m "test(services): cover sync_catalog preserves agent_id"
 ## Task 7: Wire `sync_catalog` into backend startup
 
 **Files:**
-- Modify: `sorento_crm_backend/app/main.py` (lines 96-117 — the `startup_event` function)
+- Modify: `sorento_crm_backend/app/main.py` (lines 96-117 - the `startup_event` function)
 
 - [ ] **Step 1: Add the startup hook**
 
@@ -808,7 +808,7 @@ Then check the running server's log output. Expected line in stderr:
 INFO:root:MCP tool catalog synced at startup: added=105 updated=0 deactivated=0
 ```
 
-(Numbers differ on subsequent boots — `added=0 updated=105` after first run.) Stop the server:
+(Numbers differ on subsequent boots - `added=0 updated=105` after first run.) Stop the server:
 
 ```bash
 kill %1
@@ -854,7 +854,7 @@ Read `sorento_crm_backend/app/services/module_upload_service.py` lines 247-260 (
         _verify_module_mappers(module_key, backend_dest)
 ```
 
-The catalog sync goes **after** `_verify_module_mappers` returns successfully — we want to sync only if the module is fully importable, otherwise the next startup re-runs sync anyway.
+The catalog sync goes **after** `_verify_module_mappers` returns successfully - we want to sync only if the module is fully importable, otherwise the next startup re-runs sync anyway.
 
 - [ ] **Step 2: Add the sync call**
 
@@ -886,7 +886,7 @@ Append immediately below it (still inside the `try:` block, before any `return`)
             )
 ```
 
-The wrapping try/except is intentional — sync failure must not roll back the upload (the next backend boot retries automatically).
+The wrapping try/except is intentional - sync failure must not roll back the upload (the next backend boot retries automatically).
 
 - [ ] **Step 3: Manual smoke verification**
 
@@ -897,7 +897,7 @@ source venv/bin/activate
 # Pre-count
 psql "$DATABASE_URL" -c "SELECT count(*) FROM mcp_tools WHERE is_active = true;"
 
-# Upload a module zip via the existing endpoint (curl example — adjust auth):
+# Upload a module zip via the existing endpoint (curl example - adjust auth):
 # curl -X POST http://localhost:8000/api/v1/system/modules/upload \
 #   -H "X-API-Key: $EXTERNAL_API_KEY" \
 #   -F "zip_file=@/tmp/example_module.zip"
@@ -928,7 +928,7 @@ cd sorento_crm_backend
 pytest tests/test_mcp_models.py tests/test_mcp_tool_registry_service.py -v
 ```
 
-Expected: 7 passed (3 from Task 2 + 4 from Tasks 3–6). No skipped, no errors.
+Expected: 7 passed (3 from Task 2 + 4 from Tasks 3 - 6). No skipped, no errors.
 
 - [ ] **Step 2: Confirm Alembic head is `158_mcp_tools_catalog`**
 
@@ -985,7 +985,7 @@ After Task 9 ships:
 
 - `mcp_tools` populates on backend start and after every module upload.
 - `mcp_access_log` exists but has no writer yet.
-- `agent_id` is always NULL — no UI to set it.
+- `agent_id` is always NULL - no UI to set it.
 - No enforcement on MCP tool calls.
 
 **Phase 2** adds the `/api/v1/access-agents/{id}/mcp-tools` GET/PUT endpoints, the `/api/v1/system/mcp-tools` picker endpoint, and the AccessAgentForm UI card. **Phase 3** wires the MCP server guard. Each phase is its own plan.

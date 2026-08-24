@@ -135,12 +135,12 @@ def get_due_tasks(db: Session) -> list[ScheduledTask]:
 
 
 # --------------------------------------------------------------------------- #
-# Overdue detection — the single source of truth                              #
+# Overdue detection - the single source of truth                              #
 #                                                                             #
 # Both the health dashboard card and the watchdog alert email call the helpers #
 # below. They previously each ran their own inline query against `next_run_at`, #
 # a column `compute_next_run` documents as display-only and which the scheduler #
-# never consults — and they disagreed with each other on NULL handling, so the  #
+# never consults - and they disagreed with each other on NULL handling, so the  #
 # card could report overdue tasks the email stayed silent about.               #
 # --------------------------------------------------------------------------- #
 
@@ -192,8 +192,8 @@ def compute_due_at(task: ScheduledTask) -> Optional[datetime]:
 def compute_grace(task: ScheduledTask, grace_percent: Optional[int] = None) -> timedelta:
     """Tolerance before lateness counts as a problem.
 
-    A flat percentage misbehaves at both ends of our interval range — 25% of a
-    daily task is six hours, 25% of a 30s task is under eight seconds — so the
+    A flat percentage misbehaves at both ends of our interval range - 25% of a
+    daily task is six hours, 25% of a 30s task is under eight seconds - so the
     result is clamped. A per-task `metadata.grace_percent` overrides the global
     default for the handful of tasks with unusual timing.
     """
@@ -310,7 +310,7 @@ def update_task(
     if timezone is not None:
         setattr(task, "timezone", timezone)
     if start_at is not None:
-        # Store as naive UTC — the due-check compares against datetime.utcnow().
+        # Store as naive UTC - the due-check compares against datetime.utcnow().
         # FE sends an absolute instant (ISO with Z); normalize any aware value.
         if start_at.tzinfo is not None:
             start_at = start_at.astimezone(_UTC).replace(tzinfo=None)
@@ -535,7 +535,7 @@ def run_due_tasks(db: Session) -> None:
 
     Scheduled tasks are system jobs: they sweep every company, so the session runs
     system-scoped. The caller (``_scheduled_tasks_heartbeat``) opens a bare
-    ``SessionLocal()``, whose company scope is therefore UNSET — and UNSET fail-closes
+    ``SessionLocal()``, whose company scope is therefore UNSET - and UNSET fail-closes
     to ``false()``, so every handler touching a ``CompanyScopedMixin`` table read zero
     rows. ``promotion_active_window`` ran hourly for months reporting success with
     ``scanned: 0``, which is why promotions past their ``end_date`` stayed active.

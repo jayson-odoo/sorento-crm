@@ -3,7 +3,7 @@ Auto-discovery for self-contained modules under app/modules/<key>/.
 
 Each module may define:
   - manifest.py     (required for participation; exposes MODULE_KEY etc.)
-  - models.py       (SQLAlchemy models — imported so Alembic sees tables)
+  - models.py       (SQLAlchemy models - imported so Alembic sees tables)
   - schemas.py      (Pydantic schemas)
   - routes.py       (must expose `router: APIRouter`)
   - services.py     (business logic)
@@ -12,7 +12,7 @@ Each module may define:
   - frontend/       (JSON metadata for the FE; ignored by backend)
   - mcp/tools.json  (optional per-module MCP slice)
 
-Discovery is additive — it does not replace any existing hardcoded registration.
+Discovery is additive - it does not replace any existing hardcoded registration.
 Modules listed in `LEGACY_REGISTERED_PREFIXES` (those still wired manually in
 app/api/v1/__init__.py) are skipped by router discovery to avoid duplicates.
 """

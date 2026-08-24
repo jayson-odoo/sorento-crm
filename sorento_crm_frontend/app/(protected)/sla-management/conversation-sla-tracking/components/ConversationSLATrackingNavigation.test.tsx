@@ -1,5 +1,5 @@
 /**
- * Tests for ConversationSLATrackingNavigation — the thin per-resource nav wrapper
+ * Tests for ConversationSLATrackingNavigation - the thin per-resource nav wrapper
  * that reads the active list query off the detail URL (parseDetailSearch), forwards
  * it to useConversationSLATrackingNeighbours, and renders RecordNavigation in IDs
  * mode.

@@ -1,4 +1,4 @@
-"""SCM M5 Part B — market research + advisory.
+"""SCM M5 Part B - market research + advisory.
 
 Two halves, with a hard line between them (mirrors the service docstrings):
 
@@ -7,10 +7,10 @@ Two halves, with a hard line between them (mirrors the service docstrings):
     monkeypatching ``_web_search_topic``). Also ``market_advisory`` matching, cached
     prose (fake provider), and the no-provider degrade.
   * Key-gated: ``run_research`` with NO Anthropic key must record a ``failed`` run
-    with the exact honest error and 0 signals — never a crash.
+    with the exact honest error and 0 signals - never a crash.
 
 LLM boundary (AC-M5.8): the market service writes ONLY ``market_signal`` (+ its run
-log) and ``market_advisory`` writes ONLY ``recommendation.market_advisory`` — never a
+log) and ``market_advisory`` writes ONLY ``recommendation.market_advisory`` - never a
 numeric column. Both are snapshotted before/after and asserted byte-identical.
 
 Fixtures reuse the ``scm_app`` savepoint + the M4 seed helpers and the M5 explainer
@@ -167,11 +167,11 @@ def _signals_for_topic(db, topic_id: str) -> list[dict]:
 
 
 # ===========================================================================
-# 1. LLM boundary (AC-M5.8) — the highest-risk guarantee
+# 1. LLM boundary (AC-M5.8) - the highest-risk guarantee
 # ===========================================================================
 
 def test_market_advisory_only_writes_market_advisory_column(scm_app, monkeypatch):
-    """Generating a market advisory changes ONLY ``market_advisory`` — every numeric
+    """Generating a market advisory changes ONLY ``market_advisory`` - every numeric
     column (and ``explanation``) is byte-identical before/after."""
     _, db, _, _ = scm_app
     rec = _seed_buy_rec(db)
@@ -182,20 +182,20 @@ def test_market_advisory_only_writes_market_advisory_column(scm_app, monkeypatch
                captured_at=datetime.utcnow(), currency=rec.currency, category_ref=category)
 
     before = _rec_snapshot(db, rec_id)
-    _install_provider(monkeypatch, "Buy ahead — resin is trending up.")
+    _install_provider(monkeypatch, "Buy ahead - resin is trending up.")
 
     out = explainer_service.market_advisory(db, rec_id)
-    assert out == "Buy ahead — resin is trending up."
+    assert out == "Buy ahead - resin is trending up."
     db.flush()
     after = _rec_snapshot(db, rec_id)
 
     changed = {k for k in after if after[k] != before[k]}
     assert changed == {"market_advisory"}, f"only market_advisory may change, got {changed}"
-    assert after["market_advisory"] == "Buy ahead — resin is trending up."
+    assert after["market_advisory"] == "Buy ahead - resin is trending up."
 
 
 def test_run_research_never_writes_a_recommendation_column(scm_app, monkeypatch):
-    """The market research job persists signals only — it must not touch ANY column of
+    """The market research job persists signals only - it must not touch ANY column of
     an existing recommendation (numeric or the advisory prose)."""
     _, db, _, _ = scm_app
     rec = _seed_buy_rec(db)
@@ -215,7 +215,7 @@ def test_run_research_never_writes_a_recommendation_column(scm_app, monkeypatch)
 
 
 # ===========================================================================
-# 2. run_research — no Anthropic key: honest failed run, 0 signals, persisted
+# 2. run_research - no Anthropic key: honest failed run, 0 signals, persisted
 # ===========================================================================
 
 def test_run_research_no_key_records_failed_run(scm_app, monkeypatch):
@@ -230,7 +230,7 @@ def test_run_research_no_key_records_failed_run(scm_app, monkeypatch):
     assert out["signal_count"] == 0
     assert out["topic_count"] >= 1  # our active topic was counted
 
-    # the run row persisted for observability — get_run returns it
+    # the run row persisted for observability - get_run returns it
     again = svc.get_run(db, out["id"])
     assert again["status"] == "failed" and again["error"] == svc.NO_KEY_ERROR
 
@@ -248,7 +248,7 @@ def test_get_run_missing_raises_404(scm_app):
 
 
 # ===========================================================================
-# 3. run_research — persistence path (network isolated via _web_search_topic)
+# 3. run_research - persistence path (network isolated via _web_search_topic)
 # ===========================================================================
 
 def test_run_research_persists_signals_traps_failures_filters_rows(scm_app, monkeypatch):
@@ -339,17 +339,17 @@ def test_advisory_matches_category_and_currency_caches_hit(scm_app, monkeypatch)
     _mk_signal(db, topic, "NEW copper spike", captured_at=datetime.utcnow(),
                currency=rec.currency, category_ref=category)
 
-    fake = _install_provider(monkeypatch, "Copper spiking — bring the buy forward.")
+    fake = _install_provider(monkeypatch, "Copper spiking - bring the buy forward.")
     out = explainer_service.market_advisory(db, rec.id)
-    assert out == "Copper spiking — bring the buy forward."
+    assert out == "Copper spiking - bring the buy forward."
 
     # the NEWEST signal (not the old one) was the one condensed
     block = fake.calls[0]["messages"][1]["content"]
     assert "NEW copper spike" in block and "OLD copper note" not in block
 
-    # second call is served from the cached column — provider not re-invoked
+    # second call is served from the cached column - provider not re-invoked
     again = explainer_service.market_advisory(db, rec.id)
-    assert again == "Copper spiking — bring the buy forward."
+    assert again == "Copper spiking - bring the buy forward."
     assert len(fake.calls) == 1
 
 
@@ -362,8 +362,8 @@ def test_advisory_matches_currency_agnostic_signal(scm_app, monkeypatch):
     _mk_signal(db, topic, "Global freight easing.", captured_at=datetime.utcnow(),
                currency=None, category_ref=category)
 
-    _install_provider(monkeypatch, "Freight easing — no rush to prebuy.")
-    assert explainer_service.market_advisory(db, rec.id) == "Freight easing — no rush to prebuy."
+    _install_provider(monkeypatch, "Freight easing - no rush to prebuy.")
+    assert explainer_service.market_advisory(db, rec.id) == "Freight easing - no rush to prebuy."
 
 
 def test_advisory_currency_mismatch_returns_none(scm_app, monkeypatch):
@@ -408,7 +408,7 @@ def test_advisory_no_provider_degrades_to_signal_summary(scm_app, monkeypatch):
 
     out = explainer_service.market_advisory(db, rec_id)
     assert out == "Aluminium premium widening."
-    # degrade path does not cache — a later LLM-enabled view can still condense it
+    # degrade path does not cache - a later LLM-enabled view can still condense it
     db.flush()
     assert db.execute(
         text("SELECT market_advisory FROM scm.reorder_recommendation WHERE id = :id"),
@@ -465,7 +465,7 @@ def test_topic_endpoints_create_list_update_delete(scm_app):
 
         dele = c.delete(f"/api/v1/scm/market-topics/{tid}")
         assert dele.status_code == 204
-        # gone — a follow-up PUT now 404s
+        # gone - a follow-up PUT now 404s
         assert c.put(f"/api/v1/scm/market-topics/{tid}", json={
             "label": "x", "search_prompt": "y"}).status_code == 404
 
@@ -495,7 +495,7 @@ def test_topic_update_delete_missing_is_404(scm_app):
 
 
 # ===========================================================================
-# 6. signals endpoint — topic_label resolved, newest-captured first
+# 6. signals endpoint - topic_label resolved, newest-captured first
 # ===========================================================================
 
 def test_signals_endpoint_resolves_label_and_orders_newest_first(scm_app):
@@ -541,7 +541,7 @@ def test_run_endpoint_no_key_then_fetch_run(scm_app, monkeypatch):
 
 
 # ===========================================================================
-# 7. auth — bare user denied everywhere + wrong-permission denial
+# 7. auth - bare user denied everywhere + wrong-permission denial
 # ===========================================================================
 
 def test_all_market_endpoints_deny_bare_user(scm_app):
@@ -573,7 +573,7 @@ def test_dashboard_only_user_can_view_but_not_manage_or_run(scm_app):
 
 
 # ===========================================================================
-# 8. ad-hoc market search fired from planning (M6-B) — soft, advisory-only
+# 8. ad-hoc market search fired from planning (M6-B) - soft, advisory-only
 # ===========================================================================
 
 def test_search_adhoc_caches_signals_and_completes(scm_app, monkeypatch):
@@ -644,7 +644,7 @@ def test_search_adhoc_empty_query_rejected(scm_app):
 
 def test_search_adhoc_signal_drives_advisory(scm_app, monkeypatch):
     """A signal cached by an ad-hoc search immediately drives the per-rec advisory on
-    a matching rec — no engine re-run (AC-M6.10)."""
+    a matching rec - no engine re-run (AC-M6.10)."""
     _, db, _, _ = scm_app
     rec = _seed_buy_rec(db)
     category = reorder_engine.load_category_code(db, rec.product_id)
@@ -657,9 +657,9 @@ def test_search_adhoc_signal_drives_advisory(scm_app, monkeypatch):
     )
     svc.search_adhoc(db, "resin price outlook", category_ref=category, currency=rec.currency)
 
-    _install_provider(monkeypatch, "Buy ahead — resin trending up.")
+    _install_provider(monkeypatch, "Buy ahead - resin trending up.")
     out = explainer_service.market_advisory(db, rec.id)
-    assert out == "Buy ahead — resin trending up."
+    assert out == "Buy ahead - resin trending up."
 
 
 def test_market_search_endpoint_happy(scm_app, monkeypatch):

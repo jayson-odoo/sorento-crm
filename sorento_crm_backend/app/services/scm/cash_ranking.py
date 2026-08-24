@@ -1,25 +1,25 @@
-"""SCM M4 — cash-constraint ranking + greedy funding allocation (PURE maths).
+"""SCM M4 - cash-constraint ranking + greedy funding allocation (PURE maths).
 
 This module is intentionally DB-free so the ranking + allocation logic is
 golden-testable in isolation (``tests/scm/test_m4_cash.py``). The DB accessors
 (load the active ``scm.cash_ranking_policy`` weights, persist rank_score/rank,
 run the allocator over a run's buys) live in ``reorder_run_service`` +
-``api/v1/scm/reorder_runs`` — this file only knows numbers.
+``api/v1/scm/reorder_runs`` - this file only knows numbers.
 
 Two deterministic pieces:
 
-  * **rank_score (M4-D1/D14, graceful-degrade)** —
+  * **rank_score (M4-D1/D14, graceful-degrade)**  - 
     ``rank_score = Σ(wᵢ·fᵢ) / Σ(wᵢ present)`` over the factors urgency, margin,
-    abc, priority, committed. Each factor is normalized 0–1 and a factor with NO
+    abc, priority, committed. Each factor is normalized 0 - 1 and a factor with NO
     data is DROPPED from BOTH the numerator and the denominator (never zeroed), so
     a missing factor (e.g. margin on an uncosted SKU) never dilutes the score. The
     per-rec factor vector is returned for explainability (``rank_factors[]``).
 
-  * **greedy funding allocation (M4-D2/D3/D16)** — over the buys ordered by rank,
+  * **greedy funding allocation (M4-D2/D3/D16)** - over the buys ordered by rank,
     fund a buy only if its WHOLE ``cash_impact`` fits the remaining budget, else
     SKIP it and continue to the next that fits (MoQ = all-or-nothing); Σ funded
     cash ≤ budget. An UNCOSTED buy (``cash_impact`` None) can't be cash-ranked, so
-    it is ``needs_cost`` — never funded/deferred, never draws from the budget.
+    it is ``needs_cost`` - never funded/deferred, never draws from the budget.
 """
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ FACTOR_KEYS: tuple[str, ...] = (
 # ABC/priority/committed break ties. `market` (M7) is a modest, CONFIGURABLE
 # tie-breaker and is DROPPED entirely unless a run opts in AND a signal matches, so
 # its presence never dilutes a run without market signals. (Weights need not sum to
-# 1 — rank_score normalizes by the present weights.)
+# 1 - rank_score normalizes by the present weights.)
 DEFAULT_WEIGHTS: dict[str, float] = {
     "urgency": 0.40,
     "margin": 0.30,
@@ -79,7 +79,7 @@ def _clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
 
 
 # ---------------------------------------------------------------------------
-# per-factor normalizers (each returns a 0–1 value or None when unavailable)
+# per-factor normalizers (each returns a 0 - 1 value or None when unavailable)
 # ---------------------------------------------------------------------------
 
 def urgency_value(days_of_cover: Optional[float],
@@ -97,9 +97,9 @@ def urgency_value(days_of_cover: Optional[float],
 
 def margin_value(list_price: Optional[float],
                  unit_cost: Optional[float]) -> Optional[float]:
-    """``(list_price - unit_cost) / list_price``, clamped 0–1. PRESENT only when BOTH
+    """``(list_price - unit_cost) / list_price``, clamped 0 - 1. PRESENT only when BOTH
     the chosen supplier's ``unit_cost`` AND the product's ``list_price`` exist
-    (M4-D14) — otherwise DROPPED (never fabricated)."""
+    (M4-D14) - otherwise DROPPED (never fabricated)."""
     if list_price is None or unit_cost is None:
         return None
     lp = float(list_price)
@@ -116,7 +116,7 @@ def abc_value(abc_class: Optional[str]) -> Optional[float]:
 
 
 def priority_value(priority_signal: Optional[float]) -> Optional[float]:
-    """SO / demand priority normalized 0–1. No per-SKU SO-priority signal is wired in
+    """SO / demand priority normalized 0 - 1. No per-SKU SO-priority signal is wired in
     M4 Slice A, so this is absent (dropped) unless a caller supplies one."""
     if priority_signal is None:
         return None
@@ -129,8 +129,8 @@ _MARKET_TREND_BASE = {"up": 1.0, "flat": 0.5, "down": 0.0}
 def market_value(trend: Optional[str],
                  strength: Optional[float] = None) -> Optional[float]:
     """Market-trend priority signal (M7), SYMMETRIC: ``up`` raises priority, ``down``
-    lowers it, ``flat`` is neutral. ``None``/unknown trend ⇒ absent (DROPPED — never
-    fabricated). An optional ``strength`` (0–1, e.g. a normalized % move) scales the
+    lowers it, ``flat`` is neutral. ``None``/unknown trend ⇒ absent (DROPPED - never
+    fabricated). An optional ``strength`` (0 - 1, e.g. a normalized % move) scales the
     signal toward its extreme so a strong trend counts more than a faint one:
     up = 0.5 + 0.5·s, down = 0.5 − 0.5·s, flat stays 0.5."""
     if trend is None:
@@ -234,7 +234,7 @@ def days_to_stockout(net_position: Optional[float],
 
 @dataclass(frozen=True)
 class Buy:
-    """Minimal shape the allocator needs — a ranked, (maybe) costed buy."""
+    """Minimal shape the allocator needs - a ranked, (maybe) costed buy."""
     id: str
     rank: Optional[int]
     cash_impact: Optional[float]
@@ -412,22 +412,22 @@ def allocate_funding(
 
     Buckets, in the exact order the FE ``computeFundingM8`` applies them so the persisted
     split matches the live client split for the same pins/rejects/budget. (The FE also has a
-    live-view-only ``forcedOver`` — manual drag-to-defer — staging concept that has NO
+    live-view-only ``forcedOver`` - manual drag-to-defer - staging concept that has NO
     counterpart here: it is not persisted on confirm, so it never affects this split. A row
-    dragged-to-defer that is not rejected reverts to funded on reload — known limitation.)
+    dragged-to-defer that is not rejected reverts to funded on reload - known limitation.)
 
-    * **rejected** (``rejected_ids``) — excluded from EVERY bucket; they never appear in
+    * **rejected** (``rejected_ids``) - excluded from EVERY bucket; they never appear in
       ``status_by_id`` and never draw from the budget (as if they were not in the plan).
-    * **uncosted** (``cash_impact`` None) — always ``needs_cost``; never funded/deferred,
-      never touches the budget — EVEN when pinned (a pin can't fund an unknown cost).
-    * **pinned** (``pinned_ids``, costed) — force-funded and consume the budget FIRST; they
+    * **uncosted** (``cash_impact`` None) - always ``needs_cost``; never funded/deferred,
+      never touches the budget - EVEN when pinned (a pin can't fund an unknown cost).
+    * **pinned** (``pinned_ids``, costed) - force-funded and consume the budget FIRST; they
       stay funded even when their total exceeds the budget (so ``funded_cash`` can exceed
-      ``budget`` and the caller's free figure goes negative — a pin never defers on a cut).
-    * **un-pinned** (costed) — greedily fill the LEFTOVER budget by rank: fund a buy only if
+      ``budget`` and the caller's free figure goes negative - a pin never defers on a cut).
+    * **un-pinned** (costed) - greedily fill the LEFTOVER budget by rank: fund a buy only if
       its whole ``cash_impact`` fits the remaining budget, else SKIP and continue; the rest
       defer. Budget 0/None-with-no-full → un-pinned all defer.
 
-    **Full budget** (``full=True`` or ``budget is None``) — the daily-cron path: every costed,
+    **Full budget** (``full=True`` or ``budget is None``) - the daily-cron path: every costed,
     non-rejected buy funds (uncosted still ``needs_cost``); nothing defers. NOTE this INVERTS
     the pre-M8 ``budget=None`` meaning ('fund nothing'); the only caller that passed None
     (the live-view route) guards ``budget is not None`` before calling, so nothing breaks.

@@ -21,8 +21,8 @@ type RequireAccessProps = {
  * denied state never flashes before permissions resolve.
  *
  * Two modes:
- *  - <RequireAccess superadmin> — allowed only for superadmin/admin roles.
- *  - <RequireAccess permission="slug"> — allowed only when the user's
+ *  - <RequireAccess superadmin> - allowed only for superadmin/admin roles.
+ *  - <RequireAccess permission="slug"> - allowed only when the user's
  *    permission set includes `slug`.
  */
 export default function RequireAccess(props: RequireAccessProps) {

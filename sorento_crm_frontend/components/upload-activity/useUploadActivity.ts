@@ -1,12 +1,12 @@
 'use client';
 
 /**
- * useUploadActivity — merged feed of BE sessions + optimistic FE sessions.
+ * useUploadActivity - merged feed of BE sessions + optimistic FE sessions.
  *
  * Phase 2: real BE feed via React Query against
  * GET /api/v1/resources/upload-activity?scope=me. Polled every 5s while any
  * session is in-flight; stops when all terminal. Optimistic sessions from
- * UploadManagerContext layer on top — once the BE returns a session with
+ * UploadManagerContext layer on top - once the BE returns a session with
  * the same session_id the optimistic copy is dropped via the reducer.
  *
  * Freshness invariants enforced (see feedback_drawer_no_stale_data memory):

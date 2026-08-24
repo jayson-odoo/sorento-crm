@@ -289,7 +289,7 @@ def _format_warnings_block(warnings: Optional[list[str]]) -> tuple[str, str]:
         return "", ""
     items = ", ".join(warnings)
     plain = (
-        "\nWarning — products not found in system (these lines were skipped "
+        "\nWarning - products not found in system (these lines were skipped "
         "or imported without master-data linkage):\n"
         f"{items}\n"
     )
@@ -297,7 +297,7 @@ def _format_warnings_block(warnings: Optional[list[str]]) -> tuple[str, str]:
     html_block = (
         '<section style="margin:0.5em 0;padding:0.75em 1em;'
         'background:#fff7e6;border-left:4px solid #f0a020;color:#5a3a00;">'
-        "<strong>Warning — products not found in system</strong>"
+        "<strong>Warning - products not found in system</strong>"
         "<p style=\"margin:0.25em 0;\">These lines were skipped or imported without "
         f"master-data linkage: {items_html}</p>"
         "</section>"
@@ -640,7 +640,7 @@ def notify_after_external_promotion_created(
     """
     After POST /external/promotions succeeds: notify attachment uploaders and/or notify_user_id, then send email immediately.
 
-    External API auth uses the system key, so promotion.created_by is usually null — pass notify_user_id from n8n
+    External API auth uses the system key, so promotion.created_by is usually null - pass notify_user_id from n8n
     (CRM user UUID) when attachment_ids are missing or uploaded_by is not set on files.
 
     `warnings` renders a TCK-2026-000019 warning block (unknown product codes)

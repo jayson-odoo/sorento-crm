@@ -1,16 +1,16 @@
-"""SCM Policy Configuration — request/response schemas.
+"""SCM Policy Configuration - request/response schemas.
 
 Mirror the Phase-2 FE contract documented at the top of
 ``app/(protected)/scm/policies/services/scmPolicyService.ts`` +
-``types/policy.types.ts`` — every response field matches those TS types
+``types/policy.types.ts`` - every response field matches those TS types
 field-for-field. Three policy families feed the shipped reorder engine:
 
-  1. ``reorder_policy``          — scoped CRUD, resolved most-specific-active-wins.
-  2. ``abc_xyz_policy``          — single global classification-threshold row.
-  3. ``supplier_scoring_policy`` — single global supplier-scoring row.
+  1. ``reorder_policy``          - scoped CRUD, resolved most-specific-active-wins.
+  2. ``abc_xyz_policy``          - single global classification-threshold row.
+  3. ``supplier_scoring_policy`` - single global supplier-scoring row.
 
 Pure-field / cross-field-no-DB validation (AC-VAL-1..6, AC-CFG-2, AC-SUP-2) lives
-here as Pydantic validators — the app's ``RequestValidationError`` handler
+here as Pydantic validators - the app's ``RequestValidationError`` handler
 serializes them to 422. Coherence / uniqueness / referential checks that need the
 DB (AC-VAL-7..9) raise ``AppException(422)`` from the service layer. No UUID is ever
 rendered: ``scope_label`` is always human-readable (AC-NAV-4).
@@ -40,7 +40,7 @@ ResolutionReason = Literal["most-specific-active", "priority-tiebreak", "no-matc
 # --- reorder policy ---------------------------------------------------------
 
 class ReorderPolicyWrite(BaseModel):
-    """Create/update payload — the row minus server-owned id + scope_label."""
+    """Create/update payload - the row minus server-owned id + scope_label."""
     scope_type: ScopeType
     scope_ref: Optional[str] = None
     policy_type: PolicyType = "reorder_point"
@@ -70,18 +70,18 @@ class ReorderPolicyWrite(BaseModel):
 
     @model_validator(mode="after")
     def _coherence(self) -> "ReorderPolicyWrite":
-        # AC-VAL-2 — a global row never carries a scope_ref (stored NULL).
+        # AC-VAL-2 - a global row never carries a scope_ref (stored NULL).
         if self.scope_type == "global":
             self.scope_ref = None
-        # AC-VAL-1 — scope_ref is required for every non-global scope.
+        # AC-VAL-1 - scope_ref is required for every non-global scope.
         elif not (self.scope_ref and str(self.scope_ref).strip()):
             raise ValueError("scope_ref is required for a non-global scope")
 
-        # AC-VAL-3 — service_level strictly in (0, 1) when provided.
+        # AC-VAL-3 - service_level strictly in (0, 1) when provided.
         if self.service_level is not None and not (0 < self.service_level < 1):
             raise ValueError("service_level must be strictly between 0 and 1")
 
-        # AC-VAL-4 — day fields must be > 0 when provided.
+        # AC-VAL-4 - day fields must be > 0 when provided.
         for name in ("safety_days", "review_period_days", "forecast_window_days",
                      "dead_stock_days", "overstock_days", "lead_time_default_days",
                      "trajectory_window_retail_months", "trajectory_window_project_months",
@@ -90,7 +90,7 @@ class ReorderPolicyWrite(BaseModel):
             if val is not None and val <= 0:
                 raise ValueError(f"{name} must be greater than 0")
 
-        # AC-VAL-5 — min_override <= max_override when both provided.
+        # AC-VAL-5 - min_override <= max_override when both provided.
         if (self.min_override is not None and self.max_override is not None
                 and self.min_override > self.max_override):
             raise ValueError("min_override must be <= max_override")
@@ -100,7 +100,7 @@ class ReorderPolicyWrite(BaseModel):
 class ReorderPolicyRow(ReorderPolicyWrite):
     """One reorder-policy row as returned by list / create / update / resolve."""
     id: str
-    scope_label: str  # human-readable target, no UUID; "—" for global
+    scope_label: str  # human-readable target, no UUID; "-" for global
     # READ-ONLY here. `cover_scope` is a GLOBAL setting with exactly one writer
     # (PUT /scm/config/cover-scope): it is deliberately absent from the write schema above,
     # because a grid save that omitted it would otherwise reset the global value to the

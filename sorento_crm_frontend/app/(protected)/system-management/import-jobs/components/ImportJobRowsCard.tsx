@@ -46,13 +46,13 @@ const OUTCOME_BADGE: Record<ImportRowOutcome, string> = {
   failed: 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-400',
 };
 
-/** Business keys only — identity never carries UUIDs, so this is safe to print. */
+/** Business keys only - identity never carries UUIDs, so this is safe to print. */
 function formatIdentity(identity?: Record<string, unknown> | null): string {
-  if (!identity || typeof identity !== 'object') return '—';
+  if (!identity || typeof identity !== 'object') return '-';
   const parts = Object.entries(identity)
     .filter(([, v]) => v !== null && v !== undefined && v !== '')
     .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${String(v)}`);
-  return parts.length ? parts.join(' · ') : '—';
+  return parts.length ? parts.join(' · ') : '-';
 }
 
 export interface ImportJobRowsCardProps {
@@ -110,7 +110,7 @@ export function ImportJobRowsCard({
         accessorKey: 'row_number',
         header: ({ column }) => <DataGridColumnHeader title="Row #" column={column} />,
         cell: ({ row }) => (
-          <span className="font-mono tabular-nums">{row.original.row_number ?? '—'}</span>
+          <span className="font-mono tabular-nums">{row.original.row_number ?? '-'}</span>
         ),
         size: 90,
         minSize: 70,
@@ -151,7 +151,7 @@ export function ImportJobRowsCard({
         accessorKey: 'message',
         header: ({ column }) => <DataGridColumnHeader title="Detail" column={column} />,
         cell: ({ row }) => {
-          const text = row.original.message || '—';
+          const text = row.original.message || '-';
           return (
             <span className="block truncate" title={text}>
               {text}
@@ -240,7 +240,7 @@ export function ImportJobRowsCard({
               </Badge>
               {result?.rows_truncated && (
                 <span className="text-xs text-amber-600 dark:text-amber-500">
-                  showing the first {(result.rows_total ?? 0).toLocaleString()} rows captured —
+                  showing the first {(result.rows_total ?? 0).toLocaleString()} rows captured  - 
                   counts above remain exact
                 </span>
               )}

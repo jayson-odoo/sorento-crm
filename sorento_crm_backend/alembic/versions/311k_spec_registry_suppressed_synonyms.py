@@ -5,7 +5,7 @@ a word the n8n parser depends on. That was the right default and it left one thi
 impossible.
 
 "Matte black" ships as a synonym of `black`. It is a colour in its own right, and while
-the word is bound to `black` there is no way to make it mean anything else — adding a
+the word is bound to `black` there is no way to make it mean anything else - adding a
 `matte_black` value does not help, because the word still resolves to `black` first.
 The only fix was to edit a seed row, which the next deploy repairs.
 

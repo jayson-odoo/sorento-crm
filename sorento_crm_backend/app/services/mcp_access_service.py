@@ -6,7 +6,7 @@ conversation to an agent.
 
 Access is enforced per *agent* only. The former per-*tool* guard (``evaluate``)
 and its ``mcp_access_log`` audit table were removed once n8n took over agent and
-team routing — ``mcp_tools`` remains a pure catalog with no ownership model.
+team routing - ``mcp_tools`` remains a pure catalog with no ownership model.
 """
 from __future__ import annotations
 

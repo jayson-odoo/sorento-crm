@@ -1,4 +1,4 @@
-# PLAN — Packing list container-number matching
+# PLAN - Packing list container-number matching
 
 Status: Done
 
@@ -15,7 +15,7 @@ exactly one *not fully received* inbound shipment at a time. Once that shipment
 is fully received the container is free to carry a new one.
 
 Separately, the attachment-directories detail modal showed the raw shipment UUID
-for a linked packing list whenever `shipment_number` was null — both in the
+for a linked packing list whenever `shipment_number` was null - both in the
 Linkages table and the Integration tab.
 
 ## Changes

@@ -84,7 +84,7 @@ export type SearchableSelectProps = {
    * trigger, is what has to be readable.
    */
   wrapOptions?: boolean;
-  /** Trigger size — shared with Radix SelectTrigger. Default `md`. */
+  /** Trigger size - shared with Radix SelectTrigger. Default `md`. */
   size?: SelectTriggerSize;
   /** Forwarded to the trigger so a <Label htmlFor> can point at it. */
   id?: string;
@@ -98,8 +98,8 @@ export type SearchableSelectProps = {
   /** Render a custom option body (status dots, icons). Defaults to label + description. */
   renderOption?: (opt: SearchableSelectOption) => React.ReactNode;
   /**
-   * Replace the whole trigger. For pickers that hang off something other than a select box —
-   * an icon button, say — where the default trigger + chevron would be wrong.
+   * Replace the whole trigger. For pickers that hang off something other than a select box  - 
+   * an icon button, say - where the default trigger + chevron would be wrong.
    * Receives the resolved selection and open state; must render a single focusable element.
    */
   renderTrigger?: (state: {

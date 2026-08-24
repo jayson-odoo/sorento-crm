@@ -638,7 +638,7 @@ class AIExtractService:
             "strict": True,
             "options": opts,
             "instruction": (
-                "Return ONLY one of the listed `value` strings exactly — "
+                "Return ONLY one of the listed `value` strings exactly - "
                 "case-sensitive. Use the `keywords` list per option to map "
                 "free text. If nothing matches, omit the field."
             ),
@@ -699,7 +699,7 @@ class AIExtractService:
             "documents (delivery orders, photos, message screenshots, PDFs). "
             "Read every attachment and return a single JSON object whose top-level "
             "keys are the form field names below. Rules: "
-            "(1) Omit any field you cannot find or are not confident about — "
+            "(1) Omit any field you cannot find or are not confident about - "
             "do not guess. "
             "(2) For fields with a `lookup`, return ONLY one of the listed "
             "option `value` strings, exactly. "
@@ -710,7 +710,7 @@ class AIExtractService:
             "from the supplied examples; if nothing matches, return the raw "
             "code as printed in the document. If multiple distinct product "
             "codes apply, return them as a single comma-separated string "
-            "(e.g. \"TPE-9201, TPE-9203\") — never as a JSON array. "
+            "(e.g. \"TPE-9201, TPE-9203\") - never as a JSON array. "
             "(6) For `text`, `textarea`, and `fk_customer` fields, if the "
             "document shows multiple distinct values for the same field, "
             "return them as a single comma-separated string. "
@@ -722,7 +722,7 @@ class AIExtractService:
             "when the document lists line items. Only include `unit_price` and "
             "`total` when the document actually shows them; omit otherwise."
             if has_line_items
-            else " Do NOT include a top-level `products` array — this form has "
+            else " Do NOT include a top-level `products` array - this form has "
             "no line-item table. Distinct product codes belong in the "
             "`product_code` field as a comma-separated string."
         )

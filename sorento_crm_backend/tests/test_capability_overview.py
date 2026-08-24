@@ -1,4 +1,4 @@
-"""Item 4a (PLAN-post-security-batch) — novice capability overview + the
+"""Item 4a (PLAN-post-security-batch) - novice capability overview + the
 assistant's deterministic "what can you do?" answer.
 
 These are pure-function tests (no LLM, no DB):
@@ -7,10 +7,10 @@ These are pure-function tests (no LLM, no DB):
     leak admin/internal tools, embedding skip-tools, tool slugs, UUIDs, raw
     machine category codes, methods, or API paths (UAC4.2).
   * ``AIAssistantChatService._build_capability_answer`` renders the overview to
-    markdown with NO LLM round-trip (UAC4.1 — deterministic catalog part).
+    markdown with NO LLM round-trip (UAC4.1 - deterministic catalog part).
 
 NOTE (M0 semantic-parser revamp): the keyword classifier ``_is_capability_question``
-was DELETED — capability recognition is now the Semantic Parser's ``intent ==
+was DELETED - capability recognition is now the Semantic Parser's ``intent ==
 "capability"`` (tested in ``test_ai_semantic_parser_route.py`` /
 ``test_ai_semantic_parser_schema.py``). Only the deterministic catalog BUILDER
 is unchanged and still tested here.
@@ -39,7 +39,7 @@ def test_overview_has_modules_with_friendly_names_and_examples():
     modules = ov["modules"]
     assert modules, "expected at least one capability module"
     names = {m["module"] for m in modules}
-    # Friendly, human module names — not machine codes.
+    # Friendly, human module names - not machine codes.
     assert "Products & catalogue" in names
     assert "Stock & inventory" in names
     for m in modules:
@@ -85,7 +85,7 @@ def test_overview_skip_tools_are_not_referenced():
 
 
 # --------------------------------------------------------------------------
-# Deterministic answer (UAC4.1) — no LLM call
+# Deterministic answer (UAC4.1) - no LLM call
 # --------------------------------------------------------------------------
 def test_build_capability_answer_is_deterministic_and_grounded():
     svc = _svc()

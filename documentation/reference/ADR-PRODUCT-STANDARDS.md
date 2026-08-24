@@ -31,7 +31,7 @@ This ADR defines mandatory standards for CRUD UX, delete/archive semantics, deta
 
 ---
 
-## 1b. Form Controls — Dropdowns MUST be searchable
+## 1b. Form Controls - Dropdowns MUST be searchable
 
 **Doctrine:** every dropdown-select in the product MUST be **searchable** and MUST use the standard
 component. A "dropdown-select" = click a field → a popover opens showing an option set → filter by
@@ -43,7 +43,7 @@ typing in the popover's search box → pick one (or many).
   two-mode: pass `options` for a client-filtered static list, or `fetchOptions(query)` for a
   debounced server search (async also passes `selectedOption`/`selectedOptions` so the trigger label
   survives when the current value isn't in the fetched page).
-- **Search is always shown — no option-count threshold.** A 2-option Active/Inactive dropdown is
+- **Search is always shown - no option-count threshold.** A 2-option Active/Inactive dropdown is
   searchable too. Consistency over per-field micro-optimisation.
 - **Banned (code-review hard-fail + ESLint `error`):** Radix `@/components/ui/select`, raw native
   `<select>`, and hand-rolled `CommandInput` pickers. `@/components/ui/select` is being deleted once
@@ -59,7 +59,7 @@ typing in the popover's search box → pick one (or many).
 
 ---
 
-## 1c. Form Controls — a date RANGE is ONE control
+## 1c. Form Controls - a date RANGE is ONE control
 
 **Doctrine:** any "X from / X to" pair MUST render a single range control,
 `@/components/ui/date-range-picker` (`DateRangePicker`). Two date inputs side by side are
@@ -68,7 +68,7 @@ typing in the popover's search box → pick one (or many).
 - **Why.** Two fields make the user hold the relationship in their head: nothing stops "to"
   landing before "from", the two labels have to be read separately to learn they describe one
   fact, and at phone width they wrap apart so the pair stops looking like a pair. A range
-  picker enforces the order by construction — an end cannot be picked before a start.
+  picker enforces the order by construction - an end cannot be picked before a start.
 - **Label the range, not the ends.** "Expected delivery", never "Expected delivery from" plus
   "Expected delivery to".
 - **Both ends stay optional** where the domain allows a half-known range (a developer often
@@ -80,7 +80,7 @@ typing in the popover's search box → pick one (or many).
 
 ---
 
-## 1d. Lists — the row is the way in, and status is a pill
+## 1d. Lists - the row is the way in, and status is a pill
 
 **Doctrine, applies to every list in the product:**
 
@@ -88,13 +88,13 @@ typing in the popover's search box → pick one (or many).
   shared `DataGrid`). A column whose only job is to repeat what the row already does spends a
   column on nothing.
 - **A status-like value renders as a status pill** (`@/lib/status-pill`), never as an `outline`
-  badge. An outlined box containing a verb-shaped word ("Open") reads as a BUTTON — and once one
+  badge. An outlined box containing a verb-shaped word ("Open") reads as a BUTTON - and once one
   cell looks clickable, the reader stops trusting which parts of the row are actions. Map new
   vocabularies onto the shared palette's existing keys rather than inventing colours; an unknown
   key silently falls back to grey, which is how the miss hides.
 - **Timestamps are ABSOLUTE, never relative.** "yesterday" and "3 days ago" cannot be compared
   between two rows, cannot be quoted to anybody, and change meaning depending on when the page
-  was loaded — a list left open overnight goes on claiming "today" about yesterday. Use
+  was loaded - a list left open overnight goes on claiming "today" about yesterday. Use
   `describeLastActivity`.
 - **A total belongs IN the table, under the column it sums.** Declare `footer` on the column
   definition and the shared `DataGrid` renders a `<tfoot>` row aligned to it (both the draggable
@@ -156,7 +156,7 @@ the line between them is what to check first when adding a surface.
 
 ---
 
-## 1f. Detail pages — group facts into named sections
+## 1f. Detail pages - group facts into named sections
 
 **Doctrine:** a detail page is a set of titled sections, each holding facts that are read
 together. One card listing every column the entity has is banned.
@@ -169,7 +169,7 @@ together. One card listing every column the entity has is banned.
   "Consultants" are groups a salesperson thinks in. `project_profiles` versus `projects` is not
   a grouping the reader can see or cares about, so it must not shape the page.
 - **A question people ask directly earns its own section.** "Which lead did this come from" was
-  one `Fact` labelled "Source" at the bottom of a long grid, and it was missed — it is now a
+  one `Fact` labelled "Source" at the bottom of a long grid, and it was missed - it is now a
   section of its own. The test is whether someone would open the record specifically to answer
   it.
 - **Do not repeat a fact across sections.** Owner lives in Access; it is not also a registration
@@ -265,8 +265,8 @@ Backend API
 
 ### Every domain table has a uuid `id` primary key
 - New tables MUST declare `id = Column(UUID(as_uuid=False), primary_key=True, server_default=text("gen_random_uuid()"))`.
-- A natural business key (e.g. a `code` like `retail` / `MSEG-A`) is fine and encouraged — but it lives **alongside** the surrogate `id` as a `unique=True, nullable=False` column, not **as** the primary key. Foreign keys may reference either the uuid `id` or the unique business key.
-- **Why this is mandatory, not stylistic.** The polymorphic key columns — `audit_logs.entity_id`, `conversation_sla_tracking.source_entity_id`, `notifications.source_entity_id`, and similar — store a stringified id and can only be typed `uuid` (which makes Postgres reject a `uuid = text` mismatch at write time) if *every* id they might hold is genuinely a uuid. A single natural-key-PK table forces those columns back to `text`, which silently accepts the mismatch. One code-keyed table costs the whole system its type safety on the audit/SLA/notification trails.
+- A natural business key (e.g. a `code` like `retail` / `MSEG-A`) is fine and encouraged - but it lives **alongside** the surrogate `id` as a `unique=True, nullable=False` column, not **as** the primary key. Foreign keys may reference either the uuid `id` or the unique business key.
+- **Why this is mandatory, not stylistic.** The polymorphic key columns - `audit_logs.entity_id`, `conversation_sla_tracking.source_entity_id`, `notifications.source_entity_id`, and similar - store a stringified id and can only be typed `uuid` (which makes Postgres reject a `uuid = text` mismatch at write time) if *every* id they might hold is genuinely a uuid. A single natural-key-PK table forces those columns back to `text`, which silently accepts the mismatch. One code-keyed table costs the whole system its type safety on the audit/SLA/notification trails.
 - **Enforcement.** `sorento_crm_backend/tests/test_schema_uuid_id_principle.py` walks the SQLAlchemy models and fails CI if any table lacks a uuid `id`. A new table must either comply or be consciously added to that file's `EXEMPTIONS` allowlist (junction / external / documented-legacy) in a reviewed diff. The allowlist may only shrink.
 - **Legitimate exceptions** (already in the allowlist): pure M2M junction tables (a composite natural PK is correct); schemas owned by another system (NextAuth, n8n, the Respond ingest); and grandfathered legacy auth/RBAC tables whose text ids hold uuid-shaped values (conversion is a tracked FK-heavy migration, not licence to add more).
 - Worked example: `alembic/versions/298_market_segments_uuid_id.py` moves `market_segments` from a `code` PK to a uuid `id` while keeping `code` as the unique FK target.

@@ -1,9 +1,9 @@
 import type { FormSLASourceType } from './formSLAService';
 
 /**
- * "I'm handling this" handling-lock — pure state resolver + types.
+ * "I'm handling this" handling-lock - pure state resolver + types.
  *
- * Once a form-SLA stage tracker is ESCALATED (`escalated_at` set — NOT `current_tier > 1`,
+ * Once a form-SLA stage tracker is ESCALATED (`escalated_at` set - NOT `current_tier > 1`,
  * since a config may START above tier 1, e.g. project_sales begins at tier 2) AND the per-form
  * feature flag is on, the state-changing business CTAs (approve/reject/process/close/
  * submit/reopen) disable for everyone until an eligible team-chain member claims the
@@ -24,7 +24,7 @@ export type HandlingLockState =
   | 'admin_unclaimed'
   | 'admin_other_holds';
 
-/** Minimal shape the lock cares about — a superset-compatible slice of the SLA tracker. */
+/** Minimal shape the lock cares about - a superset-compatible slice of the SLA tracker. */
 export interface HandlingLockTracker {
   id: string;
   source_entity_type?: string | null;
@@ -55,14 +55,14 @@ export interface ResolveHandlingLockInput {
 }
 
 /**
- * Resolve the guided handling-lock state for the current viewer. Order matters —
+ * Resolve the guided handling-lock state for the current viewer. Order matters  - 
  * "mine" wins even for an admin who happens to hold the lock. See PLAN §5.
  */
 export function resolveHandlingLockState(input: ResolveHandlingLockInput): HandlingLockState {
   const { activeTracker, currentUserId, isEligible, isAdmin, flagEnabledForType } = input;
 
   // No lock today: flag off, no active tracker, resolved, or never escalated.
-  // "Escalated" = escalated_at stamped, NOT current_tier > 1 — a config may start above
+  // "Escalated" = escalated_at stamped, NOT current_tier > 1 - a config may start above
   // tier 1 (project_sales begins at tier 2), so tier alone would falsely lock a fresh form.
   if (
     !flagEnabledForType ||
@@ -78,7 +78,7 @@ export function resolveHandlingLockState(input: ResolveHandlingLockInput): Handl
   const isMine =
     currentUserId != null && holderId != null && String(holderId) === String(currentUserId);
 
-  // I hold the lock — enabled — regardless of admin/eligibility.
+  // I hold the lock - enabled - regardless of admin/eligibility.
   if (isMine) return 'mine';
 
   // Admin/superadmin: bypass only when unclaimed; must take over an active holder.
@@ -93,7 +93,7 @@ export function resolveHandlingLockState(input: ResolveHandlingLockInput): Handl
 
 /**
  * Whether the state-changing business CTAs are enabled for this state. The lock is an
- * ADDITIONAL gate ANDed on top of the existing status+permission gates — when the state
+ * ADDITIONAL gate ANDed on top of the existing status+permission gates - when the state
  * is `not_escalated` this is `true`, so behaviour is exactly as today.
  */
 export function businessCtasEnabledForState(state: HandlingLockState): boolean {

@@ -3,9 +3,9 @@
 Single-shot draft flow. Caller posts the user's complaint (either
 ``original_message`` for server-side LLM extraction, or pre-drafted
 ``title`` + fields). Server creates a DRAFT ticket and returns a
-``draft_url`` the caller surfaces to the user. The user opens that URL —
+``draft_url`` the caller surfaces to the user. The user opens that URL  - 
 in-app for AI-assistant calls, public portal token URL for WhatsApp
-calls — reviews the preview, then clicks Submit / Edit / Cancel on a
+calls - reviews the preview, then clicks Submit / Edit / Cancel on a
 real ticket page. Explicit confirmation is therefore deterministic
 (button click), not an LLM-driven multi-turn handshake.
 """
@@ -196,7 +196,7 @@ class TicketIntakeService:
         actor_user_id_fallback: Optional[str],
     ) -> None:
         # Auto-detect WhatsApp/Respond intake when caller forwarded a respond
-        # contact (alias ``contact_id``) but no actor — typical MCP path from the
+        # contact (alias ``contact_id``) but no actor - typical MCP path from the
         # n8n WhatsApp agent.
         if not payload.source_channel:
             if payload.respond_contact_id and not payload.actor_user_id:
@@ -221,7 +221,7 @@ class TicketIntakeService:
                 )
             # source_conversation_id and source_message_id stay optional for MCP
             # IT-support intake. Do NOT pollute source_conversation_id with
-            # source_space_id — they are different ids in Respond.io and
+            # source_space_id - they are different ids in Respond.io and
             # conflating them breaks downstream conversation/message deep-linking.
 
     # ---------- caller-drafted preview shortcut ----------

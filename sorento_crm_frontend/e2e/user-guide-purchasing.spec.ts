@@ -32,7 +32,7 @@ async function login(page: Page) {
   await page.waitForURL((url) => !/signin/i.test(url.pathname), { timeout: 30_000 });
 }
 
-test.describe('purchasing user guides — UI claim validation', () => {
+test.describe('purchasing user guides - UI claim validation', () => {
   test.beforeEach(async ({ page }) => {
     await login(page);
   });
@@ -83,7 +83,7 @@ test.describe('purchasing user guides — UI claim validation', () => {
     await expect(firstRow).toBeVisible();
     await firstRow.click();
     await page.waitForURL(/\/procurement-management\/stock-inquiries\/[^/]+/);
-    // these may be hidden depending on inquiry status — assert at least the page loaded
+    // these may be hidden depending on inquiry status - assert at least the page loaded
     const pageBody = page.locator('body');
     await expect(pageBody).toContainText(/stock inquiry/i);
     // soft checks: present iff the inquiry is in pending_purchasing
@@ -131,7 +131,7 @@ test.describe('purchasing user guides — UI claim validation', () => {
     await expect(page.getByRole('menuitem', { name: /import spo/i })).toBeVisible();
   });
 
-  // docs/user-guides/purchasing/manage-resource-folders.md — Quick Access
+  // docs/user-guides/purchasing/manage-resource-folders.md - Quick Access
   test('Quick Access section appears in sidebar with Add shortcut', async ({ page }) => {
     await page.goto('/');
     await expect(page.getByText(/quick access/i).first()).toBeVisible();

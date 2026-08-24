@@ -36,7 +36,7 @@ class ImportJobResponse(BaseModel):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     job_metadata: Optional[Dict[str, Any]] = None
-    # Retained source file (tracing). Raw storage key is intentionally NOT exposed —
+    # Retained source file (tracing). Raw storage key is intentionally NOT exposed  - 
     # the FE downloads via GET /jobs/{id}/source which returns a fresh signed URL.
     source_filename: Optional[str] = None
     source_file_size: Optional[int] = None
@@ -49,7 +49,7 @@ class ImportJobRowResponse(BaseModel):
     """One captured source row of an import job.
 
     ``identity`` carries the row's mapped business columns (doc no, item code,
-    location...) — never raw UUIDs, since the UI prints it verbatim.
+    location...) - never raw UUIDs, since the UI prints it verbatim.
     """
     id: str
     row_number: Optional[int] = None

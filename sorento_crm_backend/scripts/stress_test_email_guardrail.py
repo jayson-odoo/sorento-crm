@@ -421,7 +421,7 @@ def render_report(results: list[ScenarioResult], out_path: Path, chart_paths: li
     s1 = next((r for r in results if r.name == "S1"), None)
     if s1:
         lines.append(
-            f"The incident scenario (S1) — {s1.enqueued} attachment-linkage callbacks for one recipient — "
+            f"The incident scenario (S1) - {s1.enqueued} attachment-linkage callbacks for one recipient - "
             f"now produces **{s1.smtp_total} outgoing email(s)** instead of {s1.enqueued}. "
             f"The producer-side coalesce window collapses the burst into a single outbox row "
             f"that lists every attachment, and the hard rate-limit guardrail backstops any future code path "
@@ -444,7 +444,7 @@ def render_report(results: list[ScenarioResult], out_path: Path, chart_paths: li
     for r in results:
         lines.append(f"### {r.name}")
         for label, ok, info in r.pass_criteria:
-            lines.append(f"- {'PASS' if ok else 'FAIL'} — {label} ({info})")
+            lines.append(f"- {'PASS' if ok else 'FAIL'} - {label} ({info})")
         lines.append("")
     if chart_paths:
         lines.append("## Charts")

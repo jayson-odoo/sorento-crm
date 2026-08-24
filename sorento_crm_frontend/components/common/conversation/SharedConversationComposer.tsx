@@ -125,7 +125,7 @@ interface SharedConversationComposerProps {
  *
  * - IN-WINDOW: a normal textbox; the raw typed text is delivered verbatim.
  * - OUT-OF-WINDOW: the form's `*_chat` template is rendered inline with its
- *   non-message parts pre-filled and an editable field where the message goes —
+ *   non-message parts pre-filled and an editable field where the message goes  - 
  *   so you see exactly what the contact receives and only fill in the message.
  *
  * Never mutates the entity, never blocks on the window.
@@ -173,7 +173,7 @@ export default function SharedConversationComposer({
   const isEntity = mode === 'entity';
 
   // Out-of-window: fetch the form's chat template so we can render it inline with
-  // a fill-in field. DB-only on the backend — no Respond call.
+  // a fill-in field. DB-only on the backend - no Respond call.
   const { data: fetchedPreview, isLoading: previewLoading } = useQuery({
     queryKey: ['chat-template-preview', entityType, entityId],
     queryFn: () => getChatTemplatePreview(entityType, entityId),
@@ -778,7 +778,7 @@ export default function SharedConversationComposer({
           <div className="flex items-start gap-2 text-xs text-muted-foreground">
             <LayoutTemplate className="size-3.5 mt-0.5 shrink-0" />
             <span>
-              Outside the 24h window — this is sent as the template
+              Outside the 24h window - this is sent as the template
               {preview?.template_name ? ` “${preview.template_name}”` : ''}. Fill in your message
               below; line breaks are removed in template messages.
             </span>
@@ -788,7 +788,7 @@ export default function SharedConversationComposer({
           </div>
           {/[\n\t]|\s{2,}/.test(replyText) && (
             <p className="text-xs text-amber-600 dark:text-amber-400" data-testid="flatten-warning">
-              Line breaks, tabs and repeated spaces are removed when sent as a template — the
+              Line breaks, tabs and repeated spaces are removed when sent as a template - the
               message is delivered on one line.
             </p>
           )}

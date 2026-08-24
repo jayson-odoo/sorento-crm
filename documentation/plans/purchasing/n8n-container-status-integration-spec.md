@@ -126,7 +126,7 @@ table is stale** - re-read it rather than trusting this copy. Sorting and groupi
 
 **Stock rows** (`crm_inventory_stock_balance_list`) are keyed too, because a cross-domain
 stock/incoming block sorts across both: `product_code`, `product_name`, `warehouse`,
-`system_location`, `quantity_on_hand`. Note that the last three always render, with `"—"` when
+`system_location`, `quantity_on_hand`. Note that the last three always render, with `"-"` when
 absent, so the row shape never varies - a consumer projecting on `quantity_on_hand` must expect a
 non-numeric value there and not coerce it to 0.
 

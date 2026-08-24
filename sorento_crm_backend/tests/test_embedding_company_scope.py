@@ -3,7 +3,7 @@
 Two layers:
   - Pure unit (always run, no DB): the vector-search company predicate builder
     (``_embedding_company_filter``) across the four scope states, and the listener
-    payload copy (``build_queue_payload`` carries the source's company_id — AC-I5).
+    payload copy (``build_queue_payload`` carries the source's company_id - AC-I5).
   - Live-DB integration (skippable via SKIP_LIVE_DB_TESTS=1): a scoped vector
     search over real ``embedding_documents`` / ``embedding_chunks`` returns only
     in-scope + shared (null-company) rows, never another company's (AC-I4).
@@ -33,7 +33,7 @@ def _compile(expr) -> str:
 
 
 class _FakeDB:
-    """Minimal stand-in exposing only ``.info`` — enough for get/set_company_scope."""
+    """Minimal stand-in exposing only ``.info`` - enough for get/set_company_scope."""
 
     def __init__(self) -> None:
         self.info: dict = {}

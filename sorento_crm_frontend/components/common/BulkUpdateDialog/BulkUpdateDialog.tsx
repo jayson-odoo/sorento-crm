@@ -30,7 +30,7 @@ import type { BulkEditableField, BulkUpdateResult } from './types';
 /**
  * Reusable, entity-agnostic bulk-edit dialog.
  *
- * SAFE by construction: the caller passes a WHITELIST of `fields` — the user can
+ * SAFE by construction: the caller passes a WHITELIST of `fields` - the user can
  * only pick one of those fields and (for `select`/`user`) only an allowed value.
  * There is no free-form "any column" path. The dialog is a pure UI shell; the
  * actual write is delegated to `onApply(fieldKey, value)`, which the caller wires
@@ -123,7 +123,7 @@ export function BulkUpdateDialog({
       );
     }
     // `select` and `user` both render an allowed-options dropdown. For `user` this
-    // is a Phase-1 stub — Phase 2 swaps in `services/userSelectService` (searchable,
+    // is a Phase-1 stub - Phase 2 swaps in `services/userSelectService` (searchable,
     // shows name/email, never the UUID). Options carry the display label so the UI
     // never surfaces a raw id.
     return (
@@ -256,7 +256,7 @@ export function BulkUpdateDialog({
         </DialogContent>
       </Dialog>
 
-      {/* Apply-step confirmation — mutating action, so AlertDialog per product standard. */}
+      {/* Apply-step confirmation - mutating action, so AlertDialog per product standard. */}
       <AlertDialog open={confirmOpen} onOpenChange={(o) => !applying && setConfirmOpen(o)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -265,7 +265,7 @@ export function BulkUpdateDialog({
               Set <span className="font-medium text-foreground">{selectedField?.label}</span> ={' '}
               <span className="font-medium text-foreground">{valueLabel}</span> on{' '}
               <span className="font-medium text-foreground">{selectedCount}</span> selected record
-              {selectedCount === 1 ? '' : 's'}? Each record is validated individually — some may be
+              {selectedCount === 1 ? '' : 's'}? Each record is validated individually - some may be
               skipped if the change is not allowed.
             </AlertDialogDescription>
           </AlertDialogHeader>

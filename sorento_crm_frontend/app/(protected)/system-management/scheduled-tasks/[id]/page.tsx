@@ -183,7 +183,7 @@ export default function ScheduledTaskDetailPage({ params }: DetailPageProps) {
               <div className="flex items-center justify-between">
                 <CardTitle>Task config</CardTitle>
                 <Badge variant={getStatusBadgeVariant(task.last_status ?? '')}>
-                  {task.last_status ?? '—'}
+                  {task.last_status ?? '-'}
                 </Badge>
               </div>
               {task.description && (
@@ -201,7 +201,7 @@ export default function ScheduledTaskDetailPage({ params }: DetailPageProps) {
                   <p className="font-medium">
                     {task.next_run_at
                       ? formatDateTimeInMalaysia(task.next_run_at)
-                      : '—'}
+                      : '-'}
                   </p>
                 </div>
                 <div>
@@ -209,7 +209,7 @@ export default function ScheduledTaskDetailPage({ params }: DetailPageProps) {
                   <p className="font-medium">
                     {task.last_run_at
                       ? formatDateTimeInMalaysia(task.last_run_at)
-                      : '—'}
+                      : '-'}
                   </p>
                 </div>
                 {task.last_error && (

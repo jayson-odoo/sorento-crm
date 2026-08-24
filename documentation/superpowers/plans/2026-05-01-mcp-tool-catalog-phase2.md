@@ -1,8 +1,8 @@
-# MCP Tool Catalog — Phase 2 Implementation Plan
+# MCP Tool Catalog - Phase 2 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let admins assign MCP tools to access agents (N:1 ownership). Backend exposes a tools-picker endpoint and per-agent GET/PUT routes; the AccessAgentForm grows an "MCP Tools" multi-select card that reassigns ownership in one transaction. **No MCP-side enforcement yet** — that's Phase 3.
+**Goal:** Let admins assign MCP tools to access agents (N:1 ownership). Backend exposes a tools-picker endpoint and per-agent GET/PUT routes; the AccessAgentForm grows an "MCP Tools" multi-select card that reassigns ownership in one transaction. **No MCP-side enforcement yet** - that's Phase 3.
 
 **Architecture:** Phase 2 of `documentation/superpowers/specs/2026-05-01-mcp-tool-access-guard-design.md` (§9, §10). Single transaction PUT semantics: claim selected tools (`UPDATE mcp_tools SET agent_id=:id WHERE id IN :tool_ids`) and release deselected (`UPDATE ... SET agent_id=NULL WHERE agent_id=:id AND id NOT IN :tool_ids`). UI exposes `current_agent_*` fields on the picker so admins see ownership conflicts before saving.
 
@@ -43,7 +43,7 @@ Notes:
 
 ```python
 # ---------------------------------------------------------------------------
-# MCP tool catalog (Phase 2 — AccessAgent ↔ Tool ownership)
+# MCP tool catalog (Phase 2 - AccessAgent ↔ Tool ownership)
 # ---------------------------------------------------------------------------
 
 class McpToolOut(BaseModel):
@@ -96,7 +96,7 @@ git commit -m "feat(schemas): add McpTool* Pydantic schemas for Phase 2"
 
 ---
 
-## Task 2: Backend service — `access_agent_mcp_tool_service`
+## Task 2: Backend service - `access_agent_mcp_tool_service`
 
 **Files:**
 - Create: `sorento_crm_backend/app/services/access_agent_mcp_tool_service.py`
@@ -249,7 +249,7 @@ Create `sorento_crm_backend/app/services/access_agent_mcp_tool_service.py`:
 ```python
 """AccessAgent ↔ McpTool ownership service (Phase 2).
 
-Tools are N:1 to access agents — each `mcp_tools.agent_id` either points at
+Tools are N:1 to access agents - each `mcp_tools.agent_id` either points at
 exactly one agent or is NULL.
 
 `set_tools_for_agent` is replace-semantics in a single transaction:
@@ -288,7 +288,7 @@ def list_picker_tools(
     """Return tools for the AccessAgentForm picker.
 
     Joins to `access_agents` so the UI can render "currently owned by X"
-    warnings before the admin reassigns. Active tools only by default —
+    warnings before the admin reassigns. Active tools only by default  - 
     inactive tools (deactivated by sync) are normally hidden.
     """
     q = (
@@ -486,7 +486,7 @@ def test_picker_requires_api_key(client):
     assert res.status_code in (401, 403)
 ```
 
-- [ ] **Step 2: Run.** Should fail (404 — endpoint doesn't exist).
+- [ ] **Step 2: Run.** Should fail (404 - endpoint doesn't exist).
 
 ```bash
 cd /Users/tehjayson/Documents/foundryx/sorento_crm/sorento_crm_backend
@@ -553,7 +553,7 @@ router.include_router(mcp_tools.router, tags=["mcp-tools"])
 pytest tests/test_mcp_tools_picker.py -v
 ```
 
-Expected: 2 passed (or 1 passed + 1 skipped if `EXTERNAL_API_KEY` is unset in your shell — we keep that test guarded).
+Expected: 2 passed (or 1 passed + 1 skipped if `EXTERNAL_API_KEY` is unset in your shell - we keep that test guarded).
 
 - [ ] **Step 6: Commit.**
 
@@ -721,7 +721,7 @@ pytest tests/test_access_agent_mcp_tools_routes.py -v
 
 - [ ] **Step 3: Implement the endpoints.**
 
-Open `sorento_crm_backend/app/api/v1/user_management/access_agents.py`. Add new imports near the existing imports at the top (do NOT remove or reorder existing imports — only add):
+Open `sorento_crm_backend/app/api/v1/user_management/access_agents.py`. Add new imports near the existing imports at the top (do NOT remove or reorder existing imports - only add):
 
 ```python
 from app.schemas.user import (  # add to existing schemas import OR a new line
@@ -734,7 +734,7 @@ from app.services.access_agent_mcp_tool_service import (
 )
 ```
 
-Then append the two new routes at the end of the file (after the last existing route handler — currently the contact-access DELETE handler around line 245):
+Then append the two new routes at the end of the file (after the last existing route handler - currently the contact-access DELETE handler around line 245):
 
 ```python
 @router.get("/{agent_id}/mcp-tools", response_model=list[McpToolForAgentOut])
@@ -1145,7 +1145,7 @@ export function McpToolSelector({
         searchText: `${r.tool_name} ${r.module_key} ${r.description ?? ''}`,
         description: r.description ?? undefined,
         badgeText: ownedElsewhere
-          ? `currently owned by ${r.current_agent_name ?? 'another agent'} — selecting will reassign`
+          ? `currently owned by ${r.current_agent_name ?? 'another agent'} - selecting will reassign`
           : undefined,
       };
     });
@@ -1157,7 +1157,7 @@ export function McpToolSelector({
   if (rows.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
-        No MCP tools registered yet — modules with{' '}
+        No MCP tools registered yet - modules with{' '}
         <code className="font-mono text-xs">mcp/tools.json</code> populate this list on upload.
       </p>
     );
@@ -1258,11 +1258,11 @@ cd /Users/tehjayson/Documents/foundryx/sorento_crm/sorento_crm_frontend
 npx tsc --noEmit -p .
 ```
 
-Expected: no new errors. If new errors point at unrelated files, leave them — only ensure the new files don't introduce errors.
+Expected: no new errors. If new errors point at unrelated files, leave them - only ensure the new files don't introduce errors.
 
 - [ ] **Step 4: Manual UI sanity check.**
 
-Run the frontend dev server (only if a backend is reachable — port 3000 must be free):
+Run the frontend dev server (only if a backend is reachable - port 3000 must be free):
 
 ```bash
 cd /Users/tehjayson/Documents/foundryx/sorento_crm/sorento_crm_frontend
@@ -1298,7 +1298,7 @@ pytest \
   -v
 ```
 
-Expected: 9 passed (4 service + 2 picker + 3 route). The two picker / 3 route tests may emit `SKIPPED` if `EXTERNAL_API_KEY` is unset — that's acceptable but mention it in the report.
+Expected: 9 passed (4 service + 2 picker + 3 route). The two picker / 3 route tests may emit `SKIPPED` if `EXTERNAL_API_KEY` is unset - that's acceptable but mention it in the report.
 
 - [ ] **Step 2: Confirm Phase 1 tests still pass.**
 
@@ -1325,7 +1325,7 @@ finally:
 PY
 ```
 
-Expected: prints the totals. `owned` should reflect any test-leftover ownership that wasn't cleaned up — if non-zero and surprising, investigate (test fixtures may have leaked).
+Expected: prints the totals. `owned` should reflect any test-leftover ownership that wasn't cleaned up - if non-zero and surprising, investigate (test fixtures may have leaked).
 
 - [ ] **Step 4: Branch summary.**
 
@@ -1334,7 +1334,7 @@ cd /Users/tehjayson/Documents/foundryx/sorento_crm
 git log --oneline main..HEAD
 ```
 
-Expected: 7 commits — one per task (1-7), Task 8 is verification-only.
+Expected: 7 commits - one per task (1-7), Task 8 is verification-only.
 
 ---
 

@@ -82,7 +82,7 @@ function TeamMemberRespondIoButton({ member }: { member: AgentTeamMemberInfo }) 
         <div className="space-y-3">
           <div>
             <p className="text-xs font-medium text-muted-foreground">Respond user ID</p>
-            <p className="mt-1 break-all font-mono text-sm">{rid || '—'}</p>
+            <p className="mt-1 break-all font-mono text-sm">{rid || '-'}</p>
           </div>
           <div>
             <p className="text-xs font-medium text-muted-foreground">Respond.io sync</p>

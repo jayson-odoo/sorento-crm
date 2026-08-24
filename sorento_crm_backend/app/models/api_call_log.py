@@ -1,13 +1,13 @@
 """Request telemetry for external + MCP-originated API calls.
 
-Separate from `integration_log` on purpose. That table is a **work queue** —
+Separate from `integration_log` on purpose. That table is a **work queue**  - 
 `retry_count`, `max_retry_allowed`, `next_retry_at`, and a UUID `business_id`
 pointing at the row being synced. Chat ingest already fakes that FK with a random
 uuid because it has no business row to point at, which is the tell that it was
 being borrowed for telemetry it was never shaped for.
 
 This table has no retry semantics and no business FK. It answers "what called us,
-when, how long did it take, and what came back" — for every `/api/v1/external/*`
+when, how long did it take, and what came back" - for every `/api/v1/external/*`
 request, written by middleware so coverage is total by construction rather than
 per-endpoint opt-in.
 """
@@ -35,7 +35,7 @@ class ApiCallLog(Base):
     actor = Column(String(128), nullable=True)
 
     status_code = Column(Integer, nullable=True)
-    # success | client_error | server_error — derived from status_code so the list
+    # success | client_error | server_error - derived from status_code so the list
     # can filter on intent without every consumer re-deriving the ranges.
     outcome = Column(String(20), nullable=False, default="success")
     latency_ms = Column(Integer, nullable=True)

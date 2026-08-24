@@ -1,4 +1,4 @@
-"""Incoming-stock allocation gap — `unallocated_quantity` on every allocation-bearing payload.
+"""Incoming-stock allocation gap - `unallocated_quantity` on every allocation-bearing payload.
 
 The signal answers "is this incoming quantity already claimed by a salesperson?".
 Emitted as the GAP only (never the shipped base) so the privacy rule at the top of
@@ -10,7 +10,7 @@ Semantics (identical across all three payload builders):
   * allocated  < quantity_shipped -> int    (the unallocated remainder)
   * allocated  > quantity_shipped -> None   (over-allocated; clamp, never negative)
 
-The base is `quantity_shipped`, NOT `remaining_incoming_quantity` — allocations are
+The base is `quantity_shipped`, NOT `remaining_incoming_quantity` - allocations are
 not decremented as goods are received, so on a partially-received line the two
 numbers have different bases. `test_*_partially_received_line_uses_shipped_base`
 is the regression guard for that.

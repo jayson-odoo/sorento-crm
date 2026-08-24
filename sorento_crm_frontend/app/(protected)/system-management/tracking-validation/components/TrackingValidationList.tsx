@@ -23,7 +23,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
-// PHASE 1 MOCK — swap for a real query hook when S8 (issue #67) lands.
+// PHASE 1 MOCK - swap for a real query hook when S8 (issue #67) lands.
 import {
   MOCK_OBSERVATIONS,
   summarize,

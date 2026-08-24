@@ -5,7 +5,7 @@ Covers:
   * ``form_type`` exact match (lowercased)
   * search query matches form code/name AND linked attachment filename
   * ``contact_access_codes=[]`` short-circuits to no results (the
-    ``text("false")`` branch — no JSONB op invoked)
+    ``text("false")`` branch - no JSONB op invoked)
 
 Runs on Postgres, so ``access_levels`` is real JSONB rather than the sqlite
 stand-in the file used to register a global ``@compiles`` hook for.

@@ -1,4 +1,4 @@
-"""S0 gate — rule-engine aggregate facts.
+"""S0 gate - rule-engine aggregate facts.
 
 Golden set for ``app/rule_engine/aggregates.py``. The status engine's auto edges
 ("project has >= 1 purchase order") are authored as rule conditions over these

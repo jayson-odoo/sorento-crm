@@ -1,4 +1,4 @@
-"""SCM M1 — sales-order CRUD + create-DO-from-SO (Postgres-backed, rolled back).
+"""SCM M1 - sales-order CRUD + create-DO-from-SO (Postgres-backed, rolled back).
 
 Anchors:
   * create/get/update/delete happy path, so_number format, resolved names,
@@ -144,7 +144,7 @@ def test_create_do_from_so_drops_committed(scm_app):
         assert so["committed_qty"] == 0
         assert so["lines"][0]["qty_delivered"] == so["lines"][0]["qty_ordered"] == 7
 
-        # committed_v drops back — the delivered line no longer contributes.
+        # committed_v drops back - the delivered line no longer contributes.
         after = _committed_for(db, SKU)
         assert after == pytest.approx(before), "committed should return to baseline after DO"
 
@@ -177,7 +177,7 @@ def test_create_do_number_is_valid_and_unique(scm_app):
 
 
 def test_create_do_number_retries_on_collision(scm_app):
-    """When the derived DO number is already taken, create-DO must not 500 —
+    """When the derived DO number is already taken, create-DO must not 500  - 
     it bumps the suffix and still produces a unique number."""
     from app.models.order import Order
     from datetime import datetime

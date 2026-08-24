@@ -5,14 +5,14 @@ segment_key", but it dropped the wrong object: it ran
 ``DROP INDEX IF EXISTS ix_agent_team_round_robin_cursors_agent_team`` while the
 real uniqueness was a table CONSTRAINT named ``uq_agent_team_cursor`` on
 (agent_id, team_id). The DROP no-op'd, so the 2-col unique survived alongside
-the new 3-col index — capping each (agent, team) at ONE cursor row. That breaks
+the new 3-col index - capping each (agent, team) at ONE cursor row. That breaks
 segment-scoped round-robin: the moment a team needs a second cursor (a different
-``segment_key`` — e.g. a '' legacy cursor plus a 'retail' cursor, or 'retail'
+``segment_key`` - e.g. a '' legacy cursor plus a 'retail' cursor, or 'retail'
 plus 'project'), the insert 409s with UniqueViolation on uq_agent_team_cursor.
 
 This migration drops the stale constraint (and its backing index) idempotently.
 The 3-col unique index ``ix_agent_team_rr_cursors_agent_team_segment`` (created
-in 263) is the sole uniqueness guarantee going forward — matching the model.
+in 263) is the sole uniqueness guarantee going forward - matching the model.
 
 Revision ID: 264_drop_stale_rr_cursor_unique
 Revises: 263_market_segments
@@ -46,7 +46,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # Best-effort restore of the old 2-col unique. Only succeeds if no team has
-    # more than one segment cursor (else the unique can't be built) — acceptable
+    # more than one segment cursor (else the unique can't be built) - acceptable
     # for a downgrade path.
     op.execute(
         "ALTER TABLE agent_team_round_robin_cursors "

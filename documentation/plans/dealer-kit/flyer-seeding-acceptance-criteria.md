@@ -1,4 +1,4 @@
-# UAC — Flyer seeding, and the fidelity gate (S7)
+# UAC - Flyer seeding, and the fidelity gate (S7)
 
 **Companion to:** `PLAN-flyer-seeding.md`
 **Status:** Pre-code except S7.1, which is built and green.
@@ -9,7 +9,7 @@ real stack for the side marked.
 
 ---
 
-## Group Z — The fidelity gate
+## Group Z - The fidelity gate
 
 > **The requirement:** the seeded catalogue must be at least **90% alike** the printed
 > document it came from.
@@ -112,7 +112,7 @@ Stated up front so the gate cannot be met by tightening a metric until it passes
 
 ---
 
-## Group A — Extraction (S7.1, built)
+## Group A - Extraction (S7.1, built)
 
 - **AC-A1** `[BE]` Given a flyer PDF, Then `extract_flyer` returns pages, cards, grids,
   artwork and headings, and touches no database.
@@ -127,7 +127,7 @@ Stated up front so the gate cannot be met by tightening a metric until it passes
 - **AC-A6** `[BE]` Given `SRTWC286-SH`, Then `offset_price` is None, because the flyer prints
   it outside the card's column band. Pinned as evidence that prices come from the promotion.
 
-## Group B — The brochure image (S7.0)
+## Group B - The brochure image (S7.0)
 
 - **AC-B1** `[BE]` Given a product and one of its image attachments, When it is set as the
   brochure image, Then exactly one attachment carries the flag for that product in that
@@ -149,7 +149,7 @@ Stated up front so the gate cannot be met by tightening a metric until it passes
 - **AC-B9** `[FE]` Given the product attachments tab, Then the same control is present there,
   writing through the same endpoint.
 
-## Group C — Promotion link and pricing (S7.2)
+## Group C - Promotion link and pricing (S7.2)
 
 - **AC-C1** `[BE][MIG]` Given `page`, Then it carries a nullable `promotion_id`, set
   explicitly. The seed may SUGGEST one when a promotion description matches the uploaded
@@ -166,7 +166,7 @@ Stated up front so the gate cannot be met by tightening a metric until it passes
 - **AC-C6** `[BE]` Given a viewer whose access level is not in the promotion's, Then they get
   the list price, and the promotional figure is **absent from the payload**, not hidden.
 
-## Group D — Match and report (S7.3)
+## Group D - Match and report (S7.3)
 
 - **AC-D1** `[BE]` Given a reading, Then codes resolve to products **within the active company
   scope**; the same code under another company is never matched.
@@ -177,7 +177,7 @@ Stated up front so the gate cannot be met by tightening a metric until it passes
 - **AC-D4** `[BE]` Given cards printing `L x W x H`, Then they are reported as dimension
   candidates and **nothing is written to `products`**.
 
-## Group E — Seed (S7.4)
+## Group E - Seed (S7.4)
 
 - **AC-E1** `[BE]` Given a seed, Then one page is created with one section per flyer page,
   each `printMode: breakBefore`.
@@ -198,7 +198,7 @@ Stated up front so the gate cannot be met by tightening a metric until it passes
   figures are chosen, because seeding here would price REAL product rows in a copy of
   production. Reasoning and the mutation table are in `PLAN-flyer-seeding.md`.
 
-## Group F — Artwork (S7.5)
+## Group F - Artwork (S7.5)
 
 - **AC-F1** `[BE]` Given a CMYK JPEG banner, Then it is converted to RGB before storage.
   Browsers do not render CMYK JPEG reliably, and it is the same defect that breaks WhatsApp

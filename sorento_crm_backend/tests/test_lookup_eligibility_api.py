@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-# MUST be first app import — resolves circular-import in app.modules.runtime.guards
+# MUST be first app import - resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 
 from tests._pg_fixture import blank_session

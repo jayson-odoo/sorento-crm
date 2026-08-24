@@ -22,7 +22,7 @@ class Notification(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     source_entity_type = Column(String(80), nullable=True, index=True)  # e.g. import_job
-    # The entity this notification is ABOUT — a real uuid, or NULL for
+    # The entity this notification is ABOUT - a real uuid, or NULL for
     # entity-less notifications (e.g. system-health alerts).
     source_entity_id = Column(UUID(as_uuid=False), nullable=True, index=True)
     # Idempotency scope: one notification per (user, source_entity_type,

@@ -117,7 +117,7 @@ def test_form_schemas_keys_namespaced():
 
 
 def test_portal_stock_inquiry_schema_has_quantity_no_do_number():
-    """Stock inquiry has quantity (number) but NOT delivery_order_number —
+    """Stock inquiry has quantity (number) but NOT delivery_order_number  - 
     proves per-form field flexibility (the user's "complaint has DO number
     but stock inquiry doesn't" requirement)."""
     schema = get_form_schema("portal.stock_inquiry")
@@ -398,7 +398,7 @@ def test_collect_text_decodes_txt_uploads():
     files = [
         ExtractFile("pasted-1.txt", "text/plain", b"  hello from paste  "),
         ExtractFile("note.TXT", "", "second\nblock".encode("utf-8")),
-        ExtractFile("photo.png", "image/png", b"\x89PNG"),  # not text — ignored
+        ExtractFile("photo.png", "image/png", b"\x89PNG"),  # not text - ignored
     ]
     out = svc._collect_text(files)
     assert "hello from paste" in out
@@ -511,7 +511,7 @@ def test_extract_products_carries_unit_price_and_total():
                 "notes": "with caps",
             },
             {
-                # purchase_request style — no unit_price/total
+                # purchase_request style - no unit_price/total
                 "product_code": "DEF-2",
                 "quantity": 1,
                 "notes": "spare",

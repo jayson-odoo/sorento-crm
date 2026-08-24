@@ -35,7 +35,7 @@ export default function AIWishlistPage() {
     return (
       <Container>
         <div className="rounded-md border p-6 text-sm text-muted-foreground">
-          Forbidden — you don&apos;t have permission to view AI assistant wishlist.
+          Forbidden - you don&apos;t have permission to view AI assistant wishlist.
         </div>
       </Container>
     );
@@ -72,7 +72,7 @@ export default function AIWishlistPage() {
           <CardHeader>
             <CardTitle>Clusters</CardTitle>
             <CardDescription>
-              Common requests the AI couldn&apos;t fully answer — clustered by similarity.
+              Common requests the AI couldn&apos;t fully answer - clustered by similarity.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -109,7 +109,7 @@ export default function AIWishlistPage() {
                             {c.category}
                           </Badge>
                         ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
+                          <span className="text-xs text-muted-foreground"> - </span>
                         )}
                       </td>
                       <td className="py-2 pe-3 text-right tabular-nums">{c.count}</td>

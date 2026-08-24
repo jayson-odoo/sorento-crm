@@ -1,15 +1,15 @@
-"""SCM M8 Slice B — low-stock on the SCM dashboard (M8-B1..B5).
+"""SCM M8 Slice B - low-stock on the SCM dashboard (M8-B1..B5).
 
 Populates the previously-deferred ``below_rop_count`` rollup tile and the
 ``status=low`` product drill from the LATEST completed reorder run's frozen
-``reorder_point`` (M3 engine output), read-only — the engine is never re-run here.
+``reorder_point`` (M3 engine output), read-only - the engine is never re-run here.
 
 Drives CONTROLLED synthetic planning rows (a stock row makes a SKU×warehouse
 appear in ``scm.net_position_v``; net = on_hand with no PO/SO) plus a directly
 seeded ``completed`` reorder_run + recommendations carrying a chosen reorder_point,
 inside the rolled-back SAVEPOINT the ``scm_app`` fixture provides. Proves:
 
-  * ``_is_below_rop`` precedence — stocked & at/under ROP counts; stockout / null-ROP /
+  * ``_is_below_rop`` precedence - stocked & at/under ROP counts; stockout / null-ROP /
     net-above-ROP do NOT (M8-B2/B3),
   * ``below_rop_count`` rollup is the count of ``on_hand>0 AND net<=reorder_point`` rows,
   * ``GET /dashboard/products?status=low`` returns exactly that set (M8-B5), excluding
@@ -91,7 +91,7 @@ def _mk_rec(db, run_id, pid, wid, rop, rec_type="buy"):
 
 def _mk_rec_with_inputs(db, run_id, pid, wid, rop, safety_stock, lead_time_days,
                         rec_type="buy"):
-    """A rec whose frozen ``inputs`` JSONB carries the ROP inputs (M8-F10) — the same
+    """A rec whose frozen ``inputs`` JSONB carries the ROP inputs (M8-F10) - the same
     shape ``reorder_run_service`` freezes: ``safety_stock`` + ``lead_time_days``."""
     db.execute(text(
         "INSERT INTO scm.reorder_recommendation (id, run_id, rec_type, product_id, warehouse_id, "
@@ -111,10 +111,10 @@ def _client(scm_app, role_slug):
 
 def _seed_rop_scenario(db):
     """A warehouse with four SKUs and a completed run's frozen reorder points:
-      LOW   — on_hand 10, net 10 <= ROP 50  → below reorder point.
-      HIGH  — on_hand 100, net 100 > ROP 50 → not below.
-      OUT   — on_hand 0 (stockout) even with ROP 50 → NEVER low (precedence).
-      NULL  — on_hand 10 but NO rec (ROP null) → not low.
+      LOW   - on_hand 10, net 10 <= ROP 50  → below reorder point.
+      HIGH  - on_hand 100, net 100 > ROP 50 → not below.
+      OUT   - on_hand 0 (stockout) even with ROP 50 → NEVER low (precedence).
+      NULL  - on_hand 10 but NO rec (ROP null) → not low.
     Returns the warehouse code."""
     wid = _mk_warehouse(db, "M8W-ROP")
     p_low = _mk_product(db, "M8P-LOW")
@@ -199,10 +199,10 @@ def test_compute_status_emits_low():
     # low wins over incoming even with an inbound PO (net already folds on_order in)
     assert _compute_status(10, 5, 0, recent, dead_days=90, today=today,
                            net=10, reorder_point=50) == "low"
-    # PRECEDENCE — stockout beats low
+    # PRECEDENCE - stockout beats low
     assert _compute_status(0, 0, 0, recent, dead_days=90, today=today,
                            net=0, reorder_point=50) == "stockout"
-    # PRECEDENCE — dead (no movement) beats low
+    # PRECEDENCE - dead (no movement) beats low
     assert _compute_status(10, 0, 0, None, dead_days=90, today=today,
                            net=10, reorder_point=50) == "dead"
     # null ROP (un-planned SKU) never reads low

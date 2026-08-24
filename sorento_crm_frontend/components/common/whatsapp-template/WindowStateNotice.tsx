@@ -11,7 +11,7 @@ interface WindowStateNoticeProps {
 /**
  * Amber banner shown above the chat compose box when the contact's 24-hour
  * WhatsApp messaging window is closed. Plain messages are silently dropped by
- * WhatsApp in that state — only approved templates are delivered.
+ * WhatsApp in that state - only approved templates are delivered.
  */
 export default function WindowStateNotice({ windowState }: WindowStateNoticeProps) {
   if (windowState.open) return null;
@@ -23,7 +23,7 @@ export default function WindowStateNotice({ windowState }: WindowStateNoticeProp
       <Clock className="size-3.5 mt-0.5 shrink-0" />
       <div>
         <span className="font-medium">24-hour window closed.</span>{' '}
-        Plain messages will not be delivered — send a template to re-open the
+        Plain messages will not be delivered - send a template to re-open the
         conversation.
         {windowState.last_incoming_at && (
           <span className="text-amber-700 dark:text-amber-300">

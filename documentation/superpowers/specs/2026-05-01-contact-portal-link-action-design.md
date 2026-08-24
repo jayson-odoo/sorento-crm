@@ -1,4 +1,4 @@
-# Per-Contact Portal Link Action — Design
+# Per-Contact Portal Link Action - Design
 
 Date: 2026-05-01
 Status: Approved (brainstorm)
@@ -12,7 +12,7 @@ The portal itself (commit `4e9082f28`) and its 7-day token model are unchanged. 
 ## Non-goals
 
 - Manual revocation UI (deferred)
-- Audit log surface for who fetched links (deferred — DB row already records mint time)
+- Audit log surface for who fetched links (deferred - DB row already records mint time)
 - New form types (sponsorship/etc. already supported by existing portal)
 
 ## User flow
@@ -34,7 +34,7 @@ Reuse policy: if a non-revoked, non-expired `portal_tokens` row exists for `(con
 Slug: `user_management.contacts.portal_link`
 Label: `Get contact portal link`
 
-Seeded (Alembic migration) and granted to roles `superadmin`, `admin` by default. No grant to other roles — admins choose to extend.
+Seeded (Alembic migration) and granted to roles `superadmin`, `admin` by default. No grant to other roles - admins choose to extend.
 
 ### New endpoint
 
@@ -60,12 +60,12 @@ Seeded (Alembic migration) and granted to roles `superadmin`, `admin` by default
 
 Server resolves `space_id` from `RespondContact.workspace_id → RespondWorkspace.space_id`. The client never passes `space_id` on this internal endpoint.
 
-### New endpoint — send link via Respond.io
+### New endpoint - send link via Respond.io
 
 `POST /api/v1/user-management/contacts/{contact_id}/portal-link/send`
 
 - Auth + RBAC: same as the link endpoint (`user_management.contacts.portal_link`).
-- Body: empty (v1). Future-proofing: optional `{ "message": "...override text..." }` — out of scope for now.
+- Body: empty (v1). Future-proofing: optional `{ "message": "...override text..." }` - out of scope for now.
 - Behavior:
   1. Resolve contact + space_id (same as link endpoint).
   2. Reject 422 if `RespondContact.respond_io_id` is null/empty.
@@ -114,10 +114,10 @@ Existing `mint_token` is unchanged; external endpoint `POST /external/portal-tok
 
 ### Files touched (backend)
 
-- `sorento_crm_backend/alembic/versions/<n>_contact_portal_link_permission.py` — new permission row + role grants
-- `sorento_crm_backend/app/api/v1/user_management/contacts.py` — two new route handlers (link + send)
-- `sorento_crm_backend/app/services/portal_service.py` — add `get_or_mint_token` and `send_link_via_respond_io`
-- `sorento_crm_backend/tests/` — unit tests for service reuse logic + endpoint RBAC + 422 missing workspace + 422 missing respond_io_id + 502 mocked Respond.io failure
+- `sorento_crm_backend/alembic/versions/<n>_contact_portal_link_permission.py` - new permission row + role grants
+- `sorento_crm_backend/app/api/v1/user_management/contacts.py` - two new route handlers (link + send)
+- `sorento_crm_backend/app/services/portal_service.py` - add `get_or_mint_token` and `send_link_via_respond_io`
+- `sorento_crm_backend/tests/` - unit tests for service reuse logic + endpoint RBAC + 422 missing workspace + 422 missing respond_io_id + 502 mocked Respond.io failure
 
 ## Frontend
 
@@ -131,7 +131,7 @@ Add `qrcode.react` (small, MIT, peer-deps clean against React 19) to `sorento_cr
   - `getContactPortalLink(contactId): Promise<PortalLinkResponse>` → `POST /user-management/contacts/{id}/portal-link`
   - `sendContactPortalLink(contactId): Promise<PortalLinkSendResponse>` → `POST /user-management/contacts/{id}/portal-link/send`
   - Both use shared `apiFetch` + `extractApiError`.
-- `sorento_crm_frontend/hooks/useContactPortalLinkMutation.ts` — two react-query `useMutation` hooks: `useContactPortalLinkMutation` and `useSendContactPortalLinkMutation`. Both toast on error.
+- `sorento_crm_frontend/hooks/useContactPortalLinkMutation.ts` - two react-query `useMutation` hooks: `useContactPortalLinkMutation` and `useSendContactPortalLinkMutation`. Both toast on error.
 
 Types:
 ```ts
@@ -165,7 +165,7 @@ Props:
 }
 ```
 
-Each call site passes `canSendViaRespondIo` based on whether the contact's `respond_io_id` is populated. When unknown (e.g. SLA tracking page may not have it), pass `true` and let the backend return 422 — UI shows the toast.
+Each call site passes `canSendViaRespondIo` based on whether the contact's `respond_io_id` is populated. When unknown (e.g. SLA tracking page may not have it), pass `true` and let the backend return 422 - UI shows the toast.
 
 Renders the appropriate trigger element (Button / DropdownMenuItem / icon Button). Opening the trigger launches the dialog.
 
@@ -179,32 +179,32 @@ State:
 - On success → render content.
 
 Content:
-- Header: "Portal link — {contactLabel ?? contactId}"
+- Header: "Portal link - {contactLabel ?? contactId}"
 - Sub-line: "Expires {formatted expires_at}" + small badge "Reused existing link" when `reused === true`
 - Read-only `<Input>` containing `portal_url` + Copy button (uses `navigator.clipboard.writeText`, toast "Copied")
 - "Open in new tab" anchor with `target="_blank" rel="noopener noreferrer"`
 - QR canvas: `<QRCodeSVG value={portal_url} size={192} />`
-- "Send via Respond.io" button: fires send mutation. While pending → spinner inside button, button disabled. On success → toast "Sent to {contactLabel}". On failure → toast with extracted error message (button re-enabled). Button is disabled (with tooltip "Contact has no Respond.io ID") if `contact.respond_io_id` not present — caller passes `canSendViaRespondIo: boolean` prop.
+- "Send via Respond.io" button: fires send mutation. While pending → spinner inside button, button disabled. On success → toast "Sent to {contactLabel}". On failure → toast with extracted error message (button re-enabled). Button is disabled (with tooltip "Contact has no Respond.io ID") if `contact.respond_io_id` not present - caller passes `canSendViaRespondIo: boolean` prop.
 - Footer: Close button
 
 ### Wiring
 
 Three call sites, all use `PortalLinkButton`:
 
-1. **Contact detail page** — `app/(protected)/user-management/contacts/[id]/page.tsx`
+1. **Contact detail page** - `app/(protected)/user-management/contacts/[id]/page.tsx`
    - Add to `ToolbarActions`: `<PortalLinkButton contactId={id} contactLabel={contact.name ?? contact.phone} variant="button" />`
    - Place between the existing Edit and Delete actions.
 
-2. **SLA tracking detail page** — `app/(protected)/sla-management/conversation-sla-tracking/[id]/page.tsx`
+2. **SLA tracking detail page** - `app/(protected)/sla-management/conversation-sla-tracking/[id]/page.tsx`
    - Existing gear-menu (DropdownMenu in screenshot). Add `<PortalLinkButton contactId={tracking.contact_id} contactLabel={tracking.contact_label} variant="menu-item" />` as a new menu item near "Open conversation".
    - Show only when `tracking.contact_id` is resolved.
 
-3. **Contact list row action** — `app/(protected)/user-management/contacts/page.tsx`
+3. **Contact list row action** - `app/(protected)/user-management/contacts/page.tsx`
    - Add a `DropdownMenuItem` to the existing per-row action menu calling the same component (`variant="menu-item"`).
 
 ### Files touched (frontend)
 
-- `package.json` — add `qrcode.react`
+- `package.json` - add `qrcode.react`
 - `services/contactPortalLinkService.ts` (new)
 - `hooks/useContactPortalLinkMutation.ts` (new)
 - `components/contacts/PortalLinkButton.tsx` (new)
@@ -235,8 +235,8 @@ Three call sites, all use `PortalLinkButton`:
 ## Testing
 
 Backend:
-- `tests/test_portal_service.py` — `get_or_mint_token` reuses live token; mints new when only expired tokens exist; mints new when all tokens revoked.
-- `tests/test_user_management_contacts.py` — new endpoint: 200 with reused=true on second call; 200 reused=false when prior token expired; 404 unknown contact; 422 contact w/o workspace; 403 without perm.
+- `tests/test_portal_service.py` - `get_or_mint_token` reuses live token; mints new when only expired tokens exist; mints new when all tokens revoked.
+- `tests/test_user_management_contacts.py` - new endpoint: 200 with reused=true on second call; 200 reused=false when prior token expired; 404 unknown contact; 422 contact w/o workspace; 403 without perm.
 
 Frontend:
 - Vitest: `PortalLinkDialog` renders link + QR on success; renders "Reused existing link" badge when `reused=true`; copy button calls clipboard API; "Send via Respond.io" fires send mutation and shows toast on success.

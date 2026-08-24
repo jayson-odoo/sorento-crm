@@ -105,7 +105,7 @@ export default function CompaniesList() {
   if (denied) {
     return (
       <div className="rounded-md border p-6 text-sm text-muted-foreground">
-        Forbidden — you don&apos;t have permission to manage companies.
+        Forbidden - you don&apos;t have permission to manage companies.
       </div>
     );
   }

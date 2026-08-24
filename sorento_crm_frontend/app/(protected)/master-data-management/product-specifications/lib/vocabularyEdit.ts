@@ -16,7 +16,7 @@ const dedupe = (list: string[]) => Array.from(new Set(list));
  * away, minus anything staff added.
  *
  * Reading this off `synonyms` alone is the trap. `synonyms` is the merged view with
- * suppression already applied, so a word suppressed last week is simply absent — and an
+ * suppression already applied, so a word suppressed last week is simply absent - and an
  * editor that asks "which shipped words are missing from the box?" cannot see it, omits
  * it from the payload, and reinstates it.
  */

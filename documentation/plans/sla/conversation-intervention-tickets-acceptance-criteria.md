@@ -1,4 +1,4 @@
-# UAC — Conversation Intervention Tickets (multi-open conversation SLA + CRM-native replies)
+# UAC - Conversation Intervention Tickets (multi-open conversation SLA + CRM-native replies)
 
 Status: Approved 2026-08-12 (lavish review) - contract locked
 Related: PLAN-conversation-intervention-tickets.md

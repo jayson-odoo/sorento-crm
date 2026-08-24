@@ -29,7 +29,7 @@ If the definition already exists (same `code`), the migration **skips** inserts 
 
 3. **Publish** the form.
 
-4. **New submission** — paste **`sample_header_data`** into the API payload field `header_data` when creating via API, or fill the form in the UI using the same values keyed by field id (`f001` … `f015`).
+4. **New submission** - paste **`sample_header_data`** into the API payload field `header_data` when creating via API, or fill the form in the UI using the same values keyed by field id (`f001` … `f015`).
 
 ### Field map (quick reference)
 
@@ -49,6 +49,6 @@ If the definition already exists (same `code`), the migration **skips** inserts 
 | f012 | Contact person |
 | f013 | Contact no |
 | f014 | Delivery / pick up date |
-| f015 | Dealer annual dinner — Sorento Sdn Bhd |
+| f015 | Dealer annual dinner - Sorento Sdn Bhd |
 
 Adjust labels/options if your commercial rules differ from the PDF wording.

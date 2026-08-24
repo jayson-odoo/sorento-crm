@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-# MUST be first app import — resolves circular-import in app.modules.runtime.guards
+# MUST be first app import - resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 
 from tests._pg_fixture import blank_session
@@ -143,7 +143,7 @@ def test_stock_inquiry_no_extra_perm_required(db_and_app):
 
 def test_stock_inquiry_api_key_principal_denied(db_and_app):
     # The JWT-only dependency denies an X-API-Key-only request for the new types
-    # too — the assembler stays out of n8n/WhatsApp reach (UAC §3.6).
+    # too - the assembler stays out of n8n/WhatsApp reach (UAC §3.6).
     import os
 
     with TestClient(app) as c:

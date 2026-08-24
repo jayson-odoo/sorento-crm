@@ -34,6 +34,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Data backfill — not reversible (cannot distinguish backfilled rows from
+    # Data backfill - not reversible (cannot distinguish backfilled rows from
     # ones that legitimately reached approved/rejected after the fix).
     pass

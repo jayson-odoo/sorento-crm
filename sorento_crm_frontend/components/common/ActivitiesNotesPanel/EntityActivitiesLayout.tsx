@@ -82,7 +82,7 @@ function formatSystemEvent(
       return `Ticket ${(p.ticket_number as string) ?? ''} was created.`;
     case 'status.changed':
       return `Status changed: ${(p.from as string) ?? '?'} → ${(p.to as string) ?? '?'}${
-        p.note ? ` — ${p.note as string}` : ''
+        p.note ? ` - ${p.note as string}` : ''
       }`;
     case 'assignee.changed':
       return 'Assignee changed.';
@@ -148,7 +148,7 @@ export default function EntityActivitiesLayout({
         {children}
       </main>
 
-      {/* Floating launcher — pinned bottom-right while panel is closed. */}
+      {/* Floating launcher - pinned bottom-right while panel is closed. */}
       {!open && (
         <Button
           variant="primary"
@@ -161,7 +161,7 @@ export default function EntityActivitiesLayout({
         </Button>
       )}
 
-      {/* Side panel — fixed-position, slides in via translate-x. */}
+      {/* Side panel - fixed-position, slides in via translate-x. */}
       <aside
         className={cn(
           'fixed top-0 right-0 z-30 h-full bg-background border-l shadow-xl flex flex-col',

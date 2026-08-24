@@ -1,4 +1,4 @@
-"""scm: plan_row_decision — the buy/use-stock/use-PO/skip decision, recorded on the row.
+"""scm: plan_row_decision - the buy/use-stock/use-PO/skip decision, recorded on the row.
 
 `PLAN-scm-reorder-decision-to-autocount.md`. Captain, 21 Aug (third time requested): "I
 want the decision made here... there is only buy / use stock / use SPO / mixture, right"

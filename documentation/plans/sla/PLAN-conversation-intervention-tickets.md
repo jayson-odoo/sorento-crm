@@ -1,4 +1,4 @@
-# PLAN — Conversation Intervention Tickets
+# PLAN - Conversation Intervention Tickets
 
 Status: Phases 1-3 DONE (PR #137 open); defect batch D1-D6 in flight; Phase 4 (parity + liveness) PLANNED 2026-08-14, awaiting user review. S4.9 backend gaps 1-4 CLOSED 2026-08-15 (contract below); FE follow-up (consume them) + gaps 5-6 still open. S4.10 (captain hands-on round 3, 2026-08-16) BUILT - six items, as-built below.
 UAC: conversation-intervention-tickets-acceptance-criteria.md (sections J/K/L/M + B3/B4 added 2026-08-14)
@@ -62,7 +62,7 @@ UAC: conversation-intervention-tickets-acceptance-criteria.md (sections J/K/L/M 
 
 ## Phases (three-phase loop)
 
-### Phase 1 — FE prototype (mock data, no backend changes)
+### Phase 1 - FE prototype (mock data, no backend changes)
 
 - S1.1 Extend `MyPendingSLAWidget` mocks: intervention tickets in all states (fresh,
   near-breach, escalated, responded-awaiting-resolve), incl. two tickets for one contact.
@@ -79,7 +79,7 @@ UAC: conversation-intervention-tickets-acceptance-criteria.md (sections J/K/L/M 
 - Gate: prototype rendered via lavish for user review; proceed autonomously unless
   feedback arrives.
 
-### Phase 2 — BE wiring + tests (TDD)
+### Phase 2 - BE wiring + tests (TDD)
 
 - S2.1 Migration: add `source_message_id` (Text, nullable), backfill from `message_id`;
   drop the migration-180 contact-singleton index; add partial unique index on
@@ -108,7 +108,7 @@ UAC: conversation-intervention-tickets-acceptance-criteria.md (sections J/K/L/M 
   round-trip; real media fixtures).
 - Gate: all suites green; browser-verified against prod build before handoff.
 
-### Phase 3 — Review + n8n cutover
+### Phase 3 - Review + n8n cutover
 
 - S3.1 `/code-review` + `/codex-review` (cross-model) on the branch; fix findings.
 - S3.2 n8n coordination (peer session via SendMessage): always-create on both branches,
@@ -146,7 +146,7 @@ UAC: conversation-intervention-tickets-acceptance-criteria.md (sections J/K/L/M 
   and resolved" auto-message (currently kept, gated).
   resolved_by pollution check: clean (zero non-UUID / orphan values on dev DB).
 
-## Phase 4 — Omnichannel parity + liveness (planned 2026-08-14, dogfooding feedback)
+## Phase 4 - Omnichannel parity + liveness (planned 2026-08-14, dogfooding feedback)
 
 Grounded on three read-only investigations (send-path diagnosis, n8n trigger trace with
 live execution payloads, Respond API v2 capability inventory). Defect batch D1-D6

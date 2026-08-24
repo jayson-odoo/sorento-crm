@@ -4,7 +4,7 @@ import { FORM_SLA_EVENT_OPTIONS } from './formSLAService';
 // Regression: the `voided` form event must be selectable as a Respond/Resolve
 // event in Form SLA config for every form type that has a Void action, so an
 // admin can wire void to stop (respond/resolve) the SLA tracker.
-describe('FORM_SLA_EVENT_OPTIONS — voided event availability', () => {
+describe('FORM_SLA_EVENT_OPTIONS - voided event availability', () => {
   const VOIDABLE = [
     'purchase_request',
     'sponsorship_form',

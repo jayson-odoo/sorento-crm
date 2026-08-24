@@ -1,4 +1,4 @@
-"""Form handling-lock — settings + get_me round-trip (§12 P2-14).
+"""Form handling-lock - settings + get_me round-trip (§12 P2-14).
 
 Guards the two "manual dict builder drops fields" gotchas (CLAUDE.md):
 
@@ -8,7 +8,7 @@ Guards the two "manual dict builder drops fields" gotchas (CLAUDE.md):
    dupes de-duped. Empty list clears the flag.
 2. USER: ``notify_email_on_handling`` / ``notify_whatsapp_on_handling`` must appear
    in the ``get_me`` payload (they are set by the manual dict builder in
-   users.get_current_user_profile, not merely inherited on UserResponse — the
+   users.get_current_user_profile, not merely inherited on UserResponse - the
    builder silently drops any field it doesn't list).
 
 Runs against a Postgres `blank_session()` (never sqlite - see PRINCIPLES.md). Auth

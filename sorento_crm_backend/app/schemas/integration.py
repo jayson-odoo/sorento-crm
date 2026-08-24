@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# n8n callback v1 schema — see docs/plans/PLAN-upload-activity-drawer.md §4.4
+# n8n callback v1 schema - see docs/plans/PLAN-upload-activity-drawer.md §4.4
 # ---------------------------------------------------------------------------
 
 

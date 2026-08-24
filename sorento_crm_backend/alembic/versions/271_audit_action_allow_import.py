@@ -1,7 +1,7 @@
 """audit_logs: allow 'IMPORT' action in the check constraint
 
 The coarse per-job import audit (log_import_audit) writes action='IMPORT', but
-audit_logs_action_check only permitted CREATE/READ/UPDATE/DELETE — so EVERY
+audit_logs_action_check only permitted CREATE/READ/UPDATE/DELETE - so EVERY
 import-audit insert was rejected and silently swallowed by the best-effort
 wrapper (`_write_import_audit`). Result: zero import audit rows ever. Widen the
 constraint to include IMPORT.

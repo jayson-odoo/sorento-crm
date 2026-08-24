@@ -25,7 +25,7 @@ from app.services.error_handler import handle_validation_error
 
 logger = logging.getLogger(__name__)
 
-# (identifier, respond_contact_id) — identifier None means no linked contact.
+# (identifier, respond_contact_id) - identifier None means no linked contact.
 ChatContactResolver = Callable[[Session, str], Tuple[Optional[str], Optional[str]]]
 
 
@@ -171,7 +171,7 @@ def build_chat_template_router(
             )
         from app.services.respond_chat_template_service import precheck_manual_template
 
-        # DB-only validation in-request — template not found / not approved / missing
+        # DB-only validation in-request - template not found / not approved / missing
         # params still surface inline. Only the Respond.io send is deferred.
         pre = precheck_manual_template(
             db, template_id=body.template_id, params=body.params

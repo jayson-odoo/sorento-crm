@@ -1,12 +1,12 @@
 /**
- * Portal path helpers — slug-aware navigation.
+ * Portal path helpers - slug-aware navigation.
  *
  * Every portal page lives under the contact's stable URL `/portal/c/{slug}`
  * once the slug is known. Legacy `/portal/...` paths remain as thin
  * redirectors for old links. All in-app navigation MUST go through these
  * helpers so the active tree (slug vs legacy) is picked in one place.
  *
- * The active slug is persisted in localStorage so it survives tab close —
+ * The active slug is persisted in localStorage so it survives tab close  - 
  * it is an identity hint, not a credential (entry still requires a live
  * token or OTP).
  */
@@ -56,7 +56,7 @@ export function portalVerifyPath(
     reason?: 'expired' | 'logout';
     token?: string | null;
     type?: string | null;
-    /** Submission id from the deep link — forwarded so verify can land the user
+    /** Submission id from the deep link - forwarded so verify can land the user
      *  back on that exact form after the OTP, not just the type index. */
     id?: string | null;
   } = {},

@@ -1,4 +1,4 @@
-# UAC — Quotation as a DOCUMENT (multi-scope, cover letter, issue snapshot)
+# UAC - Quotation as a DOCUMENT (multi-scope, cover letter, issue snapshot)
 
 **Status:** BUILT (S1-S8) on `feat/project-lead-to-so`, 2026-08-04. Open questions were answered
 by the client the same day and are folded in below (Groups A, E, F, H).
@@ -54,7 +54,7 @@ data models.
 
 ---
 
-## Journey (Phase 0 — written before any schema)
+## Journey (Phase 0 - written before any schema)
 
 **Actor:** the salesperson who has walked a development and has to send a price.
 
@@ -65,12 +65,12 @@ data models.
    from the party's primary contact, subject line from the project title, `Our Ref` from the
    series, date = today, cover letter and terms from the active template. **The only thing
    asked is what is not already known.**
-3. Adds a scope tab — *Townhouse* — and prices it. Product picked from the catalogue brings
+3. Adds a scope tab - *Townhouse* - and prices it. Product picked from the catalogue brings
    its own code, description, brand, image, list price. Quantity is typed; the line total
-   computes. A line can be marked **rate only** — quoted, printed, excluded from the total.
+   computes. A line can be marked **rate only** - quoted, printed, excluded from the total.
 4. Adds *Guard house*, *Reception* the same way. Each tab shows its own total at the bottom
    of the money column; the document header shows the grand total across tabs.
-5. Reviews the cover letter — it is already written, from the template, with the names filled
+5. Reviews the cover letter - it is already written, from the template, with the names filled
    in. Edits this one if this customer needs different words. The template is untouched.
 6. **Issue.** The document is stamped `R1`, frozen, and a PDF (and Excel) is produced that
    looks like the workbook above. What the customer holds is now a fact in the system.
@@ -84,7 +84,7 @@ CRM record that can answer "what exactly did we quote them, and when".
 
 ---
 
-## Group A — The document
+## Group A - The document
 
 - **AC-A0** `Our Ref` is a **running number from the existing numbering feature**, not free text
   and not derived from the project code. A `document_numbering_rules` row with
@@ -108,7 +108,7 @@ CRM record that can answer "what exactly did we quote them, and when".
 - **AC-A6** Deleting a document with any issue is refused, not silently hidden. An unissued
   draft deletes with the standard confirmation.
 
-## Group B — Revisions and what the customer holds
+## Group B - Revisions and what the customer holds
 
 - **AC-B1** An **issue** is a stamped, frozen snapshot of the whole document: `R1`, `R2`, …
   It records which version of each scope's lines it contained, the rendered cover letter, the
@@ -125,7 +125,7 @@ CRM record that can answer "what exactly did we quote them, and when".
   quotation version still resolves, and the detail screens still name the scope it was
   against.
 
-## Group C — Lines, as the real document has them
+## Group C - Lines, as the real document has them
 
 - **AC-C1** A line carries, in addition to what it carries today: `item_label` (the A / B / C
   letter, optional and free text), `brand_snapshot`, `technical_spec`, `complete_set`.
@@ -141,7 +141,7 @@ CRM record that can answer "what exactly did we quote them, and when".
   list price at the moment it is added, exactly as today.
 - **AC-C5** Every existing floor / non-standard alert keeps firing per line, unchanged.
 
-## Group D — Totals (this is where the client was explicit)
+## Group D - Totals (this is where the client was explicit)
 
 - **AC-D1** Each scope tab shows its own total **at the bottom of the money column**, in the
   table's own footer row - never as a chip beside the toolbar. (Shipped for POs already:
@@ -153,7 +153,7 @@ CRM record that can answer "what exactly did we quote them, and when".
 - **AC-D4** Every list on these screens uses the standard pagination bar - "1 - 1 of 1", page
   picker, rows per page - and never a sentence like "3 scopes in this quotation".
 
-## Group E — Cover letter and terms
+## Group E - Cover letter and terms
 
 - **AC-E1** A **cover letter template** and a **terms template** exist **per company** - SRT has
   its set, MOCHA has its own - editable by an admin, with merge fields for the facts the letter
@@ -170,7 +170,7 @@ CRM record that can answer "what exactly did we quote them, and when".
   dreamz_ems (~3.5k lines of editor plus its own render pipeline) buys nothing a rich-text
   field with merge fields does not, for this artifact.
 
-## Group F — Output
+## Group F - Output
 
 - **AC-F1** A document issue renders to **PDF** in the layout of the sample: sender block,
   refs, recipient, attn, subject, then each scope as a banded table with the sample's column
@@ -185,7 +185,7 @@ CRM record that can answer "what exactly did we quote them, and when".
   column collapses when no line in the scope has an image (an empty column of blank cells on
   every page is worse than no column).
 
-## Group H — Signing (both sides)
+## Group H - Signing (both sides)
 
 The client's reference is the ecohub handover screen: a drawn signature on a white canvas, with
 `SIGNED AT`, `IP ADDRESS` and `GPS LOCATION` recorded beside it.
@@ -221,7 +221,7 @@ The client's reference is the ecohub handover screen: a drawn signature on a whi
   customer who never signs leaves the issue in `Issued`, which is a legitimate resting state and
   reads as one, not as an error.
 
-## Group G — What must not break
+## Group G - What must not break
 
 - **AC-G1** Existing quotations migrate to exactly one document each, with one scope carrying
   the current `scope_label`, outcome, versions and lines. No data is dropped and no total

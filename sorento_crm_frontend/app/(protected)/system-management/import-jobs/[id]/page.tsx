@@ -506,14 +506,14 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                         ) => (
                           <li key={i} className="flex gap-2 flex-wrap">
                             <span className="font-mono shrink-0">
-                              {entry.grn_number ?? '—'}
+                              {entry.grn_number ?? '-'}
                             </span>
                             <span className="text-muted-foreground">·</span>
-                            <span>{entry.product_code ?? '—'}</span>
+                            <span>{entry.product_code ?? '-'}</span>
                             <span className="text-muted-foreground">·</span>
-                            <span>{entry.warehouse ?? '—'}</span>
+                            <span>{entry.warehouse ?? '-'}</span>
                             <span className="text-muted-foreground">·</span>
-                            <span>Qty {entry.quantity ?? '—'}</span>
+                            <span>Qty {entry.quantity ?? '-'}</span>
                           </li>
                         )
                       )}
@@ -527,7 +527,7 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                     </p>
                     <ul className="text-sm space-y-1 max-h-60 overflow-y-auto bg-muted/50 p-3 rounded list-disc pl-6 text-amber-600 dark:text-amber-500">
                       {/* Warnings are plain strings for most importers, but the
-                          order-tracking import emits {row, warning, data} objects —
+                          order-tracking import emits {row, warning, data} objects  - 
                           rendering an object as a React child crashes the page. */}
                       {(job.result.warnings as unknown[]).map((w, i: number) => {
                         if (typeof w === 'string') return <li key={i}>{w}</li>;

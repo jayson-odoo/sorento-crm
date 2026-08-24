@@ -365,7 +365,7 @@ class AutomationService:
 
         Empty / None → None (match all, backward compatible). A non-empty tree
         with problems raises a 422 whose body is the raw problems ARRAY
-        (``{"detail": [...]}``) — matching FoundryX so the FE reads the list
+        (``{"detail": [...]}``) - matching FoundryX so the FE reads the list
         directly (not the AppException string envelope).
         """
         if not tree:
@@ -599,7 +599,7 @@ class AutomationService:
         template_service: EmailTemplateService,
         owner_user_id: Optional[str],
     ) -> tuple[int, dict[str, Any]]:
-        """One email per (match × recipient) — the original behavior."""
+        """One email per (match × recipient) - the original behavior."""
         attempted = 0
         per_match: list[dict[str, Any]] = []
         for match in matches:
@@ -666,7 +666,7 @@ class AutomationService:
         """One combined email per recipient listing every row they match.
 
         Recipients are still resolved per-match so per-row entitlement
-        (include_promotion_owner / include_assigned_cs_pic) is respected — a
+        (include_promotion_owner / include_assigned_cs_pic) is respected - a
         recipient only receives the rows they are actually entitled to.
 
         ``spec`` names the entity: a promotion run renders `promotions` /

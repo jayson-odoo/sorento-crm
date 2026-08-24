@@ -89,7 +89,7 @@ _DATE_FORMATS = (
 
 
 def _end_of_day(dt: datetime) -> datetime:
-    """Return the same day at 23:59:59.999999 — used for inclusive `_to` filters."""
+    """Return the same day at 23:59:59.999999 - used for inclusive `_to` filters."""
     return datetime.combine(dt.date(), time(23, 59, 59, 999999))
 
 
@@ -121,7 +121,7 @@ def _try_strptime(value: str, fmt: str) -> Optional[datetime]:
     try:
         return datetime.strptime(value, fmt)
     except ValueError as exc:
-        # Day-out-of-range is the common leap-year case — try clamping for D/M/Y formats.
+        # Day-out-of-range is the common leap-year case - try clamping for D/M/Y formats.
         if not _is_day_out_of_range(exc):
             return None
         parts: list[str] = []
@@ -160,7 +160,7 @@ def _normalize_entities(raw: Optional[list[str]]) -> Optional[list[str]]:
     """Flatten an `entities` query param into a clean list[str].
 
     Accepts None, a list of strings (repeated query param), or a single-element list
-    holding a JSON array or comma-separated string — all of which n8n / curl callers
+    holding a JSON array or comma-separated string - all of which n8n / curl callers
     produce depending on how they encode the param.
     """
     if raw is None:
@@ -247,7 +247,7 @@ def _parse_flex_date(value: Optional[str], *, end_of_day: bool = False) -> Optio
             dt = datetime(year, month, day)
             return _end_of_day(dt) if end_of_day else dt
 
-    # "Month YYYY" / "Mon YYYY" — e.g. "February 2026", "Feb 2026"
+    # "Month YYYY" / "Mon YYYY" - e.g. "February 2026", "Feb 2026"
     m = re.fullmatch(r"([A-Za-z]+)\s+(\d{4})", s)
     if m:
         month = _MONTH_NAMES.get(m.group(1).lower())
@@ -293,7 +293,7 @@ async def get_orders(
     entities: Optional[list[str]] = Query(
         None,
         description=(
-            "DEPRECATED — free-text entity bag. Prefer typed UUID params "
+            "DEPRECATED - free-text entity bag. Prefer typed UUID params "
             "(`order_ids` / `customer_ids` / `product_ids` / `transporter_ids`). "
             "Resolve free-text refs via /api/v1/system/references/resolve first."
         ),
@@ -428,7 +428,7 @@ async def get_orders(
         )
         # Date-axis relaxation (§3.4): when the service attached `alternatives` /
         # `relaxed_axis` (only on an empty result), bypass the strict
-        # `ListResponse` response_model — which would silently drop those keys —
+        # `ListResponse` response_model - which would silently drop those keys  - 
         # and emit the raw dict. `data` is always [] here so encoding is trivial,
         # and the with-data path stays byte-identical (AC-R1).
         if isinstance(result, dict) and result.get("alternatives"):
@@ -461,7 +461,7 @@ async def list_distinct_debtors(
 ):
     """Distinct customers/debtors aggregated from orders.
 
-    The `customers` table is not used by the business — the real customer identity
+    The `customers` table is not used by the business - the real customer identity
     lives in `orders.debtor_name` / `debtor_code`. This endpoint deduplicates by
     debtor_name (case-insensitive trim) and returns each debtor with its code and
     total order count, so AI tools can search 'who are our customers' without
@@ -537,7 +537,7 @@ async def get_orders_by_product(
     entities: Optional[list[str]] = Query(
         None,
         description=(
-            "DEPRECATED — free-text entity bag. Prefer typed UUID params "
+            "DEPRECATED - free-text entity bag. Prefer typed UUID params "
             "(`product_ids` / `customer_ids` / `transporter_ids`)."
         ),
     ),
@@ -564,7 +564,7 @@ async def get_orders_by_product(
     product_id: Optional[list[str]] = Query(
         None,
         description=(
-            "Legacy — one or more product_codes/SKUs (still resolves fuzzy). Prefer `product_ids`."
+            "Legacy - one or more product_codes/SKUs (still resolves fuzzy). Prefer `product_ids`."
         ),
     ),
     has_actual_delivery_date: Optional[str] = Query(
@@ -735,7 +735,7 @@ async def get_order_analytics(
         description=(
             "Filter by customer UUIDs (csv/JSON/repeated). Matches Order.customer_id "
             "IN (...) with a legacy debtor_name fallback. Pass the resolved customer "
-            "UUID — free-text names are coerced to UUIDs upstream."
+            "UUID - free-text names are coerced to UUIDs upstream."
         ),
     ),
     product_ids: Optional[list[str]] = Query(
@@ -764,7 +764,7 @@ async def get_order_analytics(
     """Aggregate customer sales orders (count / total revenue / average delivery days).
 
     Returns ranked group rows plus an order-level overall total. Exposes ONLY the
-    computed aggregates — never per-order cost/invoice pricing.
+    computed aggregates - never per-order cost/invoice pricing.
     """
     try:
         service = OrderService(db)
@@ -875,7 +875,7 @@ async def cancel_order(
     """Cancel an order (sets is_cancelled=true, optional reason → remarks).
 
     Narrow, single-purpose alternative to the broad PUT so automation / the AI
-    assistant (X-API-Key act-as principal) can cancel without a wide edit grant —
+    assistant (X-API-Key act-as principal) can cancel without a wide edit grant  - 
     orders have no per-field edit permission, so this matches update_order's
     auth-only gate. Delegates to OrderService.update_order so the SAME
     complaint (un)link + re-fulfilment re-evaluation runs on cancel; only sets

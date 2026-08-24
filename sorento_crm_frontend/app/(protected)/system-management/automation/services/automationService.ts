@@ -42,7 +42,7 @@ export class AutomationRuleValidationError extends Error {
   }
 }
 
-/** Throw the right error for a failed automation save — a rule-validation
+/** Throw the right error for a failed automation save - a rule-validation
  * problems array when present, otherwise the standard extracted message. */
 async function throwAutomationSaveError(r: Response, fallback: string): Promise<never> {
   if (r.status === 422) {

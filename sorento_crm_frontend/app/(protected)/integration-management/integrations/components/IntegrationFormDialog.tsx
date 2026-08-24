@@ -204,7 +204,7 @@ export function IntegrationFormDialog({
               value={outboundKey}
               onChange={(e) => setOutboundKey(e.target.value)}
               placeholder={
-                integration?.has_credentials ? 'Stored — leave blank to keep' : 'API key for the target system'
+                integration?.has_credentials ? 'Stored - leave blank to keep' : 'API key for the target system'
               }
             />
             <p className="text-xs text-muted-foreground">
@@ -224,7 +224,7 @@ export function IntegrationFormDialog({
               placeholder="Default (600)"
             />
             <p className="text-xs text-muted-foreground">
-              Per-integration abuse ceiling — one noisy caller cannot throttle the
+              Per-integration abuse ceiling - one noisy caller cannot throttle the
               others. Blank uses the default; 0 disables limiting.
             </p>
           </div>

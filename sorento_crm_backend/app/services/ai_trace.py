@@ -1,9 +1,9 @@
-"""M2 — per-turn trace collector for the AI assistant pipeline.
+"""M2 - per-turn trace collector for the AI assistant pipeline.
 
 A ``TurnTrace`` is created once per ``respond()`` call and buffers spans in
 memory as the pipeline runs (reformulator, retriever, entity-resolver, each LLM
 round, each tool call). It is flushed ONCE post-turn as a single bulk insert
-(PLAN Q6). Flush is best-effort — a telemetry failure must never 500 a
+(PLAN Q6). Flush is best-effort - a telemetry failure must never 500 a
 successful answer (CLAUDE.md post-commit-side-effect rule): callers wrap
 ``flush()`` and swallow, and ``flush()`` itself also self-guards.
 
@@ -69,7 +69,7 @@ def _cap_structure(value: Any, str_budget: int, list_cap: int) -> Any:
 
 def _truncate_payload(value: Any, max_bytes: int) -> Any:
     """Cap a JSON-able payload at ``max_bytes`` (serialized) while PRESERVING its
-    JSON structure — long string leaves and long lists are trimmed in place with
+    JSON structure - long string leaves and long lists are trimmed in place with
     an inline ``…[+N …]`` marker, so the stored value stays a valid nested object
     the trace UI renders as pretty-printed JSON (not a flat serialized blob).
 
@@ -85,7 +85,7 @@ def _truncate_payload(value: Any, max_bytes: int) -> Any:
         candidate = _cap_structure(value, max(120, str_budget), list_cap=50)
         if _byte_len(candidate) <= max_bytes:
             return candidate
-    # Pathological (e.g. thousands of tiny keys) — last-resort flat preview.
+    # Pathological (e.g. thousands of tiny keys) - last-resort flat preview.
     try:
         serialized = json.dumps(value, ensure_ascii=False, default=str)
     except Exception:
@@ -212,7 +212,7 @@ class TurnTrace:
         self._seq = 0
         self._started_perf = time.perf_counter()
         self.started_at = datetime.utcnow()
-        # The root AGENT span — every other span defaults to it as parent.
+        # The root AGENT span - every other span defaults to it as parent.
         self.root_id = self.add_span(
             kind=KIND_AGENT,
             name="assistant turn",

@@ -1,18 +1,18 @@
-"""SCM M8 Slice A — explain drills on calculated numbers (read-only, no numeric write).
+"""SCM M8 Slice A - explain drills on calculated numbers (read-only, no numeric write).
 
 Three drills keyed to the M8 UAC:
 
-  * M8-A1 — the Net drill lists the OPEN sales-order lines behind ``committed`` (SO
+  * M8-A1 - the Net drill lists the OPEN sales-order lines behind ``committed`` (SO
     number, qty, customer, order date), summing to the committed figure, and the five
     components satisfy ``on_hand + on_order + po_ordered - committed == net`` (21 Aug fix
-    — ``po_ordered`` is a new leg, added once the sizing engine started netting the
+    - ``po_ordered`` is a new leg, added once the sizing engine started netting the
     outstanding PO book into the frozen recommendation `net` itself). Endpoint
     ``GET /reorder-runs recommendations/{rec_id}/explain-net``.
-  * M8-A2 — ``GET /analytics/explain/demand`` also carries ``demand_dos``: the delivery
+  * M8-A2 - ``GET /analytics/explain/demand`` also carries ``demand_dos``: the delivery
     orders that drove the outflow in the window, as a navigable list; cancelled DOs are
     excluded and DOs outside the window are ignored.
-  * M8-A3 — the recommendations grid row carries the FROZEN order-qty inputs
-    (reorder_point / order_up_to / safety_stock / recommended_qty / rounded_qty) —
+  * M8-A3 - the recommendations grid row carries the FROZEN order-qty inputs
+    (reorder_point / order_up_to / safety_stock / recommended_qty / rounded_qty)  - 
     already produced server-side; this pins the contract (NO backend change was needed).
 
 DB-backed; reuse the ``scm_app`` savepoint fixture + the M4 seed helpers. Runs are
@@ -73,7 +73,7 @@ def _mk_open_so(db, pid, wid, *, so_number, customer_id, qty_ordered,
 
 
 def _mk_do(db, pid, wid, *, order_number, qty, order_date, is_cancelled=False):
-    """A delivery order (orders + one order_line) — the demand outflow source."""
+    """A delivery order (orders + one order_line) - the demand outflow source."""
     oid = str(uuid.uuid4())
     db.execute(text(
         "INSERT INTO orders (id, order_number, order_date, is_cancelled, kpi_warning, "
@@ -109,7 +109,7 @@ def _seed_buy_with_committed(db):
     c2 = _mk_customer(db, "Beta Trading")
     _mk_open_so(db, pid, wid, so_number="SO-M8-001", customer_id=c1,
                 qty_ordered=12, order_date="2026-07-02")
-    # partially delivered line — only the remainder (5) counts toward committed
+    # partially delivered line - only the remainder (5) counts toward committed
     _mk_open_so(db, pid, wid, so_number="SO-M8-002", customer_id=c2,
                 qty_ordered=8, qty_delivered=3, order_date="2026-07-05")
     db.flush()
@@ -117,7 +117,7 @@ def _seed_buy_with_committed(db):
 
 
 # ===========================================================================
-# M8-A1 — Net drill lists committed SOs + net arithmetic
+# M8-A1 - Net drill lists committed SOs + net arithmetic
 # ===========================================================================
 
 def test_explain_net_lists_committed_sos_and_arithmetic(scm_app):
@@ -203,7 +203,7 @@ def test_explain_net_denied_without_view_permission(scm_app):
 
 
 # ===========================================================================
-# M8-A2 — days-cover demand as a navigable DO list
+# M8-A2 - days-cover demand as a navigable DO list
 # ===========================================================================
 
 def test_explain_demand_carries_navigable_dos(scm_app):
@@ -217,10 +217,10 @@ def test_explain_demand_carries_navigable_dos(scm_app):
     # two in-window DOs (drive the outflow)
     _mk_do(db, pid, wid, order_number="DO-M8-A", qty=6, order_date="2026-07-10")
     _mk_do(db, pid, wid, order_number="DO-M8-B", qty=4, order_date="2026-06-20")
-    # a cancelled DO — excluded (M8-A2)
+    # a cancelled DO - excluded (M8-A2)
     _mk_do(db, pid, wid, order_number="DO-M8-CANCEL", qty=99,
            order_date="2026-07-11", is_cancelled=True)
-    # a DO before the 90-day window — excluded
+    # a DO before the 90-day window - excluded
     _mk_do(db, pid, wid, order_number="DO-M8-OLD", qty=50, order_date="2026-01-01")
     db.flush()
 
@@ -254,13 +254,13 @@ def test_explain_demand_denied_without_view_permission(scm_app):
 
 
 # ===========================================================================
-# M8-A3 — recommendations row carries the frozen order-qty inputs (NO code change)
+# M8-A3 - recommendations row carries the frozen order-qty inputs (NO code change)
 # ===========================================================================
 
 def test_recommendations_row_carries_frozen_order_qty_inputs(scm_app):
     """AC pin: the recommendations grid row already surfaces the engine's frozen
     order-qty derivation (reorder_point / order_up_to / safety_stock / recommended_qty /
-    rounded_qty). No backend change was needed for M8-A3 — this asserts the contract."""
+    rounded_qty). No backend change was needed for M8-A3 - this asserts the contract."""
     app, db = _client(scm_app, "purchasing")
     _seed_buy_with_committed(db)
     created = svc.create_run(db, ["M8W-A"], "warehouse", enqueue=False)

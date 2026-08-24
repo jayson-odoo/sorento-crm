@@ -2,7 +2,7 @@
 
 `notifications.source_entity_id` was overloaded: for an entity notification it
 held the entity's uuid, but for batched / periodic notifications it held a
-synthetic idempotency key with no entity behind it —
+synthetic idempotency key with no entity behind it  - 
 `alert:integration_spike:2026-07-13T08:24:10`, `digest:2026-07-13`,
 `{type}_{batch}`, `{uuid}:{date}`. That overload is the only reason the column
 had to be `varchar`, and it blocked typing it `uuid` (which would let Postgres
@@ -11,7 +11,7 @@ reject a `uuid = text` mismatch).
 Give the dedup role its own `dedup_key` column and let `source_entity_id` become
 a nullable uuid. The idempotency contract is preserved exactly: the unique index
 and the app-level dedup lookup move from `source_entity_id` onto `dedup_key`,
-and `dedup_key` is backfilled from the old `source_entity_id` value — so every
+and `dedup_key` is backfilled from the old `source_entity_id` value - so every
 row keeps the exact key it de-duplicated on before.
 
 Revision ID: 299_notif_dedup_key_split
@@ -46,13 +46,13 @@ def upgrade():
     )
     op.execute("CREATE INDEX ix_notifications_dedup_key ON notifications (dedup_key)")
     # 4. source_entity_id now means only "the entity this is about". Anything that
-    #    is not a bare uuid was a synthetic key — it now lives in dedup_key, so
+    #    is not a bare uuid was a synthetic key - it now lives in dedup_key, so
     #    null it here.
     op.execute(
         f"UPDATE notifications SET source_entity_id = NULL "
         f"WHERE source_entity_id IS NOT NULL AND source_entity_id !~ '{_UUID_RE}'"
     )
-    # 5. Retype to uuid — every surviving value is a valid uuid or NULL.
+    # 5. Retype to uuid - every surviving value is a valid uuid or NULL.
     op.execute(
         "ALTER TABLE notifications "
         "ALTER COLUMN source_entity_id TYPE uuid USING source_entity_id::uuid"

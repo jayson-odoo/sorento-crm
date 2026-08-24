@@ -1,4 +1,4 @@
-"""Bug A5 — campaign status is canonicalised to LOWERCASE + enum-validated.
+"""Bug A5 - campaign status is canonicalised to LOWERCASE + enum-validated.
 
 The DB CHECK constraint `marketing_campaigns_status_check` only allows lowercase
 (planning/active/completed/cancelled). The create/update schema must coerce
@@ -23,7 +23,7 @@ def _create(**over):
 
 
 def test_create_uppercase_coerced_to_lowercase():
-    # DB CHECK constraint only allows lowercase — normalise to that.
+    # DB CHECK constraint only allows lowercase - normalise to that.
     assert _create(status="PLANNING").status == "planning"
     assert _create(status="Active").status == "active"
 

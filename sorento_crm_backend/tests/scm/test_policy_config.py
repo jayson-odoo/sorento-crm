@@ -1,9 +1,9 @@
-"""SCM Policy Configuration — Phase-2 backend tests (test-first).
+"""SCM Policy Configuration - Phase-2 backend tests (test-first).
 
 Keyed back to `documentation/plans/scm/scm-policy-config-acceptance-criteria.md`.
 Covers reorder-policy CRUD + validation, the two single-row global upserts
-(classification / supplier scoring), and — the anti-drift centrepiece (Risk #1,
-AC-PREV-2) — resolver parity: the `/resolve` endpoint must return exactly what the
+(classification / supplier scoring), and - the anti-drift centrepiece (Risk #1,
+AC-PREV-2) - resolver parity: the `/resolve` endpoint must return exactly what the
 shipped engine's `resolve_policy_for_sku` returns, never a reimplementation.
 
 Everything runs inside the rolled-back savepoint (see conftest), so writes never
@@ -94,7 +94,7 @@ def test_list_global_row_label_em_dash(scm_app):
     with TestClient(app) as c:
         body = c.get(f"{BASE}?page=1&limit=100").json()
     globals_ = [r for r in body["data"] if r["scope_type"] == "global"]
-    assert globals_ and all(r["scope_label"] == "—" for r in globals_)
+    assert globals_ and all(r["scope_label"] == "-" for r in globals_)
 
 
 def test_list_a_reorder_level_row_returns_200(scm_app):

@@ -380,7 +380,7 @@
           - generic [ref=e3315]:
             - text: Description
             - generic [ref=e3316]:
-              - paragraph [ref=e3317]: —
+              - paragraph [ref=e3317]:  - 
               - button "Add" [ref=e3318] [cursor=pointer]
           - generic [ref=e3319]:
             - text: Access levels

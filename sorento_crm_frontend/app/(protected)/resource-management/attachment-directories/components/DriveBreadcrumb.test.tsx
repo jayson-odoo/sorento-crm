@@ -1,5 +1,5 @@
 /**
- * DriveBreadcrumb — path trail + crumb navigation (UAC A2).
+ * DriveBreadcrumb - path trail + crumb navigation (UAC A2).
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

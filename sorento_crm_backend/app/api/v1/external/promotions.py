@@ -206,7 +206,7 @@ def create_promotion(
     #
     # Resolve the existing row by ATTACHMENT first, description second. n8n posts
     # `description = attachment_filename`, but the upload path runs that name through
-    # `sanitize_storage_filename`, which strips `@ ( ) , &` — so a promotion stored as
+    # `sanitize_storage_filename`, which strips `@ ( ) , &` - so a promotion stored as
     # "@ CABANA COMBINE PROMO (OFFICE)_08072026.pdf" is linked to an attachment named
     # "CABANA COMBINE PROMO OFFICE_08072026.pdf" and the two never compare equal.
     # Matching on description alone therefore missed and created a SECOND active

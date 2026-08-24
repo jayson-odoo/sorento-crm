@@ -115,7 +115,7 @@ describe('HandlingLockBanner', () => {
   });
 });
 
-describe('HandlingLockBanner — PersonLink integration (HL-2..HL-4)', () => {
+describe('HandlingLockBanner - PersonLink integration (HL-2..HL-4)', () => {
   it('other_holds + phone → holder name is a wa.me anchor, and the "since" WHEN shows', () => {
     const { container } = render(
       <HandlingLockBanner

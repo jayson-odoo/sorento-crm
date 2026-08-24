@@ -26,7 +26,7 @@ export interface MenuItem {
   /**
    * Superadmin/admin-only entry (no dedicated permission slug exists yet).
    * Hidden for everyone else. TODO(AC-A1/A4): replace with a `system.companies.manage`
-   * permission slug once the backend defines one — see PLAN-multi-company-isolation.md.
+   * permission slug once the backend defines one - see PLAN-multi-company-isolation.md.
    */
   superadminOnly?: boolean;
 }

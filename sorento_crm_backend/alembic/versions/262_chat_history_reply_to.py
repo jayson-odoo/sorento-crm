@@ -4,10 +4,10 @@ When a user quote-replies to an older bot message, respond.io includes a `replyT
 on the inbound message. n8n now pushes `reply_to_message_id` (the respond.io message
 id of the replied-to message) and `reply_to_message` (its text) on incoming rows.
 
-- `chat_histories.reply_to_message_id` — matches the `message_id` of the earlier
+- `chat_histories.reply_to_message_id` - matches the `message_id` of the earlier
   outgoing row that carried the referenced `result` set. Lets the chatbot resolve a
   pick ("5"/"All") against that message's result set instead of only the latest turn.
-- `chat_histories.reply_to_message` — the quoted message text (readability/debugging).
+- `chat_histories.reply_to_message` - the quoted message text (readability/debugging).
 
 Both NULL for normal (non-reply) messages. Index reply_to_message_id for lookups.
 

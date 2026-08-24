@@ -2,7 +2,7 @@
 
 Design principle (documentation/PRINCIPLES.md, enforced by
 tests/test_schema_uuid_id_principle.py): every domain table has a uuid `id`
-primary key. market_segments was the one natural-key holdout — PK on `code`
+primary key. market_segments was the one natural-key holdout - PK on `code`
 ('retail' / 'project').
 
 `code` is a human-facing business key referenced by three tables

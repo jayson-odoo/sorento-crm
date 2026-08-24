@@ -1,13 +1,13 @@
 # PLAN: WhatsApp Template Sync + 24h-Window-Aware Sending
 
-**Status:** Phase 1 + Phase 2 complete (2026-06-08). Backend merged (migration 226, sync service, window-aware send refactor, 4 send sites + manual chat template send), FE off mocks against the live workspace, all three test suites green (pytest 19, vitest 11, playwright e2e 1 — env-gated). Phase 3 (code review) pending. Spike confirmed Respond.io shapes: channels `GET /v2/space/channel`, templates `GET /v2/space/channel/{id}/template`, template send `POST /v2/contact/{id}/message` with `channelId` + `message.type=whatsapp_template` + full body text + positional `parameters`.
+**Status:** Phase 1 + Phase 2 complete (2026-06-08). Backend merged (migration 226, sync service, window-aware send refactor, 4 send sites + manual chat template send), FE off mocks against the live workspace, all three test suites green (pytest 19, vitest 11, playwright e2e 1 - env-gated). Phase 3 (code review) pending. Spike confirmed Respond.io shapes: channels `GET /v2/space/channel`, templates `GET /v2/space/channel/{id}/template`, template send `POST /v2/contact/{id}/message` with `channelId` + `message.type=whatsapp_template` + full body text + positional `parameters`.
 **Owner:** Claude + Jayson
 **Created:** 2026-06-07
 
 ## Problem
 
 Respond.io accepts outbound WhatsApp messages with a success response even when the
-contact's 24-hour messaging window is closed — the message is then silently never
+contact's 24-hour messaging window is closed - the message is then silently never
 delivered. This hits every CRM auto-response (complaint decisions, stock inquiry
 replies/rejections, purchase request + sponsorship form status updates) and the
 admin Chat Records manual send. Outside the 24h window WhatsApp only delivers
@@ -21,7 +21,7 @@ pre-approved **message templates**, which the CRM cannot send today.
    (last **incoming** message < 23h ago, via Respond API).
    - Open → send the composed plain-text message (today's behaviour).
    - Closed → send the configured **default template** for that use case, with
-     params filled from a per-template mapping. No reactive fallback — the branch
+     params filled from a per-template mapping. No reactive fallback - the branch
      is decided up front.
 3. In Chat Records, gate the plain-text input on window state and add a manual
    "send template" flow mimicking Respond.io (pick template → fill params →
@@ -31,17 +31,17 @@ pre-approved **message templates**, which the CRM cannot send today.
 
 | # | Decision |
 |---|----------|
-| D1 | Send paths in scope: complaint decision (RQ task), stock inquiry reply/reject (RQ task), purchase request status update ×2 sync sites in `procurement_service` (covers sponsorship forms — shared table), Chat Records manual send. |
+| D1 | Send paths in scope: complaint decision (RQ task), stock inquiry reply/reject (RQ task), purchase request status update ×2 sync sites in `procurement_service` (covers sponsorship forms - shared table), Chat Records manual send. |
 | D2 | **Pre-check, not fallback.** Respond returns success even for undeliverable sends, so reactive fallback is impossible. Deterministic branch on window state before sending. |
 | D3 | Window source of truth = Respond API `RespondClient.list_messages` (newest first), scan first page for latest `traffic: incoming`. Margin: treat window as **23h**, not 24h. No incoming message in page → treat closed. `chat_history` is NOT authoritative (n8n skips ingest when `is_human_intervened`); it is only the degraded fallback when the Respond API call errors. API error → check `chat_history` latest incoming → still nothing → treat closed (send template). |
 | D4 | New `respond_channels` table synced from Respond list-channels API per active `respond_workspaces` row. Prod today: 1 workspace, 1 WhatsApp channel; design stays multi-ready. Template send payload requires `channelId`. |
-| D5 | New `respond_message_templates` table. Sync = upsert by (channel, respond template id); hard-delete rows gone from API. All statuses stored (`approved`/`pending`/`rejected`) for admin visibility; only `approved` selectable as default or manually sendable. Sync triggers: settings-page "Sync templates" button + daily job on the existing background scheduler. If the configured default template disappears or loses approval: UI warning flag on the settings page; auto-sends in closed-window state skip sending entirely + write a `failed` `integration_log` row (plain text into a closed window is a silent drop; an unapproved template is an API error — neither is better). |
-| D6 | Per-use-case defaults, **4 keys**: `complaint`, `stock_inquiry`, `purchase_request`, `sponsorship_form` (sponsorship shares the `purchase_requests` table but gets its own key — cheap now, painful to split later). Param mapping configured per default: each `{{n}}` slot maps to a variable from a fixed catalog — `contact_name`, `entity_number`, `status`, `reason`, `portal_url`, `message`. `message` = the full composed update text so the original content survives inside a param. |
+| D5 | New `respond_message_templates` table. Sync = upsert by (channel, respond template id); hard-delete rows gone from API. All statuses stored (`approved`/`pending`/`rejected`) for admin visibility; only `approved` selectable as default or manually sendable. Sync triggers: settings-page "Sync templates" button + daily job on the existing background scheduler. If the configured default template disappears or loses approval: UI warning flag on the settings page; auto-sends in closed-window state skip sending entirely + write a `failed` `integration_log` row (plain text into a closed window is a silent drop; an unapproved template is an API error - neither is better). |
+| D6 | Per-use-case defaults, **4 keys**: `complaint`, `stock_inquiry`, `purchase_request`, `sponsorship_form` (sponsorship shares the `purchase_requests` table but gets its own key - cheap now, painful to split later). Param mapping configured per default: each `{{n}}` slot maps to a variable from a fixed catalog - `contact_name`, `entity_number`, `status`, `reason`, `portal_url`, `message`. `message` = the full composed update text so the original content survives inside a param. |
 | D7 | Param sanitization (WhatsApp rejects newlines/tabs/4+ spaces in params): newlines → `" | "`, collapse whitespace runs, truncate ~900 chars with `…`, keep `*bold*`/`_italic_` markers. |
-| D8 | Chat Records UX mimics Respond.io: window state fetched per contact (cached ~60s); closed → plain input disabled with hint "24h window closed — send a template". Template button always available: dialog → select approved template (search + body preview) → one free-text input per `{{n}}` (required) → live rendered preview → send. **No param prefill** in manual flow — defaults/mapping are auto-send machinery only. |
+| D8 | Chat Records UX mimics Respond.io: window state fetched per contact (cached ~60s); closed → plain input disabled with hint "24h window closed - send a template". Template button always available: dialog → select approved template (search + body preview) → one free-text input per `{{n}}` (required) → live rendered preview → send. **No param prefill** in manual flow - defaults/mapping are auto-send machinery only. |
 | D9 | Chat panel lists messages live from Respond API (`activities_service.list_messages`), so template sends appear automatically. `_respond_item_to_message` must learn the `whatsapp_template` message type and render the filled body text. |
 | D10 | Settings page at `/integration-management/whatsapp-templates` (Integration Management sidebar group). Admin-only RBAC slugs at launch. Param-mapping UI lives inside the set-default flow (select template → mapping form appears). |
-| D11 | One choke point: `respond_messaging_service.send_text_or_template(db, contact, text, use_case, context_vars)` — window check → plain send OR resolve default → fill params → template send → `integration_log` either way (template sends marked distinctly in the payload). All 4 auto-send sites refactor onto it. Chat manual send uses the window check for UI gating only — no auto-template substitution. |
+| D11 | One choke point: `respond_messaging_service.send_text_or_template(db, contact, text, use_case, context_vars)` - window check → plain send OR resolve default → fill params → template send → `integration_log` either way (template sends marked distinctly in the payload). All 4 auto-send sites refactor onto it. Chat manual send uses the window check for UI gating only - no auto-template substitution. |
 | D12 | Defaults stored in dedicated `respond_template_defaults` table (`use_case` unique enum, FK → `respond_message_templates.id`, `param_mapping` JSONB, timestamps). FK integrity lets sync flag dangling/rejected defaults cheaply. |
 | D13 | **Remove** the stock inquiry `verify_delivery` post-send polling (`get_message` ×3) entirely. With the window pre-check its main purpose is gone; both RQ tasks become uniform fire-and-log. |
 
@@ -65,14 +65,14 @@ POST   /api/v1/activities/{entity_type}/{entity_id}/template-messages        →
 
 - Exact Respond.io API shapes (docs are JS-rendered; verify against live workspace):
   - List channels endpoint + response.
-  - `GET /v2/space/channel/{channelId}/message_templates` (list message templates) —
+  - `GET /v2/space/channel/{channelId}/message_templates` (list message templates)  - 
     pagination, component JSON shape, status values.
-  - Template send payload on `POST /v2/contact/{identifier}/message` —
+  - Template send payload on `POST /v2/contact/{identifier}/message`  - 
     `whatsapp_template` message type, channelId placement, param format.
 - How template messages appear in `list_messages` items (for renderer support, D9).
 - WhatsApp param length limits (truncation threshold in D7).
 
-## Phase 1 — Frontend prototype (mocks only, no backend changes)
+## Phase 1 - Frontend prototype (mocks only, no backend changes)
 
 - [ ] `/integration-management/whatsapp-templates` page:
   - Workspace/channel info card.
@@ -92,7 +92,7 @@ POST   /api/v1/activities/{entity_type}/{entity_id}/template-messages        →
   path + edge states.
 - [ ] No backend code. No tests yet.
 
-## Phase 2 — Backend + wiring + tests
+## Phase 2 - Backend + wiring + tests
 
 Backend:
 - [ ] Spike: verify Respond.io API shapes (see open items) against the live workspace.
@@ -125,7 +125,7 @@ Tests (land here, not deferred):
   an entity chat panel.
 - [ ] Playwright MCP re-verification against the live stack.
 
-## Phase 3 — Code review
+## Phase 3 - Code review
 
 - [ ] `/code-review` (or `ultra` if diff is big) on the merged branch; fix findings.
 - [ ] PR with Phase 1 screenshots, contract-vs-shipped check, PR-CHECKLIST.md pass.

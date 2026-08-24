@@ -2,7 +2,7 @@
 
 `seed_spec_registry` repairs vocabulary drift on every deploy so the CRM ranker and the
 n8n parser can never disagree about what a value is called. That directly fights a UI
-that lets staff edit the same fields — without a marker, the deploy silently wins.
+that lets staff edit the same fields - without a marker, the deploy silently wins.
 
 `source` separates the two populations: `seed` rows keep being repaired, `user` rows are
 never touched. `user_synonyms` is the additive middle ground, so adding one word to a

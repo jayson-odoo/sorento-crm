@@ -28,7 +28,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/componen
 import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 
 function formatAccessLevels(levels: string[] | null | undefined): string {
-  if (!levels || levels.length === 0) return '—';
+  if (!levels || levels.length === 0) return '-';
   return levels
     .map((l) => l.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()))
     .join(', ');

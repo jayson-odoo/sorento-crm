@@ -963,7 +963,7 @@ export default function ComplaintForm({
                         field.onChange(v === "__unset__" ? null : v)
                       }
                       options={[
-                        { value: "__unset__", label: "— None —" },
+                        { value: "__unset__", label: " -  None  - " },
                         ...rootCauseOptions.map((opt) => ({
                           value: opt.id,
                           label: opt.name,
@@ -990,7 +990,7 @@ export default function ComplaintForm({
                         field.onChange(v === "__unset__" ? null : v)
                       }
                       options={[
-                        { value: "__unset__", label: "— None —" },
+                        { value: "__unset__", label: " -  None  - " },
                         ...resolutionOptions.map((opt) => ({
                           value: opt.id,
                           label: opt.name,

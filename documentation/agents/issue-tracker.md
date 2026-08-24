@@ -11,7 +11,7 @@ Issues and PRDs for this repo live as GitHub issues on `jayson-odoo/sorento-crm`
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
 
-Infer the repo from `git remote -v` — `gh` does this automatically when run inside a clone.
+Infer the repo from `git remote -v` - `gh` does this automatically when run inside a clone.
 
 ## When a skill says "publish to the issue tracker"
 
@@ -26,5 +26,5 @@ Run `gh issue view <number> --comments`.
 - The repo had zero issues when this file was written, so there is no existing
   numbering or title convention to match. The first issues created set the tone.
 - Work in this repo has historically been tracked in `documentation/plans/PLAN-<slug>.md`
-  and `documentation/backlogs/`. Those stay where they are — this file governs
+  and `documentation/backlogs/`. Those stay where they are - this file governs
   issue-shaped work only, not plans.

@@ -383,10 +383,10 @@ async def post_next_assignee(
     Body (required): contact_phone_number or contact_phone.
     Body (agent/team): agent_id/agent_code/agent and team_id/team_code/team or code.
     Body (optional): tier (or tier_level) with team_code when the same code is used for more than one
-      SLA tier — required in that case so round-robin matches the UI per-tier cursors.
-    Body (ignored): current_assignee — backward compatibility only; does not affect rotation.
+      SLA tier - required in that case so round-robin matches the UI per-tier cursors.
+    Body (ignored): current_assignee - backward compatibility only; does not affect rotation.
       Tiers are independent; use conversation_assignee_* in the response for CRM state only.
-    Body (optional): policy_code (or sla_policy_code) and tier (or tier_level) together —
+    Body (optional): policy_code (or sla_policy_code) and tier (or tier_level) together  - 
       response includes policy_id, tier_response_hours, tier_resolution_hours from that SLA tier.
     Body (optional): brand_code - the brand this item belongs to (lower-case
       `brands.brand_code`; blank / absent = unknown). The team is unchanged; the
@@ -395,7 +395,7 @@ async def post_next_assignee(
       echoes brand_code, brand_matched and team_set_code.
     Body (optional): company_id - a companies.id that overrides the contact-derived
       company (company_source becomes "body"). An unknown id is ignored.
-    Body (optional): preferred_assignee_id — when set to a valid member (user_id) of the resolved
+    Body (optional): preferred_assignee_id - when set to a valid member (user_id) of the resolved
       team, that member is returned directly and the round-robin cursor is NOT advanced. Discover
       valid ids via GET /external/team-members. 404 if not a member of the team.
 

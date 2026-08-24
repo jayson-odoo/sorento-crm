@@ -1,6 +1,6 @@
-# PLAN — Group multi-match automation emails into one
+# PLAN - Group multi-match automation emails into one
 
-Status: **Implemented** (2026-06-25) — pytest 7/7, vitest 4/4, tsc + prod build green. Browser verify pending FE restart.
+Status: **Implemented** (2026-06-25) - pytest 7/7, vitest 4/4, tsc + prod build green. Browser verify pending FE restart.
 
 ## Problem
 
@@ -12,9 +12,9 @@ combined email per recipient** listing all expiring promotions.
 
 ## Decisions (from user)
 
-1. **Per-automation toggle** — add a "Combine into one email" switch to the
+1. **Per-automation toggle** - add a "Combine into one email" switch to the
    automation modal, default ON. (Not always-on, not a global setting.)
-2. **Rewrite the template to loop** — expose a `promotions` list in the render
+2. **Rewrite the template to loop** - expose a `promotions` list in the render
    context; the "promo expire" template body uses `{% for p in promotions %}`.
    Keep singular `promotion` = `promotions[0]` for back-compat.
 
@@ -22,7 +22,7 @@ combined email per recipient** listing all expiring promotions.
 
 Grouping applies **only** to `trigger_type == "days_before_promotion_end"` (the
 only multi-match scheduled trigger). Event-driven triggers (complaint/PR/SF
-approved) always produce a single match and use singular-entity templates —
+approved) always produce a single match and use singular-entity templates  - 
 their behavior is unchanged regardless of the flag.
 
 ## Backend

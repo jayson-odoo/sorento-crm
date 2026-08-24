@@ -2,12 +2,12 @@
 
 Two directions on one surface:
 
-* **Ingest** (`POST /external/ingest/{entity}`) — the ESB pushes canonical
+* **Ingest** (`POST /external/ingest/{entity}`) - the ESB pushes canonical
   masters in. Always `200` with a per-record verdict, even when records fail:
   a batch is not a transaction (AC-AC-15), so a non-2xx would tell the ESB
   nothing about which of 10,000 records landed.
 
-* **Read** (`POST /external/read/{entity}`) — the ESB fetches current values to
+* **Read** (`POST /external/read/{entity}`) - the ESB fetches current values to
   render before/after diffs for human approval (AC-AC-19). POST rather than GET
   because the request carries a batch of source references, and a few hundred
   of them do not belong in a query string.

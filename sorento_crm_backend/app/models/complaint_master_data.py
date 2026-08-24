@@ -1,4 +1,4 @@
-"""Complaint master data models — root causes and resolutions."""
+"""Complaint master data models - root causes and resolutions."""
 from sqlalchemy import Column, String, Boolean, DateTime, Text, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func

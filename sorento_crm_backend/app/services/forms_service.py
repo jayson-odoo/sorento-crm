@@ -264,7 +264,7 @@ class FormService:
         # created_by column doesn't exist in database, skip setting it
         # form_dict["created_by"] = created_by
         # Multi-company: stamp the active company on a staff-created form (single
-        # scope only; None/UNSET/multi leave it NULL). Manual — Form is not an
+        # scope only; None/UNSET/multi leave it NULL). Manual - Form is not an
         # owned mixin, so the before_insert auto-stamp never fires here.
         from app.services.company_scope import get_company_scope
         _scope = get_company_scope(self.db)

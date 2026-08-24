@@ -2,15 +2,15 @@
 
 Joins a record row + its approval/rejection decision + the form-SLA tracker +
 the audit rows that set its state into one structured, AI-ready bundle. Pure
-read assembly — NO writes, and NEVER touches ``respond_contacts.session_vars``
+read assembly - NO writes, and NEVER touches ``respond_contacts.session_vars``
 (that store is n8n/WhatsApp-only; see UAC §4.7).
 
 Four entity types are supported, dispatched through ``_ADAPTERS``:
 
-  * ``complaint`` — tracer; real approval gate, on-row rejection columns.
-  * ``stock_inquiry`` — rejection-only (no approve), on-row rejection columns.
-  * ``purchase_request`` — real approval gate (``request_type='purchase_request'``).
-  * ``sponsorship_form`` — same model as PR (``request_type='sponsorship_form'``),
+  * ``complaint`` - tracer; real approval gate, on-row rejection columns.
+  * ``stock_inquiry`` - rejection-only (no approve), on-row rejection columns.
+  * ``purchase_request`` - real approval gate (``request_type='purchase_request'``).
+  * ``sponsorship_form`` - same model as PR (``request_type='sponsorship_form'``),
     shares the ``purchase_request`` audit entity_type but a distinct
     ``sponsorship_form`` SLA ``source_entity_type``.
 
@@ -30,7 +30,7 @@ from app.models.procurement import PurchaseRequestHeader, StockInquiry
 from app.models.sla import ConversationSLATracking, SLAPolicyTier
 from app.services.error_handler import AppException
 
-# Asia/Kuala_Lumpur — fixed UTC+8 (no DST). Mirrors sla_service.MALAYSIA_TZ.
+# Asia/Kuala_Lumpur - fixed UTC+8 (no DST). Mirrors sla_service.MALAYSIA_TZ.
 MALAYSIA_TZ = timezone(timedelta(hours=8))
 
 # Approval-decision statuses that an approval-gated record can reach.
@@ -80,7 +80,7 @@ def _pr_display_status(status: Any, approval_status: Any) -> str:
     """Single user-facing status for PR / sponsorship_form.
 
     Users see ONE status pill that combines the lifecycle ``status`` and the
-    ``approval_status`` — they do not distinguish the two internal columns.
+    ``approval_status`` - they do not distinguish the two internal columns.
     This MUST mirror the frontend ``getDisplayStatus`` (PurchaseRequestsList.tsx)
     so the bubble's answer matches the pill on screen: terminal CS states win,
     otherwise the approval decision, otherwise the lifecycle status.
@@ -196,12 +196,12 @@ class RecordContextService:
             old_status = _old_status(row)
             new_status = _new_status(row)
             if old_status == new_status:
-                # Skip no-op rows (a save that didn't change status) — they add
+                # Skip no-op rows (a save that didn't change status) - they add
                 # noise like "approved → approved" without a real transition.
                 continue
             audit_trail.append(
                 {
-                    "action": f"status: {old_status or '—'} → {new_status}",
+                    "action": f"status: {old_status or '-'} → {new_status}",
                     "by": name_map.get(str(row.user_id)) if row.user_id else None,
                     "at": _to_kl_iso(row.changed_at),
                 }
@@ -473,7 +473,7 @@ class RecordContextService:
 
         # --- who/when set the current state ----------------------------------
         # Priority: rejection (rejected_*) > response (last_responded_*) > the
-        # latest status-change audit row. A stock inquiry has NO approval gate —
+        # latest status-change audit row. A stock inquiry has NO approval gate  - 
         # "responded" means purchasing has answered (not awaiting a decision).
         if is_rejected and (inquiry.rejected_by or inquiry.rejected_at):
             set_by_id = inquiry.rejected_by or (
@@ -518,7 +518,7 @@ class RecordContextService:
 
         # --- decision block (rejection-only; null when not rejected) ---------
         # Stock inquiry has no approve action, so there is no "pending approval"
-        # decision — only a possible rejection. Null avoids implying the record
+        # decision - only a possible rejection. Null avoids implying the record
         # is awaiting a decision when it is actually new / in-progress / answered.
         approval = None
         if is_rejected:

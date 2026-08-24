@@ -3,10 +3,10 @@
 "What faucets have certs" cannot be answered by resolving a top-K list and joining
 ids across the wire: whenever the qualifying products fall outside K, the answer is
 a false "none". So the intersection happens HERE, over the full company-scoped
-catalogue — membership and the count are SQL, and the ranker only orders the
+catalogue - membership and the count are SQL, and the ranker only orders the
 products that already qualify (`search_specs(product_ids=...)`).
 
-Extending to a new domain is one function and one `REQUIRE_LEGS` entry — the legs
+Extending to a new domain is one function and one `REQUIRE_LEGS` entry - the legs
 are a code-side registry on purpose. A predicate leg is behavior (validity logic,
 ledger semantics, a join graph), not data, so registering SQL fragments as rows
 would be a security surface wearing a config table's clothes.
@@ -42,7 +42,7 @@ from app.services.product_spec_search import filter_specs, search_specs, values_
 
 
 class _UnrecognizedLabel(Exception):
-    """A require value that resolved to nothing — reported, never swallowed.
+    """A require value that resolved to nothing - reported, never swallowed.
 
     Same honesty class as an unrecognized free term: "your word mapped to no
     document type" must reach the customer as a clarify, not as a silent "none".
@@ -54,7 +54,7 @@ class _UnrecognizedLabel(Exception):
 
 
 def _leg_attachment_type(db: Session, value: Any) -> ColumnElement:
-    """Has an attachment of the type the CUSTOMER NAMED — label in, not code.
+    """Has an attachment of the type the CUSTOMER NAMED - label in, not code.
 
     Resolution mirrors `_probe_attachment_type` (exact case-insensitive on code OR
     type_name) so "technical drawing" works wherever it already works. Resolving
@@ -88,11 +88,11 @@ def _leg_attachment_type(db: Session, value: Any) -> ColumnElement:
 def _leg_certificate(db: Session, value: Any) -> ColumnElement:
     """In the certificate register. Bare ``true`` = any active-register cert
     (decided); the object form narrows: ``scheme`` by equality,
-    ``validity_state: "valid"`` through the current revision's window — validity
+    ``validity_state: "valid"`` through the current revision's window - validity
     is DERIVED from revision dates, never stored (see the certificate model).
 
     Joins through ``Certificate`` because ``certificate_products`` has no
-    company_id — the scoped side is what keeps the leg isolated per company.
+    company_id - the scoped side is what keeps the leg isolated per company.
     """
     conditions = [
         CertificateProduct.product_id == Product.id,
@@ -129,7 +129,7 @@ def _leg_promotion(db: Session, value: Any) -> ColumnElement:
 
 def _leg_stock(db: Session, value: Any) -> ColumnElement:
     """Plain on-hand > 0. Deliberately NOT the MCP's
-    ``exclude_zero_system_adjustment`` semantics — that filter answers a
+    ``exclude_zero_system_adjustment`` semantics - that filter answers a
     different question ("hide rows an adjustment zeroed"), this one answers
     "is there any stock at all".
     """
@@ -137,7 +137,7 @@ def _leg_stock(db: Session, value: Any) -> ColumnElement:
 
 
 # One entry per domain. A new domain lands as one function + one line here + one
-# noun in the n8n parser — never as another inline block in references.py.
+# noun in the n8n parser - never as another inline block in references.py.
 REQUIRE_LEGS: dict[str, Callable[[Session, Any], ColumnElement]] = {
     "attachment_type": _leg_attachment_type,
     "certificate": _leg_certificate,
@@ -157,7 +157,7 @@ def resolve_product_set(
     """(described set) ∩ (require legs), with an honest count.
 
     Returns ``{candidates, qualifying_total, truncated, unrecognized_terms,
-    require}`` — candidates are ranker-shaped (stage 2 runs `search_specs` over
+    require}`` - candidates are ranker-shaped (stage 2 runs `search_specs` over
     the qualifying ids only), ``require`` is the echo with ``attachment_type``
     as-resolved.
 
@@ -187,7 +187,7 @@ def resolve_product_set(
         except _UnrecognizedLabel as miss:
             unrecognized.append(miss.label)
             require_echo[key] = miss.label
-            # A predicate the CRM could not read qualifies NOTHING — an honest
+            # A predicate the CRM could not read qualifies NOTHING - an honest
             # zero plus the unrecognized label is a clarify on the n8n side; a
             # leg silently skipped would be a wrong count presented as truth.
             return {
@@ -234,7 +234,7 @@ def resolve_product_set(
     if qualifying_total:
         qualifying_ids = [row[0] for row in _base(db.query(Product.id)).all()]
         if terms_given:
-            # Stage 2: rank INSIDE the qualifying set. Floor 0 on purpose — the
+            # Stage 2: rank INSIDE the qualifying set. Floor 0 on purpose - the
             # floor exists to stop confident nonsense, and membership has
             # already established these products answer the question. Dropped
             # numeric entries re-enter here as boosts, so "1000mm" still orders
@@ -250,7 +250,7 @@ def resolve_product_set(
             candidates = found["candidates"]
         else:
             # require-only ("what products have certs"): nothing to rank BY, so
-            # the shortlist is deterministic — one row per family, by code.
+            # the shortlist is deterministic - one row per family, by code.
             rows = (
                 _base(
                     db.query(

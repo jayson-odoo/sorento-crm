@@ -1,7 +1,7 @@
 """Service + endpoint tests for order aggregation analytics.
 
 Covers GET /api/v1/order-management/orders/analytics and
-OrderService.order_analytics — the analytical-question gap closer:
+OrderService.order_analytics - the analytical-question gap closer:
   - metric=count / total_value / avg_delivery_days happy paths
   - group_by=customer / product / month bucketing
   - total_value falls back to line totals when the order header total_amount is 0

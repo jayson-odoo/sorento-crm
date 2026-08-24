@@ -38,7 +38,7 @@ class PresignedUrlResponse(BaseModel):
     file_path: str = Field(..., description="Normalized storage key used for signing")
     filename: str | None = Field(None, description="Filename if provided in request")
     expires_in: int = Field(..., description="Expiry in seconds")
-    storage_provider: str = Field(..., description="'s3' or 'r2' — which provider served the URL")
+    storage_provider: str = Field(..., description="'s3' or 'r2' - which provider served the URL")
 
 
 def _normalize_to_s3_key(file_path: str) -> str:
@@ -66,7 +66,7 @@ def _normalize_to_s3_key(file_path: str) -> str:
 def _resolve_attachment(db: Session, raw_file_path: str, key: str):
     """Return the most-recent Attachment row matching this file_path, or None.
 
-    Matches on either the raw request value or the normalized S3 key — attachments
+    Matches on either the raw request value or the normalized S3 key - attachments
     store file_path as a bare key OR a full CDN URL, so try both.
     """
     from app.models.resources import Attachment
@@ -129,7 +129,7 @@ async def get_presigned_url(
     **Request body:**
     - **file_path** (required): storage key (e.g. `promotion/abc/file.pdf`) or full CDN base URL.
     - **filename** (optional): Display name; echoed in response.
-    - **expires_in** (optional): URL validity in seconds (60–86400). Default 3600.
+    - **expires_in** (optional): URL validity in seconds (60 - 86400). Default 3600.
 
     **Response:** `presigned_url`, `file_path`, `filename`, `expires_in`, `storage_provider`.
     """
@@ -146,7 +146,7 @@ async def get_presigned_url(
                 detail="No attachment found for the given file_path.",
             )
 
-        # Clamp the URL lifetime — a signed URL must not outlive the action.
+        # Clamp the URL lifetime - a signed URL must not outlive the action.
         expires_in = min(int(body.expires_in), int(settings.presigned_max_ttl_seconds))
 
         provider = _provider_for_attachment(attachment, body.file_path)

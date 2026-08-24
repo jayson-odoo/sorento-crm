@@ -1,4 +1,4 @@
-"""X-API-Key (MCP / n8n) company-scope resolver matrix — AC-F1/F2/F3 (backend half).
+"""X-API-Key (MCP / n8n) company-scope resolver matrix - AC-F1/F2/F3 (backend half).
 
 The MCP server and n8n call the CRM with ``X-API-Key`` and, for a contact-scoped
 request, ``contact_id`` + ``space_id`` query params. ``resolve_company_scope``
@@ -109,7 +109,7 @@ def mocha_contact(db: Session):
 
 
 # --------------------------------------------------------------------------- #
-# AC-F1 — valid key, no contact params -> None (all companies)                 #
+# AC-F1 - valid key, no contact params -> None (all companies)                 #
 # --------------------------------------------------------------------------- #
 def test_api_key_no_contact_params_is_all_companies(db):
     scope = resolve_company_scope(_request(api_key=_API_KEY), db)
@@ -117,7 +117,7 @@ def test_api_key_no_contact_params_is_all_companies(db):
 
 
 # --------------------------------------------------------------------------- #
-# AC-F2 — contact params resolve to a Mocha-only contact -> {mocha}            #
+# AC-F2 - contact params resolve to a Mocha-only contact -> {mocha}            #
 # --------------------------------------------------------------------------- #
 def test_contact_params_resolve_to_only_that_contacts_company(db, mocha_contact):
     q = f"contact_id={mocha_contact['respond_io_id']}&space_id={mocha_contact['space_id']}"
@@ -126,7 +126,7 @@ def test_contact_params_resolve_to_only_that_contacts_company(db, mocha_contact)
 
 
 # --------------------------------------------------------------------------- #
-# AC-F3 — unresolvable contact params -> empty frozenset (0 rows, fail-closed) #
+# AC-F3 - unresolvable contact params -> empty frozenset (0 rows, fail-closed) #
 # --------------------------------------------------------------------------- #
 def test_unresolvable_contact_params_is_empty_scope(db):
     q = "contact_id=zzmcp-nope-nobody&space_id=zzmcp-nope-space"
@@ -147,7 +147,7 @@ def test_contact_with_no_membership_is_empty_scope(db, mocha_contact):
 
 
 # --------------------------------------------------------------------------- #
-# Guard — an INVALID key never resolves to data                                #
+# Guard - an INVALID key never resolves to data                                #
 # --------------------------------------------------------------------------- #
 def test_invalid_api_key_is_unset(db):
     scope = resolve_company_scope(_request(api_key="definitely-not-the-key"), db)
@@ -155,7 +155,7 @@ def test_invalid_api_key_is_unset(db):
 
 
 # --------------------------------------------------------------------------- #
-# H1 — a JWT/session user's STALE last_active (not granted) never leaks         #
+# H1 - a JWT/session user's STALE last_active (not granted) never leaks         #
 # --------------------------------------------------------------------------- #
 def _bearer_request(token: str) -> Request:
     scope = {
@@ -171,7 +171,7 @@ def _bearer_request(token: str) -> Request:
 @pytest.fixture()
 def stale_user(db: Session):
     """A regular (non-super) user granted TWO throwaway companies, whose
-    ``last_active_company_id`` points at Sorento — a company they are NOT granted
+    ``last_active_company_id`` points at Sorento - a company they are NOT granted
     (models a grant that was revoked but left ``last_active`` stale). Returns the
     session token + the two granted ids."""
     from datetime import datetime, timedelta

@@ -153,7 +153,7 @@ export default function ModuleBundlesAdmin() {
       const bk = formKey.trim();
       if (!BUNDLE_KEY_PATTERN.test(bk)) {
         toast.error(
-          'Bundle key: 2–63 chars, start with a letter, then lowercase letters, digits, or underscores.',
+          'Bundle key: 2 - 63 chars, start with a letter, then lowercase letters, digits, or underscores.',
         );
         return;
       }
@@ -238,7 +238,7 @@ export default function ModuleBundlesAdmin() {
                 {(bundlesQuery.data ?? []).map((b) => (
                   <TableRow key={b.bundle_key}>
                     <TableCell className="text-muted-foreground font-mono text-xs">
-                      {b.sort_order ?? '—'}
+                      {b.sort_order ?? '-'}
                     </TableCell>
                     <TableCell className="font-mono text-xs">{b.bundle_key}</TableCell>
                     <TableCell>{b.display_name}</TableCell>
@@ -310,7 +310,7 @@ export default function ModuleBundlesAdmin() {
                 id="bundle-sort"
                 value={formSort}
                 onChange={(e) => setFormSort(e.target.value)}
-                placeholder="e.g. 001 — lower sorts first"
+                placeholder="e.g. 001 - lower sorts first"
               />
             </div>
             <div className="space-y-2">

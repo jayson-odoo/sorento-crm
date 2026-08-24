@@ -1,5 +1,5 @@
 /**
- * D-2 — email-outbox bulk retry/cancel service functions.
+ * D-2 - email-outbox bulk retry/cancel service functions.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 

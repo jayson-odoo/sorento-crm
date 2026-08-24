@@ -1,4 +1,4 @@
-"""Sub-plan A — generic per-IP fixed-window rate limiter.
+"""Sub-plan A - generic per-IP fixed-window rate limiter.
 
 Covers: disabled (limit<=0), fail-open when Redis is down, and allow-under /
 block-over within a window with a Retry-After.
@@ -86,5 +86,5 @@ def test_separate_ips_independent(fake_redis):
 
 def test_separate_buckets_independent(fake_redis):
     assert rate_limit.hit("signup", "a", limit=1, window_seconds=60).allowed is True
-    # Same IP, different bucket — not shared.
+    # Same IP, different bucket - not shared.
     assert rate_limit.hit("reset", "a", limit=1, window_seconds=60).allowed is True

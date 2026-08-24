@@ -1,4 +1,4 @@
-"""Scheduled-task overdue detection — shared, scheduler-truth, grace-bounded.
+"""Scheduled-task overdue detection - shared, scheduler-truth, grace-bounded.
 
 Covers UAC OBS-S2-01 .. OBS-S2-11.
 
@@ -72,7 +72,7 @@ def _task(
 
 
 # --------------------------------------------------------------------------- #
-# OBS-S2-01 — due_at derives from scheduler truth, never next_run_at           #
+# OBS-S2-01 - due_at derives from scheduler truth, never next_run_at           #
 # --------------------------------------------------------------------------- #
 def test_due_at_is_last_run_plus_interval(db):
     t = _task(db, last_run_at=NOW - timedelta(minutes=30), interval_value=10)
@@ -91,7 +91,7 @@ def test_due_at_ignores_next_run_at_entirely(db):
 
 
 # --------------------------------------------------------------------------- #
-# OBS-S2-02 — never-run task is due, not silently skipped                      #
+# OBS-S2-02 - never-run task is due, not silently skipped                      #
 # --------------------------------------------------------------------------- #
 def test_never_run_with_past_start_at_is_due_at_start_at(db):
     start = NOW - timedelta(hours=2)
@@ -113,7 +113,7 @@ def test_never_run_task_is_reported_overdue(db):
 
 
 # --------------------------------------------------------------------------- #
-# OBS-S2-03 — future start_at is never overdue                                 #
+# OBS-S2-03 - future start_at is never overdue                                 #
 # --------------------------------------------------------------------------- #
 def test_future_start_at_not_overdue(db):
     _task(
@@ -126,7 +126,7 @@ def test_future_start_at_not_overdue(db):
 
 
 # --------------------------------------------------------------------------- #
-# OBS-S2-04 — grace clamp + boundary                                           #
+# OBS-S2-04 - grace clamp + boundary                                           #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "unit,value,expected",
@@ -166,7 +166,7 @@ def test_late_but_inside_grace_is_not_overdue(db):
 
 
 # --------------------------------------------------------------------------- #
-# OBS-S2-05 — per-task grace override wins over global                         #
+# OBS-S2-05 - per-task grace override wins over global                         #
 # --------------------------------------------------------------------------- #
 def test_per_task_grace_percent_overrides_global(db):
     t = _task(db, interval_unit="hours", interval_value=1, metadata_={"grace_percent": 50})
@@ -198,7 +198,7 @@ def test_invalid_per_task_grace_falls_back_to_global(db):
 
 
 # --------------------------------------------------------------------------- #
-# OBS-S2-07 — disabled tasks never overdue                                     #
+# OBS-S2-07 - disabled tasks never overdue                                     #
 # --------------------------------------------------------------------------- #
 def test_disabled_task_never_overdue(db):
     _task(db, key="off", enabled=False, last_run_at=NOW - timedelta(days=30))
@@ -206,7 +206,7 @@ def test_disabled_task_never_overdue(db):
 
 
 # --------------------------------------------------------------------------- #
-# OBS-S2-09 — lateness measured from due_at, not from due_at + grace           #
+# OBS-S2-09 - lateness measured from due_at, not from due_at + grace           #
 # --------------------------------------------------------------------------- #
 def test_late_by_measured_from_due_at(db):
     last = NOW - timedelta(minutes=33)  # interval 10m -> due 23m ago
@@ -216,7 +216,7 @@ def test_late_by_measured_from_due_at(db):
 
 
 # --------------------------------------------------------------------------- #
-# OBS-S2-06 — both surfaces agree, because both call this helper               #
+# OBS-S2-06 - both surfaces agree, because both call this helper               #
 # --------------------------------------------------------------------------- #
 def test_health_and_watchdog_report_identical_overdue_sets(db):
     """The whole point of the slice: one helper, one answer."""

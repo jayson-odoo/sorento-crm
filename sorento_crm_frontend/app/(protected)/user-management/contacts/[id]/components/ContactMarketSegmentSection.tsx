@@ -113,7 +113,7 @@ export default function ContactMarketSegmentSection({ contactId }: { contactId: 
           ))}
         </div>
       ) : (
-        <p className="font-medium text-muted-foreground">No market segment — matches all CS members</p>
+        <p className="font-medium text-muted-foreground">No market segment - matches all CS members</p>
       )}
 
       {/* Edit dialog */}

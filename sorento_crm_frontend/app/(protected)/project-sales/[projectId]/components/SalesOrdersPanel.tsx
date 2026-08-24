@@ -284,7 +284,7 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
         header: ({ column }) => <DataGridColumnHeader title="Drafted" column={column} />,
         cell: ({ row }) => (
           <span className="text-muted-foreground">
-            {row.original.created_at ? formatDateInMalaysia(row.original.created_at) : '—'}
+            {row.original.created_at ? formatDateInMalaysia(row.original.created_at) : '-'}
           </span>
         ),
         size: 120,

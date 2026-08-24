@@ -29,7 +29,7 @@ describe('Ideas board page', () => {
     expect(embed).toBeInTheDocument();
     expect(embed.getAttribute('data-idea-id')).toBe('');
     expect(embed.getAttribute('data-title')).toBe('Ideas board');
-    // No outer "Ideas" heading by design — the embedded workspace renders its
+    // No outer "Ideas" heading by design - the embedded workspace renders its
     // own, and a second title above the iframe was redundant (see page.tsx).
     expect(screen.queryByRole('heading', { name: 'Ideas' })).not.toBeInTheDocument();
   });

@@ -1,7 +1,7 @@
 """Schemas for the AI assistant prompt registry API.
 
 Field names match ``docs/plans/PLAN-ai-assistant-prompt-registry.md`` §8b and the
-UAC contract verbatim — the FE prototype is built against these exact shapes.
+UAC contract verbatim - the FE prototype is built against these exact shapes.
 """
 from __future__ import annotations
 

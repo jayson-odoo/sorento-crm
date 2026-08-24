@@ -1,4 +1,4 @@
-# PLAN — Attachment grid thumbnails
+# PLAN - Attachment grid thumbnails
 
 **Status:** Phase 2 done + browser-verified (branch `perf/attachment-grid-thumbnails`).
 Backfill running over all 3140 existing image rows (idempotent). Live check:
@@ -12,7 +12,7 @@ Files → grid view scrolls sluggishly on normal (Windows) machines. Root cause
 confirmed by driving Playwright + inspecting a user screen-recording:
 
 - Grid renders `<img>` at a **114×114px** box.
-- Actual stored images are **full-resolution originals** — sampled naturals:
+- Actual stored images are **full-resolution originals** - sampled naturals:
   `4500×4500` (20 MP), `3084×4764`, `2776×4388`, `2834×3407`, ...
 - One 4500×4500 image decodes to ~**81 MB** raw bitmap in RAM + a large GPU
   texture. 91 such cards on one page = **GBs of decode memory** + heavy
@@ -34,10 +34,10 @@ own object alongside the original, and serve THAT to the grid. Provider-agnostic
 existing `image_normalizer` upload-boundary pattern.
 
 ### Data model
-- New column `attachments.thumbnail_path TEXT NULL` — stores the **CDN base URL**
+- New column `attachments.thumbnail_path TEXT NULL` - stores the **CDN base URL**
   of the thumbnail object (unsigned, like `file_path`; signed on read). NULL =
   no thumbnail (non-image, or pre-backfill). Provider is the row's existing
-  `storage_provider` — the thumb always lives in the same bucket as the original.
+  `storage_provider` - the thumb always lives in the same bucket as the original.
 - Alembic migration `255_attachment_thumbnail_path` (down_revision `254_audit_trace_id`).
 
 ### Thumbnail generation (new `app/services/image_thumbnailer.py`)
@@ -46,7 +46,7 @@ existing `image_normalizer` upload-boundary pattern.
     when the bytes are not a decodable raster image (non-image files, PDFs, etc.).
   - Best-effort: any decode/encode failure returns `None` (never blocks upload).
   - Reuses Pillow (already a dep via image_normalizer).
-- Thumb object key = `{original_key}.thumb.jpg` (deterministic, collision-free —
+- Thumb object key = `{original_key}.thumb.jpg` (deterministic, collision-free  - 
   original keys are already uuid-segregated).
 
 ### Upload wiring (`app/api/v1/resources/attachments.py :: create_attachment`)
@@ -91,7 +91,7 @@ Add signed `thumbnail_url` to the **drive-list** response so the grid needs
 - `DriveImageThumbnail` accepts optional `thumbnailUrl`. When present: render it
   directly (still `loading="lazy"` + IntersectionObserver gate) and **skip**
   `getAttachmentPreviewUrl`. Add `decoding="async"` on the `<img>`. When absent:
-  current behaviour (IO → preview-url of original) unchanged — safe fallback.
+  current behaviour (IO → preview-url of original) unchanged - safe fallback.
 - `DriveGridView` / `DriveCard` pass `item.thumbnail_url` through.
 
 ## Tests (land in this phase)
@@ -125,5 +125,5 @@ After backfill, grid image `<img>.naturalWidth ≤ 320` for every image card
 3. **Non-square aspect at 114px square box?** `object-cover` already crops;
    `Image.thumbnail` keeps aspect so no distortion. ✅
 4. **320px enough for retina at 114px?** 114 * 2 (dpr) ≈ 228 < 320 → sharp. ✅
-5. **List signing cost** ~130ms/91 rows blocks the async loop briefly — a
+5. **List signing cost** ~130ms/91 rows blocks the async loop briefly - a
    listing, acceptable; revisit with a threadpool if page-size 1000 is common.

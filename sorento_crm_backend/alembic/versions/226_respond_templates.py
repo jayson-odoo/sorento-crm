@@ -1,10 +1,10 @@
 """Respond.io WhatsApp template sync tables.
 
-- `respond_channels` — synced channels per workspace (numeric channel id is
+- `respond_channels` - synced channels per workspace (numeric channel id is
   required in template send payloads).
-- `respond_message_templates` — WhatsApp templates per channel; only
+- `respond_message_templates` - WhatsApp templates per channel; only
   status='approved' rows are sendable. Hard-deleted on sync when gone.
-- `respond_template_defaults` — one row per auto-send use case (complaint /
+- `respond_template_defaults` - one row per auto-send use case (complaint /
   stock_inquiry / purchase_request / sponsorship_form) with the param mapping
   used when the contact's 24h window is closed. `template_id` SET NULL on
   template delete; `template_name_snapshot` keeps the warning meaningful.

@@ -4,7 +4,7 @@ Many orders carry `debtor_name` (free text) without a matching `customers` row
 (e.g. project / cash debtors imported from legacy Sage). The MCP layer now
 requires UUID-only entity refs, so every distinct debtor needs a customers.id
 to resolve to. This migration inserts a customers row per distinct debtor name
-that doesn't already have one. Idempotent — re-run safely.
+that doesn't already have one. Idempotent - re-run safely.
 
 Sibling migration 207 backfills orders.customer_id from this seed.
 

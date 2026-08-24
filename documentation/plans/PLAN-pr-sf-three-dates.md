@@ -1,6 +1,6 @@
-# PLAN — PR/SF three-date model (Submitted / Request / Approved)
+# PLAN - PR/SF three-date model (Submitted / Request / Approved)
 
-Status: DONE — BE migration + portal stamp + schema/serializers; FE detail/footer/edit/create/public/excel; pytest (2) green; browser-verified on local PSSF26-0317 (Submitted 23/06, Request —, Approved —).
+Status: DONE - BE migration + portal stamp + schema/serializers; FE detail/footer/edit/create/public/excel; pytest (2) green; browser-verified on local PSSF26-0317 (Submitted 23/06, Request  - , Approved  - ).
 
 ## Business requirement (from Project Sales Sponsorship Form)
 
@@ -8,8 +8,8 @@ The paper form has three distinct dates:
 
 | Form position | Meaning | Source |
 |---|---|---|
-| Top "Date:" (`*filled by CS*`) | **Submitted date** — when the form entered the system | auto-generated |
-| Bottom-left "Date:" under **Requested by** | **Request date** — when the requester made the request | user-entered |
+| Top "Date:" (`*filled by CS*`) | **Submitted date** - when the form entered the system | auto-generated |
+| Bottom-left "Date:" under **Requested by** | **Request date** - when the requester made the request | user-entered |
 | Bottom-right "Date:" under **Approved by** | **Approved date** | auto on approval |
 
 ## Column mapping
@@ -18,9 +18,9 @@ The paper form has three distinct dates:
 |---|---|---|---|
 | Submitted date (top) | `submitted_at` (NEW `DateTime`) | read-only | re-stamped `utcnow()` on **every** submit, incl. resubmit-after-rejection |
 | Request date (footer-left) | `request_date` (existing `Date`) | user | collected in portal / create form |
-| Approved date (footer-right) | `approved_at` (existing) | — | stamped on approval decision |
+| Approved date (footer-right) | `approved_at` (existing) | - | stamped on approval decision |
 
-`requested_at` (existing column) is **deprecated** — no longer shown/edited anywhere. Left in DB, unused.
+`requested_at` (existing column) is **deprecated** - no longer shown/edited anywhere. Left in DB, unused.
 
 ## Resubmit behaviour (locked with user)
 
@@ -37,7 +37,7 @@ Approved (10-Jun)→ approved_at  = 10-Jun
 
 ## Stamp point
 
-PR/SF reach `status="submitted"` **only** in `portal_service.submit_draft` (PR/SF branch). Resubmit-after-rejection sets `status="submitted"` again there. So stamp `row.submitted_at = _utcnow()` in that one branch — covers submit + resubmit uniformly. `set_pending_approval` is the approval-send step, NOT a submit; it must NOT re-stamp.
+PR/SF reach `status="submitted"` **only** in `portal_service.submit_draft` (PR/SF branch). Resubmit-after-rejection sets `status="submitted"` again there. So stamp `row.submitted_at = _utcnow()` in that one branch - covers submit + resubmit uniformly. `set_pending_approval` is the approval-send step, NOT a submit; it must NOT re-stamp.
 
 System-created rows that never go through portal submit keep `submitted_at = NULL` (top date blank). Acceptable edge case.
 

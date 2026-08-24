@@ -51,7 +51,7 @@ function trackConsole(page: Page): { errors: string[] } {
 }
 
 async function navigateUserListViaSidebar(page: Page) {
-  // Sidebar group "User Management" — open then click leaf "Administrative Users".
+  // Sidebar group "User Management" - open then click leaf "Administrative Users".
   // Some menus group it under "Settings" depending on layout config; try both.
   const groupLabels = [/user management/i, /settings/i, /admin/i];
   for (const label of groupLabels) {
@@ -61,7 +61,7 @@ async function navigateUserListViaSidebar(page: Page) {
         await trigger.click({ timeout: 2_000 });
         break;
       } catch {
-        // ignore — try the next group
+        // ignore - try the next group
       }
     }
   }

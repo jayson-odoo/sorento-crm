@@ -1,10 +1,10 @@
-"""RAG / embedding company-scope end-to-end — AC-I4/I5 (owned-entity framing).
+"""RAG / embedding company-scope end-to-end - AC-I4/I5 (owned-entity framing).
 
 Complements the predicate/payload unit coverage in ``test_embedding_company_scope``
 with two live-DB, entity-level assertions:
 
   - AC-I5: mutating an OWNED entity (a Promotion) enqueues an embedding-queue row
-    whose payload carries the ENTITY's ``company_id`` — via the real
+    whose payload carries the ENTITY's ``company_id`` - via the real
     ``after_insert`` change listener + the multi-company auto-stamp, not the raw
     ``build_queue_payload`` helper. This is the source-company that the embedding
     worker later stamps onto ``embedding_documents`` / ``embedding_chunks``.
@@ -66,7 +66,7 @@ def mocha(db: Session) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# AC-I5 — owned-entity mutation enqueues an embedding row carrying company_id  #
+# AC-I5 - owned-entity mutation enqueues an embedding row carrying company_id  #
 # --------------------------------------------------------------------------- #
 def test_promotion_insert_enqueues_embedding_with_source_company(db, mocha):
     from app.models.marketing import Promotion
@@ -101,7 +101,7 @@ def test_promotion_insert_enqueues_embedding_with_source_company(db, mocha):
 
 
 # --------------------------------------------------------------------------- #
-# AC-I4 — a scoped semantic search never returns another company's chunk        #
+# AC-I4 - a scoped semantic search never returns another company's chunk        #
 # --------------------------------------------------------------------------- #
 @pytest.fixture()
 def emb_rows(db, mocha):

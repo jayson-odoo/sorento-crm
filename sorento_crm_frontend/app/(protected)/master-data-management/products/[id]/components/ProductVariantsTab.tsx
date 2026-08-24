@@ -25,9 +25,9 @@ import type { ProductVariantRef } from '../../types/product.types';
 import ProductVariantPickerDialog from './ProductVariantPickerDialog';
 
 interface ProductVariantsTabProps {
-  /** The current product's id — required for variant curation mutations. */
+  /** The current product's id - required for variant curation mutations. */
   productId: string;
-  /** The current product's code — used to highlight each child's distinguishing suffix. */
+  /** The current product's code - used to highlight each child's distinguishing suffix. */
   productCode: string;
   /** Parent product when this product is itself a variant; null for a base product. */
   variantOf?: ProductVariantRef | null;
@@ -42,7 +42,7 @@ const PRODUCT_BASE_PATH = '/master-data-management/products';
 /**
  * When the child code starts with the base code, dim the shared prefix and
  * bold the distinguishing suffix (e.g. SRTKT71SS **-BL**). Falls back to the
- * plain code when there is no clean prefix match — kept deliberately simple.
+ * plain code when there is no clean prefix match - kept deliberately simple.
  */
 function renderCode(childCode: string, baseCode: string) {
   if (baseCode && childCode.toLowerCase().startsWith(baseCode.toLowerCase())) {
@@ -132,7 +132,7 @@ export default function ProductVariantsTab({
         </p>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* Parent — only meaningful when this product is itself a variant */}
+        {/* Parent - only meaningful when this product is itself a variant */}
         <div>
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <h3 className="font-semibold">Variant of</h3>
@@ -184,7 +184,7 @@ export default function ProductVariantsTab({
               <div className="min-w-0 flex-1">
                 <div
                   className="font-medium truncate"
-                  title={`${variantOf.product_code} — ${variantOf.product_name}`}
+                  title={`${variantOf.product_code} - ${variantOf.product_name}`}
                 >
                   {variantOf.product_code}
                 </div>
@@ -195,12 +195,12 @@ export default function ProductVariantsTab({
             </Link>
           ) : (
             <p className="text-sm text-muted-foreground">
-              This is a base product — it is not a variant of another product.
+              This is a base product - it is not a variant of another product.
             </p>
           )}
         </div>
 
-        {/* Children — the variant list */}
+        {/* Children - the variant list */}
         <div>
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <h3 className="font-semibold">
@@ -246,7 +246,7 @@ export default function ProductVariantsTab({
                     <div className="min-w-0 flex-1">
                       <div
                         className="truncate"
-                        title={`${child.product_code} — ${child.product_name}`}
+                        title={`${child.product_code} - ${child.product_name}`}
                       >
                         {renderCode(child.product_code, productCode)}
                       </div>

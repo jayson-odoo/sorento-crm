@@ -1,10 +1,10 @@
-"""Form void — schema + state (UAC SCH-1..SCH-3).
+"""Form void - schema + state (UAC SCH-1..SCH-3).
 
 SCH-1: the reason quad (void_reason / voided_by / voided_at) exists on all three
        form models (the DB migration up/down is verified separately via alembic).
 SCH-2: a successful void sets status='voided', voided_by=actor, voided_at≈now,
        void_reason=text.
-SCH-3: void_reason is required, free-text >= 3 chars — blank / whitespace / short
+SCH-3: void_reason is required, free-text >= 3 chars - blank / whitespace / short
        -> 422 (enforced at the FormVoidRequest schema layer).
 
 Run: venv/bin/pytest tests/test_form_void_schema.py -q
@@ -47,7 +47,7 @@ def _patches(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# SCH-1 — columns present on all three form models
+# SCH-1 - columns present on all three form models
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("model", [PurchaseRequestHeader, StockInquiry, Complaint])
 def test_reason_quad_columns_exist(model):
@@ -56,7 +56,7 @@ def test_reason_quad_columns_exist(model):
 
 
 # --------------------------------------------------------------------------- #
-# SCH-2 — void writes status + reason quad
+# SCH-2 - void writes status + reason quad
 # --------------------------------------------------------------------------- #
 def test_void_sets_status_and_reason_quad(db):
     from app.services.procurement_service import PurchaseRequestService
@@ -73,7 +73,7 @@ def test_void_sets_status_and_reason_quad(db):
 
 
 # --------------------------------------------------------------------------- #
-# SCH-3 — reason required, >= 3 non-space chars -> 422
+# SCH-3 - reason required, >= 3 non-space chars -> 422
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("bad", [None, "", "   ", "ab", "  a "])
 def test_blank_or_short_reason_422(db, bad):
@@ -105,7 +105,7 @@ def test_valid_reason_trimmed_and_voids(db):
 
 
 # --------------------------------------------------------------------------- #
-# BAN-1 — detail DTO exposes voided_by_name (resolved, no UUID) + wa_phone + when
+# BAN-1 - detail DTO exposes voided_by_name (resolved, no UUID) + wa_phone + when
 # --------------------------------------------------------------------------- #
 def test_ban1_dto_fields_on_void_response(db):
     actor = H.new_user(db, name="Jane Voider")

@@ -1,4 +1,4 @@
-"""SCM M3 — reorder RUN JOB + endpoints (AC-M3.6/3.8/3.10/3.11 + auth).
+"""SCM M3 - reorder RUN JOB + endpoints (AC-M3.6/3.8/3.10/3.11 + auth).
 
 Drives ``reorder_run_service`` over CONTROLLED synthetic planning rows (a stock row
 makes a SKU×warehouse appear in ``scm.net_position_v``; a demand_stat row sets its
@@ -6,7 +6,7 @@ rate) inside the rolled-back SAVEPOINT the ``scm_app`` fixture provides. Proves:
 
   * create_run → run_reorder writes recommendations + sets 'completed' + run-log counts,
   * running→completed and running→failed transitions (failure recorded, worker survives),
-  * frozen-input reproducibility — a stored rec reproduces its ROP/qty via the pure engine,
+  * frozen-input reproducibility - a stored rec reproduces its ROP/qty via the pure engine,
   * a network run writes an allocation breakdown summing to the buy qty,
   * a no-supplier planning SKU that would buy emits an 'exception' rec (never skipped),
   * auth (POST needs scm.reorder.run; GET needs scm.dashboard.view).
@@ -154,7 +154,7 @@ def test_run_writes_recommendations_and_completes(scm_app):
 
 
 def test_rerun_creates_new_run_immutable_history(scm_app):
-    """A re-run creates a NEW run_id — prior runs are immutable history, never overwritten."""
+    """A re-run creates a NEW run_id - prior runs are immutable history, never overwritten."""
     _, db, _, _ = scm_app
     wid = _mk_warehouse(db, "M3W-IMMU")
     pid = _mk_product(db, "M3P-IMMU")
@@ -197,7 +197,7 @@ def test_run_failure_is_recorded_and_worker_survives(scm_app, monkeypatch):
 
 def test_frozen_inputs_reproduce_rop_and_qty(scm_app):
     """AC-M3.11: a completed buy rec's stored frozen inputs reproduce its ROP and
-    rounded qty via the pure engine — reproducible without stat versioning."""
+    rounded qty via the pure engine - reproducible without stat versioning."""
     _, db, _, _ = scm_app
     wid = _mk_warehouse(db, "M3W-FROZE")
     pid = _mk_product(db, "M3P-FROZE")
@@ -280,7 +280,7 @@ def test_network_run_no_buy_when_net_above_rop_below_oup(scm_app):
 
 
 def test_dead_cell_does_not_also_emit_a_buy(scm_app):
-    """#8: a cell classified for disposition (dead) must NOT also emit a buy — even when
+    """#8: a cell classified for disposition (dead) must NOT also emit a buy - even when
     its low net would otherwise trigger a reorder. Only the disposition rec is written."""
     _, db, _, _ = scm_app
     wid = _mk_warehouse(db, "M3W-DEAD")
@@ -329,7 +329,7 @@ def test_no_supplier_sku_emits_exception(scm_app):
 def test_endpoints_full_flow(scm_app):
     """POST launch → GET status (completed + summary) → GET recommendations (paged,
     frozen-input row shape, no UUIDs in display fields). The request no longer carries
-    ``buy_scope`` (M8-D5) — the run defaults to network, so a single-warehouse plan
+    ``buy_scope`` (M8-D5) - the run defaults to network, so a single-warehouse plan
     emits an aggregate (network) buy whose allocation names the warehouse."""
     app, db = _client(scm_app, "purchasing")
     wid = _mk_warehouse(db, "M3W-API")
@@ -372,7 +372,7 @@ def test_endpoints_full_flow(scm_app):
         # no UUIDs surface in display fields
         assert "-" not in str(row["sku"]) or not _looks_uuid(row["sku"])
 
-        # frozen derivation inputs power the plain-language explanation popup — the
+        # frozen derivation inputs power the plain-language explanation popup - the
         # endpoint surfaces them read-only from `inputs` (never recomputed on the FE).
         assert row["forecast_daily_demand"] is not None and row["forecast_daily_demand"] > 0
         assert row["lead_time_days"] is not None and row["lead_time_days"] > 0
@@ -396,7 +396,7 @@ def _looks_uuid(v) -> bool:
 
 
 def test_list_runs_newest_first_with_summary_and_pagination(scm_app):
-    """AC — run history: GET /reorder-runs returns runs newest-first, each with its
+    """AC - run history: GET /reorder-runs returns runs newest-first, each with its
     resolved warehouse codes/count + (once completed) the run-log summary counts, and
     a page envelope. Two completed runs → the second-created is listed first."""
     app, db = _client(scm_app, "purchasing")

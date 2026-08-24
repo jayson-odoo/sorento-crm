@@ -44,7 +44,7 @@ class ImagePart:
     ``mime`` must be a content type the active provider accepts
     (``image/png``, ``image/jpeg``, ``image/webp``; Gemini additionally takes
     ``image/heic`` and ``image/heif``). ``data_b64`` is raw
-    base64 with no ``data:`` prefix — each provider's ``chat`` adapter
+    base64 with no ``data:`` prefix - each provider's ``chat`` adapter
     wraps it in the native shape.
     """
 
@@ -386,7 +386,7 @@ class OpenAIProvider:
 
         completion = _create_chat_completion(client, kwargs)
 
-        # Defensive normalization — tests use simple stub objects.
+        # Defensive normalization - tests use simple stub objects.
         choice = completion.choices[0]
         msg = choice.message
         content = (getattr(msg, "content", None) or "")
@@ -604,7 +604,7 @@ def _convert_messages_to_anthropic(messages: list[dict]) -> list[dict]:
             out.append({"role": "assistant", "content": blocks})
             continue
 
-        # default: user message (or anything else) — pass through as text
+        # default: user message (or anything else) - pass through as text
         content = msg.get("content")
         if isinstance(content, str):
             out.append({"role": "user", "content": content})
@@ -645,7 +645,7 @@ class AnthropicProvider:
         system_text, rest = _split_system_messages(messages)
         # Structured-output: Anthropic has no response_format=json_schema. Force
         # a single tool whose input_schema IS the target schema and require it
-        # via tool_choice — the model's tool_use.input is the schema-valid object.
+        # via tool_choice - the model's tool_use.input is the schema-valid object.
         # We surface that object as ``content`` (JSON string) so the caller parses
         # it exactly like the OpenAI path.
         if json_schema is not None:
@@ -697,7 +697,7 @@ class AnthropicProvider:
         # validates the response is parseable JSON either way.
         if response_format and response_format.get("type") == "json_object":
             json_directive = (
-                "Return ONLY a single JSON object as the assistant message — "
+                "Return ONLY a single JSON object as the assistant message - "
                 "no prose, no code fences, no leading or trailing text."
             )
             system_text = f"{system_text}\n\n{json_directive}".strip()

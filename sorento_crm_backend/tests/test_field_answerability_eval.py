@@ -3,7 +3,7 @@
 Opt-in (RUN_LLM_EVALS=1) and self-discovering: for each form-SLA entity it picks
 a real record from the live DB (skips that entity if none), builds visible_text
 from the real columns the detail page shows, and asserts the bubble's answer is
-GROUNDED in the real value (case-insensitive token match) — not exact prose.
+GROUNDED in the real value (case-insensitive token match) - not exact prose.
 
 Why this shape (anti-overfit): we never hardcode expected answers; we assert the
 real field value appears. visible_text covers on-screen fields; the assembler
@@ -140,7 +140,7 @@ def test_absent_field_is_not_fabricated():
 
 def test_visible_text_answers_without_assembler():
     """Fan-out coverage: any detail page's visible fields are answerable through
-    the agent loop from visible_text alone — NO entity registration, NO assembler.
+    the agent loop from visible_text alone - NO entity registration, NO assembler.
     This is why the non-form entities (products, GRN, SPO, stock, promotion, …)
     need no new backend code. Proven here on a synthetic product screen.
     """
@@ -234,7 +234,7 @@ def test_fanout_visible_fields_answerable_on_real_data():
         specs.append((db.query(Attachment).filter(Attachment.original_filename.isnot(None)).first(),
                       [("File name", "original_filename"), ("Type", "mime_type")],
                       [("what is the file name", "original_filename")]))
-    if Order:  # "delivery orders" — has a catalog MCP tool; verifies prefer-visible nudge
+    if Order:  # "delivery orders" - has a catalog MCP tool; verifies prefer-visible nudge
         specs.append((db.query(Order).filter(Order.order_number.isnot(None)).first(),
                       [("Order number", "order_number"), ("Debtor", "debtor_name"),
                        ("Order type", "order_type")],

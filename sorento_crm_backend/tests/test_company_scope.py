@@ -1,6 +1,6 @@
 """Company-scope enforcement tests (multi-company data isolation).
 
-Security core — Group H of UAC-multi-company-isolation.md:
+Security core - Group H of UAC-multi-company-isolation.md:
   - AC-H1 leak test: UNSET -> 0 rows; single-company scope -> only that company;
     None -> all companies (across a representative set of owned models).
   - AC-H2 new-table guard: every model with a company_id column is a
@@ -14,7 +14,7 @@ Security core — Group H of UAC-multi-company-isolation.md:
 Runs against the local Postgres dev DB (a prod-copy) inside a nested transaction
 that is ALWAYS rolled back, so no real data is created. All test rows carry a
 ``zzscope-<suffix>`` / ``ZZSCOPE`` marker and are scoped by the two throwaway test
-company ids — no unscoped DELETE (the DB is the developer's real data).
+company ids - no unscoped DELETE (the DB is the developer's real data).
 """
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ pytestmark = pytest.mark.skipif(
     reason="SKIP_LIVE_DB_TESTS=1",
 )
 
-# Owned models exercised in the leak test — one per model file, none with
+# Owned models exercised in the leak test - one per model file, none with
 # __audit_track__ (keeps the flush free of audit side effects).
 REPRESENTATIVE = [
     (Brand, "brand_code", dict(brand_name="ZZSCOPE brand")),
@@ -263,10 +263,10 @@ def test_predicate_attachment_unset_is_null_only():
 #   - Infra/pipeline tables that snapshot a company_id but are NOT auto-filtered by
 #     the ORM listener: import_jobs (enqueue snapshot, worker re-establishes scope);
 #     embedding_documents / embedding_chunks (vector search filters company_id
-#     manually — the pipeline processes all companies).
+#     manually - the pipeline processes all companies).
 #   - Admin-listing tables with a MANUAL company filter (admin_listing_company_filter),
 #     deliberately NOT owned mixins so their other consumers (portal / public /
-#     workflow / worker / global audit listener) keep working under any scope —
+#     workflow / worker / global audit listener) keep working under any scope  - 
 #     only the staff listing is scoped: forms, import_logs, audit_logs.
 _COMPANY_ID_ALLOWLIST = {
     "user_companies",
@@ -448,7 +448,7 @@ def test_every_company_id_table_is_registered():
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------
-# NOTE: ``None`` is NOT in this list — a None-scope (system / all-companies, the
+# NOTE: ``None`` is NOT in this list - a None-scope (system / all-companies, the
 # n8n no-contact backward-compat path) owned-write now stamps the incumbent
 # company (Sorento) rather than rejecting; see the dedicated test below. Only a
 # genuinely-ambiguous scope (UNSET = resolver never ran / unresolved contact,
@@ -468,7 +468,7 @@ def test_system_write_without_company_is_rejected(scope):
 
 
 def test_none_scope_owned_write_stamps_incumbent_company():
-    """A None-scope (system/all-companies) owned write must NOT reject — it stamps
+    """A None-scope (system/all-companies) owned write must NOT reject - it stamps
     the incumbent (Sorento) so n8n no-contact write flows keep working."""
     from app.services.company_scope import DEFAULT_COMPANY_ID
 

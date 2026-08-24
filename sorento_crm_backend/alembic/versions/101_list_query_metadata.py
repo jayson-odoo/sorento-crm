@@ -128,9 +128,9 @@ def upgrade() -> None:
     ins_field(ro, "actual_delivery_date", "Actual delivery", "date", "order.actual_delivery_date", date_ops, 110)
     ins_field(ro, "order_type", "Order type", "string", "order.order_type", str_ops, 120)
     ins_field(ro, "remarks_cs", "Remarks CS", "string", "order.remarks_cs", str_ops, 130)
-    ins_field(ro, "line_product_id", "Line — product", "uuid", "line.product_id", uuid_ops, 200, line=True, exp_name="line_product_id")
-    ins_field(ro, "line_warehouse_id", "Line — warehouse", "uuid", "line.warehouse_id", uuid_ops, 210, line=True, exp_name="line_warehouse_id")
-    ins_field(ro, "line_quantity", "Line — quantity", "number", "line.quantity", num_ops, 220, line=True, exp_name="line_quantity")
+    ins_field(ro, "line_product_id", "Line - product", "uuid", "line.product_id", uuid_ops, 200, line=True, exp_name="line_product_id")
+    ins_field(ro, "line_warehouse_id", "Line - warehouse", "uuid", "line.warehouse_id", uuid_ops, 210, line=True, exp_name="line_warehouse_id")
+    ins_field(ro, "line_quantity", "Line - quantity", "number", "line.quantity", num_ops, 220, line=True, exp_name="line_quantity")
 
     rp = ins_resource("products", "Products", "Product list filter/export metadata")
     ins_field(rp, "product_code", "Product code", "string", "product.product_code", str_ops, 10)

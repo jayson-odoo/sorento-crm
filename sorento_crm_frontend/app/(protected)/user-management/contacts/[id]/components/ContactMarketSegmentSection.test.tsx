@@ -40,7 +40,7 @@ describe('ContactMarketSegmentSection', () => {
   it('renders the empty state when the contact has no segment', () => {
     useContactMarketSegments.mockReturnValue({ data: [], isLoading: false });
     renderWithClient(<ContactMarketSegmentSection contactId="c1" />);
-    expect(screen.getByText(/no market segment — matches all cs members/i)).toBeInTheDocument();
+    expect(screen.getByText(/no market segment - matches all cs members/i)).toBeInTheDocument();
   });
 
   it('renders badges for assigned segments (human-readable names)', () => {
@@ -65,7 +65,7 @@ describe('ContactMarketSegmentSection', () => {
     fireEvent.click(screen.getByLabelText(/edit market segment/i));
     fireEvent.click(screen.getByLabelText('Retail')); // uncheck
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
-    // No immediate mutation — confirmation must appear first.
+    // No immediate mutation - confirmation must appear first.
     expect(setMutate).not.toHaveBeenCalled();
     expect(screen.getByText(/this will unassign retail/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^confirm$/i }));

@@ -2,7 +2,7 @@
  * Turn a system key into the words a person uses.
  *
  * `dim_height` is what the database calls it and what the n8n parser is held to. It is
- * not what a human calls anything, and it had been leaking onto every screen — a
+ * not what a human calls anything, and it had been leaking onto every screen - a
  * product page listing "dim height" and "seat material" reads like a debug dump.
  *
  * The registry's own `label` is always better where one is to hand ("Height", "Finish
@@ -29,8 +29,8 @@ const SPECIAL: Record<string, string> = {
 };
 
 /**
- * `_self` is not a value. It holds the words that name the SPECIFICATION itself —
- * "bowl", "height", "deep" — as opposed to the words for one of its values. Rendered
+ * `_self` is not a value. It holds the words that name the SPECIFICATION itself  - 
+ * "bowl", "height", "deep" - as opposed to the words for one of its values. Rendered
  * through the generic path it came out as "Self", which reads like a value nobody can
  * find in the catalogue.
  */

@@ -5,7 +5,7 @@ every deploy so the CRM ranker and the n8n parser can never disagree about what 
 is called, and an edit there would be silently reverted.
 
 That left a dead end. Pointing a rule at a value the key does not have is rejected with
-"add the value to this specification first" — and there was no way to add one. The
+"add the value to this specification first" - and there was no way to add one. The
 instruction was impossible to follow for every shipped key, which is all but the ones
 staff created themselves.
 

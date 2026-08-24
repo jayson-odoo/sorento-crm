@@ -191,7 +191,7 @@ export default function SLATrackingDashboard() {
         </Button>
       </div>
 
-      {/* KPI Cards — all from conversation SLA tracking table */}
+      {/* KPI Cards - all from conversation SLA tracking table */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="pb-2">

@@ -1,5 +1,5 @@
 /**
- * Tests for StockInquiryNavigation — the thin per-resource nav wrapper that
+ * Tests for StockInquiryNavigation - the thin per-resource nav wrapper that
  * reads the active list query off the detail URL (parseDetailSearch), forwards
  * it to useStockInquiryNeighbours, and renders RecordNavigation in IDs mode.
  *

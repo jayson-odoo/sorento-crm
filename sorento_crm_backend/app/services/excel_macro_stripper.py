@@ -114,7 +114,7 @@ def extract_macro_template_xlsx(
       single-sheet workbook keeps its only sheet; multi-sheet without the
       template raises `MacroWorkbookError`.
     - `require_data=True` additionally raises `MacroWorkbookError` when the
-      kept sheet has no data rows below the header — macro workbooks whose
+      kept sheet has no data rows below the header - macro workbooks whose
       Template the user forgot to populate (run the macro) before uploading.
     Returns (bytes, filename, mime) with the `.xlsm` suffix and MIME rewritten
     to `.xlsx`.

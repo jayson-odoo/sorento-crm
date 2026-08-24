@@ -47,7 +47,7 @@ def test_workbook_with_overall_tracking_picks_overall_rows_not_daily(monkeypatch
     """When both sheets are present, the Overall Tracking sheet is the source.
 
     We patch ``openpyxl.load_workbook`` only to assert that the service then
-    reads the ``Overall Tracking`` sheet — without depending on the rest of
+    reads the ``Overall Tracking`` sheet - without depending on the rest of
     the import pipeline.
     """
     data = _build_workbook(

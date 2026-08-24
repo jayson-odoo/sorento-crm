@@ -31,8 +31,8 @@ export type OrderNeighboursListParams = DataGridApiFetchParams & {
 
 /**
  * Prev/next neighbours of an order within the active filtered+sorted list set.
- * Serializes the list query (search/sort) with `buildDataGridParams` — the same
- * serialization the list page uses — and threads the order-specific filters
+ * Serializes the list query (search/sort) with `buildDataGridParams` - the same
+ * serialization the list page uses - and threads the order-specific filters
  * (order_status_id, has_order_lines) so the backend honours filters identically.
  * `page`/`limit` are sent but ignored by the neighbours endpoint.
  */

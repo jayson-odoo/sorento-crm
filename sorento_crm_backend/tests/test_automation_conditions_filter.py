@@ -1,14 +1,14 @@
 """Integration tests for AutomationService._execute conditions_json filtering +
 expiry-batch stamping (promotion-expiry trigger).
 
-Mirrors tests/test_automation_service.py — runs against the Postgres dev DB,
+Mirrors tests/test_automation_service.py - runs against the Postgres dev DB,
 isolated by direct-engine cleanup, no SMTP send. Covers:
 
   - a Sorento conditions_json (accessLevels contains_any [sorento_*] OR name
     contains "Sorento") keeps ONLY Sorento promos; Cabana promos are filtered out;
   - empty conditions_json -> all promos flow;
   - a match carrying no fact_sources / an unset trigger keeps all (covered by the
-    empty-tree path — the promotion trigger always carries fact_sources);
+    empty-tree path - the promotion trigger always carries fact_sources);
   - stamp-first: kept promos get expiry_notified_at + a SHARED expiry_notify_batch_id
     before send; filtered-out promos are NOT stamped;
   - a re-run mints a FRESH batch id;
@@ -40,7 +40,7 @@ def _wipe():
     ignoring description).
 
     CRITICAL: every delete is SCOPED to this file's test rows. This DB is the
-    local prod-copy dev DB (per CLAUDE.md) — an unscoped ``DELETE FROM
+    local prod-copy dev DB (per CLAUDE.md) - an unscoped ``DELETE FROM
     automations`` here wipes the developer's real automations. Test automations
     are uniquely named with the ``(cond)`` marker; test promotions/templates use
     the ``CondPromo`` / ``tpl-cond-`` prefixes; notifications/runs are scoped by
@@ -115,7 +115,7 @@ def db() -> Iterator[Session]:
 
 
 # The promotion-expiry trigger matches EVERY active promo whose end_date is
-# exactly ``days_before`` out — including real promos on the shared prod-copy dev
+# exactly ``days_before`` out - including real promos on the shared prod-copy dev
 # DB. Push this file's test promos ~10 years out (and the automation's target to
 # match) so no real promo can ever collide with the assertions on match count.
 #
@@ -219,7 +219,7 @@ def _no_smtp(monkeypatch):
     monkeypatch.setattr(notification_email, "send_notification_email", lambda *a, **kw: None)
     monkeypatch.setattr(notification_email, "send_notification_email_multi", lambda *a, **kw: None)
     # Stub enqueue so the `notifications` queue's in-process immediate-drain
-    # daemon thread is never spawned — otherwise a lingering drainer flips a
+    # daemon thread is never spawned - otherwise a lingering drainer flips a
     # sibling shared-DB test's delivery rows pending -> queued (a known flake).
     # These tests assert on match/stamp/body, never on delivery status.
     monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **kw: None)
@@ -378,7 +378,7 @@ def test_grouped_ctx_carries_batch_link_and_id(db, monkeypatch):
     )
     assert notifs
     body = str(dict(getattr(notifs[0], "data") or {}).get("body_html") or "")
-    # The rendered body used {{ batch_link }} + {{ expiry_notify_batch_id }} — the
+    # The rendered body used {{ batch_link }} + {{ expiry_notify_batch_id }} - the
     # ctx must have carried both. batch_link ends with the batch id.
     assert str(batch_id) in body
     assert "expiry_notify_batch_id=" in body

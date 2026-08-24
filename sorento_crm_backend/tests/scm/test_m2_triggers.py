@@ -1,4 +1,4 @@
-"""SCM M2 — analytics TRIGGERS (plan §3): scheduled full run + on-GR hook.
+"""SCM M2 - analytics TRIGGERS (plan §3): scheduled full run + on-GR hook.
 
 Covers the two Phase-2 trigger deliverables:
   * the scheduled ``scm_analytics`` handler runs ``run_analytics`` and leaves a
@@ -40,12 +40,12 @@ def _pid(db, code):
 
 
 def _fake_task(metadata: dict | None):
-    """Minimal stand-in for a ScheduledTask row — only ``metadata_`` is read."""
+    """Minimal stand-in for a ScheduledTask row - only ``metadata_`` is read."""
     return types.SimpleNamespace(metadata_=metadata)
 
 
 # ---------------------------------------------------------------------------
-# 1. Scheduled full run — scm_analytics handler
+# 1. Scheduled full run - scm_analytics handler
 # ---------------------------------------------------------------------------
 
 def test_scheduled_handler_runs_analytics_and_logs_success(scm_app):
@@ -107,7 +107,7 @@ def test_scheduled_handler_writes_failed_row_on_exception(scm_app, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 2. On-GR hook — on_goods_receipt_posted
+# 2. On-GR hook - on_goods_receipt_posted
 # ---------------------------------------------------------------------------
 
 def test_on_gr_hook_refreshes_only_affected_pair(scm_app):

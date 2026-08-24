@@ -1,4 +1,4 @@
-"""Unit tests for the multi-modal capture core (ideation_media_service) — DC-1..DC-9.
+"""Unit tests for the multi-modal capture core (ideation_media_service) - DC-1..DC-9.
 
 Pure resolution logic: candidate extraction from a Respond List Messages payload,
 menu rendering, selection parsing, and the snapshot+caption pipeline with injected

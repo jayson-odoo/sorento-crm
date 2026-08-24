@@ -1,6 +1,6 @@
 """Cross-Entity Activity Timeline API.
 
-``GET /api/v1/audit/activity`` — a human-readable, label-resolved view over the
+``GET /api/v1/audit/activity`` - a human-readable, label-resolved view over the
 raw ``audit_logs`` table (see ``app.services.activity_service``). Auth-only, same
 as the Audit Logs listing; no bespoke permission slug.
 """
