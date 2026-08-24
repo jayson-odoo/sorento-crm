@@ -337,11 +337,11 @@ export function SidebarMenu() {
     return <AccordionMenuLabel key={index}>{item.heading}</AccordionMenuLabel>;
   };
 
-  const adminHeadingIndex = useMemo(
-    () => effectiveMenu.findIndex((item) => item.heading === 'ADMINISTRATION'),
+  const salesHeadingIndex = useMemo(
+    () => effectiveMenu.findIndex((item) => item.heading === 'SALES'),
     [effectiveMenu]
   );
-  const indexToSplit = adminHeadingIndex >= 0 ? adminHeadingIndex : effectiveMenu.length;
+  const indexToSplit = salesHeadingIndex >= 0 ? salesHeadingIndex : effectiveMenu.length;
   const menuBefore = useMemo(() => effectiveMenu.slice(0, indexToSplit), [effectiveMenu, indexToSplit]);
   const menuAfter = useMemo(() => effectiveMenu.slice(indexToSplit), [effectiveMenu, indexToSplit]);
 

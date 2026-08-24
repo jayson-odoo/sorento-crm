@@ -497,25 +497,61 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
 
-  { heading: 'CUSTOMER SERVICE' },
+  { heading: 'OPERATIONS' },
   {
-    title: 'Customer Service',
+    title: 'Complaint Management',
+    icon: AlertCircle,
+    moduleKey: 'complaints',
+    children: [
+      {
+        title: 'Complaints',
+        path: '/complaint-management/complaints',
+      },
+      {
+        title: 'Root Causes',
+        path: '/complaint-management/complaint-root-causes',
+        permission: 'master_data.complaint_root_causes.view',
+      },
+      {
+        title: 'Resolutions',
+        path: '/complaint-management/complaint-resolutions',
+        permission: 'master_data.complaint_resolutions.view',
+      },
+    ],
+  },
+  {
+    title: 'SLA Management',
     icon: Clock,
     moduleKey: 'sla',
     children: [
+      {
+        title: 'SLA Policies',
+        path: '/sla-management/sla-policies',
+      },
       {
         title: 'Conversations',
         path: '/sla-management/conversations',
         permission: 'sla_management.conversations.view',
       },
       {
+        title: 'Conversation SLA Tracking',
+        path: '/sla-management/conversation-sla-tracking',
+      },
+      {
+        title: 'Form SLA Tracking',
+        path: '/sla-management/form-sla-tracking',
+      },
+      {
         title: 'My Team Tasks',
         path: '/sla-management/team-pending',
       },
       {
-        title: 'KPI Dashboard',
-        path: '/sla-management/kpi-dashboard',
-        permission: 'sla.kpi.view',
+        title: 'Form SLA Configuration',
+        path: '/sla-management/form-sla-config',
+      },
+      {
+        title: 'SLA Event Logs',
+        path: '/sla-management/escalation-logs',
       },
       {
         title: 'Message Snippets',
@@ -523,80 +559,49 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'sla_management.message_snippets.view',
       },
       {
-        title: 'Complaints',
-        moduleKey: 'complaints',
-        children: [
-          {
-            title: 'Complaints',
-            path: '/complaint-management/complaints',
-          },
-          {
-            title: 'Root Causes',
-            path: '/complaint-management/complaint-root-causes',
-            permission: 'master_data.complaint_root_causes.view',
-          },
-          {
-            title: 'Resolutions',
-            path: '/complaint-management/complaint-resolutions',
-            permission: 'master_data.complaint_resolutions.view',
-          },
-        ],
-      },
-      {
-        title: 'SLA',
-        children: [
-          {
-            title: 'SLA Policies',
-            path: '/sla-management/sla-policies',
-          },
-          {
-            title: 'Conversation SLA Tracking',
-            path: '/sla-management/conversation-sla-tracking',
-          },
-          {
-            title: 'Form SLA Tracking',
-            path: '/sla-management/form-sla-tracking',
-          },
-          {
-            title: 'Form SLA Configuration',
-            path: '/sla-management/form-sla-config',
-          },
-          {
-            title: 'SLA Event Logs',
-            path: '/sla-management/escalation-logs',
-          },
-        ],
+        title: 'KPI Dashboard',
+        path: '/sla-management/kpi-dashboard',
+        permission: 'sla.kpi.view',
       },
     ],
   },
-
-  { heading: 'WORKSPACE' },
   {
-    title: 'Forms',
-    icon: FileText,
+    title: 'Project Sales Admin',
+    icon: Briefcase,
+    moduleKey: 'procurement',
     children: [
-      {
-        title: 'Forms',
-        path: '/forms-management/forms',
-        moduleKey: 'forms',
-      },
-      {
-        title: 'Definitions',
-        path: '/workflow-forms-management/definitions',
-        permission: 'workflow_forms.definitions.view',
-        moduleKey: 'workflow_forms',
-      },
       {
         title: 'Purchase Requests',
         path: '/procurement-management/purchase-requests',
         permission: 'procurement.purchase_requests.view',
-        moduleKey: 'procurement',
       },
       {
         title: 'Sponsorship Forms',
         path: '/procurement-management/sponsorship-forms',
         permission: 'procurement.sponsorship_forms.view',
-        moduleKey: 'procurement',
+      },
+    ],
+  },
+  {
+    title: 'Forms Management',
+    icon: FileText,
+    moduleKey: 'forms',
+    children: [
+      {
+        title: 'Forms',
+        path: '/forms-management/forms',
+      },
+    ],
+  },
+  {
+    title: 'Workflow Forms',
+    icon: GitBranch,
+    moduleKey: 'workflow_forms',
+    children: [
+      {
+        title: 'Definitions',
+        path: '/workflow-forms-management/definitions',
+        permission: 'workflow_forms.definitions.view',
       },
     ],
   },

@@ -49,9 +49,7 @@ function findLeaf(items: MenuConfig, title: string): MenuItem | undefined {
  * converted from a leaf into a sub-group container (Outgoing Mails) with
  * Email Outbox and Respond Outbox as children.
  */
-const INTENTIONALLY_REMOVED_PATHS = new Set([
-  '/system-management/outgoing-mails',
-]);
+const INTENTIONALLY_REMOVED_PATHS = new Set<string>([]);
 
 /** Snapshot of every leaf path from the pre-reorganisation MENU_SIDEBAR. */
 const OLD_PATHS: string[] = [
@@ -321,26 +319,39 @@ describe('filterOrphanHeadings', () => {
 // ---------------------------------------------------------------------------
 
 describe('menu.config - section headings', () => {
-  it('has exactly 7 headings in order', () => {
+  it('has exactly 6 headings in order', () => {
     const headings = MENU_SIDEBAR.filter((i) => i.heading).map((i) => i.heading);
     expect(headings).toEqual([
       'OVERVIEW',
       'SALES',
       'SUPPLY CHAIN',
       'CATALOGUE',
-      'CUSTOMER SERVICE',
-      'WORKSPACE',
+      'OPERATIONS',
       'ADMINISTRATION',
     ]);
   });
 });
 
-describe('menu.config - Complaints sub-group has moduleKey', () => {
-  it('complaints sub-group under Customer Service has moduleKey complaints', () => {
-    const cs = findGroup(MENU_SIDEBAR, 'Customer Service');
-    expect(cs).toBeDefined();
-    const complaints = findSubGroup(cs!, 'Complaints');
+describe('menu.config - Complaint Management', () => {
+  it('is a standalone group with moduleKey complaints', () => {
+    const complaints = findGroup(MENU_SIDEBAR, 'Complaint Management');
     expect(complaints).toBeDefined();
     expect(complaints!.moduleKey).toBe('complaints');
+  });
+});
+
+describe('menu.config - SLA Management', () => {
+  it('is a standalone group with moduleKey sla', () => {
+    const sla = findGroup(MENU_SIDEBAR, 'SLA Management');
+    expect(sla).toBeDefined();
+    expect(sla!.moduleKey).toBe('sla');
+  });
+});
+
+describe('menu.config - Project Sales Admin', () => {
+  it('is a standalone group with moduleKey procurement', () => {
+    const psa = findGroup(MENU_SIDEBAR, 'Project Sales Admin');
+    expect(psa).toBeDefined();
+    expect(psa!.moduleKey).toBe('procurement');
   });
 });
