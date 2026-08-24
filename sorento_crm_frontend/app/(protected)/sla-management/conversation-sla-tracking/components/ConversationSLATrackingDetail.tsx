@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -129,8 +129,7 @@ export default function ConversationSLATrackingDetail({
   const [markResolvedDialogOpen, setMarkResolvedDialogOpen] = useState(false);
   const [escalateDialogOpen, setEscalateDialogOpen] = useState(false);
   const [escalateReason, setEscalateReason] = useState('');
-  const _chatParam = useSearchParams().get('chat');
-  const [conversationSheetOpen, setConversationSheetOpen] = useState(_chatParam === '1');
+  const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
   const [selectedAssigneeId, setSelectedAssigneeId] = useState('');
   const [tierStartedLocal, setTierStartedLocal] = useState('');
   const [initiatedLocal, setInitiatedLocal] = useState('');

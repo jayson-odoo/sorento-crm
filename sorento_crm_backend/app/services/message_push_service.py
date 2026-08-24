@@ -40,8 +40,7 @@ logger = logging.getLogger(__name__)
 # Contract note recorded in the UAC beside AC-M11.
 INBOUND_TYPE = "incoming"
 
-TRACKING_LINK = "/sla-management/conversation-sla-tracking"
-_CHAT_SUFFIX = "?chat=1"
+CONVERSATIONS_LINK = "/sla-management/conversations"
 
 # The lock screen shows about this much anyway, and the rest is a battery cost.
 BODY_MAX_CHARS = 120
@@ -157,14 +156,7 @@ def build_message_push(db: Session, row) -> Optional[MessagePush]:
     )
 
     trackings = _open_conversation_trackings(db, contact) if contact is not None else []
-    # An `all_contacts` recipient who owns none of these tickets lands on the most
-    # recently updated open one, or on the contact-filtered list when none is open
-    # (the list already reads `?contact=` - no new route needed). AC-M14a.
-    fallback_link = (
-        f"{TRACKING_LINK}/{trackings[0].id}{_CHAT_SUFFIX}"
-        if trackings
-        else f"{TRACKING_LINK}?contact={respond_io_id}"
-    )
+    link = f"{CONVERSATIONS_LINK}?contact={respond_io_id}"
 
     # Candidate -> (link, how they earned it). Built in precedence order so the
     # first offer for a user wins: their own ticket beats coverage beats the
@@ -178,11 +170,7 @@ def build_message_push(db: Session, row) -> Optional[MessagePush]:
     for tracking in trackings:
         assignee = str(getattr(tracking, "assigned_to_id", None) or "")
         if not assignee:
-            # An unassigned thread pushes only `all_contacts` users. No team
-            # fallback and no tier walk: an unassigned thread is an SLA problem,
-            # and the SLA system raises it through its own events (AC-M10b).
             continue
-        link = f"{TRACKING_LINK}/{tracking.id}{_CHAT_SUFFIX}"
         offers.append((assignee, link, _SCOPES_HEARING_OWN_ASSIGNMENT))
         for coverer in coverage.active_subscribers_for(assignee):
             coverage_offers.append((str(coverer), link, _SCOPES_HEARING_COVERAGE))
@@ -195,7 +183,7 @@ def build_message_push(db: Session, row) -> Optional[MessagePush]:
         .all()
     ]
     offers.extend(
-        (uid, fallback_link, frozenset({SCOPE_ALL_CONTACTS})) for uid in all_contacts_ids
+        (uid, link, frozenset({SCOPE_ALL_CONTACTS})) for uid in all_contacts_ids
     )
 
     scopes = _scopes_for(db, {user_id for user_id, _, _ in offers})
