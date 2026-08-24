@@ -1010,3 +1010,55 @@ def test_ac_c4_byte_identical_empty_result_null_lookup_companies():
     assert present_response(
         "crm_master_products_list", json.dumps(with_null)
     ) == present_response("crm_master_products_list", json.dumps(without_key))
+
+
+# --- QS-C8: summary + pagination passthrough (order-quantity-summary) -----------
+
+
+_QS_SUMMARY = {
+    "scope": "filter", "row_count": 35, "order_count": 35, "delivered_count": 33,
+    "pending_count": 2, "customers": ["ECO WORLD SDN BHD"], "customer_count": 1,
+    "delivered_from": "2026-03-02", "delivered_to": "2026-07-15",
+    "products": [{"product_code": "SRTWC8605", "delivered_quantity": 48, "pending_quantity": 12}],
+}
+
+_QS_ROW = {"order_number": "202603-0412", "debtor_name": "ECO WORLD SDN BHD",
+           "order_date": "2026-03-01", "actual_delivery_date": "2026-03-02",
+           "matched_products": [{"product_code": "SRTWC8605", "quantity": 10}]}
+
+
+def test_qs_c8_summary_and_pagination_pass_through_untouched():
+    out = env("crm_order_management_orders_by_product_list", {
+        "data": [_QS_ROW],
+        "pagination": {"total": 35, "page": 1, "limit": 20},
+        "summary": _QS_SUMMARY,
+    })
+    assert out["summary"] == _QS_SUMMARY
+    assert out["pagination"] == {"total": 35, "page": 1, "limit": 20}
+    # the rows themselves render exactly as before
+    assert out["items"][0]["title"] == "202603-0412"
+
+
+def test_qs_c8_orders_list_passes_summary_too():
+    out = env("crm_order_management_orders_list", {
+        "data": [{**_QS_ROW, "lines": []}],
+        "pagination": {"total": 1, "page": 1, "limit": 20},
+        "summary": {**_QS_SUMMARY, "row_count": 1, "order_count": 1},
+    })
+    assert out["summary"]["row_count"] == 1
+
+
+def test_qs_c8_summary_omitted_not_null_when_absent():
+    out = env("crm_order_management_orders_by_product_list", {"data": [_QS_ROW]})
+    assert "summary" not in out
+
+
+def test_qs_c8_summary_omitted_when_explicitly_null():
+    out = env("crm_order_management_orders_by_product_list", {"data": [_QS_ROW], "summary": None})
+    assert "summary" not in out
+
+
+def test_qs_c6_by_product_catalog_accepts_order_status():
+    from sorento_crm_mcp.catalog import CATALOG
+    spec = next(s for s in CATALOG if s.name == "crm_order_management_orders_by_product_list")
+    assert "order_status" in spec.query_params

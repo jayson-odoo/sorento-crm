@@ -104,6 +104,11 @@ _PASSTHROUGH_KEYS = (
     # this" from "it has not happened yet" - so it guesses, and it guesses the
     # second one out loud.
     "field_access",
+    # Filter-wide measures for list answers (backend `stamp_order_summary`), and
+    # the page geometry the consumer needs to say "latest 20 of 35". Neither is
+    # interpreted here: the backend computes, n8n presents. Absent when absent.
+    "summary",
+    "pagination",
 )
 
 

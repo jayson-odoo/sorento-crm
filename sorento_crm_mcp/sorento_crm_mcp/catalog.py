@@ -515,7 +515,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (
             "page", "limit", "product_ids", "customer_ids", "transporter_ids",
-            "actual_delivery_date_from", "actual_delivery_date_to", "sort", "dir",
+            "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "sort", "dir",
             "contact_id", "space_id",
         ),
         domain="orders",

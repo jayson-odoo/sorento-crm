@@ -571,6 +571,14 @@ async def get_orders_by_product(
         None,
         description="Filter by actual delivery date: 'yes' = has date, 'no' = missing date, omit = all",
     ),
+    order_status: Optional[str] = Query(
+        None,
+        description=(
+            "Delivery bucket filter, same semantics as the orders list: 'outstanding' = "
+            "orders NOT yet delivered, 'delivered' = status delivered/completed AND "
+            "actual_delivery_date set, omit/null = all."
+        ),
+    ),
     order_date_from: Optional[str] = Query(
         None,
         description=(
@@ -648,6 +656,7 @@ async def get_orders_by_product(
             product_query=product_query,
             product_id=product_id,
             has_actual_delivery_date=has_actual_delivery_date,
+            order_status=order_status,
             order_date_from=_parse_flex_date(order_date_from),
             order_date_to=_parse_flex_date(order_date_to, end_of_day=True),
             actual_delivery_date_from=_parse_flex_date(actual_delivery_date_from),

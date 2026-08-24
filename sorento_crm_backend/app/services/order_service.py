@@ -49,6 +49,174 @@ DATE_RELAX_LIMIT = 3
 DELIVERED_STATUS_CODES = ("delivered", "completed")
 
 
+def _delivered_status_ids(db) -> list:
+    """Ids of the order statuses that count as delivered (see DELIVERED_STATUS_CODES)."""
+    return [
+        s.id
+        for s in db.query(OrderStatus.id)
+        .filter(func.lower(OrderStatus.status_code).in_(DELIVERED_STATUS_CODES))
+        .all()
+    ]
+
+
+def _delivered_clause(delivered_status_ids: list):
+    """The canonical delivered predicate: delivered/completed status AND a set date.
+
+    With no delivered statuses configured nothing is delivered (``false()``), so a
+    "delivered" bucket returns no rows and a summary counts zero delivered.
+    """
+    if not delivered_status_ids:
+        return false()
+    return and_(
+        Order.order_status_id.in_(delivered_status_ids),
+        Order.actual_delivery_date.is_not(None),
+    )
+
+
+def _order_status_bucket_filter(db, order_status: Optional[str]):
+    """Translate the ``order_status`` bucket ('outstanding' | 'delivered') into a
+    filter clause, or None when the bucket is absent / unrecognised / a no-op.
+
+    Shared by ``list_orders`` and ``list_orders_by_product`` so the two order
+    tools cannot disagree on what "delivered" means (4,832 orders carried a
+    delivery date under a non-delivered status on 2026-08-24 - a date-only
+    predicate and this one are NOT the same filter).
+    """
+    bucket = (order_status or "").strip().lower()
+    if bucket not in ("outstanding", "delivered"):
+        return None
+    delivered_status_ids = _delivered_status_ids(db)
+    if bucket == "delivered":
+        return _delivered_clause(delivered_status_ids)
+    if not delivered_status_ids:
+        # outstanding = everything qualifies; add no filter.
+        return None
+    return or_(
+        Order.order_status_id.is_(None),
+        Order.order_status_id.not_in(delivered_status_ids),
+        Order.actual_delivery_date.is_(None),
+    )
+
+
+def _plain_number(v):
+    """Decimal/float -> int when integral, else float. None stays None."""
+    if v is None:
+        return None
+    try:
+        d = Decimal(str(v))
+    except Exception:
+        return v
+    if d == d.to_integral_value():
+        return int(d)
+    return float(d)
+
+
+def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> None:
+    """Stamp ``payload["summary"]`` - measures over the WHOLE filter, never the page.
+
+    ``filtered_q`` is the list query AFTER every filter and BEFORE offset/limit
+    (ordering is stripped here). External/agent callers see at most 20 rows of
+    ``data``; a consumer that summed those rows would state a wrong total for
+    exactly the accounts that ask (81 customer x product pairs exceed 20 DOs).
+    So the numbers are computed in SQL over the same predicate the rows came from.
+
+    Shape (absent-not-null everywhere, like ``lookup_companies``)::
+
+        {"scope": "filter", "row_count": 35,
+         "order_count": 35, "delivered_count": 33, "pending_count": 2,
+         "customers": ["ECO WORLD SDN BHD"], "customer_count": 1,
+         "delivered_from": "2026-03-02", "delivered_to": "2026-07-15",
+         "products": [{"product_code": "SRTWC8605",
+                       "delivered_quantity": 48, "pending_quantity": 12}]}
+
+    ``products`` is present only when ``product_ids`` (the product narrower the
+    caller actually applied) is given - a quantity summed across unrelated
+    products is not a number anyone asked for. ``delivered_from/to`` are present
+    only when something was delivered. Delivered = the canonical predicate
+    (``_delivered_clause``), pending = its negation.
+
+    Best-effort: any failure warns and leaves the payload untouched, so a list
+    answer never dies because its headline could not be computed. An empty
+    result gets no summary at all.
+    """
+    try:
+        ids_sq = (
+            filtered_q.order_by(None)
+            .with_entities(Order.id)
+            .distinct()
+            .subquery()
+        )
+        in_ids = Order.id.in_(db.query(ids_sq.c.id))
+        delivered = _delivered_clause(_delivered_status_ids(db))
+
+        total, n_delivered, d_from, d_to = db.query(
+            func.count(Order.id),
+            func.count(Order.id).filter(delivered),
+            func.min(Order.actual_delivery_date).filter(delivered),
+            func.max(Order.actual_delivery_date).filter(delivered),
+        ).filter(in_ids).one()
+        total = int(total or 0)
+        if total == 0:
+            return
+        n_delivered = int(n_delivered or 0)
+
+        name_col = func.btrim(func.coalesce(Order.debtor_name, Customer.customer_name))
+        name_rows = (
+            db.query(name_col)
+            .select_from(Order)
+            .outerjoin(Customer, Customer.id == Order.customer_id)
+            .filter(in_ids)
+            .filter(name_col.is_not(None), name_col != "")
+            .distinct()
+            .order_by(name_col.asc())
+            .limit(50)
+            .all()
+        )
+        names = [r[0] for r in name_rows]
+
+        summary: dict[str, Any] = {
+            "scope": "filter",
+            "row_count": total,
+            "order_count": total,
+            "delivered_count": n_delivered,
+            "pending_count": total - n_delivered,
+            "customers": names[:3],
+            "customer_count": len(names),
+        }
+        if n_delivered and d_from is not None and d_to is not None:
+            summary["delivered_from"] = d_from.isoformat()
+            summary["delivered_to"] = d_to.isoformat()
+
+        pids = [str(p) for p in (product_ids or []) if p]
+        if pids:
+            prod_rows = (
+                db.query(
+                    Product.product_code,
+                    func.sum(OrderLine.quantity).filter(delivered),
+                    func.sum(OrderLine.quantity).filter(~delivered),
+                )
+                .select_from(OrderLine)
+                .join(Order, Order.id == OrderLine.order_id)
+                .join(Product, Product.id == OrderLine.product_id)
+                .filter(in_ids)
+                .filter(OrderLine.product_id.in_(pids))
+                .group_by(Product.product_code)
+                .order_by(Product.product_code.asc())
+                .all()
+            )
+            summary["products"] = [
+                {
+                    "product_code": code,
+                    "delivered_quantity": _plain_number(dq) or 0,
+                    "pending_quantity": _plain_number(pq) or 0,
+                }
+                for code, dq, pq in prod_rows
+            ]
+        payload["summary"] = summary
+    except Exception as exc:  # pragma: no cover - best-effort by contract
+        logger.warning("stamp_order_summary skipped: %s", exc)
+
+
 class OrderService:
     """Service for order operations."""
     
@@ -239,34 +407,9 @@ class OrderService:
         # canonical one: a delivered/completed status code AND a set actual_delivery_date
         # (so a "New Order" with a stray delivery date reads as outstanding, not
         # delivered). Outstanding = the null-safe negation.
-        bucket = (order_status or "").strip().lower()
-        if bucket in ("outstanding", "delivered"):
-            delivered_status_ids = [
-                s.id
-                for s in self.db.query(OrderStatus.id)
-                .filter(func.lower(OrderStatus.status_code).in_(DELIVERED_STATUS_CODES))
-                .all()
-            ]
-            if not delivered_status_ids:
-                # No delivered/completed statuses configured: nothing is delivered.
-                if bucket == "delivered":
-                    filters.append(false())
-                # outstanding → everything qualifies; add no filter.
-            elif bucket == "delivered":
-                filters.append(
-                    and_(
-                        Order.order_status_id.in_(delivered_status_ids),
-                        Order.actual_delivery_date.is_not(None),
-                    )
-                )
-            else:  # outstanding = NOT delivered (null-safe)
-                filters.append(
-                    or_(
-                        Order.order_status_id.is_(None),
-                        Order.order_status_id.not_in(delivered_status_ids),
-                        Order.actual_delivery_date.is_(None),
-                    )
-                )
+        bucket_clause = _order_status_bucket_filter(self.db, order_status)
+        if bucket_clause is not None:
+            filters.append(bucket_clause)
 
         hol = (has_order_lines or "").strip().lower()
         if hol == "yes":
@@ -408,6 +551,7 @@ class OrderService:
             # prioritize structured filters instead of returning a false empty result.
             q = base_q
             total = q.count()
+        summary_q = q  # the rows' own filter, before sort / offset / limit
 
         # Nullable columns: use nulls_last so NULLs don't break sort order
         nullable_sort_fields = {
@@ -492,6 +636,7 @@ class OrderService:
             },
             "empty": total == 0
         }
+        stamp_order_summary(self.db, payload, summary_q, product_ids=_product_uuid_filter)
         # Per-company labelling when the lookup spans more than one company - on the
         # empty path too, so an empty answer can name the companies searched.
         stamp_lookup_companies(
@@ -1097,8 +1242,13 @@ class OrderService:
         product_ids: Optional[list[str]] = None,
         customer_ids: Optional[list[str]] = None,
         transporter_ids: Optional[list[str]] = None,
+        order_status: Optional[str] = None,
     ):
         """List distinct orders matched by product search.
+
+        ``order_status`` is the same 'outstanding' | 'delivered' bucket as
+        ``list_orders`` (canonical delivered predicate), so the two order tools
+        agree on what delivered means.
 
         `entities` is the single-bag entity filter (see list_orders). At least one
         entity must resolve to a product - the endpoint is product-centric and falls
@@ -1278,6 +1428,10 @@ class OrderService:
         elif hadd == "no":
             filters.append(Order.actual_delivery_date.is_(None))
 
+        bucket_clause = _order_status_bucket_filter(self.db, order_status)
+        if bucket_clause is not None:
+            filters.append(bucket_clause)
+
         if order_date_from is not None:
             filters.append(Order.order_date >= order_date_from)
 
@@ -1412,6 +1566,7 @@ class OrderService:
             # General fallback for noisy intent-like query text.
             q = base_q
             total = q.count()
+        summary_q = q  # the rows' own filter, before offset / limit
         offset = (page - 1) * limit
         orders = q.offset(offset).limit(limit).all()
 
@@ -1464,6 +1619,12 @@ class OrderService:
             },
             "empty": total == 0,
         }
+        stamp_order_summary(
+            self.db,
+            payload,
+            summary_q,
+            product_ids=[*(_product_uuid_filter or []), *(product_ids or [])],
+        )
         # Per-company labelling when the lookup spans more than one company - on the
         # empty path too, so an empty answer can name the companies searched. Both
         # the typed uuid filter and the ids resolved from free-text product tokens
