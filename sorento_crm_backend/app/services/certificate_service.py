@@ -235,6 +235,35 @@ class CertificateService:
             .first()
         )
 
+    def find_by_revision_attachment(self, attachment_id: Any) -> tuple[Optional[Certificate], bool]:
+        """The certificate this attachment is a revision of, and whether it is CURRENT.
+
+        ``product_attachments`` rows for such an attachment are a projection of
+        ``certificate_products`` x the current revision, so any surface that links
+        or unlinks one by hand has to author coverage instead - otherwise the next
+        ``reconcile`` sweeps its row away. Returns ``(None, False)`` for an
+        ordinary attachment, which keeps the plain linking path untouched.
+        """
+        if not attachment_id:
+            return None, False
+        revision = (
+            self.db.query(CertificateRevision)
+            .filter(CertificateRevision.attachment_id == str(attachment_id))
+            .order_by(CertificateRevision.is_current.desc(), CertificateRevision.id)
+            .first()
+        )
+        if revision is None:
+            return None, False
+        cert = (
+            self.db.query(Certificate)
+            .filter(Certificate.id == revision.certificate_id)
+            .first()
+        )
+        if cert is None:
+            return None, False
+        current = self.get_current_revision(cert)
+        return cert, bool(current is not None and str(current.id) == str(revision.id))
+
     @staticmethod
     def _identity_expression():
         return func.upper(
