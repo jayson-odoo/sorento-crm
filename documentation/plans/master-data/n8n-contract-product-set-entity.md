@@ -429,9 +429,35 @@ onto every member line - not split across members, not scaled by `ProductSetMemb
 many complete sets" versus "how many of this one part," so scaling would invent a number nobody
 on the slip actually wrote. See the evidence doc for the worked example and the full reasoning.
 
+**Decided, on the user's explicit call: the substring tier (tier 4 in Surface 3/4's numbering)
+also applies here, not just set expansion.** Packing list create used to be exact-match-only;
+routing it through the shared resolver means a code that is merely a SUBSTRING of one or more
+real product codes now also fans out, exactly the way it already does for product attachments
+(Surface 3) and, as of this feature, promotions (Surface 4). The user was offered a
+packing-list-specific carve-out - keep set expansion but drop the substring tier here, since
+this surface is the one where a wrong match has the most concrete cost - and chose to keep the
+helper identical across every surface instead: one helper, one behaviour (UAC D11).
+
+**State the risk plainly, because this is the surface where it bites hardest.** On a product
+attachment or a promotion, a wrong substring match is a bad link. On a packing list it creates
+a receiving line, so it inflates on-hand stock for the wrong SKU. Using Surface 4's own real
+example: a supplier's packing list naming `WC7601` (a partial code, not a real SKU) now matches
+all 5 real sibling SKUs it is a substring of in the live catalogue
+(`CWC7601-P-RL`, `CWC7601-S`, `CWC7601-S-200-RL`, `CWC7601-S-300-RL`, `CWC7601-S-ECO`) and
+creates a receiving line for EACH ONE, every line carrying the FULL submitted quantity
+unscaled - not divided across the 5 matches. Five phantom receipts, not one. This is a
+deliberate, accepted risk, not an oversight: it was flagged as risky by the person building
+this rather than shipped silently, and the user ruled on it in favour of consistency across
+surfaces. Full reasoning: `PLAN-product-sets.md` section 5.
+
 **n8n action: if a supplier's packing list ever prints a set/flyer code instead of a real SKU,
 it now creates a line for every member at the code's own stated quantity - confirm that is the
-receiving behaviour you want before this deploys.**
+receiving behaviour you want before this deploys. If a packing list line ever carries a short
+or partial code that happens to be a substring of several real product codes (the `WC7601`
+class of input, not a genuine set code), the same call now creates one receiving line per
+matching SKU, each at the line's full stated quantity, with no scaling or split - confirm your
+upstream data never produces a partial code on this surface, since the CRM will not catch it
+for you.**
 
 ---
 

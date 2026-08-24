@@ -297,6 +297,19 @@ not have shown a difference in THIS example, but the code does not scale regardl
 slip says "how many complete sets" versus "how many of this one part," so multiplying by a per-set
 count would be inventing a number nobody wrote on the document).
 
+**The substring-tier question, decided, not open.** Command 5 above shows a genuine set code
+fanning out to its members. It does not, by itself, show what happens when a packing-list line
+carries a code that is merely a SUBSTRING of several real product codes and not a set code at
+all - that risk is real and was raised, not overlooked: routing packing lists through the same
+shared resolver means they gain the substring tier too, and on this surface a wrong match
+creates a receiving line, inflating on-hand stock for the wrong SKU. The user was asked whether
+to carve packing lists out of the substring tier and chose to keep the helper identical across
+every surface instead, accepting the risk explicitly. This is settled, not a caveat still
+waiting on an answer. Full reasoning and the worked `WC7601` example (5 sibling SKUs, one
+receiving line each, full quantity on every line):
+`documentation/plans/master-data/PLAN-product-sets.md` section 5 and
+`documentation/plans/master-data/n8n-contract-product-set-entity.md` Surface 5.
+
 ## 6. A member code alone - it does NOT name its parent set (D13)
 
 ```bash

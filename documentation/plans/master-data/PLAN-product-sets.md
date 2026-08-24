@@ -179,6 +179,22 @@ accidental substring hit.
 they gain substring matching. It is a live defect being fixed, but it ships as its own PR with
 its own evidence run rather than hiding inside a set feature.
 
+**Decided: the substring tier also applies to packing list create, on the user's explicit
+call.** Packing list create never had substring matching before this change; it went through
+its own exact-match-only lookup. Routing it through the same shared helper means it now gains
+tier 3 (substring) along with tier 2 (set expansion). The user was asked whether packing list
+should get a carve-out that keeps it on exact-plus-set-expansion only, without the substring
+tier the other two surfaces already carried. They chose to keep the helper's behaviour
+identical across every surface: one helper, one behaviour, which is what UAC decision D11
+asked for. The trade-off they accepted, stated plainly: on a product attachment or a
+promotion, a wrong substring match is a bad link. On a packing list it creates a receiving
+line, so it inflates on-hand stock for the wrong SKU. A partial code such as `WC7601` matches
+5 real sibling SKUs in the live catalogue and now creates a receiving line for each, every one
+carrying the full submitted quantity. This was flagged as risky rather than built silently, and
+the user ruled on it: consistency across surfaces over a packing-list-specific carve-out. See
+`documentation/plans/master-data/n8n-contract-product-set-entity.md` Surface 5 for how this
+reaches n8n.
+
 **Provenance.** `product_attachments` gains `linked_via_set_id UUID NULL`, and the promotion
 link table gains the same. Without it, nothing can answer "why is this flyer on a seat cover"
 and nothing can clean up when membership changes. Null means a human or an exact code made the
