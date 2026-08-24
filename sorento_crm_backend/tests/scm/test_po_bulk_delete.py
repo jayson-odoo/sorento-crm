@@ -1,4 +1,4 @@
-"""SCM purchase orders — bulk delete (captain, 20 Aug: "give me an option to bulk delete
+"""SCM purchase orders - bulk delete (captain, 20 Aug: "give me an option to bulk delete
 purchase orders ... maybe need to recreate").
 
 Covers: the happy path (hard delete, lines cascade), the side effect on an order-inquiry

@@ -66,7 +66,7 @@ def test_list_for_user_by_source_filters_and_orders_newest_first(db):
 
 
 def test_count_map_reflects_marked_states(db):
-    """All states count — print count = times generated, not times ready."""
+    """All states count - print count = times generated, not times ready."""
     svc = DownloadService(db)
     r1 = _mk(svc, user_id="82dce68d-596c-5265-9263-07b67db11d44", source_entity_type="complaint", source_entity_id="a464017f-adb4-5685-b832-9c6e852318d4")
     r2 = _mk(svc, user_id="82dce68d-596c-5265-9263-07b67db11d44", source_entity_type="complaint", source_entity_id="a464017f-adb4-5685-b832-9c6e852318d4")

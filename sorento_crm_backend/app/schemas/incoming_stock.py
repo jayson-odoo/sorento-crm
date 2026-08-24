@@ -8,7 +8,7 @@ These schemas enforce the business rules from next_agents/incoming_stock_enquiri
   ETA, filenames.
 - ONLY show `remaining_incoming_quantity` (= quantity_shipped - quantity_received, clamped to >= 0).
 - Allocation state is surfaced as `unallocated_quantity` (the GAP against quantity_shipped),
-  never as the shipped base itself — the base plus the already-public remaining would let a
+  never as the shipped base itself - the base plus the already-public remaining would let a
   consumer derive `quantity_received`.
 """
 from __future__ import annotations

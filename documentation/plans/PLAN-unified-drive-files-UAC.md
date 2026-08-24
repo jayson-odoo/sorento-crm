@@ -1,11 +1,11 @@
-# UAC — Unified Drive for Resource Management → Files
+# UAC - Unified Drive for Resource Management → Files
 
 Acceptance criteria for `PLAN-unified-drive-files.md`. Every item is testable. The
 **tester** must mark each PASS/FAIL with evidence (pytest name, vitest name, Playwright
 step, or screenshot) before a phase returns to the orchestrator. No phase advances with a
 FAIL.
 
-Legend — **Gate**: which phase validates it. BE = backend pytest, FE = vitest, E2E = Playwright, MAN = final manual (user).
+Legend - **Gate**: which phase validates it. BE = backend pytest, FE = vitest, E2E = Playwright, MAN = final manual (user).
 
 ---
 
@@ -15,12 +15,12 @@ Legend — **Gate**: which phase validates it. BE = backend pytest, FE = vitest,
 |----|-----------|------|
 | A1 | Left folder tree still renders, nested, and selecting a node drives the right pane to that folder. | FE, E2E |
 | A2 | Right pane shows a **breadcrumb** of the current path (root → … → current). Clicking a crumb navigates there. | FE, E2E |
-| A3 | Folders and files appear in the **same** right-pane collection (list view) — not separate panes. | FE, E2E |
+| A3 | Folders and files appear in the **same** right-pane collection (list view) - not separate panes. | FE, E2E |
 | A4 | A **grid/card** view toggle exists; switching shows the same folders+files as cards. | FE, E2E |
 | A5 | View mode (list/grid) persists across reloads, per user (localStorage). | FE |
 | A6 | Single click on a folder (row or card) drills into it (right pane + breadcrumb update). | FE, E2E |
 | A7 | Single click on a file opens its preview (image/PDF inline per existing behavior; others as today). | FE, E2E |
-| A8 | Drive **root** shows top-level folders + files with `directory_id IS NULL` only — NOT a flat dump of all files. | BE, E2E |
+| A8 | Drive **root** shows top-level folders + files with `directory_id IS NULL` only - NOT a flat dump of all files. | BE, E2E |
 
 ## B. Search (the core fix)
 
@@ -33,7 +33,7 @@ Legend — **Gate**: which phase validates it. BE = backend pytest, FE = vitest,
 | B5 | Each search result shows a **Location/path** column (hidden during plain browse). | FE, E2E |
 | B6 | "Reveal in folder" action on a file result navigates to that file's parent folder and clears the search. | FE, E2E |
 | B7 | Drilling into a folder **clears** the active search query. | FE |
-| B8 | Optional "this folder only" toggle narrows a search to non-recursive. (If shipped — else mark N/A.) | FE |
+| B8 | Optional "this folder only" toggle narrows a search to non-recursive. (If shipped - else mark N/A.) | FE |
 
 ## C. Sort / filter / export
 
@@ -43,7 +43,7 @@ Legend — **Gate**: which phase validates it. BE = backend pytest, FE = vitest,
 | C2 | Sorting by Size/Type/Modified/uploader pushes folders to the **end** of the list. | BE, FE |
 | C3 | Any active file-attribute filter (Type/Access/Link status/Uploader/date) or a non-empty search **hides folders**. | BE, FE |
 | C4 | Plain browse (no filter, no query) **shows folders**. | BE, FE |
-| C5 | Export (xlsx) includes **files only** — folders never appear in the export. | BE |
+| C5 | Export (xlsx) includes **files only** - folders never appear in the export. | BE |
 | C6 | Sort + pagination are correct across the **UNION** (folder+file) result at any folder size; no duplicate/missing rows across pages. | BE |
 
 ## D. Data / backend contract
@@ -74,7 +74,7 @@ Legend — **Gate**: which phase validates it. BE = backend pytest, FE = vitest,
 | F2 | All bulk actions live under **one "Action" dropdown** (not separate toolbar buttons): Export, Set access levels, Set attachment type, Resubmit selected, Delete selected, Move. | FE, E2E |
 | F3 | On a selection containing a folder, file-only actions (Export, access levels, attachment type, Resubmit) are **disabled/hidden**; shared actions (Move, Delete) stay enabled. | FE, E2E |
 | F4 | Bulk **Delete** on a folder cascades soft-delete to its subtree; restore brings it back. | BE, E2E |
-| ~~F5~~ | ~~Bulk Download as ZIP~~ — **DROPPED from scope** (no endpoint/task in sorento, not requested). | — |
+| ~~F5~~ | ~~Bulk Download as ZIP~~ - **DROPPED from scope** (no endpoint/task in sorento, not requested). | - |
 | F6 | Single-only actions (Rename, Replace) are hidden when selection is multi. | FE |
 
 ## G. Card view thumbnails

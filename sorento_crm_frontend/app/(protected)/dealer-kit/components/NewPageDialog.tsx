@@ -18,7 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { createPage } from '../services/dealerKitService';
 
-/** Lowercase, hyphen-separated, no leading/trailing hyphen — matches the backend validator. */
+/** Lowercase, hyphen-separated, no leading/trailing hyphen - matches the backend validator. */
 function toSlug(value: string): string {
   return value
     .toLowerCase()

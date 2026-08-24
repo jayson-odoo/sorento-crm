@@ -108,7 +108,7 @@ def create_bundle(
     bk = bundle_key.strip()
     if not _BUNDLE_KEY_RE.match(bk):
         raise handle_validation_error(
-            "bundle_key must be 2–63 chars: start with a letter, then lowercase letters, digits, or underscores."
+            "bundle_key must be 2 - 63 chars: start with a letter, then lowercase letters, digits, or underscores."
         )
     if db.query(AppModuleBundle).filter(AppModuleBundle.bundle_key == bk).first():
         raise handle_conflict(f"Bundle «{bk}» already exists.")

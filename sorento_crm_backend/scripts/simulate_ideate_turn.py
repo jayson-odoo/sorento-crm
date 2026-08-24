@@ -11,7 +11,7 @@ What is real vs. stubbed
   ``session_vars`` (keep on collecting/review, MERGE the pointer, CLEAR on
   complete/duplicate while preserving every other CRM key), the confirm gate wiring.
 - Round-tripped: ``session_vars`` lives in an in-memory per-contact store so each turn
-  reads back the blob the previous turn wrote — exactly what a real DB would do.
+  reads back the blob the previous turn wrote - exactly what a real DB would do.
 - Stubbed (no live deps): the brain extractor's LLM output (``extract_ideate_turn`` →
   ``{fields, remove, confirm}``) and the shared-service ``create_idea`` HTTP call.
   If ``ideation_shared_service_url`` + ``ideation_intake_api_key`` are configured AND
@@ -102,7 +102,7 @@ SCRIPT: list[Turn] = [
     Turn(
         label="T1 incomplete -> collecting (pointer set)",
         respond_io_id=_ALICE,
-        user_message="I've got an idea — the system should remind me before a quotation expires",
+        user_message="I've got an idea - the system should remind me before a quotation expires",
         fields={"what": "remind me before a quotation expires"},
         create_idea={
             "draft_id": "d-100",
@@ -149,7 +149,7 @@ SCRIPT: list[Turn] = [
             },
             "missing": [],
             "reply_text": (
-                "Here's what I have — What: remind before a quotation expires | Who: sales team "
+                "Here's what I have - What: remind before a quotation expires | Who: sales team "
                 "| Module: Order Management | Impact: saves chasing expired quotes. "
                 "Reply 'confirm' to submit, or tell me what to change."
             ),
@@ -254,7 +254,7 @@ SCRIPT: list[Turn] = [
         label="T8 (Bob) one-shot complete FIRST turn -> still REVIEW (not complete)",
         respond_io_id=_BOB,
         user_message=(
-            "Idea: in Inventory, warehouse ops should get a low-stock alert — "
+            "Idea: in Inventory, warehouse ops should get a low-stock alert - "
             "it prevents stockouts."
         ),
         fields={
@@ -273,7 +273,7 @@ SCRIPT: list[Turn] = [
                 "impact": "prevents stockouts",
             },
             "missing": [],
-            "reply_text": "Everything's here — What/Who/Module/Impact all set. Reply 'confirm' to submit.",
+            "reply_text": "Everything's here - What/Who/Module/Impact all set. Reply 'confirm' to submit.",
         },
         expect_status="review",
         expect_ideation_status="review",
@@ -412,7 +412,7 @@ def build_client(script: list[Turn]):
 def run() -> int:
     client, store, real_create_idea = build_client(SCRIPT)
 
-    out("# Ideation `ideate` turn — end-to-end SORENTO simulation transcript")
+    out("# Ideation `ideate` turn - end-to-end SORENTO simulation transcript")
     out()
     out(
         "Drives `POST /api/v1/external/ideation/turn` via FastAPI TestClient across a "
@@ -499,7 +499,7 @@ def run() -> int:
     if _FAILURES:
         out(f"- FAILED assertions: {len(_FAILURES)}")
         for f in _FAILURES:
-            out(f"  - {f}")
+            out(f" - {f}")
     else:
         out("- All status / session_vars / CRM-key assertions PASSED.")
 

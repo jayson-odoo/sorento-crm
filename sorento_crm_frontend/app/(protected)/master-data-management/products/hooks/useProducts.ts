@@ -77,8 +77,8 @@ export type ProductNeighboursListParams = DataGridApiFetchParams & {
 /**
  * Prev/next neighbours of a product within the active filtered+sorted list set.
  * Serializes the list query (search/sort + category/brand/status/discontinued
- * batch filters) with `buildDataGridParams` — the same serialization the list
- * page uses — so the backend honours filters identically. `page`/`limit` are
+ * batch filters) with `buildDataGridParams` - the same serialization the list
+ * page uses - so the backend honours filters identically. `page`/`limit` are
  * sent but ignored by the neighbours endpoint.
  */
 export function useProductNeighbours(
@@ -194,7 +194,7 @@ export function useUpdateProduct() {
  * Hook for setting / changing a product's variant parent (manual curation).
  *
  * Reused for "Add variant" (attach a child): call with the CHILD's id as
- * `productId` and the current product's id as `parentId` — both ids are
+ * `productId` and the current product's id as `parentId` - both ids are
  * invalidated so the parent detail's Variants list refreshes.
  */
 export function useSetVariantParent() {

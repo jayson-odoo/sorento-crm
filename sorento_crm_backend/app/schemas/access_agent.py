@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 class AgentAccessCheckIn(BaseModel):
     contact_id: str = Field(..., description="Respond.io contact id (respond_io_id).")
     space_id: str = Field(..., description="Respond.io workspace id (matches respond_workspaces.space_id).")
-    agent: str = Field(..., description="AccessAgent.code — stable, kebab/underscore string.")
+    agent: str = Field(..., description="AccessAgent.code - stable, kebab/underscore string.")
     resource: str | None = Field(
         None,
         description=(

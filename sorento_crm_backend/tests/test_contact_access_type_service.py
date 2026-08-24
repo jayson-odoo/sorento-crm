@@ -1,7 +1,7 @@
 """
 Unit tests for ContactAccessTypeService: catalog validation, default access levels.
 
-Allowed access type codes are whatever is active in the contact access type catalog (admin UI)—not
+Allowed access type codes are whatever is active in the contact access type catalog (admin UI) - not
 fixed to any two values. Tests use ``dealer`` / ``end_user`` as example rows unless stated otherwise.
 
 The only special case in code is ``_FALLBACK_DEFAULT_CODES`` when the catalog table has no active rows yet
@@ -29,7 +29,7 @@ def test_list_active_codes_returns_fallback_when_empty():
 
 
 def test_list_active_codes_returns_codes_from_catalog():
-    """list_active_codes returns whatever codes are in the active catalog (ordered by sort_order, code)—not a fixed pair."""
+    """list_active_codes returns whatever codes are in the active catalog (ordered by sort_order, code) - not a fixed pair."""
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [
         ("end_user",),
@@ -100,7 +100,7 @@ def test_validate_access_levels_valid_returns_normalized():
 
 
 def test_validate_access_levels_accepts_any_catalog_code():
-    """Validation allows any code present in the catalog (e.g. manager)—not only legacy example codes."""
+    """Validation allows any code present in the catalog (e.g. manager) - not only legacy example codes."""
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [
         ("manager",),

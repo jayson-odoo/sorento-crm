@@ -1,4 +1,4 @@
-"""Admin health dashboard — GET /api/v1/system/health/summary.
+"""Admin health dashboard - GET /api/v1/system/health/summary.
 
 The endpoint aggregates five operational tables into one payload. Each metric
 block is guarded so a missing/legacy model omits the block rather than 500-ing.

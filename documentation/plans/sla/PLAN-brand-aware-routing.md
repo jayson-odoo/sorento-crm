@@ -36,9 +36,9 @@ tracker stores the brand -> tier 2/3 escalation resolves with it.
   handle (report §3.3), and a deleted brand must not cascade a routing row away.
 - Unique keys become (see `app/models/access.py` `AgentTeam.__table_args__`, which MUST mirror
   the migration because scratch-schema fixtures build indexes from the model):
-  - `uq_agent_teams_agent_code_company_tier_null`: `(agent_id, code, company_id,
+ - `uq_agent_teams_agent_code_company_tier_null`: `(agent_id, code, company_id,
     coalesce(brand_code, ''))` where tier IS NULL
-  - `uq_agent_teams_agent_code_company_tier`: `(agent_id, code, tier, company_id,
+ - `uq_agent_teams_agent_code_company_tier`: `(agent_id, code, tier, company_id,
     coalesce(brand_code, ''))` where tier IS NOT NULL
   `coalesce` because Postgres treats NULLs as distinct in a unique index and we need exactly one
   all-brands row per (agent, code, tier, company).
@@ -59,29 +59,29 @@ has one head:
    2. Drop the two old partial unique indexes, create the two coalesce ones above.
    3. Collapse, per (agent_id, company_id) that has rows with code in
       `('marketing_promotion_sorento','marketing_promotion_mocha','marketing_promotion_cabana')`:
-      - `policy = the _sorento set's policy_id` (else first non-null among the three) - one policy
+    - `policy = the _sorento set's policy_id` (else first non-null among the three) - one policy
         per code is an invariant (`resolve_policy_id_for` 409s otherwise).
-      - Tier-1 rows (and tier-NULL rows): `code = 'marketing_promotion'`, `brand_code = suffix`.
+    - Tier-1 rows (and tier-NULL rows): `code = 'marketing_promotion'`, `brand_code = suffix`.
         **A tier-NULL row is treated exactly like tier 1, all-brands copy included, so the
         collapsed set never has brand rows at a tier with no fallback (which the new
         save-time guard would then reject).**
-      - Tier 2 / 3, per tier: distinct team_ids among the suffixed rows. If a base
+    - Tier 2 / 3, per tier: distinct team_ids among the suffixed rows. If a base
         `marketing_promotion` row already exists at that tier it stays the all-brands row; else the
         `_sorento` row (else the first) becomes `brand_code = NULL`. Every other suffixed row at
         that tier: same team_id as the all-brands row -> DELETE; different team -> becomes a
         brand row for its suffix (AC-M3).
-      - All-brands T1: if no `marketing_promotion` T1 with brand NULL exists, INSERT a copy of
+    - All-brands T1: if no `marketing_promotion` T1 with brand NULL exists, INSERT a copy of
         the `_sorento` T1 row (team, notify_on_extension) with brand NULL. **No `_sorento` T1 ->
         seed it from the next brand in priority order (mocha, then cabana) and warn which one
         was copied (review fix).** Leaving the tier with brand rows and no fallback is worse:
         an unknown brand 404s AND the save-time guard then rejects the whole agent on the
         admin's next save.
-      - After the collapse, every brand code written is checked against `brands`
+    - After the collapse, every brand code written is checked against `brands`
         (`lower(brand_code)`); a code that exists nowhere gets a warning naming the code and
         the company. A guard, not a fix - the prod copy has SORENTO / MOCHA / CABANA for both
         companies.
-      - Set `policy_id = policy` on every `marketing_promotion` row of that (agent, company).
-      - `UPDATE conversation_sla_tracking SET team_set_code='marketing_promotion',
+    - Set `policy_id = policy` on every `marketing_promotion` row of that (agent, company).
+    - `UPDATE conversation_sla_tracking SET team_set_code='marketing_promotion',
         brand_code=<suffix> WHERE team_set_code = <suffixed>` (all rows; resolved rows have it
         cleared anyway).
    4. Downgrade: restore the old indexes, drop both columns. The collapse is not reversed
@@ -100,12 +100,12 @@ has one head:
 `app/services/user_service.py` (`AccessAgentService`):
 
 - New module-level helpers:
-  - `normalise_brand_code(value) -> str | None` (strip, lower, '' -> None).
-  - `split_legacy_team_set_code(code) -> tuple[str, str | None]`: dict
+ - `normalise_brand_code(value) -> str | None` (strip, lower, '' -> None).
+ - `split_legacy_team_set_code(code) -> tuple[str, str | None]`: dict
     `{"marketing_promotion_sorento": ("marketing_promotion","sorento"), ...mocha, ...cabana}`;
     anything else -> `(code, None)`; matched case-insensitively. One-release compat; comment
     says so.
-  - `_pick_brand_rows(rows, brand_code)`: rows are `(…, brand_code)` tuples; return the rows whose
+ - `_pick_brand_rows(rows, brand_code)`: rows are `(…, brand_code)` tuples; return the rows whose
     brand equals the wanted one if any, else the rows whose brand is NULL. Single place for the
     preference rule; every resolver calls it.
 - `get_team_id_by_tier(agent_id, tier, team_set_code=None, *, company_id, brand_code=None)`:
@@ -362,19 +362,19 @@ symptom instead of assuming the daemon itself is broken.
   leaving only the Tier-1 `MOCHA` row plus the untouched Tier-2/Tier-3 all-brands rows
   (`42-negtest-deleted-allbrands.png`; snapshot confirmed via ref inspection that the remaining
   rows under the `marketing_product` code textbox were exactly Tier 2, Tier 3, and Tier 1/MOCHA
-  - no all-brands row left at tier 1).
+ - no all-brands row left at tier 1).
 - Clicked `Update`. `network requests --filter teams` -> `PUT .../teams` -> **`422`**.
   `network request <id> --json` response body:
   `{"message":"Team set 'marketing_product' tier 1 has brand rows but no 'All brands' row. Add
   one so an unknown brand can still be routed.","detail":null,"code":"VALIDATION_ERROR"}` -
   **exact match** to AC-R7's specified message, naming both the set (`marketing_product`) and the
   tier (`1`). Toast screenshot: `43-negtest-422-toast.png`.
-  - **AC-R7 (save-time guard, 422 naming set+tier): PASS.**
+ - **AC-R7 (save-time guard, 422 naming set+tier): PASS.**
 - Clicked `Cancel`. Read view re-checked: `marketing_product` still shows the Tier-1 All-brands
   row, the Tier-1 `MOCHA` row, and Tier-2/Tier-3 - i.e. exactly the post-step-3 state, with **no**
   partial application of the rejected edit (`44-negtest-nodatachange.png`). The failed PUT left
   no data change, matching the transactional rollback in `set_agent_teams`.
-  - **AC-V1 step 4 (negative save, no data change): PASS.**
+ - **AC-V1 step 4 (negative save, no data change): PASS.**
 
 ### Step 5 - cleanup: restore the original three rows (AC-V1)
 
@@ -390,7 +390,7 @@ symptom instead of assuming the daemon itself is broken.
   `marketing_product` shows exactly the original 3 all-brands rows, byte-identical to the
   pre-run baseline screenshot (`47-cleanup-final-confirmed.png` vs `06-team-assignments-
   marketing-product.png`).
-  - **AC-V1 step 5 (cleanup/restore): PASS.** The agent's data is back to its original state;
+ - **AC-V1 step 5 (cleanup/restore): PASS.** The agent's data is back to its original state;
     this evidence run leaves no residue on the shared dev DB.
 
 ### Step 6 - 375x812 viewport check (AC-F4)
@@ -523,17 +523,17 @@ carries that brand, or carries none. Applied in exactly two readers, both of whi
 applied the identical rule for market segments:
 
 - `AccessAgentService.get_next_assignee(agent_id, team_id, contact_segments=None, *, brand_code=None)`
-  - pool = RR-eligible members passing the segment filter AND the brand filter;
-  - empty pool -> the whole team on the legacy cursor (never nobody);
-  - the returned dict carries `brand_matched`, true only when the member DRAWN is tagged with the
+ - pool = RR-eligible members passing the segment filter AND the brand filter;
+ - empty pool -> the whole team on the legacy cursor (never nobody);
+ - the returned dict carries `brand_matched`, true only when the member DRAWN is tagged with the
     brand (per assignee, not per pool: an untagged serve-all member drawn from the same pool
     reports false);
-  - cursor key = `segment_key` + `brand_pool_key(brand)` (`~b:<code>`), and the brand part is
+ - cursor key = `segment_key` + `brand_pool_key(brand)` (`~b:<code>`), and the brand part is
     appended ONLY when a tagged member matched. A team nobody has tagged therefore keeps its
     single `''` cursor when n8n starts sending `brand_code`, instead of silently splitting one
     rotation into one queue per brand.
 - `AccessAgentService.list_active_team_members_detail(team_id, contact_segments=None, *, brand_code=None)`
-  - the same filter over the active roster, so `GET /external/team-members` returns exactly the
+ - the same filter over the active roster, so `GET /external/team-members` returns exactly the
     pool `next-assignee` draws from.
 
 `_brand_codes_by_member` is one query and is only issued when a brand was actually requested,
@@ -657,7 +657,7 @@ separate rows on the page, unrelated to this evidence run's scope).
 - Screenshot `03-agent-detail.png` (full page): every team-set card (`marketing_product`,
   `purchasing`, `marketing_promotion_sorento`, `warehouse`, `marketing_promotion_mocha`,
   `marketing_promotion_cabana`) shows **tier rows with no Brand select and no Brand badge anywhere**
-  - confirms the row-level UI from revision 1 is gone.
+ - confirms the row-level UI from revision 1 is gone.
 - Expanded the `marketing_product` Tier 1 row ("Marketing - Product") by clicking it (a collapsible
   disclosure, not a plain heading - the first click attempt from off-screen silently no-op'd until
   the row was scrolled into view first). Screenshot `07-step1-member-brands-editor.png`:
@@ -759,7 +759,7 @@ always returning the whole team. `next-assignee` was not called, per the brief.
 
 - `set viewport 375 812` (member-row disclosure state carried over from 1280px - still expanded).
   Scrolled it into view. Screenshot `23-redo-mobile-untagged.png`: the member row now **stacks**
-  - "Tay Zhi Yang" on its own line (fully readable, not clipped), "(zhiyang.sorento@gmail...)"
+ - "Tay Zhi Yang" on its own line (fully readable, not clipped), "(zhiyang.sorento@gmail...)"
   truncated with an ellipsis (not collapsed to 0px) on the line below, respond-status icon to the
   right, then "Serves all" / "All brands" chips on their own line, then the "Next in line" /
   "Last assigned" position badge on its own line below that. No horizontal clipping, no cut-off

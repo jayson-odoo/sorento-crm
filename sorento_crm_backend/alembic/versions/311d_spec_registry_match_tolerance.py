@@ -1,7 +1,7 @@
 """Per-key numeric match tolerance on the spec registry.
 
 One module-level "+/- 5mm reads as exact" was applied to every numeric key, so a
-one-bowl sink scored a PERFECT `bowl_count` match for "double bowl" — 1 and 2 are
+one-bowl sink scored a PERFECT `bowl_count` match for "double bowl" - 1 and 2 are
 within 5. Tolerance is a property of the quantity, so it belongs on the row.
 
 `match_decay = 0` means exact-or-nothing, which is what a count needs. Millimetre keys

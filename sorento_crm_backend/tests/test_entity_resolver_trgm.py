@@ -1,4 +1,4 @@
-"""Wave 2a — §3a dash/ws normalization + §3.2 trigram is_variant ranking.
+"""Wave 2a - §3a dash/ws normalization + §3.2 trigram is_variant ranking.
 
 Covers PLAN-suggest-on-miss-variant-graph.md §7 acceptance cases:
 
@@ -6,7 +6,7 @@ Covers PLAN-suggest-on-miss-variant-graph.md §7 acceptance cases:
   AC-D2  two real codes colliding under dash-strip -> AMBIGUOUS (both surfaced,
          never a silent wrong SKU).
   AC-N1  a resolution-miss returns trgm matches[] ranked is_variant DESC, sim
-         DESC — variant prefix-extensions ABOVE digit-neighbours.
+         DESC - variant prefix-extensions ABOVE digit-neighbours.
   AC-R2  real codes still resolve to the SAME single code after dash-strip
          (collision guard doesn't over-flag).
 
@@ -17,7 +17,7 @@ unreachable or the referenced real codes aren't present.
 NOTE on `enable_prefix_fallback`: the exact-tier probe (Tier 1) is what §3a
 touches. The default pipeline also runs a Tier-2 product *variant-family
 expansion* (siblings sharing a stem) which independently flags a base code's
-family ambiguous — orthogonal to the dash-collision concern. AC-D1/AC-R2, which
+family ambiguous - orthogonal to the dash-collision concern. AC-D1/AC-R2, which
 assert a clean SINGLE exact result, therefore run with
 `enable_prefix_fallback=False` to isolate the §3a normalization behaviour from
 that expansion. AC-D2 runs on the DEFAULT path, where the multi-row guard turns
@@ -112,7 +112,7 @@ def _resolution(db, token, **kw):
 
 
 # --------------------------------------------------------------------------- #
-# AC-D1 — dash/ws variant resolves EXACT
+# AC-D1 - dash/ws variant resolves EXACT
 # --------------------------------------------------------------------------- #
 def test_ac_d1_nospace_code_resolves_exact_to_dashed_code(db):
     # SRTWT7438GM (typed without dash) must resolve exact to SRTWT7438-GM.
@@ -140,12 +140,12 @@ def test_ac_d1_dashed_input_resolves_exact_to_nodash_code(db):
 
 
 # --------------------------------------------------------------------------- #
-# AC-D2 — dash-collision -> ambiguous (both surfaced)
+# AC-D2 - dash-collision -> ambiguous (both surfaced)
 # --------------------------------------------------------------------------- #
 def test_ac_d2_dash_collision_is_ambiguous(db):
     # SRT-FH12-CR-DIY and SRTFH12-CR-DIY both flatten to 'srtfh12crdiy'.
     # The default pipeline's multi-row guard must flag ambiguous with BOTH
-    # codes present — never silently pick one.
+    # codes present - never silently pick one.
     _require_codes(db, "SRT-FH12-CR-DIY", "SRTFH12-CR-DIY")
     tr = _resolution(db, "srtfh12-cr-diy")
     assert tr.ambiguous
@@ -154,7 +154,7 @@ def test_ac_d2_dash_collision_is_ambiguous(db):
 
 
 # --------------------------------------------------------------------------- #
-# AC-N1 — trgm miss ranks variants above digit-neighbours
+# AC-N1 - trgm miss ranks variants above digit-neighbours
 # --------------------------------------------------------------------------- #
 def test_ac_n1_trgm_ranks_variants_above_digit_neighbours(db):
     # 'SRTKT71' is a near-but-nonexistent code. trgm neighbours:
@@ -170,7 +170,7 @@ def test_ac_n1_trgm_ranks_variants_above_digit_neighbours(db):
     flags = [bool(h.display.get("is_variant")) for h in hits]
     # Every product hit carries the is_variant flag.
     assert all(h.match_tier == "trgm" for h in hits)
-    # No False appears before a True — all variants lead.
+    # No False appears before a True - all variants lead.
     first_false = flags.index(False) if False in flags else len(flags)
     assert all(flags[:first_false]), "a variant ranked below a digit-neighbour"
     assert not any(flags[first_false:]), "a variant ranked below a digit-neighbour"
@@ -184,7 +184,7 @@ def test_ac_n1_trgm_ranks_variants_above_digit_neighbours(db):
 
 
 # --------------------------------------------------------------------------- #
-# AC-R2 — exact stays exact after dash-strip (no false ambiguity)
+# AC-R2 - exact stays exact after dash-strip (no false ambiguity)
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "token, expected",
@@ -210,7 +210,7 @@ def test_ac_r2_real_codes_still_single_exact(db, token, expected):
 # without a second neighbour lookup. `matches` semantics are unchanged.
 # --------------------------------------------------------------------------- #
 def test_resolve_miss_returns_trgm_alternatives(db):
-    # SRTKT71SX is a 1-char typo of the real SRTKT71SS — no exact row, so it
+    # SRTKT71SX is a 1-char typo of the real SRTKT71SS - no exact row, so it
     # stays a miss (matches empty) but must suggest SRTKT71SS as an alternative.
     _require_codes(db, "SRTKT71SS")
     r = _resolution(db, "SRTKT71SX")
@@ -226,7 +226,7 @@ def test_resolve_miss_returns_trgm_alternatives(db):
 
 
 def test_resolved_token_has_no_alternatives(db):
-    # A token that resolves (exact match) must NOT carry alternatives — they are
+    # A token that resolves (exact match) must NOT carry alternatives - they are
     # a miss-only affordance and would confuse a confident resolution.
     _require_codes(db, "SRTKT71SS")
     r = _resolution(db, "SRTKT71SS")

@@ -1,6 +1,6 @@
-# Product Management — Units of measure
+# Product Management - Units of measure
 
-Maintain the units of measure (UoM) products are stocked and sold in — e.g. *Each*, *Box*, *Carton*, *Kilogram*. Every product must have a **Base Unit of Measure**.
+Maintain the units of measure (UoM) products are stocked and sold in - e.g. *Each*, *Box*, *Carton*, *Kilogram*. Every product must have a **Base Unit of Measure**.
 
 Open **[Product Management → Units of Measure](/master-data-management/units-of-measure)** (URL: `/master-data-management/units-of-measure`). The page is titled **Units of Measure**.
 
@@ -8,19 +8,19 @@ Open **[Product Management → Units of Measure](/master-data-management/units-o
 
 Columns: **UOM Code**, **UOM Name**, **Base UOM**, **Conversion Factor**, **Status**.
 
-* **Search UOMs...** — matches code / name.
-* **Create UOM** — opens the UoM form.
+* **Search UOMs...** - matches code / name.
+* **Create UOM** - opens the UoM form.
 
 ## Create / edit a unit of measure
 
 The form fields:
 
-* **UOM Code \*** — required, up to 50 characters; letters, numbers, dashes, underscores only; unique.
-* **UOM Name \*** — required, up to 150 characters.
-* **Base UOM** — optional. Set this when this unit is a *derived* unit of another (e.g. *Box* whose base is *Each*). Leave empty for a standalone base unit.
-* **Conversion Factor** — optional positive number (up to 4 decimal places). How many base units one of this unit equals (e.g. a *Box* with base *Each* and factor `12` = 12 each).
-* **Description** — optional, up to 2000 characters.
-* **Active** — switch.
+* **UOM Code \*** - required, up to 50 characters; letters, numbers, dashes, underscores only; unique.
+* **UOM Name \*** - required, up to 150 characters.
+* **Base UOM** - optional. Set this when this unit is a *derived* unit of another (e.g. *Box* whose base is *Each*). Leave empty for a standalone base unit.
+* **Conversion Factor** - optional positive number (up to 4 decimal places). How many base units one of this unit equals (e.g. a *Box* with base *Each* and factor `12` = 12 each).
+* **Description** - optional, up to 2000 characters.
+* **Active** - switch.
 
 There is a UoM **detail** page (`/master-data-management/units-of-measure/{id}`), and **new**/**edit** pages.
 
@@ -38,4 +38,4 @@ On the product form's **Specifications** tab, **Base Unit of Measure \*** is req
 
 * [Manage products](manage-products.md)
 * [Product categories & brands](product-categories-and-brands.md)
-* [Product Management — Data analysis for the AI assistant](data-analysis.md)
+* [Product Management - Data analysis for the AI assistant](data-analysis.md)

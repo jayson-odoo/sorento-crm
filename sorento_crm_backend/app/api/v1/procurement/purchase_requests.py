@@ -780,7 +780,7 @@ async def send_approval_link(
 
                 header = service.get_request(request_id)
                 type_label = "Purchase Request" if getattr(header, "request_type", None) == "purchase_request" else "Sponsorship Form"
-                subject = f"{type_label} – Approval link"
+                subject = f"{type_label} - Approval link"
                 full_url = approval_url if approval_url.startswith("http") else f"{base_url.rstrip('/')}{approval_url if approval_url.startswith('/') else '/' + approval_url}"
                 body_text = (
                     f"You have been sent a one-time approval link for a {type_label.lower()}.\n\n"

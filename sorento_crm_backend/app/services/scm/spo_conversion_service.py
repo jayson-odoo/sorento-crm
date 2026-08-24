@@ -13,7 +13,7 @@ and `proforma_invoice_service` (`convert_to_draft_shipment`):
     never the PI's invoiced figure - the Amendment's own correction), what an OPEN purchase
     order to the SAME supplier already covers (matched by product, PINNED to one PO when the
     line's originating PI line(s) stated a `po_ref`), and on hand + incoming SPO company-wide
-    - same three figures `container_request_service._stock_context` reads, same reason: this
+  - same three figures `container_request_service._stock_context` reads, same reason: this
     is one company deciding what it still needs, not one warehouse's question. The suggested
     qty is `packed - po_covered - on_hand - incoming_spo`, floored at zero, editable. A line
     with nothing left to ask for reads as COVERED (unticked by default, one line saying why);

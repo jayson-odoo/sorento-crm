@@ -1,4 +1,4 @@
-"""Import source-file retention — store helper + download endpoint.
+"""Import source-file retention - store helper + download endpoint.
 
 Covers docs/plans/imports/import-source-file-retention-acceptance-criteria.md
 AC-1 (store), AC-2 (best-effort never blocks), AC-3/AC-5 (download + ownership),

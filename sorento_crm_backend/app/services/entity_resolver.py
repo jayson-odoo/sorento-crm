@@ -71,6 +71,12 @@ _ENTITY_TYPE_ALIASES: dict[str, str] = {
     "sales_order": "customer_order",
     # Product-domain hints. Caller uses these labels as `domain_hint` to scope
     # ambiguous aliases (brand / category) to product probes.
+    # Product sets: the flyer code that names an assembly. "kit" is what people
+    # say out loud; the glossary term is Product Set.
+    "product_set": "product_set",
+    "product_sets": "product_set",
+    "set": "product_set",
+    "kit": "product_set",
     "product_attachment": "product",
     "product_attachments": "product",
     "master_products": "product",
@@ -100,7 +106,7 @@ _ENTITY_TYPE_ALIASES: dict[str, str] = {
 # One-to-many fan-out for canonical names that have NO dedicated probe but map
 # to one or more concrete entity types in the resolver. Applied after
 # `_canonical_entity_type` when building the `allowed` set. Brand / category
-# resolve to promotion only — keeping the surface narrow (promotions group
+# resolve to promotion only - keeping the surface narrow (promotions group
 # products by brand + category, which is what the n8n promo agent needs).
 _ENTITY_TYPE_EXPANSIONS: dict[str, frozenset[str]] = {
     "brand": frozenset({"promotion"}),
@@ -110,7 +116,7 @@ _ENTITY_TYPE_EXPANSIONS: dict[str, frozenset[str]] = {
 
 # Domain-scoped overrides for one-to-many expansions. When the caller passes
 # `domain_hint`, ambiguous aliases like brand / category gain a different
-# meaning. Example — domain_hint="order" + token="super ceramic": the user is
+# meaning. Example - domain_hint="order" + token="super ceramic": the user is
 # almost certainly naming a customer / debtor, not a promotion bucket. Routing
 # the expansion to {customer, customer_order, transporter} keeps the resolver
 # inside the order domain.
@@ -127,7 +133,7 @@ _DOMAIN_HINT_EXPANSIONS: dict[str, dict[str, frozenset[str]]] = {
         "brand": frozenset({"customer", "customer_order", "transporter"}),
         "category": frozenset({"customer", "customer_order", "transporter"}),
     },
-    # Product domain — `product_attachment` / `master_products` / `products`
+    # Product domain - `product_attachment` / `master_products` / `products`
     # all canonicalize to `product` via `_ENTITY_TYPE_ALIASES`. Brand / category
     # in that context should hit product probes (products carry brand_id +
     # category_id directly) instead of fanning out to promotion.
@@ -148,7 +154,7 @@ def _expand_entity_types(
     have no probes of their own and need to map to a SET of concrete probe
     types. When `domain_hint` is supplied AND it has an override in
     `_DOMAIN_HINT_EXPANSIONS`, the override takes precedence over the default
-    `_ENTITY_TYPE_EXPANSIONS` map — keeps brand / category scoped to the
+    `_ENTITY_TYPE_EXPANSIONS` map - keeps brand / category scoped to the
     domain the caller actually cares about.
     """
     hint_canon = _canonical_entity_type(domain_hint) if domain_hint else None
@@ -163,6 +169,14 @@ def _expand_entity_types(
             out.update(expansion)
         else:
             out.add(canon)
+        # n8n's `product` hint has to reach the set probe too: n8n names a
+        # flyer code with domain_hint="product" (it has no reason to know the
+        # glossary term "product_set"), and `_TIER1_PROBES` only runs a probe
+        # when its `produces` set intersects `allowed`. Additive, not a
+        # replacement of `canon` — a caller that filtered on `product` still
+        # gets ordinary products, PLUS the set probe becomes reachable.
+        if canon == "product":
+            out.add("product_set")
     return frozenset(out)
 
 
@@ -175,14 +189,14 @@ def _build_token_type_map(
     tokens: list[str] | None,
     allowed_entity_types: Iterable[str] | None,
 ) -> Optional[dict[str, str]]:
-    """Deprecated — positional pairing is disabled.
+    """Deprecated - positional pairing is disabled.
 
     Historically returned a positional token -> canonical_entity_type map when
     caller passed parallel lists of equal length, so token[i] would be resolved
     ONLY against allowed_entity_types[i]. This behaviour surprised callers who
     wanted each token resolved against EVERY allowed type (set-filter mode),
     e.g. tokens=["Sorento water closet", "latest promo"] with
-    allowed_entity_types=["product", "promotion"] — they expect both tokens
+    allowed_entity_types=["product", "promotion"] - they expect both tokens
     probed against both types.
 
     Always returns None now, so every code path falls through to the set-filter
@@ -197,7 +211,7 @@ def _build_token_type_map(
 # Token extraction
 # --------------------------------------------------------------------------- #
 # Code-like token: contains at least one letter AND at least one digit, min length 3.
-# Allows letters, digits, hyphens, slashes, underscores, dots — but not pure numbers.
+# Allows letters, digits, hyphens, slashes, underscores, dots - but not pure numbers.
 # Examples accepted: ACC-SRT1024, RF2601-025, FJ24041192, MSCU5475129, CB310-BL, CB313, PL.2026.001
 # Examples rejected: the, and, 2026 (all digits), order, RF (no digit), product
 _CODE_RE = re.compile(
@@ -207,7 +221,7 @@ _CODE_RE = re.compile(
 )
 
 # Tokens that match the regex but are almost always English words or noise. Keep SHORT
-# — we prefer false positives (extra SQL work) over false negatives (missed entity).
+# - we prefer false positives (extra SQL work) over false negatives (missed entity).
 _STOPWORDS: frozenset[str] = frozenset(
     {
         "january",
@@ -242,9 +256,9 @@ _STOPWORDS: frozenset[str] = frozenset(
 # Marker-driven name capture. We only run this when the user/agent has explicitly
 # tagged the value with a customer/debtor/client/account marker, to avoid pulling
 # every random capitalised word as a "name".
-#   - "customer is Jayson", "customer: Jayson Lim", "customer name IJM Land"
-#   - "debtor jayson", "debtor name IJM Land Sdn Bhd"
-#   - "client: ABC Corp", "account name Pang Holdings"
+# - "customer is Jayson", "customer: Jayson Lim", "customer name IJM Land"
+# - "debtor jayson", "debtor name IJM Land Sdn Bhd"
+# - "client: ABC Corp", "account name Pang Holdings"
 # The lookahead stops the (non-greedy) capture before common verbs / connectors so
 # "client: ABC Corp ordered RF2601-025" yields just "ABC Corp" rather than the rest.
 _NAME_STOP_WORDS_RE = (
@@ -256,7 +270,7 @@ _NAME_STOP_WORDS_RE = (
 )
 _NAME_MARKER_RE = re.compile(
     r"(?:customer(?:\s+name)?|debtor(?:\s+name)?|client(?:\s+name)?|account(?:\s+name)?|company)"
-    r"\s*(?:is|are|:|=|->|→|—|-)?\s*"
+    r"\s*(?:is|are|:|=|->|→| - |-)?\s*"
     r"([A-Za-z][A-Za-z0-9&'.\- ]{1,60}?)"
     r"(?=$|[,;.\n!?]|\s+" + _NAME_STOP_WORDS_RE + r"\b)",
     re.IGNORECASE,
@@ -382,7 +396,7 @@ def _extract_freeword_tokens(query: str, *, max_candidates: int) -> list[str]:
             last_end = match.end()
             continue
         # Detect punctuation / digit / boundary between this word and the last
-        # survivor — also treat as a phrase boundary.
+        # survivor - also treat as a phrase boundary.
         if surviving:
             gap = query[last_end : match.start()]
             if any(c in gap for c in (",", ";", ":", "\n", "!", "?", "(", ")", "/", "|")) or any(
@@ -438,7 +452,7 @@ def extract_candidate_tokens(query: str, *, max_candidates: int = 8) -> list[str
             continue
         if t.lower() in _STOPWORDS:
             continue
-        # Require BOTH a digit and a letter — rejects pure numbers ("2026", phone fragments)
+        # Require BOTH a digit and a letter - rejects pure numbers ("2026", phone fragments)
         # and pure words simultaneously.
         if not (any(c.isdigit() for c in t) and any(c.isalpha() for c in t)):
             continue
@@ -484,7 +498,7 @@ class ResolvedEntity:
 
     entity_type: str  # product | customer_order | customer | inbound_shipment | spo_allocation | grn | warehouse | supplier | promotion | transporter | form | attachment | attachment_type
     canonical_code: str  # the business code the user should pass to tools (e.g. order_number)
-    uuid: Optional[str] = None  # the row's primary key — required for tools that accept UUID-only inputs
+    uuid: Optional[str] = None  # the row's primary key - required for tools that accept UUID-only inputs
     display: dict[str, Any] = field(default_factory=dict)
     match_field: str = ""  # which column matched (e.g. "product_code", "product_name")
     match_tier: str = "exact"  # "exact" | "prefix" | "substring" | "embedding"
@@ -513,7 +527,7 @@ class TokenResolution:
     matches: list[ResolvedEntity] = field(default_factory=list)
     ambiguous: bool = False  # True when we found multiple candidates but picked none
     # Fuzzy trigram "did you mean" neighbours for a token that produced NO exact/
-    # prefix/embedding match. Purely entity-level (NOT domain-data-gated — that is
+    # prefix/embedding match. Purely entity-level (NOT domain-data-gated - that is
     # the list tools' job): "SRTKT71SX unknown → did you mean SRTKT71SS?". Emitted
     # so callers get a suggestion inline without a second neighbour lookup. Never
     # populated when `matches` is non-empty; does not affect `resolved`.
@@ -521,7 +535,7 @@ class TokenResolution:
 
     @property
     def resolved(self) -> bool:
-        # A single confident match. Ambiguous tokens are NOT resolved — the LLM must ask.
+        # A single confident match. Ambiguous tokens are NOT resolved - the LLM must ask.
         return bool(self.matches) and not self.ambiguous
 
     @property
@@ -687,7 +701,7 @@ def _strip_all_ws(value: str) -> str:
     """Collapse every dash and whitespace run to empty (§3a dash/ws-insensitive).
 
     For code-style tokens where the agent typed (or the user pasted) a stray
-    dash or space inside what should be one contiguous code — e.g.
+    dash or space inside what should be one contiguous code - e.g.
     'cgb9032b- new' → 'cgb9032bnew', 'srtkt71-ss' → 'srtkt71ss'. So dash and
     no-dash variants of the same code (`SRTWT7438GM` ≡ `SRTWT7438-GM`) flatten
     to one form and match exactly. Only `[-\\s]` is stripped; `/ . _` stay
@@ -727,9 +741,9 @@ def _norm_prefix(col, token: str):
 
     One of the two standard matching primitives (see `_norm_contains`). Every
     resolver tier goes through them so a token whose separators were stripped
-    upstream — n8n strips dashes and whitespace from EVERY entity token before
+    upstream - n8n strips dashes and whitespace from EVERY entity token before
     calling /system/references/resolve, because STT spaces product codes
-    ("SRT WC286SH") — still reaches a stored value that keeps them
+    ("SRT WC286SH") - still reaches a stored value that keeps them
     ("MASTILEKLANG" -> "MASTILE KLANG SDN BHD"). The plain ILIKE is always kept
     alongside, so the normalized clause can only ADD matches, never remove one.
     """
@@ -802,6 +816,121 @@ def _probe_product(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEnt
     return result
 
 
+def _probe_product_set(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """A flyer code answers with ONE entity carrying its members.
+
+    `SRTWC8608-RL` is printed on a flyer and asked for on WhatsApp, but no product
+    carries it - the catalogue holds a pedestal, a cistern and a seat cover. The
+    exact product probe finds nothing and the customer is told the product does
+    not exist. This is the probe that answers instead.
+
+    NOT a fan-out. Three top-level product entities would lose the thing the
+    customer named, and once a set carries a price of its own it IS an entity.
+
+    NO PRICE in the response: a stock question gets stock, and the price path has
+    its own entitlement gates (UAC D7).
+
+    ORM only. Company isolation is injected by the `do_orm_execute` listener into
+    every ORM SELECT touching a `CompanyScopedMixin` model; `ProductSet` carries
+    it, so another company's set is invisible here and its members are never
+    reached. `ProductSetMember` is deliberately unscoped and is read only THROUGH
+    its scoped parent, the same shape as `certificate_products` through
+    `Certificate`. A raw `text()` query would bypass the listener entirely.
+    """
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+
+    from app.models.product_set import ProductSet, ProductSetMember
+
+    normalized_tokens = [_strip_all_ws(t.lower()) for t in tokens]
+    norm_to_token = dict(zip(normalized_tokens, tokens))
+
+    rows = (
+        db.query(ProductSet)
+        .filter(_ws_insensitive_lower(ProductSet.set_code).in_(list(norm_to_token.keys())))
+        .all()
+    )
+    if not rows:
+        return result
+
+    members_by_set: dict[str, list] = {}
+    for product_set in rows:
+        members_by_set[product_set.id] = (
+            db.query(ProductSetMember)
+            .filter(ProductSetMember.product_set_id == product_set.id)
+            .order_by(ProductSetMember.sort_order)
+            .all()
+        )
+
+    product_ids = [m.product_id for members in members_by_set.values() for m in members]
+    available: dict[str, int] = {}
+    if product_ids:
+        from app.models.inventory import Stock
+
+        for pid, total in (
+            db.query(Stock.product_id, func.sum(Stock.quantity_available))
+            .filter(Stock.product_id.in_(list(set(product_ids))))
+            .group_by(Stock.product_id)
+            .all()
+        ):
+            available[str(pid)] = int(total or 0)
+
+    for product_set in rows:
+        token = norm_to_token.get(_strip_all_ws(str(product_set.set_code).lower()))
+        if not token:
+            continue
+
+        rendered = []
+        complete = None
+        limiting = None
+        for member in members_by_set.get(product_set.id, []):
+            product = member.product
+            if product is None:
+                continue
+            have = available.get(str(member.product_id), 0)
+            quantity = member.quantity or 1
+            rendered.append(
+                {
+                    "product_code": product.product_code,
+                    "description": product.description or product.product_name,
+                    "quantity": float(quantity),
+                    "available": have,
+                    "is_discontinued": bool(product.is_discontinued),
+                    # For n8n's fan-out: the existing per-product MCP tools
+                    # (`crm_inventory_stock_balance_list`, `crm_master_products_list`,
+                    # `crm_marketing_promotion_products_list`,
+                    # `crm_incoming_stock_by_product`) already take `product_ids`.
+                    # This is what feeds them - no new tool needed. Machine payload,
+                    # not UI, so the UUID rule does not apply (matches.uuid already
+                    # carries one at the top level).
+                    "uuid": str(member.product_id),
+                }
+            )
+            # A discontinued member supplies nothing: the set survives it, but it
+            # cannot be completed, and the reason is that member's own code.
+            supplies = 0 if product.is_discontinued else int(have // float(quantity))
+            if complete is None or supplies < complete:
+                complete, limiting = supplies, product.product_code
+
+        result[token].append(
+            ResolvedEntity(
+                entity_type="product_set",
+                canonical_code=product_set.set_code,
+                uuid=str(product_set.id),
+                match_field="set_code",
+                display={
+                    "name": product_set.name,
+                    "member_count": len(rendered),
+                    "complete_sets": complete,
+                    "limiting_member": limiting,
+                    "members": rendered,
+                },
+            )
+        )
+    return result
+
+
 def _probe_customer_order(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
     """Exact match on orders.order_number, joined to order_statuses for the label."""
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
@@ -853,7 +982,7 @@ def _probe_customer_order(db: Session, tokens: list[str]) -> dict[str, list[Reso
 
 
 def _name_hit(name: str | None, token: str) -> bool:
-    """Did `token` match `name` — plainly, or only after normalization?
+    """Did `token` match `name` - plainly, or only after normalization?
 
     Used to label match_field: a row pulled in by the normalized clause has the
     token nowhere in the raw name, so the plain `in` test alone would mislabel
@@ -873,7 +1002,7 @@ def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
     if not tokens:
         return result
     lowered = [t.lower() for t in tokens]
-    # Exact by customer_code — whitespace-insensitive on both sides so a typed
+    # Exact by customer_code - whitespace-insensitive on both sides so a typed
     # "300- C043" still hits "300-C043".
     norm_to_token = {_strip_all_ws(t.lower()): t for t in tokens}
     rows = (
@@ -907,7 +1036,7 @@ def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
             )
         )
     # Fuzzy on name / phone (only if still unresolved to avoid noise).
-    # Phone probe restricted to digit-bearing tokens — keeps name tokens like
+    # Phone probe restricted to digit-bearing tokens - keeps name tokens like
     # "chin chun" from accidentally substring-hitting phone numbers, which
     # otherwise floods the fuzzy result with unrelated rows.
     _CUSTOMER_FUZZY_LIMIT = 25
@@ -960,7 +1089,7 @@ def _probe_customer_debtor_name(db: Session, tokens: list[str]) -> dict[str, lis
     if not tokens:
         return result
 
-    # Tier 1 — exact case-insensitive match, plus a normalized exact so a
+    # Tier 1 - exact case-insensitive match, plus a normalized exact so a
     # separator-stripped token ("MASTILEKLANGSDNBHD") still lands on Tier 1
     # rather than falling through to the substring scan.
     lowered = [t.lower() for t in tokens if t]
@@ -998,7 +1127,7 @@ def _probe_customer_debtor_name(db: Session, tokens: list[str]) -> dict[str, lis
             )
         )
 
-    # Tier 2 fallback — partial / fuzzy ILIKE on debtor_name for any token still
+    # Tier 2 fallback - partial / fuzzy ILIKE on debtor_name for any token still
     # unresolved. The debtor master is denormalised onto `orders`, so customers
     # without a `customers` row (e.g. "FIRA VENTURE ENTERPRISE (PROJECT-CASH)")
     # are only reachable via this scan. Also tolerates pluralised input
@@ -1172,7 +1301,7 @@ def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[Re
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     if not tokens:
         return result
-    # All four match fields are number-style identifiers — strip whitespace
+    # All four match fields are number-style identifiers - strip whitespace
     # both sides so 'SHP- 2026-001' matches 'SHP-2026-001' etc.
     normalized = [_strip_all_ws(t.lower()) for t in tokens]
     rows = (
@@ -1493,7 +1622,7 @@ def _probe_certificate(db: Session, tokens: list[str]) -> dict[str, list[Resolve
 
     Matched two ways so the user can type either half of the identity:
       * the number alone - "04124FC", "WCM PC 000321"
-      * scheme + number  - "PPS 0119", "PPS0119", "pps-0119"
+      * scheme + number - "PPS 0119", "PPS0119", "pps-0119"
 
     Both sides are normalized with the same `_strip_all_ws` / `_ws_insensitive_lower`
     pair that already makes `WC 8038` match `WC8038`, so no normalized column is
@@ -1610,7 +1739,7 @@ def _probe_attachment_type(db: Session, tokens: list[str]) -> dict[str, list[Res
 
 
 # --------------------------------------------------------------------------- #
-# Tier 2 — prefix / substring probes (run only for tokens Tier 1 missed)
+# Tier 2 - prefix / substring probes (run only for tokens Tier 1 missed)
 # --------------------------------------------------------------------------- #
 # A Tier-2 probe takes a SINGLE token and returns a list of candidate entities.
 # - Preference order: prefix match first, then substring.
@@ -1642,7 +1771,7 @@ def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
         tier = "substring"
     # Product resolution is CODE-ONLY by design: exact/prefix/substring probes
     # (and the trgm fallback) all match on product_code. Name/description
-    # free-text matching was intentionally removed — a phrase like "basin" is
+    # free-text matching was intentionally removed - a phrase like "basin" is
     # not a product identifier, so it must not resolve to a specific SKU.
     return [
         ResolvedEntity(
@@ -1785,7 +1914,7 @@ def _prefix_probe_customer_debtor_name(db: Session, token: str) -> list[Resolved
         )
         tier = "substring"
     if not rows:
-        # Per-word AND fallback — handles typos / dropped letters in multi-word
+        # Per-word AND fallback - handles typos / dropped letters in multi-word
         # debtor phrases. Token "Delux home centre" against "DELUXE HOME CENTRE
         # SDN BHD": full-string substring miss (extra 'E' in DELUXE breaks the
         # contiguous phrase) but every word still appears individually. AND
@@ -2039,7 +2168,7 @@ def _prefix_probe_form(db: Session, token: str) -> list[ResolvedEntity]:
     then name, then purpose (longest text, lowest signal). Each column tries
     prefix first, then substring. For multi-word inputs ("renovation form",
     "sponsorship request"), a final AND-tokenized pass requires every token to
-    appear somewhere across code/name/purpose — covers descriptive phrasings
+    appear somewhere across code/name/purpose - covers descriptive phrasings
     where no single column carries the literal phrase.
     """
     if not token or len(token) < 3:
@@ -2224,10 +2353,10 @@ def _prefix_probe_attachment_type(db: Session, token: str) -> list[ResolvedEntit
     "broch" → "Brochure"). Three-stage matching:
       1. Contiguous prefix ILIKE on code OR type_name.
       2. Contiguous substring ILIKE on code OR type_name OR description.
-      3. Per-word substring ILIKE — for every word ≥4 chars in the token,
+      3. Per-word substring ILIKE - for every word ≥4 chars in the token,
          match rows whose code / type_name / description contains it. Lets a
          loose user phrase like "technical drawing" resolve to
-         "Technical Specifications" (one shared word is enough — caller already
+         "Technical Specifications" (one shared word is enough - caller already
          narrowed to attachment_type so semantic drift risk is bounded).
     Returns up to PREFIX_LIMIT candidates so ambiguous labels surface for LLM
     disambiguation.
@@ -2263,7 +2392,7 @@ def _prefix_probe_attachment_type(db: Session, token: str) -> list[ResolvedEntit
     )
     # Per-word fallback for multi-word phrases (e.g. "technical drawing" with
     # no contiguous match against "Technical Specifications"). OR across words
-    # so a single shared word is enough — attachment_type was explicitly hinted
+    # so a single shared word is enough - attachment_type was explicitly hinted
     # by the caller, so loose matching is safer here than for general entities.
     word_rows: list = []
     words = [w for w in token.split() if len(w) >= 4]
@@ -2407,7 +2536,7 @@ def _tier2_fuzzy_lookup(
     """Run Tier-2 prefix probes for a single token and return combined candidates.
 
     When `allowed_entity_types` is provided, probes whose output type is not in the set
-    are skipped entirely — keeps per-tool resolution lean.
+    are skipped entirely - keeps per-tool resolution lean.
     """
     combined: list[ResolvedEntity] = []
     for probe, produces in _TIER2_PROBES:
@@ -2421,7 +2550,7 @@ def _tier2_fuzzy_lookup(
 
 
 # --------------------------------------------------------------------------- #
-# Tier 3 — embedding vector fallback (last resort)
+# Tier 3 - embedding vector fallback (last resort)
 # --------------------------------------------------------------------------- #
 # Source types in embedding_chunks that correspond to primary business entities.
 # Child tables (order_line, picking_line, ...) are excluded: they'd match on noise.
@@ -2532,7 +2661,7 @@ def _tier3_embedding_lookup(
 
 
 # --------------------------------------------------------------------------- #
-# Tier 2.5 — pg_trgm typo-tolerant SQL match
+# Tier 2.5 - pg_trgm typo-tolerant SQL match
 # --------------------------------------------------------------------------- #
 # Substring ILIKE (Tier-2) misses on typos / missing characters; embedding RAG
 # (Tier-3) tolerates them but ranks noisily on short codes. pg_trgm sits in the
@@ -2547,7 +2676,7 @@ TRGM_LIMIT = 15
 # Substitution floor for the data-miss neighbour helper (§3.3 / §5.4). Higher than
 # the TRGM_THRESHOLD recall floor (0.25): a barely-related in-stock product is a
 # business error, so if the nearest DATA-BEARING neighbour is below this, we return
-# nothing and n8n says "no similar products with stock". Tunable — adjust on replay.
+# nothing and n8n says "no similar products with stock". Tunable - adjust on replay.
 SUGGEST_FLOOR = 0.40
 
 # Entity types `_trgm_lookup` can probe. Used as the default scope for resolve
@@ -2886,7 +3015,7 @@ def find_entity_neighbours_with_data(
     instead, but ONLY ones that actually have data in that domain.
 
     Candidate pool (deduped by product id):
-      (a) stored variant graph — children (``variant_of_id == input.id``),
+      (a) stored variant graph - children (``variant_of_id == input.id``),
           siblings sharing the input's parent (``variant_of_id == input.variant_of_id``),
           and the input's own parent / base product (``id == input.variant_of_id``).
           These are curated variants; they carry ``is_variant=True``.
@@ -2897,15 +3026,15 @@ def find_entity_neighbours_with_data(
 
     Gates, applied AFTER ranking and BEFORE the cap so out-of-domain / too-far
     candidates never consume a top-N slot:
-      * **Has-data gate** (AC-N3) — ``has_data(candidate_ids) -> {ids_with_data}`` is a
+      * **Has-data gate** (AC-N3) - ``has_data(candidate_ids) -> {ids_with_data}`` is a
         caller-supplied BATCH predicate (one query, per-domain: only the stock tool
         knows stock, only incoming knows eta). A candidate absent from the returned set
         is dropped, even if highly similar. So `8517` no-stock AND `8518` no-stock ⇒
         `8518` is not returned; the walk continues to the next neighbour WITH stock.
-      * **Distance floor** (AC-N4) — drop candidates with ``sim < suggest_floor``.
+      * **Distance floor** (AC-N4) - drop candidates with ``sim < suggest_floor``.
         Graph variants are scored with ``similarity()`` too, so the floor applies
         UNIFORMLY (a curated variant that is textually far AND is the only data-bearing
-        option still yields ``[]`` — "no similar products with stock").
+        option still yields ``[]`` - "no similar products with stock").
 
     Returns up to ``limit`` dicts ``{value, display, id, sim, is_variant}`` (``value`` =
     the product_code the user should ask about next). Empty list ⇒ caller emits no
@@ -2919,7 +3048,7 @@ def find_entity_neighbours_with_data(
             db, code, has_data=has_data, limit=limit, suggest_floor=suggest_floor
         )
     except Exception:
-        # Best-effort enrichment — a suggestion probe must NEVER turn the caller's
+        # Best-effort enrichment - a suggestion probe must NEVER turn the caller's
         # (already-committed) empty result into a 500. Includes DBs that can't run
         # regexp_replace / similarity (e.g. sqlite test fixtures).
         logger.exception("neighbour suggestion probe failed for code=%s", code)
@@ -2996,7 +3125,7 @@ def _find_entity_neighbours_with_data(
         is_variant = bool(ent.display.get("is_variant"))
         existing = candidates.get(cid)
         if existing:
-            # Already a graph member — keep the curated is_variant=True, take max sim.
+            # Already a graph member - keep the curated is_variant=True, take max sim.
             existing["sim"] = max(existing["sim"], sim)
             existing["is_variant"] = existing["is_variant"] or is_variant
         else:
@@ -3018,7 +3147,7 @@ def _find_entity_neighbours_with_data(
         reverse=True,
     )
 
-    # HAS-DATA GATE (batch — one query supplied by the caller).
+    # HAS-DATA GATE (batch - one query supplied by the caller).
     try:
         with_data = has_data([c["id"] for c in ranked]) or set()
     except Exception:
@@ -3026,7 +3155,7 @@ def _find_entity_neighbours_with_data(
         return []
     ranked = [c for c in ranked if c["id"] in with_data]
 
-    # DISTANCE FLOOR (uniform — applies to graph variants too).
+    # DISTANCE FLOOR (uniform - applies to graph variants too).
     ranked = [c for c in ranked if c["sim"] >= suggest_floor]
 
     return [
@@ -3045,7 +3174,7 @@ def _find_entity_neighbours_with_data(
 # AND-mode (cross-token intersection) probes
 # --------------------------------------------------------------------------- #
 # When the caller asks for "cabana filter tap", a per-token OR resolver yields
-# two ambiguous lists that the agent must intersect manually — and the PREFIX
+# two ambiguous lists that the agent must intersect manually - and the PREFIX
 # limit can evict legitimate cross-matches before that intersection runs.
 #
 # AND-mode runs a single SQL per entity type with all tokens ANDed across the
@@ -3055,7 +3184,7 @@ def _find_entity_neighbours_with_data(
 
 # Cap per AND probe BEFORE downstream post-filters (access_levels, promotion-
 # domain product expansion). 200 is the same ceiling the API's `limit` param
-# uses — keeps the SQL bounded while ensuring the post-filters see enough rows
+# uses - keeps the SQL bounded while ensuring the post-filters see enough rows
 # to find legitimate matches. Without this slack, e.g. 22 Sorento+End-User
 # promotions get clipped to ~3 because the first 20 raw Sorento rows happen to
 # have dealer-only access_levels.
@@ -3066,7 +3195,7 @@ def _concat_ws(*cols):
     """Sqlalchemy concat_ws helper used by AND-mode probes.
 
     Note the blob is space-joined, so the normalized half of `_norm_contains`
-    also drops the join separator — a word can in principle match across two
+    also drops the join separator - a word can in principle match across two
     concatenated columns. `_NORM_MIN_LEN` bounds that; the plain ILIKE half is
     unaffected."""
     return func.concat_ws(" ", *cols)
@@ -3076,7 +3205,7 @@ def _word_variants(word: str) -> list[str]:
     """Return `word` plus a singular fallback when it looks like an alphabetic
     plural. Lets a token like 'ventures' still match 'VENTURE ENTERPRISE' so
     minor plural typos ('Fira ventures' vs DB 'FIRA VENTURE') don't drop the
-    match. Codes containing digits are NEVER stripped — `TT440s` must keep its
+    match. Codes containing digits are NEVER stripped - `TT440s` must keep its
     trailing s.
     """
     if not word:
@@ -3100,7 +3229,7 @@ def _and_token_match_counts(blob, tokens: list[str]):
     each word's indicator is `blob ILIKE %word%` OR a singular-fallback
     variant. The probe uses these expressions to find the GLOBAL MAX match
     count for each token across the table, then keeps only rows hitting that
-    max — so filler words ("promotion", "version") never poison results: any
+    max - so filler words ("promotion", "version") never poison results: any
     row that hits the most semantic words wins, regardless of how many words
     the token had.
     """
@@ -3129,7 +3258,7 @@ def _and_max_tier_filter(base_query, counts):
     of per-token match-count expressions, return the additional filter that
     keeps only rows reaching the GLOBAL MAX match count for EVERY token.
 
-    Returns `None` when any token has no possible hits (max == 0) — caller
+    Returns `None` when any token has no possible hits (max == 0) - caller
     should short-circuit and return no rows.
     """
     if not counts:
@@ -3192,7 +3321,7 @@ def _token_coverage_expr(blob, tokens: list[str]):
     A token is "present" iff ALL of its words appear in the blob (multi-word
     tokens like "water closet" need both words). Returns None when no token
     yields a usable indicator. Unlike `_and_token_match_counts` (per-token
-    global-max), this scores COVERAGE per row — so a descriptive token that
+    global-max), this scores COVERAGE per row - so a descriptive token that
     happens to match unrelated rows elsewhere in the corpus cannot exclude an
     otherwise-best match.
     """
@@ -3223,11 +3352,11 @@ def _and_probe_attachment(
     """Attachment AND probe.
 
     Default (``coverage_mode=False``): the standard cross-token behaviour shared
-    by every entity type — concat blob of filename + description + type, kept to
+    by every entity type - concat blob of filename + description + type, kept to
     rows hitting each token's per-token global max.
 
     ``coverage_mode=True`` (enabled ONLY when the caller's domain is
-    ``resource_attachment`` — see ``resolve_references_intersection``): a targeted
+    ``resource_attachment`` - see ``resolve_references_intersection``): a targeted
     filename-coverage AND. Returns the rows whose ``original_filename`` covers the
     MOST query tokens, ignoring a descriptive token that no filename contains
     instead of letting it poison the AND to empty. "Sorento water closet warranty"
@@ -3308,7 +3437,7 @@ class _ProbeRows(list):
 
 
 def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
-    # Two sources: customers master (preferred — has UUID) and orders.debtor_name
+    # Two sources: customers master (preferred - has UUID) and orders.debtor_name
     # (legacy fallback). Run both; orders.debtor_name JOINs Customer for UUID.
     out: _ProbeRows = _ProbeRows()
     blob_c = _concat_ws(Customer.customer_code, Customer.customer_name, Customer.phone_number, Customer.email)
@@ -3331,7 +3460,7 @@ def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
                     display={"customer_name": name, "phone_number": phone, "email": email, "is_active": bool(is_active) if is_active is not None else True},
                 )
             )
-    # Legacy debtor_name path — only if no customers master hit covers the same name.
+    # Legacy debtor_name path - only if no customers master hit covers the same name.
     seen_names = {(m.display or {}).get("customer_name", "").lower() for m in out}
     blob_o = _concat_ws(Order.debtor_name, Order.debtor_code)
     counts_o = _and_token_match_counts(blob_o, tokens)
@@ -3345,7 +3474,7 @@ def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
         rows = base_o.filter(tier_o).distinct().limit(AND_MODE_LIMIT).all()
         if len(rows) >= AND_MODE_LIMIT:
             # The dedup below can shrink the merged list under the cap even
-            # though this source hit its LIMIT — mark it at the source.
+            # though this source hit its LIMIT - mark it at the source.
             out.truncated = True
         for debtor_name, debtor_code, customer_id in rows:
             if (debtor_name or "").lower() in seen_names:
@@ -3514,8 +3643,8 @@ def token_word_coverage_for_rows(
     so a word can contribute nothing and the caller cannot tell from the rows.
     This reports it, without changing which rows come back.
 
-    Called by the API layer over the FINAL row set — after the access-level
-    filter, the promotion expansion and the limit — because coverage computed
+    Called by the API layer over the FINAL row set - after the access-level
+    filter, the promotion expansion and the limit - because coverage computed
     earlier describes rows a later stage removed (the original version baked
     it into ``as_dict()`` and asserted "every word matched" on zero-row
     entitlement-filtered responses).
@@ -3524,13 +3653,13 @@ def token_word_coverage_for_rows(
       * The claim is WEAK: "absent from these results", never "absent from the
         catalogue". No extra query.
       * Partitioned per entity type. A word matched by a product code must not
-        be credited to a promotion enquiry — pooling across types was the
+        be credited to a promotion enquiry - pooling across types was the
         other way the first version lied.
       * Scored against the row's ``_match_blob`` (the text its probe actually
         scored), never ``display``: the product probe matches ``product_code``
         only, so a word appearing in ``product_name`` would be a match the
         probe never made. Promotion rows whose ``match_field`` is
-        ``description`` fall back to ``display.description`` — for those rows
+        ``description`` fall back to ``display.description`` - for those rows
         blob and description are the same column, which keeps the rows the
         promotion expander synthesized from a description match honest. The
         gate matters: a promotion found by MEMBERSHIP
@@ -3540,10 +3669,10 @@ def token_word_coverage_for_rows(
         that SKU's promotions.
       * A type whose rows carry no scorable text is OMITTED, not reported
         all-unmatched: nobody scored any text for those rows. A type where
-        SOME rows are unscored keeps its claims but is marked ``truncated`` —
+        SOME rows are unscored keeps its claims but is marked ``truncated`` - 
         the claims cover only the scored subset.
       * A word matched via a `_word_variants` form counts as matched but is
-        echoed back AS THE CALLER TYPED IT — reporting "taps" unmatched while
+        echoed back AS THE CALLER TYPED IT - reporting "taps" unmatched while
         showing a TAP promotion would be a new false statement.
       * ``truncated_types`` marks a type whose row set was capped (probe limit
         or API ``limit``), so a consumer knows an unmatched word may exist in
@@ -3552,7 +3681,7 @@ def token_word_coverage_for_rows(
     blobs_by_type: dict[str, list[str]] = {}
     # Types with at least one surviving row nobody scored (no blob, no honest
     # fallback). Their claims cover only the scored subset, so they read as
-    # incomplete — reported via the same `truncated` flag.
+    # incomplete - reported via the same `truncated` flag.
     partially_scored: set[str] = set()
     for row in rows or []:
         if not isinstance(row, dict):
@@ -3622,7 +3751,7 @@ class IntersectionResolutionResult:
     # tokens' trigram neighbours, deduped). Same entity-level, non-domain-gated
     # semantics as the OR-mode per-token alternatives.
     alternatives: list[ResolvedEntity] = field(default_factory=list)
-    # Entity types whose AND probe returned AND_MODE_LIMIT rows — the cap may
+    # Entity types whose AND probe returned AND_MODE_LIMIT rows - the cap may
     # have cut real matches, so word-coverage claims over these types are
     # incomplete. (Exactly-at-the-cap without truncation is a harmless false
     # positive: the flag only softens phrasing downstream.)
@@ -3662,7 +3791,7 @@ class IntersectionResolutionResult:
                     "display": m.display,
                     # Transport key for `token_word_coverage_for_rows`: the
                     # text this row's probe actually scored. Coverage cannot
-                    # be computed here — the API layer filters / replaces /
+                    # be computed here - the API layer filters / replaces /
                     # caps these rows afterwards, and coverage must describe
                     # the FINAL set. Stripped by `_attach_and_coverage`
                     # before the response leaves the process.
@@ -3706,7 +3835,7 @@ def resolve_references_intersection(
     """AND-mode resolver. Returns rows matching EVERY token in the concatenated
     searchable columns of each entity type. Skips code-only types.
 
-    `allowed_entity_types` (when set) is always a global set filter — every
+    `allowed_entity_types` (when set) is always a global set filter - every
     surviving probe sees every token. Positional pairing (token[i] vs
     allowed_entity_types[i]) is no longer auto-triggered on equal-length lists;
     callers that need 1:1 pairing must issue one resolve call per pair.
@@ -3822,6 +3951,7 @@ def _company_scoped_models() -> dict[str, Any]:
         Supplier,
     )
     from app.models.product import Product
+    from app.models.product_set import ProductSet
     from app.models.resources import Attachment
 
     return {
@@ -3837,6 +3967,7 @@ def _company_scoped_models() -> dict[str, Any]:
         "promotion": Promotion,
         "certificate": Certificate,
         "attachment": Attachment,
+        "product_set": ProductSet,
     }
 
 
@@ -3927,7 +4058,7 @@ def _attach_company_info(db: Session, matches: list[ResolvedEntity]) -> set[tupl
     for entity_type, group in by_type.items():
         model = models.get(entity_type)
         if model is None:
-            continue  # global / unpartitioned type — leave company_id None, never gate
+            continue  # global / unpartitioned type - leave company_id None, never gate
         shared = bool(getattr(model, "__company_shared__", False))
         try:
             # SAVEPOINT: this lookup is best-effort, and a failed statement
@@ -3945,7 +4076,7 @@ def _attach_company_info(db: Session, matches: list[ResolvedEntity]) -> set[tupl
                     ),
                     {"ids": [str(m.uuid) for m in group]},
                 ).all()
-        except Exception:  # noqa: BLE001 — attribution is additive, never fatal
+        except Exception:  # noqa: BLE001 - attribution is additive, never fatal
             logger.exception("company attribution lookup failed for %s", entity_type)
             if not _scope_allows(scope, None, shared=shared):
                 # Cannot prove these rows are in scope → do not emit them.
@@ -3972,7 +4103,7 @@ def _attach_company_info(db: Session, matches: list[ResolvedEntity]) -> set[tupl
             .filter(Company.id.in_(company_ids))
             .all()
         }
-    except Exception:  # noqa: BLE001 — an id with no name is still actionable
+    except Exception:  # noqa: BLE001 - an id with no name is still actionable
         logger.exception("company name lookup failed")
         return blocked
     for match, cid in pending:
@@ -4040,7 +4171,7 @@ def _attach_brand_info(db: Session, matches: list[ResolvedEntity]) -> None:
         return
     try:
         brands = fetch_product_brands(db, [str(m.uuid) for m in products])
-    except Exception:  # noqa: BLE001 — brand is additive, never fatal
+    except Exception:  # noqa: BLE001 - brand is additive, never fatal
         logger.exception("brand attribution lookup failed")
         return
     for m in products:
@@ -4247,6 +4378,7 @@ def _probe_user(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity
 
 _TIER1_PROBES: tuple[tuple[Callable[[Session, list[str]], dict[str, list[ResolvedEntity]]], frozenset[str]], ...] = (
     (_probe_product, frozenset({"product"})),
+    (_probe_product_set, frozenset({"product_set"})),
     (_probe_customer_order, frozenset({"customer_order"})),
     (_probe_inbound_shipment, frozenset({"inbound_shipment"})),
     (_probe_spo, frozenset({"spo_allocation"})),
@@ -4281,9 +4413,9 @@ def resolve_references(
 
     Runs three tiers in order, stopping per-token as soon as a tier yields a match:
 
-      Tier 1 — exact case-insensitive lookup on all code fields.
-      Tier 2 — prefix / substring ILIKE on the same code fields (handles partial codes).
-      Tier 3 — embedding vector search over primary entities (semantic last resort).
+      Tier 1 - exact case-insensitive lookup on all code fields.
+      Tier 2 - prefix / substring ILIKE on the same code fields (handles partial codes).
+      Tier 3 - embedding vector search over primary entities (semantic last resort).
 
     Tier 2/3 results with ambiguity (multiple candidates, or low confidence gap) are
     flagged `ambiguous=True` so the LLM asks the user to pick rather than guessing.
@@ -4360,7 +4492,7 @@ def resolve_references(
             # / -UF / -OLD share a base stem and never match exact. When Tier 1
             # already produced a product hit, additionally probe prefix on the
             # product table so siblings surface alongside the exact match. Other
-            # entity types keep strict single-hit semantics — variant siblings
+            # entity types keep strict single-hit semantics - variant siblings
             # are a product-domain concept (SKU suffixes); customers / orders /
             # promotions don't have the same family pattern.
             existing_product_hit = any(
@@ -4387,7 +4519,7 @@ def resolve_references(
             if len(candidates) == 1:
                 per_token[tok] = candidates
                 continue
-            # 2+ matches — let the LLM ask the user to pick, cap surface size.
+            # 2+ matches - let the LLM ask the user to pick, cap surface size.
             # Per-type balanced cap: when several entity types matched (e.g.
             # `kitchen sink` hits 20 products + 6 promotions), a flat top-N
             # would crowd out the smaller types entirely. Allocate the budget
@@ -4403,7 +4535,7 @@ def resolve_references(
             per_token[tok] = balanced[:PREFIX_LIMIT]
             ambiguous_tokens.add(tok)
 
-    # Snapshot which tokens already had matches BEFORE cross-type expansion —
+    # Snapshot which tokens already had matches BEFORE cross-type expansion - 
     # used below to flag tokens that grew into multi-type candidate sets so the
     # LLM disambiguates instead of picking the first match.
     pre_expand_type_count: dict[str, int] = {
@@ -4491,7 +4623,7 @@ def resolve_references(
     # without explicit markers. Free-word candidates are bulk-queried so the cost
     # stays bounded regardless of how many surface from the phrase.
     # Positional pairing already pins every token to a single type, so the free-word
-    # scan would only produce noise — skip it in that mode.
+    # scan would only produce noise - skip it in that mode.
     freeword_resolutions: list[TokenResolution] = []
     if raw_query and pair_map is None and (allowed is None or {"customer", "transporter"} & allowed):
         existing_lower = {t.lower() for t in tokens}
@@ -4645,7 +4777,7 @@ def _rag_resolve_phrase(
 
     Returns the top-k hits filtered by `allowed_entity_types`, ranked by cosine
     similarity desc, dropping anything below `min_similarity`. No tokenization,
-    no fallback tiers — the entire surface area is "embed the user's phrase,
+    no fallback tiers - the entire surface area is "embed the user's phrase,
     ask pgvector who looks closest, trust the score."
 
     `embedding_documents.source_key` is populated per source_type by the embedding
@@ -4712,7 +4844,7 @@ def _rag_resolve_phrase(
         if not entity_type:
             continue
         raw_key = r.source_key or str(r.source_id)
-        # Customer debtor-synthetic keys arrive as "debtor:<code>" — strip the
+        # Customer debtor-synthetic keys arrive as "debtor:<code>" - strip the
         # prefix so the canonical_code matches `Order.debtor_code` directly.
         match_field = "embedding"
         canonical = raw_key
@@ -4755,10 +4887,10 @@ def _rag_resolve_phrase(
         )
 
     # Substring re-rank: embedding similarity on short product/customer codes is
-    # noisy — the top-K above similarity threshold is often a mix of relevant
+    # noisy - the top-K above similarity threshold is often a mix of relevant
     # and completely unrelated codes that happen to share token shape. When ANY
     # candidate's canonical_code (case-insensitive) contains the input phrase
-    # as a substring, keep only those candidates — substring containment is a
+    # as a substring, keep only those candidates - substring containment is a
     # stronger human-meaningful signal than embedding rank, and it cuts the
     # noise from 15 candidates down to the ones the user could plausibly mean.
     phrase_lower = (phrase or "").strip().lower()
@@ -4789,7 +4921,7 @@ def resolve_entities_to_filters(
     agent can ask the user to pick one. Anything below `RAG_MIN_SIMILARITY`
     falls into `unresolved` so the agent can tell the user no match was found.
 
-    No token extraction, no n-gram sweep, no Tier-1 / Tier-2 ILIKE — the
+    No token extraction, no n-gram sweep, no Tier-1 / Tier-2 ILIKE - the
     embedding pipeline already indexed the relevant business vocabulary, so we
     let pgvector do the work in one round-trip per entity.
     """
@@ -4805,12 +4937,12 @@ def resolve_entities_to_filters(
     t_start = time.perf_counter()
     aggregated: list[TokenResolution] = []
     for phrase in inputs:
-        # Hybrid retrieval. The agent's input is unpredictable — sometimes a full
+        # Hybrid retrieval. The agent's input is unpredictable - sometimes a full
         # product_code, sometimes a partial prefix the user typed, sometimes a
         # loose customer phrase. Sequence:
         #   1. Tier-2 prefix / substring ILIKE across every allowed entity type's
         #      name + code columns. Deterministic. Matches what the in-app list
-        #      search does — "SRTWC8088" returns every product_code containing it.
+        #      search does - "SRTWC8088" returns every product_code containing it.
         #   2. Only if Tier-2 finds nothing → RAG embedding top-K fallback.
         #      Catches semantic phrasings ("fira ventures" → "FIRA VENTURE
         #      ENTERPRISE SDN BHD") that pure substring would miss.
@@ -4828,7 +4960,7 @@ def resolve_entities_to_filters(
             )
             continue
 
-        # Tier 2.5: pg_trgm fuzzy SQL — catches typos / missing chars before
+        # Tier 2.5: pg_trgm fuzzy SQL - catches typos / missing chars before
         # falling through to the heavier embedding lookup.
         trgm_hits = _trgm_lookup(db, phrase, allowed_set)
         if trgm_hits:
@@ -4880,7 +5012,7 @@ def resolve_entities_to_filters(
             # Surface the ambiguity in the echo so the agent can tell the user
             # we matched several near-equal candidates, but ALSO let every
             # candidate flow into the filter buckets below. Returning empty on
-            # ambiguity is worse than over-matching — caller sees stock for all
+            # ambiguity is worse than over-matching - caller sees stock for all
             # near matches and the user can disambiguate verbally.
             buckets.ambiguous.append(
                 {

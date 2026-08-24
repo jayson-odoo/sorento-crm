@@ -3,11 +3,11 @@
  *
  * Pins the request shaping every AC in group I (AC-STD-1/2) and the endpoint
  * contract documented at the top of scmPolicyService.ts:
- *   - list uses buildDataGridParams (page/limit/sort/dir/query)         AC-LIST-3
- *   - create/update/delete/classification/supplier-scoring/resolve hit
+ * - list uses buildDataGridParams (page/limit/sort/dir/query)         AC-LIST-3
+ * - create/update/delete/classification/supplier-scoring/resolve hit
  *     the right method + path + body (AC-EDIT / AC-CFG-2 / AC-SUP-2 / AC-PREV-1)
- *   - extractApiError is used on a non-ok response (error branch)       AC-STD-2
- *   - scope-option mappers hold the resolver key as the hidden value:
+ * - extractApiError is used on a non-ok response (error branch)       AC-STD-2
+ * - scope-option mappers hold the resolver key as the hidden value:
  *       product → products.id, class → category_code, warehouse → code  AC-NAV-4 / Risk #2
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';

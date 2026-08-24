@@ -21,8 +21,8 @@ If changes aren't showing up, try these steps:
    ```
 
 5. **Hard refresh browser:**
-   - Chrome/Edge: Ctrl+Shift+R (Windows) or Cmd+Shift+R (Mac)
-   - Firefox: Ctrl+F5 (Windows) or Cmd+Shift+R (Mac)
-   - Safari: Cmd+Option+R
+ - Chrome/Edge: Ctrl+Shift+R (Windows) or Cmd+Shift+R (Mac)
+ - Firefox: Ctrl+F5 (Windows) or Cmd+Shift+R (Mac)
+ - Safari: Cmd+Option+R
 
 6. **Check browser console** for any errors

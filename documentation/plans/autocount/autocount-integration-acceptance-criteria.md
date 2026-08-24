@@ -1,12 +1,12 @@
-# AutoCount Integration (Sorento side) — User Acceptance Criteria
+# AutoCount Integration (Sorento side) - User Acceptance Criteria
 
 > **Status:** Group A **BUILT** (2026-07-21). Group D **BUILT** via a reference table rather
-> than per-table columns — see AC-AC-21/23 below. Remaining groups DRAFT.
+> than per-table columns - see AC-AC-21/23 below. Remaining groups DRAFT.
 > Contract for `documentation/plans/autocount/PLAN-autocount-integration.md`
 > **Counterpart repo:** `foundryx-shared-service` → `documentation/plans/sprint-4/13-autocount-esb-acceptance-criteria.md`
 > **Read that first if you need the full picture.** This file is self-contained for the Sorento work.
 
-## Context (read this — it explains why the shape is what it is)
+## Context (read this - it explains why the shape is what it is)
 
 Customers run **AutoCount on-premise**. Sorento runs in the cloud. They cannot reach each other directly.
 A new **ESB module in the FoundryX shared service** sits between them: it holds the AutoCount credentials,
@@ -33,7 +33,7 @@ companies' code spaces.
 
 ---
 
-## Group A — Integration object and credentials (do this first)
+## Group A - Integration object and credentials (do this first)
 
 > Today: a single static `EXTERNAL_API_KEY` env var, shared with n8n, compared with plain `!=` in
 > `app/dependencies.py:546-582` on a dependency that applies **no permission check**. That is not an
@@ -60,7 +60,7 @@ companies' code spaces.
 **When** the key is generated
 **Then** the plaintext is displayed **once** at creation
 **And** only a hash is persisted
-**And** it can never be retrieved again — only rotated.
+**And** it can never be retrieved again - only rotated.
 
 ### AC-AC-04 `[BE]` Key comparison is constant-time
 **Given** an inbound request
@@ -75,7 +75,7 @@ companies' code spaces.
 **Then** the request is rejected `403`
 **And** **all 17** `/external/*` endpoints enforce permissions against the integration's
 `act_as_user_id` via `require_permission_with_api_key`.
-> Revised 2026-07-21 (decisions A1/A3/A8). There is **no separate scope vocabulary** — RBAC slugs
+> Revised 2026-07-21 (decisions A1/A3/A8). There is **no separate scope vocabulary** - RBAC slugs
 > are the single authorization source. `get_external_api_user` applies no permission check at all
 > today; that dependency is retired.
 
@@ -99,7 +99,7 @@ integration
 **Given** an active integration
 **When** its key is rotated
 **Then** a grace window (**default 7 days**) accepts both old and new
-**And** the old key stops working when `expires_at` lapses, **evaluated at request time — no cron**
+**And** the old key stops working when `expires_at` lapses, **evaluated at request time - no cron**
 **And** an admin can revoke the old key immediately rather than waiting out the window
 **And** both events are audit-logged.
 > The scheduler is opt-in and defaults off, so a cron-driven expiry would fail **open**.
@@ -124,12 +124,12 @@ integration
 **And** secret fields are masked with a reveal toggle
 **And** last-used timestamp and last error are visible.
 
-### AC-AC-09 `[BE]` Migration off the env key — seeded once, no runtime fallback
+### AC-AC-09 `[BE]` Migration off the env key - seeded once, no runtime fallback
 **Given** the existing `EXTERNAL_API_KEY`, shared by **n8n and the MCP server**
 **When** this group ships
 **Then** a migration reads the env var **once, at migration time** and seeds a `legacy-shared-key`
 integration carrying its hash, so both callers keep working with **zero changes**
-**And** **no runtime code path ever reads the env var** — no dual-accept fallback is written
+**And** **no runtime code path ever reads the env var** - no dual-accept fallback is written
 **And** if the env var is absent the migration seeds nothing and logs loudly, never an empty hash.
 > Existing n8n traffic must not break. This is a live system. Revised 2026-07-21 (decision A6):
 > seeding the *hash of the same value* satisfies both "n8n keeps working" and "nothing reads env at
@@ -157,13 +157,13 @@ goes quiet.
 **And** when the limiter backend is unavailable the request is **allowed** (fail-open) and an alert
 is raised.
 > `/external` has no rate limiting today. Fail-open matches `app/services/rate_limit.py`'s existing,
-> deliberate semantics (decision A7): rate limiting here is abuse control, not authorization — a
+> deliberate semantics (decision A7): rate limiting here is abuse control, not authorization - a
 > dead limiter grants no access, since authentication is DB-backed and still enforced. Fail-closed
 > would turn a Redis blip into a simultaneous ESB-sync and n8n outage.
 
 ---
 
-## Group B — Ingest endpoints (ESB → Sorento)
+## Group B - Ingest endpoints (ESB → Sorento)
 
 ### AC-AC-11 `[BE]` Ingest accepts canonical shapes
 **Given** the ESB pushing a batch
@@ -216,7 +216,7 @@ Delivery Order (+lines), Goods Received Note (+lines).
 
 ---
 
-## Group C — Read endpoints (for diffing)
+## Group C - Read endpoints (for diffing)
 
 ### AC-AC-19 `[BE]` Current-state read for diff rendering
 **Given** the ESB preparing an approval diff
@@ -233,7 +233,7 @@ Delivery Order (+lines), Goods Received Note (+lines).
 
 ---
 
-## Group D — `source_system` / `source_ref`
+## Group D - `source_system` / `source_ref`
 
 ### AC-AC-21 `[BE]` Consumed records carry a source system and reference
 **Given** every entity the ESB writes
@@ -264,7 +264,7 @@ Delivery Order (+lines), Goods Received Note (+lines).
 
 ---
 
-## Group E — Per-field ownership
+## Group E - Per-field ownership
 
 ### AC-AC-24 `[BE]` AutoCount-owned fields are protected
 **Given** a supplier whose `payment_terms_days` is AutoCount-owned
@@ -285,14 +285,14 @@ Delivery Order (+lines), Goods Received Note (+lines).
 
 ---
 
-## Group F — Document lifecycle events (Sorento → ESB)
+## Group F - Document lifecycle events (Sorento → ESB)
 
 ### AC-AC-27 `[BE]` Generic lifecycle event, not per-trigger hooks
 **Given** any tracked document changing state
 **When** the transition commits
 **Then** one generic event `{doc_type, event, doc_id, occurred_at}` is emitted
 **And** adding a new trigger option requires **no new Sorento code**.
-> The ESB filters. Do not build a bespoke hook per trigger — that hardcodes the thing being made configurable.
+> The ESB filters. Do not build a bespoke hook per trigger - that hardcodes the thing being made configurable.
 
 ### AC-AC-28 `[BE]` Coverage
 Events fire for PO, SQ, PR/RFQ, SO on at least: created, submitted, approved, rejected, cancelled.
@@ -318,7 +318,7 @@ Events fire for PO, SQ, PR/RFQ, SO on at least: created, submitted, approved, re
 
 ---
 
-## Group G — Sync status on documents
+## Group G - Sync status on documents
 
 ### AC-AC-32 `[BE]` Documents carry sync state
 **Given** a document configured to sync
@@ -342,7 +342,7 @@ Events fire for PO, SQ, PR/RFQ, SO on at least: created, submitted, approved, re
 
 ---
 
-## Group H — New masters
+## Group H - New masters
 
 ### AC-AC-35 `[BE]` Tax master
 **Given** no tax master exists today
@@ -359,7 +359,7 @@ Events fire for PO, SQ, PR/RFQ, SO on at least: created, submitted, approved, re
 
 ---
 
-## Group I — Company scoping
+## Group I - Company scoping
 
 ### AC-AC-37 `[BE]` Exactly one AutoCount company per deployment, explicitly configured
 **Given** deployment configuration
@@ -398,17 +398,17 @@ Navigate by clicking, never by direct URL.
 
 | # | Item | Impact |
 |---|---|---|
-| 1 | **`feat/scm-reorder-copilot` must merge** — `purchase_orders`, `sales_orders` and their line tables do not exist on main | Blocks Groups B/F/G for those doc types |
+| 1 | **`feat/scm-reorder-copilot` must merge** - `purchase_orders`, `sales_orders` and their line tables do not exist on main | Blocks Groups B/F/G for those doc types |
 | 2 | **No Tax or Payment Terms tables exist** | Group H is net-new schema |
-| 3 | **No event bus exists** — closest is `AutomationService.dispatch_event` (email-only actions) and the funnel at `app/services/procurement_service.py:6546-6639` | Group F is net-new infrastructure |
+| 3 | **No event bus exists** - closest is `AutomationService.dispatch_event` (email-only actions) and the funnel at `app/services/procurement_service.py:6546-6639` | Group F is net-new infrastructure |
 | 4 | **`EXTERNAL_API_KEY` is live and shared with n8n** | Group A must migrate without breaking n8n (AC-AC-09) |
-| 5 | **Naming mismatch** — AutoCount GRN ≈ Sorento `picking_headers`/`picking_lines`; AutoCount DO ≈ `orders`/`order_lines` | Mapping must be explicit; do not assume name equivalence |
+| 5 | **Naming mismatch** - AutoCount GRN ≈ Sorento `picking_headers`/`picking_lines`; AutoCount DO ≈ `orders`/`order_lines` | Mapping must be explicit; do not assume name equivalence |
 | 6 | **Sorento appears single-tenant** (no `tenant_id` on domain models) | Confirm before designing multi-tenant ingest |
 | 7 | **PO write overturns a documented hard rule** (`SCM_Module_Build_Plan.md:37`) | Requires doc update + named sign-off |
 
 ## Definition of Done
 
-1. No phase-1 mock remains — real backend wired and verified with real data.
+1. No phase-1 mock remains - real backend wired and verified with real data.
 2. Every new column on an existing table has a **backfill migration**, not seed-if-absent.
 3. No code hardcode-looks-up a user-editable key.
 4. Every new permission has a grant path for **existing** roles.

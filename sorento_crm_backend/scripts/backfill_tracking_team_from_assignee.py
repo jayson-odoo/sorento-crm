@@ -94,7 +94,7 @@ def main() -> int:
             uid = str(tracking.assigned_to_id)
             user_links = tier1_by_user.get(uid)
             if not user_links:
-                continue  # tier-2/3 manager or unmapped user — no routing signal
+                continue  # tier-2/3 manager or unmapped user - no routing signal
             stored_agent_id = str(tracking.agent_id) if tracking.agent_id else None
             stored_code = str(tracking.team_set_code) if tracking.team_set_code else None
             # Prefer the stored agent's link to the user's team; else deterministic first.
@@ -108,7 +108,7 @@ def main() -> int:
                 f"[FIX] tracking {tracking.id}: "
                 f"agent {agent_codes.get(stored_agent_id or '', stored_agent_id)} → "
                 f"{agent_codes.get(derived_agent_id, derived_agent_id)}, "
-                f"team_set {stored_code or '—'} → {derived_code} "
+                f"team_set {stored_code or '-'} → {derived_code} "
                 f"(assignee {uid}, tier stays {tracking.current_tier})"
             )
             if not args.dry_run:

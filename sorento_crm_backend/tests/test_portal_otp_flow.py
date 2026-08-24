@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-# MUST be first app import — resolves circular-import in app.modules.runtime.guards.
+# MUST be first app import - resolves circular-import in app.modules.runtime.guards.
 from app.main import app  # noqa: E402
 
 from app.database import SessionLocal
@@ -84,7 +84,7 @@ def _contact(db, cleanup, *, workspace_id=None) -> RespondContact:
 
 @pytest.fixture
 def client(db):
-    """Public portal endpoints don't need auth — just override get_db so the
+    """Public portal endpoints don't need auth - just override get_db so the
     route handler sees the same session as the test fixture (so flushes/commits
     are visible).
     """
@@ -104,7 +104,7 @@ def client(db):
 
 def test_verify_otp_then_me_succeeds(client, db, cleanup):
     """Mint OTP, exchange via /verify-otp, then immediately call /me with the
-    returned token. Must succeed — confirms BE has no race / encoding issue
+    returned token. Must succeed - confirms BE has no race / encoding issue
     between mint_token and resolve_token.
     """
     ws = _workspace(db, cleanup)
@@ -153,7 +153,7 @@ def test_verify_otp_then_me_succeeds(client, db, cleanup):
 
 def test_request_otp_enqueues_async_respond_send(db, cleanup):
     """request_otp must enqueue the send on the respond_io queue (async, logged
-    in the outbox) — NOT send synchronously — so a Respond outage doesn't 500
+    in the outbox) - NOT send synchronously - so a Respond outage doesn't 500
     and the code lands in integration_logs for local testing. The worker task
     handles the window-aware text/template branch."""
     from unittest.mock import patch
@@ -182,7 +182,7 @@ def test_request_otp_enqueues_async_respond_send(db, cleanup):
 
 def test_get_submission_cross_contact_raises_owner_mismatch_403(db, cleanup):
     """Opening another contact's submission with a valid session returns 403
-    OWNER_MISMATCH (so the portal offers owner login) — not a misleading 404.
+    OWNER_MISMATCH (so the portal offers owner login) - not a misleading 404.
     A genuinely absent id still 404s."""
     import uuid as _uuid
 

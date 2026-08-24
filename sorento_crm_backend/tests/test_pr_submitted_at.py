@@ -1,4 +1,4 @@
-"""purchase_requests.submitted_at — auto-stamped on every portal submit.
+"""purchase_requests.submitted_at - auto-stamped on every portal submit.
 
 The PR/SF document's top "Date" = submitted date. It is stamped in
 PortalService.submit_draft (the sole place PR/SF reach status='submitted') and
@@ -33,7 +33,7 @@ def db():
 @pytest.fixture(autouse=True)
 def _neutralize_side_effects(monkeypatch):
     """submit_draft generates document numbers, fires notifications + SLA events,
-    and re-serializes via get_submission — none relevant to the date stamp."""
+    and re-serializes via get_submission - none relevant to the date stamp."""
     monkeypatch.setattr(
         PortalService, "_assign_document_number_if_missing", lambda self, kind, row: None
     )

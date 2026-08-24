@@ -15,7 +15,7 @@ const RED =
 const MUTED = 'border-border bg-muted/40 text-muted-foreground';
 
 /**
- * The one banner that renders every form-action state (AC-U-7). Presentational only  - 
+ * The one banner that renders every form-action state (AC-U-7). Presentational only - 
  * cancel / undo side effects belong to the caller, same split as HandlingLockBanner.
  *
  * Renders nothing in the `idle` and `undoable` states: `undoable` puts its affordance in

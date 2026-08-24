@@ -67,7 +67,7 @@ interface StockInquiryViewSummary {
 }
 
 function formatDateTimeStr(value: string | null | undefined): string {
-  if (!value) return '—';
+  if (!value) return '-';
   try {
     const d = new Date(value);
     return Number.isNaN(d.getTime()) ? value : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
@@ -260,7 +260,7 @@ function ViewStockInquiryContent() {
       )}
       <ProductInquiryFormLayout>
         <InquiryFormTableRow label="Date">
-          <InquiryReadValue empty="—">
+          <InquiryReadValue empty="-">
             {summary?.created_at
               ? format(new Date(summary.created_at), 'dd/MM/yy')
               : ''}
@@ -322,12 +322,12 @@ function ViewStockInquiryContent() {
         {(summary?.last_responded_at || summary?.last_responded_by) && (
           <>
             <InquiryFormTableRow label="Last responded by">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty="-">
                 {summary?.last_responded_by_name ?? summary?.last_responded_by}
               </InquiryReadValue>
             </InquiryFormTableRow>
             <InquiryFormTableRow label="Last responded at">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty="-">
                 {summary?.last_responded_at
                   ? formatDateTimeStr(summary.last_responded_at)
                   : ''}
@@ -340,12 +340,12 @@ function ViewStockInquiryContent() {
           (summary?.rejection_reason != null && summary.rejection_reason !== '')) && (
           <>
             <InquiryFormTableRow label="Rejected by">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty="-">
                 {summary?.rejected_by_name ?? summary?.rejected_by}
               </InquiryReadValue>
             </InquiryFormTableRow>
             <InquiryFormTableRow label="Rejected at">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty="-">
                 {summary?.rejected_at ? formatDateTimeStr(summary.rejected_at) : ''}
               </InquiryReadValue>
             </InquiryFormTableRow>
@@ -362,12 +362,12 @@ function ViewStockInquiryContent() {
               <InquiryReadValue>{summary?.reopen_reason}</InquiryReadValue>
             </InquiryFormTableRow>
             <InquiryFormTableRow label="Reopened by">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty="-">
                 {summary?.reopened_by_name ?? summary?.reopened_by}
               </InquiryReadValue>
             </InquiryFormTableRow>
             <InquiryFormTableRow label="Reopened at">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty="-">
                 {summary?.reopened_at ? formatDateTimeStr(summary.reopened_at) : ''}
               </InquiryReadValue>
             </InquiryFormTableRow>
@@ -411,7 +411,7 @@ function ViewStockInquiryContent() {
         <div className="rounded-md border border-border bg-muted/30 px-4 py-3 text-sm space-y-1">
           <div className="flex flex-wrap gap-x-4 gap-y-1">
             <span className="text-muted-foreground">Status</span>
-            <span className="font-medium">{summary.status ?? '—'}</span>
+            <span className="font-medium">{summary.status ?? '-'}</span>
           </div>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             {summary.last_responded_at && (

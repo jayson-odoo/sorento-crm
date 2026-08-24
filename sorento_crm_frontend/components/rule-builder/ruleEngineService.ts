@@ -7,7 +7,7 @@ import { extractApiError } from '@/lib/api-client';
 import type { RuleFactItem } from './types';
 
 /**
- * Whitelisted facts for the given sources (e.g. `["promotion"]`) — backend
+ * Whitelisted facts for the given sources (e.g. `["promotion"]`) - backend
  * `GET /api/v1/rule-facts?sources=<csv>`. Dynamic options (access levels) are
  * materialized server-side.
  */

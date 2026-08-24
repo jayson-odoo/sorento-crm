@@ -1,15 +1,15 @@
 /**
- * SCM M8 — daily reorder plan + Days-cover drill e2e (M8-D3 / M8-A2 / M8-A3).
+ * SCM M8 - daily reorder plan + Days-cover drill e2e (M8-D3 / M8-A2 / M8-A3).
  * Full FE → BE → DB round-trip against the LIVE stack (FE :3000 + BE + worker;
  * `scm` module enabled, a completed run seeded so today's plan has real recs):
  *
  *   sidebar → Supply Chain → Reorder Planning
- *     → page opens straight to TODAY'S plan (no run click) — M8-D3
+ *     → page opens straight to TODAY'S plan (no run click) - M8-D3
  *     → the plan table renders real buy recommendations (GET .../recommendations)
  *     → click a row's "Explain days cover" drill
- *     → the drill lazy-fetches GET /api/v1/scm/analytics/explain/demand — M8-A2
+ *     → the drill lazy-fetches GET /api/v1/scm/analytics/explain/demand - M8-A2
  *     → the arithmetic RECONCILES (net / rate = N days) and NEVER divides by zero
- *       ("/ 0" is never rendered) even on a deficit / no-demand row — M8-A3
+ *       ("/ 0" is never rendered) even on a deficit / no-demand row - M8-A3
  *
  * Navigation ALWAYS goes through the sidebar (never a deep URL) so a broken menu
  * gate fails the test (AC-NAV-1). The demand endpoint hit is asserted via a
@@ -42,9 +42,9 @@ async function login(page: Page) {
 
 /**
  * Confirm the Supply Chain sidebar group + leaf render (catches missing-entry /
- * wrong-moduleKey / permission-gating bugs — AC-NAV-1), then navigate via the
+ * wrong-moduleKey / permission-gating bugs - AC-NAV-1), then navigate via the
  * leaf's resolved href (clicking the <Link> directly hangs on the protected
- * layout's ingest fetch — established repo workaround, see scm-m4-copilot.spec).
+ * layout's ingest fetch - established repo workaround, see scm-m4-copilot.spec).
  */
 async function openScmLeaf(page: Page, leaf: RegExp) {
   await page.goto('/', { waitUntil: 'commit' });
@@ -76,17 +76,17 @@ test('m8 reorder plan: opens to today + Days-cover drill hits explain/demand and
 
   await login(page);
 
-  // ── Reorder Planning — opens straight to today's plan (M8-D3) ──────────────
+  // ── Reorder Planning - opens straight to today's plan (M8-D3) ──────────────
   await openScmLeaf(page, /^Reorder Planning$/);
   await page.waitForURL(/\/scm\/reorder$/);
 
-  // The page opens to today's snapshot directly — GET /reorder-runs/today fires
+  // The page opens to today's snapshot directly - GET /reorder-runs/today fires
   // WITHOUT any "Run planning" click.
   await expect
     .poll(() => seen('GET', /\/scm\/reorder-runs\/today/), { timeout: 20_000 })
     .toBeTruthy();
 
-  // Real buy recommendations load into the plan table (data-driven — a completed
+  // Real buy recommendations load into the plan table (data-driven - a completed
   // run must be seeded so today's plan has rows).
   await expect
     .poll(() => seen('GET', /\/scm\/reorder-runs\/[^/]+\/recommendations/), { timeout: 25_000 })
@@ -100,7 +100,7 @@ test('m8 reorder plan: opens to today + Days-cover drill hits explain/demand and
   // ── Open the Days-cover drill (M8-A2) ─────────────────────────────────────
   await drillTrigger.click();
 
-  // The drill lazy-fetches the demand working from /analytics/explain/demand —
+  // The drill lazy-fetches the demand working from /analytics/explain/demand - 
   // proves the hook → drillService → api-client chain is wired to the right route.
   await expect
     .poll(() => seen('GET', /\/scm\/analytics\/explain\/demand/), { timeout: 20_000 })
@@ -110,7 +110,7 @@ test('m8 reorder plan: opens to today + Days-cover drill hits explain/demand and
   // "undefined" copy on a deficit / no-demand row).
   const drillHeader = page.getByText(/Days cover =/).first();
   await expect(drillHeader).toBeVisible({ timeout: 15_000 });
-  // Full metric name spelled out — never the ambiguous "CV".
+  // Full metric name spelled out - never the ambiguous "CV".
   await expect(page.getByText('Coefficient of variation')).toBeVisible({ timeout: 10_000 });
 
   // ── Reconciliation invariant (M8-A3): NEVER a division by zero ────────────

@@ -1,4 +1,4 @@
-# PLAN — Conversation SLA: idempotent create + conversation-row scoping
+# PLAN - Conversation SLA: idempotent create + conversation-row scoping
 
 **Status:** Merged to main 2026-06-06 (PR #4, commit efe20ad). Pending: n8n-side node removal (see n8n section). (Grill session 2026-06-06; supersedes the abandoned multi-active/source-entity-key design.)
 
@@ -42,7 +42,7 @@ different layer and its singleton-per-contact invariant is **correct**.
 4. Resolved row exists at create → **overwrite-in-place stays** (current behavior).
    History = event logs, which survive overwrite (FK by tracking id, only scalar
    fields reset).
-5. Existence check (and every contact-keyed read) must scope to conversation rows —
+5. Existence check (and every contact-keyed read) must scope to conversation rows - 
    today an active **form** row falsely 409s n8n's create and can leak a form row's
    assignee to thread-level endpoints.
 
@@ -52,27 +52,27 @@ different layer and its singleton-per-contact invariant is **correct**.
    `source_entity_type IS NULL OR source_entity_type NOT IN FORM_SLA_TYPES`.
    Refactor the inline copy at `:445-452` (and `:2410`) onto it.
 2. **`create_tracking` (`sla_service.py:1669`)**
-   - Scope `existing` query with the helper.
-   - Active hit → set `message_id` from payload (if sent), commit, return existing
+ - Scope `existing` query with the helper.
+ - Active hit → set `message_id` from payload (if sent), commit, return existing
      with `already_active` marker (no 409). **No event log written.**
-   - Resolved hit → overwrite-in-place (unchanged) + write `assign` event log.
-   - No hit → insert (unchanged) + write `assign` event log.
-   - **Backend now owns the `assign` event log** (was n8n's
+ - Resolved hit → overwrite-in-place (unchanged) + write `assign` event log.
+ - No hit → insert (unchanged) + write `assign` event log.
+ - **Backend now owns the `assign` event log** (was n8n's
      `conversation-sla-event-tracking-create` POST): `event_type="assign"`,
      `from_tier=1`, `to_tier=1`, `assigned_to` from the new tracking, reason
      `"New Assignee <name>"` resolved from the assignee user. Written only when a
-     conversation actually starts (insert / overwrite), never on idempotent hit —
+     conversation actually starts (insert / overwrite), never on idempotent hit - 
      that is what kills the duplicate-log problem at the source.
 3. **Route `POST /conversation-sla-tracking/integration` (`sla_tracking.py:572`)**
-   - `is_update` pre-check: same scoping.
-   - Response: include `already_active: true|false`; keep 200/201 semantics n8n
+ - `is_update` pre-check: same scoping.
+ - Response: include `already_active: true|false`; keep 200/201 semantics n8n
      tolerates. Integration log channel: `sla_tracking_idempotent_hit` on hit.
 4. **Scope contact-keyed reads** with the helper:
-   - `get_tracking_by_contact_phone` (`sla_service.py:~1110`) → used by
+ - `get_tracking_by_contact_phone` (`sla_service.py:~1110`) → used by
      `external/next_assignee.py:297`, `external/conversation_assignee.py:58`
-   - `get_tracking_by_contact` (`sla_service.py:~803`) → used by
+ - `get_tracking_by_contact` (`sla_service.py:~803`) → used by
      `external/conversation_sla_tracking.py:25`
-   - `get_tracking_by_contact_and_policy` (`sla_service.py:~915`) → used by
+ - `get_tracking_by_contact_and_policy` (`sla_service.py:~915`) → used by
      escalate (`sla_tracking.py:401`) and `sla_service.py:1031`
 5. No migration. No FE change required (listing filter already excludes form rows;
    event-log table unchanged).
@@ -81,13 +81,13 @@ different layer and its singleton-per-contact invariant is **correct**.
 
 In the routing sub-workflow:
 
-1. **Remove the `conversation-sla-event-tracking-create` node** — backend writes the
+1. **Remove the `conversation-sla-event-tracking-create` node** - backend writes the
    `assign` event log itself on create/overwrite (and skips it on idempotent hit).
 2. **Repoint `Code in JavaScript1`**: it reads
-   `$('conversation-sla-event-tracking-create').first().json.assigned_to` — change to
+   `$('conversation-sla-event-tracking-create').first().json.assigned_to` - change to
    `$('conversation-sla-tracking-create').first().json.assigned_to` (same field on the
    create response).
-3. SLA comment node keeps using the returned (existing) deadlines — no change.
+3. SLA comment node keeps using the returned (existing) deadlines - no change.
 
 ## Tests (pytest, same PR)
 

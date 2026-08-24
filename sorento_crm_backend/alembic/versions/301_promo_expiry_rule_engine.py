@@ -1,11 +1,11 @@
 """Promotion-expiry rule engine + compiled-PDF batch columns.
 
 Adds:
-- ``automations.conditions_json`` (JSONB, nullable) — the rule-engine condition
+- ``automations.conditions_json`` (JSONB, nullable) - the rule-engine condition
   tree filtering which trigger matches an automation acts on.
-- ``promotions.expiry_notified_at`` (timestamp, nullable) — when the promo was
+- ``promotions.expiry_notified_at`` (timestamp, nullable) - when the promo was
   last emailed as expiring.
-- ``promotions.expiry_notify_batch_id`` (uuid, nullable, indexed) — the batch a
+- ``promotions.expiry_notify_batch_id`` (uuid, nullable, indexed) - the batch a
   promo belongs to for the reminder-email deep link + list filter.
 
 Idempotent (IF NOT EXISTS) so a partial prior apply re-runs cleanly.

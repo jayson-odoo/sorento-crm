@@ -10,10 +10,10 @@
  *   Chat    : /user-management/contacts/{id}/chat
  *
  * Plus the rules the single-page version broke:
- *   - Created / Updated are read-only metadata: header strip, never a tab body.
- *   - Editable values (phone number, workspace) stay on the Profile card the pencil
+ * - Created / Updated are read-only metadata: header strip, never a tab body.
+ * - Editable values (phone number, workspace) stay on the Profile card the pencil
  *     opens, so the read view and the edit dialog show the same fields.
- *   - Prev/next record navigation is present, and keeps the tab the user is on.
+ * - Prev/next record navigation is present, and keeps the tab the user is on.
  *
  * The layout reads through its hooks and contact service; only the network client
  * (`apiFetch`) is mocked, so nothing hits the network.

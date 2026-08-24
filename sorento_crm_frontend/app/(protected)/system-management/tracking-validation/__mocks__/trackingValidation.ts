@@ -5,9 +5,9 @@
  * "would the liner and CIDB feeds have told us sooner than the human did?".
  *
  * Verdicts:
- *   agree            - feed matches what was typed
- *   disagree         - one of them is wrong, investigate
- *   integration_led  - the feed knew FIRST; `lag_days` is the time recovered
+ *   agree          - feed matches what was typed
+ *   disagree       - one of them is wrong, investigate
+ *   integration_led - the feed knew FIRST; `lag_days` is the time recovered
  *
  * `observed_at` is stored NAIVE UTC, matching how the backend serializes timestamps -
  * `formatDateTimeInMalaysia` adds +8 for display. Writing MYT wall-clock here would

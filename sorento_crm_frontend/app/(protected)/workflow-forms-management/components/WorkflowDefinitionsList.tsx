@@ -120,7 +120,7 @@ export default function WorkflowDefinitionsList() {
           row.original.published_version_number != null ? (
             <Badge variant="primary">v{row.original.published_version_number}</Badge>
           ) : (
-            <span className="text-muted-foreground text-sm">—</span>
+            <span className="text-muted-foreground text-sm"> - </span>
           ),
         size: 110,
         enableSorting: false,
@@ -236,7 +236,7 @@ export default function WorkflowDefinitionsList() {
                         variant="outline"
                         size="icon"
                         className="relative shrink-0"
-                        title="Quick filters — status"
+                        title="Quick filters - status"
                         aria-label="Quick filters"
                       >
                         <SlidersHorizontal className="size-4" />

@@ -19,10 +19,9 @@ from app.models.procurement import Supplier, InboundShipment
 from app.models.resources import Attachment
 from app.api.v1.external.utils import (
     parse_date_value,
-    get_products_by_code,
-    normalize_code,
     scope_to_attachment_company,
 )
+from app.services.product_code_resolution import resolve_codes_to_products
 from app.services.attachment_notification_helper import (
     build_packing_list_detail_url,
     notify_after_external_attachment_entity,
@@ -39,14 +38,14 @@ def stamp_duplicate_integration_log(
 
     Every user-facing surface (upload-activity drawer, attachment integration
     panel) reads the ``error_code`` / ``error_message`` COLUMNS. n8n's error
-    branch only posts ``{status, response_payload}``, leaving both NULL — so the
+    branch only posts ``{status, response_payload}``, leaving both NULL - so the
     drawer would show a bare "Integration failed" while the real reason sat
     unread inside response_payload. Stamping the columns here puts the
     explanation where the UI already looks.
 
     Safe against n8n's follow-up callback: IntegrationLogService updates with
     ``model_dump(exclude_unset=True)``, so the status POST cannot clobber these.
-    Deliberately does NOT set ``status`` — that stays n8n's to report.
+    Deliberately does NOT set ``status`` - that stays n8n's to report.
     """
     log = (
         db.query(IntegrationLog)
@@ -58,7 +57,7 @@ def stamp_duplicate_integration_log(
         .first()
     )
     if log is None:
-        # Direct API call with no n8n leg — nothing to stamp.
+        # Direct API call with no n8n leg - nothing to stamp.
         return
     log.error_code = error_code
     log.error_message = error_message
@@ -94,28 +93,39 @@ def create_packing_list(
     # fall-through below fails rather than binding another company's product.
     scope_to_attachment_company(db, attachment)
 
+    # Same resolver as product-attachment and promotion linking (D11 - one
+    # helper, one behaviour): exact code, then a SET code fans out to its
+    # members, then `+`-split, then substring. A set code that names no single
+    # product ("WC7605" on the packing slip) therefore lands lines for every
+    # member instead of the whole line being skipped.
     product_codes = [item.product_code for item in payload.packing_list_products]
-    products_map = get_products_by_code(db, product_codes)
-    missing_codes = [code for code in product_codes if normalize_code(code) not in products_map]
-    skipped_product_codes = list(missing_codes)
+    resolution = resolve_codes_to_products(db, product_codes)
+    skipped_product_codes = list(resolution.unmatched)
     if skipped_product_codes:
         logger.warning(
             "Packing list external API: skipping missing product codes (request still processed): %s",
             skipped_product_codes,
         )
 
-    # Only include lines whose product_code exists; skip missing ones
-    valid_items = [
-        item for item in payload.packing_list_products
-        if normalize_code(item.product_code) in products_map
-    ]
-
-    # Group by product_id and sum quantity (one row per product per shipment)
+    # Group by product_id and sum quantity (one row per product per shipment).
+    # A set code's line quantity is NOT split across its members or scaled by
+    # each member's per-set quantity - every member the set names receives the
+    # SAME quantity the packing-list line stated for the set code. The line
+    # states physical cartons/units received for the code as printed; there is
+    # no reliable signal on the slip for "how many complete sets" versus "how
+    # many of this one part", so scaling by `ProductSetMember.quantity` would
+    # be inventing a number no one on the slip actually wrote.
     by_product: dict[str, int] = {}
-    for item in valid_items:
-        product = products_map[normalize_code(item.product_code)]
-        product_id = cast(str, product.id)
-        by_product[product_id] = by_product.get(product_id, 0) + item.quantity
+    for item in payload.packing_list_products:
+        code = (item.product_code or "").strip()
+        if not code:
+            continue
+        for matched_code in resolution.codes_for(code):
+            product = resolution.products_by_code.get(matched_code)
+            if product is None:
+                continue
+            product_id = cast(str, product.id)
+            by_product[product_id] = by_product.get(product_id, 0) + item.quantity
 
     try:
         shipment_date = parse_date_value(payload.packing_list.shipment_date)
@@ -184,7 +194,7 @@ def create_packing_list(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.message)
 
     try:
-        sn = (payload.packing_list.shipment_number or "").strip() or "—"
+        sn = (payload.packing_list.shipment_number or "").strip() or "-"
         aid = payload.packing_list.attachment_id
         summary_plain = (
             f'Packing list / inbound shipment "{sn}" was created in Sorento CRM via the external integration API '

@@ -46,7 +46,7 @@ from app.services.form_sla_service import emit_form_event
 
 logger = logging.getLogger(__name__)
 
-# Default SLA windows (hours) — overridable later via SLAPolicy lookup.
+# Default SLA windows (hours) - overridable later via SLAPolicy lookup.
 DEFAULT_RESPONSE_SLA_HOURS = 24
 DEFAULT_RESOLUTION_SLA_HOURS = 72
 
@@ -196,7 +196,7 @@ def _generate_ticket_number(db: Session) -> str:
 def _visibility_filter(db: Session, current_user: dict):
     """Return a SQLAlchemy filter restricting to tickets the user can see.
 
-    raised_by-by-user matches only when ``raised_by_kind='user'`` — a respond
+    raised_by-by-user matches only when ``raised_by_kind='user'`` - a respond
     contact's id sharing the same string as a user.id is impossible in practice
     but the discriminator avoids any accidental collision."""
     if _has_view_all(db, current_user) or _is_admin(db, current_user):
@@ -778,7 +778,7 @@ def update_response(
     response_text: Optional[str],
     current_user: dict,
 ) -> Dict[str, Any]:
-    """Save the response payload only — does not flip status or notify the
+    """Save the response payload only - does not flip status or notify the
     submitter. Use ``update_response_and_reply`` for the full flow."""
     t = _get_or_404(db, ticket_id)
     _ensure_visible(db, t, current_user)
@@ -877,7 +877,7 @@ def update_resolution(
     resolution_text: Optional[str],
     current_user: dict,
 ) -> Dict[str, Any]:
-    """Save the resolution payload only — does not flip status or notify the
+    """Save the resolution payload only - does not flip status or notify the
     submitter. Use ``update_resolution_and_reply`` for the full flow."""
     t = _get_or_404(db, ticket_id)
     _ensure_visible(db, t, current_user)
@@ -981,7 +981,7 @@ def create_ticket_from_mcp(
 
     The draft is intentionally minimal: no round-robin assignment, no SLA
     emit, no notifications. The submitter is expected to open the returned
-    link, review the preview on a real ticket page, and click "Submit" —
+    link, review the preview on a real ticket page, and click "Submit" - 
     that path (``submit_ticket_draft``) is what fires the rest of the
     workflow. This avoids the LLM-confirmation-state-machine fragility
     altogether by delegating the explicit confirm to a real UI."""

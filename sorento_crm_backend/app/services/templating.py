@@ -80,7 +80,7 @@ def _unescape_jinja_tags(source: str) -> str:
     ``unexpected char '&'`` and the whole template renders as
     ``[template-error:...]``. Entities never carry meaning *inside* a Jinja tag
     (logic uses ``and``/``or``/``>``/``"``, never ``&amp;``), so decoding within
-    the delimiters is safe and leaves output text — where ``&amp;`` is real —
+    the delimiters is safe and leaves output text - where ``&amp;`` is real - 
     untouched.
     """
     if not source or "&" not in source:
@@ -114,7 +114,7 @@ def html_to_text(html: str) -> str:
     Post-processes html2text output to flatten markdown inline links
     `[label](url)` into `label: url`. Naive auto-linkers in plain-text viewers
     (e.g. Respond.io inbox) capture the trailing `)` as part of the URL,
-    producing dead links — the bracketed form is safer and renders cleanly in
+    producing dead links - the bracketed form is safer and renders cleanly in
     every viewer.
     """
     if not html:

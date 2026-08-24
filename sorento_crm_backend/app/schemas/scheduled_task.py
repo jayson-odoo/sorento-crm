@@ -45,7 +45,7 @@ class ScheduledTaskResponse(BaseModel):
     updated_at: datetime
 
     # Derived overdue state. Computed from `last_run_at + interval`, the scheduler's
-    # own truth — NOT from the display-only `next_run_at` above.
+    # own truth - NOT from the display-only `next_run_at` above.
     due_at: Optional[datetime] = None
     grace_percent: Optional[int] = None      # effective: per-task override or global
     grace_seconds: Optional[int] = None      # after the [60s, 30min] clamp

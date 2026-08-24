@@ -9,7 +9,7 @@ route's guard is
 
 On Python 3.12+ `str(UserStatus.ACTIVE)` is "UserStatus.ACTIVE", so the check
 rejected everyone with 403 "Account not activated". It is a nasty shape because
-`user.status == "ACTIVE"` and `user.status.value` both still work — only `str()`
+`user.status == "ACTIVE"` and `user.status.value` both still work - only `str()`
 breaks, and it breaks silently by producing a plausible-looking string.
 
 `test_active_user_status_survives_str_conversion` pins that specific mechanism.
@@ -105,7 +105,7 @@ def test_active_user_status_survives_str_conversion(client):
 
     The route compares ``str(user.status) != "ACTIVE"``. If `User.status` is ever
     redeclared as a SQLAlchemy ``Enum``, the ORM hands back a ``UserStatus``
-    member whose ``str()`` is "UserStatus.ACTIVE" — and every login 403s. Assert
+    member whose ``str()`` is "UserStatus.ACTIVE" - and every login 403s. Assert
     on the round-tripped value, not on the literal we wrote.
     """
     email = f"strcheck-{uuid.uuid4().hex[:8]}@example.com"

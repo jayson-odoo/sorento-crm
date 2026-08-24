@@ -4,13 +4,13 @@ Why: a mutating action can be delivered more than once for a single user intent
 (double-click before the FE disables, FE re-enabling on stale data while a refetch
 lags, client/proxy/Cloudflare re-send on a slow upstream, two stale tabs). For
 action endpoints whose side effects are harmful to duplicate (SLA assignment,
-Respond sends, status transitions) this caused real duplicates — see
+Respond sends, status transitions) this caused real duplicates - see
 docs/plans/PLAN-uniform-idempotency.md and the form-SLA duplicate incident.
 
 Design (see plan + its internal-grill verdicts):
 - Pure ASGI so the request body can be buffered + replayed correctly (BaseHTTPMiddleware
   loses the downstream body when you read it).
-- Scoped to an explicit ALLOWLIST of transition/side-effect endpoints — NOT all POSTs
+- Scoped to an explicit ALLOWLIST of transition/side-effect endpoints - NOT all POSTs
   (global body-hash would silently collapse two legitimate identical creates).
 - Key = sha256(session_token : method : path : body). Token (not user_id) because
   middleware runs before the auth dependency; a browser session carries one token.
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 # Endpoints whose re-execution is semantically a no-op and whose duplication is the
 # harm. Matched by path suffix (ids live in the path, so suffix match is id-agnostic).
-# Extend here — do NOT add create/collection POSTs (body-hash would collapse two
+# Extend here - do NOT add create/collection POSTs (body-hash would collapse two
 # legitimate identical creates; those are covered by the FE primitive + DB constraints).
 _ALLOWLIST_SUFFIXES = (
     "/set-pending-approval",
@@ -96,7 +96,7 @@ def _header(headers: list[tuple[bytes, bytes]], name: bytes) -> Optional[bytes]:
 
 def _session_identity(headers: list[tuple[bytes, bytes]]) -> str:
     """A stable per-caller token: bearer JWT/session token, else X-API-Key, else the
-    raw cookie header. Hashed into the key — never logged or stored in clear."""
+    raw cookie header. Hashed into the key - never logged or stored in clear."""
     auth = _header(headers, b"authorization")
     if auth and auth.lower().startswith(b"bearer "):
         return auth[7:].decode("latin-1", "ignore")
@@ -152,7 +152,7 @@ class IdempotencyMiddleware:
         max_body = int(getattr(settings, "idempotency_max_body", 262144))
         replay = _replay_receive(messages)
         if len(body) > max_body:
-            # Too large to fingerprint safely — pass through untouched.
+            # Too large to fingerprint safely - pass through untouched.
             return await self.app(scope, replay, send)
 
         r = self._get_redis()
@@ -206,7 +206,7 @@ class IdempotencyMiddleware:
         try:
             await self.app(scope, replay, send_wrapper)
         except Exception:
-            # Handler blew up — drop the lock so the user can retry immediately.
+            # Handler blew up - drop the lock so the user can retry immediately.
             try:
                 r.delete(key)
             except Exception:
@@ -262,7 +262,7 @@ class IdempotencyMiddleware:
 
 def _replay_receive(messages: list[dict]):
     """An ASGI receive that yields the buffered request messages, then blocks on
-    disconnect — so the downstream handler reads the same body."""
+    disconnect - so the downstream handler reads the same body."""
     queue = list(messages)
 
     async def receive():

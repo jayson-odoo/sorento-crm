@@ -7,8 +7,8 @@ market insight OFF, then funds everything (full budget) so the morning snapshot 
 fully within-budget (M8-D1/D6). The user tightens the budget on the page to defer.
 
 The "configurable time" (M8-D2) is this row's ``start_at`` (anchored to 06:00 KL) +
-``interval_unit``/``interval_value`` (daily). Both — plus enablement and an optional
-``metadata`` ``{budget, include_market}`` — are editable via the scheduled-tasks API/UI
+``interval_unit``/``interval_value`` (daily). Both - plus enablement and an optional
+``metadata`` ``{budget, include_market}`` - are editable via the scheduled-tasks API/UI
 with no code change. ``budget: null`` => full budget; ``include_market: false`` keeps
 market out of the run (market reaches the plan only through chat, M8-D5).
 

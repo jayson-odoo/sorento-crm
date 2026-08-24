@@ -9,7 +9,7 @@ import OrderForm from './OrderForm';
  *
  * OrderForm populates fields from the loaded order via a `form.reset()` that runs
  * inside a `setTimeout(0)` (see OrderForm.tsx ~L168), and Remarks CS lives inside a
- * non-default "Remarks" tab — so the test must flush the timer, then open the tab.
+ * non-default "Remarks" tab - so the test must flush the timer, then open the tab.
  */
 
 const useOrder = vi.fn();
@@ -44,7 +44,7 @@ async function renderAndOpenRemarks() {
   await act(async () => {
     await new Promise((r) => setTimeout(r, 0));
   });
-  // Remarks CS lives in the non-default "Remarks" tab — open it.
+  // Remarks CS lives in the non-default "Remarks" tab - open it.
   fireEvent.click(screen.getByRole('tab', { name: /Remarks/i }));
 }
 
@@ -66,7 +66,7 @@ describe('OrderForm Remarks CS freeze (UAC-Z3)', () => {
       return fields;
     });
     remarksFields.forEach((el) => expect(el).toBeDisabled());
-    expect(screen.getAllByText(/Locked —/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Locked -/i).length).toBeGreaterThan(0);
   });
 
   it('keeps the Remarks CS field editable when remarks_cs_locked is false', async () => {
@@ -81,6 +81,6 @@ describe('OrderForm Remarks CS freeze (UAC-Z3)', () => {
       return fields;
     });
     remarksFields.forEach((el) => expect(el).not.toBeDisabled());
-    expect(screen.queryByText(/Locked —/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Locked -/i)).not.toBeInTheDocument();
   });
 });

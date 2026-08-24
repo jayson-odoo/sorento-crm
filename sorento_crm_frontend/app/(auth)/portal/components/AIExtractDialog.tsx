@@ -1,13 +1,13 @@
 'use client';
 
 /**
- * AIExtractDialog — smart popup that prefills a portal submission form from
+ * AIExtractDialog - smart popup that prefills a portal submission form from
  * uploaded attachments (images + PDFs). Two stages:
  *
- *   1. Upload — local-only File[] buffer with drag/drop, file picker, and
+ *   1. Upload - local-only File[] buffer with drag/drop, file picker, and
  *      clipboard paste. Files are NOT uploaded to S3 yet; they're held in
  *      memory and shipped to /api/v1/public/portal/ai-extract on click.
- *   2. Review — read-only mirror of the FE field registry showing extracted
+ *   2. Review - read-only mirror of the FE field registry showing extracted
  *      values. Per-field × removes a guess. The user toggles the auto-attach
  *      checkbox and confirms; the parent merges values into empty form fields
  *      and (optionally) queues files for upload via the existing pendingFiles
@@ -133,7 +133,7 @@ export function AIExtractDialog({
     if (!open) reset();
   }, [open, reset]);
 
-  // Clipboard paste — only while open and on the upload stage.
+  // Clipboard paste - only while open and on the upload stage.
   useEffect(() => {
     if (!open || stage !== 'upload') return;
     const onPaste = (e: ClipboardEvent) => {
@@ -190,7 +190,7 @@ export function AIExtractDialog({
     if (inputRef.current) inputRef.current.value = '';
   };
 
-  // Mobile-friendly clipboard paste — `navigator.clipboard.read()` returns the
+  // Mobile-friendly clipboard paste - `navigator.clipboard.read()` returns the
   // raw clipboard items including images (Cmd/Ctrl+V is desktop-only).
   const handlePasteFromClipboard = useCallback(async () => {
     const clip = (navigator as Navigator & {
@@ -215,7 +215,7 @@ export function AIExtractDialog({
           incoming.push(new File([blob], `clipboard-${ts}.${ext}`, { type: imageType }));
           continue;
         }
-        // No image — fall back to pasted text saved as a .txt file.
+        // No image - fall back to pasted text saved as a .txt file.
         if (item.types.includes('text/plain')) {
           const blob = await item.getType('text/plain');
           const text = (await blob.text()).trim();
@@ -482,7 +482,7 @@ export function AIExtractDialog({
               {KINDS_WITH_LINE_ITEMS.includes(kind) && result.products && result.products.length > 0 && (
                 <div className="rounded-md border border-border">
                   <div className="px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground border-b border-border">
-                    Line items ({result.products.length}) — will be applied to the items list
+                    Line items ({result.products.length}) - will be applied to the items list
                   </div>
                   <table
                     className="w-full text-sm"
@@ -508,12 +508,12 @@ export function AIExtractDialog({
                           className="border-b border-border last:border-b-0"
                           data-testid={`ai-extract-product-row-${i}`}
                         >
-                          <td className="px-3 py-2 align-top break-words">{p.product_code ?? '—'}</td>
-                          <td className="px-3 py-2 align-top text-right">{p.quantity ?? '—'}</td>
+                          <td className="px-3 py-2 align-top break-words">{p.product_code ?? '-'}</td>
+                          <td className="px-3 py-2 align-top text-right">{p.quantity ?? '-'}</td>
                           {kind !== 'complaint' && (
                             <>
-                              <td className="px-3 py-2 align-top text-right">{p.unit_price ?? '—'}</td>
-                              <td className="px-3 py-2 align-top text-right">{p.total ?? '—'}</td>
+                              <td className="px-3 py-2 align-top text-right">{p.unit_price ?? '-'}</td>
+                              <td className="px-3 py-2 align-top text-right">{p.total ?? '-'}</td>
                               <td className="px-3 py-2 align-top break-words">{p.notes ?? ''}</td>
                             </>
                           )}

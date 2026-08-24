@@ -163,7 +163,7 @@ export default function MarketSegmentsAdmin() {
         meta: { headerTitle: 'Description', skeleton: <Skeleton className="h-4 w-44" /> },
         cell: ({ row }) => (
           <span className="max-w-[240px] truncate block" title={row.original.description ?? undefined}>
-            {row.original.description ?? '—'}
+            {row.original.description ?? '-'}
           </span>
         ),
       },
@@ -174,7 +174,7 @@ export default function MarketSegmentsAdmin() {
         size: 140,
         enableSorting: false,
         meta: { headerTitle: 'Sort order', skeleton: <Skeleton className="h-4 w-16" /> },
-        cell: ({ row }) => <span>{row.original.sort_order ?? '—'}</span>,
+        cell: ({ row }) => <span>{row.original.sort_order ?? '-'}</span>,
       },
       {
         id: 'is_active',

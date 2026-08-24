@@ -1,4 +1,4 @@
-"""SCM M5 Part A — bounded semantic explainer (prose + scoped Q&A + advisory).
+"""SCM M5 Part A - bounded semantic explainer (prose + scoped Q&A + advisory).
 
 The LLM is a hard boundary: it receives already-frozen numbers and emits prose
 ONLY. These tests MOCK the provider by monkeypatching
@@ -6,14 +6,14 @@ ONLY. These tests MOCK the provider by monkeypatching
 call and returns a ``ChatResult``-like object. Nothing here needs a real API key.
 
 Covered UAC:
-  * AC-M5.1 — explain caches frozen-fact prose; second read hits the cache.
-  * AC-M5.2 — ask returns ``REFUSAL`` verbatim when the model refuses; passes an
+  * AC-M5.1 - explain caches frozen-fact prose; second read hits the cache.
+  * AC-M5.2 - ask returns ``REFUSAL`` verbatim when the model refuses; passes an
     answerable question + facts through otherwise.
-  * AC-M5.3 — no tool/agent loop: ``provider.chat`` gets NO ``tools`` kwarg.
-  * AC-M5.8 — LLM boundary: numeric columns are byte-identical before/after
+  * AC-M5.3 - no tool/agent loop: ``provider.chat`` gets NO ``tools`` kwarg.
+  * AC-M5.8 - LLM boundary: numeric columns are byte-identical before/after
     explain AND ask; only ``explanation`` may change (on explain).
-  * no-provider degrade — deterministic sentence (uncached) + ask REFUSAL.
-  * auth — bare user is denied on every endpoint.
+  * no-provider degrade - deterministic sentence (uncached) + ask REFUSAL.
+  * auth - bare user is denied on every endpoint.
 
 Fixtures reuse the ``scm_app`` savepoint + the M4 seed helpers.
 """
@@ -113,7 +113,7 @@ def _numeric_snapshot(db, rec_id: str) -> dict:
 
 
 # ===========================================================================
-# AC-M5.1 — explain: frozen facts in, cached prose out, second call = cache
+# AC-M5.1 - explain: frozen facts in, cached prose out, second call = cache
 # ===========================================================================
 
 def test_explain_passes_frozen_facts_and_caches(scm_app, monkeypatch):
@@ -145,7 +145,7 @@ def test_explain_passes_frozen_facts_and_caches(scm_app, monkeypatch):
 
 
 # ===========================================================================
-# AC-M5.2 — ask: verbatim REFUSAL, and answerable question passes through
+# AC-M5.2 - ask: verbatim REFUSAL, and answerable question passes through
 # ===========================================================================
 
 def test_ask_returns_refusal_verbatim(scm_app, monkeypatch):
@@ -176,7 +176,7 @@ def test_ask_passes_question_and_facts_through(scm_app, monkeypatch):
 
 
 # ===========================================================================
-# AC-M5.3 — no tools / no agent loop on explain OR ask
+# AC-M5.3 - no tools / no agent loop on explain OR ask
 # ===========================================================================
 
 def test_no_tools_passed_to_provider(scm_app, monkeypatch):
@@ -193,14 +193,14 @@ def test_no_tools_passed_to_provider(scm_app, monkeypatch):
 
 
 # ===========================================================================
-# AC-M5.8 — LLM boundary: numeric columns unchanged by explain AND ask
+# AC-M5.8 - LLM boundary: numeric columns unchanged by explain AND ask
 # ===========================================================================
 
 def test_numeric_columns_untouched_by_llm(scm_app, monkeypatch):
     _, db, _, _ = scm_app
     rec = _seed_buy_rec(db)
     rec_id = rec.id
-    _install_provider(monkeypatch, "Order now — cover is low.")
+    _install_provider(monkeypatch, "Order now - cover is low.")
 
     before = _numeric_snapshot(db, rec_id)
 
@@ -218,11 +218,11 @@ def test_numeric_columns_untouched_by_llm(scm_app, monkeypatch):
     assert db.execute(
         text("SELECT explanation FROM scm.reorder_recommendation WHERE id = :id"),
         {"id": rec_id},
-    ).scalar() == "Order now — cover is low."
+    ).scalar() == "Order now - cover is low."
 
 
 # ===========================================================================
-# no-provider degrade — deterministic (uncached) explain + REFUSAL ask
+# no-provider degrade - deterministic (uncached) explain + REFUSAL ask
 # ===========================================================================
 
 def test_no_provider_deterministic_explain_not_cached(scm_app, monkeypatch):
@@ -253,7 +253,7 @@ def test_no_provider_ask_refuses(scm_app, monkeypatch):
 
 
 # ===========================================================================
-# market advisory — None until a signal is stored
+# market advisory - None until a signal is stored
 # ===========================================================================
 
 def test_market_advisory_none_then_value(scm_app):
@@ -263,16 +263,16 @@ def test_market_advisory_none_then_value(scm_app):
 
     db.execute(
         text("UPDATE scm.reorder_recommendation SET market_advisory = :a WHERE id = :id"),
-        {"a": "Copper prices rising — consider buying ahead.", "id": rec.id},
+        {"a": "Copper prices rising - consider buying ahead.", "id": rec.id},
     )
     db.flush()
     db.expire(rec)
     assert explainer_service.market_advisory(db, rec.id) == \
-        "Copper prices rising — consider buying ahead."
+        "Copper prices rising - consider buying ahead."
 
 
 # ===========================================================================
-# endpoints — happy path through the route (gated on scm.dashboard.view)
+# endpoints - happy path through the route (gated on scm.dashboard.view)
 # ===========================================================================
 
 def test_explanation_endpoint_caches_and_reuses(scm_app, monkeypatch):
@@ -285,7 +285,7 @@ def test_explanation_endpoint_caches_and_reuses(scm_app, monkeypatch):
         r1 = client.get(f"/api/v1/scm/recommendations/{rec.id}/explanation")
         assert r1.status_code == 200, r1.text
         assert r1.json()["explanation"] == "Replenish now before it stocks out."
-        # a second view is served from the cached column — no second LLM call
+        # a second view is served from the cached column - no second LLM call
         r2 = client.get(f"/api/v1/scm/recommendations/{rec.id}/explanation")
         assert r2.json()["explanation"] == "Replenish now before it stocks out."
 
@@ -342,7 +342,7 @@ def test_advisory_endpoint_none_then_value(scm_app):
 
 
 # ===========================================================================
-# missing recommendation — 404 (not a 500)
+# missing recommendation - 404 (not a 500)
 # ===========================================================================
 
 def test_explanation_missing_rec_returns_404(scm_app):
@@ -353,7 +353,7 @@ def test_explanation_missing_rec_returns_404(scm_app):
 
 
 # ===========================================================================
-# auth — bare user denied on every explainer endpoint
+# auth - bare user denied on every explainer endpoint
 # ===========================================================================
 
 def test_explanation_denied_without_dashboard_view(scm_app):
@@ -380,7 +380,7 @@ def test_advisory_denied_without_dashboard_view(scm_app):
 
 
 # ===========================================================================
-# run overview — aggregate brief, cached onto reorder_run.overview
+# run overview - aggregate brief, cached onto reorder_run.overview
 # ===========================================================================
 
 def _seed_run(db) -> str:
@@ -412,7 +412,7 @@ def test_explain_run_aggregates_caches_and_boundary(scm_app, monkeypatch):
     facts = _facts_json(_user_block(fake))
     assert facts["buy_count"] >= 1
 
-    # cached onto the run — a second read serves the cache, no second LLM call
+    # cached onto the run - a second read serves the cache, no second LLM call
     db.flush()
     cached = db.execute(
         text("SELECT overview FROM scm.reorder_run WHERE id = :r"), {"r": run_id}
@@ -457,7 +457,7 @@ def test_run_overview_endpoint_happy(scm_app, monkeypatch):
         r1 = client.get(f"/api/v1/scm/reorder-runs/{run_id}/overview")
         assert r1.status_code == 200, r1.text
         assert r1.json()["overview"] == "Run brief: 2 buys, one urgent SKU."
-        # cached — a second view does not re-invoke the model
+        # cached - a second view does not re-invoke the model
         r2 = client.get(f"/api/v1/scm/reorder-runs/{run_id}/overview")
         assert r2.json()["overview"] == "Run brief: 2 buys, one urgent SKU."
     assert len(fake.calls) == 1
@@ -478,7 +478,7 @@ def test_run_overview_denied_without_dashboard_view(scm_app):
 
 
 # ===========================================================================
-# disposition explain — the frozen disposition facts reach the model
+# disposition explain - the frozen disposition facts reach the model
 # ===========================================================================
 
 def test_disposition_explain_surfaces_disposition_facts(scm_app, monkeypatch):
@@ -493,9 +493,9 @@ def test_disposition_explain_surfaces_disposition_facts(scm_app, monkeypatch):
     db.flush()
     db.expire(rec)
 
-    fake = _install_provider(monkeypatch, "Hold this stock — it is overstocked.")
+    fake = _install_provider(monkeypatch, "Hold this stock - it is overstocked.")
     out = explainer_service.explain_recommendation(db, rec.id)
-    assert out == "Hold this stock — it is overstocked."
+    assert out == "Hold this stock - it is overstocked."
 
     facts = _facts_json(_user_block(fake))
     assert facts["type"] == "disposition"
@@ -504,7 +504,7 @@ def test_disposition_explain_surfaces_disposition_facts(scm_app, monkeypatch):
 
 
 # ===========================================================================
-# plan-chat (M6-A) — grounded, multi-turn conversation over the WHOLE run
+# plan-chat (M6-A) - grounded, multi-turn conversation over the WHOLE run
 # ===========================================================================
 
 def test_run_chat_context_carries_all_recs_and_no_tools(scm_app, monkeypatch):
@@ -524,7 +524,7 @@ def test_run_chat_context_carries_all_recs_and_no_tools(scm_app, monkeypatch):
         {"r": run_id},
     ).scalar()
     assert sku and sku in block
-    # AC-M6.4 — plan-chat is a bounded chat, never an agent loop
+    # AC-M6.4 - plan-chat is a bounded chat, never an agent loop
     assert fake.calls[0]["kwargs"].get("tools") is None
     # the manager's question is the final turn
     assert fake.calls[0]["messages"][-1]["content"] == "Which buys are most urgent?"
@@ -554,7 +554,7 @@ def test_run_chat_touches_no_numeric_column(scm_app, monkeypatch):
         {"r": run_id},
     ).mappings().all()
     assert [dict(r) for r in after] == [dict(r) for r in before]
-    # chat is NOT overview — it must not write the cached overview column either
+    # chat is NOT overview - it must not write the cached overview column either
     assert db.execute(
         text("SELECT overview FROM scm.reorder_run WHERE id = :r"), {"r": run_id}
     ).scalar() is None

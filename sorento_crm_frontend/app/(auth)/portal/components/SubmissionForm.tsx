@@ -2146,7 +2146,7 @@ function StockInquiryFormSection({
   const inquiryNumber =
     (detail?.document_number as string | undefined) ||
     (detail?.inquiry_number as string | undefined) ||
-    (submissionId ? '—' : 'auto-generated on submit');
+    (submissionId ? '-' : 'auto-generated on submit');
 
   return (
     <div className="space-y-3">

@@ -1,20 +1,20 @@
 """Company-scope enforcement tests (multi-company data isolation).
 
-Security core — Group H of UAC-multi-company-isolation.md:
-  - AC-H1 leak test: UNSET -> 0 rows; single-company scope -> only that company;
+Security core - Group H of UAC-multi-company-isolation.md:
+ - AC-H1 leak test: UNSET -> 0 rows; single-company scope -> only that company;
     None -> all companies (across a representative set of owned models).
-  - AC-H2 new-table guard: every model with a company_id column is a
+ - AC-H2 new-table guard: every model with a company_id column is a
     CompanyScopedMixin subclass (except the M2M grant/membership tables).
-  - AC-H3 four-state predicate: UNSET/empty -> false(), None -> no predicate,
+ - AC-H3 four-state predicate: UNSET/empty -> false(), None -> no predicate,
     frozenset -> IN (...); empty never renders `.in_([])`.
-  - AC-H5 attachments: shared (null) rows always visible; owned rows scoped.
-  - AC-D4: a system write (scope None/UNSET) to an owned table without a
+ - AC-H5 attachments: shared (null) rows always visible; owned rows scoped.
+ - AC-D4: a system write (scope None/UNSET) to an owned table without a
     company_id is rejected (never inserts a null-company owned row).
 
 Runs against the local Postgres dev DB (a prod-copy) inside a nested transaction
 that is ALWAYS rolled back, so no real data is created. All test rows carry a
 ``zzscope-<suffix>`` / ``ZZSCOPE`` marker and are scoped by the two throwaway test
-company ids — no unscoped DELETE (the DB is the developer's real data).
+company ids - no unscoped DELETE (the DB is the developer's real data).
 """
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ pytestmark = pytest.mark.skipif(
     reason="SKIP_LIVE_DB_TESTS=1",
 )
 
-# Owned models exercised in the leak test — one per model file, none with
+# Owned models exercised in the leak test - one per model file, none with
 # __audit_track__ (keeps the flush free of audit side effects).
 REPRESENTATIVE = [
     (Brand, "brand_code", dict(brand_name="ZZSCOPE brand")),
@@ -259,14 +259,14 @@ def test_predicate_attachment_unset_is_null_only():
 
 # --- AC-H2 new-table guard -----------------------------------------------------
 # Tables that legitimately carry a company_id column WITHOUT being owned/partitioned:
-#   - M2M grant/membership tables (shared bucket).
-#   - Infra/pipeline tables that snapshot a company_id but are NOT auto-filtered by
+# - M2M grant/membership tables (shared bucket).
+# - Infra/pipeline tables that snapshot a company_id but are NOT auto-filtered by
 #     the ORM listener: import_jobs (enqueue snapshot, worker re-establishes scope);
 #     embedding_documents / embedding_chunks (vector search filters company_id
-#     manually — the pipeline processes all companies).
-#   - Admin-listing tables with a MANUAL company filter (admin_listing_company_filter),
+#     manually - the pipeline processes all companies).
+# - Admin-listing tables with a MANUAL company filter (admin_listing_company_filter),
 #     deliberately NOT owned mixins so their other consumers (portal / public /
-#     workflow / worker / global audit listener) keep working under any scope —
+#     workflow / worker / global audit listener) keep working under any scope - 
 #     only the staff listing is scoped: forms, import_logs, audit_logs.
 _COMPANY_ID_ALLOWLIST = {
     "user_companies",
@@ -350,19 +350,19 @@ def test_every_company_id_table_is_registered():
     # number and the prose drifted apart twice already. The rule is what matters. A table
     # is owned when the row is a fact about ONE company that cannot be derived from
     # something already scoped:
-    #   - Planning artefacts own their company because a run, a recommendation, a budget or
+    # - Planning artefacts own their company because a run, a recommendation, a budget or
     #     an exception batch is a company's own decision queue, and an exception's warehouse
     #     is nullable (supply in transit names no location to filter through).
-    #   - Fulfilment rows (loading plans, supplier notices, supplier inventory, allocations)
+    # - Fulfilment rows (loading plans, supplier notices, supplier inventory, allocations)
     #     own it for the same reason: they are that company's shipment, not a place.
-    #   - The project-sales domain owns its company the same way: a project, a lead, a
+    # - The project-sales domain owns its company the same way: a project, a lead, a
     #     quotation, an intake PO/SO and their versions are that company's pipeline.
-    #   - Certificate children are deliberately NOT owned: they are only reachable through
+    # - Certificate children are deliberately NOT owned: they are only reachable through
     #     the certificate, which is scoped, so a second filter is redundant surface (SEC-2a).
     #     Same reasoning for the project children that inherit their partition through their
     #     parent (projects.series_categories, projects.brands, projects.collaborators,
     #     projects.takeover_requests).
-    #   - `access_agents` is NOT owned: one agent routes both brands through two ladders.
+    # - `access_agents` is NOT owned: one agent routes both brands through two ladders.
     # Derived instead of owned: demand_stat / item_classification / the views (via the
     # warehouse join), supplier_performance (via suppliers), market signals (facts about
     # the world, not about us).
@@ -441,14 +441,28 @@ def test_every_company_id_table_is_registered():
     # existing PO / skip, or a mixture - kept CURRENT rather than append-only. Owned because it
     # is that company's own decision queue, the same reason `recommendation_override` beside
     # it is owned.
-    expected_owned = 118
+    #
+    # PLAN-product-sets.md adds 2: `product_sets` is the flyer code that names an assembly
+    # (`SRTWC8608-RL` = pedestal + cistern + seat cover). Owned because every product code in
+    # the catalogue exists once under Sorento and once under Mocha, so a set naming those
+    # products belongs to exactly one of them - the unique index is `(company_id, set_code)`
+    # for the same reason. `product_set_members` is deliberately NOT owned: it reaches its
+    # scope through its parent set, the way `certificate_products` reaches it through
+    # `Certificate`. `product_set_proposal_batches` is owned for the identical reason: a
+    # proposal batch is one company's own pass over its own catalogue, deriving candidate
+    # sets from product codes that exist once under Sorento and once under Mocha, so the
+    # batch belongs to exactly one of them - the same fact `product_sets` is owned for.
+    # `product_set_proposals`, the candidate rows inside a batch, are deliberately NOT owned
+    # for the same reason `product_set_members` is not: each one is reachable only through
+    # its parent batch, which is already scoped, so a second filter would drop it twice.
+    expected_owned = 120
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------
-# NOTE: ``None`` is NOT in this list — a None-scope (system / all-companies, the
+# NOTE: ``None`` is NOT in this list - a None-scope (system / all-companies, the
 # n8n no-contact backward-compat path) owned-write now stamps the incumbent
 # company (Sorento) rather than rejecting; see the dedicated test below. Only a
 # genuinely-ambiguous scope (UNSET = resolver never ran / unresolved contact,
@@ -468,7 +482,7 @@ def test_system_write_without_company_is_rejected(scope):
 
 
 def test_none_scope_owned_write_stamps_incumbent_company():
-    """A None-scope (system/all-companies) owned write must NOT reject — it stamps
+    """A None-scope (system/all-companies) owned write must NOT reject - it stamps
     the incumbent (Sorento) so n8n no-contact write flows keep working."""
     from app.services.company_scope import DEFAULT_COMPANY_ID
 

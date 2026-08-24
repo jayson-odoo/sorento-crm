@@ -1,4 +1,4 @@
-"""Dealer Kit module foundation — dealer_kit schema, RBAC, catalog row.
+"""Dealer Kit module foundation - dealer_kit schema, RBAC, catalog row.
 
 Creates the ``dealer_kit`` Postgres schema and its eight tables, adds two small
 additive columns to public resource tables, seeds six permission slugs with an
@@ -8,9 +8,9 @@ Cross-schema FKs (dealer_kit.* -> public.*) are normal Postgres FKs.
 
 The two public columns are deliberately nullable and additive, so this migration
 cannot break an existing row:
-  * ``attachment_types.certification_logo_attachment_id`` — the badge artwork a
+  * ``attachment_types.certification_logo_attachment_id`` - the badge artwork a
     product inherits by holding a document of that type.
-  * ``attachments.valid_until`` — expiry lives on the DOCUMENT, so updating it
+  * ``attachments.valid_until`` - expiry lives on the DOCUMENT, so updating it
     once updates every product that holds it. It is also appended to
     ``Attachment.__audit_columns__`` in the model, without which expiry edits
     would be silently unaudited.
@@ -400,6 +400,6 @@ def downgrade() -> None:
         op.drop_column("attachment_types", "certification_logo_attachment_id")
 
     # Dropping the schema takes every Dealer Kit table with it and leaves every
-    # public row untouched — which is the uninstall test the module was designed
+    # public row untouched - which is the uninstall test the module was designed
     # around (AC-A8).
     op.execute(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE")

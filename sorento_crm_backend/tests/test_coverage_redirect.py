@@ -13,7 +13,7 @@ Covers PLAN-coverage-redirect-assignment.md:
 Most routing surfaces (form _start_for_config / _escalate_tracker, conversation
 get_escalation_assignee_for_tier, reassign) apply this same helper right before
 ``assigned_to_id`` is set; they are exercised here via the helper (and, for RR, via the
-real get_next_assignee → resolve chain) — see the harness note at the bottom of the file.
+real get_next_assignee → resolve chain) - see the harness note at the bottom of the file.
 """
 from __future__ import annotations
 

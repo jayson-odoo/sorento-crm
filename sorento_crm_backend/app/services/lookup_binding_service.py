@@ -86,7 +86,7 @@ class LookupBindingService:
         interpolated string. Eligibility has already validated the pair against
         ``Base.metadata`` (``lookup_eligibility._eligibility_from_metadata``), so
         the identifiers are emitted/quoted by SQLAlchemy Core and never
-        concatenated into SQL — no injection surface, even as defense-in-depth.
+        concatenated into SQL - no injection surface, even as defense-in-depth.
 
         Synthetic ``(table, column)`` pairs registered only via ``_REGISTRY``
         (used by tests) are absent from ``Base.metadata``; for those we return an

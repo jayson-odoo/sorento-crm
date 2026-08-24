@@ -1,4 +1,4 @@
-# 1.5-Purchasing — Review and respond to a stock inquiry
+# 1.5-Purchasing - Review and respond to a stock inquiry
 
 When a project sales manager flows a stock inquiry to purchasing, the inquiry moves to the **Pending purchasing** state. Purchasing reviews the request, replies with availability / lead-time / price, or rejects it with a reason.
 
@@ -16,8 +16,8 @@ Filter the list by **Status = Pending purchasing** to see only inquiries waiting
 3. Click **[Edit purchasing response](#guide_target=procurement.stock-inquiries.edit-purchasing-response-button)** in the toolbar.
 4. Fill in your response in the **Edit purchasing response** dialog. The dialog tells you: *"Save updates the record only. Update & Reply saves your text and sends it to the contact."*
 5. Choose how to finish:
-   * **[Save only](#guide_target=procurement.stock-inquiries.save-response-button)** — saves your draft response without notifying the requester. Use this for work-in-progress edits.
-   * **[Update & Reply](#guide_target=procurement.stock-inquiries.update-and-reply-button)** — saves your response **and** sends it back to the requester via Respond.io. Use this when the reply is complete.
+   * **[Save only](#guide_target=procurement.stock-inquiries.save-response-button)** - saves your draft response without notifying the requester. Use this for work-in-progress edits.
+   * **[Update & Reply](#guide_target=procurement.stock-inquiries.update-and-reply-button)** - saves your response **and** sends it back to the requester via Respond.io. Use this when the reply is complete.
 
 After **Update & Reply** the inquiry moves to **Responded** and the requester is notified.
 
@@ -27,7 +27,7 @@ If the request can't be fulfilled, click **[Reject](#guide_target=procurement.st
 
 
 1. The **Reject stock inquiry** dialog opens.
-2. Enter a **Rejection reason** — this field is required (the dialog says: *"Enter a reason for the rejection. This is required."*). Placeholder: *"Reason for rejection..."*.
+2. Enter a **Rejection reason** - this field is required (the dialog says: *"Enter a reason for the rejection. This is required."*). Placeholder: *"Reason for rejection..."*.
 3. Click **[Reject](#guide_target=procurement.stock-inquiries.reject-confirm-button)** to confirm. The inquiry moves to **Rejected** and the rejection reason is stored on the record and sent to the requester.
 
 ## Reopen a rejected inquiry
@@ -41,7 +41,7 @@ If you need clarification before responding, use the chat panel:
 
 1. From the inquiry detail page, open the actions menu (`⋯`) and click **Chat records**.
 2. A side panel opens with the conversation history for this inquiry.
-3. Send messages directly to the contact — replies show up in the same panel as the requester's replies.
+3. Send messages directly to the contact - replies show up in the same panel as the requester's replies.
 
 You can also use **Update & Reply** from the same actions menu to compose a reply prefilled with the saved purchasing response.
 
@@ -54,4 +54,4 @@ You can also use **Update & Reply** from the same actions menu to compose a repl
 ## See also
 
 * [Shared upload flow](../_shared/upload-flow.md) (for attaching files to your response)
-* [Project Sales Manager — Flow stock inquiry to purchasing](../project-sales-manager/flow-stock-inquiry.md)
+* [Project Sales Manager - Flow stock inquiry to purchasing](../project-sales-manager/flow-stock-inquiry.md)

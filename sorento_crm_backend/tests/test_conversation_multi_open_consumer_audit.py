@@ -6,17 +6,17 @@ contact can now hold several open conversation-SLA tickets at once. This file
 pins the explicit multi-row semantic every "the open tracking for this contact"
 consumer got as part of that audit:
 
-  - get_preferred_tracking_for_contact / get_tracking_by_contact_and_policy /
+ - get_preferred_tracking_for_contact / get_tracking_by_contact_and_policy /
     get_open_tracking_by_contact / get_existing_assignee_for_contact_phone:
     documented MOST-RECENT-OPEN reductions (never a silent unordered .first()).
-  - escalate_tracking(tracking_id=...): a real bug fix - escalating a specific
+ - escalate_tracking(tracking_id=...): a real bug fix - escalating a specific
     ticket must target THAT row, never re-resolve by (contact, policy) and risk
     hitting a sibling.
-  - sync_assignee_from_respond: retired to a deprecated no-op for conversation
+ - sync_assignee_from_respond: retired to a deprecated no-op for conversation
     tickets (AC-F2) - CRM is the per-ticket assignee authority now.
-  - resolve's Respond-close side effect: gated so a sibling ticket staying open
+ - resolve's Respond-close side effect: gated so a sibling ticket staying open
     is never orphaned by another ticket's resolve (AC-C3).
-  - conversation_tracking_scope family separation stays intact under multi-open
+ - conversation_tracking_scope family separation stays intact under multi-open
     (AC-F3).
 
 Run: pytest tests/test_conversation_multi_open_consumer_audit.py -v

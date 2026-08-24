@@ -116,9 +116,9 @@ export async function removeBinding(setId: string, bindingId: string): Promise<v
 }
 
 /**
- * R2 — set (or clear) the default option a binding pre-selects on new forms.
+ * R2 - set (or clear) the default option a binding pre-selects on new forms.
  *
- * EXPECTED API CONTRACT (Phase 2 wiring target — NOT yet implemented):
+ * EXPECTED API CONTRACT (Phase 2 wiring target - NOT yet implemented):
  *   PATCH /api/v1/master-data/lookup-sets/{setId}/bindings/{bindingId}
  *     body:  { default_value: string | null }   // null clears the default
  *     200:   the updated LookupBinding (incl. default_value)
@@ -126,7 +126,7 @@ export async function removeBinding(setId: string, bindingId: string): Promise<v
  *   (validated app-side). The by-binding read (GET /api/v1/lookup/by-binding)
  *   echoes it so LookupBoundField can pre-select it on new forms.
  *
- * PHASE 1 (current): MOCKED — no network call; echoes the input back.
+ * PHASE 1 (current): MOCKED - no network call; echoes the input back.
  */
 export async function setBindingDefaultValue(
   setId: string,

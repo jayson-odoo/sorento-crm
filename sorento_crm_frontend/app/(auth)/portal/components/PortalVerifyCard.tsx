@@ -4,8 +4,8 @@
  * Shared OTP verification card for both portal trees:
  *
  * - slug mode (`/portal/c/{slug}/verify`): identity comes from the stable
- *   slug via fetchSlugInfo — no token required at all.
- * - token mode (`/portal/verify`): legacy flow — identity recovered from the
+ *   slug via fetchSlugInfo - no token required at all.
+ * - token mode (`/portal/verify`): legacy flow - identity recovered from the
  *   (possibly expired) token via fetchTokenInfo.
  *
  * Always renders the WhatsApp escape hatch: OTP delivery is fire-and-forget
@@ -58,24 +58,24 @@ const TYPE_LABELS: Record<string, string> = {
 const WA_TEXT = 'Hi, I need my portal link.';
 
 interface Props {
-  /** Stable contact slug — present on the slug tree, absent on legacy. */
+  /** Stable contact slug - present on the slug tree, absent on legacy. */
   slug?: string;
 }
 
 type CardState =
   | 'loading' // resolving slug-info / token-info
-  | 'confirm-identity' // deep link on a new device — confirm "log in with this number?"
+  | 'confirm-identity' // deep link on a new device - confirm "log in with this number?"
   | 'otp' // normal verify flow
-  | 'unknown-slug' // slug-info 404 — ask for a fresh portal link
-  | 'request-link' // "Not your number?" — ask for own portal link
-  | 'lookup-failed'; // transient slug-info/token-info failure — offer retry
+  | 'unknown-slug' // slug-info 404 - ask for a fresh portal link
+  | 'request-link' // "Not your number?" - ask for own portal link
+  | 'lookup-failed'; // transient slug-info/token-info failure - offer retry
 
 export function PortalVerifyCard({ slug }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const reason = searchParams?.get('reason');
   const isLogout = reason === 'logout';
-  // Submission kind from the deep-link verify redirect — its presence means the
+  // Submission kind from the deep-link verify redirect - its presence means the
   // user followed a link to a specific form on a device with no session, so we
   // gate on an explicit "log in with this number?" confirmation before sending
   // a code (instead of silently auto-firing).
@@ -115,7 +115,7 @@ export function PortalVerifyCard({ slug }: Props) {
         return true;
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Failed to send code.';
-        // On silent auto-fire, ignore "please wait" cooldown errors — the
+        // On silent auto-fire, ignore "please wait" cooldown errors - the
         // previous code is presumably still valid and the user has it.
         if (opts.silent && /please wait/i.test(msg)) {
           setSentTo((prev) => prev ?? 'your registered contact');
@@ -145,7 +145,7 @@ export function PortalVerifyCard({ slug }: Props) {
       if (!otpFiredRef.current && !alreadyFired) {
         otpFiredRef.current = true;
         const sent = await sendCode(cid, sid, { silent: true });
-        // Persist the guard ONLY after a successful dispatch — a failed send
+        // Persist the guard ONLY after a successful dispatch - a failed send
         // must not advertise a phantom "code sent" on the next reload.
         if (sent && typeof window !== 'undefined') {
           window.sessionStorage.setItem(sentKey, '1');
@@ -201,7 +201,7 @@ export function PortalVerifyCard({ slug }: Props) {
       } catch (e) {
         if (cancelled) return;
         // Transient lookup failure (5xx / network): the OTP form would be a
-        // dead end (no contact resolved, no wa.me number) — render an explicit
+        // dead end (no contact resolved, no wa.me number) - render an explicit
         // retry card instead.
         setState('lookup-failed');
         setError(e instanceof Error ? e.message : 'Could not look up portal session.');
@@ -347,7 +347,7 @@ export function PortalVerifyCard({ slug }: Props) {
           Log in with this number
         </Button>
 
-        {/* wa.me fallback — kept secondary per product decision. */}
+        {/* wa.me fallback - kept secondary per product decision. */}
         {whatsappNumber && (
           <div className="rounded-lg border bg-muted/40 px-3 py-3 space-y-2">
             <p className="text-xs text-muted-foreground">
@@ -483,7 +483,7 @@ export function PortalVerifyCard({ slug }: Props) {
         </Alert>
       )}
 
-      {/* WhatsApp escape hatch — always visible when the business number is
+      {/* WhatsApp escape hatch - always visible when the business number is
           configured. Delivery is fire-and-forget, so when the 24h window is
           closed the code never arrives; messaging the business first reopens
           the window, then Resend delivers. */}
@@ -513,7 +513,7 @@ export function PortalVerifyCard({ slug }: Props) {
         <button
           type="button"
           onClick={() => {
-            // Wrong identity on this device — drop the stored slug + token so
+            // Wrong identity on this device - drop the stored slug + token so
             // the next visit starts clean, then point at the link-request CTA.
             clearPortalToken();
             clearPortalSlug();

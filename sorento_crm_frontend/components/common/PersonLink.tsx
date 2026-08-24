@@ -10,7 +10,7 @@
  * - `name` is trimmed; blank/absent → renders nothing (never an empty link).
  * - `waPhone` is stripped to bare digits (defence-in-depth; the backend already
  *   sends bare digits like `60123...`). No digits → plain `<span>`.
- * - Only ever renders the `name` string it is given — never an id. Callers MUST
+ * - Only ever renders the `name` string it is given - never an id. Callers MUST
  *   pass a resolved display name, never a raw `users.id` / `respond_contact_id`.
  */
 export function PersonLink({

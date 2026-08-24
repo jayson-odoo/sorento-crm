@@ -265,7 +265,7 @@ async def uninstall_module_route(
 
 
 # ---------------------------------------------------------------------------
-# Phase 8 — module upload + activate + remove (zip drop-in)
+# Phase 8 - module upload + activate + remove (zip drop-in)
 # ---------------------------------------------------------------------------
 
 @router.post("/upload")
@@ -377,7 +377,7 @@ async def remove_module(
     if has_install:
         raise HTTPException(
             status_code=409,
-            detail="Module still installed for at least one tenant — uninstall first.",
+            detail="Module still installed for at least one tenant - uninstall first.",
         )
     try:
         return remove_module_files(module_key)
@@ -386,7 +386,7 @@ async def remove_module(
 
 
 # ---------------------------------------------------------------------------
-# Phase 9 — module export (download as zip)
+# Phase 9 - module export (download as zip)
 # ---------------------------------------------------------------------------
 
 @router.get("/{module_key}/export")

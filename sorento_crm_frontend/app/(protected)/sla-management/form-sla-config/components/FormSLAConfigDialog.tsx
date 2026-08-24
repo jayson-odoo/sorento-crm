@@ -407,7 +407,7 @@ export default function FormSLAConfigDialog({
               <Label htmlFor="notify-assignee">Notify assignee on assignment</Label>
             </div>
             <span className="text-xs text-muted-foreground">
-              When off, this stage assigns the tracker silently — the assignee is
+              When off, this stage assigns the tracker silently - the assignee is
               not notified when the stage spawns.
             </span>
           </div>
@@ -422,7 +422,7 @@ export default function FormSLAConfigDialog({
               <Label htmlFor="notify-on-escalation">Notify on escalation</Label>
             </div>
             <span className="text-xs text-muted-foreground">
-              When off, escalating a tracker on this stage reassigns silently — the
+              When off, escalating a tracker on this stage reassigns silently - the
               new assignee is not notified.
             </span>
           </div>

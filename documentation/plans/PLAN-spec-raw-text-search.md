@@ -14,14 +14,14 @@ A customer types a sentence in WhatsApp: "sorento double bowl kitchen sink with 
    parser never modelled ("thickness 1.0mm") can no longer be silently dropped before it
    reaches us.
 2. The CRM answers with, in one response:
-   - ranked products that actually answer the description (never SORENTOBAG / "NOT USE
+ - ranked products that actually answer the description (never SORENTOBAG / "NOT USE
      THIS CODE" as the headline answer),
-   - per-row spec VALUES ("this one is 1.2mm, that one 1.0mm") so the reply can show WHY
+ - per-row spec VALUES ("this one is 1.2mm, that one 1.0mm") so the reply can show WHY
      each product is offered,
-   - honest verdicts: `spec_unmet` (known key, products lack the value: "thickness isn't
+ - honest verdicts: `spec_unmet` (known key, products lack the value: "thickness isn't
      recorded for these"), `unrecognized_terms` (word bound to nothing: "I don't know
      what X means") - two different sentences n8n renders differently,
-   - no false "Couldn't find: double bowl kitchen sink" footer when spec rows DID answer
+ - no false "Couldn't find: double bowl kitchen sink" footer when spec rows DID answer
      that description.
 3. The customer holds a shortlist with visible reasons, or an honest explanation of what
    could not be honoured. Never junk presented as an answer, never a silent drop.
@@ -147,7 +147,7 @@ blank Postgres schema, no bugs found (every case confirmed intended behaviour):
 Full new-feature regression (`test_spec_values_on_rows.py`,
 `test_resolve_unrecognized_terms.py`, `test_resolve_brand_routing.py`,
 `test_resolve_raw_text.py`, `test_resolve_spec_fallback.py`, `test_resolve_predicate.py`,
-`test_product_set_service.py`, `test_product_spec_search.py`,
+`test_product_predicate_service.py`, `test_product_spec_search.py`,
 `test_product_spec_understanding.py`, `test_product_spec_registry.py`,
 `test_spec_findability.py`, `test_spec_raw_text_hardening.py`): **221 passed, 1 skipped,
 0 failed.**

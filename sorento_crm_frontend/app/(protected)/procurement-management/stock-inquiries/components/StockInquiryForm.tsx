@@ -120,7 +120,7 @@ export default function StockInquiryForm({
   /**
    * The dialog edits the purchasing wording only. The preamble and the contact's
    * portal link are composed server-side and appended when the message is sent, so
-   * there is no link to fetch here — see
+   * there is no link to fetch here - see
    * `StockInquiryService.compose_stock_inquiry_reply_message`.
    */
   const handleUpdateAndReplyClick = async () => {
@@ -382,7 +382,7 @@ export default function StockInquiryForm({
                   <FormControl>
                     <Input
                       className="h-9"
-                      placeholder="e.g. MOCK UP – MAY 2026, BALANCE BY AUG/SEPT 2026"
+                      placeholder="e.g. MOCK UP - MAY 2026, BALANCE BY AUG/SEPT 2026"
                       {...field}
                       value={field.value ?? ''}
                     />

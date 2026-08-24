@@ -1,7 +1,7 @@
 """seed the takeover_request_commit scheduled task (idempotent)
 
 The cron row that drives the takeover-cooldown commit sweep is runtime data, not
-schema — so it would never reach prod without a seed. This data migration inserts it
+schema - so it would never reach prod without a seed. This data migration inserts it
 if absent, so every environment gets it on `alembic upgrade head`. Safe to re-run:
 guarded by NOT EXISTS on the unique key. See PLAN-takeover-cooldown (Q5/AC-COMMIT-7).
 

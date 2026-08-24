@@ -1,6 +1,6 @@
 /**
  * Client-side state-transition summary. Kept in lockstep with the SQL view
- * `public.v_turn_state_transition` (migration 295) — these cases mirror the
+ * `public.v_turn_state_transition` (migration 295) - these cases mirror the
  * psql assertions in the state-transition-monitor CRM plan (UAC-CRM-2, -5).
  */
 import { describe, it, expect } from 'vitest';
@@ -71,7 +71,7 @@ describe('deriveStateSummary', () => {
       after: null,
     };
     const s = deriveStateSummary(t)!;
-    // NOT [] — absence of a write is not evidence of a loss.
+    // NOT [] - absence of a write is not evidence of a loss.
     expect(s.wroteState).toBe(false);
     expect(s.entitiesLost).toBeNull();
     expect(s.entitiesGained).toBeNull();

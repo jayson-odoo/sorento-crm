@@ -33,7 +33,7 @@ def _task_to_response(task: ScheduledTask, grace_percent: Optional[int] = None) 
     resp = ScheduledTaskResponse.model_validate(task)
 
     # Derived overdue state, from the same helper the health card and the watchdog
-    # alert use — so the detail page can never disagree with either of them.
+    # alert use - so the detail page can never disagree with either of them.
     now = datetime.utcnow()
     effective_percent = grace_percent if grace_percent is not None else DEFAULT_GRACE_PERCENT
     meta = getattr(task, "metadata_", None)

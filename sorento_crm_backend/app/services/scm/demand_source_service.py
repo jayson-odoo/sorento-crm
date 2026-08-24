@@ -26,7 +26,7 @@ SAMPLE_SIZE = 5
 # The line-level half restated exactly as `scm.committed_v` applies it, so "set aside"
 # means precisely "would have been demand but for the order-level rule" - nothing more.
 _OPEN_QTY = ("GREATEST(COALESCE(sol.qty_required, sol.qty_ordered) "
-             "         - COALESCE(sol.qty_delivered, 0), 0)")
+             "       - COALESCE(sol.qty_delivered, 0), 0)")
 _OPEN_LINE = (
     "so.status = 'open' AND sol.line_status = 'open' "
     "AND sol.purchasing_status <> 'covered' "

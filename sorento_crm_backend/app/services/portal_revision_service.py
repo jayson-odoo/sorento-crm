@@ -12,7 +12,7 @@ migration.
 
 Two counters, never collapsed (UAC C0):
 
-* ``version_no``  - every submitted version, for history ordering. Unique per entity.
+* ``version_no`` - every submitted version, for history ordering. Unique per entity.
 * ``revision_no`` - contact-initiated revisions only, the cap counter. A reject then
   resubmit advances ``version_no`` and leaves ``revision_no`` alone.
 

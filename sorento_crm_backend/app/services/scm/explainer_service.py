@@ -1,14 +1,14 @@
-"""SCM M5 — bounded semantic explainer (NOT the agent/MCP flow).
+"""SCM M5 - bounded semantic explainer (NOT the agent/MCP flow).
 
 Turns a reorder recommendation's FROZEN numbers into plain-language prose and
 answers scoped follow-up questions. Hard boundary (AC-M5.3 / AC-M5.8): the LLM
-receives already-computed numbers as input and emits prose only — there is NO
+receives already-computed numbers as input and emits prose only - there is NO
 tool/agent loop and NO path from LLM output to a numeric field. The only column
 this service ever writes is ``recommendation.explanation`` (Text, cached prose).
 
-- ``explain_recommendation`` — lazy: return the cached sentence, else generate
+- ``explain_recommendation`` - lazy: return the cached sentence, else generate
   one from the frozen facts, cache it, return.
-- ``answer_question`` — bounded Q&A over the same frozen facts; if a question
+- ``answer_question`` - bounded Q&A over the same frozen facts; if a question
   needs a number not in the facts the model must reply with ``REFUSAL`` verbatim.
 
 Reuses the shared ``llm_provider`` + ``ai_prompt_registry`` (prompt key
@@ -33,7 +33,7 @@ from app.services.error_handler import AppException
 from app.services.llm_provider import get_provider
 from app.services.scm import cash_ranking, reorder_engine
 
-# The exact refusal contract — mirrored by the FE (`explainerMockStore.REFUSAL`)
+# The exact refusal contract - mirrored by the FE (`explainerMockStore.REFUSAL`)
 # and asserted byte-for-byte in tests. The prompt instructs the model to emit this
 # verbatim when a question can't be answered from the frozen facts.
 REFUSAL = "I can't compute that from this recommendation's data."
@@ -76,12 +76,12 @@ _PAST_PLANS_INTENT_RE = re.compile(
 # defer / keep-only / adjust of specific lines) routes to a schema-forced structured
 # action-parse whose per-line refs are resolved to REAL rec ids. There is deliberately
 # NO keyword gate here: a verb allowlist silently dropped natural instructions ("mr loo
-# just wants to buy C-FH24"). The structured parser is the sole, semantic gate — it
+# just wants to buy C-FH24"). The structured parser is the sole, semantic gate - it
 # returns empty lines for a plain question, which resolves to NO action_proposal.
 
 
 # ---------------------------------------------------------------------------
-# facts (frozen numbers only — this is the LLM's entire world)
+# facts (frozen numbers only - this is the LLM's entire world)
 # ---------------------------------------------------------------------------
 
 def _num(v: Any) -> Optional[float]:
@@ -89,7 +89,7 @@ def _num(v: Any) -> Optional[float]:
 
 
 def _iso(dt: Any) -> Optional[str]:
-    """Naive-UTC ISO string (or None) — matches the market service's date serializer."""
+    """Naive-UTC ISO string (or None) - matches the market service's date serializer."""
     return dt.isoformat() if dt else None
 
 
@@ -102,7 +102,7 @@ _SELECTION_WHY = {
 
 def _rec_facts(rec: ReorderRecommendation) -> dict:
     """The frozen, already-computed numbers the model is allowed to speak. Pulled
-    from the recommendation columns + its frozen ``inputs`` snapshot — never
+    from the recommendation columns + its frozen ``inputs`` snapshot - never
     recomputed here."""
     inp = rec.inputs or {}
     supplier = inp.get("supplier") or {}
@@ -156,7 +156,7 @@ def _rec_facts(rec: ReorderRecommendation) -> dict:
 
 def _provider_and_model(db: Session):
     """(provider, model) from the shared assistant config, or (None, None) when
-    no API key is configured — callers degrade gracefully, never raise."""
+    no API key is configured - callers degrade gracefully, never raise."""
     config = (
         db.query(AIAssistantConfig)
         .order_by(AIAssistantConfig.created_at.asc())
@@ -166,7 +166,7 @@ def _provider_and_model(db: Session):
         settings, "openai_api_key", None
     )
     # config is None (empty config table) still degrades gracefully even when a
-    # global env key is set — never raise (the docstring contract).
+    # global env key is set - never raise (the docstring contract).
     if not api_key or config is None:
         return None, None
     provider = get_provider(config.provider, api_key, config.model)
@@ -210,27 +210,27 @@ def explain_recommendation(db: Session, rec_id: str) -> str:
 
     provider, model = _provider_and_model(db)
     if provider is None:
-        # No LLM configured — degrade to a deterministic sentence (never blocks the
+        # No LLM configured - degrade to a deterministic sentence (never blocks the
         # UI, never fabricates: it only restates frozen facts). Not cached.
         return _deterministic_explanation(rec)
 
     facts = _rec_facts(rec)
     user_block = (
-        "EXPLAIN mode. Recommendation facts (JSON — the ONLY numbers you may use):\n"
+        "EXPLAIN mode. Recommendation facts (JSON - the ONLY numbers you may use):\n"
         f"{json.dumps(facts, ensure_ascii=False)}\n\n"
         "Write one plain sentence telling the planner what to do and why. "
-        "Money is Malaysian Ringgit — write it as 'RM'."
+        "Money is Malaysian Ringgit - write it as 'RM'."
     )
     text = _chat(db, provider, model, user_block)
     if text:
-        rec.explanation = text  # the ONLY write — prose, never a numeric field
+        rec.explanation = text  # the ONLY write - prose, never a numeric field
         db.flush()
     return text or _deterministic_explanation(rec)
 
 
 def answer_question(db: Session, rec_id: str, question: str) -> str:
     """Bounded Q&A over a recommendation's frozen facts (AC-M5.2). A question that
-    needs a number not in the facts returns ``REFUSAL`` verbatim — never a figure."""
+    needs a number not in the facts returns ``REFUSAL`` verbatim - never a figure."""
     if not (question or "").strip():
         raise AppException(status_code=422, message="A question is required.")
     rec = _get_rec(db, rec_id)
@@ -241,10 +241,10 @@ def answer_question(db: Session, rec_id: str, question: str) -> str:
 
     facts = _rec_facts(rec)
     user_block = (
-        "ASK mode. Recommendation facts (JSON — the ONLY numbers you may use):\n"
+        "ASK mode. Recommendation facts (JSON - the ONLY numbers you may use):\n"
         f"{json.dumps(facts, ensure_ascii=False)}\n\n"
         f"Planner's question: {question.strip()}\n\n"
-        "Money is Malaysian Ringgit — write it as 'RM'. "
+        "Money is Malaysian Ringgit - write it as 'RM'. "
         f'If the answer needs anything not in the facts, reply EXACTLY: "{REFUSAL}"'
     )
     text = _chat(db, provider, model, user_block)
@@ -256,10 +256,10 @@ def market_advisory(db: Session, rec_id: str) -> Optional[str]:
 
     Lazy + cached: return the cached advisory if present. Else find the most recent
     ``market_signal`` matching this rec by **product category + currency**; if one
-    exists, condense it into ONE advisory sentence (LLM ADVISORY mode — never a new
+    exists, condense it into ONE advisory sentence (LLM ADVISORY mode - never a new
     number), cache it to ``rec.market_advisory`` (the ONLY write), and return it. No
     matching signal → ``None``. Advisory is decision-support prose from a STORED
-    signal — the LLM never searches and never touches a numeric column."""
+    signal - the LLM never searches and never touches a numeric column."""
     rec = _get_rec(db, rec_id)
     if rec.market_advisory:
         return rec.market_advisory
@@ -270,24 +270,24 @@ def market_advisory(db: Session, rec_id: str) -> Optional[str]:
 
     provider, model = _provider_and_model(db)
     if provider is None:
-        # No LLM configured — the stored signal's own summary IS advisory prose
+        # No LLM configured - the stored signal's own summary IS advisory prose
         # (restates the captured signal, invents nothing). Not cached, so a later
         # LLM-enabled view can still generate the condensed sentence.
         return (signal.summary or None)
 
     text = _advisory_chat(db, provider, model, rec, signal)
     if text:
-        rec.market_advisory = text  # the ONLY write — prose, never a numeric field
+        rec.market_advisory = text  # the ONLY write - prose, never a numeric field
         db.flush()
     return text or (signal.summary or None)
 
 
 # ---------------------------------------------------------------------------
-# run-level overview (M5) — aggregate the run's frozen numbers → one short brief
+# run-level overview (M5) - aggregate the run's frozen numbers → one short brief
 # ---------------------------------------------------------------------------
 
 def _run_facts(db: Session, run_id: str) -> dict:
-    """Aggregate a run's FROZEN recommendation numbers for the overview — counts,
+    """Aggregate a run's FROZEN recommendation numbers for the overview - counts,
     cash, the biggest buys and the most urgent SKUs. All read straight from the
     stored recs; nothing recomputed."""
     counts = dict(
@@ -354,7 +354,7 @@ def _run_facts(db: Session, run_id: str) -> dict:
 
 
 def explain_run(db: Session, run_id: str) -> str:
-    """Lazy, cached run-level AI overview — a short brief over the run's frozen
+    """Lazy, cached run-level AI overview - a short brief over the run's frozen
     aggregates (LLM speaks only the given numbers; no numeric write except the
     cached ``reorder_run.overview`` prose)."""
     run = db.query(ReorderRun).filter(ReorderRun.id == run_id).first()
@@ -369,17 +369,17 @@ def explain_run(db: Session, run_id: str) -> str:
         return _deterministic_run_overview(facts)
 
     user_block = (
-        "RUN OVERVIEW mode. Reorder-run aggregates (JSON — the ONLY numbers you may "
+        "RUN OVERVIEW mode. Reorder-run aggregates (JSON - the ONLY numbers you may "
         "use):\n"
         f"{json.dumps(facts, ensure_ascii=False)}\n\n"
         "Write a short brief (2-3 sentences) for a planner: the scale of what this run "
         "recommends (buys, dispositions, total cash), then the few SKUs that most need "
         "attention (biggest cash and/or soonest to stock out), naming them. Plain prose, "
-        "no lists, only the given numbers. Money is Malaysian Ringgit — write it as 'RM'."
+        "no lists, only the given numbers. Money is Malaysian Ringgit - write it as 'RM'."
     )
     text_out = _chat(db, provider, model, user_block)
     if text_out:
-        run.overview = text_out  # the ONLY write — prose, never a numeric field
+        run.overview = text_out  # the ONLY write - prose, never a numeric field
         db.flush()
     return text_out or _deterministic_run_overview(facts)
 
@@ -400,11 +400,11 @@ def _deterministic_run_overview(facts: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# plan-chat — a grounded, multi-turn conversation over the WHOLE run (M6-A)
+# plan-chat - a grounded, multi-turn conversation over the WHOLE run (M6-A)
 # ---------------------------------------------------------------------------
 
 def _run_market_signals(db: Session, run_id: str, limit: int = 15) -> list[dict]:
-    """Latest cached market signals whose category matches any product in the run —
+    """Latest cached market signals whose category matches any product in the run - 
     so a plan-chat question like 'given the colour trend, what should I stock?' has
     the signal text to reason over. Matched on the product's category **id** (what
     the topic picker + ad-hoc search store as ``category_ref``)."""
@@ -447,7 +447,7 @@ def _run_market_signals(db: Session, run_id: str, limit: int = 15) -> list[dict]
 def _run_chat_context(db: Session, run_id: str) -> dict:
     """The whole run, compact, as the plan-chat's entire world (AC-M6.2): run
     aggregates + a per-rec snapshot of EVERY rec (capped, urgent + biggest-cash
-    first) + matched market signals. Frozen numbers only — nothing recomputed."""
+    first) + matched market signals. Frozen numbers only - nothing recomputed."""
     run = db.query(ReorderRun).filter(ReorderRun.id == run_id).first()
     if not run:
         raise AppException(status_code=404, message="Run not found.")
@@ -467,7 +467,7 @@ def _run_chat_context(db: Session, run_id: str) -> dict:
             "inputs->>'reason' AS reason, "
             "inputs->'supplier'->>'supplier_name' AS supplier "
             "FROM scm.reorder_recommendation WHERE run_id = :r "
-            # urgent (soonest to run dry) first, then biggest cash — the order a
+            # urgent (soonest to run dry) first, then biggest cash - the order a
             # manager cares about, and the right rows to keep if we must truncate.
             "ORDER BY (days_of_cover IS NULL), days_of_cover ASC, "
             "cash_impact DESC NULLS LAST LIMIT :lim"
@@ -514,9 +514,9 @@ def _run_chat_context(db: Session, run_id: str) -> dict:
 
 
 def _deterministic_run_chat_fallback(ctx: dict) -> str:
-    """No LLM configured — restate the aggregates (never fabricate an answer)."""
+    """No LLM configured - restate the aggregates (never fabricate an answer)."""
     return _deterministic_run_overview(ctx.get("aggregates") or {}) + (
-        " (AI chat is unavailable — configure a provider to ask follow-up questions.)"
+        " (AI chat is unavailable - configure a provider to ask follow-up questions.)"
     )
 
 
@@ -552,7 +552,7 @@ def _parse_budget(question: str) -> Optional[float]:
 
 
 def _budget_scenario(db: Session, run_id: str, budget: float) -> dict:
-    """The ENGINE's funding split for ``budget`` — the same greedy-by-rank allocator
+    """The ENGINE's funding split for ``budget`` - the same greedy-by-rank allocator
     the Cash-budget slider uses (view-time, no persistence). This is authoritative;
     the LLM only narrates it."""
     rows = db.execute(
@@ -601,7 +601,7 @@ def _budget_scenario(db: Session, run_id: str, budget: float) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# cross-run history (M8-E3) — prior COMPLETED-run lines for the same SKU, its
+# cross-run history (M8-E3) - prior COMPLETED-run lines for the same SKU, its
 # category siblings, and its variant_of_id neighbours. Read-only; writes nothing.
 # ---------------------------------------------------------------------------
 
@@ -615,7 +615,7 @@ def _similar_product_ids(
     the exact SKU, its category siblings (matched on the category **id OR code**),
     and its ``variant_of_id`` neighbours (parent, children, same-parent siblings).
 
-    Value-space-agnostic on the category token (id or code) — the same both-ways
+    Value-space-agnostic on the category token (id or code) - the same both-ways
     match the advisory + market factor use, so a caller can pass either."""
     ids: set[str] = set()
 
@@ -722,7 +722,7 @@ def query_past_plans(
 
 
 # M8-F: "how does this plan compare to the previous plan(s)" routes to a DETERMINISTIC
-# product-by-product diff. Routing only — the comparison maths is pure Python; the LLM
+# product-by-product diff. Routing only - the comparison maths is pure Python; the LLM
 # never computes or compares a number (guardrail: LLMs are bad at arithmetic).
 _COMPARE_INTENT_RE = re.compile(
     r"(compare|comparison|compared|versus|\bvs\.?\b|difference\s+(?:between|from|with)|"
@@ -735,7 +735,7 @@ _COMPARE_MAX_ROWS = 8
 
 
 def _compare_direction(cur_qty: Optional[float], prev_qty: Optional[float]) -> str:
-    """new (no prior) | up | down | same — from the two frozen quantities only."""
+    """new (no prior) | up | down | same - from the two frozen quantities only."""
     if prev_qty is None:
         return "new"
     if cur_qty is None:
@@ -783,14 +783,14 @@ def build_plan_comparison(
     most recent PRIOR completed run (M8-F). For the run's top buys by priority, look up
     the same product's newest earlier buy rec and diff the FROZEN figures (qty, funding,
     net, days-of-cover) in Python. Returns ``{rows, compared_count}`` or ``None`` when the
-    run has no buys. No LLM touches any number — the assistant only narrates around it."""
+    run has no buys. No LLM touches any number - the assistant only narrates around it."""
     cur_rows = db.execute(
         text(
             "SELECT r.product_id::text AS pid, p.product_code AS sku, p.product_name AS name, "
             "r.rounded_qty AS qty, r.funding_status AS fs, r.days_of_cover AS doc, "
             "r.net_position AS net, r.forecast_daily_demand AS dem "
             "FROM scm.reorder_recommendation r JOIN products p ON p.id = r.product_id "
-            # Only the ORDERABLE plan (costed buys) — skipped needs-cost SKUs aren't part
+            # Only the ORDERABLE plan (costed buys) - skipped needs-cost SKUs aren't part
             # of the plan, so they must not appear in a plan-vs-previous comparison.
             "WHERE r.run_id = :rid AND r.rec_type = 'buy' AND r.unit_cost IS NOT NULL "
             "ORDER BY r.rank NULLS LAST, p.product_code LIMIT :lim"
@@ -853,7 +853,7 @@ def build_plan_comparison(
 
 def _skus_mentioned(question: str, ctx: dict) -> list[str]:
     """SKUs from THIS run's recommendations that the question names (case-insensitive
-    substring) — the trigger for prefetching cross-run history into the chat context.
+    substring) - the trigger for prefetching cross-run history into the chat context.
     Bounded to the run's own SKUs so the match set is small + deterministic."""
     q = (question or "").lower()
     seen: list[str] = []
@@ -865,7 +865,7 @@ def _skus_mentioned(question: str, ctx: dict) -> list[str]:
 
 
 def _top_cash_skus(ctx: dict, limit: int = _PAST_PLANS_CHAT_SKUS) -> list[str]:
-    """This plan's own highest cash-impact buy SKUs — the fallback drivers for a
+    """This plan's own highest cash-impact buy SKUs - the fallback drivers for a
     'previous / similar plans' question that names no SKU (M8-F7). Ordered by cash
     impact desc so the history we surface is for the buys that matter most today."""
     buys = [
@@ -913,7 +913,7 @@ def _inject_past_plans(db: Session, ctx: dict, question: str, run_id: str) -> No
 
 # Plan-chat gets its OWN system prompt. It must NOT inherit the single-recommendation
 # explainer's refusal contract (which tells the model to reply with the exact REFUSAL
-# string whenever the answer isn't in "this recommendation's data") — a run-level
+# string whenever the answer isn't in "this recommendation's data") - a run-level
 # question like "what defers under budget X" IS answerable by reasoning over all the
 # recs in the context, and the explainer prompt would wrongly force a refusal.
 _RUN_CHAT_SYSTEM = (
@@ -943,7 +943,7 @@ _RUN_CHAT_SYSTEM = (
     "state its figures in plain language and, if it maps to plan lines, tell the manager a "
     "confirm-gated quantity proposal is shown below to review. In that case you MUST NOT say "
     "you could not get a reading. Use ONLY the figures in ``live_market_scan.summary`` for the "
-    "market trend — never a number from an earlier turn, a cached advisory, or elsewhere; if "
+    "market trend - never a number from an earlier turn, a cached advisory, or elsewhere; if "
     "they differ, the live scan wins. Only when ``live_market_scan.status`` is 'unavailable' "
     "(no summary) may you say plainly that you could not get a live market reading right now, "
     "then answer from the plan. Never invent a market figure.\n\n"
@@ -1014,7 +1014,7 @@ def _run_chat_answer(
                 f"{json.dumps(ctx, ensure_ascii=False)}"
             ),
         },
-        {"role": "assistant", "content": "Understood — ask me anything about this plan."},
+        {"role": "assistant", "content": "Understood - ask me anything about this plan."},
     ]
     for turn in history or []:
         q = (turn.get("question") or "").strip()
@@ -1051,7 +1051,7 @@ def answer_run_question(
 
 
 def _dominant_category_ref(db: Session, run_id: str) -> Optional[str]:
-    """The category (code) of the run's highest cash-impact buy — the category a live
+    """The category (code) of the run's highest cash-impact buy - the category a live
     market scan is keyed to so its signal can map back onto plan lines (M8-F6)."""
     pid = db.execute(
         text(
@@ -1071,10 +1071,10 @@ def _market_augment(
 ) -> Optional[dict]:
     """M8-F6: run a LIVE ad-hoc market scan for a trend question, fold the reading into
     the chat context (so the answer speaks the trend), and return a confirm-gated
-    proposal when the signal maps to plan lines (else ``None`` — the answer just
+    proposal when the signal maps to plan lines (else ``None`` - the answer just
     mentions the trend). Key-gated + graceful: no key / no signal → an 'unavailable'
     note in the context and no proposal, never a crash. Writes NOTHING to any
-    recommendation column (M8-E7) — the proposal is confirmed per line via /adjust."""
+    recommendation column (M8-E7) - the proposal is confirmed per line via /adjust."""
     # local import: market_proposal_service → market_research_service → this module,
     # so keep the edge out of module import time.
     from app.services.scm import market_proposal_service
@@ -1091,13 +1091,13 @@ def _market_augment(
             "matched_line_count": len(lines),
         }
     else:
-        # no reading (no key / nothing found) — let the LLM say so in business terms
+        # no reading (no key / nothing found) - let the LLM say so in business terms
         ctx["live_market_scan"] = {"status": "unavailable"}
     return result if lines else None
 
 
 # ---------------------------------------------------------------------------
-# plan-action proposal (M8-F16) — a natural-language instruction ("buy FT-B only,
+# plan-action proposal (M8-F16) - a natural-language instruction ("buy FT-B only,
 # reject the rest", "bump FT-03 to 684") becomes a STRUCTURED per-line proposal the
 # human Applies. The LLM proposes which lines + which decision (schema-forced, so it
 # emits data not prose); we resolve its SKU/name refs to REAL rec ids. Writes NOTHING.
@@ -1107,7 +1107,7 @@ _ACTION_PARSE_MAX_TOKENS = 700
 _ACTION_PARSE_SCHEMA_NAME = "scm_plan_action_proposal"
 
 # Schema-forced structured output: the model returns per-line decisions keyed by the
-# plan line's SKU (never a rec id — no UUIDs cross the LLM boundary). ``rest`` applies
+# plan line's SKU (never a rec id - no UUIDs cross the LLM boundary). ``rest`` applies
 # one action to every OTHER buy line, so "reject the rest" needs no enumeration.
 _ACTION_PARSE_JSON_SCHEMA: dict = {
     "type": "object",
@@ -1184,7 +1184,7 @@ _ACTION_PARSE_SYSTEM = (
 
 
 def _buy_lines_for_actions(db: Session, run_id: str) -> list[dict]:
-    """The run's BUY recs as {rec_id, sku, product_name, current_qty} — the resolution
+    """The run's BUY recs as {rec_id, sku, product_name, current_qty} - the resolution
     table that maps an LLM's SKU/name reference back to a real recommendation id. Read
     only; the rec id never crosses the LLM boundary (it's filled in AFTER the parse)."""
     rows = db.execute(
@@ -1192,7 +1192,7 @@ def _buy_lines_for_actions(db: Session, run_id: str) -> list[dict]:
             "SELECT id::text AS rec_id, inputs->>'sku' AS sku, "
             "inputs->>'product_name' AS product_name, rounded_qty "
             "FROM scm.reorder_recommendation WHERE run_id = :r AND rec_type = 'buy' "
-            # Only ORDERABLE buys are part of the plan — uncosted (needs-cost) SKUs are
+            # Only ORDERABLE buys are part of the plan - uncosted (needs-cost) SKUs are
             # skipped, so an instruction like "reject the rest" must never enumerate them.
             "AND unit_cost IS NOT NULL"
         ),
@@ -1278,7 +1278,7 @@ def _resolve_action_proposal(parsed: dict, buys: list[dict], ctx: dict) -> Optio
         if action == "adjust":
             nq = ln.get("new_qty")
             if nq is None:
-                # an adjust with no target qty can't be Applied — list it, don't guess.
+                # an adjust with no target qty can't be Applied - list it, don't guess.
                 if ln.get("ref"):
                     unresolved.append(ln["ref"])
                 continue
@@ -1371,7 +1371,7 @@ def _build_action_proposal(
     buys = _buy_lines_for_actions(db, run_id)
     if not buys:
         return None
-    # Only SKU / name / qty reach the LLM — never a rec id (no UUIDs cross the boundary).
+    # Only SKU / name / qty reach the LLM - never a rec id (no UUIDs cross the boundary).
     plan_lines = [
         {"sku": b["sku"], "product_name": b["product_name"], "order_quantity": b["current_qty"]}
         for b in buys
@@ -1396,7 +1396,7 @@ def _build_action_proposal(
             json_schema_name=_ACTION_PARSE_SCHEMA_NAME,
         )
         parsed = json.loads((result.content or "").strip() or "{}")
-    except Exception:  # noqa: BLE001 — a malformed parse degrades to no proposal
+    except Exception:  # noqa: BLE001 - a malformed parse degrades to no proposal
         return None
     if not isinstance(parsed, dict):
         return None
@@ -1419,7 +1419,7 @@ def answer_run_chat(
         into a structured ``action_proposal`` of per-line accept/reject/adjust decisions
         the human Applies.
 
-    Returns ``{answer, proposal, action_proposal}`` — both proposals ``None`` unless their
+    Returns ``{answer, proposal, action_proposal}`` - both proposals ``None`` unless their
     trigger fired. No numeric write anywhere (M8-E7 / M8-F16 guardrail)."""
     if not (question or "").strip():
         raise AppException(status_code=422, message="A question is required.")
@@ -1432,7 +1432,7 @@ def answer_run_chat(
     # M8-F16 (fix): the plan-action proposal is gated by the SCHEMA-FORCED parse itself,
     # NOT by a keyword regex. A verb allowlist ("accept|reject|only|the rest…") silently
     # dropped natural instructions like "mr loo just wants to buy C-FH24" (no listed
-    # verb) — the answer prose then promised "click Apply" with no card behind it. The
+    # verb) - the answer prose then promised "click Apply" with no card behind it. The
     # structured parser classifies intent semantically and returns None for a plain
     # question, so we always run it and let an empty resolution be the real gate.
     action_proposal = _build_action_proposal(db, ctx, run_id, question)
@@ -1466,9 +1466,9 @@ def _rec_currency(rec: ReorderRecommendation) -> Optional[str]:
 
 
 def _rec_category_refs(db: Session, rec: ReorderRecommendation) -> list[str]:
-    """The category tokens a signal could be keyed by for this rec — BOTH the
+    """The category tokens a signal could be keyed by for this rec - BOTH the
     category **id** (what the topic picker stores as ``category_ref``) and the
-    human ``category_code`` — so a signal matches regardless of which the config
+    human ``category_code`` - so a signal matches regardless of which the config
     used. Value-space-agnostic on purpose (the FE stores the id)."""
     refs: list[str] = []
     cat_id = db.execute(
@@ -1537,7 +1537,7 @@ def _advisory_chat(
     }
     ctx = {k: v for k, v in ctx.items() if v is not None and v != ""}
     user_block = (
-        "ADVISORY mode. Recommendation context + the cached market signal (JSON — the "
+        "ADVISORY mode. Recommendation context + the cached market signal (JSON - the "
         "signal is the ONLY market data you may reference):\n"
         f"{json.dumps(ctx, ensure_ascii=False)}\n\n"
         "Write one advisory sentence on what this market signal means for this buy."
@@ -1555,12 +1555,12 @@ def _advisory_chat(
 
 
 # ---------------------------------------------------------------------------
-# deterministic fallback (no LLM) — restates frozen facts, invents nothing
+# deterministic fallback (no LLM) - restates frozen facts, invents nothing
 # ---------------------------------------------------------------------------
 
 def _fmt(v: Optional[float]) -> str:
     if v is None:
-        return "—"
+        return "-"
     return f"{v:,.0f}" if float(v).is_integer() else f"{v:,.2f}"
 
 
@@ -1569,10 +1569,10 @@ def _deterministic_explanation(rec: ReorderRecommendation) -> str:
     sku = f.get("sku") or "this SKU"
     if rec.rec_type == "buy":
         return (
-            f"Order {_fmt(f.get('order_quantity'))} units of {sku} — net position "
+            f"Order {_fmt(f.get('order_quantity'))} units of {sku} - net position "
             f"({_fmt(f.get('net_position'))}) has reached the reorder point "
             f"({_fmt(f.get('reorder_point'))}), so it is time to replenish."
         )
     if rec.rec_type == "exception":
-        return f"{sku} would reorder, but no supplier is linked to source it — link one to proceed."
+        return f"{sku} would reorder, but no supplier is linked to source it - link one to proceed."
     return f"{sku} is flagged for review based on its current cover."

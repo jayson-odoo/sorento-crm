@@ -64,10 +64,10 @@ const PAST_CELL_BG = 'bg-[color-mix(in_oklab,var(--destructive)_6%,var(--backgro
  * config, sort or resize applies to them. What DataGrid would otherwise give us is solved
  * explicitly, and those three obligations are the price of the carve-out:
  *
- *   - the whole table scrolls INSIDE this container, so the page body never scrolls sideways;
- *   - the product column is sticky and the header row is sticky, both opaque, so a reader
+ * - the whole table scrolls INSIDE this container, so the page body never scrolls sideways;
+ * - the product column is sticky and the header row is sticky, both opaque, so a reader
  *     eight buckets in still knows which product they are on;
- *   - the table is `w-full` so a selection of two weeks fills the bordered container rather
+ * - the table is `w-full` so a selection of two weeks fills the bordered container rather
  *     than sitting in a third of it with the rest blank (measured live), the product column
  *     keeps a fixed width because it is not part of what should stretch, and the date columns
  *     carry only a `min-w` floor so they grow evenly into whatever is left. `table-layout` is

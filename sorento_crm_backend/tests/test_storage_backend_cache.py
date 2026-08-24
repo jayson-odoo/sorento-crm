@@ -4,9 +4,9 @@
 read path (presign, preview, download) calls it per request. Construction is
 pure setup, none of it per-request:
 
-  * ``boto3.client(...)`` — ~350ms on the first build in a process, ~3ms after.
+  * ``boto3.client(...)`` - ~350ms on the first build in a process, ~3ms after.
   * ``S3Service`` also builds a ``CloudFrontSigner``, which reads and parses the
-    RSA private key — ~225ms EVERY build.
+    RSA private key - ~225ms EVERY build.
 
 So a presign was ~99% setup and an n8n loop over N attachments paid it N times.
 Measured on the real endpoint: first request 2.39s -> 0.068s, steady-state

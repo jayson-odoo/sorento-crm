@@ -1,4 +1,4 @@
-"""S6 — the surface the AI / MCP layer reads projects through (UAC Group K).
+"""S6 - the surface the AI / MCP layer reads projects through (UAC Group K).
 
 Three things are being pinned, and none of them is "the endpoint returns rows":
 

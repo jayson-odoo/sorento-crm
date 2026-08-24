@@ -1,14 +1,14 @@
 """Normalize uploaded raster images to an RGB color space.
 
 WhatsApp Cloud API (and Meta's media validator behind Respond.io) reject JPEGs
-in the CMYK / YCCK color space with a generic "Media upload error" — even
+in the CMYK / YCCK color space with a generic "Media upload error" - even
 though browsers and Respond's own preview render them fine. Print-pipeline
 exports (Illustrator, CAD, InDesign) routinely produce 4-channel CMYK JPEGs,
 so technical-spec drawings hit this constantly.
 
 We transcode CMYK / YCCK images to RGB JPEG at the upload boundary so stored
 bytes are always WhatsApp-safe. RGB/grayscale JPEG and PNG pass through
-untouched — only the color spaces Meta actually rejects are converted, so we
+untouched - only the color spaces Meta actually rejects are converted, so we
 don't strip PNG transparency or needlessly re-encode greyscale scans.
 See the M9713SS-BL CMYK incident.
 """
@@ -37,7 +37,7 @@ def _decode_mode(content: bytes) -> str | None:
 
         with Image.open(io.BytesIO(content)) as im:
             return im.mode
-    except Exception:  # noqa: BLE001 — not a decodable image
+    except Exception:  # noqa: BLE001 - not a decodable image
         return None
 
 

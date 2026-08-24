@@ -1,4 +1,4 @@
-/** API returns times like "09:00:00" — normalize for <input type="time" /> (HH:MM). */
+/** API returns times like "09:00:00" - normalize for <input type="time" /> (HH:MM). */
 export function apiTimeToInputValue(value: string | undefined, fallback: string): string {
   if (!value || typeof value !== 'string') return fallback;
   const m = /^(\d{1,2}):(\d{2})/.exec(value.trim());

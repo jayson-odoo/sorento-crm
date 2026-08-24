@@ -64,7 +64,7 @@ function encodeBetweenId(parentId: string | null, index: number): string {
 
 function BetweenDropZone({ parentId, index, depth }: { parentId: string | null; index: number; depth: number }) {
   // Between-zones are for REORDERING folders only. When the active drag is a
-  // file/attachment (move-into intent), they must be DISABLED — otherwise the
+  // file/attachment (move-into intent), they must be DISABLED - otherwise the
   // 2px zone (z-10, negative margins) sitting under a collapsed folder's name
   // steals the `over` from the folder row, showing a blue reorder bar and
   // dropping nothing. Disabling lets the folder-row droppable win (highlight +

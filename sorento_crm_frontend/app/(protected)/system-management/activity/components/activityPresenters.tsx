@@ -101,7 +101,7 @@ export function actionMeta(action: ActivityAction): {
 // of the viewer's browser timezone.
 const MALAYSIA_TZ = 'Asia/Kuala_Lumpur';
 
-/** YYYY-MM-DD for the instant in Malaysia time — the day-bucket key + day math. */
+/** YYYY-MM-DD for the instant in Malaysia time - the day-bucket key + day math. */
 function dayKey(d: Date): string {
   // en-CA formats as YYYY-MM-DD.
   return new Intl.DateTimeFormat('en-CA', {
@@ -121,7 +121,7 @@ const DAY_MONTH_YEAR = new Intl.DateTimeFormat('en-GB', {
 
 const WEEKDAY = new Intl.DateTimeFormat('en-GB', { timeZone: MALAYSIA_TZ, weekday: 'long' });
 
-/** "Today", "Yesterday", "Monday", or "28 Jun 2026" — all in Malaysia time. */
+/** "Today", "Yesterday", "Monday", or "28 Jun 2026" - all in Malaysia time. */
 export function dayLabel(d: Date): string {
   // Diff the two MYT calendar-day keys (parsed as UTC midnight, so DST-free math).
   const diffDays = Math.round(

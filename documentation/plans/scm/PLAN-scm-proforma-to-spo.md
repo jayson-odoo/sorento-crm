@@ -128,7 +128,7 @@ from the Amendment's first decision. What shipped:
   `proforma_invoice_service.serialize()` reads this back as `converted_shipments` (header)
   and per-line `shipment_id`/`shipment_number`/`unmatched_reason`, so a PI shows where each
   line went from its own detail page.
-  - the packing-list -> SPO trail (next slice) is a SEPARATE link, per the Amendment's
+ - the packing-list -> SPO trail (next slice) is a SEPARATE link, per the Amendment's
     "PI line -> shipment line (draft), and shipment line -> SPO line" composition - not
     built by this slice.
 - Idempotency: a PI with ANY existing link row is refused with a 409 naming the invoice and
@@ -183,7 +183,7 @@ from the Amendment's first decision. What shipped:
   pattern (`######-S####`, `SPO-####/##-####`) AND from the CRM's own canonical
   `PO-{year}/{month}-####` series (`decision_service`), so an AutoCount import can never
   collide with a number this action minted.
-  - **Source marker: `crm_spo`** (`spo_conversion_service.SOURCE_SYSTEM`), on both
+ - **Source marker: `crm_spo`** (`spo_conversion_service.SOURCE_SYSTEM`), on both
     `purchase_orders.source_system` and `purchase_order_lines.source_system`. Every consumer
     that reads `source_system` was checked before picking it: `scm.po_ordered_v` /
     `scm.on_order_v` (migration 337) carry NO source predicate at all - only status/line
@@ -195,15 +195,15 @@ from the Amendment's first decision. What shipped:
     `SOURCE_LABELS`) so the PO detail page names it honestly rather than folding it into
     "Manual" (nobody keyed it by hand) or "Imported history" (it did not come from
     AutoCount).
-  - **Provenance:** `scm.shipment_line_spo_link` (migration 406), one row per shipment line
+ - **Provenance:** `scm.shipment_line_spo_link` (migration 406), one row per shipment line
     "Create SPO" touched - pointing at the new SPO line, or carrying `unmatched_reason`
     ("Already covered...", "No supplier recorded...", "Not selected.") - the same shape
     `proforma_invoice_shipment_link` uses. The PI -> SPO trail the journey describes is the
     COMPOSITION of the two link tables (PI line -> shipment line -> SPO line), exactly as
     the Amendment specified; nothing merges them into one row.
-  - **Idempotency:** ANY existing link row for a shipment refuses a second "Create SPO"
+ - **Idempotency:** ANY existing link row for a shipment refuses a second "Create SPO"
     with a 409 naming the SPO(s) already made - never a silent double.
-  - **Draft shipments convert too** (guard #5's explicit allowance): the FE copy says so
+ - **Draft shipments convert too** (guard #5's explicit allowance): the FE copy says so
     plainly ("Draft shipment - based on this draft's own packed quantities, not a real
     packing list yet") so nobody reads a draft-based SPO as sized off a real container.
 - **`scm.po_ordered_v` / `scm.on_order_v` visibility, decided and verified:** a CRM SPO

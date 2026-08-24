@@ -6,14 +6,14 @@
  *   PORTAL_E2E_TOKEN       a valid X-Portal-Token for an already-onboarded portal contact
  *
  * Backend prerequisites:
- *   - sorento_crm_backend running with valid AIAssistantConfig.api_key_ciphertext
+ * - sorento_crm_backend running with valid AIAssistantConfig.api_key_ciphertext
  *     (provider can be 'openai' or 'anthropic'; the spec runs identically for both).
- *   - PyMuPDF installed in the backend venv.
+ * - PyMuPDF installed in the backend venv.
  *
  * The fixtures committed in e2e/fixtures/ai-extract/ are:
- *   - image-01.png … image-07.png  (defect photos / DO screenshots / message captures)
- *   - PS202603-0071_WATER_CARE.pdf
- *   - 20260415153447847.pdf
+ * - image-01.png … image-07.png  (defect photos / DO screenshots / message captures)
+ * - PS202603-0071_WATER_CARE.pdf
+ * - 20260415153447847.pdf
  */
 import { test, expect, Page } from '@playwright/test';
 import path from 'path';

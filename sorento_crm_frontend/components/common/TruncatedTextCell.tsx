@@ -22,7 +22,7 @@ export type TruncatedTextCellProps = {
   dialogTitle?: string;
   /** Override className on the truncated label span. */
   className?: string;
-  /** Hide eye icon if text is short enough — defaults to ``80`` chars. */
+  /** Hide eye icon if text is short enough - defaults to ``80`` chars. */
   expandThreshold?: number;
 };
 
@@ -35,7 +35,7 @@ export function TruncatedTextCell({
 }: TruncatedTextCellProps) {
   const [open, setOpen] = React.useState(false);
   const value = (text ?? '').toString();
-  if (!value.trim()) return <span className="text-muted-foreground">—</span>;
+  if (!value.trim()) return <span className="text-muted-foreground"> - </span>;
   const showExpand = value.length > expandThreshold;
 
   const truncated = (

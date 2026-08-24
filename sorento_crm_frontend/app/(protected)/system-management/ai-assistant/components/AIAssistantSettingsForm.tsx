@@ -35,7 +35,7 @@ export default function AIAssistantSettingsForm() {
   const [systemPrompt, setSystemPrompt] = useState('');
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [apiKeyEdited, setApiKeyEdited] = useState(false);
-  // Dedicated Anthropic key — used by the SCM market-research web search (Anthropic-only)
+  // Dedicated Anthropic key - used by the SCM market-research web search (Anthropic-only)
   // while the assistant itself can run on the primary provider above.
   const [anthropicKeyInput, setAnthropicKeyInput] = useState('');
   const [anthropicKeyEdited, setAnthropicKeyEdited] = useState(false);
@@ -197,7 +197,7 @@ export default function AIAssistantSettingsForm() {
         <Label>System prompt</Label>
         <p className="text-xs text-muted-foreground">
           The system prompt now lives in the versioned prompt registry as{' '}
-          <span className="font-mono">agent_system</span> — editable, diffable, and publishable without a
+          <span className="font-mono">agent_system</span> - editable, diffable, and publishable without a
           redeploy. This field is deprecated.
         </p>
         <Button asChild variant="outline" size="sm">

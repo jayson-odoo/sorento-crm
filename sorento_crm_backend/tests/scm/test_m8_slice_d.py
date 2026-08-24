@@ -1,10 +1,10 @@
-"""SCM M8 Slice D — daily scheduled reorder run + /today first-view fallback + drop buy_scope.
+"""SCM M8 Slice D - daily scheduled reorder run + /today first-view fallback + drop buy_scope.
 
 Covers:
-  * D8 — ``_handler_scm_reorder_run`` creates a run over ALL warehouses (warehouse_codes
+  * D8 - ``_handler_scm_reorder_run`` creates a run over ALL warehouses (warehouse_codes
     empty), market insight OFF, and the full-budget path funds every costed buy (M8-D1/D6),
     plus the seeded ``scheduled_tasks`` row (days/1 + 06:00-KL anchor + metadata).
-  * D9 — the create-run REQUEST no longer carries ``buy_scope`` (defaults to warehouse
+  * D9 - the create-run REQUEST no longer carries ``buy_scope`` (defaults to warehouse
     internally); ``GET /reorder-runs/today`` returns today's snapshot, and falls back to
     the latest completed run when none started today.
 
@@ -37,7 +37,7 @@ pytestmark = requires_pg
 
 
 # ===========================================================================
-# D8 — daily scheduled reorder run handler
+# D8 - daily scheduled reorder run handler
 # ===========================================================================
 
 def test_scheduled_handler_runs_all_warehouses_market_off_full_budget(scm_app, monkeypatch):
@@ -110,7 +110,7 @@ def test_scheduled_handler_seed_row_exists_days_1_at_0600_kl(scm_app):
 
 
 # ===========================================================================
-# D9 — drop buy_scope from the create-run request
+# D9 - drop buy_scope from the create-run request
 # ===========================================================================
 
 def test_create_run_request_without_buy_scope_defaults_warehouse(scm_app):
@@ -133,7 +133,7 @@ def test_create_run_request_without_buy_scope_defaults_warehouse(scm_app):
 
 
 # ===========================================================================
-# D9 — GET /reorder-runs/today (first-view fallback)
+# D9 - GET /reorder-runs/today (first-view fallback)
 # ===========================================================================
 
 def test_today_returns_todays_completed_snapshot(scm_app):

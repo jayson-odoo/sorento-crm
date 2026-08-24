@@ -74,7 +74,7 @@ export default function SetDefaultTemplateDialog({
     for (const key of Array.from({ length: selected.param_count }, (_, i) => String(i + 1))) {
       seed[key] = sameTemplate ? (current.param_mapping[key] ?? '') : '';
     }
-    // COPY_CODE auth buttons carry no link variable — the OTP code auto-fills.
+    // COPY_CODE auth buttons carry no link variable - the OTP code auto-fills.
     if (selected.has_url_button && !selected.button_is_copy_code) {
       // Default the button link to portal_url for a fresh mapping.
       seed[BUTTON_URL_KEY] = sameTemplate
@@ -124,7 +124,7 @@ export default function SetDefaultTemplateDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Default template — {useCaseLabel}</DialogTitle>
+          <DialogTitle>Default template - {useCaseLabel}</DialogTitle>
           <DialogDescription>
             Pick an approved template and map each placeholder to a CRM variable.
           </DialogDescription>
@@ -200,7 +200,7 @@ export default function SetDefaultTemplateDialog({
                 <span className="text-sm text-muted-foreground">Copies the OTP code</span>
               </div>
               <p className="text-xs text-muted-foreground">
-                This is a WhatsApp Authentication copy-code button — it copies the verification
+                This is a WhatsApp Authentication copy-code button - it copies the verification
                 code automatically. No variable to map.
               </p>
             </div>
@@ -228,7 +228,7 @@ export default function SetDefaultTemplateDialog({
               <p className="text-xs text-muted-foreground">
                 The button opens{' '}
                 <span className="font-mono">{selected.button_url_base ?? ''}</span>
-                <span className="font-mono">{'{link}'}</span> — the chosen variable supplies the
+                <span className="font-mono">{'{link}'}</span> - the chosen variable supplies the
                 rest of the URL.
               </p>
             </div>
@@ -236,7 +236,7 @@ export default function SetDefaultTemplateDialog({
 
           {selected && paramKeys.length === 0 && !selected.has_url_button && (
             <p className="text-xs text-muted-foreground">
-              This template has no parameters — nothing to map.
+              This template has no parameters - nothing to map.
             </p>
           )}
         </div>

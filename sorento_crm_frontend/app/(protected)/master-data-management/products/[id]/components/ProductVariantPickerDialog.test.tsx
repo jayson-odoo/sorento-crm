@@ -1,8 +1,8 @@
 /**
  * Verifies the shared variant picker combobox:
- *  - renders human-readable `code — name` options, never a raw UUID,
- *  - excludes the ids it is told to hide (self + existing children),
- *  - confirms with the chosen product's id.
+ * - renders human-readable `code - name` options, never a raw UUID,
+ * - excludes the ids it is told to hide (self + existing children),
+ * - confirms with the chosen product's id.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
@@ -84,15 +84,15 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('ProductVariantPickerDialog', () => {
-  it('renders code — name options and never a raw UUID', async () => {
+  it('renders code - name options and never a raw UUID', async () => {
     renderPicker();
 
     // Open the combobox popover.
     fireEvent.click(screen.getByRole('combobox'));
 
-    const black = await screen.findByText(/SRTKT71SS-BL — Kitchen Tap 71 Black/);
+    const black = await screen.findByText(/SRTKT71SS-BL - Kitchen Tap 71 Black/);
     expect(black).toBeInTheDocument();
-    expect(screen.getByText(/SRTKT71SS — Kitchen Tap 71/)).toBeInTheDocument();
+    expect(screen.getByText(/SRTKT71SS - Kitchen Tap 71/)).toBeInTheDocument();
 
     // No option surfaces the underlying product UUID as visible text.
     expect(black.textContent).not.toContain('u-child');
@@ -103,9 +103,9 @@ describe('ProductVariantPickerDialog', () => {
     renderPicker({ excludeIds: ['u-child'] });
     fireEvent.click(screen.getByRole('combobox'));
 
-    await screen.findByText(/SRTKT71SS — Kitchen Tap 71/);
+    await screen.findByText(/SRTKT71SS - Kitchen Tap 71/);
     expect(
-      screen.queryByText(/SRTKT71SS-BL — Kitchen Tap 71 Black/),
+      screen.queryByText(/SRTKT71SS-BL - Kitchen Tap 71 Black/),
     ).not.toBeInTheDocument();
   });
 
@@ -113,7 +113,7 @@ describe('ProductVariantPickerDialog', () => {
     const { onConfirm } = renderPicker();
     fireEvent.click(screen.getByRole('combobox'));
 
-    fireEvent.click(await screen.findByText(/SRTKT71SS — Kitchen Tap 71/));
+    fireEvent.click(await screen.findByText(/SRTKT71SS - Kitchen Tap 71/));
     fireEvent.click(screen.getByRole('button', { name: /set parent/i }));
 
     expect(onConfirm).toHaveBeenCalledWith('u-parent');

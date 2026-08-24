@@ -10,12 +10,12 @@
  * Every figure below is the worked example from ADR-0011 and the acceptance
  * criteria, not invented data:
  *
- *   - `shortfall` scenario: opening 140, demand 135 due 1 Jul, demand 72 due 3 Aug,
+ * - `shortfall` scenario: opening 140, demand 135 due 1 Jul, demand 72 due 3 Aug,
  *     a PO of 200 arriving 25 Aug. Balances run 140, 5, -67, 133. First shortfall
  *     is 67 on 3 Aug, and the closing balance is POSITIVE at 133 while that
  *     shortfall is real - which is exactly why supply dated after a demand event
  *     must not offset it (AC-B4). The PO is 22 days late for that order.
- *   - `use_pool` scenario: item SRTWT7408, demand 67 against customer bins with
+ * - `use_pool` scenario: item SRTWT7408, demand 67 against customer bins with
  *     4,397 in the BRW shared pool. Must read "use the pool", never a buy of 67
  *     (AC-B1c). This is the regression case the amendment to ADR-0011 exists for.
  *

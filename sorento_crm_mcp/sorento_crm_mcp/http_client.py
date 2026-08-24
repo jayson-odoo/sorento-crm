@@ -82,7 +82,7 @@ class CRMClient:
         method_upper = method.upper()
 
         # Attribution for the CRM's api_call_log. Without these the backend
-        # cannot tell MCP from n8n at all — both authenticate with the same
+        # cannot tell MCP from n8n at all - both authenticate with the same
         # shared EXTERNAL_API_KEY and send nothing else to distinguish them.
         # correlation_id joins our elapsed_ms below to the server-side span, so
         # network time and server time can be told apart.
@@ -114,7 +114,7 @@ class CRMClient:
             detail = str(e) or repr(e)
             elapsed_ms = (time.perf_counter() - started) * 1000
             logger.warning(
-                "CRM request failed: tool=%s corr=%s %s %s params=%s body=%s elapsed_ms=%.1f — %s: %s",
+                "CRM request failed: tool=%s corr=%s %s %s params=%s body=%s elapsed_ms=%.1f - %s: %s",
                 tool_name or "-",
                 correlation_id,
                 method_upper,

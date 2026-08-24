@@ -1,4 +1,4 @@
-"""Variant graph derivation — ``products.variant_of_id`` self-FK link.
+"""Variant graph derivation - ``products.variant_of_id`` self-FK link.
 
 A product's parent is the **longest existing** product ``P'`` such that the
 child's code starts with ``P'.code`` (both dash/whitespace-normalized), ``P'`` is
@@ -28,7 +28,7 @@ from app.services.company_scope_sql import company_sql_predicate
 
 logger = logging.getLogger(__name__)
 
-# Dash/whitespace stripper — symmetric with the resolver's SQL normalizer
+# Dash/whitespace stripper - symmetric with the resolver's SQL normalizer
 # ``lower(regexp_replace(col, '[-\s]', '', 'g'))``.
 _STRIP_RE = re.compile(r"[-\s]")
 
@@ -78,7 +78,7 @@ def _derive_parent_id(db: Session, product_id: str, product_code: str) -> Option
         return None
     n_norm = _norm_sql("product_code")
     # Multi-company isolation (Group I): a variant relationship must stay within
-    # one company — the raw ``text()`` bypasses the ORM scope filter, so scope the
+    # one company - the raw ``text()`` bypasses the ORM scope filter, so scope the
     # candidate-parent search by hand from the session scope (single company on
     # API create / import). Never link a child to another company's parent.
     company_frag, company_params = company_sql_predicate(db)
@@ -171,7 +171,7 @@ def reconcile_variant_links(db: Session, code_or_id: str) -> dict:
     if product is None:
         return {"found": False, "self_changed": False, "orphans_adopted": 0}
 
-    # D1 — a manually-curated row's OWN parent is sticky: never re-derive it.
+    # D1 - a manually-curated row's OWN parent is sticky: never re-derive it.
     # (It still acts as a legitimate parent for auto children below.)
     if not getattr(product, "variant_link_manual", False):
         derived_parent = _derive_parent_id(db, product.id, product.product_code)
@@ -194,7 +194,7 @@ def reconcile_variant_links(db: Session, code_or_id: str) -> dict:
 
 
 def child_ids_of(db: Session, product_id: str) -> list[str]:
-    """Ids of products currently pointing at ``product_id`` — captured pre-delete
+    """Ids of products currently pointing at ``product_id`` - captured pre-delete
     so they can be re-derived (re-anchored to the next ancestor) afterwards."""
     # Multi-company isolation (Group I): scope the child scan by hand (raw text
     # bypasses the ORM filter). Children of an in-company parent are already

@@ -1,6 +1,6 @@
 """Spec registry: values that exist in the catalog but are not searchable.
 
-`brand` is an OPEN vocabulary — its options are whatever the catalog holds — and the
+`brand` is an OPEN vocabulary - its options are whatever the catalog holds - and the
 catalog holds OTHERS (1,956 products) and NO LOGO (651). Those record the ABSENCE of a
 brand. Handed to the understanding model as enum options they read as "none of the
 above", so a word it could not place was filed under one instead of being left alone:

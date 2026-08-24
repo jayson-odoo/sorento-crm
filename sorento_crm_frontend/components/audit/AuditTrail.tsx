@@ -7,7 +7,7 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { AuditLogEntry } from '@/types/audit.types';
 
 function formatAuditValue(v: unknown): string {
-  if (v === null || v === undefined) return '—';
+  if (v === null || v === undefined) return '-';
   if (typeof v === 'object') {
     try {
       return JSON.stringify(v);

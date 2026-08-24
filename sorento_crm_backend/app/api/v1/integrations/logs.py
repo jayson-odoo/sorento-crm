@@ -159,7 +159,7 @@ async def update_integration_log_status(
         # with a hardcoded status="success", so the System Health dashboard row was
         # structurally blind (always N/N, 0 failed) and doubled log volume. The real
         # outcome is already persisted on the original log above (its `status` is set
-        # from the callback body — success OR failed). See PLAN-system-health-observability WS1a.
+        # from the callback body - success OR failed). See PLAN-system-health-observability WS1a.
 
         return {"status": "success", "message": "Integration log updated successfully."}
     except HTTPException:

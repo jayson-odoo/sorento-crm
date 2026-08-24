@@ -35,7 +35,7 @@ describe('NotificationChannelsPreference (TCK-31 UX1)', () => {
     const emailAssign = await screen.findByLabelText('Email on assignment');
     await waitFor(() => expect(emailAssign).toBeChecked());
 
-    // Each key maps to its own switch — a matrix, not one coarse toggle.
+    // Each key maps to its own switch - a matrix, not one coarse toggle.
     expect(screen.getByLabelText('Email on escalation')).not.toBeChecked();
     expect(screen.getByLabelText('WhatsApp on assignment')).toBeChecked();
     expect(screen.getByLabelText('WhatsApp on escalation')).not.toBeChecked();

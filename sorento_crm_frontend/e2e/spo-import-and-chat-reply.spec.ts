@@ -1,5 +1,5 @@
 /**
- * SPO import + form chat reply — the two integration paths left undriven.
+ * SPO import + form chat reply - the two integration paths left undriven.
  *
  * 1. SPO allocation import: sidebar -> Procurement -> SPO Allocations -> Import
  *    SPO, upload a real .xlsx whose filename carries the SPO number (the
@@ -8,7 +8,7 @@
  *
  * 2. Form chat reply: open a form that has a Respond.io conversation, type into
  *    the shared composer and send. Locally the Respond credentials are
- *    deliberately wrong, so the send fails upstream — that is the point. What
+ *    deliberately wrong, so the send fails upstream - that is the point. What
  *    must hold is that the app issues the send request and surfaces the outcome
  *    rather than silently doing nothing.
  *
@@ -68,7 +68,7 @@ test('SPO import accepts a real workbook and queues an import job', async ({ pag
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
 
-  // Set the hidden input directly — the visible drop zone has several
+  // Set the hidden input directly - the visible drop zone has several
   // text nodes and clicking the wrong one never opens the file chooser.
   await dialog.locator('input[type="file"]').setInputFiles(FIXTURE);
 
@@ -87,7 +87,7 @@ test('SPO import accepts a real workbook and queues an import job', async ({ pag
   await importBtn.click();
 
   // A workbook that validates with warnings raises an "Import with warnings?"
-  // confirm step. That is intended behaviour — acknowledge it, or the real
+  // confirm step. That is intended behaviour - acknowledge it, or the real
   // import POST never fires and the test silently proves nothing.
   const confirm = page.getByRole('button', { name: /import anyway/i });
   if (await confirm.isVisible({ timeout: 30_000 }).catch(() => false)) {
@@ -135,7 +135,7 @@ test('form chat composer sends a reply and surfaces the result', async ({ page }
   await composer.fill(`E2E chat reply ${Date.now()}`);
 
   // The send may 4xx upstream (local Respond creds are intentionally wrong).
-  // Assert the request is actually issued — a silent no-op is the real defect.
+  // Assert the request is actually issued - a silent no-op is the real defect.
   const sent = page.waitForResponse(
     (r) =>
       /(conversation\/(reply|send-message)|send-message)/.test(r.url()) &&

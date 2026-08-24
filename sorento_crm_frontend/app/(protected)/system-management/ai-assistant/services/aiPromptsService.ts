@@ -1,8 +1,8 @@
 /**
- * AI Assistant Prompt Registry — FE service.
+ * AI Assistant Prompt Registry - FE service.
  *
  * ============================================================================
- * API CONTRACT (matches PLAN-ai-assistant-prompt-registry.md §8b — Phase-2 BE
+ * API CONTRACT (matches PLAN-ai-assistant-prompt-registry.md §8b - Phase-2 BE
  * MUST match this exactly). All routes gated on the same permission as the
  * existing AI-assistant config routes (view for reads, edit for writes).
  * ============================================================================
@@ -114,7 +114,7 @@ export interface PromptVersionDetail {
   created_by_name: string | null;
   created_at: string;
   labels: string[];
-  /** Present on a save (201) response — declared vars not used in the template (soft warn). */
+  /** Present on a save (201) response - declared vars not used in the template (soft warn). */
   missing_vars?: string[];
 }
 
@@ -190,7 +190,7 @@ export async function getPromptVersion(name: string, version: number): Promise<P
 /**
  * Save a new immutable version. On 422 the rejection carries the parsed
  * {@link SaveVersionError} (unknown tokens block, missing vars are warnings the
- * caller surfaces but the BE already accepted — 422 is only for unknown tokens
+ * caller surfaces but the BE already accepted - 422 is only for unknown tokens
  * / blank commit).
  */
 export async function saveVersion(name: string, payload: SaveVersionPayload): Promise<PromptVersionDetail> {

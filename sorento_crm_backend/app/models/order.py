@@ -152,7 +152,7 @@ class Customer(Base, CompanyScopedMixin):
         Index("ix_customers_is_active", "is_active"),
         Index("ix_customers_customer_code", "customer_code"),
         Index("ix_customers_account_owner_user_id", "account_owner_user_id"),
-        # Composite uniqueness — see column docstring. Created as a functional
+        # Composite uniqueness - see column docstring. Created as a functional
         # UNIQUE INDEX by migration 220 so case + whitespace differences don't
         # produce silent duplicates, then re-created WITH company_id by migration
         # 305: the same code+name legally exists once per company (884 pairs are
@@ -362,7 +362,7 @@ class OrderLine(Base, CompanyScopedMixin):
 
 
 class SalesOrder(Base, CompanyScopedMixin):
-    """SCM sales order (demand / committed source). Public core record — survives
+    """SCM sales order (demand / committed source). Public core record - survives
     module uninstall. Sits with Order/DO in the order domain."""
     __tablename__ = "sales_orders"
 
@@ -426,7 +426,7 @@ class SalesOrder(Base, CompanyScopedMixin):
 
 
 class SalesOrderLine(Base, CompanyScopedMixin):
-    """Open SO line — feeds committed / net-position views by product×warehouse."""
+    """Open SO line - feeds committed / net-position views by product×warehouse."""
     __tablename__ = "sales_order_lines"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)

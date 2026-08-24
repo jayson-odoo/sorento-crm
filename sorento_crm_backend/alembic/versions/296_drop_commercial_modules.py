@@ -12,7 +12,7 @@ so the models did not describe the real schema. That drift blocked using the
 models as a source of truth for building a test/CI database.
 
 Drops the tables and the 45 `commercial_*` permission rows. Downgrade is
-intentionally not supported — recreating empty tables whose model definitions
+intentionally not supported - recreating empty tables whose model definitions
 have been deleted would serve no purpose.
 
 Revision ID: 296_drop_commercial_modules
@@ -71,7 +71,7 @@ def upgrade():
 
 
 def downgrade():
-    """Not supported — the module code and models were deleted alongside this."""
+    """Not supported - the module code and models were deleted alongside this."""
     raise NotImplementedError(
         "commercial_core / commercial_activity were removed permanently; "
         "restore the module packages from git history before re-adding the schema."

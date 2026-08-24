@@ -1,4 +1,4 @@
-"""Service-level tests for ComplaintFulfilmentService — the centralized
+"""Service-level tests for ComplaintFulfilmentService - the centralized
 complaint <-> Delivery Order auto-fulfilment helper.
 
 Covers the UAC lines of docs/plans/PLAN-complaint-do-auto-fulfilment.md:
@@ -7,13 +7,13 @@ Covers the UAC lines of docs/plans/PLAN-complaint-do-auto-fulfilment.md:
   Fulfil  : F1 F2 F3 F4 F5 F6 F7 F8 F9
   Freeze  : Z4 (pending DO editable + unlink on token removal)
   Notify  : N4 (notify-once via delivery_notified_at), N7 (dry-run no send/no link)
-  Perf    : P1 (delta-only / batched — no per-row complaint queries)
+  Perf    : P1 (delta-only / batched - no per-row complaint queries)
 
 Runs against the live Postgres test DB (same convention as the other complaint
 service tests): seed rows with unique prefixes, assert, clean up. The new
 ``complaint_fulfilment_orders`` table already exists at alembic head 251.
 
-External notification dispatch (Respond/email/RQ) is NOT exercised here — these
+External notification dispatch (Respond/email/RQ) is NOT exercised here - these
 tests drive ``reconcile_links_and_status`` directly and inspect the returned
 ``(warnings, notify_payloads)`` plus DB state. Notification side effects have
 their own file (test_complaint_do_notify.py).
@@ -183,7 +183,7 @@ def test_L2_multi_token_ampersand(db: Session) -> None:
 
 
 def test_L3_non_matching_token_ignored(db: Session) -> None:
-    """UAC-L3: a token matching no complaint is ignored — no error, no warning."""
+    """UAC-L3: a token matching no complaint is ignored - no error, no warning."""
     o = _mk_order(db, f"{O_PREFIX}3", remarks_cs=f"{C_PREFIX}NOSUCH")
     warnings, notify = _reconcile(db, (o, None))
     assert warnings == []
@@ -380,10 +380,10 @@ def test_F9_sla_resolved_emit_on_fulfil_only(db: Session, monkeypatch) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Freeze — pending DO editable + unlink (UAC-Z4)
+# Freeze - pending DO editable + unlink (UAC-Z4)
 # --------------------------------------------------------------------------- #
 def test_Z4_pending_unlink_on_token_removal(db: Session) -> None:
-    """UAC-Z4: a pending DO's Remarks CS is editable — removing a token unlinks the
+    """UAC-Z4: a pending DO's Remarks CS is editable - removing a token unlinks the
     complaint and the complaint stays open (processed_by_cs)."""
     c = _mk_complaint(db, f"{C_PREFIX}Z4")
     o = _mk_order(db, f"{O_PREFIX}Z4", remarks_cs=f"{C_PREFIX}Z4")
@@ -525,7 +525,7 @@ def _build_tracking_workbook(master_rows: list[list]) -> bytes:
     for r in master_rows:
         ms.append(r)
     ts = wb.create_sheet("Overall Tracking")
-    ts.append(["Doc Number"])  # header only — delivery already set in DB
+    ts.append(["Doc Number"])  # header only - delivery already set in DB
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -577,7 +577,7 @@ def test_Z1_import_freeze_warning_in_validate_only_response(db: Session) -> None
 
 
 def test_Z1_import_not_frozen_when_not_delivered(db: Session) -> None:
-    """UAC-Z1 negative / UAC-Z4: a linked but NOT-delivered DO is not frozen — an
+    """UAC-Z1 negative / UAC-Z4: a linked but NOT-delivered DO is not frozen - an
     import may still change its Remarks CS (no warning, value updated)."""
     from app.services.order_service import OrderService
 
@@ -600,12 +600,12 @@ def test_Z1_import_not_frozen_when_not_delivered(db: Session) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Backfill — stamp-without-send + idempotent (UAC-B1 / UAC-B2)
+# Backfill - stamp-without-send + idempotent (UAC-B1 / UAC-B2)
 # --------------------------------------------------------------------------- #
 def test_B1_backfill_stamps_without_send(db: Session) -> None:
     """UAC-B1: the backfill drives the centralized helper with old_remarks=None,
     creates links, sets `fulfilled` for already-delivered DOs, and STAMPS
-    delivery_notified_at — but DISCARDS the notify payloads so no historical message
+    delivery_notified_at - but DISCARDS the notify payloads so no historical message
     is sent. Mirrors scripts/backfill_complaint_fulfilment_orders.py."""
     c = _mk_complaint(db, f"{C_PREFIX}B1")
     o = _mk_order(db, f"{O_PREFIX}B1", remarks_cs=f"{C_PREFIX}B1", delivered=True)
@@ -616,7 +616,7 @@ def test_B1_backfill_stamps_without_send(db: Session) -> None:
         [{"order": o, "old_remarks": None}], dry_run=False
     )
     db.commit()
-    # The script suppresses these — they are never dispatched.
+    # The script suppresses these - they are never dispatched.
     suppressed = len(notify_payloads)
     assert suppressed == 1
 
@@ -664,7 +664,7 @@ def test_backfill_script_dry_run_executes(monkeypatch) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Endpoint auth (UAC — the two new GET routes reject an unauthenticated caller)
+# Endpoint auth (UAC - the two new GET routes reject an unauthenticated caller)
 # --------------------------------------------------------------------------- #
 def test_complaint_fulfilment_orders_endpoint_requires_auth() -> None:
     from fastapi.testclient import TestClient
@@ -720,7 +720,7 @@ def test_N7_dry_run_no_links_no_payloads(db: Session) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Performance — delta-only / batched (UAC-P1)
+# Performance - delta-only / batched (UAC-P1)
 # --------------------------------------------------------------------------- #
 def _count_complaint_selects(db: Session, fn) -> int:
     """Count SELECTs against the complaints table issued while running ``fn``."""

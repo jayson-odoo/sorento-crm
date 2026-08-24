@@ -37,7 +37,7 @@ export interface UseHandlingLockResult {
   state: HandlingLockState;
   /** True when the state-changing business CTAs should be enabled (ANDed on top of today's gates). */
   businessCtasEnabled: boolean;
-  /** The active tracker (or null) — convenience passthrough for the banner/actions. */
+  /** The active tracker (or null) - convenience passthrough for the banner/actions. */
   tracker: HandlingLockTracker | null;
   /** Non-null only when a banner should render (state !== 'not_escalated'). */
   banner: { state: HandlingLockState; tracker: HandlingLockTracker | null } | null;
@@ -79,7 +79,7 @@ function toLockTracker(row: FormHandlingTracker | null): HandlingLockTracker | n
  * which carries the viewer-scoped `flag_enabled` / `viewer_eligible` / `viewer_is_admin`
  * that `resolveHandlingLockState` cannot compute client-side. Uses `useEffectiveUserId`
  * (the acting user under impersonation, not the NextAuth session user) for the "is this
- * me?" check — same rule as SlaExtendAction.
+ * me?" check - same rule as SlaExtendAction.
  */
 export function useHandlingLock(input: UseHandlingLockInput): UseHandlingLockResult {
   const { sourceEntityType, sourceEntityId, entityKey, enabled = true } = input;
@@ -122,7 +122,7 @@ export function useHandlingLock(input: UseHandlingLockInput): UseHandlingLockRes
   });
 
   const takeOverMutation = useMutation({
-    // ALWAYS pass the current holder's id — the backend 409s on a null/mismatched expectation.
+    // ALWAYS pass the current holder's id - the backend 409s on a null/mismatched expectation.
     mutationFn: () => takeOverHandling(activeRow!.tracking_id, activeRow?.handled_by_id ?? null),
     onSuccess: () => {
       toast.success('You have taken over handling.');

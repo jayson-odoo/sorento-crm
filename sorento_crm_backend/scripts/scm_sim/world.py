@@ -439,7 +439,7 @@ def _seed_price_history(db, *, product_id: str, warehouse_id: str, supplier_id: 
                         spec: ScenarioSpec) -> None:
     """CLOSED, fully-received PO lines purely as purchase-price evidence (S11-S14).
 
-    ``line_status='closed'`` + fully received so they never register as open PO exposure  - 
+    ``line_status='closed'`` + fully received so they never register as open PO exposure - 
     isolated from the po_open_qty axis above.
     """
     from app.models.procurement import PurchaseOrder, PurchaseOrderLine

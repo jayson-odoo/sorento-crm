@@ -2936,11 +2936,11 @@ def _verdict(
 
     What still blocks is the reverse and the internal disagreement:
 
-    - the column asks for MORE than the purchase order ordered: the schedule cannot
+  - the column asks for MORE than the purchase order ordered: the schedule cannot
       commit quantity nobody bought,
-    - the phases do not add up to the schedule's own TOTAL QTY row: one of the two was
+  - the phases do not add up to the schedule's own TOTAL QTY row: one of the two was
       misread and neither number can be trusted until that is settled,
-    - there is no purchase order quantity at all. Silence is not agreement: the column is
+  - there is no purchase order quantity at all. Silence is not agreement: the column is
       unchecked, not clean, and saying so is the whole point of the screen.
 
     The ceiling is the quantity the named PO version PRINTS, cancelled lines included.

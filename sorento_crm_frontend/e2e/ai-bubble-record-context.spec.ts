@@ -15,7 +15,7 @@
  *   GET /api/v1/assistant/record-context/purchase_request/{id}
  *   GET /api/v1/assistant/record-context/sponsorship_form/{id}
  * (sponsorship_form and purchase_request share a detail component but register
- * distinct entity_type strings — assert on the URL, not the component.)
+ * distinct entity_type strings - assert on the URL, not the component.)
  *
  * ALWAYS sidebar-navigate (project memory feedback_playwright_via_sidebar),
  * never deep-link to the detail page directly.
@@ -23,7 +23,7 @@
  * Required env (spec is skipped otherwise):
  *   PORTAL_E2E_BASE_URL=http://localhost:3000   (default in playwright.config)
  *   REQUEST_BATCH_E2E_EMAIL / REQUEST_BATCH_E2E_PASSWORD  (login creds; same
- *     vars used by the other complaint specs — set in the BE .env per memory)
+ *     vars used by the other complaint specs - set in the BE .env per memory)
  *
  * Assumes the logged-in user has the `system.ai_assistant_chat.use` permission
  * (the bubble does not render without it) and at least one complaint exists.

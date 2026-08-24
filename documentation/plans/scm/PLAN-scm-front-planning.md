@@ -333,7 +333,7 @@ warehouse allocation identifies the location. For product `p`, location `w`, and
 availability_by_date(p, w, d)
   = stock(p, w)
   + SUM(SPO incoming(p, w) arriving on or before d)
-  - SUM(outstanding SO(p, w) required on or before d)
+ - SUM(outstanding SO(p, w) required on or before d)
 ```
 
 The shared location-projection boundary owns all ordering and source attribution. Timeline events
@@ -468,7 +468,7 @@ project_need(p, w)
 
 retail_free_supply(p, w)
   = existing shared free-supply calculation
-  - confirmed non-Buy components of active Project decisions whose recorded
+ - confirmed non-Buy components of active Project decisions whose recorded
     source location is w
     (per line: Reserve + Borrow + timely SPO cover = confirmed open_so_qty - buy_qty;
     own-location Reserve and timely SPO cover source the line fulfilment

@@ -32,7 +32,7 @@ class UserDownload(Base):
     kind = Column(String(50), nullable=False)
     # Optional source pointer so the drawer can deep-link / dedupe.
     source_entity_type = Column(String(50), nullable=True)
-    # Polymorphic (no FK) but always a uuid — see migration 300.
+    # Polymorphic (no FK) but always a uuid - see migration 300.
     source_entity_id = Column(UUID(as_uuid=False), nullable=True, index=True)
     status = Column(
         SQLEnum(

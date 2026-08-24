@@ -54,14 +54,14 @@ def cost_variance(
 
     Returns a dict with:
 
-    * ``variance``   - ``incoming - ordered`` as a Decimal, so a POSITIVE number means the
+    * ``variance`` - ``incoming - ordered`` as a Decimal, so a POSITIVE number means the
       supplier repriced upward after we committed. ``None`` whenever the comparison is not
       computable.
-    * ``currency``   - the unit the variance is expressed in. Where the two sides disagree
+    * ``currency`` - the unit the variance is expressed in. Where the two sides disagree
       there is no such unit, so it is ``None``; where only one side states a currency it is
       reported as context for whichever figure is present.
     * ``comparable`` - whether ``variance`` is a real number.
-    * ``reason``     - why not, when it is not. ``None`` when the variance is comparable.
+    * ``reason``   - why not, when it is not. ``None`` when the variance is comparable.
     """
     ordered = _to_decimal(ordered_cost)
     incoming = _to_decimal(incoming_cost)

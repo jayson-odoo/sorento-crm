@@ -2,10 +2,10 @@
  * StockInquiryDetail - mirrors ComplaintDetail.test.tsx for the two shared
  * behaviours from UAC-response-attachments.md:
  *
- *  - Group C/D5: "Edit purchasing response" uploads staged attachments BEFORE
+ * - Group C/D5: "Edit purchasing response" uploads staged attachments BEFORE
  *    the response text is saved; an upload failure surfaces a toast and must
  *    NOT silently save the response text alone.
- *  - Group H: the gear-menu Reassign item acts on the open form-SLA tracker,
+ * - Group H: the gear-menu Reassign item acts on the open form-SLA tracker,
  *    is hidden with no open tracker and on a voided stock inquiry, and on
  *    success invalidates the form-sla-trackers query AND calls
  *    handlingLock.refresh().

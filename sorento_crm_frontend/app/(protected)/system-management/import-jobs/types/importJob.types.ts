@@ -1,4 +1,4 @@
-/** One outcome bucket in a job's breakdown. `count` is exact and complete — never truncated. */
+/** One outcome bucket in a job's breakdown. `count` is exact and complete - never truncated. */
 export interface ImportOutcomeBreakdownEntry {
   code: string;
   label: string;
@@ -15,7 +15,7 @@ export interface ImportOutcomeBreakdown {
 
 /**
  * The uniform envelope every importer writes into `import_jobs.result`.
- * Legacy jobs predate it — treat every field as optional and fall back to the raw JSON view.
+ * Legacy jobs predate it - treat every field as optional and fall back to the raw JSON view.
  */
 export interface ImportJobResultEnvelope {
   message?: string;
@@ -46,7 +46,7 @@ export interface ImportJobRow {
   message?: string | null;
   /** The offending token, when the reason has one (product code, doc no, filename). */
   value?: string | null;
-  /** The row's mapped business columns — never raw UUIDs. */
+  /** The row's mapped business columns - never raw UUIDs. */
   identity?: Record<string, unknown> | null;
   entity_type?: string | null;
   entity_id?: string | null;

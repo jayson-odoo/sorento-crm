@@ -1,4 +1,4 @@
-"""Unified Drive (folders + files in one stream) — service-level tests.
+"""Unified Drive (folders + files in one stream) - service-level tests.
 
 Covers the BE-gated UAC items for PLAN-unified-drive-files:
   A8/D10 (root scope), B1/B2/B3 (browse vs recursive incl. deep descendant),
@@ -110,11 +110,11 @@ def _names(result):
 
 
 # --------------------------------------------------------------------------- #
-# A8 / D10 — root scope
+# A8 / D10 - root scope
 # --------------------------------------------------------------------------- #
 def test_A8_root_shows_top_folders_and_null_directory_files(db):
     top = _folder(db, "Marketing")
-    _folder(db, "Sub", parent_id=top)  # nested — must NOT appear at root browse
+    _folder(db, "Sub", parent_id=top)  # nested - must NOT appear at root browse
     _file(db, filename="root_file.pdf", directory_id=None)
     _file(db, filename="in_marketing.pdf", directory_id=top)  # must NOT appear at root
     db.commit()
@@ -129,7 +129,7 @@ def test_A8_root_shows_top_folders_and_null_directory_files(db):
 
 
 # --------------------------------------------------------------------------- #
-# B1 — browse = immediate children only
+# B1 - browse = immediate children only
 # --------------------------------------------------------------------------- #
 def test_B1_browse_immediate_children_only(db):
     parent = _folder(db, "Parent")
@@ -145,7 +145,7 @@ def test_B1_browse_immediate_children_only(db):
 
 
 # --------------------------------------------------------------------------- #
-# B2 / D3 — recursive finds a file in a sub-subfolder
+# B2 / D3 - recursive finds a file in a sub-subfolder
 # --------------------------------------------------------------------------- #
 def test_B2_recursive_search_finds_deep_descendant_file(db):
     a = _folder(db, "A")
@@ -163,7 +163,7 @@ def test_B2_recursive_search_finds_deep_descendant_file(db):
 
 
 # --------------------------------------------------------------------------- #
-# B3 — searching at root searches the whole drive
+# B3 - searching at root searches the whole drive
 # --------------------------------------------------------------------------- #
 def test_B3_root_search_whole_drive(db):
     a = _folder(db, "A")
@@ -176,7 +176,7 @@ def test_B3_root_search_whole_drive(db):
 
 
 # --------------------------------------------------------------------------- #
-# B4 — recursive results include BOTH matching files and folders
+# B4 - recursive results include BOTH matching files and folders
 # --------------------------------------------------------------------------- #
 def test_B4_recursive_includes_matching_folders_and_files(db):
     a = _folder(db, "Reports")
@@ -193,7 +193,7 @@ def test_B4_recursive_includes_matching_folders_and_files(db):
 
 
 # --------------------------------------------------------------------------- #
-# C1 — default Name sort interleaves folders + files
+# C1 - default Name sort interleaves folders + files
 # --------------------------------------------------------------------------- #
 def test_C1_name_sort_interleaves_folders_and_files(db):
     _folder(db, "Bravo")
@@ -207,7 +207,7 @@ def test_C1_name_sort_interleaves_folders_and_files(db):
 
 
 # --------------------------------------------------------------------------- #
-# C2 — non-Name sort groups folders FIRST (Finder/macOS)
+# C2 - non-Name sort groups folders FIRST (Finder/macOS)
 # --------------------------------------------------------------------------- #
 def test_C2_size_sort_groups_folders_first(db):
     _folder(db, "ZFolder")
@@ -268,7 +268,7 @@ def test_C2_type_sort_folders_precede_files_and_files_type_ordered(db):
 
 
 # --------------------------------------------------------------------------- #
-# C3 — any file-attribute filter hides folders
+# C3 - any file-attribute filter hides folders
 # --------------------------------------------------------------------------- #
 def test_C3_filter_hides_folders(db):
     t = _type(db, "Catalogue")
@@ -291,7 +291,7 @@ def test_C3_query_hides_nonmatching_and_only_folders_that_match(db):
 
 
 # --------------------------------------------------------------------------- #
-# C4 — plain browse shows folders
+# C4 - plain browse shows folders
 # --------------------------------------------------------------------------- #
 def test_C4_plain_browse_shows_folders(db):
     _folder(db, "Visible")
@@ -304,7 +304,7 @@ def test_C4_plain_browse_shows_folders(db):
 
 
 # --------------------------------------------------------------------------- #
-# C5 — export (xlsx) is files-only; the files-list path never yields folders
+# C5 - export (xlsx) is files-only; the files-list path never yields folders
 # --------------------------------------------------------------------------- #
 def test_C5_export_path_files_only_no_folders(db):
     folder = _folder(db, "ShouldNotExport")
@@ -315,13 +315,13 @@ def test_C5_export_path_files_only_no_folders(db):
     result = AttachmentService(db).list_attachments(directory_id=None)
     names = [a.original_filename for a in result["data"]]
     assert "exported.pdf" in names
-    # A folder name can never appear — list_attachments queries attachments only.
+    # A folder name can never appear - list_attachments queries attachments only.
     assert "ShouldNotExport" not in names
     assert all(isinstance(a, Attachment) for a in result["data"])
 
 
 # --------------------------------------------------------------------------- #
-# C6 — sort + pagination correct across the UNION, no dupes/missing
+# C6 - sort + pagination correct across the UNION, no dupes/missing
 # --------------------------------------------------------------------------- #
 def test_C6_pagination_over_union_no_dupes_or_missing(db):
     # 3 folders + 4 files = 7 items, Name sort, page through in pages of 3.
@@ -350,7 +350,7 @@ def test_C6_pagination_over_union_no_dupes_or_missing(db):
 
 
 # --------------------------------------------------------------------------- #
-# D2 — directory_path resolved in-query (no N+1)
+# D2 - directory_path resolved in-query (no N+1)
 # --------------------------------------------------------------------------- #
 def test_D2_file_rows_carry_directory_path(db):
     mk = _folder(db, "Marketing")
@@ -388,7 +388,7 @@ def test_D2_path_map_single_pass_for_many_files(db):
 
 
 # --------------------------------------------------------------------------- #
-# D4 — isolation (single-tenant schema: a sibling subtree never leaks in)
+# D4 - isolation (single-tenant schema: a sibling subtree never leaks in)
 # --------------------------------------------------------------------------- #
 def test_D4_other_subtree_rows_never_appear(db):
     tenant_a = _folder(db, "TenantA")
@@ -404,7 +404,7 @@ def test_D4_other_subtree_rows_never_appear(db):
 
 
 # --------------------------------------------------------------------------- #
-# E4 — cycle guard on folder move
+# E4 - cycle guard on folder move
 # --------------------------------------------------------------------------- #
 def test_E4_move_folder_into_own_descendant_blocked(db):
     parent = _folder(db, "Parent")
@@ -426,7 +426,7 @@ def test_E4_move_folder_into_itself_blocked(db):
 
 
 # --------------------------------------------------------------------------- #
-# F4 — folder delete cascades soft-delete + restore brings it back
+# F4 - folder delete cascades soft-delete + restore brings it back
 # --------------------------------------------------------------------------- #
 def test_F4_folder_delete_cascade_and_restore(db):
     parent = _folder(db, "Parent")
@@ -484,7 +484,7 @@ def test_F4_trash_view_lists_deleted_folders(db):
 
 
 # --------------------------------------------------------------------------- #
-# I6 / I8 — collision copy-name + replace-in-place still resolve
+# I6 / I8 - collision copy-name + replace-in-place still resolve
 # --------------------------------------------------------------------------- #
 def test_I8_collision_check_finds_existing(db):
     from app.api.v1.resources.attachments import _find_filename_collision
@@ -512,7 +512,7 @@ def test_I8_next_copy_name_bumps_until_free(db):
 
 
 def test_I6_replace_semantics_keep_same_row(db):
-    """Replace-in-place: same row id, new size/hash — the version-append path the
+    """Replace-in-place: same row id, new size/hash - the version-append path the
     upload API uses. Asserted at the field level the route mutates."""
     folder = _folder(db, "Folder")
     fid = _file(db, filename="v1.pdf", directory_id=folder, size=10)

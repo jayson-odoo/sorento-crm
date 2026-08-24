@@ -16,11 +16,11 @@ is FROZEN at generation rather than recomputed on read:
     moves daily, so a timeline recomputed when somebody opens the row is a different
     position wearing the same date, and the reviewer would be approving against numbers the
     engine never saw.
-  * `reading_json`  - lifecycle, velocity, business class and last purchase date, each with
+  * `reading_json` - lifecycle, velocity, business class and last purchase date, each with
     the FIELD it was read from (AC-D9, AC-D12). Frozen for the same reason and one more: an
     item reclassified next week must not silently re-order the actions of a decision already
     taken.
-  * `actions_json`  - the proposed actions, ranked by that reading (AC-D10). The rank IS the
+  * `actions_json` - the proposed actions, ranked by that reading (AC-D10). The rank IS the
     engine's verdict, so it is stored, not derived at read time by whatever the ordering code
     happens to say that day.
 

@@ -60,20 +60,852 @@ import {
 } from 'lucide-react';
 import { type MenuConfig } from './types';
 
+
 export const MENU_SIDEBAR: MenuConfig = [
+  { heading: 'OVERVIEW' },
   {
-    // Dashboards is the system's default landing page — a direct, clickable link
-    // (no submenu) to '/'.
     title: 'Dashboards',
     icon: LayoutGrid,
     path: '/',
   },
   {
-    // Ideas — hosts the shared-service ideation board/detail inside an iframe.
-    // Leaf link to '/ideas' (detail lives at '/ideas/{id}').
     title: 'Ideas',
     icon: Lightbulb,
     path: '/ideas',
+    permission: 'ideation.board.view',
+  },
+
+  { heading: 'SALES' },
+  {
+    title: 'Project Sales',
+    icon: Building2,
+    moduleKey: 'projects',
+    children: [
+      {
+        title: 'Pipeline',
+        path: '/project-sales/pipeline',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Leads',
+        path: '/project-sales/leads',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Awaiting Acceptance',
+        path: '/project-sales/lead-acceptance',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'My Tasks',
+        path: '/project-sales/my-tasks',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Stock Claims',
+        path: '/project-sales/stock-claims',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'AutoCount Differences',
+        path: '/project-sales/divergences',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Parties',
+        path: '/project-sales/parties',
+        permission: 'projects.parties.view',
+      },
+      {
+        title: 'Configuration',
+        children: [
+          {
+            title: 'Setup',
+            path: '/project-sales/setup',
+            permission: 'projects.types.view',
+          },
+          {
+            title: 'Series',
+            path: '/project-sales/series',
+            permission: 'projects.types.view',
+          },
+          {
+            title: 'Price Floors',
+            path: '/project-sales/price-floors',
+            permission: 'projects.types.view',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    title: 'Delivery Orders',
+    icon: ShoppingCart,
+    moduleKey: 'order',
+    children: [
+      {
+        title: 'Delivery Orders',
+        path: '/order-management/orders',
+        permission: 'order_management.orders.view',
+      },
+      {
+        title: 'Delivery Order Status',
+        path: '/order-management/order-statuses',
+        permission: 'order_management.order_statuses.view',
+      },
+      {
+        title: 'Customers',
+        path: '/order-management/customers',
+        permission: 'order_management.customers.view',
+      },
+    ],
+  },
+  {
+    title: 'Marketing',
+    icon: Megaphone,
+    moduleKey: 'marketing',
+    children: [
+      {
+        title: 'Promotions',
+        children: [
+          {
+            title: 'All Promotions',
+            path: '/marketing-management/promotions',
+          },
+          {
+            title: 'Promotion Attachments',
+            path: '/marketing-management/promotion-attachments',
+          },
+          {
+            title: 'Promotion Types',
+            path: '/marketing-management/promotion-types',
+          },
+          {
+            title: 'Promotion Products',
+            path: '/marketing-management/promotion-products',
+          },
+        ],
+      },
+      {
+        title: 'Campaigns',
+        path: '/marketing-management/campaigns',
+      },
+    ],
+  },
+
+  { heading: 'SUPPLY CHAIN' },
+  {
+    title: 'Supply Chain',
+    icon: TrendingUp,
+    moduleKey: 'scm',
+    children: [
+      {
+        title: 'Dashboard',
+        path: '/scm',
+        permission: 'scm.dashboard.view',
+      },
+      {
+        title: 'Planning',
+        children: [
+          {
+            title: 'Reorder Planning',
+            path: '/scm/reorder',
+            permission: 'scm.reorder.run',
+          },
+          {
+            title: 'Loading Plan',
+            path: '/scm/loading-plan',
+            permission: 'scm.reorder.run',
+          },
+          {
+            title: 'Simulation',
+            path: '/scm/simulation',
+            permission: 'scm.reorder.run',
+          },
+          {
+            title: 'Market Signals',
+            path: '/scm/market-signals',
+            permission: 'scm.dashboard.view',
+          },
+          {
+            title: 'Policies',
+            path: '/scm/policies',
+            permission: 'scm.policy.manage',
+          },
+        ],
+      },
+      {
+        title: 'Project Demand',
+        children: [
+          {
+            title: 'Fulfilment Planning',
+            path: '/project-sales/fulfilment-planning',
+            permission: 'projects.projects.view',
+          },
+          {
+            title: 'Plans',
+            path: '/project-sales/plans',
+            permission: 'projects.projects.view',
+          },
+          {
+            title: 'Order Inquiries',
+            path: '/project-sales/order-inquiries',
+            permission: 'projects.projects.view',
+          },
+          {
+            title: 'Planning changes',
+            path: '/project-sales/planning-changes',
+            permission: 'projects.projects.view',
+          },
+          {
+            title: 'Forecast & Reports',
+            path: '/project-sales/reports',
+            permission: 'projects.projects.view',
+          },
+        ],
+      },
+      {
+        title: 'Orders',
+        children: [
+          {
+            title: 'Sales Orders',
+            path: '/scm/sales-orders',
+            permission: 'scm.dashboard.view',
+          },
+          {
+            title: 'Purchase Orders',
+            path: '/scm/purchase-orders',
+            permission: 'scm.dashboard.view',
+          },
+          {
+            title: 'Proforma Invoices',
+            path: '/scm/proforma-invoices',
+            permission: 'scm.dashboard.view',
+          },
+          {
+            title: 'Incoming Containers',
+            path: '/scm/incoming',
+            permission: 'scm.reorder.run',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    title: 'Procurement',
+    icon: ShoppingBag,
+    moduleKey: 'procurement',
+    children: [
+      {
+        title: 'Suppliers',
+        path: '/procurement-management/suppliers',
+        permission: 'procurement.suppliers.view',
+      },
+      {
+        title: 'Product-Suppliers',
+        path: '/procurement-management/product-suppliers',
+        permission: 'procurement.product_suppliers.view',
+      },
+      {
+        title: 'Packing Lists',
+        path: '/procurement-management/packing-lists',
+        permission: 'procurement.packing_lists.view',
+      },
+      {
+        title: 'SPO Allocations',
+        path: '/procurement-management/spo-allocations',
+        permission: 'procurement.spo_allocations.view',
+      },
+      {
+        title: 'GRN',
+        path: '/procurement-management/grn',
+        permission: 'procurement.grn.view',
+      },
+      {
+        title: 'Picking Lines',
+        path: '/procurement-management/picking-lines',
+        permission: 'procurement.picking_lines.view',
+      },
+      {
+        title: 'Stock Inquiries',
+        path: '/procurement-management/stock-inquiries',
+        permission: 'procurement.stock_inquiries.view',
+      },
+    ],
+  },
+  {
+    title: 'Inventory',
+    icon: Warehouse,
+    moduleKey: 'inventory',
+    children: [
+      {
+        title: 'Warehouses',
+        path: '/inventory-management/warehouses',
+        permission: 'inventory.warehouses.view',
+      },
+      {
+        title: 'Storage Zones',
+        path: '/inventory-management/storage-zones',
+        permission: 'inventory.storage_zones.view',
+      },
+      {
+        title: 'Stock',
+        path: '/inventory-management/stock',
+        permission: 'inventory.stock.view',
+      },
+      {
+        title: 'Stock Batches',
+        path: '/inventory-management/stock-batches',
+        permission: 'inventory.stock_batches.view',
+      },
+      {
+        title: 'Stock Ledger',
+        path: '/inventory-management/stock-ledger',
+        permission: 'inventory.stock_ledger.view',
+      },
+    ],
+  },
+
+  { heading: 'CATALOGUE' },
+  {
+    title: 'Products',
+    icon: Package,
+    moduleKey: 'product',
+    children: [
+      {
+        title: 'Products',
+        children: [
+          {
+            title: 'All Products',
+            path: '/master-data-management/products',
+            permission: 'master_data.products.view',
+          },
+          {
+            title: 'Product Attachments',
+            path: '/master-data-management/product-attachments',
+            permission: 'master_data.product_attachments.view',
+          },
+          {
+            title: 'Product Sets',
+            path: '/master-data-management/product-sets',
+            permission: 'master_data.product_sets.view',
+          },
+        ],
+      },
+      {
+        title: 'Specifications',
+        children: [
+          {
+            title: 'Product Specifications',
+            path: '/master-data-management/product-specifications',
+            permission: 'master_data.products.view',
+          },
+          {
+            title: 'Spec Verification',
+            path: '/master-data-management/spec-verification',
+            permission: 'master_data.products.view',
+          },
+          {
+            title: 'Flyer Spec Proposals',
+            path: '/master-data-management/flyer-spec-proposals',
+            permission: 'master_data.products.edit',
+          },
+        ],
+      },
+      {
+        title: 'Reference Data',
+        children: [
+          {
+            title: 'Product Categories',
+            path: '/master-data-management/product-categories',
+            permission: 'master_data.product_categories.view',
+          },
+          {
+            title: 'Brands',
+            path: '/master-data-management/brands',
+            permission: 'master_data.brands.view',
+          },
+          {
+            title: 'Units of Measure',
+            path: '/master-data-management/units-of-measure',
+            permission: 'master_data.units_of_measure.view',
+          },
+          {
+            title: 'Certificates',
+            path: '/master-data-management/certificates',
+            permission: 'master_data.certificates.view',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    title: 'Dealer Kit',
+    icon: BookOpen,
+    moduleKey: 'dealer_kit',
+    children: [
+      {
+        title: 'Catalogue Pages',
+        path: '/dealer-kit',
+        permission: 'dealer_kit.page.view',
+      },
+      {
+        title: 'Editions',
+        path: '/dealer-kit/editions',
+        permission: 'dealer_kit.page.view',
+      },
+      {
+        title: 'Library',
+        children: [
+          {
+            title: 'Product Collections',
+            path: '/dealer-kit/collections',
+            permission: 'dealer_kit.page.view',
+          },
+          {
+            title: 'Tile Designs',
+            path: '/dealer-kit/tile-designs',
+            permission: 'dealer_kit.page.view',
+          },
+          {
+            title: 'Brochure Images',
+            path: '/dealer-kit/brochure-images',
+            permission: 'dealer_kit.page.view',
+          },
+          {
+            title: 'Flyers',
+            path: '/dealer-kit/flyer-readings',
+            permission: 'dealer_kit.page.view',
+          },
+          {
+            title: 'Bundles',
+            path: '/dealer-kit/bundles',
+            permission: 'dealer_kit.page.view',
+          },
+        ],
+      },
+      {
+        title: 'Room Designer',
+        children: [
+          {
+            title: 'Room Designer',
+            path: '/dealer-kit/design',
+            permission: 'dealer_kit.page.view',
+          },
+          {
+            title: 'Design Summary',
+            path: '/dealer-kit/design/summary',
+            permission: 'dealer_kit.page.view',
+          },
+        ],
+      },
+    ],
+  },
+
+  { heading: 'OPERATIONS' },
+  {
+    title: 'Complaints',
+    icon: AlertCircle,
+    moduleKey: 'complaints',
+    children: [
+      {
+        title: 'Complaints',
+        path: '/complaint-management/complaints',
+      },
+      {
+        title: 'Root Causes',
+        path: '/complaint-management/complaint-root-causes',
+        permission: 'master_data.complaint_root_causes.view',
+      },
+      {
+        title: 'Resolutions',
+        path: '/complaint-management/complaint-resolutions',
+        permission: 'master_data.complaint_resolutions.view',
+      },
+    ],
+  },
+  {
+    title: 'SLA',
+    icon: Clock,
+    moduleKey: 'sla',
+    children: [
+      {
+        title: 'SLA Policies',
+        path: '/sla-management/sla-policies',
+      },
+      {
+        title: 'Conversations',
+        path: '/sla-management/conversations',
+        permission: 'sla_management.conversations.view',
+      },
+      {
+        title: 'Conversation SLA Tracking',
+        path: '/sla-management/conversation-sla-tracking',
+      },
+      {
+        title: 'Form SLA Tracking',
+        path: '/sla-management/form-sla-tracking',
+      },
+      {
+        title: 'My Team Tasks',
+        path: '/sla-management/team-pending',
+      },
+      {
+        title: 'Form SLA Configuration',
+        path: '/sla-management/form-sla-config',
+      },
+      {
+        title: 'SLA Event Logs',
+        path: '/sla-management/escalation-logs',
+      },
+      {
+        title: 'Message Snippets',
+        path: '/sla-management/message-snippets',
+        permission: 'sla_management.message_snippets.view',
+      },
+      {
+        title: 'KPI Dashboard',
+        path: '/sla-management/kpi-dashboard',
+        permission: 'sla.kpi.view',
+      },
+    ],
+  },
+  {
+    title: 'Project Sales Admin',
+    icon: Briefcase,
+    moduleKey: 'procurement',
+    children: [
+      {
+        title: 'Purchase Requests',
+        path: '/procurement-management/purchase-requests',
+        permission: 'procurement.purchase_requests.view',
+      },
+      {
+        title: 'Sponsorship Forms',
+        path: '/procurement-management/sponsorship-forms',
+        permission: 'procurement.sponsorship_forms.view',
+      },
+    ],
+  },
+  {
+    title: 'Forms',
+    icon: FileText,
+    moduleKey: 'forms',
+    children: [
+      {
+        title: 'Forms',
+        path: '/forms-management/forms',
+      },
+    ],
+  },
+  {
+    title: 'Workflow Forms',
+    icon: GitBranch,
+    moduleKey: 'workflow_forms',
+    children: [
+      {
+        title: 'Definitions',
+        path: '/workflow-forms-management/definitions',
+        permission: 'workflow_forms.definitions.view',
+      },
+    ],
+  },
+  {
+    title: 'Resources',
+    icon: Folder,
+    moduleKey: 'resources',
+    children: [
+      {
+        title: 'Files',
+        path: '/resource-management/attachment-directories',
+      },
+      {
+        title: 'Trash',
+        path: '/resource-management/trash',
+      },
+      {
+        title: 'Attachment Types',
+        path: '/resource-management/attachment-types',
+      },
+    ],
+  },
+
+  { heading: 'ADMINISTRATION' },
+  {
+    title: 'Users & Access',
+    icon: ShieldUser,
+    moduleKey: 'base',
+    children: [
+      {
+        title: 'People',
+        children: [
+          {
+            title: 'Administrative Users',
+            path: '/user-management/users',
+            permission: 'user_management.users.view',
+          },
+          {
+            title: 'Internal Users',
+            path: '/user-management/contact-access-agents',
+            permission: 'user_management.contacts.view',
+          },
+          {
+            title: 'Teams',
+            path: '/user-management/teams',
+            permission: 'user_management.teams.view',
+          },
+          {
+            title: 'Sales Agents',
+            path: '/master-data-management/sales-agents',
+            permission: 'master_data.sales_agents.view',
+          },
+          {
+            title: 'Onboarding Requests',
+            path: '/user-management/onboarding-requests',
+            permission: 'user_management.onboarding.view',
+          },
+        ],
+      },
+      {
+        title: 'Access',
+        children: [
+          {
+            title: 'Roles',
+            path: '/user-management/roles',
+            permission: 'user_management.roles.view',
+          },
+          {
+            title: 'Permissions',
+            path: '/user-management/permissions',
+            permission: 'user_management.permissions.view',
+          },
+          {
+            title: 'AI Agents',
+            path: '/user-management/access-agents',
+            permission: 'user_management.access_agents.view',
+          },
+          {
+            title: 'Contact Access Types',
+            path: '/user-management/contact-access-types',
+            permission: 'user_management.access_agents.view',
+          },
+        ],
+      },
+      {
+        title: 'Market Segments',
+        path: '/user-management/market-segments',
+        permission: 'user_management.reference_data.view',
+      },
+      {
+        title: 'Account',
+        path: '/user-management/account',
+        permission: 'user_management.account.view',
+      },
+      {
+        title: 'Logs',
+        path: '/user-management/logs',
+        permission: 'user_management.logs.view',
+      },
+      {
+        title: 'Settings',
+        path: '/user-management/settings',
+        permission: 'user_management.settings.view',
+      },
+    ],
+  },
+  {
+    title: 'System',
+    icon: Settings,
+    moduleKey: 'base',
+    children: [
+      {
+        title: 'Platform',
+        children: [
+          {
+            title: 'Companies',
+            path: '/system-management/companies',
+            icon: Building2,
+            superadminOnly: true,
+          },
+          {
+            title: 'App Store',
+            path: '/system-management/app-store',
+            permission: 'system.modules.manage',
+          },
+          {
+            title: 'Module bundles',
+            path: '/system-management/app-store/bundles',
+            permission: 'system.modules.manage',
+          },
+        ],
+      },
+      {
+        title: 'Operations',
+        children: [
+          {
+            title: 'Import Jobs',
+            path: '/system-management/import-jobs',
+            superadminOnly: true,
+          },
+          {
+            title: 'Import Logs',
+            path: '/system-management/import-logs',
+            superadminOnly: true,
+          },
+          {
+            title: 'Tracking Validation',
+            path: '/system-management/tracking-validation',
+            superadminOnly: true,
+          },
+          {
+            title: 'Audit Logs',
+            path: '/system-management/audit-logs',
+            superadminOnly: true,
+          },
+          {
+            title: 'System Health',
+            path: '/system-management/health',
+            superadminOnly: true,
+          },
+          {
+            title: 'Activity Timeline',
+            path: '/system-management/activity',
+            superadminOnly: true,
+          },
+          {
+            title: 'Scheduled Tasks',
+            path: '/system-management/scheduled-tasks',
+            superadminOnly: true,
+          },
+          {
+            title: 'API Call Log',
+            path: '/system-management/api-call-logs',
+            permission: 'system_management.api_call_log.view',
+          },
+        ],
+      },
+      {
+        title: 'Messaging',
+        children: [
+          {
+            title: 'Integrations',
+            path: '/integration-management/integrations',
+          },
+          {
+            title: 'Integration Logs',
+            path: '/integration-management/integration-logs',
+            superadminOnly: true,
+          },
+          {
+            title: 'WhatsApp Templates',
+            path: '/integration-management/whatsapp-templates',
+            permission: 'integration.respond_templates.view',
+          },
+          {
+            title: 'Outgoing Mails',
+            path: '/system-management/outgoing-mails',
+            permission: 'system.outgoing_mails.view',
+            children: [
+              {
+                title: 'Email Outbox',
+                path: '/system-management/email-outbox',
+                permission: 'system.email_outbox.view',
+              },
+              {
+                title: 'Respond Outbox',
+                path: '/system-management/respond-outbox',
+                permission: 'system.respond_outbox.view',
+              },
+            ],
+          },
+          {
+            title: 'Chat History',
+            path: '/system-management/chat-history',
+            permission: 'system.chat_history.view',
+          },
+          {
+            title: 'Email Event Configs',
+            path: '/system-management/email-event-configs',
+            permission: 'system.email_event_configs.view',
+          },
+          {
+            title: 'Email Templates',
+            path: '/system-management/email-templates',
+            permission: 'email_templates.templates.view',
+          },
+          {
+            title: 'Respond.io Workspaces',
+            path: '/system-management/respond-workspaces',
+            permission: 'system.respond_workspaces.view',
+          },
+          {
+            title: 'Respond.io Contacts',
+            path: '/system-management/respond-contacts',
+            permission: 'system.respond_workspaces.view',
+          },
+        ],
+      },
+      {
+        title: 'Configuration',
+        children: [
+          {
+            title: 'Automation',
+            path: '/system-management/automation',
+            permission: 'automation.automations.view',
+          },
+          {
+            title: 'Work Calendar',
+            path: '/system-management/work-calendar',
+            superadminOnly: true,
+          },
+          {
+            title: 'Running Numbers',
+            path: '/system-management/numbering-rules',
+            permission: 'system.numbering_rules.view',
+          },
+          {
+            title: 'Status Graphs',
+            path: '/system-management/status-graphs',
+            permission: 'system.statuses.view',
+          },
+          {
+            title: 'Lookup Sets',
+            path: '/master-data-management/lookup-sets',
+            permission: 'master_data.lookup_sets.view',
+          },
+        ],
+      },
+      {
+        title: 'AI Assistant',
+        children: [
+          {
+            title: 'Settings',
+            path: '/system-management/ai-assistant',
+            permission: 'system.ai_assistant_settings.view',
+          },
+          {
+            title: 'Prompts',
+            path: '/system-management/ai-assistant/prompts',
+            permission: 'system.ai_assistant_settings.view',
+          },
+          {
+            title: 'Usage',
+            path: '/system-management/ai-assistant/usage',
+            permission: 'system.ai_assistant_settings.view',
+          },
+          {
+            title: 'Wishlist',
+            path: '/system-management/ai-assistant/wishlist',
+            permission: 'system.ai_assistant_settings.view',
+          },
+          {
+            title: 'MCP Tools',
+            path: '/system-management/mcp-tools',
+            permission: 'system.ai_assistant_settings.view',
+          },
+        ],
+      },
+    ],
   },
   // Hidden: Public Profile
   // {
@@ -291,786 +1123,6 @@ export const MENU_SIDEBAR: MenuConfig = [
   //     { title: 'Error 500', path: '/error/500' },
   //   ],
   // },
-  {
-    title: 'User Management',
-    icon: ShieldUser,
-    moduleKey: 'base',
-    children: [
-      {
-        title: 'Administrative Users',
-        path: '/user-management/users',
-        permission: 'user_management.users.view',
-      },
-      {
-        title: 'Onboarding Requests',
-        path: '/user-management/onboarding-requests',
-        permission: 'user_management.onboarding.view',
-      },
-      {
-        title: 'Roles',
-        path: '/user-management/roles',
-        permission: 'user_management.roles.view',
-      },
-      {
-        title: 'Permissions',
-        path: '/user-management/permissions',
-        permission: 'user_management.permissions.view',
-      },
-      {
-        title: 'AI Agents',
-        path: '/user-management/access-agents',
-        permission: 'user_management.access_agents.view',
-      },
-      {
-        title: 'Teams',
-        path: '/user-management/teams',
-        permission: 'user_management.teams.view',
-      },
-      {
-        title: 'Internal Users',
-        path: '/user-management/contact-access-agents',
-        permission: 'user_management.contacts.view',
-      },
-      {
-        title: 'Contact Access Types',
-        path: '/user-management/contact-access-types',
-        permission: 'user_management.access_agents.view',
-      },
-      {
-        title: 'Market Segments',
-        path: '/user-management/market-segments',
-        permission: 'user_management.reference_data.view',
-      },
-      {
-        title: 'Sales Agents',
-        path: '/master-data-management/sales-agents',
-        permission: 'master_data.sales_agents.view',
-      },
-      {
-        title: 'Account',
-        path: '/user-management/account',
-        permission: 'user_management.account.view',
-      },
-      {
-        title: 'Logs',
-        path: '/user-management/logs',
-        permission: 'user_management.logs.view',
-      },
-      {
-        title: 'Settings',
-        path: '/user-management/settings',
-        permission: 'user_management.settings.view',
-      },
-    ],
-  },
-  {
-    // Supply Chain (SCM) — net-position dashboard + sales orders.
-    // Gated behind `moduleKey: 'scm'` and, per leaf, the `scm.dashboard.view`
-    // read permission that actually protects all three read endpoints (the SO
-    // and PO list routes share that read gate; writes use `scm.reorder.run`).
-    title: 'Supply Chain',
-    icon: TrendingUp,
-    moduleKey: 'scm',
-    children: [
-      {
-        title: 'Dashboard',
-        path: '/scm',
-        permission: 'scm.dashboard.view',
-      },
-      {
-        title: 'Reorder Planning',
-        path: '/scm/reorder',
-        permission: 'scm.reorder.run',
-      },
-      {
-        title: 'Loading Plan',
-        path: '/scm/loading-plan',
-        permission: 'scm.reorder.run',
-      },
-      {
-        title: 'Incoming Containers',
-        path: '/scm/incoming',
-        permission: 'scm.reorder.run',
-      },
-      {
-        title: 'Proforma Invoices',
-        path: '/scm/proforma-invoices',
-        permission: 'scm.dashboard.view',
-      },
-      {
-        title: 'Policies',
-        path: '/scm/policies',
-        permission: 'scm.policy.manage',
-      },
-      {
-        title: 'Sales Orders',
-        path: '/scm/sales-orders',
-        permission: 'scm.dashboard.view',
-      },
-      {
-        title: 'Purchase Orders',
-        path: '/scm/purchase-orders',
-        permission: 'scm.dashboard.view',
-      },
-      {
-        title: 'Market Signals',
-        path: '/scm/market-signals',
-        permission: 'scm.dashboard.view',
-      },
-      {
-        title: 'Simulation',
-        path: '/scm/simulation',
-        permission: 'scm.reorder.run',
-      },
-    ],
-  },
-  {
-    // Dealer Kit — the catalogue page builder.
-    //
-    // Deliberately carries NO `moduleKey` and NO `permission` yet. The sidebar
-    // hides any branch whose moduleKey is absent from the tenant's enabled set,
-    // so declaring `dealer_kit` before the backend seeds its catalogue row would
-    // hide this entry outright. Both gates land in S1 phase 2, together with the
-    // module row and the permission slugs that actually enforce them — a gate
-    // added before its enforcement exists is a gate that lies.
-    title: 'Dealer Kit',
-    icon: BookOpen,
-    children: [
-      {
-        title: 'Catalogue Pages',
-        path: '/dealer-kit',
-      },
-      {
-        title: 'Product Collections',
-        path: '/dealer-kit/collections',
-      },
-      {
-        title: 'Tile Designs',
-        path: '/dealer-kit/tile-designs',
-      },
-      {
-        title: 'Brochure Images',
-        path: '/dealer-kit/brochure-images',
-      },
-      {
-        title: 'Flyers',
-        path: '/dealer-kit/flyer-readings',
-      },
-      {
-        title: 'Editions',
-        path: '/dealer-kit/editions',
-      },
-      {
-        title: 'Bundles',
-        path: '/dealer-kit/bundles',
-      },
-      {
-        title: 'Room Designer',
-        path: '/dealer-kit/design',
-      },
-      {
-        title: 'Design Summary',
-        path: '/dealer-kit/design/summary',
-      },
-      {
-        title: 'Price Tag Requests',
-        path: '/dealer-kit/price-tag-requests',
-      },
-      {
-        title: 'Tag Templates',
-        path: '/dealer-kit/tag-templates',
-      },
-    ],
-  },
-  {
-    title: 'Delivery Order Management',
-    icon: ShoppingCart,
-    moduleKey: 'order',
-    children: [
-      {
-        title: 'Delivery Orders',
-        path: '/order-management/orders',
-        permission: 'order_management.orders.view',
-      },
-      {
-        title: 'Delivery Order Status',
-        path: '/order-management/order-statuses',
-        permission: 'order_management.order_statuses.view',
-      },
-      {
-        title: 'Customers',
-        path: '/order-management/customers',
-        permission: 'order_management.customers.view',
-      },
-    ],
-  },
-  {
-    title: 'Complaint Management',
-    icon: AlertCircle,
-    moduleKey: 'complaints',
-    children: [
-      {
-        title: 'Complaints',
-        path: '/complaint-management/complaints',
-      },
-      {
-        title: 'Root Causes',
-        path: '/complaint-management/complaint-root-causes',
-        permission: 'master_data.complaint_root_causes.view',
-      },
-      {
-        title: 'Resolutions',
-        path: '/complaint-management/complaint-resolutions',
-        permission: 'master_data.complaint_resolutions.view',
-      },
-    ],
-  },
-  {
-    title: 'SLA Management',
-    icon: Clock,
-    moduleKey: 'sla',
-    children: [
-      {
-        title: 'SLA Policies',
-        path: '/sla-management/sla-policies',
-      },
-      {
-        title: 'Conversations',
-        path: '/sla-management/conversations',
-        permission: 'sla_management.conversations.view',
-      },
-      {
-        title: 'Conversation SLA Tracking',
-        path: '/sla-management/conversation-sla-tracking',
-      },
-      {
-        title: 'Form SLA Tracking',
-        path: '/sla-management/form-sla-tracking',
-      },
-      {
-        title: 'My Team Tasks',
-        path: '/sla-management/team-pending',
-      },
-      {
-        title: 'Form SLA Configuration',
-        path: '/sla-management/form-sla-config',
-      },
-      {
-        title: 'SLA Event Logs',
-        path: '/sla-management/escalation-logs',
-      },
-      {
-        title: 'Message Snippets',
-        path: '/sla-management/message-snippets',
-        permission: 'sla_management.message_snippets.view',
-      },
-      {
-        title: 'KPI Dashboard',
-        path: '/sla-management/kpi-dashboard',
-        permission: 'sla.kpi.view',
-      },
-    ],
-  },
-  {
-    title: 'Product Management',
-    icon: Package,
-    moduleKey: 'product',
-    children: [
-    {
-      title: 'Products',
-      children: [
-        {
-          title: 'All Products',
-          path: '/master-data-management/products',
-          permission: 'master_data.products.view',
-        },
-        {
-          title: 'Product Attachments',
-          path: '/master-data-management/product-attachments',
-          permission: 'master_data.product_attachments.view',
-        },
-      ],
-    },
-    {
-      title: 'Certificates',
-      path: '/master-data-management/certificates',
-      permission: 'master_data.certificates.view',
-    },
-    {
-      title: 'Product Categories',
-      path: '/master-data-management/product-categories',
-      permission: 'master_data.product_categories.view',
-    },
-    {
-      title: 'Product Specifications',
-      path: '/master-data-management/product-specifications',
-      permission: 'master_data.products.view',
-    },
-    {
-      title: 'Spec Verification',
-      path: '/master-data-management/spec-verification',
-      permission: 'master_data.products.view',
-    },
-    {
-      title: 'Flyer Spec Proposals',
-      path: '/master-data-management/flyer-spec-proposals',
-      permission: 'master_data.products.edit',
-    },
-    {
-      title: 'Brands',
-      path: '/master-data-management/brands',
-      permission: 'master_data.brands.view',
-    },
-    {
-      title: 'Units of Measure',
-      path: '/master-data-management/units-of-measure',
-      permission: 'master_data.units_of_measure.view',
-    },
-    ],
-  },
-  {
-    title: 'Procurement',
-    icon: ShoppingBag,
-    moduleKey: 'procurement',
-    children: [
-      {
-        title: 'Suppliers',
-        path: '/procurement-management/suppliers',
-        permission: 'procurement.suppliers.view',
-      },
-      {
-        title: 'Product-Suppliers',
-        path: '/procurement-management/product-suppliers',
-        permission: 'procurement.product_suppliers.view',
-      },
-      {
-        title: 'Packing Lists',
-        path: '/procurement-management/packing-lists',
-        permission: 'procurement.packing_lists.view',
-      },
-      {
-        title: 'SPO Allocations',
-        path: '/procurement-management/spo-allocations',
-        permission: 'procurement.spo_allocations.view',
-      },
-      {
-        title: 'GRN',
-        path: '/procurement-management/grn',
-        permission: 'procurement.grn.view',
-      },
-      {
-        title: 'Picking Lines',
-        path: '/procurement-management/picking-lines',
-        permission: 'procurement.picking_lines.view',
-      },
-      {
-        title: 'Stock Inquiries',
-        path: '/procurement-management/stock-inquiries',
-        permission: 'procurement.stock_inquiries.view',
-      },
-    ],
-  },
-  {
-    title: 'Project Sales Admin',
-    icon: Briefcase,
-    moduleKey: 'procurement',
-    children: [
-      {
-        title: 'Purchase Requests',
-        path: '/procurement-management/purchase-requests',
-        permission: 'procurement.purchase_requests.view',
-      },
-      {
-        title: 'Sponsorship Forms',
-        path: '/procurement-management/sponsorship-forms',
-        permission: 'procurement.sponsorship_forms.view',
-      },
-    ],
-  },
-  {
-    title: 'Inventory Management',
-    icon: Warehouse,
-    moduleKey: 'inventory',
-    children: [
-      {
-        title: 'Warehouses',
-        path: '/inventory-management/warehouses',
-        permission: 'inventory.warehouses.view',
-      },
-      {
-        title: 'Storage Zones',
-        path: '/inventory-management/storage-zones',
-        permission: 'inventory.storage_zones.view',
-      },
-      {
-        title: 'Stock',
-        path: '/inventory-management/stock',
-        permission: 'inventory.stock.view',
-      },
-      {
-        title: 'Stock Batches',
-        path: '/inventory-management/stock-batches',
-        permission: 'inventory.stock_batches.view',
-      },
-      {
-        title: 'Stock Ledger',
-        path: '/inventory-management/stock-ledger',
-        permission: 'inventory.stock_ledger.view',
-      },
-    ],
-  },
-  {
-    title: 'Project Sales',
-    icon: Building2,
-    moduleKey: 'projects',
-    children: [
-      {
-        // Pipeline carries both views behind its own Board / Grid toggle, and the Grid
-        // is the same list a separate "Projects" entry used to show. Two menu entries
-        // onto one screen is a choice the user has to make and cannot get right.
-        // /project-sales/projects still resolves, it redirects here.
-        title: 'Pipeline',
-        path: '/project-sales/pipeline',
-        permission: 'projects.projects.view',
-      },
-      {
-        title: 'Leads',
-        path: '/project-sales/leads',
-        permission: 'projects.projects.view',
-      },
-      {
-        // Marketing's worklist: leads assigned but not yet accepted. Its own entry
-        // because a lead nobody has accepted is nobody's job, and it stays invisible
-        // if you have to go looking for it inside the leads list.
-        title: 'Awaiting Acceptance',
-        path: '/project-sales/lead-acceptance',
-        permission: 'projects.projects.view',
-      },
-      {
-        title: 'My Tasks',
-        path: '/project-sales/my-tasks',
-        permission: 'projects.projects.view',
-      },
-      {
-        // Cross-project by nature: a claim raised on one project's sales order is
-        // answered by another project's CS, so it cannot live under either project.
-        title: 'Stock Claims',
-        path: '/project-sales/stock-claims',
-        permission: 'projects.projects.view',
-      },
-      {
-        // Cross-project for the same reason claims are: a reconciliation belongs to one
-        // sales order, but the point of the list is that a STACK of unanswered ones is
-        // visible to management rather than discovered (AC-N6).
-        title: 'AutoCount Differences',
-        path: '/project-sales/divergences',
-        permission: 'projects.projects.view',
-      },
-      {
-        // Cross-project for the same reason the two entries above are: CS works the whole
-        // published order book down in one pass, and a reconciliation that only exists
-        // inside its own project is one nobody goes looking for.
-        title: 'Fulfilment Planning',
-        path: '/project-sales/fulfilment-planning',
-        permission: 'projects.projects.view',
-      },
-      {
-        // "Is the plan stored, how do I review it" (captain, 19 Aug 2026 demo): the board
-        // writes the decision, this is where it is reviewed afterwards - cross-project for
-        // the same reason Fulfilment Planning beside it is.
-        title: 'Plans',
-        path: '/project-sales/plans',
-        permission: 'projects.projects.view',
-      },
-      {
-        // Purchasing's own worklist, and cross-project because purchasing is: the rows an
-        // ADOPTED AutoCount order raises belong to no project at all, so inside a project
-        // they are reachable nowhere. Shaped like the spreadsheet they work from today,
-        // one tab per delivery month.
-        title: 'Order Inquiries',
-        path: '/project-sales/order-inquiries',
-        permission: 'projects.projects.view',
-      },
-      {
-        // Where the re-uploaded book's reaction to a planned line is reviewed and
-        // applied - born on the sales-order upload confirmation, listed here after.
-        title: 'Planning changes',
-        path: '/project-sales/planning-changes',
-        permission: 'projects.projects.view',
-      },
-      {
-        title: 'Forecast & Reports',
-        path: '/project-sales/reports',
-        permission: 'projects.projects.view',
-      },
-      {
-        title: 'Parties',
-        path: '/project-sales/parties',
-        permission: 'projects.parties.view',
-      },
-      {
-        title: 'Setup',
-        path: '/project-sales/setup',
-        permission: 'projects.types.view',
-      },
-      {
-        title: 'Series',
-        path: '/project-sales/series',
-        permission: 'projects.types.view',
-      },
-      {
-        title: 'Price Floors',
-        path: '/project-sales/price-floors',
-        permission: 'projects.types.view',
-      },
-    ],
-  },
-  {
-    title: 'Marketing Management',
-    icon: Megaphone,
-    moduleKey: 'marketing',
-    children: [
-      {
-        title: 'Promotions',
-        children: [
-          {
-            title: 'All Promotions',
-            path: '/marketing-management/promotions',
-          },
-          {
-            title: 'Promotion Attachments',
-            path: '/marketing-management/promotion-attachments',
-          },
-          {
-            title: 'Promotion Types',
-            path: '/marketing-management/promotion-types',
-          },
-        ],
-      },
-      {
-        title: 'Promotion Products',
-        path: '/marketing-management/promotion-products',
-      },
-      {
-        title: 'Campaigns',
-        path: '/marketing-management/campaigns',
-      },
-    ],
-  },
-  {
-    title: 'Forms Management',
-    icon: FileText,
-    moduleKey: 'forms',
-    children: [
-      {
-        title: 'Forms',
-        path: '/forms-management/forms',
-      },
-    ],
-  },
-  {
-    title: 'Workflow Forms',
-    icon: GitBranch,
-    moduleKey: 'workflow_forms',
-    children: [
-      {
-        title: 'Definitions',
-        path: '/workflow-forms-management/definitions',
-        permission: 'workflow_forms.definitions.view',
-      },
-    ],
-  },
-  {
-    title: 'Resource Management',
-    icon: Folder,
-    moduleKey: 'resources',
-    children: [
-      {
-        title: 'Files',
-        path: '/resource-management/attachment-directories',
-      },
-      {
-        title: 'Trash',
-        path: '/resource-management/trash',
-      },
-      {
-        title: 'Attachment Types',
-        path: '/resource-management/attachment-types',
-      },
-    ],
-  },
-  {
-    title: 'System Management',
-    icon: Settings,
-    moduleKey: 'base',
-    children: [
-      {
-        title: 'Companies',
-        path: '/system-management/companies',
-        icon: Building2,
-        superadminOnly: true,
-      },
-      {
-        title: 'App Store',
-        path: '/system-management/app-store',
-        permission: 'system.modules.manage',
-      },
-      {
-        title: 'Module bundles',
-        path: '/system-management/app-store/bundles',
-        permission: 'system.modules.manage',
-      },
-      {
-        title: 'Import Jobs',
-        path: '/system-management/import-jobs',
-        superadminOnly: true,
-      },
-      {
-        title: 'Import Logs',
-        path: '/system-management/import-logs',
-        superadminOnly: true,
-      },
-      {
-        title: 'Tracking Validation',
-        path: '/system-management/tracking-validation',
-        superadminOnly: true,
-      },
-      {
-        title: 'Audit Logs',
-        path: '/system-management/audit-logs',
-        superadminOnly: true,
-      },
-      {
-        title: 'System Health',
-        path: '/system-management/health',
-        superadminOnly: true,
-      },
-      {
-        title: 'Activity Timeline',
-        path: '/system-management/activity',
-        superadminOnly: true,
-      },
-      {
-        title: 'Integrations',
-        path: '/integration-management/integrations',
-      },
-      {
-        title: 'Integration Logs',
-        path: '/integration-management/integration-logs',
-        superadminOnly: true,
-      },
-      {
-        title: 'WhatsApp Templates',
-        path: '/integration-management/whatsapp-templates',
-        permission: 'integration.respond_templates.view',
-      },
-      {
-        title: 'Scheduled Tasks',
-        path: '/system-management/scheduled-tasks',
-        superadminOnly: true,
-      },
-      {
-        title: 'Outgoing Mails',
-        path: '/system-management/outgoing-mails',
-        permission: 'system.outgoing_mails.view',
-      },
-      {
-        title: 'Email Outbox',
-        path: '/system-management/email-outbox',
-        permission: 'system.email_outbox.view',
-      },
-      {
-        title: 'Respond Outbox',
-        path: '/system-management/respond-outbox',
-        permission: 'system.respond_outbox.view',
-      },
-      {
-        title: 'Chat History',
-        path: '/system-management/chat-history',
-        permission: 'system.chat_history.view',
-      },
-      {
-        title: 'API Call Log',
-        path: '/system-management/api-call-logs',
-        permission: 'system_management.api_call_log.view',
-      },
-      {
-        title: 'Email Event Configs',
-        path: '/system-management/email-event-configs',
-        permission: 'system.email_event_configs.view',
-      },
-      {
-        title: 'Email Templates',
-        path: '/system-management/email-templates',
-        permission: 'email_templates.templates.view',
-      },
-      {
-        title: 'Automation',
-        path: '/system-management/automation',
-        permission: 'automation.automations.view',
-      },
-      {
-        title: 'Work Calendar',
-        path: '/system-management/work-calendar',
-        superadminOnly: true,
-      },
-      {
-        title: 'Running Numbers',
-        path: '/system-management/numbering-rules',
-        permission: 'system.numbering_rules.view',
-      },
-      {
-        title: 'Status Graphs',
-        path: '/system-management/status-graphs',
-        permission: 'system.statuses.view',
-      },
-      {
-        title: 'Lookup Sets',
-        path: '/master-data-management/lookup-sets',
-        permission: 'master_data.lookup_sets.view',
-      },
-      {
-        title: 'Respond.io Workspaces',
-        path: '/system-management/respond-workspaces',
-        permission: 'system.respond_workspaces.view',
-      },
-      {
-        title: 'Respond.io Contacts',
-        path: '/system-management/respond-contacts',
-        permission: 'system.respond_workspaces.view',
-      },
-      {
-        title: 'AI Assistant',
-        children: [
-          {
-            title: 'Settings',
-            path: '/system-management/ai-assistant',
-            permission: 'system.ai_assistant_settings.view',
-          },
-          {
-            title: 'Prompts',
-            path: '/system-management/ai-assistant/prompts',
-            permission: 'system.ai_assistant_settings.view',
-          },
-          {
-            title: 'Usage',
-            path: '/system-management/ai-assistant/usage',
-            permission: 'system.ai_assistant_settings.view',
-          },
-          {
-            title: 'Wishlist',
-            path: '/system-management/ai-assistant/wishlist',
-            permission: 'system.ai_assistant_settings.view',
-          },
-          {
-            title: 'MCP Tools',
-            path: '/system-management/mcp-tools',
-            permission: 'system.ai_assistant_settings.view',
-          },
-        ],
-      },
-    ],
-  },
   // Hidden: Store - Client
   // {
   //   title: 'Store - Client',
@@ -1110,42 +1162,6 @@ export const MENU_SIDEBAR: MenuConfig = [
   //     },
   //     { title: 'My Orders', path: '/store-client/my-orders' },
   //     { title: 'Order Receipt', path: '/store-client/order-receipt' },
-  //   ],
-  // },
-  // Hidden: Store - Admin
-  // {
-  //   title: 'Store - Admin',
-  //   icon: Bolt,
-  //   disabled: true,
-  //   children: [
-  //     { title: 'Dashboard', path: '/store-admin/dashboard' },
-  //     {
-  //       title: 'Inventory',
-  //       children: [
-  //         {
-  //           title: 'All Products',
-  //           path: '/store-admin/inventory/all-products',
-  //         },
-  //         {
-  //           title: 'Current Stock',
-  //           path: '/store-admin/inventory/current-stock',
-  //         },
-  //         {
-  //           title: 'Inbound Stock',
-  //           path: '/store-admin/inventory/inbound-stock',
-  //         },
-  //         {
-  //           title: 'Outbound Stock',
-  //           path: '/store-admin/inventory/outbound-stock',
-  //         },
-  //         {
-  //           title: 'Stock Planner',
-  //           path: '/store-admin/inventory/stock-planner',
-  //         },
-  //         { title: 'Track Shipping', path: '/' },
-  //         { title: 'Create Shipping Label', path: '/' },
-  //       ],
-  //     },
   //   ],
   // },
   // Hidden: Store - Services, AI Promt, Invoice Generator
@@ -1602,6 +1618,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
           title: 'Product Attachments',
           path: '/master-data-management/product-attachments',
           permission: 'master_data.product_attachments.view',
+        },
+        {
+          title: 'Product Sets',
+          path: '/master-data-management/product-sets',
+          permission: 'master_data.product_sets.view',
         },
       ],
     },

@@ -17,6 +17,11 @@ from app.schemas.external.attachments import (
 )
 from app.schemas.product import ProductAttachmentCreate, ProductAttachmentResponse
 from app.services.product_service import ProductAttachmentService
+from app.services.product_code_resolution import resolve_codes_to_products
+
+#: The ONE resolver. Pinned by tests: re-adding a private code matcher here is
+#: exactly how this path and the promotion path drifted apart.
+_resolve_codes = resolve_codes_to_products
 from app.services.attachment_field_link_service import AttachmentFieldLinkService
 from app.models.certificate import CERTIFICATE_SOURCE_AI
 from app.models.product import Product, ProductAttachment
@@ -47,9 +52,9 @@ def _notify_product_attachment_external(
     product_id: str | None = None,
     linked_codes: list[str] | None = None,
 ) -> None:
-    """Notify attachment uploaders / notify_user_id after successful external product–attachment link."""
+    """Notify attachment uploaders / notify_user_id after successful external product - attachment link."""
     if mode == "single" and product_id and product_code is not None:
-        pc = product_code or "—"
+        pc = product_code or "-"
         summary_plain = (
             f'Your file was linked to product "{pc}" in Sorento CRM'
         )
@@ -71,7 +76,7 @@ def _notify_product_attachment_external(
 
     if mode == "bulk":
         codes = linked_codes or []
-        codes_str = ", ".join(codes[:30]) if codes else "—"
+        codes_str = ", ".join(codes[:30]) if codes else "-"
         summary_plain = (
             "Your file was linked to product(s) in Sorento CRM "
             f"Products: {codes_str}."
@@ -178,40 +183,21 @@ def _log_certificate_not_created(
 
 
 def _resolve_product_codes(db: Session, codes: list[str]) -> tuple[list[tuple[str, object]], list[str]]:
-    """Match product codes the same way the plain linking path does.
+    """Adapter over the ONE resolver, kept for this module's existing call shape.
 
-    Returns ``([(code, product)], unmatched_codes)``. The query is company-scoped
-    by the session listener (``scope_to_attachment_company`` pinned it to the
-    attachment's company), so a same-coded product in another company never
-    resolves - SEC-1.
+    Returns ``([(requested_code, product)], unmatched_codes)``. The tiers, the
+    substring behaviour and the product-set expansion all live in
+    ``app.services.product_code_resolution`` so that this path and the promotion
+    path cannot drift apart again - they used to, and the same flyer code could
+    link a file here and fail to create a promotion there.
 
-    A code is a SUBSTRING, not a key: "WC7601" names MWC7601-RL-S12,
-    IBWC7601-RL-S10 and every other product carrying it. Every match is
-    returned, because taking one arbitrarily left the rest silently uncovered.
+    Company isolation still comes from the session: the caller pinned it to the
+    attachment's company, so a same-coded product or set in another company never
+    resolves (SEC-1).
     """
-    matched: list[tuple[str, object]] = []
-    unmatched: list[str] = []
-    seen: set[str] = set()
-    for raw_code in codes:
-        code = (raw_code or "").strip()
-        if not code:
-            continue
-        normalized = _normalize_product_code(code)
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        products = (
-            db.query(Product)
-            .filter(Product.product_code.ilike(f"%{normalized}%"))
-            .order_by(Product.product_code)
-            .all()
-        )
-        if not products:
-            unmatched.append(code)
-            continue
-        matched.extend((code, product) for product in products)
-    return matched, unmatched
-
+    resolved = _resolve_codes(db, codes)
+    matched = [(m.requested_code, m.product) for m in resolved.matches]
+    return matched, list(resolved.unmatched)
 
 def _link_via_certificate(
     db: Session,
@@ -451,12 +437,11 @@ def create_product_attachment(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid product_code",
         )
-    products = (
-        db.query(Product)
-        .filter(Product.product_code.ilike(f"%{normalized}%"))
-        .order_by(Product.product_code)
-        .all()
-    )
+    # One resolver: an exact code, a PRODUCT SET code expanded to its members, a
+    # `+` split, then substring. A set code is what the flyer prints, and no
+    # product carries it.
+    _resolution = _resolve_codes(db, [payload.product_code or ""])
+    products = [m.product for m in _resolution.matches]
     if not products:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -481,6 +466,9 @@ def create_product_attachment(
             # caller asked for: this photo is the image for every product it names.
             is_primary=payload.is_primary,
             access_levels=payload.access_levels,
+            # Stamped only when a PRODUCT SET expansion put this product here, so
+            # a set-created link can be found again when membership changes.
+            linked_via_set_id=_resolution.product_set_id_for(product_code),
         )
         result = service.create_product_attachment(data, created_by=created_by)
         if first_link_id is None:
@@ -576,12 +564,8 @@ def _link_attachment_to_products_bulk(
         # ("WC7601" -> MWC7601-RL-S12, IBWC7601-RL-S10, ...). Every one of them
         # gets the file; taking the first left the siblings without it. Ordered,
         # so a repeated call reports the same list in the same order.
-        products = (
-            db.query(Product)
-            .filter(Product.product_code.ilike(f"%{normalized}%"))
-            .order_by(Product.product_code)
-            .all()
-        )
+        _resolution = _resolve_codes(db, [code])
+        products = [m.product for m in _resolution.matches]
         if not products:
             skipped_product_codes.append(code)
             continue
@@ -601,6 +585,7 @@ def _link_attachment_to_products_bulk(
                 product_id=product_id,
                 attachment_id=attachment_id,
                 access_levels=access_levels,
+                linked_via_set_id=_resolution.product_set_id_for(product_code),
             )
             service.create_product_attachment(data, created_by=created_by)
             try:

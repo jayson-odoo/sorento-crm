@@ -1,10 +1,10 @@
 /**
- * Rule engine types — mirrors the backend camelCase wire contracts
+ * Rule engine types - mirrors the backend camelCase wire contracts
  * (app/rule_engine/schemas.py). The condition tree is stored AS-IS in each
  * consumer's own JSON column (e.g. `automations.conditions_json`).
  *
  * KEEP THE OPERATOR TABLES IN SYNC with the backend `OPERATORS_BY_TYPE`
- * (app/rule_engine/schemas.py) — every operator key here must exist there.
+ * (app/rule_engine/schemas.py) - every operator key here must exist there.
  */
 
 export type RuleFactType =

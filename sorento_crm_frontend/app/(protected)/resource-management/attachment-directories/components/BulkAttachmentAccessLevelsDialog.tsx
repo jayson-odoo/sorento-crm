@@ -210,7 +210,7 @@ export default function BulkAttachmentAccessLevelsDialog({
                       <li key={`${t.kind}-${t.entity_id}`}>
                         <span className="text-muted-foreground">{kindLabel(t.kind)}</span>{' '}
                         <span className="font-medium tabular-nums">{t.code}</span>
-                        {t.name ? <span className="text-muted-foreground"> — {t.name}</span> : null}
+                        {t.name ? <span className="text-muted-foreground"> - {t.name}</span> : null}
                       </li>
                     ))}
                   </ul>

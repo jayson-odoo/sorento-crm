@@ -1,5 +1,5 @@
 """Self-service coverer nomination: a user nominates a scope-B colleague to cover
-THEM while away — no manage_team permission. Plus the covered party may list + revoke
+THEM while away - no manage_team permission. Plus the covered party may list + revoke
 their own coverage.
 
 Service-level (routes gate only get_current_user, no permission). Mirrors the

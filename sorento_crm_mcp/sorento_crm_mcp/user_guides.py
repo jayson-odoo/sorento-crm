@@ -5,7 +5,7 @@ the in-app AI assistant) can answer "how do I…?" questions in a single call.
 
 One tool is registered:
 
-- ``user_guides_read`` — given a free-text query OR an Outline doc id / url-id,
+- ``user_guides_read`` - given a free-text query OR an Outline doc id / url-id,
   return the full markdown body of the most relevant guide. Internally this
   does ``documents.search`` against the Sorento CRM collection and fetches the
   top hit's body via ``documents.info``. If the input already looks like a
@@ -37,7 +37,7 @@ _UUID_RE = re.compile(
 )
 # Outline url-ids are bare alphanumeric tokens of length 10-15 (e.g.
 # `6nHGiMmtcg`). Only treat the input as a url-id if it matches that exact
-# shape — random hyphenated phrases like `how-do-i-upload-a-packing-list`
+# shape - random hyphenated phrases like `how-do-i-upload-a-packing-list`
 # previously matched and made us send junk ids to Outline.
 _URL_ID_RE = re.compile(r"^[A-Za-z0-9]{10,15}$")
 
@@ -110,8 +110,8 @@ async def _fetch_doc_body(settings: Settings, identifier: str) -> dict[str, Any]
 async def read_user_guide_impl(settings: Settings, query: str) -> str:
     """Resolve `query` to a single guide body.
 
-    - If `query` looks like a UUID / url-id, fetch directly via documents.info.
-    - Otherwise run documents.search (top 3) against the Sorento CRM
+  - If `query` looks like a UUID / url-id, fetch directly via documents.info.
+  - Otherwise run documents.search (top 3) against the Sorento CRM
       collection, take the best-ranked hit, and fetch its body.
     """
     q = (query or "").strip()
@@ -126,7 +126,7 @@ async def read_user_guide_impl(settings: Settings, query: str) -> str:
             return json.dumps(body)
         except Exception as e:
             logger.warning("user_guides_read direct fetch failed for %r: %s", q, e)
-            # Fall through to search — caller may have passed a slug-shaped
+            # Fall through to search - caller may have passed a slug-shaped
             # natural language phrase (e.g. 'upload-packing-list').
     try:
         search = await _outline_post(
@@ -207,7 +207,7 @@ def register_user_guide_tools(mcp: Any, settings: Settings) -> None:
         Pass the user's natural-language how-to question as ``query`` (e.g.
         "How do I upload a packing list?"). The tool searches the Sorento CRM
         Outline collection and returns the top match's full markdown body in
-        one round trip — no separate search call is needed.
+        one round trip - no separate search call is needed.
 
         If the caller already has an Outline doc id (UUID) or url-id (e.g.
         ``portal-overview-aBcDe``), pass it as ``query`` and the tool fetches

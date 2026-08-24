@@ -560,7 +560,7 @@ def test_a_count_is_matched_exactly_not_within_a_millimetre_tolerance(db):
     """The defect this exists to stop: 1 bowl scoring a PERFECT match for 2.
 
     `_numeric_score` used one module-level `+/- 5` for every numeric key. That is a
-    millimetre intuition, and against a COUNT it made 1 and 2 indistinguishable — a
+    millimetre intuition, and against a COUNT it made 1 and 2 indistinguishable - a
     single-bowl sink ranked above real double-bowl sinks for "double bowl kitchen sink"
     while reporting `bowl_count` as a matched spec.
     """
@@ -575,7 +575,7 @@ def test_a_count_is_matched_exactly_not_within_a_millimetre_tolerance(db):
 
     # The single-bowl sink is absent entirely, and correctly so: this query states one
     # spec and no free terms, so contradicting it leaves the row with NO positive
-    # evidence at all — the one condition that drops a candidate. Where the query
+    # evidence at all - the one condition that drops a candidate. Where the query
     # carries other signal it is demoted instead, which the next test asserts.
     assert "ZZT-1BOWL" not in _codes(result)
 
@@ -590,7 +590,7 @@ def test_a_millimetre_key_keeps_its_tolerance(db):
 
 
 def test_a_numeric_contradiction_demotes_without_removing(db):
-    """A number can contradict exactly as an enum can — and still not be deleted."""
+    """A number can contradict exactly as an enum can - and still not be deleted."""
     _product(db, "ZZT-1BOWL", "CABANA SINGLE BOWL KITCHEN SINK")
     _product(db, "ZZT-2BOWL", "CABANA DOUBLE BOWL KITCHEN SINK")
 
@@ -615,7 +615,7 @@ def test_a_numeric_contradiction_demotes_without_removing(db):
     ],
 )
 def test_a_quantity_is_bound_to_the_key_its_own_word_names(db, phrase, expected_mm):
-    """Numbers in a phrase were dropped entirely — resolution scanned synonyms only."""
+    """Numbers in a phrase were dropped entirely - resolution scanned synonyms only."""
     resolved = {e["key"]: e["value"] for e in resolve_terms_to_specs(db, [phrase])}
 
     assert resolved.get("trap_length") == pytest.approx(expected_mm)
@@ -812,7 +812,7 @@ def test_the_preference_still_reorders_answers_the_customer_did_find(db):
 # say what was asked for and not delivered (#105)
 # --------------------------------------------------------------------------- #
 def test_a_brand_that_has_no_match_is_reported_as_unmet(db):
-    """"cabana free standing bathtub" offers Sorento ones — and must say so.
+    """"cabana free standing bathtub" offers Sorento ones - and must say so.
 
     Every spec is a boost, never a filter, so offering the next best thing is correct.
     Offering it SILENTLY is what reads as a broken search: the customer said Cabana,
@@ -938,7 +938,7 @@ def test_the_word_resolver_cannot_reinstate_a_refused_spec(db):
     """The phrase still contains the word "glass", and the word-level resolver reads it.
 
     Without withholding refused values from that resolver, the exclusion is understood
-    and then undone one line later — the product is filtered out but the spec comes back
+    and then undone one line later - the product is filtered out but the spec comes back
     as a positive boost on everything else made of glass.
     """
     _catalog(db)

@@ -19,9 +19,9 @@ _PAIR_COLS = {"promotion_id", "product_id"}
 def _drop_old_promotion_product_pair_uniqueness() -> None:
     """
     Old DBs may have (promotion_id, product_id) uniqueness as either:
-    - a UNIQUE CONSTRAINT (drop with ALTER TABLE ... DROP CONSTRAINT), or
-    - a UNIQUE INDEX only (drop with DROP INDEX), or
-    - a different name than uq_promotion_products_promotion_id_product_id.
+  - a UNIQUE CONSTRAINT (drop with ALTER TABLE ... DROP CONSTRAINT), or
+  - a UNIQUE INDEX only (drop with DROP INDEX), or
+  - a different name than uq_promotion_products_promotion_id_product_id.
 
     Inspect the live schema and drop whichever exists.
     """

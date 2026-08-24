@@ -97,11 +97,11 @@ class ContactAccessTypeService:
     def translate_names_to_codes(self, names: Optional[list[str]]) -> Optional[list[str]]:
         """Map access-level NAMES → canonical codes via contact_access_types.name.
 
-        Case-insensitive name match against the full catalog (active or not — admins may
+        Case-insensitive name match against the full catalog (active or not - admins may
         rename codes; promotion JSONB still references the legacy code). Returns
         ``None`` when ``names`` is falsy / empty so the caller can short-circuit the
         filter. Empty translated list (no name matched anything) is preserved as
-        ``[]`` so the JSONB overlap filter rejects every row — matches user intent
+        ``[]`` so the JSONB overlap filter rejects every row - matches user intent
         ("filter by these names" + zero recognized names = zero results).
         """
         if not names:
@@ -348,7 +348,7 @@ class ContactAccessTypeService:
 
         Non-raising by design (this feeds the request-entry scope resolver, which
         must never 500): returns ``[]`` when the params are blank, when NO contact
-        matches, OR when the contact matched but has NO company memberships — the
+        matches, OR when the contact matched but has NO company memberships - the
         caller maps ``[]`` to an empty scope (0 owned rows, fail-closed).
         """
         rid = (respond_io_id or "").strip()

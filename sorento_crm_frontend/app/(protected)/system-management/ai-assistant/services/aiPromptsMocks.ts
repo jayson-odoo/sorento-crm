@@ -65,7 +65,7 @@ export const MOCK_PROMPT_KEYS: PromptKeySummary[] = [
   },
   {
     name: 'synthesizer',
-    role: 'Answer policy — cite, preserve links, format',
+    role: 'Answer policy - cite, preserve links, format',
     active: true,
     dry_runnable: true,
     activates_in: null,
@@ -219,7 +219,7 @@ export const MOCK_VERSIONS: Record<string, PromptVersionsResponse> = {
     ],
   },
   agent_system: singleVersion('agent_system', 'Thinker / executor ReAct core'),
-  synthesizer: singleVersion('synthesizer', 'Answer policy — cite, preserve links, format'),
+  synthesizer: singleVersion('synthesizer', 'Answer policy - cite, preserve links, format'),
   planner: singleVersion('planner', 'Decompose task, order tool steps', false, 'M2.5'),
   semantic_compressor: singleVersion('semantic_compressor', 'Raw tool JSON → token-tight sentences', false, 'M2.5'),
   validator: singleVersion('validator', 'Confidence-gate answer before send', false, 'M3a'),
@@ -259,7 +259,7 @@ function singleVersion(
 }
 
 export function mockTemplateFor(name: string, version: number): string {
-  return MOCK_TEMPLATES[name]?.[version] ?? `# ${name} v${version}\n(mock template body — edit me)`;
+  return MOCK_TEMPLATES[name]?.[version] ?? `# ${name} v${version}\n(mock template body - edit me)`;
 }
 
 const DECLARED: (t: string) => string[] = () => [];
@@ -332,10 +332,10 @@ export function mockSetLabel(name: string, payload: SetLabelPayload): Promise<Se
 export function mockDryRun(name: string, payload: DryRunPayload): Promise<DryRunResponse> {
   const summary = MOCK_PROMPT_KEYS.find((k) => k.name === name);
   if (summary && !summary.active) {
-    return Promise.reject(new Error('Dormant key is not testable — it has no runtime call site yet.'));
+    return Promise.reject(new Error('Dormant key is not testable - it has no runtime call site yet.'));
   }
   return Promise.resolve({
-    output: `**Mock dry-run** for \`${name}\` (${payload.version_id}).\n\nYou said: "${payload.message}".\n\nThis is a stubbed response — the Phase-2 backend runs the real assistant turn with only this prompt overridden.`,
+    output: `**Mock dry-run** for \`${name}\` (${payload.version_id}).\n\nYou said: "${payload.message}".\n\nThis is a stubbed response - the Phase-2 backend runs the real assistant turn with only this prompt overridden.`,
     token_usage: { prompt_tokens: 812, completion_tokens: 143, total_tokens: 955 },
     tool_calls: [{ name: 'user_guides_read', ok: true }],
     used_overrides: { [name]: payload.version_id },

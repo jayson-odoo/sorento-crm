@@ -88,7 +88,7 @@ function LinkagesTable({
           <TableRow key={item.id}>
             <TableCell className="font-medium">{item.name}</TableCell>
             <TableCell className="text-muted-foreground max-w-md line-clamp-2" title={item.description ?? undefined}>
-              {item.description ?? '—'}
+              {item.description ?? '-'}
             </TableCell>
             <TableCell>
               <Link
@@ -344,7 +344,7 @@ export default function AttachmentDetail({
           <div>
             <p className="text-sm text-muted-foreground">Directory</p>
             <p className="font-medium text-sm break-words">
-              {attachment.full_directory_path?.trim() || '—'}
+              {attachment.full_directory_path?.trim() || '-'}
             </p>
             {attachment.directory_id ? (
               <a
@@ -419,7 +419,7 @@ export default function AttachmentDetail({
             ) : (
               <div className="flex items-start justify-between gap-2">
                 <p className="font-medium text-sm min-h-[1.5rem]">
-                  {attachment.description?.trim() || '—'}
+                  {attachment.description?.trim() || '-'}
                 </p>
                 <Button variant="ghost" size="sm" onClick={() => setDescriptionEdit(attachment.description ?? '')}>
                   {attachment.description?.trim() ? 'Edit' : 'Add'}
@@ -464,7 +464,7 @@ export default function AttachmentDetail({
               <div className="flex items-start justify-between gap-2">
                 <div className="flex flex-wrap gap-2">
                   {(attachment.access_levels ?? []).length === 0 ? (
-                    <span className="text-sm text-muted-foreground">—</span>
+                    <span className="text-sm text-muted-foreground"> - </span>
                   ) : (
                     (attachment.access_levels ?? []).map((level) => (
                       <Badge key={level} variant="secondary">

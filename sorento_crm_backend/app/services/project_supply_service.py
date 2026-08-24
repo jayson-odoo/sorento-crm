@@ -2766,8 +2766,8 @@ class ProjectSupplyService:
             taken = pile["borrowed"] + pile["reserved"]
             after = (
                 availability.get(key, _ZERO)
-                - held_from_elsewhere.get(key, _ZERO)
-                - taken
+              - held_from_elsewhere.get(key, _ZERO)
+              - taken
             )
             if after >= _ZERO:
                 continue

@@ -74,7 +74,7 @@ import TicketSlaChips, { AT_RISK_MS } from './TicketSlaChips';
 import { CoverageManager } from '@/app/(protected)/account/notifications/components';
 
 // Same inbox base used by the SLA detail page; conversation rows deep-link here
-// because the CRM cannot send files in-app yet — staff reply from Respond.
+// because the CRM cannot send files in-app yet - staff reply from Respond.
 const RESPOND_IO_INBOX_BASE_URL = 'https://app.respond.io/space/364817/inbox';
 
 const ENTITY_ROUTES: Record<string, { base: string; label: string }> = {
@@ -87,7 +87,7 @@ const ENTITY_ROUTES: Record<string, { base: string; label: string }> = {
 type AnyTask = MyPendingSLAItem | TeamPendingItem;
 
 /** Form-vs-conversation is decided by the backend (is_form_sla, from FORM_SLA_TYPES)
- * — never re-derived here, or types the FE route map doesn't know (e.g. 'ticket')
+ * - never re-derived here, or types the FE route map doesn't know (e.g. 'ticket')
  * silently fall through to the conversation branch. */
 function isFormTask(item: AnyTask): boolean {
   return item.is_form_sla;
@@ -109,7 +109,7 @@ function pendingTakeover(item: AnyTask): TakeoverInfo | null {
 }
 
 /** In-system record link when we have a known route for the form type; null when we
- * don't (e.g. ticket — the row falls back to its Respond conversation / SLA detail). */
+ * don't (e.g. ticket - the row falls back to its Respond conversation / SLA detail). */
 function entityHref(item: AnyTask): string | null {
   const route = ENTITY_ROUTES[item.source_entity_type ?? ''];
   if (route && item.source_entity_id) return `${route.base}/${item.source_entity_id}`;
@@ -458,7 +458,7 @@ export default function MyPendingSLAWidget() {
     [teamItems, q],
   );
   // Coverage deep link: pin the targeted task to the FIRST row (pagination-proof) so the
-  // coverer sees it immediately and can take it over — mirrors the takeover pin.
+  // coverer sees it immediately and can take it over - mirrors the takeover pin.
   const orderedTeam = useMemo(() => {
     if (!teamTaskParam) return filteredTeam;
     const idx = filteredTeam.findIndex((it) => it.id === teamTaskParam);
@@ -494,11 +494,11 @@ export default function MyPendingSLAWidget() {
     const isTeam = mode === 'team';
     const form = isFormTask(item);
     // Show the deadline this row is racing for its next action (resolution due for
-    // resolution-phase rows — the one Extend moves), falling back to the response due.
+    // resolution-phase rows - the one Extend moves), falling back to the response due.
     const meta = item as MyPendingSLAItem;
     // Show ONLY the active clock the row is racing for its next action (resolution due
-    // for resolution-phase rows — the one Extend moves; response due otherwise). One
-    // line, labelled by phase. Red already conveys overdue — no extra "overdue" text.
+    // for resolution-phase rows - the one Extend moves; response due otherwise). One
+    // line, labelled by phase. Red already conveys overdue - no extra "overdue" text.
     const due = dueLabel(meta.active_due_at ?? item.due_at);
     const primaryLabel = (meta.due_kind ?? 'respond') === 'resolve'
       ? 'Resolve by'
@@ -510,7 +510,7 @@ export default function MyPendingSLAWidget() {
     const tk = pendingTakeover(item);
     const ticket = isTeam ? null : asTicket(item);
     const subline = isTeam
-      ? `${teamItem.assignee_name ?? '—'} · ${teamItem.team_label ?? '—'} · Tier ${item.current_tier}`
+      ? `${teamItem.assignee_name ?? '-'} · ${teamItem.team_label ?? '-'} · Tier ${item.current_tier}`
       : ticket
         ? // AC-E7: a snippet the n8n spine never mapped arrives blank or as
           // whitespace, not null - trim before falling back so the row always
@@ -764,7 +764,7 @@ export default function MyPendingSLAWidget() {
       <span>
         {totalCount === 0
           ? '0 of 0'
-          : `${cur * PAGE_SIZE + 1}–${Math.min((cur + 1) * PAGE_SIZE, totalCount)} of ${totalCount}`}
+          : `${cur * PAGE_SIZE + 1} - ${Math.min((cur + 1) * PAGE_SIZE, totalCount)} of ${totalCount}`}
       </span>
       {totalCount > PAGE_SIZE && (
         <div className="flex items-center gap-1">
@@ -962,7 +962,7 @@ export default function MyPendingSLAWidget() {
       ) : mineItems.length === 0 ? (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <CheckCircle2 className="size-4 text-emerald-600" />
-          Nothing pending — you&apos;re all caught up.
+          Nothing pending - you&apos;re all caught up.
         </p>
       ) : pageItems.length === 0 ? (
         <p className="text-sm text-muted-foreground">No tasks match “{search}”.</p>
@@ -979,7 +979,7 @@ export default function MyPendingSLAWidget() {
             <AlertDialogTitle>Take over this task?</AlertDialogTitle>
             <AlertDialogDescription>
               {takeoverTarget
-                ? `${humanizeType(takeoverTarget)}${takeoverTarget.reference ? ` · ${takeoverTarget.reference}` : ''} — currently with ${takeoverTarget.assignee_name ?? 'a teammate'}. It will move to your pending tasks at your tier. The SLA clock is not reset.`
+                ? `${humanizeType(takeoverTarget)}${takeoverTarget.reference ? ` · ${takeoverTarget.reference}` : ''} - currently with ${takeoverTarget.assignee_name ?? 'a teammate'}. It will move to your pending tasks at your tier. The SLA clock is not reset.`
                 : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>

@@ -1,4 +1,4 @@
-"""Form handling-lock ("I'm handling this") — Phase 2 ROUTE-layer tests.
+"""Form handling-lock ("I'm handling this") - Phase 2 ROUTE-layer tests.
 
 Complements tests/test_form_handling_lock.py (service + guard, 25 tests) by
 exercising the three new FastAPI endpoints through a TestClient with real auth
@@ -159,7 +159,7 @@ def _tracker(
 
 
 # --------------------------------------------------------------------------- #
-# TestClient wiring — dynamic actor + no-op notify + patched role slugs        #
+# TestClient wiring - dynamic actor + no-op notify + patched role slugs        #
 # --------------------------------------------------------------------------- #
 _ACTOR: dict = {"id": None}
 
@@ -221,7 +221,7 @@ def client(db):
 
 @pytest.fixture
 def anon_client(db):
-    """No auth override — the real get_current_user runs, rejecting anon requests
+    """No auth override - the real get_current_user runs, rejecting anon requests
     before the route body."""
     from app.main import app
     from app.database import get_db
@@ -371,7 +371,7 @@ def test_release_unauth_401(anon_client, db, seed):  # P2-17 auth-deny
 
 
 # =========================================================================== #
-# GET serializer — the fields the FE state resolver consumes                   #
+# GET serializer - the fields the FE state resolver consumes                   #
 # =========================================================================== #
 def test_get_includes_fe_resolver_fields_unclaimed(client, db, seed):  # P2-2/P2-14 contract
     t = _tracker(db, seed, tier=2)

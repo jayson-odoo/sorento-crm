@@ -8,6 +8,7 @@ from sqlalchemy import or_, and_, func
 from typing import Any, Optional, List, Callable, Tuple, Iterable
 from decimal import Decimal
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure, ProductAttachment
+from app.models.product_set import ProductSet, ProductSetMember
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,7 @@ def is_discontinued_from_description(description: Optional[str]) -> bool:
 
     Auto-derived flag: a product whose description begins with four asterisks
     is considered discontinued. Recomputed on every save (single create/edit
-    and bulk import) — never edited manually.
+    and bulk import) - never edited manually.
     """
     if not description:
         return False
@@ -438,7 +439,7 @@ class ProductService:
         # Apply sorting
         # GREATEST / LEAST give us a virtual "max axis" / "min axis" per row so the LLM can ask
         # for the biggest or smallest product in one call (sort=largest_dimension dir=desc).
-        # NULL dimensions sort to the bottom on desc and top on asc — handled with NULLS LAST/FIRST.
+        # NULL dimensions sort to the bottom on desc and top on asc - handled with NULLS LAST/FIRST.
         largest_dim = func.greatest(
             Product.dimensions_length,
             Product.dimensions_width,
@@ -750,14 +751,14 @@ class ProductService:
     def _product_entity_alternatives(self, input_code: Optional[str]) -> list[dict]:
         """Trigram/graph sibling products (existing + priced) for a row-miss.
 
-        Fires on a genuine ``total == 0`` — a `query` code that matched no product
+        Fires on a genuine ``total == 0`` - a `query` code that matched no product
         row. The neighbour helper's input product does not exist, so it falls to
         trigram recall (§3.1 "did you mean") over EXISTING siblings. The has-data
         gate = candidate has a non-null, positive ``list_price`` so a price question
         gets a priced neighbour.
 
         Deliberately NOT called when a product resolves but carries ``list_price``
-        0 — that is a field-level miss, and substituting a different SKU's price is
+        0 - that is a field-level miss, and substituting a different SKU's price is
         misleading (a variant's price is legitimately different). Only the row-miss
         (nothing matched) path reaches here.
         """
@@ -805,14 +806,40 @@ class ProductService:
             raise handle_not_found("Product", product_id)
         _populate_field_attachments(self.db, [product])
         self._populate_variant_graph(product)
+        self._populate_product_sets(product)
         return product
+
+    def _populate_product_sets(self, product) -> None:
+        """Stash the sets this product belongs to, for the detail serializer.
+
+        A DETAIL-only populate, like the variant graph beside it: list rows never
+        call this, so the listing stays free of an extra query per row. Every
+        method that returns the detail shape calls both, or the field is present
+        on one route and absent on the next for no reason a reader could guess.
+
+        Reached through `ProductSet`, which carries `CompanyScopedMixin`, so the
+        session's scope filters it and another company's set can never name this
+        product. `ProductSetMember` is deliberately unscoped and is only ever read
+        through its scoped parent - the same shape as `certificate_products`
+        reached through `Certificate`.
+
+        Ordered by set_code so two reads of one product agree; an unordered list
+        reorders itself between reads and reads as a bug.
+        """
+        product._product_sets = (
+            self.db.query(ProductSet)
+            .join(ProductSetMember, ProductSetMember.product_set_id == ProductSet.id)
+            .filter(ProductSetMember.product_id == product.id)
+            .order_by(ProductSet.set_code.asc())
+            .all()
+        )
 
     def _populate_variant_graph(self, product) -> None:
         """Stash the variant-graph refs the detail serializer reads.
 
         Populates two throwaway instance attrs consumed by ProductResponse via
         `validation_alias` (`_variant_of_ref`, `_variant_children`) so the schema
-        never touches the SQLAlchemy relationships directly — keeping LIST rows
+        never touches the SQLAlchemy relationships directly - keeping LIST rows
         (which never call this) free of variant N+1s. See
         PLAN-suggest-on-miss-variant-graph.md §1.5.
         """
@@ -834,7 +861,7 @@ class ProductService:
         product._variant_child_count = len(children)
 
     def set_variant_parent(self, product_id: str, parent_id: str, updated_by: str):
-        """Manually set/change a product's variant parent (D1 — sticky override).
+        """Manually set/change a product's variant parent (D1 - sticky override).
 
         Sets ``variant_of_id`` + ``variant_link_manual = True`` so auto-derivation
         never re-points it. Rejects self-parent and cycles (walking the chosen
@@ -863,7 +890,7 @@ class ProductService:
                 message="A product cannot be a variant of itself",
                 code="VALIDATION_ERROR",
             )
-        # Cycle check — walk the chosen parent's ancestor chain via variant_of_id.
+        # Cycle check - walk the chosen parent's ancestor chain via variant_of_id.
         # If `product` is encountered, linking would create a cycle. Visited-set
         # guards against a pre-existing cycle looping forever.
         visited: set[str] = set()
@@ -893,10 +920,11 @@ class ProductService:
         self.db.refresh(product)
         _populate_field_attachments(self.db, [product])
         self._populate_variant_graph(product)
+        self._populate_product_sets(product)
         return product
 
     def unlink_variant(self, product_id: str, updated_by: str):
-        """Manually unlink a product from its parent (D1 — sticky override).
+        """Manually unlink a product from its parent (D1 - sticky override).
 
         Nulls ``variant_of_id`` and sets ``variant_link_manual = True`` so
         auto-reconcile will not re-link it. Also the "remove a child" path: call
@@ -911,6 +939,7 @@ class ProductService:
         self.db.refresh(product)
         _populate_field_attachments(self.db, [product])
         self._populate_variant_graph(product)
+        self._populate_product_sets(product)
         return product
 
     def reset_variant_auto(self, product_id: str):
@@ -929,6 +958,7 @@ class ProductService:
         self.db.refresh(product)
         _populate_field_attachments(self.db, [product])
         self._populate_variant_graph(product)
+        self._populate_product_sets(product)
         return product
 
     def _populate_list_variant_fields(self, products: Iterable[Product]) -> None:
@@ -952,7 +982,7 @@ class ProductService:
         if not page_ids:
             return
 
-        # 1) Parent refs — one IN-query over just the parents referenced on this page.
+        # 1) Parent refs - one IN-query over just the parents referenced on this page.
         parent_ids = {
             str(p.variant_of_id) for p in rows if getattr(p, "variant_of_id", None)
         }
@@ -967,7 +997,7 @@ class ProductService:
                 if getattr(p, "variant_of_id", None):
                     p._variant_of_ref = parent_by_id.get(str(p.variant_of_id))
 
-        # 2) Direct-child counts — one grouped IN-query keyed on this page's ids.
+        # 2) Direct-child counts - one grouped IN-query keyed on this page's ids.
         counts = (
             self.db.query(Product.variant_of_id, func.count(Product.id))
             .filter(Product.variant_of_id.in_(page_ids))
@@ -1121,11 +1151,11 @@ class ProductService:
                 triggered_by=updated_by,
             )
             # Re-derive the variant link only when the code (the derivation input)
-            # actually changed — avoids churn on price/description-only edits.
+            # actually changed - avoids churn on price/description-only edits.
             if "product_code" in update_data:
                 # Capture existing children BEFORE re-deriving: a rename can break
                 # the old-code prefix match, so each former child must re-derive to
-                # its next ancestor (else it stays mis-linked to us — the FK is
+                # its next ancestor (else it stays mis-linked to us - the FK is
                 # unchanged by a rename). Mirrors delete_product's re-anchor.
                 ex_children = self._variant_child_ids(product.id)
                 self._reconcile_variant_links(product.id)
@@ -1147,7 +1177,7 @@ class ProductService:
         return {"message": "Product deleted successfully"}
 
     def _reconcile_variant_links(self, code_or_id: str) -> None:
-        """Best-effort post-commit variant-graph reconcile. Never raises — a
+        """Best-effort post-commit variant-graph reconcile. Never raises - a
         side effect running AFTER the row committed must not 500 a succeeded op
         (post-commit side-effect rule, CLAUDE.md)."""
         try:
@@ -2569,11 +2599,11 @@ class ProductAttachmentService:
     def _resolve_product_identifiers(self, product_identifier: Optional[str]) -> Optional[list[str]]:
         """Resolve a product UUID or product_code to one or more product UUIDs.
 
-        - UUID input -> [uuid].
-        - Non-UUID input -> case-insensitive substring (ilike) match across product_code,
+      - UUID input -> [uuid].
+      - Non-UUID input -> case-insensitive substring (ilike) match across product_code,
           so callers passing a partial/base code (e.g. ``SRTMCB6084-WH``) also find
           variants (``SRTMCB6084-WH-DF`` etc.).
-        - Returns ``None`` when input is empty; ``[]`` when no product matches.
+      - Returns ``None`` when input is empty; ``[]`` when no product matches.
         """
         if not product_identifier:
             return None
@@ -2644,7 +2674,7 @@ class ProductAttachmentService:
             joinedload(ProductAttachment.product),
             joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
         ).filter(
-            # Exclude trashed (soft-deleted) attachments — mirrors
+            # Exclude trashed (soft-deleted) attachments - mirrors
             # get_product_attachments_by_product. Without this, "Move to Trash"d
             # files keep showing in product-attachment listings.
             ProductAttachment.attachment.has(Attachment.is_deleted == False),
@@ -2780,7 +2810,7 @@ class ProductAttachmentService:
         )
         # Entity-axis relaxation (§3.4 M5): the product resolved but has no
         # (matching-type) attachment. Offer data-bearing variant/neighbour
-        # products that DO have such an attachment. Only on the empty path — a
+        # products that DO have such an attachment. Only on the empty path - a
         # non-empty result stays byte-identical (AC-R1).
         if total == 0:
             # Best-effort: a suggestion probe must never turn an empty attachment
@@ -2842,7 +2872,7 @@ class ProductAttachmentService:
         Only fires when exactly ONE input product resolved. The has-data gate =
         the candidate product has at least one non-trashed product-attachment,
         narrowed to ``attachment_type_ids`` when the caller asked for a specific
-        document class (e.g. a certificate). Reuses the shared neighbour helper —
+        document class (e.g. a certificate). Reuses the shared neighbour helper - 
         no bespoke neighbour ranking here.
         """
         ids = list(product_ids or [])

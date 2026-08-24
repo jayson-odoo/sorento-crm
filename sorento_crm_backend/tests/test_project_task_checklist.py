@@ -1,4 +1,4 @@
-"""S2b — template checklists, derived next action, My Tasks (AC-N1, N6, N9, N11).
+"""S2b - template checklists, derived next action, My Tasks (AC-N1, N6, N9, N11).
 
 The load-bearing claim in this slice is AC-N6: a project's next action is DERIVED from
 its earliest open task and stored nowhere. Two records of the same promise drift, and

@@ -1,5 +1,5 @@
 /**
- * SCM M4 Slice B — cash co-pilot decision → draft PO → confirm → GR e2e (AC-M4.15).
+ * SCM M4 Slice B - cash co-pilot decision → draft PO → confirm → GR e2e (AC-M4.15).
  * Full FE → BE → DB round-trip against the LIVE stack (FE :3000 + BE :8005 +
  * worker; `scm` module enabled, M0/M3/M4 seed applied + a completed run with
  * costed buys). Exercises the whole loop:
@@ -42,9 +42,9 @@ async function login(page: Page) {
 
 /**
  * Confirm the Supply Chain sidebar group + leaf render (catches missing-entry /
- * wrong-moduleKey / permission-gating bugs — AC-NAV-1), then navigate via the
+ * wrong-moduleKey / permission-gating bugs - AC-NAV-1), then navigate via the
  * leaf's resolved href (clicking the <Link> directly hangs on the protected
- * layout's ingest fetch — established repo workaround, see scm-policies.spec).
+ * layout's ingest fetch - established repo workaround, see scm-policies.spec).
  */
 async function openScmLeaf(page: Page, leaf: RegExp) {
   await page.goto('/', { waitUntil: 'commit' });
@@ -76,12 +76,12 @@ test('m4 co-pilot: accept funded buys → confirm draft POs → create GR (AC-M4
 
   await login(page);
 
-  // ── Reorder Planning — open a completed run with costed buys ──────────────
+  // ── Reorder Planning - open a completed run with costed buys ──────────────
   await openScmLeaf(page, /^Reorder Planning$/);
   await page.waitForURL(/\/scm\/reorder$/);
 
   // The run-history list loads; pick the most recent completed run to view its
-  // cash co-pilot results (data-driven — a seeded completed run must exist).
+  // cash co-pilot results (data-driven - a seeded completed run must exist).
   await expect
     .poll(() => seen('GET', /\/scm\/reorder-runs/), { timeout: 20_000 })
     .toBeTruthy();
@@ -117,7 +117,7 @@ test('m4 co-pilot: accept funded buys → confirm draft POs → create GR (AC-M4
     .toBeTruthy();
   await expect(page.getByText(/draft PO/i).first()).toBeVisible({ timeout: 15_000 });
 
-  // ── Purchase Orders — drafts present + "Not on order" ─────────────────────
+  // ── Purchase Orders - drafts present + "Not on order" ─────────────────────
   await openScmLeaf(page, /^Purchase Orders$/);
   await page.waitForURL(/\/scm\/purchase-orders$/);
   await expect

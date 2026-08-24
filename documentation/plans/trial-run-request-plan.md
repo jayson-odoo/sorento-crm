@@ -59,24 +59,24 @@ Resolution plan: Reuse master-data lookup configuration for form types, add acce
 ## Implementation Plan
 
 1. Ticket creation first:
-   - Create one ticket per item above with description, initial response, and resolution plan.
-   - Mark the promotion create endpoint issue as “No code change: requester to fix payload wrapper/header.”
+ - Create one ticket per item above with description, initial response, and resolution plan.
+ - Mark the promotion create endpoint issue as “No code change: requester to fix payload wrapper/header.”
 
 2. Backend changes:
-   - Update order tracking import service and route docs from `Daily Tracking` to `Overall Tracking`.
-   - Add/adjust inventory service filters to exclude inactive warehouses from stock reads.
-   - Add full-snapshot zeroing logic and `SYSTEM_ADJUSTMENT` ledger creation to stock bulk import.
-   - Normalize stock MCP `updated_at` to `Asia/Kuala_Lumpur`.
-   - Add attachment filters for attachment type, uploaded by, and uploaded date range.
-   - Expand forms schemas/services/routes/MCP catalog for form type, access levels, Respond contact filtering, and attachment filename search.
-   - Expand promotion list/search to match linked promotion attachment filenames.
+ - Update order tracking import service and route docs from `Daily Tracking` to `Overall Tracking`.
+ - Add/adjust inventory service filters to exclude inactive warehouses from stock reads.
+ - Add full-snapshot zeroing logic and `SYSTEM_ADJUSTMENT` ledger creation to stock bulk import.
+ - Normalize stock MCP `updated_at` to `Asia/Kuala_Lumpur`.
+ - Add attachment filters for attachment type, uploaded by, and uploaded date range.
+ - Expand forms schemas/services/routes/MCP catalog for form type, access levels, Respond contact filtering, and attachment filename search.
+ - Expand promotion list/search to match linked promotion attachment filenames.
 
 3. Frontend changes:
-   - Update order tracking upload dialog validation, copy, and summary to use `Overall Tracking`.
-   - Update stock import UI to surface zero-adjustment preview/apply counts.
-   - Replace attachment access-level checkbox groups with a dropdown checklist, selected pills, and Select All.
-   - Add Files advanced filters for attachment type, uploaded by, and uploaded at.
-   - Add form type master-data selection and access-level controls to forms create/edit/detail/list flows as applicable.
+ - Update order tracking upload dialog validation, copy, and summary to use `Overall Tracking`.
+ - Update stock import UI to surface zero-adjustment preview/apply counts.
+ - Replace attachment access-level checkbox groups with a dropdown checklist, selected pills, and Select All.
+ - Add Files advanced filters for attachment type, uploaded by, and uploaded at.
+ - Add form type master-data selection and access-level controls to forms create/edit/detail/list flows as applicable.
 
 ## Test Plan
 

@@ -1,4 +1,4 @@
-"""Bug A5 — campaign list status filter must actually filter (uppercase-normalized).
+"""Bug A5 - campaign list status filter must actually filter (uppercase-normalized).
 
 Previously `list_campaigns(page, limit)` ignored status entirely → the FE filter
 was dead. Now it accepts an optional `status`, normalised to UPPERCASE so a

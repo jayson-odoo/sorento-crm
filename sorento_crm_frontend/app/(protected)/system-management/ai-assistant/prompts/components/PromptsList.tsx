@@ -13,7 +13,7 @@ import type { PromptKeySummary } from '../../services/aiPromptsService';
 const VIEW_PERMISSION = 'system.ai_assistant_settings.view';
 
 function formatDate(d: string | null): string {
-  if (!d) return '—';
+  if (!d) return '-';
   try {
     return new Date(d).toLocaleString();
   } catch {
@@ -37,7 +37,7 @@ export function PromptsList() {
   if (!hasPermission) {
     return (
       <div className="rounded-md border p-6 text-sm text-muted-foreground">
-        Forbidden — you don&apos;t have permission to view AI assistant prompts.
+        Forbidden - you don&apos;t have permission to view AI assistant prompts.
       </div>
     );
   }
@@ -125,10 +125,10 @@ function PromptTable({ rows, dormant = false }: { rows: PromptKeySummary[]; dorm
                     )}
                   </td>
                   <td className="p-3 text-right tabular-nums">
-                    {r.production_version != null ? `v${r.production_version}` : '—'}
+                    {r.production_version != null ? `v${r.production_version}` : '-'}
                   </td>
                   <td className="p-3 text-right tabular-nums text-muted-foreground">
-                    {r.latest_version != null ? `v${r.latest_version}` : '—'}
+                    {r.latest_version != null ? `v${r.latest_version}` : '-'}
                   </td>
                   <td className="p-3 text-xs text-muted-foreground">
                     {formatDate(r.updated_at)}

@@ -2,7 +2,7 @@
 
 Guards the Files-grid perf fix: full-resolution product photos (up to ~4500px)
 must be downscaled to a small JPEG so the grid paints a tiny image instead of a
-20-MP bitmap. Pure function — no DB / storage needed.
+20-MP bitmap. Pure function - no DB / storage needed.
 See docs/plans/PLAN-attachment-grid-thumbnails.md.
 """
 import io

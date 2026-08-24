@@ -2,8 +2,8 @@
 
 See ``docs/plans/PLAN-ai-assistant-prompt-registry.md`` §5. Two tables:
 
-- ``ai_prompt_versions`` — immutable, append-only snapshot per ``(name, version)``.
-- ``ai_prompt_labels``   — movable pointer, one row per ``(name, label)``.
+- ``ai_prompt_versions`` - immutable, append-only snapshot per ``(name, version)``.
+- ``ai_prompt_labels`` - movable pointer, one row per ``(name, label)``.
 
 Publish = repoint a label row's ``version_id``; the version rows never change.
 """

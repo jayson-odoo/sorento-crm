@@ -13,7 +13,7 @@ vi.mock('@/hooks/useEffectiveUserId', () => ({
   useEffectiveUserId: () => 'me',
 }));
 
-// DropdownMenuItem must render outside a menu in the test — stub to a button.
+// DropdownMenuItem must render outside a menu in the test - stub to a button.
 vi.mock('@/components/ui/dropdown-menu', () => ({
   DropdownMenuItem: ({ children, onSelect }: any) => (
     <button onClick={() => onSelect?.({ preventDefault() {} })}>{children}</button>

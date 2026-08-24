@@ -53,7 +53,7 @@ export function ChatTranscript({ messages, isLoading, anchorId, emptyText }: Cha
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const matchRefs = useRef<(HTMLDivElement | null)[]>([]);
 
-  // Message ids that contain the term, in transcript order — the navigable match set.
+  // Message ids that contain the term, in transcript order - the navigable match set.
   const matches = useMemo(() => {
     const q = term.trim().toLowerCase();
     if (!q) return [] as number[];

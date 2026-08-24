@@ -34,7 +34,7 @@ import SpecKeyProducts from './SpecKeyProducts';
  * Every spec key the system knows, and every word that resolves onto it.
  *
  * This IS the extraction prompt the n8n parser reads and the vocabulary the ranker's
- * word-resolver matches against — not a description of it. If a phrase isn't reaching
+ * word-resolver matches against - not a description of it. If a phrase isn't reaching
  * a product, this table says whether the word simply isn't bound to anything yet.
  *
  * Built on the system's DataGrid rather than a hand-rolled table, so the type scale,
@@ -109,7 +109,7 @@ export default function SpecRegistryTable() {
    *
    * "free standing" was added to `free_standing` while the seed already had it on
    * `floor_standing`, so the word now means two things and the resolver takes whichever
-   * it reaches first. The list rendered it twice and said nothing — a word doing two
+   * it reaches first. The list rendered it twice and said nothing - a word doing two
    * jobs is worth naming, not de-duplicating quietly.
    */
   const ambiguousWords = (key: SpecRegistryKey): string[] => {
@@ -254,7 +254,7 @@ export default function SpecRegistryTable() {
         meta: { headerTitle: 'Weight', skeleton: <Skeleton className="h-4 w-8" /> },
         cell: ({ row }) => (
           <span className="tabular-nums text-muted-foreground">
-            {row.original.rank_weight ?? '—'}
+            {row.original.rank_weight ?? '-'}
           </span>
         ),
       },
@@ -277,7 +277,7 @@ export default function SpecRegistryTable() {
               {coverage[row.original.spec_key].toLocaleString()}
             </button>
           ) : (
-            <span className="text-muted-foreground">—</span>
+            <span className="text-muted-foreground"> - </span>
           ),
       },
     ];
@@ -293,7 +293,7 @@ export default function SpecRegistryTable() {
         cell: ({ row }) => (
           <div className="flex items-center gap-1.5">
             <span className="font-mono text-xs">
-              {String(productKeys[row.original.spec_key]?.value ?? '—')}
+              {String(productKeys[row.original.spec_key]?.value ?? '-')}
             </span>
             {productKeys[row.original.spec_key]?.source && (
               <span className="text-xs text-muted-foreground">
@@ -353,7 +353,7 @@ export default function SpecRegistryTable() {
           // on: it named a property of the data model rather than what to do about it.
           return (
             <span className="text-muted-foreground">
-              No fixed list — every value the catalogue holds counts.
+              No fixed list - every value the catalogue holds counts.
               <span className="italic"> Edit to add customer wording.</span>
             </span>
           );

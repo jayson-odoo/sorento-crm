@@ -295,7 +295,7 @@ def _container_match_key(value: Optional[str]) -> str:
 def _container_key_sql(column):
     """SQL twin of ``_container_match_key``.
 
-    Uses only UPPER/REPLACE — Postgres-only ``regexp_replace`` would break the
+    Uses only UPPER/REPLACE - Postgres-only ``regexp_replace`` would break the
     sqlite-backed unit tests (tests/conftest.py).
     """
     expr = column
@@ -343,7 +343,7 @@ def _format_duplicate_packing_list_message(existing: "InboundShipment", shipment
     """User-facing rejection copy.
 
     Identifies the colliding shipment by container + dates (+ shipment number
-    when it has one). Never by id — packing lists usually have no shipment
+    when it has one). Never by id - packing lists usually have no shipment
     number, and UUIDs must not surface in user-facing text.
     """
     container = (shipment_data.shipping_container_number or "").strip()
@@ -708,7 +708,7 @@ class InboundShipmentService:
         tie-breaker so offset position and prev/next neighbours stay unambiguous
         when the primary sort column has equal values.
 
-        Returns ``(query, empty)`` — ``empty`` is True when a supplier filter was
+        Returns ``(query, empty)`` - ``empty`` is True when a supplier filter was
         supplied but resolved to no suppliers, in which case the query yields nothing.
         """
         q = self.db.query(InboundShipment)
@@ -1975,14 +1975,14 @@ class SPOAllocationService:
         """Create or update an SPO allocation keyed by (spo_number, product_id, warehouse_id).
 
         Returns a (action, allocation) tuple where action is one of:
-        - "created"   — no existing row, a new allocation was inserted.
-        - "updated"   — existing row's allocated_quantity changed (and is still >= received).
-        - "unchanged" — existing row already had the same allocated_quantity; no write.
+      - "created" - no existing row, a new allocation was inserted.
+      - "updated" - existing row's allocated_quantity changed (and is still >= received).
+      - "unchanged" - existing row already had the same allocated_quantity; no write.
 
         Raises AllocationReceivedGuardError when the new allocated quantity is below the
         existing quantity_received (received-below-allocated is a data problem to surface).
 
-        Only allocated_quantity (and updated_at) are ever written on update — receipt_status,
+        Only allocated_quantity (and updated_at) are ever written on update - receipt_status,
         quantity_received, quantity_rejected, created_by, storage_zone_id, allocation_notes
         are left untouched (the import file doesn't carry them reliably).
         """
@@ -4598,7 +4598,7 @@ class StockInquiryService:
         1. The ``:`` landed immediately after the URL, so WhatsApp's autolinker
            pulled it into the href and the contact got an invalid link.
         2. It used the read-only ``/view/stock-inquiry?token=`` page, built on
-           ``window.location.origin`` — whatever host the staff browser was on —
+           ``window.location.origin`` - whatever host the staff browser was on - 
            instead of the interactive portal link the backend already resolves via
            ``_stock_inquiry_portal_or_view_url`` for the template's ``portal_url``.
 
@@ -4619,8 +4619,8 @@ class StockInquiryService:
         preamble, keeping ONLY the purchasing wording for the lean ``update``
         template var.
 
-        The frontend no longer composes that string — it posts the bare wording and
-        ``compose_stock_inquiry_reply_message`` builds the outgoing text — so for
+        The frontend no longer composes that string - it posts the bare wording and
+        ``compose_stock_inquiry_reply_message`` builds the outgoing text - so for
         current clients this is a no-op passthrough. It stays for two inputs that
         still carry the old shape: a stored ``purchasing_response`` written before
         the change and re-sent, and any client not yet on the new build. Without it
@@ -5518,7 +5518,7 @@ class PurchaseRequestService:
 
         ``approved_by`` may hold either a CRM user id (public approval link flow)
         OR the approver's display name (in-system approve route stores the name
-        directly). Resolution order — chosen so the outbound message matches the
+        directly). Resolution order - chosen so the outbound message matches the
         "Approved by" shown on the detail page (which renders ``approved_by`` raw):
         1. ``approved_by`` matches a ``User.id`` → that user's name/email.
         2. ``approved_by`` is a non-empty, non-UUID-shaped string → return it
@@ -6125,7 +6125,7 @@ class PurchaseRequestService:
             "contact_id",
             "space_id",
             "products",
-            "sales_type",  # project / cash_sales — required for PR (SF omits it); routes CS
+            "sales_type",  # project / cash_sales - required for PR (SF omits it); routes CS
         ),
         "sponsorship_form": (
             "sponsor_subject",
@@ -6259,12 +6259,12 @@ class PurchaseRequestService:
         """Resolve an incoming ``sponsor_subject`` against the lookup set.
 
         Returns ``(sponsor_subject, sponsor_subject_other)``:
-        - Non-sponsorship requests pass the raw value through untouched (PR never
+      - Non-sponsorship requests pass the raw value through untouched (PR never
           binds sponsor_subject), other stays None.
-        - Empty/blank → ``(None, None)``.
-        - Resolves through the lookup resolver; a match yields the canonical
+      - Empty/blank → ``(None, None)``.
+      - Resolves through the lookup resolver; a match yields the canonical
           option value with no other text.
-        - Unmatched free text (e.g. n8n submissions) → ``("others", <raw text>)``
+      - Unmatched free text (e.g. n8n submissions) → ``("others", <raw text>)``
           so the strict lookup write-validator never 422s the intake.
         """
         if (request_type or "").strip() != "sponsorship_form":
@@ -7081,7 +7081,7 @@ class PurchaseRequestService:
         not in the filtered set (deep link, or filtered out after an edit), falls back
         to the default-sorted set so the pager is never dead (D2).
 
-        The D2 fallback preserves ``request_type`` only — so PR navigation can never
+        The D2 fallback preserves ``request_type`` only - so PR navigation can never
         wrap into sponsorship forms (and vice-versa) even on the fallback path.
         """
         from app.services.record_navigation import compute_neighbours

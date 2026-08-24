@@ -1,4 +1,4 @@
-"""Slice 1 of AutoCount Group A — the key crypto primitives.
+"""Slice 1 of AutoCount Group A - the key crypto primitives.
 
 These are the security core: how an integration API key is minted, stored and
 verified. Everything else in Group A (rotation, expiry, RBAC resolution) sits on

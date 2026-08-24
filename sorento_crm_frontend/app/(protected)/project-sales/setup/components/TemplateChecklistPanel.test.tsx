@@ -3,8 +3,8 @@
  *
  * Two things must be unmistakable on this screen, because getting either wrong loses
  * data or confuses the admin about what they just changed:
- *   - editing the template does NOT reach into projects already registered
- *   - a checklist item already copied somewhere cannot be deleted, only deactivated
+ * - editing the template does NOT reach into projects already registered
+ * - a checklist item already copied somewhere cannot be deleted, only deactivated
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';

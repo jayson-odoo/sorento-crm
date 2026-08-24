@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * MyDownloadsContext — drawer open-state + the per-user downloads feed.
+ * MyDownloadsContext - drawer open-state + the per-user downloads feed.
  *
  * Server-driven (no optimistic state): the feed is polled every 4s while any
  * row is pending/processing, and forced to refetch when the drawer opens

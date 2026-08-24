@@ -1,6 +1,6 @@
-# PLAN — Attachment Storage Accessibility Audit + Cleanup Filters
+# PLAN - Attachment Storage Accessibility Audit + Cleanup Filters
 
-**Status:** Phase 2 complete — BE + FE wired, 12 pytest + 6 vitest green, type-check clean, browser-verified end-to-end (Files storage_status=missing → 313 rows; Promotions attachment_state=unlinked_or_trashed → 20 rows; both hit the backend with the right param, no console errors). Audit handler ran live against R2+S3 (3279 accessible / 313 missing). Ready for review + deploy.
+**Status:** Phase 2 complete - BE + FE wired, 12 pytest + 6 vitest green, type-check clean, browser-verified end-to-end (Files storage_status=missing → 313 rows; Promotions attachment_state=unlinked_or_trashed → 20 rows; both hit the backend with the right param, no console errors). Audit handler ran live against R2+S3 (3279 accessible / 313 missing). Ready for review + deploy.
 **Branch:** `feat/attachment-storage-audit` (isolated worktree off `main`; deliberately excludes the in-flight attachment key-rename work)
 **Date:** 2026-06-16
 
@@ -9,7 +9,7 @@
 ~258 attachments have a `file_path` whose object is **missing from object storage** (404 via CDN). Confirmed by direct bucket scans: 234 are gone from both R2 (`sorento-crm`) and S3 (`sorento-demo-bucket`); only ~24 promotion PDFs still exist in S3. Bulk loss is `product_photos` (uploaded directly to R2, never to S3). DB rows still point at dead keys, so the UI shows broken images/links.
 
 The user wants to **clean up**, in prod:
-1. Find attachments whose bytes are not accessible via storage → **trash** them (soft delete — existing `is_deleted` behaviour).
+1. Find attachments whose bytes are not accessible via storage → **trash** them (soft delete - existing `is_deleted` behaviour).
 2. Then find promotions that are **unlinked** or **linked to a trashed attachment** → **hard delete** them (existing promotion delete behaviour).
 
 This feature builds the **detection + filters**. The deletes themselves use existing UI actions (attachment soft-delete/archive, promotion hard-delete). No new destructive code paths.
@@ -32,8 +32,8 @@ This feature builds the **detection + filters**. The deletes themselves use exis
 ### 1. Schema (migration `234_attachment_storage_status`)
 
 Add to `attachments`:
-- `storage_status` `VARCHAR(20)` NOT NULL `server_default 'unchecked'` — one of `accessible | missing | unchecked`.
-- `storage_checked_at` `TIMESTAMP` NULL — last audit time.
+- `storage_status` `VARCHAR(20)` NOT NULL `server_default 'unchecked'` - one of `accessible | missing | unchecked`.
+- `storage_checked_at` `TIMESTAMP` NULL - last audit time.
 - Index `ix_attachments_storage_status` on `storage_status`.
 
 Model: `app/models/resources.py` `Attachment`. Schema: `app/schemas/resources.py` `AttachmentBase`/`AttachmentResponse` expose both (read-only).

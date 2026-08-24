@@ -377,7 +377,7 @@ function YearRangePicker({
           ◀
         </Button>
         <span className="text-sm font-medium">
-          {pageStart} – {pageStart + 11}
+          {pageStart} - {pageStart + 11}
         </span>
         <Button
           type="button"

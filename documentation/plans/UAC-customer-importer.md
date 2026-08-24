@@ -191,12 +191,12 @@ Existing codes carry most of it. Reused: `CREATED`, `UPDATED`, `UNCHANGED`,
   already on this code". Genuinely new - `ALREADY_EXISTS` and `DUPLICATE_LINE` both assert the
   row was *not* written, which is the opposite. Rides on `OUTCOME_CREATED`, counts as success.
 - **AC-6.2** No other new codes without saying why here. Two more were added, with reasons:
-  - **`MARKET_SEGMENT_NOT_RECOGNISED`**, label "Imported; market segment not recognised, left
+ - **`MARKET_SEGMENT_NOT_RECOGNISED`**, label "Imported; market segment not recognised, left
     unset". Reason: the segment decides SCM demand class and fulfilment priority, and a
     file-level `unknown_market_segments` list no screen renders is not a trace - 40 customers
     could land with a NULL segment under a job reporting "40 created, no warnings". Rides on
     whichever success outcome the row earned (created / updated / unchanged); never a skip.
-  - **`DUPLICATE_IN_FILE`**, label "The same row appears earlier in this file". Reason:
+ - **`DUPLICATE_IN_FILE`**, label "The same row appears earlier in this file". Reason:
     `DUPLICATE_LINE` was reused for this at first, but its shared label reads "Identical line
     already exists on this order" and a customer job has no order. The GRN and SPO importers
     depend on that existing meaning, so the label could not simply be reworded.

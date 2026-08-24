@@ -33,7 +33,7 @@ class AIAssistantConfig(Base):
     temperature: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     api_key_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Dedicated Anthropic key — the SCM M5 market web search needs Anthropic while
+    # Dedicated Anthropic key - the SCM M5 market web search needs Anthropic while
     # the assistant/explainer runs on the primary (OpenAI) key. DB-configurable.
     anthropic_api_key_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Dedicated Gemini key - the chatbot media image lane can run on Gemini while
@@ -140,7 +140,7 @@ class AIAssistantUsageLog(Base):
     tool_calls_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     response_time_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     was_answered: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
-    # Portal contacts (no users.id) — internal respond_contacts.id (Text PK), NOT respond_io_id.
+    # Portal contacts (no users.id) - internal respond_contacts.id (Text PK), NOT respond_io_id.
     contact_id: Mapped[str | None] = mapped_column(
         Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True
     )
@@ -209,7 +209,7 @@ class AIAssistantUnansweredQuery(Base):
 
 
 class AIAssistantTrace(Base):
-    """M2 — one root trace per assistant turn (OTel GenAI-shaped).
+    """M2 - one root trace per assistant turn (OTel GenAI-shaped).
 
     Root of the span tree. Field names mirror `gen_ai.*` semconv so a future
     OTLP export is a straight field-map (PLAN Q1). Retention swept by the
@@ -232,7 +232,7 @@ class AIAssistantTrace(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
     total_tokens_in: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     total_tokens_out: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    total_cost: Mapped[float | None] = mapped_column(Text, nullable=True)  # optional $ stretch (Q8) — kept as text, unused in M2
+    total_cost: Mapped[float | None] = mapped_column(Text, nullable=True)  # optional $ stretch (Q8) - kept as text, unused in M2
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="ok")  # ok | error
     flagged: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")  # thumbs-down / kept-for-review (Q2)
     env: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -249,7 +249,7 @@ class AIAssistantTrace(Base):
 
 
 class AIAssistantSpan(Base):
-    """M2 — one span per pipeline node under a trace (tree via parent_id)."""
+    """M2 - one span per pipeline node under a trace (tree via parent_id)."""
 
     __tablename__ = "ai_assistant_spans"
 

@@ -3,8 +3,8 @@
 Covers UAC OBS-S1-17 .. OBS-S1-20.
 
 Clicking a specific cause on the dashboard has to land on exactly the rows that
-produced that cause's count. Channel + status alone cannot do that — one channel
-mixes several faults — so the list gains `status_code` and `error_contains`.
+produced that cause's count. Channel + status alone cannot do that - one channel
+mixes several faults - so the list gains `status_code` and `error_contains`.
 
 `error_contains` is a LIKE, which is why the wildcard-escaping test below is not
 theoretical: real error messages contain `%` (percent-encoded urls) and `_`
@@ -94,7 +94,7 @@ def test_like_wildcards_in_the_term_are_escaped(db):
 
 
 def test_underscore_wildcard_is_escaped(db):
-    """`_` matches any single char in LIKE — an identifier like `sla_daily` would
+    """`_` matches any single char in LIKE - an identifier like `sla_daily` would
     otherwise also match `sla-daily`."""
     _log(db, error="use case 'sla_daily_summary'")
     _log(db, error="use case 'slaXdailyXsummary'")
@@ -121,7 +121,7 @@ def test_card_count_equals_link_count(db):
     """The invariant the whole drill-down rests on: the number rendered on the
     health card must equal the number of rows its link lands on.
 
-    Seeds the exact live shape that broke it — two 401 faults on the same channel
+    Seeds the exact live shape that broke it - two 401 faults on the same channel
     differing only by endpoint, where the longest single stable substring of one
     is also a substring of the other.
     """

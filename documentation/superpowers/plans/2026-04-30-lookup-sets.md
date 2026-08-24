@@ -58,7 +58,7 @@
 
 ---
 
-## Phase 1 — Backend foundations
+## Phase 1 - Backend foundations
 
 ### Task 1: Permission registry entries
 
@@ -115,7 +115,7 @@ git commit -m "rbac: register master_data.lookup_sets permissions"
 
 ---
 
-### Task 2: Alembic migration — tables + indexes + permission sync
+### Task 2: Alembic migration - tables + indexes + permission sync
 
 **Files:**
 - Create: `sorento_crm_backend/alembic/versions/157_lookup_sets.py`
@@ -1662,7 +1662,7 @@ def test_listener_rejects_unknown(db_session, _reg):
     assert e.value.status_code == 422
 ```
 
-(Need migration for `fake_lookup_target` table — for the test, use the SQLAlchemy `create_all` hook in `tests/conftest.py`. If conftest doesn't auto-create per-test tables, register the test model and call `Base.metadata.create_all(bind=engine, tables=[FakeLookupTarget.__table__])` in the fixture.)
+(Need migration for `fake_lookup_target` table - for the test, use the SQLAlchemy `create_all` hook in `tests/conftest.py`. If conftest doesn't auto-create per-test tables, register the test model and call `Base.metadata.create_all(bind=engine, tables=[FakeLookupTarget.__table__])` in the fixture.)
 
 - [ ] **Step 2: Run failing**
 
@@ -1744,7 +1744,7 @@ git commit -m "services: SQLAlchemy lookup write enforcement listener"
 
 ---
 
-### Task 13: Admin CRUD — sets
+### Task 13: Admin CRUD - sets
 
 **Files:**
 - Create: `sorento_crm_backend/app/api/v1/master_data/lookup_sets.py`
@@ -2110,7 +2110,7 @@ Expected: 404 on `/api/v1/lookup/...`.
 
 ```python
 # app/api/v1/lookup.py
-"""Public lookup endpoints — used by FE dropdowns and n8n MCP tools."""
+"""Public lookup endpoints - used by FE dropdowns and n8n MCP tools."""
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -2166,7 +2166,7 @@ from app.api.v1 import lookup as lookup_router
 api_router.include_router(lookup_router.router, prefix="/lookup", tags=["lookup"])
 ```
 
-(Match the actual router name used in that file — adjust if it's `router` instead of `api_router`.)
+(Match the actual router name used in that file - adjust if it's `router` instead of `api_router`.)
 
 - [ ] **Step 5: Run pass**
 
@@ -2185,7 +2185,7 @@ git commit -m "api: public /lookup/{set_key}/options and /lookup/resolve"
 
 ---
 
-## Phase 2 — Frontend
+## Phase 2 - Frontend
 
 ### Task 16: TypeScript types
 
@@ -2787,7 +2787,7 @@ export default function LookupSetDeleteDialog({
 
 ```bash
 npm run dev
-# Open http://localhost:3000/master-data-management/lookup-sets — empty list with "Add lookup set" button.
+# Open http://localhost:3000/master-data-management/lookup-sets - empty list with "Add lookup set" button.
 ```
 
 - [ ] **Step 6: Commit**
@@ -2870,7 +2870,7 @@ export default function LookupSetFormDialog({
     const elig = (eligibility ?? []).find((e) => e.table_name === tableName && e.column_name === columnName);
     if (!elig) return;
     if (!setKey) setSetKey(slugify(`${tableName}_${columnName}`));
-    if (!name) setName(`${elig.table_label} — ${elig.column_label}`);
+    if (!name) setName(`${elig.table_label} - ${elig.column_label}`);
   }, [tableName, columnName, eligibility, isEdit, setKey, name]);
 
   async function submit() {
@@ -2923,7 +2923,7 @@ export default function LookupSetFormDialog({
               </div>
               <div className="flex items-center gap-2">
                 <Switch checked={skipBinding} onCheckedChange={setSkipBinding} />
-                <Label>Skip — create unbound set</Label>
+                <Label>Skip - create unbound set</Label>
               </div>
             </>
           )}
@@ -3586,7 +3586,7 @@ git commit -m "fe: test-resolve card on lookup set detail page"
 
 ---
 
-## Phase 3 — MCP
+## Phase 3 - MCP
 
 ### Task 26: Add MCP catalog entries for lookup tools
 
@@ -3633,7 +3633,7 @@ Insert into `CATALOG` tuple, after the master-data block:
         "crm_lookup_resolve",
         "Resolve a raw user keyword into the canonical option value for a set. "
         "Body: {set_key, raw, locale?}. Returns {value,label,matched_keyword,match_type,score} or 404. "
-        "Use this whenever a user gives a free-text value for a CRM dropdown field — translate first, "
+        "Use this whenever a user gives a free-text value for a CRM dropdown field - translate first, "
         "then send the canonical value to the matching write API.",
         "/api/v1/lookup/resolve",
         method="POST",
@@ -3660,7 +3660,7 @@ git commit -m "mcp: expose lookup options + resolve tools to n8n"
 
 ---
 
-## Phase 4 — Integration smoke
+## Phase 4 - Integration smoke
 
 ### Task 27: End-to-end happy path
 
@@ -3719,7 +3719,7 @@ curl -X POST http://localhost:8000/api/v1/lookup/resolve \
   -H "Content-Type: application/json" -H "Authorization: Bearer <token>" \
   -d '{"set_key":"complaints_priority","raw":"urgent"}'
 # returns {"value":"high",...}
-# now use "high" in the write — succeeds.
+# now use "high" in the write - succeeds.
 ```
 
 - [ ] **Step 8: Roll back the smoke registration if not desired**
@@ -3746,4 +3746,4 @@ git commit -m "registrations: complaint priority adopts lookup set"
 - FE binding-driven create → Task 20 reads eligibility, auto-fills set_key/name; Task 24 mirrors the picker for adding bindings later.
 - n8n integration → Task 15 public endpoints; Task 26 MCP catalog entries.
 - Permission slugs match between Task 1 (`add/edit/delete/view`) and Task 13 endpoints.
-- All "TODO/TBD" placeholders absent — code is concrete.
+- All "TODO/TBD" placeholders absent - code is concrete.

@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 if (!window.matchMedia) {
@@ -415,7 +415,9 @@ describe('ProformaUploadDialog - currency, the last resort (AC-P3.1)', () => {
     openDialog();
     await chooseSupplier();
     const file = pickFile();
-    fireEvent.change(currencyField(), { target: { value: 'usd' } });
+    await act(async () => {
+      fireEvent.change(currencyField(), { target: { value: 'usd' } });
+    });
 
     fireEvent.click(testButton());
     await waitFor(() =>

@@ -1,4 +1,4 @@
-"""Dealer Kit page lifecycle — immutable versions, movable labels.
+"""Dealer Kit page lifecycle - immutable versions, movable labels.
 
 Postgres only, per the hard rule: `schema="dealer_kit"` models cannot be created
 on sqlite at all, so a sqlite run here would prove nothing.

@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
  *
  * Replaces a comma-separated text field. The old control asked people to hold the
  * whole list in their head as one string and gave no way to remove one item without
- * re-reading the punctuation — and a trailing comma silently created an empty word.
+ * re-reading the punctuation - and a trailing comma silently created an empty word.
  *
  * `muted` items render quieter (something shipped, removable but not yours).
  * `suppressed` items are shipped entries this business has taken away: they render

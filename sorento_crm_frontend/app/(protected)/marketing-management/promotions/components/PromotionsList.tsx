@@ -51,7 +51,7 @@ export default function PromotionsList() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  // Deep link from an expiry-reminder email — restrict the list to exactly the
+  // Deep link from an expiry-reminder email - restrict the list to exactly the
   // promotions stamped in that batch.
   const expiryNotifyBatchId = searchParams.get('expiry_notify_batch_id') || undefined;
   const compilePdf = useCompilePromotionsPdf();
@@ -307,7 +307,7 @@ export default function PromotionsList() {
     const promotionId = row.id;
     // Carry the active list query (search/sort/filters) into the detail URL so the
     // detail page's prev/next pager walks the same filtered+sorted set. Advanced
-    // (list-query) filters are not threaded — the neighbours endpoint mirrors the
+    // (list-query) filters are not threaded - the neighbours endpoint mirrors the
     // standard list GET params only.
     const search = buildDetailSearch(
       {
@@ -354,7 +354,7 @@ export default function PromotionsList() {
     .map((r) => r.original);
 
   const handleCompilePdf = () => {
-    // Selected rows in the order they appear in the grid — the merged PDF
+    // Selected rows in the order they appear in the grid - the merged PDF
     // preserves this ordering.
     const ids = table
       .getRowModel()

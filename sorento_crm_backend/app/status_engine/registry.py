@@ -1,4 +1,4 @@
-"""Status-entity registry — which tables ride the engine.
+"""Status-entity registry - which tables ride the engine.
 
 Code-side, like the permissions CSV: a table joins the engine by registering here
 with a flat ``entity_type`` and a ``status_id`` column. Core registers nothing;

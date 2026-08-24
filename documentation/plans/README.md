@@ -1,4 +1,4 @@
-# Plans — structure & conventions
+# Plans - structure & conventions
 
 Every non-trivial feature is planned here before code. Structure adopted from the FoundryX
 shared-service model, adapted for Sorento's continuous (non-sprint) delivery.
@@ -11,9 +11,9 @@ For each feature, in this order:
    cluster plans use) - the **UAC, written FIRST**. Independently-verifiable
    Given/When/Then list, per-AC id (`AC-<NN>`), grouped by phase, tagged `[BE]` / `[FE]` /
    `[E2E]` / `[T]`. This is the **contract** the feature must satisfy.
-2. **`PLAN-<slug>.md`** — the design that *fulfils* the UAC. Carries a `Status:` line kept current
+2. **`PLAN-<slug>.md`** - the design that *fulfils* the UAC. Carries a `Status:` line kept current
    as work progresses, a decision log, and the phase breakdown.
-3. **`<slug>-test-report.md`** — the Phase-2 verification, **keyed back to the UAC ids**
+3. **`<slug>-test-report.md`** - the Phase-2 verification, **keyed back to the UAC ids**
    (PASS / FAIL / DEFERRED per id). Real-click Playwright + pytest + vitest outcomes.
 
 A plan does not ship without its UAC file. A slice is "done" only when its UAC ids pass the
@@ -36,7 +36,7 @@ documentation/plans/
 `inventory/`, `forms/`, `integrations/`, `system-health/`, `portal/`, `master-data/`.
 
 **Going-forward only.** The ~78 existing flat `PLAN-*.md` at the `plans/` root stay where they
-are — they are historical and shipped. No retro-UAC. New work uses the triple in a cluster folder.
+are - they are historical and shipped. No retro-UAC. New work uses the triple in a cluster folder.
 
 ## Where things link
 

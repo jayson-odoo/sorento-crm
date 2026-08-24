@@ -38,7 +38,7 @@ router = APIRouter()
 def get_incoming_for_product(
     entities: Optional[list[str]] = Query(
         None,
-        description="DEPRECATED — free-text entity bag. Prefer `product_ids`.",
+        description="DEPRECATED - free-text entity bag. Prefer `product_ids`.",
     ),
     product_ids: Optional[list[str]] = Query(
         None,
@@ -117,7 +117,7 @@ def get_incoming_for_product(
 def get_incoming_shipments(
     entities: Optional[list[str]] = Query(
         None,
-        description="DEPRECATED — free-text entity bag. Prefer `shipment_ids` / `supplier_ids`.",
+        description="DEPRECATED - free-text entity bag. Prefer `shipment_ids` / `supplier_ids`.",
     ),
     shipment_ids: Optional[list[str]] = Query(
         None,
@@ -226,13 +226,13 @@ def get_incoming_list(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """Unified incoming-stock list — shipment-rooted with nested product lines.
+    """Unified incoming-stock list - shipment-rooted with nested product lines.
 
     One MCP tool covers both "any incoming for product X?" (pass `product_ids`)
     and "what is arriving this month / from supplier Y?" (pass `eta_*` /
     `supplier_ids` / `shipment_ids`). Each shipment row carries its still-incoming
     product lines with per-warehouse allocations and the packing-list attachment.
-    No aggregate totals — callers sum the line quantities themselves. At least one
+    No aggregate totals - callers sum the line quantities themselves. At least one
     narrowing filter is required.
     """
     # product_ids may be UUIDs or product_codes, csv-joined or repeated; flatten
@@ -320,7 +320,7 @@ def get_incoming_shipment_attachment(
 def get_incoming_stock_grn(
     entities: Optional[list[str]] = Query(
         None,
-        description="DEPRECATED — free-text entity bag. Prefer `shipment_ids` / `product_ids`.",
+        description="DEPRECATED - free-text entity bag. Prefer `shipment_ids` / `product_ids`.",
     ),
     shipment_ids: Optional[list[str]] = Query(
         None,

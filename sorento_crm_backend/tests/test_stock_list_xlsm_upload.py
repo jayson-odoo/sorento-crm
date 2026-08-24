@@ -17,14 +17,14 @@ from fastapi.testclient import TestClient
 from openpyxl import Workbook, load_workbook
 from sqlalchemy.orm import Session
 
-# MUST be first app import — resolves circular-import in app.modules.runtime.guards
+# MUST be first app import - resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 from tests._pg_fixture import blank_session
 
 
 _USER_ID = "130c548f-048f-53b2-97a6-3a54676bea77"
 _ROLE_ID = "7c50d6db-8dce-555a-85a2-86cf7756f33f"
-# NB: must contain letters — sqlite's NUMERIC affinity on the UUID column
+# NB: must contain letters - sqlite's NUMERIC affinity on the UUID column
 # coerces an all-digit uuid string to float and breaks row loading.
 _TYPE_ID = "4b8bd2aa-c3a9-5b0d-b02a-4538c4bd2e04"
 XLSM_MIME = "application/vnd.ms-excel.sheet.macroEnabled.12"
@@ -244,7 +244,7 @@ def test_generic_create_attachment_xlsm_without_template_is_422(client):
 
 
 def test_generic_create_attachment_plain_file_still_uploads(client):
-    """A plain (non-xlsm, non-image) file skips every conversion branch — this
+    """A plain (non-xlsm, non-image) file skips every conversion branch - this
     pins that offloading upload_file/hash/etc onto a thread (fix for the worker
     -event-loop-blocking incident) didn't change behaviour for the common case."""
     c, db, backend = client

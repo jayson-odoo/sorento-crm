@@ -4,7 +4,7 @@
  *
  * `.xlsx`/`.xls` keep first-sheet behavior; `.xlsm` prefers the "Template"
  * sheet, accepts a single-sheet workbook, and rejects multi-sheet workbooks
- * without a Template sheet — mirroring the backend 422.
+ * without a Template sheet - mirroring the backend 422.
  */
 import { describe, expect, it } from 'vitest';
 

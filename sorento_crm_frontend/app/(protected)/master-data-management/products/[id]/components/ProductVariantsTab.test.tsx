@@ -97,7 +97,7 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
-describe('ProductVariantsTab — states', () => {
+describe('ProductVariantsTab - states', () => {
   it('base product: shows an "Add variant" CTA, no Unlink / Manual badge / Reset', () => {
     render(
       <ProductVariantsTab
@@ -191,7 +191,7 @@ describe('ProductVariantsTab — states', () => {
   });
 });
 
-describe('ProductVariantsTab — actions fire the right hook', () => {
+describe('ProductVariantsTab - actions fire the right hook', () => {
   it('set-parent picker confirm → setVariantParent(productId, parentId)', () => {
     render(
       <ProductVariantsTab
@@ -241,7 +241,7 @@ describe('ProductVariantsTab — actions fire the right hook', () => {
   });
 });
 
-describe('ProductVariantsTab — destructive actions require an AlertDialog confirm', () => {
+describe('ProductVariantsTab - destructive actions require an AlertDialog confirm', () => {
   it('unlink: dialog appears before the mutation fires → unlinkVariant(productId, parentId)', () => {
     render(
       <ProductVariantsTab
@@ -254,7 +254,7 @@ describe('ProductVariantsTab — destructive actions require an AlertDialog conf
     );
 
     fireEvent.click(screen.getByRole('button', { name: /^unlink$/i }));
-    // Confirmation is required — the mutation must NOT fire on the first click.
+    // Confirmation is required - the mutation must NOT fire on the first click.
     expect(unlinkMutate).not.toHaveBeenCalled();
 
     const dialog = screen.getByRole('alertdialog');

@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 
 export const Packaging = () => {
-  const [packageName, setPackageName] = useState('Mike Anderson – Medium Box');
+  const [packageName, setPackageName] = useState('Mike Anderson - Medium Box');
   const [totalWeight, setTotalWeight] = useState('2.1');
   const [length, setLength] = useState('48');
   const [width, setWidth] = useState('36');

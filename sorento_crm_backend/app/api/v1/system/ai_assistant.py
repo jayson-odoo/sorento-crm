@@ -594,14 +594,14 @@ def usage_top_contacts(
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
     limit: int = Query(10, ge=1, le=100),
-    feature: Optional[str] = Query("ai_extract", description="Default scopes to ai_extract — pass empty for all."),
+    feature: Optional[str] = Query("ai_extract", description="Default scopes to ai_extract - pass empty for all."),
     _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
     db: Session = Depends(get_db),
 ):
     """Top portal contacts by token spend.
 
     Joins respond_contacts so admins can see phone number + name. Excludes
-    rows without a contact_id (those are user-scoped — see top-users).
+    rows without a contact_id (those are user-scoped - see top-users).
     Defaults to feature='ai_extract' since that's the only writer that
     populates contact_id today.
     """
@@ -688,7 +688,7 @@ def usage_recent_queries(
             )
             if user_msg:
                 preview = (user_msg[0] or "")[:120]
-        # AI extract rows have no conversation/message — surface the form_key
+        # AI extract rows have no conversation/message - surface the form_key
         # as the preview so the table is still informative.
         if not preview and log.form_key:
             preview = f"[{log.form_key}]"
@@ -782,7 +782,7 @@ def usage_query_trace(
     _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
     db: Session = Depends(get_db),
 ):
-    """M2 — full per-turn trace (root + ordered span tree) for an assistant
+    """M2 - full per-turn trace (root + ordered span tree) for an assistant
     message. Admin-only. 404 when the turn has no trace (e.g. legacy rows or a
     swept/expired trace)."""
     trace = (

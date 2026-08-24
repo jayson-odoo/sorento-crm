@@ -7,7 +7,7 @@ import type { ScheduledTask, ScheduledTaskUpdateBody } from '../types/scheduledT
  * Metadata semantics are the backend's, and they are easy to get wrong:
  * `update_task` **merges** the submitted map into the stored one and removes a key
  * only when its value is explicitly `null`. Omitting a key leaves the stored value
- * untouched — so clearing the grace override requires sending `grace_percent: null`,
+ * untouched - so clearing the grace override requires sending `grace_percent: null`,
  * not an object without the key.
  */
 export function mapFormToUpdateBody(

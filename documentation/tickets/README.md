@@ -12,7 +12,7 @@ Source ticket bodies live in the in-CRM ticketing system at `/ticket-management/
 | TCK-2026-000018 | n8n SLA routing: technical drawing → marketing_product | low | draft | [TCK-2026-000018.md](./TCK-2026-000018.md) |
 | TCK-2026-000019 | Packing list + promotion email: warn on unknown products | high | draft | [TCK-2026-000019.md](./TCK-2026-000019.md) |
 | TCK-2026-000020 | Attachments: dup-name + uniform replace-with-webhook-retrigger | high | draft | [TCK-2026-000020.md](./TCK-2026-000020.md) |
-| TCK-2026-000021 | (DROPPED — bidirectional SPO↔packing-list matching) | — | deleted | — |
+| TCK-2026-000021 | (DROPPED - bidirectional SPO↔packing-list matching) | - | deleted | - |
 | TCK-2026-000022 | `.xlsm` intake: strip macros, save cleaned `.xlsx` | medium | draft | [TCK-2026-000022.md](./TCK-2026-000022.md) |
 | TCK-2026-000023 | Orders: `delivery_time` → `pickup_time` rename + MCP trim | high | draft | [TCK-2026-000023.md](./TCK-2026-000023.md) |
 | TCK-2026-000024 | Orders MCP: customer + product wildcard via embedding | medium | draft | [TCK-2026-000024.md](./TCK-2026-000024.md) |
@@ -29,7 +29,7 @@ Source ticket bodies live in the in-CRM ticketing system at `/ticket-management/
 
 ## Acceptance criteria (loop-validated)
 
-Testable UAC for TCK-28..33 live in [`UAC/`](./UAC/README.md) — functional / business / data / RBAC / UX / scalability criteria, each with a `Validate:` step (pytest / curl / Playwright MCP / psql). The `/loop` executing these plans must validate development against them: a criterion is `[x]` only when its validation passes; ticket Done = all criteria green + three-phase tests committed.
+Testable UAC for TCK-28..33 live in [`UAC/`](./UAC/README.md) - functional / business / data / RBAC / UX / scalability criteria, each with a `Validate:` step (pytest / curl / Playwright MCP / psql). The `/loop` executing these plans must validate development against them: a criterion is `[x]` only when its validation passes; ticket Done = all criteria green + three-phase tests committed.
 
 ## SLA / notifications epic (directors' session 2026-06-17)
 
@@ -50,8 +50,8 @@ Recommended order: **31 → (28, 32, 33 in parallel) → 29 → 30**.
 
 ```
 26 (customer + transporter embedding)
-  ├── 17 (incoming stock fuzzy product search — product already embedded, can ship without 26)
-  └── 24 (orders fuzzy customer/product/transporter — needs 26 for transporter)
+  ├── 17 (incoming stock fuzzy product search - product already embedded, can ship without 26)
+  └── 24 (orders fuzzy customer/product/transporter - needs 26 for transporter)
 
 20 standalone (attachments + uniform replace-with-webhook-retrigger)
 21 DROPPED
@@ -66,4 +66,4 @@ Recommended order: **31 → (28, 32, 33 in parallel) → 29 → 30**.
 Each spec is hand-off ready: open `TCK-2026-000XXX.md` and the agent has goal, files, step-by-step, acceptance, and verification. Spin up an agent per ticket and they should not collide on shared files except where listed:
 
 - 17 + 24 + 25 share a fuzzy-resolver helper (factor in `app/services/fuzzy_resolver.py`); whichever ticket lands first owns the helper, others import.
-- 15 + 16 + 23 + 25 + 27 all touch `sorento_crm_mcp/sorento_crm_mcp/server.py` and `catalog.py` — straightforward merges; coordinate on the shared `_sanitize_tool_response()` dispatch table.
+- 15 + 16 + 23 + 25 + 27 all touch `sorento_crm_mcp/sorento_crm_mcp/server.py` and `catalog.py` - straightforward merges; coordinate on the shared `_sanitize_tool_response()` dispatch table.

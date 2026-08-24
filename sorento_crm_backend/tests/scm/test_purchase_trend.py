@@ -209,7 +209,7 @@ def test_a_purchase_order_under_a_different_company_is_never_counted():
     """The production shape: two companies can hold a purchase order for what is, by
     product id, the SAME row in `pairs` (the run's own product). Company A's read must
     never pick up B's purchase order lines, even though the join key (product_id) matches
-    - only `po.company_id` in the caller's scope may contribute to the trend or the lines.
+  - only `po.company_id` in the caller's scope may contribute to the trend or the lines.
     """
     from app.models.base import set_company_scope
     from app.models.company import Company

@@ -71,7 +71,7 @@ class WorkflowFormVersion(Base):
     __table_args__ = (
         # NOTE: definition_id already declares index=True above, which emits an
         # index named ix_workflow_form_versions_definition_id. Do NOT redeclare
-        # it here — a second Index with the same name makes Base.metadata.create_all
+        # it here - a second Index with the same name makes Base.metadata.create_all
         # fail ("index ... already exists") on fresh sqlite binds in tests.
         Index(
             "uq_workflow_form_versions_def_ver",

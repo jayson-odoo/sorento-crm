@@ -1,7 +1,7 @@
 """Tests for the Google-Drive dup-name suffix helper used by the attachment
 upload collision flow (TCK-2026-000020).
 
-The helper is pure-function — it does not touch the DB, only chooses the next
+The helper is pure-function - it does not touch the DB, only chooses the next
 candidate filename. The DB-aware ``_next_copy_name`` loop is exercised via
 manual verification (see the ticket's curl block) because it would otherwise
 require standing up the full attachments / directories schema in a test DB.

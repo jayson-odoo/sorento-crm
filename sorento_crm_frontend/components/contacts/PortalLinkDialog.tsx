@@ -81,7 +81,7 @@ export default function PortalLinkDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Portal link {contactLabel ? `— ${contactLabel}` : ''}</DialogTitle>
+          <DialogTitle>Portal link {contactLabel ? ` -  ${contactLabel}` : ''}</DialogTitle>
         </DialogHeader>
 
         {linkMutation.isPending && (

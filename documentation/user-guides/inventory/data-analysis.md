@@ -1,14 +1,14 @@
-# Inventory — Data analysis for the AI assistant
+# Inventory - Data analysis for the AI assistant
 
 Reference for answering natural-language questions about inventory. It maps each entity to its fields, filters, and date columns, and gives example questions per entity.
 
-> **Numerics are answered via SQL, not embeddings.** Stock and order quantities are deliberately **not** written to the vector store — they change too often and must be exact. Answer "how much", "below X", "between dates", "expiring in N days" by querying the live tables / list endpoints, never from semantic recall. Use embeddings only for fuzzy text (product names, notes), then resolve to exact rows.
+> **Numerics are answered via SQL, not embeddings.** Stock and order quantities are deliberately **not** written to the vector store - they change too often and must be exact. Answer "how much", "below X", "between dates", "expiring in N days" by querying the live tables / list endpoints, never from semantic recall. Use embeddings only for fuzzy text (product names, notes), then resolve to exact rows.
 
 The five entities and their backing tables: **Warehouse** (`warehouses`), **Storage Zone** (`storage_zones`), **Stock** balance (`stock`), **Stock Batch** (`stock_batches`), **Stock Ledger** entry (`stock_ledger`).
 
 ---
 
-## Warehouse — `warehouses`
+## Warehouse - `warehouses`
 
 A storage location. Everything else hangs off a warehouse.
 
@@ -30,7 +30,7 @@ A storage location. Everything else hangs off a warehouse.
 
 ---
 
-## Storage Zone — `storage_zones`
+## Storage Zone - `storage_zones`
 
 A named area inside a warehouse (shelf / rack / bin / pallet) with a capacity.
 
@@ -51,19 +51,19 @@ A named area inside a warehouse (shelf / rack / bin / pallet) with a capacity.
 
 ---
 
-## Stock balance — `stock`
+## Stock balance - `stock`
 
 The live on-hand position. **One row per `(product, warehouse)`** (enforced unique). This is the table for "how much of product X do we have".
 
 **Quantity fields:**
 
-* `quantity_on_hand` — physical stock (UI **Total**).
-* `quantity_reserved` — allocated to orders (UI **Reserved**).
-* `quantity_available` — **generated column** = `quantity_on_hand − quantity_reserved` (UI **Available**). Filter/threshold on this for "available" questions.
-* `quantity_damaged` — damaged units (UI **Damaged**; shown on the detail page only).
-* `reorder_point` — threshold driving the status.
+* `quantity_on_hand` - physical stock (UI **Total**).
+* `quantity_reserved` - allocated to orders (UI **Reserved**).
+* `quantity_available` - **generated column** = `quantity_on_hand − quantity_reserved` (UI **Available**). Filter/threshold on this for "available" questions.
+* `quantity_damaged` - damaged units (UI **Damaged**; shown on the detail page only).
+* `reorder_point` - threshold driving the status.
 
-**Computed `status`** (not stored — derived from `quantity_available` vs. the product's reorder level):
+**Computed `status`** (not stored - derived from `quantity_available` vs. the product's reorder level):
 `critical` (available ≤ 0) · `low` (0 < available < reorder level) · `normal` · `overstock` (available > reorder level × 2).
 
 **Other fields:** `id`, `product_id` (FK → products), `warehouse_id` (FK → warehouses), `zone_id`, `last_count_date`, `created_at`, `updated_at`.
@@ -84,11 +84,11 @@ The live on-hand position. **One row per `(product, warehouse)`** (enforced uniq
 * "What's overstocked?" (`status=overstock`)
 * "Total available units of category Beverages." (filter via `category_name`, sum `available`)
 
-> "Current on-hand by zone" is **not** directly answerable from the balance table — `stock.zone_id` is optional and rarely populated; zone-level quantity is not tracked on the balance. Answer at warehouse granularity and say so, or fall back to batches if the question is batch-specific.
+> "Current on-hand by zone" is **not** directly answerable from the balance table - `stock.zone_id` is optional and rarely populated; zone-level quantity is not tracked on the balance. Answer at warehouse granularity and say so, or fall back to batches if the question is batch-specific.
 
 ---
 
-## Stock Batch — `stock_batches`
+## Stock Batch - `stock_batches`
 
 A lot of one product in one warehouse, with dates and a lifecycle status. The table for expiry and lot questions.
 
@@ -107,13 +107,13 @@ A lot of one product in one warehouse, with dates and a lifecycle status. The ta
 * "Batches of product X by expiry date, soonest first."
 * "How many units are in available batches for warehouse WH-001?" (`status=AVAILABLE`, sum `quantity`)
 * "What was received this month?" (filter `received_date`)
-* "Show batch ABC-123 — its quantity, dates, and status."
+* "Show batch ABC-123 - its quantity, dates, and status."
 * "Total quantity in reserved batches for product Y."
 * "Any batches manufactured before 2024 still in stock?"
 
 ---
 
-## Stock Ledger entry — `stock_ledger`
+## Stock Ledger entry - `stock_ledger`
 
 Append-only audit trail of quantity changes. The table for "what moved / history / who changed it".
 
@@ -146,6 +146,6 @@ Append-only audit trail of quantity changes. The table for "what moved / history
 
 ## See also
 
-* [Inventory — Understand stock levels](understand-stock-levels.md)
-* [Inventory — Stock batches and expiry](stock-batches-and-expiry.md)
-* [Inventory — Read the stock ledger](read-the-stock-ledger.md)
+* [Inventory - Understand stock levels](understand-stock-levels.md)
+* [Inventory - Stock batches and expiry](stock-batches-and-expiry.md)
+* [Inventory - Read the stock ledger](read-the-stock-ledger.md)

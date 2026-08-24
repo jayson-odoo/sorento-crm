@@ -1,13 +1,13 @@
-"""SCM purchase-order service — list/read + the M4 Slice B draft→confirm→GR flow.
+"""SCM purchase-order service - list/read + the M4 Slice B draft→confirm→GR flow.
 
 The PO is the inbound-supply record feeding on-order / incoming into the net
 position views. M1 was read-only; M4 Slice B adds:
 
-  * ``bulk_confirm`` — flips ``draft_recommendation`` → ``active`` and assigns the
+  * ``bulk_confirm`` - flips ``draft_recommendation`` → ``active`` and assigns the
     CANONICAL ``PO-{year}/{month:02d}-####`` number via the shared ``NumberingService``
     (the same rule that stamps SO/PO numbers, mig 274). Only then does the PO count as
-    on-order (``scm.on_order_v`` — M4-D5/D6). Idempotent: non-draft ids are skipped.
-  * ``create_gr`` — creates a goods receipt (``picking_headers`` /
+    on-order (``scm.on_order_v`` - M4-D5/D6). Idempotent: non-draft ids are skipped.
+  * ``create_gr`` - creates a goods receipt (``picking_headers`` /
     ``picking_lines`` with ``picking_type='goods_received'``) from an active/partial PO,
     stamping ``qty_received`` onto the PO lines (M4-D6).
 

@@ -2,7 +2,7 @@
 
 `conversation_sla_tracking.source_entity_id` and `user_downloads.source_entity_id`
 are polymorphic (they point at whichever form/entity a tracker or download is
-about), so they carry no FK — but every value they hold is a uuid, and now that
+about), so they carry no FK - but every value they hold is a uuid, and now that
 every domain table has a uuid `id` (see 298 + the schema-guard test) every value
 they will EVER hold is a uuid. Typing them `uuid` makes Postgres reject a
 `uuid = text` mismatch at write time instead of silently accepting it.

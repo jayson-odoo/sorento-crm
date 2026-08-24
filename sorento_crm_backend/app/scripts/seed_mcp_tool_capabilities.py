@@ -42,9 +42,9 @@ def _sync_enabled_tools(db) -> list[tuple[str, int, int, int]]:
     """Sync ai_assistant_configs.enabled_tools to current TOOL_INTENTS, minus the
     embedding skip set so assistants drop tools we hide from the RAG too.
 
-    - Adds missing catalogued tools.
-    - Removes tools no longer present in TOOL_INTENTS (e.g. retired tools).
-    - Removes tools in `_EMBEDDING_SKIP_TOOLS` even if a ToolIntent still exists.
+  - Adds missing catalogued tools.
+  - Removes tools no longer present in TOOL_INTENTS (e.g. retired tools).
+  - Removes tools in `_EMBEDDING_SKIP_TOOLS` even if a ToolIntent still exists.
     """
     catalog_set = set(TOOL_INTENTS.keys()) - set(_EMBEDDING_SKIP_TOOLS)
     rows = db.execute(text("SELECT id, enabled_tools FROM ai_assistant_configs")).all()

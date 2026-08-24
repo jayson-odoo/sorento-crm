@@ -1,12 +1,12 @@
 """Companies admin + my-context/switch endpoint tests (multi-company isolation).
 
-Phase-2 route-layer coverage for app/api/v1/system/companies.py — the backend half
+Phase-2 route-layer coverage for app/api/v1/system/companies.py - the backend half
 of UAC groups A/B:
-  - AC-A: list (superadmin sees ALL; a regular user sees only granted).
-  - AC-A4: create → 403 for a non-superadmin.
-  - AC-B4/B5: switch validates the grant (403 when not granted) + persists
+ - AC-A: list (superadmin sees ALL; a regular user sees only granted).
+ - AC-A4: create → 403 for a non-superadmin.
+ - AC-B4/B5: switch validates the grant (403 when not granted) + persists
     users.last_active_company_id.
-  - AC-B8: my-context shape ({ companies, active_company_id, last_active_company_id }).
+ - AC-B8: my-context shape ({ companies, active_company_id, last_active_company_id }).
 
 Runs against an in-memory sqlite bind (CLAUDE.md "sqlite pytest fixtures" gotcha):
 pg ``UUID(as_uuid=False)`` works as-is; JSONB/ARRAY columns are swapped to JSON.
@@ -85,7 +85,7 @@ def seed(db):
 
 
 # --------------------------------------------------------------------------- #
-# TestClient wiring — injected principal + patched role slugs                  #
+# TestClient wiring - injected principal + patched role slugs                  #
 # --------------------------------------------------------------------------- #
 _ACTOR: dict = {"id": None}
 
@@ -122,7 +122,7 @@ def _as(user_id: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# AC-A — list                                                                  #
+# AC-A - list                                                                  #
 # --------------------------------------------------------------------------- #
 def test_list_superadmin_sees_all(client, seed):
     _as(seed["superadmin"])
@@ -147,7 +147,7 @@ def test_list_regular_user_sees_only_granted(client, seed):
 
 
 # --------------------------------------------------------------------------- #
-# AC-A4 — create authorization                                                 #
+# AC-A4 - create authorization                                                 #
 # --------------------------------------------------------------------------- #
 def test_create_forbidden_for_non_superadmin(client, seed):
     _as(seed["regular"])
@@ -169,7 +169,7 @@ def test_create_duplicate_code_conflicts(client, seed):
 
 
 # --------------------------------------------------------------------------- #
-# AC-B4/B5 — switch validates grant + persists last_active                     #
+# AC-B4/B5 - switch validates grant + persists last_active                     #
 # --------------------------------------------------------------------------- #
 def test_switch_to_granted_persists_last_active(client, seed, db):
     _as(seed["regular"])
@@ -195,7 +195,7 @@ def test_superadmin_switch_to_any_company(client, seed, db):
 
 
 # --------------------------------------------------------------------------- #
-# AC-B8 — my-context shape                                                      #
+# AC-B8 - my-context shape                                                      #
 # --------------------------------------------------------------------------- #
 def test_my_context_regular_user_shape(client, seed):
     _as(seed["regular"])
@@ -217,11 +217,11 @@ def test_my_context_superadmin_sees_all_companies(client, seed):
 
 
 # --------------------------------------------------------------------------- #
-# H1 — a STALE last_active (not in grants) must NEVER resolve as active         #
+# H1 - a STALE last_active (not in grants) must NEVER resolve as active         #
 # --------------------------------------------------------------------------- #
 def test_my_context_stale_last_active_never_resolves_non_granted(client, seed, db):
     """A user with >1 grants whose last_active points at a company they are NOT
-    granted (e.g. left over after a revoke) must resolve to a GRANTED company —
+    granted (e.g. left over after a revoke) must resolve to a GRANTED company - 
     never the stale one. Before the H1 fix the `elif last_active` fallback picked
     the non-granted company; after, it deterministically picks a granted id."""
     third = Company(id=str(uuid.uuid4()), name="Third", code="TRD")
@@ -250,7 +250,7 @@ def test_my_context_stale_last_active_never_resolves_non_granted(client, seed, d
 
 
 # --------------------------------------------------------------------------- #
-# H1 — removing a grant that is the user's last_active repoints/nulls it        #
+# H1 - removing a grant that is the user's last_active repoints/nulls it        #
 # --------------------------------------------------------------------------- #
 def test_remove_company_user_clears_stale_last_active(client, seed, db):
     user = User(

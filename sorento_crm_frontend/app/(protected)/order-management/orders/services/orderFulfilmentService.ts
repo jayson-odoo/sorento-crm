@@ -18,7 +18,7 @@ import { extractApiError } from '@/lib/api-client';
  *   200: FulfilledComplaint[]  ([] when this DO is not linked to any complaint)
  *
  *   FulfilledComplaint = {
- *     complaint_id: string;       // UUID — used ONLY for the row href, never displayed
+ *     complaint_id: string;       // UUID - used ONLY for the row href, never displayed
  *     complaint_number: string;   // human complaint number, e.g. "CMP26-0042" (displayed)
  *   }
  *

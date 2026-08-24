@@ -1,13 +1,13 @@
-"""Form void — notifications (UAC NTF-1..NTF-5).
+"""Form void - notifications (UAC NTF-1..NTF-5).
 
 NTF-1: current assignee gets an in-app notification.
 NTF-2: handling-lock holder (handled_by_id) also gets in-app (skipped when unset).
 NTF-3: the salesperson (respond_contact_id) gets a WhatsApp via the existing
        send_text_or_template choke point (which writes integration_log on
-       success AND failure — same path as process/close).
-NTF-4: NO WhatsApp/comment egress to anyone but the salesperson — assignee +
+       success AND failure - same path as process/close).
+NTF-4: NO WhatsApp/comment egress to anyone but the salesperson - assignee +
        handler get in-app ONLY (send_whatsapp=False).
-NTF-5: notifications are best-effort — a notify failure never rolls back the void.
+NTF-5: notifications are best-effort - a notify failure never rolls back the void.
 
 Leaf choke points are stubbed so the test does zero real egress; the recorded
 calls prove targeting + channel scoping.
@@ -73,7 +73,7 @@ def _seed(db, *, handler=False):
 
 
 # --------------------------------------------------------------------------- #
-# NTF-1 / NTF-4 — assignee in-app; no WhatsApp to the assignee
+# NTF-1 / NTF-4 - assignee in-app; no WhatsApp to the assignee
 # --------------------------------------------------------------------------- #
 def test_assignee_in_app_only(db, recorder):
     actor, assignee, _, pid = _seed(db, handler=False)
@@ -89,7 +89,7 @@ def test_assignee_in_app_only(db, recorder):
 
 
 # --------------------------------------------------------------------------- #
-# NTF-2 — handling-lock holder also notified (and skipped cleanly when unset)
+# NTF-2 - handling-lock holder also notified (and skipped cleanly when unset)
 # --------------------------------------------------------------------------- #
 def test_handler_notified_when_set(db, recorder):
     actor, assignee, handler_id, pid = _seed(db, handler=True)
@@ -107,7 +107,7 @@ def test_handler_absent_only_assignee(db, recorder):
 
 
 # --------------------------------------------------------------------------- #
-# NTF-3 / NTF-4 — salesperson WhatsApp fires; it is the ONLY WhatsApp egress
+# NTF-3 / NTF-4 - salesperson WhatsApp fires; it is the ONLY WhatsApp egress
 # --------------------------------------------------------------------------- #
 def test_salesperson_whatsapp_is_only_egress(db, recorder):
     actor, assignee, handler_id, pid = _seed(db, handler=True)
@@ -120,7 +120,7 @@ def test_salesperson_whatsapp_is_only_egress(db, recorder):
 
 
 # --------------------------------------------------------------------------- #
-# NTF-5 — best-effort: a notify failure does not roll back the void
+# NTF-5 - best-effort: a notify failure does not roll back the void
 # --------------------------------------------------------------------------- #
 def test_notify_failure_does_not_rollback(db, monkeypatch):
     from app.services.notification_service import NotificationService

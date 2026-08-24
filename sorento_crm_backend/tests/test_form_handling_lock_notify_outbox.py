@@ -1,4 +1,4 @@
-"""Form handling-lock — notification producer + WhatsApp outbox (§12 P2-11/P2-12).
+"""Form handling-lock - notification producer + WhatsApp outbox (§12 P2-11/P2-12).
 
 Two layers:
 
@@ -13,7 +13,7 @@ Two layers:
 2. WORKER OUTBOX (``notification_tasks._send_whatsapp_for_notification``): a handling
    notification whose ``whatsapp_use_case`` is a handling case writes an
    ``integration_log`` outbox row on BOTH success AND failure (local runs use
-   intentionally-wrong Respond creds — a 401'd send must still be logged). Mirrors
+   intentionally-wrong Respond creds - a 401'd send must still be logged). Mirrors
    tests/test_whatsapp_notification_outbox_log.py with a handling payload.
 
 Run: venv/bin/pytest tests/test_form_handling_lock_notify_outbox.py -q
@@ -47,7 +47,7 @@ from tests._pg_fixture import blank_session
 
 
 # --------------------------------------------------------------------------- #
-# PRODUCER — blank Postgres schema (mirrors tests/test_form_handling_lock.py)  #
+# PRODUCER - blank Postgres schema (mirrors tests/test_form_handling_lock.py)  #
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def db():

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PurchaseRequestSchema } from './purchase-request-schema';
 
-/** Total Project Value FE guard rail — mirrors backend validators.validate_project_value.
+/** Total Project Value FE guard rail - mirrors backend validators.validate_project_value.
  *  Prevents regression of the "string saved as null" / Numeric(15,2) overflow bugs. */
 function parseTPV(value: unknown) {
   return PurchaseRequestSchema.shape.total_project_value.safeParse(value);

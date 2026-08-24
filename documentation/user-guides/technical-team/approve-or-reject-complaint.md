@@ -1,13 +1,13 @@
-# 7.3-Technical Team — Approve or reject a complaint
+# 7.3-Technical Team - Approve or reject a complaint
 
-After the technical team has sent a response (status = **Responded**), the complaint needs to be closed out — either **Approved** (we accept the outcome) or **Rejected** (we don't accept the outcome and the complaint goes back to open). Both actions notify the customer via Respond.io.
+After the technical team has sent a response (status = **Responded**), the complaint needs to be closed out - either **Approved** (we accept the outcome) or **Rejected** (we don't accept the outcome and the complaint goes back to open). Both actions notify the customer via Respond.io.
 
 ## Prerequisites
 
 * The complaint is in status **Responded**. If it's still **Open**, finish [Respond to a complaint](respond-to-complaint.md) first.
 * You have the permission for the action you want to take:
-  * `complaint_management.complaints.approve` — to approve.
-  * `complaint_management.complaints.reject` — to reject.
+  * `complaint_management.complaints.approve` - to approve.
+  * `complaint_management.complaints.reject` - to reject.
 
 The **Approve** and **Reject** buttons are only rendered when both conditions are true. If you don't see them, double-check the status and your role permissions.
 

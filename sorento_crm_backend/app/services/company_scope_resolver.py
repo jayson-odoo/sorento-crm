@@ -6,10 +6,10 @@ again: a FastAPI dependency (``apply_company_scope``) that runs for every
 ``/api/v1/*`` request (attached as a router-level dependency in ``app/main.py``),
 computes the caller's scope, and stamps it onto the SAME session the routes use
 (``get_db`` is cached per-request, so the ``Depends(get_db)`` here and in the route
-resolve to one session instance — the scope set here is visible to the route's
+resolve to one session instance - the scope set here is visible to the route's
 queries).
 
-Decision table (PLAN §3.9 / §3.11, four-state — see ``app/models/base.py``):
+Decision table (PLAN §3.9 / §3.11, four-state - see ``app/models/base.py``):
 
   Principal                                   | Scope
   --------------------------------------------|-----------------------------------
@@ -119,7 +119,7 @@ def _impersonation_target_id(db: Session, request: Request, real_user_id: str) -
     admin/superadmin AND an active ``ImpersonationSession`` (real→target) must
     exist. Without this, the scope resolver (a router dependency that runs BEFORE
     ``get_current_user``) would keep the admin's own scope while the rest of the
-    request acts as the target — so an admin impersonating a Mocha user would
+    request acts as the target - so an admin impersonating a Mocha user would
     still see all companies' data. We re-validate here rather than trust the raw
     header.
     """
@@ -181,7 +181,7 @@ def _resolve_user_scope(db: Session, token: str, request: Optional[Request] = No
     elif grants:
         # Fail-closed fallback: NEVER pick a non-granted company. A stale
         # ``last_active`` (e.g. left over after a grant was revoked) must not be
-        # selectable — deterministically pick the lowest granted id instead.
+        # selectable - deterministically pick the lowest granted id instead.
         active = sorted(grants)[0]
     # else: no grants at all -> leave UNSET (fail-closed).
 
@@ -275,12 +275,12 @@ def _portal_token_scope(request: Request, db: Session) -> Optional[CompanyScope]
 
 
 def resolve_company_scope(request: Request, db: Session) -> CompanyScope:
-    """Pure resolver (no session mutation) — exposed for tests. Never raises."""
+    """Pure resolver (no session mutation) - exposed for tests. Never raises."""
     api_key = request.headers.get("X-API-Key")
     if api_key:
         if _api_key_valid(api_key):
             return _resolve_api_key_scope(db, request)
-        return UNSET  # invalid key — the route's own auth will 401; stay fail-closed
+        return UNSET  # invalid key - the route's own auth will 401; stay fail-closed
     token = _bearer_token(request)
     if token:
         return _resolve_user_scope(db, token, request)
@@ -300,7 +300,7 @@ async def apply_company_scope(
     session so the ``do_orm_execute`` filter enforces isolation for every route."""
     try:
         scope = resolve_company_scope(request, db)
-    except Exception as exc:  # noqa: BLE001 — resolver must never 500 the request
+    except Exception as exc:  # noqa: BLE001 - resolver must never 500 the request
         logger.warning("company scope resolver failed; falling back to UNSET (fail-closed): %s", exc)
         scope = UNSET
     # ``db`` is always a real Session in production (from get_db). Guard only for

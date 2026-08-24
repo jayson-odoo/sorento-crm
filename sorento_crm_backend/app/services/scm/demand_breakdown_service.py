@@ -231,7 +231,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
 
     co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="dbk")
     qty = ("GREATEST(COALESCE(sol.qty_required, sol.qty_ordered) "
-           "         - COALESCE(sol.qty_delivered, 0), 0)")
+           "       - COALESCE(sol.qty_delivered, 0), 0)")
     # Both halves of the rule: which orders the sheet speaks for, and which of their lines
     # CS has already decided (`demand.py`). Applying only the first would show a buyer the
     # sheet quantity of a line whose confirmed Buy is already in the plan beside it.

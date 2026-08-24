@@ -97,23 +97,23 @@ stores must produce the states: loading, empty run, legacy run (breakdown unavai
 refused), product-grain run, location-grain run, and a decision error.
 
 1. **Order Summary (Product grain)** `scm/reorder/components/SummaryOrderReportView.tsx`
-   - Header chip **Plan grain: Product** or **Plan grain: Location** from the run's stamped
+ - Header chip **Plan grain: Product** or **Plan grain: Location** from the run's stamped
      `decision_grain`; a legacy run (grain NULL) shows **Legacy run** and read-only state. No per-run
      grain selector anywhere on the plan page or in `RunPlanningModal`.
-   - One row per product. The SO column stacks three readings: Project (`project_demand`), Retail
+ - One row per product. The SO column stacks three readings: Project (`project_demand`), Retail
      (`retail_outstanding`), Unclassified (`unclassified_demand_qty`). The Suggested column stacks
      Project Buy (`project_buy_qty`), Retail replenishment (`retail_replenishment_qty`) and the
      once-rounded `suggested_qty` total. `project_demand` (open Project-class SO qty) and
      `project_buy_qty` (confirmed unplaced Buy) sit side by side as two measures.
-   - Row expansion has three ledgers: Project (SO lines with SO number, line, location, qty, required
+ - Row expansion has three ledgers: Project (SO lines with SO number, line, location, qty, required
      date, and the decision revision / inquiry reference), Retail (per location: stock, avg daily
      demand, incoming SPO/PO, reorder level, allocation), Unclassified (SO lines + the
      "missing demand class" exception). Ledgers reuse the existing drill popover components where a
      shape already exists.
-   - A **Locations** drill per row: member locations with channel breakdown, shared supply once,
+ - A **Locations** drill per row: member locations with channel breakdown, shared supply once,
      the once-rounded suggested qty, the chosen qty and its split back to locations
      (`location_allocations`).
-   - Legacy run: channel cells render "Unavailable", ledgers show the unavailable state, decision
+ - Legacy run: channel cells render "Unavailable", ledgers show the unavailable state, decision
      action disabled with the reason.
 2. **Decision sheet** `OrderDecisionSheet.tsx`: chosen qty input step and validation follow the row's
    `uom_decimal_places` (0 => integer only; 3 => up to 3 fractional digits); shows the location split

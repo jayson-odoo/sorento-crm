@@ -1,4 +1,4 @@
-"""n8n liveness probe — run_n8n_liveness_ping (System Health WS1d).
+"""n8n liveness probe - run_n8n_liveness_ping (System Health WS1d).
 
 Service-level unit test over an empty Postgres schema. The outbound webhook send
 is mocked (IntegrationLogService.send_webhook_for_log) so no real HTTP fires; we

@@ -1,4 +1,4 @@
-"""SCM M1 — dashboard endpoint tests (Postgres-backed, rolled back).
+"""SCM M1 - dashboard endpoint tests (Postgres-backed, rolled back).
 
 Covers, against the seeded demo:
   * shape of every dashboard endpoint,
@@ -90,7 +90,7 @@ def test_rollups_shape(scm_app):
     assert body["incoming_po_count"] == 1
     assert body["incoming_po_next_eta"] == "2026-08-04"
     # Below-reorder-point is now populated (M8-B) from the latest completed run's
-    # engine ROP — a non-negative int (0 when no run has completed); overstock is M2-real.
+    # engine ROP - a non-negative int (0 when no run has completed); overstock is M2-real.
     assert body["below_rop_count"] is not None and body["below_rop_count"] >= 0
     assert body["overstock_valuation"] is not None and body["overstock_valuation"] >= 0
     assert body["overstock_count"] is not None and body["overstock_count"] >= 0
@@ -206,7 +206,7 @@ def test_net_position_bad_sort_key_does_not_500(scm_app):
     breakdown) must fall back to the attention default, not raise a 500."""
     app, _ = _client(scm_app, "purchasing")
     with TestClient(app) as c:
-        # 'warehouses' is a list[dict] per row — previously TypeError → 500.
+        # 'warehouses' is a list[dict] per row - previously TypeError → 500.
         bad = c.get("/api/v1/scm/dashboard/net-position", params={"sort": "warehouses"})
         assert bad.status_code == 200, bad.text
         nonsense = c.get("/api/v1/scm/dashboard/net-position", params={"sort": "not_a_column"})

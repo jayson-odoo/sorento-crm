@@ -148,13 +148,13 @@ class Product(Base, CompanyScopedMixin):
     brand_id = Column(UUID(as_uuid=False), ForeignKey("brands.id", ondelete="SET NULL"), nullable=True)
     # Self-referential variant graph. A variant points at its (longest existing
     # boundary-prefix) parent product; a base has variant_of_id IS NULL. Deleting
-    # a parent SET-NULLs its children (never blocks) — derivation re-anchors them
+    # a parent SET-NULLs its children (never blocks) - derivation re-anchors them
     # to the next existing ancestor. See app/services/variant_link_service.py and
     # docs/plans/PLAN-suggest-on-miss-variant-graph.md §1.
     variant_of_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     # Manual-curation flag. When true, the auto-derivation (reconcile_variant_links /
     # _adopt_orphans / backfill) must NOT re-derive or re-point this row's variant
-    # link — a hand-set parent (or hand-cleared link) is sticky until "reset to auto"
+    # link - a hand-set parent (or hand-cleared link) is sticky until "reset to auto"
     # clears the flag. See docs/plans/PLAN-variant-manual-curation.md.
     variant_link_manual = Column(Boolean, nullable=False, server_default="false", default=False)
     base_uom_id = Column(UUID(as_uuid=False), ForeignKey("units_of_measure.id"), nullable=False)
@@ -249,6 +249,12 @@ class ProductAttachment(Base, CompanyScopedMixin):
     synced_to_excel = Column(Boolean, default=False, nullable=True)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     updated_at = Column(DateTime(timezone=False), nullable=True)
+    # Which PRODUCT SET fanned this link out, if any. NULL means a person or an
+    # exact product code made it. Without this, a flyer linked by set code cannot
+    # be cleaned up when the set's membership changes.
+    linked_via_set_id = Column(
+        UUID(as_uuid=False), ForeignKey("product_sets.id", ondelete="SET NULL"), nullable=True
+    )
     
     product = relationship("Product", back_populates="product_attachments")
     attachment = relationship("Attachment", foreign_keys=[attachment_id])
@@ -261,7 +267,7 @@ class ProductAttachment(Base, CompanyScopedMixin):
         # At most ONE chosen brochure image per product. `is_primary` is what
         # decides a catalogue tile's photo (app/services/dealer_kit/product_images.py
         # orders by it), so two rows flagged at once would put that photo back at
-        # the mercy of row order — the exact defect the picker exists to remove.
+        # the mercy of row order - the exact defect the picker exists to remove.
         # Partial, because the overwhelming majority of rows are not primary and
         # a full unique index would forbid a product having two unchosen photos.
         Index(

@@ -2,7 +2,7 @@
 
 Creates (or leaves untouched) the ``product_discontinued_check`` row in
 ``scheduled_tasks`` so the heartbeat batcher runs every 15 minutes. Safe to
-re-run; only inserts when the key is absent. Prod has no git repo — run via
+re-run; only inserts when the key is absent. Prod has no git repo - run via
 the backend venv after deploy:
 
     python -m scripts.seed_product_discontinued_task
@@ -21,7 +21,7 @@ def main() -> None:
         existing = db.query(ScheduledTask).filter(ScheduledTask.key == KEY).first()
         if existing:
             print(f"[seed] {KEY} already exists (enabled={existing.enabled}, "
-                  f"every {existing.interval_value} {existing.interval_unit}) — no change")
+                  f"every {existing.interval_value} {existing.interval_unit}) - no change")
             return
         task = ScheduledTask(
             key=KEY,

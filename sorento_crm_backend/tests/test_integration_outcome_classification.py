@@ -4,7 +4,7 @@ Covers UAC OBS-S1-01 .. OBS-S1-08.
 
 The health card counted raw `status == 'failed'`, so benign outcomes were reported as
 failures. On the live DB **every** historical `sla_management` failure is the same
-thing: a 400 carrying "Conversation is already responded." — an idempotency race, not a
+thing: a 400 carrying "Conversation is already responded." - an idempotency race, not a
 fault. Meanwhile rows in `pending` / `processing` / `sent` were counted in the channel
 total but rendered in neither bucket, so `n8n_crm_chat_outbound` displayed
 success 0 / failed 0 / total 13.
@@ -112,7 +112,7 @@ def test_null_error_message_on_failed_stays_failed():
 
 
 # --------------------------------------------------------------------------- #
-# Auth failures are real — they were the bulk of respond_io                   #
+# Auth failures are real - they were the bulk of respond_io                   #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("code", [401, 403])
 def test_auth_failures_are_real_failures(code):

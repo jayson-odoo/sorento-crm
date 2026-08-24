@@ -26,8 +26,8 @@ The repository expects `listing_key` to be either:
 
 1. An RBAC view permission slug, for example: `order_management.orders.view`
 2. A composite key using `::`:
-   - `<permission_slug>::<stable_listing_id>`
-   - Example: `order_management.orders.view::orders-list`
+ - `<permission_slug>::<stable_listing_id>`
+ - Example: `order_management.orders.view::orders-list`
 
 If the `<permission_slug>` portion does not exist in the RBAC catalog, the backend treats the key as "module-auth only" and does not perform fine-grained permission checks.
 

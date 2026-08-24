@@ -255,7 +255,7 @@ export default function PurchaseRequestForm({
         request_number: data.request_number ?? undefined,
         request_date: data.request_date || undefined,
         customer_name: data.customer_name || undefined,
-        // Empty string must become undefined, not "" — "not given" is one value.
+        // Empty string must become undefined, not "" - "not given" is one value.
         pic: data.pic || undefined,
         project_title: data.project_title || undefined,
         project_id: data.project_id || null,

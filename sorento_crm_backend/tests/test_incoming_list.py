@@ -1,4 +1,4 @@
-"""IncomingStockService.incoming_list — unified shipment-rooted incoming view.
+"""IncomingStockService.incoming_list - unified shipment-rooted incoming view.
 
 One row per still-incoming shipment, each with nested product `lines[]` (no
 aggregate totals). Covers: product filter narrows lines, shipment/eta filters,

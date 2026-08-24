@@ -5,7 +5,7 @@ to verify access rights. The effective user is signaled via the
 ``X-Impersonate-User-Id`` request header, which is honored by ``get_current_user``
 when an active ``impersonation_sessions`` row exists for that admin/target pair.
 
-Audit / created_by / updated_by always remain the real admin — see
+Audit / created_by / updated_by always remain the real admin - see
 ``app.dependencies.get_actor_user_id`` and ``set_audit_context``.
 """
 import logging

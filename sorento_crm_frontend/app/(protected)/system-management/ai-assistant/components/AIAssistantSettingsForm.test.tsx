@@ -2,10 +2,10 @@
  * AIAssistantSettingsForm - the three provider API key fields (OpenAI/primary,
  * Anthropic, Gemini) share one behaviour contract:
  *
- *   - a saved key renders MASKED (the value the backend returns, e.g. "****1234")
- *   - typing in the field marks it "edited"; the save payload then carries the
+ * - a saved key renders MASKED (the value the backend returns, e.g. "****1234")
+ * - typing in the field marks it "edited"; the save payload then carries the
  *     new value the operator typed
- *   - a field the operator never touched sends nothing (undefined), so a save
+ * - a field the operator never touched sends nothing (undefined), so a save
  *     never overwrites a working key with a stale masked placeholder
  *
  * Data hooks are mocked at the module boundary; nothing hits the network.

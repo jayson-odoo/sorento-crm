@@ -8,10 +8,10 @@
  * net-position views. No UUIDs surfaced - PO by po_number.
  *
  * At M1 the list was READ-ONLY. M4 Slice B adds the draft→confirm→GR flow:
- *   - draft POs (status `draft_recommendation`) are drafted from accepted
+ * - draft POs (status `draft_recommendation`) are drafted from accepted
  *     recommendations and are NOT on-order (M4-D5);
- *   - bulk Confirm flips them to `active` - only then do they count as on-order;
- *   - create-GR stamps received qty on an active PO (GR = `picking_headers`,
+ * - bulk Confirm flips them to `active` - only then do they count as on-order;
+ * - create-GR stamps received qty on an active PO (GR = `picking_headers`,
  *     `picking_type='goods_received'`).
  *
  * PHASE 1 (now): `USE_SLICE_B_MOCKS = true` routes the list + confirm + GR

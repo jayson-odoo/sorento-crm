@@ -42,7 +42,7 @@ def main():
         if dups:
             print(f"Found {len(dups)} duplicate product_code(s):")
             for row in dups:
-                print(f"  - {row[0]}: {row[1]} rows")
+                print(f" - {row[0]}: {row[1]} rows")
         else:
             print("No duplicates found.")
 

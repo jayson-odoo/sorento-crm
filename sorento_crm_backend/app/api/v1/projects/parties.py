@@ -1,4 +1,4 @@
-"""Project party (organisation master) API — UAC Group D."""
+"""Project party (organisation master) API - UAC Group D."""
 from __future__ import annotations
 
 from typing import Optional

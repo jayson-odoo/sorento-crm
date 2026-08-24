@@ -129,8 +129,8 @@ def _build_bodies(
         lines.append("Name | Phone | Link")
         for tr in rows:
             c = tr.contact
-            name = (c.name if c else None) or "—"
-            phone = (c.phone_number if c else None) or "—"
+            name = (c.name if c else None) or "-"
+            phone = (c.phone_number if c else None) or "-"
             rel = conversation_tracking_path(str(tr.id))
             link = f"{base}{rel}" if base else rel
             lines.append(f"{name} | {phone} | {link}")
@@ -143,8 +143,8 @@ def _build_bodies(
     table_rows = ""
     for tr in rows:
         c = tr.contact
-        name = html.escape((c.name if c else None) or "—")
-        phone = html.escape((c.phone_number if c else None) or "—")
+        name = html.escape((c.name if c else None) or "-")
+        phone = html.escape((c.phone_number if c else None) or "-")
         rel = conversation_tracking_path(str(tr.id))
         href = html.escape(f"{base}{rel}" if base else rel)
         table_rows += (
@@ -287,7 +287,7 @@ def run_user_sla_daily_summary(db: Session, task: ScheduledTask) -> dict[str, An
             staff_name = (user.name or user.email or "there").strip()
             # Keep the WhatsApp message minimal: greet by name, the date, the
             # outstanding count, and a link to the dashboard. Staff open the
-            # system to see the detail — no escalated/resolved breakdown here.
+            # system to see the detail - no escalated/resolved breakdown here.
             wa_text = (
                 f"Hi {staff_name}, your daily SLA summary for {summary_date_label}: "
                 f"{outstanding_n} outstanding. View your tasks: {summary_link}"

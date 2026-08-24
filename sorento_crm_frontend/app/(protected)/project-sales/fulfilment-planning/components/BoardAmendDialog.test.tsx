@@ -9,10 +9,10 @@
  *
  * The three things pinned hardest, because each was a way the old form said no:
  *
- *   - the line's OWN location is always a Reserve row, even when the engine reserved nothing
+ * - the line's OWN location is always a Reserve row, even when the engine reserved nothing
  *     there, because that is the amendment a planner most often wants to make;
- *   - a Borrow can be composed at all, with the mandatory reason AC-B09 demands;
- *   - Save is shut while the components do not add up to what is owed, so an amendment cannot
+ * - a Borrow can be composed at all, with the mandatory reason AC-B09 demands;
+ * - Save is shut while the components do not add up to what is owed, so an amendment cannot
  *     leave a quantity owed by nobody.
  */
 import React from 'react';

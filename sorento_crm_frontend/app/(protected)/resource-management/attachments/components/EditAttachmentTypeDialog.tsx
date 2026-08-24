@@ -1,13 +1,13 @@
 'use client';
 
 /**
- * EditAttachmentTypeDialog — change attachment_type_id on one or many
+ * EditAttachmentTypeDialog - change attachment_type_id on one or many
  * attachments. Used by:
- *   - the per-attachment Edit button in AttachmentDetailModal.
- *   - the Files toolbar bulk action when 1+ rows are selected.
+ * - the per-attachment Edit button in AttachmentDetailModal.
+ * - the Files toolbar bulk action when 1+ rows are selected.
  *
  * Backend: POST /api/v1/resource-management/attachments/bulk-attachment-type
- * — does NOT trigger any webhook resubmission.
+ * - does NOT trigger any webhook resubmission.
  */
 import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';

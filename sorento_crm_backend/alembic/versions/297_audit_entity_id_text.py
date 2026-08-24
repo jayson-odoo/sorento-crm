@@ -1,7 +1,7 @@
 """Widen audit_logs.entity_id from uuid to text.
 
 `audit_logs` is polymorphic: `audit_service._entity_id_str` stores whatever the
-audited entity's primary key is, and not every PK is a UUID — `MarketSegment`
+audited entity's primary key is, and not every PK is a UUID - `MarketSegment`
 is keyed by a `code` such as 'MSEG-A'.
 
 Typing the column `uuid` therefore rejects those inserts. Because audit writes
@@ -11,7 +11,7 @@ swallowed and the audit row simply never appeared. Evidence on the live dataset:
 
 Widening to text lets every entity be audited regardless of PK type. UUID-keyed
 entities keep storing the same 36-char string, so existing rows and queries are
-unaffected — Postgres casts uuid to text losslessly.
+unaffected - Postgres casts uuid to text losslessly.
 
 Revision ID: 297_audit_entity_id_text
 Revises: 296_drop_commercial_modules

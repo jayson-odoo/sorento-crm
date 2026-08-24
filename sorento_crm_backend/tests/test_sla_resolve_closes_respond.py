@@ -33,5 +33,5 @@ def test_resolve_enqueue_failure_is_swallowed():
     svc = _service()
     tracking = SimpleNamespace(id="t2", respond_contact_id="internal-uuid")
     with patch("app.services.queue_service.enqueue_job", side_effect=RuntimeError("redis down")):
-        # Must not raise — the resolve already committed.
+        # Must not raise - the resolve already committed.
         svc._close_respond_conversation_best_effort(tracking)

@@ -15,7 +15,7 @@ const DEFAULT_DESCRIPTION =
 
 /**
  * Shared "no access" state, rendered by page-level guards when the current user
- * lacks the required permission or superadmin role. Purely a UX surface — the
+ * lacks the required permission or superadmin role. Purely a UX surface - the
  * backend is the real enforcement (routes 403 for unauthorized principals).
  */
 export default function AccessDenied({

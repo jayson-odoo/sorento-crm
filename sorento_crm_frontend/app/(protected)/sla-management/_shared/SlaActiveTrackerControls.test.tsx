@@ -30,7 +30,7 @@ function tracker(partial: Partial<ConversationSLATrackingDetail>): ConversationS
   } as ConversationSLATrackingDetail;
 }
 
-describe('SlaActiveTrackerControls — extension banner', () => {
+describe('SlaActiveTrackerControls - extension banner', () => {
   it('shows the latest extend reason of the active stage', () => {
     render(
       <SlaActiveTrackerControls

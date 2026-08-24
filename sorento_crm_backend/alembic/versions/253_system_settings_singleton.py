@@ -6,7 +6,7 @@ Create Date: 2026-07-01
 
 system_settings is company-wide config and must have exactly one row, but the
 table had accumulated duplicates. `db.query(SystemSetting).first()` has no
-ORDER BY, so reads and writes could non-deterministically hit different rows —
+ORDER BY, so reads and writes could non-deterministically hit different rows - 
 silently breaking every settings save. Collapse to one row (keep the earliest
 by ctid) and add a unique index on a constant expression so a second row can
 never be inserted again.

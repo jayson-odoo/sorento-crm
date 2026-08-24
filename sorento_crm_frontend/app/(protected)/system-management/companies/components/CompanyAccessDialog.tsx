@@ -52,7 +52,7 @@ export default function CompanyAccessDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Manage access — {company.name}</DialogTitle>
+          <DialogTitle>Manage access - {company.name}</DialogTitle>
           <DialogDescription>
             Grant users the ability to switch into this company, and tag the contacts that belong
             to it.
@@ -85,7 +85,7 @@ export default function CompanyAccessDialog({
 }
 
 // ── Confirm-before-unlink ─────────────────────────────────────────────────────
-// Removing access is a destructive/detach action — gate it behind a confirm per
+// Removing access is a destructive/detach action - gate it behind a confirm per
 // the project rule (confirm before delete OR unlink), never one-click.
 
 function ConfirmRemoveButton({

@@ -104,7 +104,7 @@ export default function TeamPendingList() {
         header: ({ column }) => <DataGridColumnHeader title="Reference" column={column} />,
         cell: ({ row }) => {
           const r = row.original;
-          const ref = r.reference || '—';
+          const ref = r.reference || '-';
           return <span className="truncate block" title={ref}>{ref}</span>;
         },
         size: 200,
@@ -136,7 +136,7 @@ export default function TeamPendingList() {
         accessorKey: 'policy_name',
         header: ({ column }) => <DataGridColumnHeader title="Policy" column={column} />,
         cell: ({ row }) => {
-          const p = row.original.policy_name || '—';
+          const p = row.original.policy_name || '-';
           return <span className="truncate block" title={p}>{p}</span>;
         },
         size: 160,
@@ -147,7 +147,7 @@ export default function TeamPendingList() {
         header: ({ column }) => <DataGridColumnHeader title="Due at" column={column} />,
         cell: ({ row }) => {
           const due = row.original.due_at;
-          if (!due) return '—';
+          if (!due) return '-';
           const overdue = parseDateTimeAsUTC(due).getTime() < Date.now();
           const text = formatDateTime(parseDateTimeAsUTC(due));
           return (
@@ -198,7 +198,7 @@ export default function TeamPendingList() {
                     <UserRoundPlus className="size-4 text-muted-foreground" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Takeover — assign this task to me</TooltipContent>
+                <TooltipContent>Takeover - assign this task to me</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>

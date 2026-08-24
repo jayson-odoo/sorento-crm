@@ -45,7 +45,7 @@ class ChatHistory(Base):
     # --- Round-trip latency telemetry -------------------------------------
     # `sent_at` above is whatever n8n supplied. `respond_ts` is the authoritative
     # Respond-side timestamp, resolved via GET /v2/message/{id}. Both ends of the
-    # SLA measurement read `respond_ts` so the two timestamps share one clock —
+    # SLA measurement read `respond_ts` so the two timestamps share one clock - 
     # mixing Respond's clock with ours would bake skew into the p99.
     respond_ts = Column(DateTime(timezone=False), nullable=True)
     # sent | delivered | read | failed | not_sent. Displayed and alerted on
@@ -64,11 +64,11 @@ class ChatHistory(Base):
     # Per-turn conversation state transition (v1), populated by n8n on INCOMING rows
     # only; NULL on outgoing. Opaque jsonb: {v, before, parser_raw, parser_applied,
     # after}. `after: null` means the turn wrote no state (no-access refusal, LLM
-    # fallback) — a real signal, distinct from "field absent". Read by the admin thread
+    # fallback) - a real signal, distinct from "field absent". Read by the admin thread
     # view. The RAW trace stays internal; the external read contract exposes only a
     # 4-key projection of `after` (domain_hint / intent_hint / entities / dym_offer),
     # via conversation-variables `?message_id=` -> `session_vars.referenced_state`.
-    # Widening that projection is a contract change — see
+    # Widening that projection is a contract change - see
     # conversation_variables_service.get_referenced_state for why the withheld keys
     # are withheld.
     state_trace = Column(JSONB, nullable=True)

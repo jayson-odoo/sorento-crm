@@ -2,7 +2,7 @@
 
 The ESB stages changes for human approval and shows what would change. It
 therefore needs Sorento's *current* values for a set of source references, in
-the same canonical shape it pushes — a diff between two different vocabularies
+the same canonical shape it pushes - a diff between two different vocabularies
 is not a diff anyone can review.
 
 Batched, because a diff over several hundred records must not become several
@@ -10,7 +10,7 @@ hundred round trips.
 
 **A reference we do not hold is reported explicitly**, not omitted. Silence is
 ambiguous: the ESB cannot tell "Sorento has no such record" from "the response
-was truncated", and those demand opposite actions — create it, versus stop and
+was truncated", and those demand opposite actions - create it, versus stop and
 investigate.
 """
 from __future__ import annotations

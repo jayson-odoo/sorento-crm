@@ -2,7 +2,7 @@
 
 Director requirement: promotions list must surface expired promotions (backend
 fallback rows carry is_expired=true) so the agent answers "found but expired".
-The flat product/attachment *_list tools now ALSO pass through — the backend owns
+The flat product/attachment *_list tools now ALSO pass through - the backend owns
 active-first + inactive fallback for them (active=True default for API-key callers),
 so this layer must not strip the intentional fallback rows. Single-record drill-down
 tools (get / products_nested / by_promotion) keep the active-only block.

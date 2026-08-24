@@ -3,7 +3,7 @@
 The worker container (`python worker.py`) imports modules in a different order
 than the API (`app.main`): queue_service first, then app.scheduler.task_scheduler
 lazily inside `_maybe_start_scheduler`. Circular imports can be invisible on the
-app.main path yet fatal on the worker path — in 2026-06 a user_service <->
+app.main path yet fatal on the worker path - in 2026-06 a user_service <->
 integration_service cycle killed APScheduler at startup while the RQ loop kept
 running, so the container looked healthy and email_outbox rows sat pending forever.
 
@@ -49,7 +49,7 @@ def test_worker_entrypoint_import_chain():
         "print('ok')\n"
     )
     assert proc.returncode == 0, (
-        "worker entrypoint import chain failed — APScheduler would silently die "
+        "worker entrypoint import chain failed - APScheduler would silently die "
         f"in the worker container:\n{proc.stderr}"
     )
 

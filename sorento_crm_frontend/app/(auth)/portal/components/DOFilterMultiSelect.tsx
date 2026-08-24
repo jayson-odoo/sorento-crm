@@ -263,7 +263,7 @@ export function DOFilterMultiSelect({
           ))}
         </div>
       )}
-      {/* Free-text entry — DOs not in the system can still be filed. Press
+      {/* Free-text entry - DOs not in the system can still be filed. Press
           Enter (or blur) to commit each value as a pill. The dialog search
           remains available for known DOs. */}
       <Input
@@ -508,7 +508,7 @@ function DOResultRow({
       onMouseUp={clearPress}
       onMouseLeave={clearPress}
     >
-      {/* pointer-events-none so clicks pass through to <li> — fixes the
+      {/* pointer-events-none so clicks pass through to <li> - fixes the
           "tickbox doesn't toggle, only the text does" bug. */}
       <Checkbox
         checked={checked}
@@ -534,7 +534,7 @@ function DOResultRow({
             ).map((line, idx) => (
               <li key={`${line.product_code}-${idx}`} className="break-words">
                 <span className="font-medium text-foreground">{line.product_code}</span>
-                {line.product_name ? <span> — {line.product_name}</span> : null}
+                {line.product_name ? <span> - {line.product_name}</span> : null}
                 {line.quantity != null ? (
                   <span className="ml-1 tabular-nums">× {line.quantity}</span>
                 ) : null}

@@ -29,7 +29,7 @@ def db() -> Session:
         yield session
 
 
-# UUID-typed columns reject slug ids — use valid UUIDs. User.id is a String PK.
+# UUID-typed columns reject slug ids - use valid UUIDs. User.id is a String PK.
 _CONV_ID = "118892da-f08f-562f-8553-a8aa6727138b"
 _MSG_ID = "c1f2f463-4922-56c3-9239-49e868288ad7"
 _TRACE_ID = "b830fd9f-e2d2-5680-98b6-039665eed77d"

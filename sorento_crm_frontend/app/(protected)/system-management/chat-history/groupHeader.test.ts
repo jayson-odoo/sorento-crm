@@ -6,7 +6,7 @@
  * only reachable through a rendered grid.
  *
  * Contiguity is the API's job (`group_by` orders rows server-side). This only
- * decides where to draw the divider — if members were NOT contiguous, the same
+ * decides where to draw the divider - if members were NOT contiguous, the same
  * group would render more than once, which is why grouping is not done purely
  * client-side over a paginated set.
  */
@@ -16,7 +16,7 @@ import { buildGroupHeader } from './groupHeader';
 const row = (contact: string, iso: string) =>
   ({ contact_display: contact, sent_at: iso }) as never;
 
-// 21/07 08:29 MYT is 20/07 00:29 UTC — the two disagree on the calendar day,
+// 21/07 08:29 MYT is 20/07 00:29 UTC - the two disagree on the calendar day,
 // which is exactly why the label is derived in Malaysia time.
 const ANN_21ST = row('Ann (+60111)', '2026-07-21T00:29:00');
 const ANN_21ST_LATER = row('Ann (+60111)', '2026-07-21T01:10:00');

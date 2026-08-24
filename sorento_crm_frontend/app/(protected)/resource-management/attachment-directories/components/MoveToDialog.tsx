@@ -37,7 +37,7 @@ function collectDescendants(node: AttachmentDirectoryTreeNode, into: Set<string>
  * Universal non-drag move path (UAC E5 / mobile H3): pick a destination folder
  * from the tree and move the selected files/folders there. Folders being moved
  * (and their descendants) are disabled as targets so the FE never offers a
- * cycle (the backend also rejects cycles — E4).
+ * cycle (the backend also rejects cycles - E4).
  */
 export default function MoveToDialog({
   open,

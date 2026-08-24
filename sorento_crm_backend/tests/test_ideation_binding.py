@@ -1,13 +1,13 @@
-"""Slice B — workspace<->product binding + ideation config (ideation pipeline).
+"""Slice B - workspace<->product binding + ideation config (ideation pipeline).
 
 Keys back to ``documentation/plans/ideation/ideation-ideate-intent-acceptance-criteria.md``:
 
-- **AC-30 [T]** — ``respond_workspaces`` carries a nullable ``ideation_product_id``
+- **AC-30 [T]** - ``respond_workspaces`` carries a nullable ``ideation_product_id``
   (shared-service Product UUID, server-side only), added by an idempotent Alembic
-  migration chained onto the committed main head — a single linear head, no fork.
-- **AC-31 [T]** — a workspace with NO ``ideation_product_id`` is detectable so the
+  migration chained onto the committed main head - a single linear head, no fork.
+- **AC-31 [T]** - a workspace with NO ``ideation_product_id`` is detectable so the
   brain-path endpoint can fail-closed (no ``create_idea`` call).
-- **AC-32 [T]** — the four ideation settings (``ideation_shared_service_url``,
+- **AC-32 [T]** - the four ideation settings (``ideation_shared_service_url``,
   ``ideation_intake_api_key``, ``ideation_embed_signing_secret``,
   ``ideation_embed_connection_id``) exist, default blank (feature dormant), and
   there is NO ``ideation_mcp_url`` (create_idea is HTTP, not MCP).
@@ -30,7 +30,7 @@ _MIGRATIONS = Path(__file__).resolve().parent.parent / "alembic" / "versions"
 
 
 # ===========================================================================
-# AC-30 / AC-31 — nullable ideation_product_id on respond_workspaces
+# AC-30 / AC-31 - nullable ideation_product_id on respond_workspaces
 # ===========================================================================
 def test_workspace_model_has_nullable_ideation_product_id():
     col = RespondWorkspace.__table__.columns.get("ideation_product_id")
@@ -57,7 +57,7 @@ def test_workspace_without_binding_is_detectable_fail_closed():
 
 
 # ===========================================================================
-# AC-30 — migration is chained + idempotent + single head
+# AC-30 - migration is chained + idempotent + single head
 # ===========================================================================
 def _binding_migration() -> Path:
     matches = list(_MIGRATIONS.glob("*ideation_product*.py"))
@@ -68,7 +68,7 @@ def _binding_migration() -> Path:
 
 def test_binding_migration_chains_on_committed_head():
     """AC-30: the migration chains onto the ideate-parser head (272) so the head
-    stays a single linear chain — no dual head after merge."""
+    stays a single linear chain - no dual head after merge."""
     text = _binding_migration().read_text()
     assert 'down_revision = "272_ideate_intent_parser_prompt"' in text, (
         "the binding migration must chain onto 272 (the ideate parser head) to "
@@ -103,7 +103,7 @@ def test_alembic_has_single_head():
 
 
 # ===========================================================================
-# AC-32 — ideation settings exist, default blank/dormant, no ideation_mcp_url
+# AC-32 - ideation settings exist, default blank/dormant, no ideation_mcp_url
 # ===========================================================================
 def test_ideation_settings_default_blank_and_dormant():
     from app.config import Settings
@@ -122,7 +122,7 @@ def test_ideation_settings_default_blank_and_dormant():
 
 
 def test_no_ideation_mcp_url_setting():
-    """create_idea is an HTTP call, not MCP — the mcp url setting must not exist."""
+    """create_idea is an HTTP call, not MCP - the mcp url setting must not exist."""
     from app.config import Settings
 
     assert "ideation_mcp_url" not in Settings.model_fields, (

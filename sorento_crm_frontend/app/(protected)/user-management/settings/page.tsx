@@ -55,7 +55,7 @@ function mergeApproverOptions(
     byId.set(savedId, {
       id: savedId,
       name: savedName ?? 'Saved user',
-      email: savedEmail ?? '—',
+      email: savedEmail ?? '-',
     });
   }
   return Array.from(byId.values());
@@ -181,7 +181,7 @@ export default function Page() {
       } else {
         byId.set(savedSupplierId, {
           id: savedSupplierId,
-          supplier_code: '—',
+          supplier_code: '-',
           supplier_name: 'Saved supplier (unavailable)',
         });
       }
@@ -781,7 +781,7 @@ export default function Page() {
                         { value: NO_DEFAULT_SUPPLIER_VALUE, label: 'Automatic' },
                         ...suppliersForSelect.map((s) => ({
                           value: s.id,
-                          label: `${s.supplier_code} — ${s.supplier_name}`,
+                          label: `${s.supplier_code} - ${s.supplier_name}`,
                         })),
                       ]}
                     />

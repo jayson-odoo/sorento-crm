@@ -11,7 +11,14 @@ export type ProductItemType = 'product' | 'bundle' | 'service' | 'other';
 export type ProductStatus = 'active' | 'inactive';
 
 // Lightweight reference to a product in the variant graph (parent / child).
-// Only human-readable fields are exposed — never surface the UUID in the UI.
+// Only human-readable fields are exposed - never surface the UUID in the UI.
+/** A set this product is part of. Linked by code; no UUID reaches the screen. */
+export interface ProductSetRef {
+  id: string;
+  set_code: string;
+  name: string;
+}
+
 export interface ProductVariantRef {
   id: string;
   product_code: string;
@@ -32,6 +39,8 @@ export interface ProductLineRef extends ProductVariantRef {
 
 // Product Interface (matches database schema)
 export interface Product {
+  /** Sets this product belongs to. Always a list: one cistern serves two traps. */
+  product_sets?: ProductSetRef[];
   id: string;
   product_code: string;
   product_name: string;

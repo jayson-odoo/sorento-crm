@@ -80,7 +80,7 @@ function actionBadgeVariant(
 }
 
 function prettyJson(value: Record<string, unknown> | null | undefined): string {
-  if (value == null) return '—';
+  if (value == null) return '-';
   try {
     return JSON.stringify(value, null, 2);
   } catch {
@@ -115,7 +115,7 @@ export default function AuditLogsList() {
     changed_to: dateTo || undefined,
   });
 
-  // Users for the "User" picker — the audit user_id is a UUID, so a name must
+  // Users for the "User" picker - the audit user_id is a UUID, so a name must
   // resolve to an id (free text would 500 the UUID-typed column).
   const { data: users } = useQuery({
     queryKey: ['audit-user-select'],
@@ -206,7 +206,7 @@ export default function AuditLogsList() {
           const name = row.original.user_display_name;
           return (
             <span className="block truncate text-sm" title={name || 'System'}>
-              {name || (row.original.user_id ? '—' : 'System')}
+              {name || (row.original.user_id ? '-' : 'System')}
             </span>
           );
         },
@@ -217,7 +217,7 @@ export default function AuditLogsList() {
         accessorKey: 'description',
         header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
         cell: ({ row }) => {
-          const desc = row.original.description || '—';
+          const desc = row.original.description || '-';
           return (
             <span className="block truncate text-sm text-muted-foreground" title={desc}>
               {desc}
@@ -231,7 +231,7 @@ export default function AuditLogsList() {
         accessorKey: 'ip_address',
         header: ({ column }) => <DataGridColumnHeader title="IP" column={column} />,
         cell: ({ row }) => (
-          <span className="text-xs text-muted-foreground">{row.original.ip_address || '—'}</span>
+          <span className="text-xs text-muted-foreground">{row.original.ip_address || '-'}</span>
         ),
         size: 130,
         meta: { headerTitle: 'IP' },
@@ -468,11 +468,11 @@ export default function AuditLogsList() {
                 </div>
                 <div>
                   <dt className="text-xs font-medium text-muted-foreground">User</dt>
-                  <dd>{selectedLog.user_display_name || (selectedLog.user_id ? '—' : 'System')}</dd>
+                  <dd>{selectedLog.user_display_name || (selectedLog.user_id ? '-' : 'System')}</dd>
                 </div>
                 <div>
                   <dt className="text-xs font-medium text-muted-foreground">IP address</dt>
-                  <dd>{selectedLog.ip_address || '—'}</dd>
+                  <dd>{selectedLog.ip_address || '-'}</dd>
                 </div>
                 {selectedLog.description && (
                   <div className="col-span-2">

@@ -4,7 +4,7 @@ import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/u
 
 // NOTE: only `status` is filterable server-side. The campaign_type/date/budget
 // filter params the FE used to send were never honoured by `list_campaigns`
-// (dead controls) and were removed — re-add here AND in the BE service together
+// (dead controls) and were removed - re-add here AND in the BE service together
 // if real type/date/budget filtering is wanted (see PLAN-fix-security-cluster C2).
 export async function getCampaigns(params: DataGridApiFetchParams & { status?: string }): Promise<DataGridApiResponse<Campaign>> {
   const { pageIndex, pageSize, sorting, searchQuery, status } = params;
@@ -37,7 +37,7 @@ export async function getCampaignTypes(): Promise<CampaignType[]> {
 }
 
 export async function createCampaign(data: CampaignFormData): Promise<Campaign> {
-  // Trailing slash matches the FastAPI route exactly — without it the POST 307s
+  // Trailing slash matches the FastAPI route exactly - without it the POST 307s
   // to `/campaigns/` and the cross-origin redirect drops the CORS header.
   const response = await apiFetch('/api/v1/marketing/campaigns/', {
     method: 'POST',

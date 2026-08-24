@@ -1,5 +1,5 @@
 /**
- * Multi-company isolation — frontend types (Phase 1 prototype).
+ * Multi-company isolation - frontend types (Phase 1 prototype).
  *
  * `company` is a data-partition dimension below tenant (Sorento + Mocha share
  * one deployment). See documentation/plans/PLAN-multi-company-isolation.md §16.

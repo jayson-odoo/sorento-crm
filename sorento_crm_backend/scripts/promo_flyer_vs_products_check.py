@@ -1,7 +1,7 @@
 """Cross-check every ACTIVE promotion's own flyer PDF against its linked products.
 
 Run this INSIDE a live container that already has the app code + real
-DATABASE_URL (the backend or worker container — they share one image, see
+DATABASE_URL (the backend or worker container - they share one image, see
 Dockerfile). It never touches anything outside this process: read-only DB
 queries + read-only storage downloads (the same `get_backend(...).download_file`
 call `promotions_pdf_service` already uses to build the printable PDF), so no
@@ -17,9 +17,9 @@ is_active is True AND (no date window at all OR today falls within
 [start_date, end_date]).
 
 For each active promotion:
-  - no flyer attachment linked at all -> flagged, nothing to check
-  - flyer isn't a PDF (image) -> flagged, text-check skipped
-  - flyer is a PDF -> extract text per page (PyMuPDF, already a dependency),
+ - no flyer attachment linked at all -> flagged, nothing to check
+ - flyer isn't a PDF (image) -> flagged, text-check skipped
+ - flyer is a PDF -> extract text per page (PyMuPDF, already a dependency),
     find product codes printed on it, diff against what's actually linked in
     promotion_products. Any code printed on the flyer, known to the product
     master, and NOT linked = a real gap a Resubmit (AI re-extraction) can fix.
@@ -49,7 +49,7 @@ from app.services.storage_router import extract_key, get_backend, normalize_prov
 # Mirrors the heuristic already validated against a real prod export
 # (promo_crosscheck_v2, 2026-08-04): generic token scan, then classify each
 # token as a known product code, or a plausible-but-unknown one (right shape/
-# prefix, absent from the product master — no amount of resubmit fixes those,
+# prefix, absent from the product master - no amount of resubmit fixes those,
 # the product needs creating first).
 STRICT = re.compile(r"^[A-Z]{1,8}\d{2,}[A-Z0-9\-./]*$")
 TOK = re.compile(r"[A-Za-z][A-Za-z0-9./\-]{3,}")

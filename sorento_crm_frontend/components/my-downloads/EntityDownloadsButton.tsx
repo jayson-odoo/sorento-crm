@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * EntityDownloadsButton — a clickable "print count" chip for one source entity
+ * EntityDownloadsButton - a clickable "print count" chip for one source entity
  * (e.g. a complaint). Clicking opens a modal listing the current user's
  * downloads for that entity; each row is click-to-download (shared DownloadRow).
  *

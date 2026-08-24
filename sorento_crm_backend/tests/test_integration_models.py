@@ -1,4 +1,4 @@
-"""Slice 2 of AutoCount Group A — the integration + API key schema.
+"""Slice 2 of AutoCount Group A - the integration + API key schema.
 
 Pins the shape the rest of the group depends on:
 

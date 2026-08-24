@@ -1,7 +1,7 @@
 /**
- * Cross-Entity Activity Timeline — feature service.
+ * Cross-Entity Activity Timeline - feature service.
  *
- * Backend contract: `GET /api/v1/audit/activity` — a human-readable, label-
+ * Backend contract: `GET /api/v1/audit/activity` - a human-readable, label-
  * resolved view over the `audit_logs` table (the raw listing lives at
  * `GET /api/v1/audit/logs/`). Auth-only, same as the Audit Logs page.
  *
@@ -17,7 +17,7 @@
  *   page          1-based
  *   limit         default 50
  *
- * Response (200) — the FE consumes exactly this shape:
+ * Response (200) - the FE consumes exactly this shape:
  *   {
  *     items: ActivityItem[],   // entity_label + entity_href are BE-resolved, never UUIDs
  *     actors: { id, name }[],  // distinct actors in the window -> user filter

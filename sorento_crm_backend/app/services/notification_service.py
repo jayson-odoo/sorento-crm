@@ -22,7 +22,7 @@ def _split_entity_and_dedup(
     """Derive (entity_uuid_or_none, dedup_scope) from the create args.
 
     `source_entity_id` used to carry two things at once: the entity a
-    notification is about, AND the idempotency scope — which for batched /
+    notification is about, AND the idempotency scope - which for batched /
     periodic notifications was a synthetic string with no entity behind it
     (`alert:...`, `digest:<date>`, `{type}_{batch}`). Now they are separate
     columns: `source_entity_id` is a uuid (or NULL), `dedup_key` is the scope.
@@ -61,7 +61,7 @@ class NotificationService:
         # create() unconditionally fans out to all three channels on the new-row
         # path below; the idempotent branch ensures those same channels exist on
         # an already-present row. These locals were referenced there but never
-        # defined — the branch NameError'd on every duplicate until now.
+        # defined - the branch NameError'd on every duplicate until now.
         send_in_app = send_email = send_web_push = True
         entity_id, dedup = _split_entity_and_dedup(source_entity_id, dedup_key)
         if source_entity_type and dedup and event_type:
@@ -244,7 +244,7 @@ class NotificationService:
 
         send_whatsapp is "this event is WhatsApp-eligible" (escalation / assignment,
         TCK-29). A whatsapp delivery is created ONLY when the recipient also has
-        notify_whatsapp on AND a resolvable RespondContact — otherwise it is skipped
+        notify_whatsapp on AND a resolvable RespondContact - otherwise it is skipped
         silently so other channels still fire.
         """
         # Gate WhatsApp on the recipient's opt-in + reachability.
@@ -267,7 +267,7 @@ class NotificationService:
             _ue = self.db.query(_UserE).filter(_UserE.id == user_id).first()
             send_email = bool(_ue and getattr(_ue, email_pref_attr, True))
         # Web push mirrors in-app for users with an active subscription (TCK-33).
-        # The browser subscription IS the opt-in — no separate pref column.
+        # The browser subscription IS the opt-in - no separate pref column.
         # Best-effort: a lookup failure (e.g. table absent in a partial test DB)
         # must never block the notification.
         if send_in_app and not send_web_push:

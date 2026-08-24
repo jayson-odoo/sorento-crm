@@ -32,11 +32,11 @@ async def get_work_calendar_summary(
     """
     Returns how working days are configured:
 
-    - **working_day_ranges**: each item is one contiguous block of working weekdays.
-      Example: Mon–Fri with all five days on → one range Monday→Friday.
+  - **working_day_ranges**: each item is one contiguous block of working weekdays.
+      Example: Mon - Fri with all five days on → one range Monday→Friday.
       If Wednesday is off → two ranges: Monday→Tuesday and Thursday→Friday.
 
-    - **working_hours_start** / **working_hours_end**: local wall-clock times in 12-hour form
+  - **working_hours_start** / **working_hours_end**: local wall-clock times in 12-hour form
       (e.g. 09:00 A.M.) on each working day (same **timezone** as used elsewhere).
     """
     service = CalendarService(db)
@@ -70,7 +70,7 @@ async def get_is_working_day(
 ):
     """
     Returns whether **now**, interpreted in the given timezone, falls on a **working day**
-    per the CRM work calendar: enabled weekday (Mon–Sun flags) and not a **public holiday**.
+    per the CRM work calendar: enabled weekday (Mon - Sun flags) and not a **public holiday**.
 
     Clock time within the day is ignored; for working hours use the work-calendar summary
     and your own logic, or internal `is_within_working_time` patterns.

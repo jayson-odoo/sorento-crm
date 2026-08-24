@@ -2,7 +2,7 @@
 
 Dealers send a macro-enabled stock workbook; the upload pipeline strips VBA
 and keeps only the Template sheet before storage (see
-`app/services/excel_macro_stripper.py`), so accepting `xlsm` here is safe —
+`app/services/excel_macro_stripper.py`), so accepting `xlsm` here is safe - 
 macro bytes never reach S3/R2 or the n8n webhook.
 
 Idempotent: appends `xlsm` only where it is not already present, so re-runs

@@ -36,7 +36,7 @@ function PayloadBlock({ label, raw }: { label: string; raw: string | null }) {
         // An explicit reason, not a blank space: an empty body and a pruned body
         // look identical otherwise, and only one of them is a problem.
         <p className="rounded bg-muted/30 p-3 text-xs text-muted-foreground">
-          No body recorded — the request had none, or the payload has passed its
+          No body recorded - the request had none, or the payload has passed its
           30-day retention window and was cleared.
         </p>
       )}
@@ -83,13 +83,13 @@ export function ApiCallDetailDrawer({
                       appearance="light"
                       size="sm"
                     >
-                      {row.status_code ?? '—'} {row.outcome}
+                      {row.status_code ?? '-'} {row.outcome}
                     </Badge>
                   </dd>
                 </div>
                 <div>
                   <dt className="text-muted-foreground">Latency</dt>
-                  <dd className="mt-0.5">{row.latency_ms ?? '—'} ms</dd>
+                  <dd className="mt-0.5">{row.latency_ms ?? '-'} ms</dd>
                 </div>
                 <div>
                   <dt className="text-muted-foreground">When</dt>

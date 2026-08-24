@@ -1,8 +1,8 @@
-"""SCM purchase-order endpoints — list/read + the M4 Slice B draft→confirm→GR flow.
+"""SCM purchase-order endpoints - list/read + the M4 Slice B draft→confirm→GR flow.
 
 Reads are gated on ``scm.dashboard.view``; the confirm + create-GR writes mutate
 supply state so they are gated on ``scm.reorder.run`` (the planning permission that
-already governs accepting recommendations into drafts). No UUIDs surfaced — PO by
+already governs accepting recommendations into drafts). No UUIDs surfaced - PO by
 po_number, GR by its reference.
 """
 from __future__ import annotations

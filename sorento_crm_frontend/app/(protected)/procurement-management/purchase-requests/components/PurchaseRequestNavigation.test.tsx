@@ -1,5 +1,5 @@
 /**
- * Tests for PurchaseRequestNavigation — the thin per-resource nav wrapper that
+ * Tests for PurchaseRequestNavigation - the thin per-resource nav wrapper that
  * reads the active list query off the detail URL (parseDetailSearch), forces the
  * request_type from the base path (so PR nav stays in PRs and SF nav in SFs),
  * forwards it to usePurchaseRequestNeighbours, and renders RecordNavigation in

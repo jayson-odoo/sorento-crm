@@ -13,7 +13,7 @@
  * live SLA policy - not something this spec can safely invent). So this spec
  * ONLY runs against a ticket explicitly nominated for it:
  *
- *   E2E_INTERVENTION_TICKET_ID       - the tracking id to resolve (required)
+ *   E2E_INTERVENTION_TICKET_ID     - the tracking id to resolve (required)
  *
  * The nominated ticket must currently be open and visible in the signed-in
  * account's "My Pending" widget. The spec verifies the id via the drawer's

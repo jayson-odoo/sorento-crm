@@ -68,7 +68,7 @@ def _apply_preview_scope(db, company_scope: Any) -> None:
     not-found. Preview and import must disagree about nothing.
 
     The caller is an HTTP route, so it already holds the resolved scope on its own
-    session (``get_company_scope(db)``) — it passes that through rather than us
+    session (``get_company_scope(db)``) - it passes that through rather than us
     re-deriving it. ``_SCOPE_NOT_GIVEN`` keeps non-HTTP callers (scripts, tests)
     working system-scoped, with a warning so a route that forgets is visible.
     """
@@ -91,7 +91,7 @@ def _apply_import_job_scope(db, db_job_id: Optional[str]) -> None:
     ``company_id`` snapshot (captured at enqueue) and set a single-company scope so
     owned inserts auto-stamp + reads isolate. A NULL snapshot (system / None-scope
     import, or a pre-isolation job) runs system-scoped (``None`` = all companies)
-    with a warning — back-compat for the pre-multi-company behaviour.
+    with a warning - back-compat for the pre-multi-company behaviour.
     """
     company_id = None
     if db_job_id:
@@ -599,7 +599,7 @@ def process_attachment_bulk_import(
         (preserves attachment_id + every linkage) and re-fires the
         `attachment_replaced` webhook.
 
-    Detection key: `(resolved directory_id, lower(filename))` — same as the
+    Detection key: `(resolved directory_id, lower(filename))` - same as the
     interactive single-upload path. Empty `directory_id` (root) is also
     scoped correctly because the partial unique index on attachments only
     applies when directory_id IS NOT NULL.
@@ -658,7 +658,7 @@ def process_attachment_bulk_import(
         dir_service = AttachmentDirectoryService(db)
         attachment_service = AttachmentService(db)
         type_service = AttachmentTypeService(db)
-        # Attachment-write provider — separate variable from the staged-zip
+        # Attachment-write provider - separate variable from the staged-zip
         # provider so a future split (e.g. zips on R2, writes on S3) is just a
         # config change.
         storage_provider = default_provider()
@@ -872,7 +872,7 @@ def process_attachment_bulk_import(
                     # Mirror the single-upload contract (PLAN-attachment-key-uuid-segregation):
                     #   stored_filename   = raw display name (editable, what the folder dup-check matches)
                     #   original_filename = sanitized, immutable → the object-key basename
-                    #   key = {entity_type}/{attachment_id}/{basename} — the uuid dir makes every
+                    #   key = {entity_type}/{attachment_id}/{basename} - the uuid dir makes every
                     #   key unique, so two same-named files across folders can NEVER clobber.
                     bulk_attachment_id = str(_uuid.uuid4())
                     key_basename = sanitize_storage_filename(original_filename) or "file"
@@ -891,7 +891,7 @@ def process_attachment_bulk_import(
                         file_path=s3_file_path,
                         content_type=guessed_type,
                     )
-                    # Grid thumbnail (images only) — same small-variant path as the
+                    # Grid thumbnail (images only) - same small-variant path as the
                     # single-file upload route so bulk-imported photos also render
                     # at ~320px in the Files grid. Best-effort; never fails import.
                     from app.services.image_thumbnailer import store_thumbnail
@@ -1122,11 +1122,11 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
     """Process SPO allocation import from Excel in background.
 
     Parsing rules:
-    - Filename (without extension) = SPO number.
-    - Item Code = product code.
-    - Loading Date = cell text; text after first space = shipping container number (link to inbound shipment).
-    - Location = warehouse code.
-    - Qty = allocated quantity.
+  - Filename (without extension) = SPO number.
+  - Item Code = product code.
+  - Loading Date = cell text; text after first space = shipping container number (link to inbound shipment).
+  - Location = warehouse code.
+  - Qty = allocated quantity.
 
     Rows are grouped by (spo_number, product_id, warehouse_id); quantities are summed.
     One allocation is created per group, linked to the first valid inbound shipment for that group.
@@ -1850,7 +1850,7 @@ def _run_grn_listing_import_core(
             # `upsert_grn_header_for_import` commits per row, so a failed flush
             # leaves the session needing a rollback. Without this, every LATER row
             # dies with "transaction has been rolled back due to a previous
-            # exception" — one bad cell fails the whole file and the job report
+            # exception" - one bad cell fails the whole file and the job report
             # blames rows that were fine.
             try:
                 db.rollback()
@@ -2360,7 +2360,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
             A single bad row (constraint / type / FK error) must not abort the
             whole job's transaction: without the savepoint, the swallowed error
             below would leave the Postgres tx in a failed state and every later
-            statement — including ``update_job_progress`` and ``fail_job`` —
+            statement - including ``update_job_progress`` and ``fail_job`` - 
             would blow up with StaleDataError / PendingRollbackError.
             """
             nonlocal first_line_error
@@ -2792,7 +2792,7 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
                 _norm_decimal_for_key(total),
             )
 
-        # Resolve each import row to a per-row entry. NO pre-aggregation — every row stays distinct
+        # Resolve each import row to a per-row entry. NO pre-aggregation - every row stays distinct
         # so two source rows with same product/warehouse but different price/discount produce two
         # separate order lines, matching the source spreadsheet.
         resolved_rows: List[Dict[str, Any]] = []
@@ -2800,7 +2800,7 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
         progress_every = max(100, min(500, total_data_rows // 50 or 100))
 
         def _identity(row_d: Dict[str, Any]) -> Dict[str, Any]:
-            """The row's mapped business columns — what the operator needs to find it."""
+            """The row's mapped business columns - what the operator needs to find it."""
             return {
                 "doc_no": row_d.get("doc_no"),
                 "item_code": row_d.get("item_code"),

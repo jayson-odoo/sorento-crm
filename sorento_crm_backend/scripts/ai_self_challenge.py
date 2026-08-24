@@ -27,7 +27,7 @@ from sqlalchemy import text
 from app.database import SessionLocal
 from app.services.ai_assistant_service import AIAssistantChatService
 
-# The act-as user (EXTERNAL_API_KEY_ACT_AS_USER_ID) — has the view permissions
+# The act-as user (EXTERNAL_API_KEY_ACT_AS_USER_ID) - has the view permissions
 # the assistant/MCP need. Override with --user.
 DEFAULT_USER_ID = "a4b15bc3-5f65-4ff3-aed8-785575a59ce3"
 
@@ -40,7 +40,7 @@ class Q:
 
 
 # --------------------------------------------------------------------------- #
-# Variety question bank — the acceptance surface for "satisfactory answers".    #
+# Variety question bank - the acceptance surface for "satisfactory answers".    #
 # --------------------------------------------------------------------------- #
 BANK: list[Q] = [
     # --- how_to (guide-backed) ---

@@ -12,7 +12,7 @@ import { sessionTokenCookieName } from '@/lib/auth-cookie';
  * `user_sessions` row, and returns an opaque session token. We stash that token
  * (`apiToken`) inside the NextAuth httpOnly cookie; every server-side proxy to
  * FastAPI forwards it as `Authorization: Bearer <apiToken>`. FastAPI is the sole
- * source of truth for session validity — revocation and the sliding 30-day
+ * source of truth for session validity  - revocation and the sliding 30-day
  * window live there (see PLAN-staff-rolling-sessions-fastapi-auth.md).
  *
  * The cookie maxAge (30d) only has to outlive the FastAPI session; FastAPI
@@ -32,10 +32,10 @@ function backendBaseUrl(): string {
 const THIRTY_DAYS_SECONDS = 30 * 24 * 60 * 60;
 
 /**
- * Multi-company isolation (PLAN §3.11 — Q1 = backend-call-at-login): fetch the
+ * Multi-company isolation (PLAN §3.11  - Q1 = backend-call-at-login): fetch the
  * user's switchable companies + active company from FastAPI, using the opaque
  * session token minted by /api/v1/auth/login as the Bearer. Resilient by design:
- * a failure never blocks login — we return an empty context and the app falls
+ * a failure never blocks login  - we return an empty context and the app falls
  * back to the backend resolver's last_active default on the first /my-context.
  */
 async function fetchCompanyContext(
@@ -76,7 +76,7 @@ const authOptions: NextAuthOptions = {
           );
         }
 
-        // NextAuth serializes credentials as strings — coerce the checkbox.
+        // NextAuth serializes credentials as strings  - coerce the checkbox.
         // (Boolean true → "true", string "true"/"on" all count as checked.)
         const rememberMe = ['true', 'on', '1'].includes(
           String(credentials.rememberMe).toLowerCase(),
@@ -117,7 +117,7 @@ const authOptions: NextAuthOptions = {
           roleId: data.role_id || (data.role_ids?.[0] ?? null),
           roleIds: data.role_ids ?? (data.role_id ? [data.role_id] : []),
           roleName: data.role_name ?? null,
-          // Opaque FastAPI session token — carried in the NextAuth cookie.
+          // Opaque FastAPI session token  - carried in the NextAuth cookie.
           apiToken: data.token,
         } as User;
       },
@@ -207,7 +207,7 @@ const authOptions: NextAuthOptions = {
   },
   // Per-instance cookie names so two local instances on different ports
   // (localhost:3000 vs localhost:3001) don't overwrite each other's session.
-  // Browsers scope cookies by host only — port is ignored. Single source of
+  // Browsers scope cookies by host only  - port is ignored. Single source of
   // truth: sessionTokenCookieName() in lib/auth-cookie.ts.
   cookies: (() => {
     const suffix = process.env.NEXTAUTH_COOKIE_SUFFIX

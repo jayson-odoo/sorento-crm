@@ -79,7 +79,7 @@ def link_entity_attachment(
     db.refresh(link)
 
     # Fan attachment template (or explicit field_keys override) into per-row
-    # attachment_field_links. Tolerated as best-effort — never fail the link.
+    # attachment_field_links. Tolerated as best-effort - never fail the link.
     try:
         attachment_row = (
             db.query(Attachment).filter(Attachment.id == link.attachment_id).first()

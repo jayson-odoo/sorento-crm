@@ -13,11 +13,11 @@ export interface LookupBoundResponse {
   set_name: string | null;
   options: LookupBoundOption[];
   /** Optional default option `value` the binding declares. The FE pre-selects it
-   *  on a NEW (empty) form only — never overriding an existing value on edit.
+   *  on a NEW (empty) form only - never overriding an existing value on edit.
    *  (Contract: `GET /api/v1/lookup/by-binding` now also returns `default_value`.) */
   default_value?: string | null;
   /** True when the caller lacks permission to read this binding (403). The
-   *  field degrades to its free-text fallback instead of erroring — see C4. */
+   *  field degrades to its free-text fallback instead of erroring - see C4. */
   forbidden?: boolean;
 }
 
@@ -31,7 +31,7 @@ export async function getLookupOptionsByBinding(
   // lookup-read permission should NOT get a thrown error (which react-query
   // retries 4× and a global handler surfaces as a "Permission required" toast).
   // Resolve with an empty/forbidden response so the field falls back to plain
-  // input silently — no retry, no toast, no console spam.
+  // input silently - no retry, no toast, no console spam.
   if (r.status === 403) {
     return { set_key: null, set_name: null, options: [], forbidden: true };
   }

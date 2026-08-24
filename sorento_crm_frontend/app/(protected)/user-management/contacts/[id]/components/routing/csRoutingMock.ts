@@ -1,5 +1,5 @@
 /**
- * Feature service — Contact CS-routing predicate rules (R2). Phase-2 WIRED to the
+ * Feature service - Contact CS-routing predicate rules (R2). Phase-2 WIRED to the
  * real FastAPI endpoints under /api/v1/user-management/contacts.
  *
  *   GET    .../{contactId}/cs-routing                → { pins: RoutingRule[] }
@@ -86,7 +86,7 @@ export async function saveRoutingRules(
   // Re-create in list order → priority = index (lowest wins).
   for (let i = 0; i < rules.length; i++) {
     const rule = rules[i];
-    if (!rule.cs_pic_user_id) continue; // incomplete row — skip
+    if (!rule.cs_pic_user_id) continue; // incomplete row - skip
     const put = await apiFetch(
       `${BASE}/${contactId}/cs-routing/${encodeURIComponent(rule.use_case)}`,
       {

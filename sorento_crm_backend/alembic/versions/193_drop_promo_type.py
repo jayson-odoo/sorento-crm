@@ -1,7 +1,7 @@
 """Drop promotions.promo_type column.
 
 The DB carries a legacy CHECK constraint ``promotions_promo_type_check`` whose
-allowed value list is no longer aligned with the API contract — n8n payloads
+allowed value list is no longer aligned with the API contract - n8n payloads
 sending ``promo_type='discount'`` 500'd on CheckViolation. The column itself is
 not load-bearing on any business logic (no flag-driven branching in services),
 so we remove it entirely rather than maintain a moving allowed list.

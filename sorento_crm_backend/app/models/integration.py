@@ -20,7 +20,7 @@ class Integration(Base):
     """A counterparty Sorento exchanges data with (the AutoCount ESB, n8n, the MCP server).
 
     Bidirectional by design (plan decision A4): the same row carries the inbound
-    identity — who may call us, via ``integration_api_keys`` — and the outbound
+    identity - who may call us, via ``integration_api_keys`` - and the outbound
     destination, the config and credentials Sorento uses to call *them*. One
     relationship, one row, one screen for an operator to debug.
 

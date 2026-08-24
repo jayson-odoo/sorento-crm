@@ -88,7 +88,7 @@ class SystemSettingUpdate(BaseModel):
     health_integration_fail_threshold: Optional[int] = Field(None, ge=1, le=100000)
     health_audit_volume_floor: Optional[int] = Field(None, ge=0, le=1000000)
     # WhatsApp round-trip latency SLA (S4). Must appear in BOTH this schema and
-    # the GET dict below — inheriting the column is not enough, the GET builds a
+    # the GET dict below - inheriting the column is not enough, the GET builds a
     # manual dict and silently drops anything not listed there.
     chat_latency_p99_target_seconds: Optional[int] = Field(None, ge=1, le=3600)
     chat_latency_percentile: Optional[int] = Field(None, ge=1, le=99)
@@ -382,7 +382,7 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
                 update_data[col] = None
 
     # Handling-lock enabled types: accept a list, persist as a de-duped CSV of valid
-    # form types (mirrors the singleton gotcha — the generic setattr loop below would
+    # form types (mirrors the singleton gotcha - the generic setattr loop below would
     # otherwise write a Python list into a Text column).
     if "handling_lock_enabled_types" in update_data:
         from app.services.form_sla_service import FORM_SLA_TYPES

@@ -26,7 +26,7 @@ const bodyCellSpacingVariants = cva('', {
   variants: {
     size: {
       dense: 'px-2.5 py-2',
-      // Roomier default row spacing — every CRM list matches the Administrative
+      // Roomier default row spacing - every CRM list matches the Administrative
       // Users density. `h-[60px]` acts as a row MIN-height in tables (cells are
       // align-middle), so single-line rows get the same breathing room as the
       // avatar rows without inflating the avatar rows themselves.
@@ -591,7 +591,7 @@ function DataGridTable<TData>() {
           ) : table.getRowModel().rows.length ? (
             table.getRowModel().rows.map((row: Row<TData>, index) => {
               // Optional grouping. `renderGroupHeader` returns a label when this
-              // row starts a new group, or null otherwise — so a grid that does
+              // row starts a new group, or null otherwise - so a grid that does
               // not opt in behaves exactly as before.
               //
               // The caller decides what a group is; the grid only draws the

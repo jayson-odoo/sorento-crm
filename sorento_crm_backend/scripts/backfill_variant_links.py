@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Backfill ``products.variant_of_id`` — the variant graph (suggest-on-miss Wave 1).
+"""Backfill ``products.variant_of_id`` - the variant graph (suggest-on-miss Wave 1).
 
 Derives every product's parent as the LONGEST EXISTING product whose (dash/ws-
-normalized) code is a boundary-prefix of the child's — boundary = the original
+normalized) code is a boundary-prefix of the child's - boundary = the original
 next char is a ``-`` or an ASCII letter, never a continued digit. Existence-
 anchoring (parent must be a real row) keeps brand/category prefixes like ``ACC``
 from forming garbage families. Shares the exact derivation logic with the live
@@ -78,7 +78,7 @@ def main() -> int:
         code_by_id = {r[0]: r[1] for r in rows}
         # Manually-curated rows are STICKY (D1): never overwrite their variant_of_id.
         # They still act as candidate parents in `derive_parents` (they're in `rows`),
-        # only their own value is protected — a re-run reports 0 changes for them.
+        # only their own value is protected - a re-run reports 0 changes for them.
         manual_ids = {r[0] for r in rows if r[3]}
         derived = derive_parents([(r[0], r[1]) for r in rows])
 

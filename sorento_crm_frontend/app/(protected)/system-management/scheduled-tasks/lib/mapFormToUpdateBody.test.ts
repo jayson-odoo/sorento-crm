@@ -38,7 +38,7 @@ const values: FormValues = {
   grace_percent: '',
 };
 
-describe('mapFormToUpdateBody — grace override', () => {
+describe('mapFormToUpdateBody - grace override', () => {
   it('sends the numeric override when one is set', () => {
     const body = mapFormToUpdateBody({ ...values, grace_percent: 50 }, task);
     // toMatchObject, not toEqual: metadata gained an additive company_ids key and
@@ -49,7 +49,7 @@ describe('mapFormToUpdateBody — grace override', () => {
 
   it('sends null (not an omitted key) when the field is cleared', () => {
     // The backend MERGES metadata and removes a key only on an explicit null.
-    // Omitting the key silently leaves the stored override in place — the bug
+    // Omitting the key silently leaves the stored override in place - the bug
     // this test exists to prevent.
     const body = mapFormToUpdateBody({ ...values, grace_percent: '' }, task);
     expect(body.metadata).toHaveProperty('grace_percent', null);

@@ -1,4 +1,4 @@
-"""TCK-2026-000031 AC-31-F3 — E.164 (MY) phone normalisation.
+"""TCK-2026-000031 AC-31-F3 - E.164 (MY) phone normalisation.
 
 Run: pytest tests/test_phone_normalize.py -v
 """
@@ -33,5 +33,5 @@ def test_idempotent():
 
 
 def test_local_and_e164_converge():
-    """A user typing local form matches a contact stored in E.164 — the link key."""
+    """A user typing local form matches a contact stored in E.164 - the link key."""
     assert normalize_msisdn("0123456789") == normalize_msisdn("+60123456789")

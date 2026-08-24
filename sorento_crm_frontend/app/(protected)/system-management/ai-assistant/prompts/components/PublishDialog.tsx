@@ -14,7 +14,7 @@ import {
 
 /**
  * Confirm dialog for moving a label to a version (publish / rollback). AlertDialog
- * per CRUD UX standard — never confirm() (feedback_confirm_before_delete_or_unlink).
+ * per CRUD UX standard - never confirm() (feedback_confirm_before_delete_or_unlink).
  */
 export function PublishDialog({
   open,

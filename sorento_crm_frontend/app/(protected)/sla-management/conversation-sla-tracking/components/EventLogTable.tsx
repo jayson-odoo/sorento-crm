@@ -62,7 +62,7 @@ export const EVENT_TYPE_OPTIONS = [
 /**
  * Human label for the Duration column, per event type.
  * - extend: `duration` is WORKING DAYS added, and from_time is the PREVIOUS (future)
- *   due — so event_at - from_time would be negative. Show "+N working day(s)".
+ *   due - so event_at - from_time would be negative. Show "+N working day(s)".
  * - response/resolution: elapsed time from from_time (initiated_at) to event_at.
  * - escalation/assign/adjust/reassignment: no meaningful elapsed span -> em dash.
  */

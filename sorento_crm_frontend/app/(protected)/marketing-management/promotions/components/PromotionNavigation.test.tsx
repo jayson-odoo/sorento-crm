@@ -1,5 +1,5 @@
 /**
- * Tests for PromotionNavigation — the thin per-resource nav wrapper that reads
+ * Tests for PromotionNavigation - the thin per-resource nav wrapper that reads
  * the active list query off the detail URL (parseDetailSearch), forwards it to
  * usePromotionNeighbours, and renders RecordNavigation in IDs mode.
  *

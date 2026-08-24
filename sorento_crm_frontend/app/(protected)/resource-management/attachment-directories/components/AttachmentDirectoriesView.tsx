@@ -44,7 +44,7 @@ export const DND_ID_FOLDER_ALL = 'folder-all';
 export const DND_ID_FOLDER_BETWEEN_PREFIX = 'folder-between::';
 // Grid (right-pane) folder rows/cards use a DISTINCT prefix from the tree's
 // `folder-` ids. A folder visible in BOTH the tree and the right pane would
-// otherwise register two dnd-kit droppables/draggables with the same id — the
+// otherwise register two dnd-kit droppables/draggables with the same id - the
 // registry keeps only one, silently breaking drag-into for whichever folder is
 // shown in both places (the bug: top-of-list folders failed, lower ones worked).
 export const DND_ID_GRID_FOLDER_PREFIX = 'gridfolder-';
@@ -69,7 +69,7 @@ const FOLDER_ID_PREFIXES = [
 ];
 
 // True for any folder drop/drag id across tree / grid / breadcrumb (NOT the
-// between-zone or `folder-all` root sentinel — callers handle those).
+// between-zone or `folder-all` root sentinel - callers handle those).
 export function isFolderId(dndId: string): boolean {
   if (dndId.startsWith(DND_ID_FOLDER_BETWEEN_PREFIX)) return false;
   return FOLDER_ID_PREFIXES.some((p) => dndId.startsWith(p));

@@ -1,4 +1,4 @@
-"""Form-banner person links — PR rejection attribution (UAC REJ-3/REJ-4/HIST-3).
+"""Form-banner person links - PR rejection attribution (UAC REJ-3/REJ-4/HIST-3).
 
 - reject_submitted + in-system approval-decision populate the new rejected_by_id
   column with a resolvable CRM user (REJ-3).

@@ -15,7 +15,7 @@ import type { SpecSearchPolicyRow } from '../types/productSpec.types';
  *
  * These were constants in the code, which put "discontinued products should rank
  * lower" behind a deploy. Each row says what it does in the language of the decision
- * being made, not the language of the scoring function — someone tuning this is asking
+ * being made, not the language of the scoring function - someone tuning this is asking
  * a merchandising question, not reading an algorithm.
  */
 export default function SearchTuning() {
@@ -116,7 +116,7 @@ export default function SearchTuning() {
 
         <p className="text-xs text-muted-foreground">
           Every number here is a nudge, never a filter. A product that answers the question
-          is always offered — these decide the order it is offered in. To prefer a
+          is always offered - these decide the order it is offered in. To prefer a
           particular brand, edit that key below and set a preference against its values.
         </p>
       </CardContent>

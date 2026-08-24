@@ -3,7 +3,7 @@
 **Status:** Design locked (grill 2026-07-19). Not built.
 **Classification:** CORE (extends the existing form-SLA engine; `public` schema; no new tables).
 **Domain:** forms / sla
-**UAC:** `documentation/plans/forms/form-workday-sla-clamp-acceptance-criteria.md` (contract — written first)
+**UAC:** `documentation/plans/forms/form-workday-sla-clamp-acceptance-criteria.md` (contract - written first)
 **Owner:** Claude + Jayson · **Created:** 2026-07-19
 
 ## Problem (proven)
@@ -12,12 +12,12 @@ Form due-dates funnel through `_working_due_naive` (`app/services/form_sla_servi
 `CalendarService.add_working_days_from_hours` (`app/services/calendar_service.py:288`), which branches
 at 24h:
 
-- **`< 24h`** → `add_working_hours` (`:366`): a true 09:00–17:00 KL clock. Skips nights/weekends/
+- **`< 24h`** → `add_working_hours` (`:366`): a true 09:00 - 17:00 KL clock. Skips nights/weekends/
   holidays. **No bug.**
 - **`>= 24h`** → `days = round(hours/24)` then `add_business_days` (`:233`): steps whole business days
   and **preserves the submission wall-clock time-of-day.** **The bug.**
 
-Simulation (24h tier, Mon–Fri 09:00–17:00, no holidays):
+Simulation (24h tier, Mon - Fri 09:00 - 17:00, no holidays):
 
 | Submit | Due today | Effective working time | Verdict |
 |---|---|---|---|
@@ -30,7 +30,7 @@ Simulation (24h tier, Mon–Fri 09:00–17:00, no holidays):
 Root cause: an early-morning / off-hours submit clock lands the deadline at that same early time on
 the `>= 24h` branch → almost no working window.
 
-## Solution — one-sided clamp in `_working_due_naive`
+## Solution - one-sided clamp in `_working_due_naive`
 
 After the funnel computes `due` (naive UTC), convert to KL local; if the local time-of-day is
 **before** `work_day_start_time` on a working day, set it to that day's **configured**
@@ -56,21 +56,21 @@ def _clamp_to_workday_end(db, due_naive_utc):
         return local.astimezone(timezone.utc).replace(tzinfo=None)
     return due_naive_utc
 ```
-(Exact helper visibility TBD in coding — reuse `CalendarService` accessors, do not duplicate the
+(Exact helper visibility TBD in coding - reuse `CalendarService` accessors, do not duplicate the
 holiday/weekday logic. If a private accessor must become public, do it minimally.)
 
 ## Decisions
 
 | # | Decision |
 |---|----------|
-| D1 | **Rule = one-sided clamp** (snap to end-of-day only when raw time is *before* `work_start`). Rejected: start-shift + unify-through-working-hours — both loosen every deadline, larger change than asked. |
+| D1 | **Rule = one-sided clamp** (snap to end-of-day only when raw time is *before* `work_start`). Rejected: start-shift + unify-through-working-hours - both loosen every deadline, larger change than asked. |
 | D2 | **Placement = `_working_due_naive`** (form-only funnel). NOT `add_business_days`/`add_working_days_from_hours` (also serve SLA extend + conversation SLAs). Narrowest blast radius (FUNNEL-1/2). |
 | D3 | **End-of-day = configured `work_day_end_time`** via `get_working_hours()`, never hardcoded 18:00 (CLAMP-6). |
 | D4 | **Scope = all 4 forms, response + resolution + escalation** (all pass through the funnel). `< 24h` branch untouched (CLAMP-8). |
 
 ## Phase mapping
 
-- **Phase 1 (FE prototype):** N/A — pure backend calc; the FE already renders `due_at`. No prototype.
+- **Phase 1 (FE prototype):** N/A - pure backend calc; the FE already renders `due_at`. No prototype.
 - **Phase 2 (BE, test-FIRST):** author CLAMP-1..9 + FUNNEL-1..6 as failing tests first (deterministic
   engine → golden expected timestamps before code), implement the clamp, green, refactor. Re-run the
   full existing SLA suite for FUNNEL-2 regression.
@@ -79,9 +79,9 @@ holiday/weekday logic. If a private accessor must become public, do it minimally
 
 ## Risks
 
-- **R1 — timezone/DST:** KL has no DST, but keep all math on `DEFAULT_WORKING_TZ` and store naive UTC;
+- **R1 - timezone/DST:** KL has no DST, but keep all math on `DEFAULT_WORKING_TZ` and store naive UTC;
   test asserts the returned naive-UTC equals the KL-17:00 conversion.
-- **R2 — `_is_business_day` is currently "private":** avoid duplicating weekday/holiday logic; if
+- **R2 - `_is_business_day` is currently "private":** avoid duplicating weekday/holiday logic; if
   needed expose a thin public predicate on `CalendarService` rather than re-implementing.
-- **R3 — no schema change, no backfill:** existing open trackers keep their stored due until next
+- **R3 - no schema change, no backfill:** existing open trackers keep their stored due until next
   recompute/escalation; this is acceptable (fix is forward-looking). Note in PR.

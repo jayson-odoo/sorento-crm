@@ -1,4 +1,4 @@
-# Phase 3 manual step — add Ticket Management to the sidebar
+# Phase 3 manual step - add Ticket Management to the sidebar
 
 The sidebar layout reads `config/menu.config.tsx` directly (not the
 `@/modules/registry` discovery loader, which is exported but not yet
@@ -12,8 +12,8 @@ as a small patch instead.
 git apply documentation/patches/add-ticket-menu-entry.patch
 ```
 
-This adds the same 11-line block to two places — `MENU_SIDEBAR` and
-`MENU_SIDEBAR_COMPACT` — right above the existing `Complaint Management`
+This adds the same 11-line block to two places - `MENU_SIDEBAR` and
+`MENU_SIDEBAR_COMPACT` - right above the existing `Complaint Management`
 entry, so both layouts stay aligned. `LifeBuoy` is already imported in
 that file.
 

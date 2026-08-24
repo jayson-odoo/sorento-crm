@@ -1,7 +1,7 @@
 """Record-action write tools for the MCP server.
 
 Wraps existing internal-staff CRM endpoints so an n8n agent (or the in-app AI
-assistant) can operate the system by chat — "close complaint C-1042", "approve
+assistant) can operate the system by chat - "close complaint C-1042", "approve
 PR-88", "cancel this order". Four tools are registered:
 
 - ``crm_complaint_close``            → POST  /complaints-management/complaints/{id}/close
@@ -18,7 +18,7 @@ there is a single source of truth; the fixed body is the only tool-specific bit.
 
 The tool names carry a write-verb suffix (_close / _cancel / _approve /
 _reject) so the in-app assistant's write-confirmation gate halts them until the
-user explicitly confirms — nothing here bypasses that.
+user explicitly confirms - nothing here bypasses that.
 """
 
 from __future__ import annotations

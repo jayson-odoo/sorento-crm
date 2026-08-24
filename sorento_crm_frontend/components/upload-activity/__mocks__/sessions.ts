@@ -53,7 +53,7 @@ export const MOCK_SESSIONS: UploadActivitySession[] = [
     ],
   },
 
-  // 2. Multi-file modal upload — mixed outcomes (3 linked, 1 unlinked, 1 failed)
+  // 2. Multi-file modal upload - mixed outcomes (3 linked, 1 unlinked, 1 failed)
   {
     session_id: 'mock-session-multi-mixed',
     session_type: 'multi',
@@ -169,7 +169,7 @@ export const MOCK_SESSIONS: UploadActivitySession[] = [
     ],
   },
 
-  // 3. Bulk ZIP — 50 files, mostly linked, 3 in needs-attention
+  // 3. Bulk ZIP - 50 files, mostly linked, 3 in needs-attention
   {
     session_id: 'mock-session-bulk-zip',
     session_type: 'bulk_zip',
@@ -188,7 +188,7 @@ export const MOCK_SESSIONS: UploadActivitySession[] = [
     needs_action: true,
     import_job_id: 'mock-job-zip-1',
     files: [
-      // representative subset — Phase 2 will paginate via virtual scroll
+      // representative subset - Phase 2 will paginate via virtual scroll
       ...Array.from({ length: 47 }, (_, i) => ({
         client_id: `mock-file-zip-linked-${i}`,
         attachment_id: `mock-att-zip-l-${i}`,

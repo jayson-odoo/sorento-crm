@@ -5,7 +5,7 @@ upload, but the Overall Tracking sheet is only a partial/rolling window (real
 import_logs show master_rows routinely far exceeding tracking_rows). The Master
 loop used to reset order_status_id to "New" unconditionally for every matched
 order, even one that already had a real actual_delivery_date + Delivered status
-recorded by an earlier run — wiping the status while leaving the date behind.
+recorded by an earlier run - wiping the status while leaving the date behind.
 Traced from a CSV export where 5394/5394 delivery orders had actual_delivery_date
 set but order_status stuck at "New Order".
 """

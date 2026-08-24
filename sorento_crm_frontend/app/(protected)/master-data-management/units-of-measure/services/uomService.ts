@@ -16,19 +16,19 @@
  *
  * Rules the routes enforce, and the reasons they are not negotiable:
  *
- *   - **`0..4`, validated on every write.** Outside that range is rejected. It is
+ * - **`0..4`, validated on every write.** Outside that range is rejected. It is
  *     canonical UOM divisibility - `EA` is 0 and refuses `2.5`, `kg` at 3 accepts
  *     it - not SCM arithmetic precision, and it is never inferred from
  *     `conversion_factor`.
- *   - **Omitted on CREATE resolves to `0`**, the same fallback a missing rollout
+ * - **Omitted on CREATE resolves to `0`**, the same fallback a missing rollout
  *     value takes. **Omitted on EDIT preserves the stored value**, so a partial
  *     update cannot silently reset a measure unit to whole numbers.
- *   - **The backfill classifies by NAME, never by code.** Count names get 0;
+ * - **The backfill classifies by NAME, never by code.** Count names get 0;
  *     measure names get the greatest fractional scale actually observed in the
  *     transaction columns, capped at 4; every unknown name gets 0. A unit coded
  *     `EA` but named `Kilogram` is therefore a measure unit, and no historical
  *     quantity is rewritten.
- *   - **SCM freezes it per run.** Each summary row copies the product's value as
+ * - **SCM freezes it per run.** Each summary row copies the product's value as
  *     `uom_decimal_places` at calculation, and validation and allocation read that
  *     snapshot, so editing a unit here never changes a run already calculated.
  *

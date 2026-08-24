@@ -159,7 +159,7 @@ export default function StockInquiriesList() {
           );
           return (
             <span className="truncate" title={number ?? undefined}>
-              {number || '—'}
+              {number || '-'}
             </span>
           );
         },
@@ -178,7 +178,7 @@ export default function StockInquiriesList() {
         // Denormalized on the row - no per-row query (UAC H4).
         cell: ({ row }) => {
           const label = revisionBadgeLabel(row.original.revision_no);
-          if (!label) return <span className="text-muted-foreground">—</span>;
+          if (!label) return <span className="text-muted-foreground"> - </span>;
           return (
             <Badge variant="secondary" title={label}>
               {label}

@@ -52,7 +52,7 @@ def get_conversation_state(
 
     With `?message_id=...`, also resolves the quoted message's stored result set and
     the quoted turn's post-turn state, returned under
-    `session_vars.referenced_result_set` and `session_vars.referenced_state` — both
+    `session_vars.referenced_result_set` and `session_vars.referenced_state` - both
     always present (null on any miss) so n8n can branch deterministically. The two
     read different rows: the result set comes off the quoted row itself, the state off
     the INCOMING row of the same turn. The persisted `session_vars` is never modified

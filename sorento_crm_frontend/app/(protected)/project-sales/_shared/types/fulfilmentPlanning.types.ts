@@ -904,10 +904,10 @@ export interface BoardContribution {
    * what confirmed decisions hold, less `so_qty_ahead`.
    *
    * THREE NUMBERS LIVE NEAR EACH OTHER AND NONE MAY BE PRINTED AS ANOTHER:
-   *   - `BoardCellLocation.available_qty` is the WHOLE pile's position, signed, as AutoCount
+   * - `BoardCellLocation.available_qty` is the WHOLE pile's position, signed, as AutoCount
    *     states it (on hand - all SO + all SPO). It is about the pile, not about any line;
-   *   - this is what was left for THIS line at its own location;
-   *   - `qty_proposed_reserve` is what the line actually TOOK, and it may EXCEED this one,
+   * - this is what was left for THIS line at its own location;
+   * - `qty_proposed_reserve` is what the line actually TOOK, and it may EXCEED this one,
    *     because the shared pool is a second source with a queue of its own. A live card reads
    *     "0 left for this line" beside a Reserve of 9 drawn from the pool, and both are true.
    */

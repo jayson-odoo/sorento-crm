@@ -1,4 +1,4 @@
-"""Installable application modules (App Store) — catalog, per-tenant state, install audit."""
+"""Installable application modules (App Store) - catalog, per-tenant state, install audit."""
 import uuid
 from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB

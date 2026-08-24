@@ -35,7 +35,7 @@ export async function extractApiError(
     const text = await response.text().catch(() => '');
     if (text && responseBodyLooksLikeHtml(text)) {
       if (response.status === 502) {
-        return 'Bad gateway (502). The API server is not responding — check that the backend is running and nginx proxy settings.';
+        return 'Bad gateway (502). The API server is not responding - check that the backend is running and nginx proxy settings.';
       }
       if (response.status === 503) {
         return 'Service unavailable (503). The API may be starting or overloaded.';

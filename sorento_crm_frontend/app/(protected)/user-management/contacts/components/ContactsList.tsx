@@ -231,7 +231,7 @@ export default function ContactsList() {
         header: ({ column }) => <DataGridColumnHeader title="First name" column={column} />,
         size: 160,
         cell: ({ row }) =>
-          row.original.first_name || <span className="text-muted-foreground">—</span>,
+          row.original.first_name || <span className="text-muted-foreground"> - </span>,
         meta: { headerTitle: 'First name', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
@@ -239,7 +239,7 @@ export default function ContactsList() {
         header: ({ column }) => <DataGridColumnHeader title="Last name" column={column} />,
         size: 160,
         cell: ({ row }) =>
-          row.original.last_name || <span className="text-muted-foreground">—</span>,
+          row.original.last_name || <span className="text-muted-foreground"> - </span>,
         meta: { headerTitle: 'Last name', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
@@ -251,7 +251,7 @@ export default function ContactsList() {
         cell: ({ row }) => {
           const types = row.original.access_types ?? [];
           if (types.length === 0) {
-            return <span className="text-muted-foreground">—</span>;
+            return <span className="text-muted-foreground"> - </span>;
           }
           return (
             <div className="flex flex-wrap gap-1">

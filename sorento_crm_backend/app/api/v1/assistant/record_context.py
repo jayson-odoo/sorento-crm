@@ -1,7 +1,7 @@
 """Record-context assembler route for the in-system AI bubble.
 
 JWT-only. The dependency is ``get_current_user`` (not the ``_or_api_key``
-variant), so an ``EXTERNAL_API_KEY`` / ``X-API-Key`` principal is denied — this
+variant), so an ``EXTERNAL_API_KEY`` / ``X-API-Key`` principal is denied - this
 keeps the assembler out of n8n/WhatsApp reach (UAC §3.6 / Q7).
 
 RBAC is resolved per entity_type via ``record_context_view_permission``: the

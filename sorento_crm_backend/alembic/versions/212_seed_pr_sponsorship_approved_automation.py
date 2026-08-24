@@ -3,7 +3,7 @@
 Creates two ``email_templates`` rows and two ``automations`` rows wired to the
 new ``purchase_request_approved`` and ``sponsorship_form_approved`` trigger
 types. Automations are seeded **disabled with empty recipient_config** so they
-do not fire blank emails on first deploy — the admin opens System Management →
+do not fire blank emails on first deploy - the admin opens System Management →
 Automation, picks recipients, then flips the enable switch.
 
 Idempotent: skips rows that already exist by ``email_templates.code`` and by
@@ -42,14 +42,14 @@ _PR_BODY_HTML = """\
   has been <strong>approved</strong>.
 </p>
 <ul>
-  <li><strong>Customer:</strong> {{ purchase_request.customer_name or '—' }}</li>
-  <li><strong>Project:</strong> {{ purchase_request.project_title or '—' }}</li>
-  <li><strong>Purpose:</strong> {{ purchase_request.purpose or '—' }}</li>
-  <li><strong>Requested by:</strong> {{ purchase_request.requested_by or '—' }}</li>
-  <li><strong>Approved by:</strong> {{ purchase_request.approved_by or '—' }}</li>
-  <li><strong>Approved at:</strong> {{ purchase_request.approved_at or '—' }}</li>
-  <li><strong>Expected delivery:</strong> {{ purchase_request.expected_delivery_date or '—' }}</li>
-  <li><strong>Expected PO date:</strong> {{ purchase_request.expected_po_date or purchase_request.expected_po_date_text or '—' }}</li>
+  <li><strong>Customer:</strong> {{ purchase_request.customer_name or '-' }}</li>
+  <li><strong>Project:</strong> {{ purchase_request.project_title or '-' }}</li>
+  <li><strong>Purpose:</strong> {{ purchase_request.purpose or '-' }}</li>
+  <li><strong>Requested by:</strong> {{ purchase_request.requested_by or '-' }}</li>
+  <li><strong>Approved by:</strong> {{ purchase_request.approved_by or '-' }}</li>
+  <li><strong>Approved at:</strong> {{ purchase_request.approved_at or '-' }}</li>
+  <li><strong>Expected delivery:</strong> {{ purchase_request.expected_delivery_date or '-' }}</li>
+  <li><strong>Expected PO date:</strong> {{ purchase_request.expected_po_date or purchase_request.expected_po_date_text or '-' }}</li>
 </ul>
 {% if purchase_request.approval_comments %}
 <p><strong>Approval comments:</strong> {{ purchase_request.approval_comments }}</p>
@@ -64,17 +64,17 @@ _SF_BODY_HTML = """\
   has been <strong>approved</strong>.
 </p>
 <ul>
-  <li><strong>Customer:</strong> {{ purchase_request.customer_name or '—' }}</li>
-  <li><strong>Project:</strong> {{ purchase_request.project_title or '—' }}</li>
-  <li><strong>Purpose:</strong> {{ purchase_request.purpose or '—' }}</li>
+  <li><strong>Customer:</strong> {{ purchase_request.customer_name or '-' }}</li>
+  <li><strong>Project:</strong> {{ purchase_request.project_title or '-' }}</li>
+  <li><strong>Purpose:</strong> {{ purchase_request.purpose or '-' }}</li>
   <li><strong>Total project value:</strong>
     {{ purchase_request.total_project_value_text
        or purchase_request.total_project_value
-       or '—' }}
+       or '-' }}
   </li>
-  <li><strong>Requested by:</strong> {{ purchase_request.requested_by or '—' }}</li>
-  <li><strong>Approved by:</strong> {{ purchase_request.approved_by or '—' }}</li>
-  <li><strong>Approved at:</strong> {{ purchase_request.approved_at or '—' }}</li>
+  <li><strong>Requested by:</strong> {{ purchase_request.requested_by or '-' }}</li>
+  <li><strong>Approved by:</strong> {{ purchase_request.approved_by or '-' }}</li>
+  <li><strong>Approved at:</strong> {{ purchase_request.approved_at or '-' }}</li>
 </ul>
 {% if purchase_request.approval_comments %}
 <p><strong>Approval comments:</strong> {{ purchase_request.approval_comments }}</p>
@@ -168,7 +168,7 @@ def _seed_automation(
         {"code": template_code},
     ).first()
     if template_row is None:
-        # Should not happen — _upsert_template runs first in upgrade().
+        # Should not happen - _upsert_template runs first in upgrade().
         return
     template_id = template_row[0]
 
@@ -227,7 +227,7 @@ def upgrade() -> None:
         name=_PR_AUTOMATION_NAME,
         description=(
             "Sends the default approval email to configured recipients whenever a "
-            "purchase request transitions to approved. Seeded disabled — add "
+            "purchase request transitions to approved. Seeded disabled - add "
             "recipients in System Management → Automation, then enable."
         ),
         trigger_type="purchase_request_approved",
@@ -238,7 +238,7 @@ def upgrade() -> None:
         name=_SF_AUTOMATION_NAME,
         description=(
             "Sends the default approval email to configured recipients whenever a "
-            "sponsorship form transitions to approved. Seeded disabled — add "
+            "sponsorship form transitions to approved. Seeded disabled - add "
             "recipients in System Management → Automation, then enable."
         ),
         trigger_type="sponsorship_form_approved",

@@ -26,7 +26,7 @@ def _embedding_company_filter(db: Session):
     """Company-scope predicate for vector search over embedding rows (multi-company
     isolation, AC-I4). Reads the four-state scope stamped on the session:
 
-      None              -> None  (no filter — all companies / system / back-compat)
+      None              -> None  (no filter - all companies / system / back-compat)
       frozenset({ids})  -> company_id IN (ids) OR company_id IS NULL
                            (shared / company-less knowledge stays visible)
       UNSET / empty     -> false()  (fail-closed: 0 rows)
@@ -299,7 +299,7 @@ class EmbeddingReadService:
         #
         # When the orchestrator marks the intent as one of the four portal-backed
         # submission flows, the user always wants `crm_portal_link_get`, never an
-        # inventory / incoming-stock / order lookup tool — regardless of how the
+        # inventory / incoming-stock / order lookup tool - regardless of how the
         # other lines ("Domain: warehouse", "Operation: search") bias the embedding
         # cosine. Pin the portal tool and aggressively demote read-only data tools.
         _portal_intent_values = (
@@ -730,7 +730,7 @@ class EmbeddingReadService:
                     score -= 0.06
             if "is spo_allocation" in q_lower and tool_name.startswith("crm_procurement_spo"):
                 score += 0.15
-            # If a code is explicitly unresolved, strongly penalize every data tool —
+            # If a code is explicitly unresolved, strongly penalize every data tool - 
             # the LLM should just tell the user "no record found".
             if "unresolved" in q_lower and "is customer_order" not in q_lower and "is product" not in q_lower:
                 score -= 0.10

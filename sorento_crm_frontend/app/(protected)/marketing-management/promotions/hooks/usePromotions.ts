@@ -31,7 +31,7 @@ import type { PromotionFormData } from '../types/promotion.types';
 /**
  * Prev/next neighbours of a promotion within the active filtered+sorted list set.
  * Serializes the list query (search/sort/status/user_type/attachment_state) with
- * `buildDataGridParams` — the same serialization the list page uses — so the
+ * `buildDataGridParams` - the same serialization the list page uses - so the
  * backend honours filters identically. `page`/`limit` are sent but ignored by the
  * neighbours endpoint.
  */
@@ -99,7 +99,7 @@ export function useCompilePromotionsPdf() {
  *
  * Sequential on purpose: every resubmit starts a Gemini extraction on the n8n side,
  * and firing a whole page of selections at once would stampede that workflow. One
- * failure does not abort the rest — the caller reports the tally.
+ * failure does not abort the rest - the caller reports the tally.
  */
 export function useResubmitPromotionFlyers() {
   const queryClient = useQueryClient();

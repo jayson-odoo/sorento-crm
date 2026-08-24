@@ -3,12 +3,12 @@
  *
  * Validates the redesign in PLAN-unified-drive-files.md / its UAC against the
  * REAL stack (FE :3000 -> BE :8000 -> DB). Per project memory:
- *   - ALWAYS sidebar-navigate from `/` (feedback_playwright_via_sidebar);
- *   - real committed fixtures, not stubbed mocks (feedback_e2e_real_samples);
- *   - assert the FE hit the right /api/v1/* call (browser_network_requests
+ * - ALWAYS sidebar-navigate from `/` (feedback_playwright_via_sidebar);
+ * - real committed fixtures, not stubbed mocks (feedback_e2e_real_samples);
+ * - assert the FE hit the right /api/v1/* call (browser_network_requests
  *     equivalent via a request log).
  *
- * Previously ONE 300s serial golden flow — split into focused, independent
+ * Previously ONE 300s serial golden flow - split into focused, independent
  * tests so a single flaky interaction can't mask the rest. Each test logs in,
  * navigates via the sidebar, creates uniquely-named `aaa-drive-*` folders, and
  * cleans up after itself (afterEach drains the test folders from the tree +
@@ -41,7 +41,7 @@ const DOC_NAME = 'drive-doc.pdf';
 const DRIVE_URL = '/api/v1/resource-management/attachments/drive';
 const DIR_URL = '/api/v1/resource-management/directories';
 
-// Every aaa-drive-* test folder ever created — used for teardown matching.
+// Every aaa-drive-* test folder ever created - used for teardown matching.
 const TEST_FOLDER_PAT = /aaa-drive-/;
 
 function uniqueName(slug: string): string {
@@ -133,7 +133,7 @@ async function fillCreateDialog(page: Page, name: string) {
 }
 
 // Create a top-level folder via the tree "Add", then reload so it appears in the
-// right pane (drive-contents is not invalidated by the create — see report).
+// right pane (drive-contents is not invalidated by the create - see report).
 async function createTopFolder(page: Page, name: string) {
   await page.getByRole('button', { name: /^add$/i }).first().click();
   await fillCreateDialog(page, name);
@@ -239,7 +239,7 @@ async function drainTrashTestFolders(page: Page) {
 }
 
 // Full teardown: move the listed test folders to Trash from the tree, then drain
-// Trash so nothing aaa-drive-* survives. Best-effort — never fails the test.
+// Trash so nothing aaa-drive-* survives. Best-effort - never fails the test.
 async function cleanupFolders(page: Page, names: string[]) {
   try {
     await gotoFiles(page);
@@ -299,7 +299,7 @@ test.describe('Unified Drive', () => {
   });
 
   // ---- (c) upload + recursive search + Location column [B2/B3/B4/B5] -------
-  // Already passing in the old monolith — kept intact end-to-end.
+  // Already passing in the old monolith - kept intact end-to-end.
   test('B2/B3/B4/B5: upload into subfolder, recursive search finds it + Location column', async ({
     page,
   }) => {
@@ -445,7 +445,7 @@ test.describe('Unified Drive', () => {
 
     // F1: select the folder row via its "Select row" checkbox.
     // The unified list renders each row as a <button> (role=button, for
-    // single-click-open), NOT role=row — so scope to the grid <table> and match
+    // single-click-open), NOT role=row - so scope to the grid <table> and match
     // the row button by its accessible name (which contains the folder name),
     // then find the checkbox inside it.
     const grid = page.getByRole('table').first();

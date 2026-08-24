@@ -2,10 +2,10 @@
 
 Two entry points:
 
-- ``notify_assignee_and_team_on_create`` — fires when a ticket is created via
+- ``notify_assignee_and_team_on_create`` - fires when a ticket is created via
   the MCP intake (round-robin assignee + remaining tier-1 team members both
   get an in-app + email notification).
-- ``notify_submitter_on_status_change(kind='responded'|'resolved')`` — fires
+- ``notify_submitter_on_status_change(kind='responded'|'resolved')`` - fires
   when the assignee clicks "Update & Reply". Routes the notification to the
   submitter's channel: WhatsApp via Respond.io for respond-contact submitters,
   in-app + email via ``NotificationService`` for system users.

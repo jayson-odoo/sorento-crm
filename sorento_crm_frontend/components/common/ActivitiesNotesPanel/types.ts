@@ -1,4 +1,4 @@
-/** Public types for ActivitiesNotesPanel — entity-generic. */
+/** Public types for ActivitiesNotesPanel - entity-generic. */
 
 export interface ActivityActor {
   id: string;
