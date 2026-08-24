@@ -117,3 +117,41 @@ def read_print_payload(
             for collection_id, tiles in resolved.items()
         },
     }
+
+
+@router.get("/tag-sheet/{download_id}")
+def read_tag_sheet_print_payload(
+    download_id: str,
+    token: str = Query(...),
+    sheet: list[str] = Query(default=[]),
+    db: Session = Depends(get_db),
+):
+    """Render payload for tag sheet PDF export.
+
+    Resolves product data and prices at render time (ADR 0008). The print page
+    renders DOM/CSS elements (not Konva) for Chromium's ``page.pdf()``.
+
+    ``sheet`` query params filter to specific sheet ids. Empty = all sheets.
+    """
+    if not render_token.verify(download_id, token):
+        raise AppException(status_code=404, message="Not found")
+
+    from app.models.base import company_scope as _company_scope
+    from app.services.dealer_kit.tag_sheet_export_service import (
+        resolve_tag_sheet_print_payload,
+    )
+
+    # Tag sheet pages are company-scoped; read across all companies to learn
+    # which one, then pin the scope for price resolution.
+    with _company_scope(db, None):
+        payload = resolve_tag_sheet_print_payload(db, download_id)
+
+    # Filter sheets if specific ids were requested.
+    if sheet and payload.get("doc"):
+        doc = payload["doc"]
+        if "sheets" in doc:
+            doc["sheets"] = [
+                s for s in doc["sheets"] if s.get("id") in sheet
+            ]
+
+    return payload

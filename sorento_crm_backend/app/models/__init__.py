@@ -110,6 +110,14 @@ from app.models.dealer_kit import (
     FlyerReadingRecord,
     Selection,
     SelectionLine,
+    Edition,
+    ExportRequest,
+    TagTemplate,
+)
+from app.models.price_tag import (
+    ContactPortalFormOverride,
+    PriceTagRequest,
+    PriceTagRequestLine,
 )
 from app.models.onboarding import (
     OnboardingTemplate,
@@ -351,6 +359,13 @@ __all__ = [
     "SelectionLine",
     "BundleComponent",
     "FlyerReadingRecord",
+    "Edition",
+    "ExportRequest",
+    "TagTemplate",
+    # Price Tag Request
+    "ContactPortalFormOverride",
+    "PriceTagRequest",
+    "PriceTagRequestLine",
     # Onboarding intake / review / provisioning
     "OnboardingTemplate",
     "OnboardingRequest",

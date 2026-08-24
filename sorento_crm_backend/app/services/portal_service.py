@@ -66,7 +66,7 @@ OTP_MAX_ATTEMPTS = 5
 # Hard daily cap per contact - the slug URL is bookmarkable/shareable, so an
 # attacker with a leaked slug could otherwise spam the contact with OTP sends.
 OTP_DAILY_CAP = 10
-SUPPORTED_TYPES = ("complaint", "stock_inquiry", "purchase_request", "sponsorship_form")
+SUPPORTED_TYPES = ("complaint", "stock_inquiry", "purchase_request", "sponsorship_form", "price_tag_request")
 PORTAL_ATTACHMENT_TYPE_CODE = "portal_submission"
 
 # Crockford base32 alphabet - excludes I, L, O, U to eliminate look-alike

@@ -594,6 +594,39 @@ PERMISSION_REGISTRY.extend([
 ])
 
 
+# Dealer Kit - price tag requests + tag templates.
+# Migration 309 seeded the page/library/edition/brochure slugs; these five are
+# the price-tag-request extension (migration ptag_0001 seeds and grants them).
+# Declared here so a create_all database (CI, bootstrap_env) has them at all.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "dealer_kit.price_tag_requests.view",
+        "name": "View Price Tag Requests",
+        "description": "View price tag requests submitted via the portal.",
+    },
+    {
+        "slug": "dealer_kit.price_tag_requests.create",
+        "name": "Create Price Tag Requests",
+        "description": "Create price tag requests (portal contacts, implicit for linked contacts).",
+    },
+    {
+        "slug": "dealer_kit.price_tag_requests.process",
+        "name": "Process Price Tag Requests",
+        "description": "Claim, design, and manage price tag request lifecycle (CRM marketing).",
+    },
+    {
+        "slug": "dealer_kit.tag_templates.view",
+        "name": "View Tag Templates",
+        "description": "View tag templates used in the price tag designer.",
+    },
+    {
+        "slug": "dealer_kit.tag_templates.manage",
+        "name": "Manage Tag Templates",
+        "description": "Create, edit, and delete tag templates for price tag design.",
+    },
+])
+
+
 def sync_permissions(db: Session, created_by_user_id: Optional[str] = None) -> int:
     """
     Idempotent sync: ensure every slug in PERMISSION_REGISTRY exists in user_permissions.

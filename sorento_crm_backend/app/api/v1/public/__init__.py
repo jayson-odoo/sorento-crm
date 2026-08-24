@@ -7,6 +7,7 @@ from app.api.v1.public import (
     geo,
     onboarding,
     portal,
+    portal_price_tag,
     print as print_route,
     quotation_sign,
     ticket_drafts,
@@ -25,6 +26,9 @@ router.include_router(
     onboarding.router, prefix="/onboarding", tags=["public-onboarding"]
 )
 router.include_router(ai_extract.router, prefix="/portal", tags=["public-portal-ai-extract"])
+router.include_router(
+    portal_price_tag.router, prefix="/portal", tags=["public-portal-price-tag"]
+)
 router.include_router(
     ticket_drafts.router, prefix="/ticket-drafts", tags=["public-ticket-drafts"]
 )

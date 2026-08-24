@@ -39,6 +39,8 @@ FORM_SLA_TYPES = (
     # Has carried an active form_sla_configs row since 2026-08-01. Omitting it made
     # GET /form-sla-config 500 on response validation for every caller.
     "workflow_submission",
+    # Price tag request: single marketing stage, configured via form_sla_configs.
+    "price_tag_request",
 )
 
 

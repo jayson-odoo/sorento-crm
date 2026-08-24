@@ -472,6 +472,14 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Design Summary',
         path: '/dealer-kit/design/summary',
       },
+      {
+        title: 'Price Tag Requests',
+        path: '/dealer-kit/price-tag-requests',
+      },
+      {
+        title: 'Tag Templates',
+        path: '/dealer-kit/tag-templates',
+      },
     ],
   },
   {

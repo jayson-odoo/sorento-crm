@@ -133,6 +133,13 @@ class Customer(Base, CompanyScopedMixin):
     ar_outstanding = Column(Numeric(15, 2), nullable=True)
     ar_ageing_json = Column(JSONB, nullable=True)  # {"current":..,"30":..,"60":..,"90+":..}
     ar_as_of = Column(DateTime(timezone=False), nullable=True)
+    # Links customer/dealer to their assigned salesperson. Source for the portal
+    # debtor dropdown (customers assigned to the contact's linked agent).
+    sales_agent_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("sales_agents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     orders = relationship("Order", back_populates="customer")
     customer_contacts = relationship(

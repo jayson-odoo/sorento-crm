@@ -11,7 +11,9 @@ from app.api.v1.dealer_kit import (
     flyer_readings,
     flyer_spec_proposals,
     pages,
+    price_tag_requests,
     selections,
+    tag_templates,
 )
 
 router = APIRouter()
@@ -26,3 +28,5 @@ router.include_router(selections.router)
 router.include_router(flyer_spec_proposals.router)
 router.include_router(flyer_readings.router)
 router.include_router(editions.router)
+router.include_router(price_tag_requests.router)
+router.include_router(tag_templates.router)

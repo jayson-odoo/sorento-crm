@@ -341,7 +341,7 @@ function absoluteApiUrl(path: string): string {
   return path;
 }
 
-async function portalFetch(
+export async function portalFetch(
   input: string,
   init: RequestInit = {},
 ): Promise<Response> {
@@ -383,7 +383,7 @@ async function portalMultipartFetch(
   return res;
 }
 
-async function unwrap<T>(res: Response, fallback: string): Promise<T> {
+export async function unwrap<T>(res: Response, fallback: string): Promise<T> {
   if (!res.ok) {
     const message = await extractApiError(res, fallback);
     throw new Error(message);
@@ -815,6 +815,12 @@ export const SUBMISSION_STATUS_LABELS: Record<string, string> = {
   closed: 'Closed',
   completed: 'Completed',
   updated: 'Updated',
+  // Price tag request statuses
+  designing: 'Designing',
+  proof_ready: 'Proof Ready',
+  changes_requested: 'Changes Requested',
+  ready: 'Ready',
+  void: 'Void',
 };
 
 export function statusLabel(status: string | null | undefined): string {

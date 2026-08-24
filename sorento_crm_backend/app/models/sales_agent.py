@@ -82,6 +82,14 @@ class SalesAgent(Base):
     # as `demand_class`. Stored upper/trim-normalised by `sales_agent_service.annotate` so a
     # typed `bb` still matches the group the warehouse suffix carries.
     location_group = Column(String(16), nullable=True)
+    # Portal contact linked to this agent. Allows the portal to scope the debtor
+    # dropdown and show price_tag_request to contacts whose linked agent exists.
+    # Text, not UUID, because respond_contacts.id is Text.
+    contact_id = Column(
+        Text,
+        ForeignKey("respond_contacts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(

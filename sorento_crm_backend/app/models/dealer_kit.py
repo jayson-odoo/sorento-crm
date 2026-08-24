@@ -114,6 +114,14 @@ class Page(Base, CompanyScopedMixin):
         nullable=True,
     )
     print_profile = Column(JSONB, nullable=True)
+    # 'catalogue' (default, all existing pages) or 'tag_sheet'.
+    kind = Column(String(20), nullable=False, server_default=text("'catalogue'"))
+    # When kind='tag_sheet', the request this sheet was created from.
+    request_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("price_tag_requests.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = _created_at()
     updated_at = _updated_at()
@@ -657,3 +665,29 @@ class Edition(Base, CompanyScopedMixin):
     updated_at = _updated_at()
 
     page = relationship("Page")
+
+
+class TagTemplate(Base, CompanyScopedMixin):
+    """A reusable template for a single price tag, keyed by product family.
+
+    Named slots (product_image, code, name, dimensions, spec_lines, list_price,
+    sell_price, badges, etc.) are resolved at render time from the product master
+    and the pricing engine. The ``doc`` JSONB holds the layer definitions; the
+    ``family`` column selects which template applies when a request line is
+    dropped onto the tag sheet designer.
+    """
+
+    __tablename__ = "tag_template"
+    __table_args__ = (
+        Index("ix_dealer_kit_tag_template_family", "family"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    name = Column(String(255), nullable=False)
+    family = Column(String(50), nullable=False)
+    doc = Column(JSONB, nullable=False)
+    print_size = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    created_by = Column(UUID(as_uuid=False), nullable=True)
+    created_at = _created_at()
+    updated_at = _updated_at()
