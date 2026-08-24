@@ -158,7 +158,11 @@ class PriceTagRequestLine(Base):
         nullable=True,
     )
     # No FK to product_sets yet - table not merged from feat/product-sets.
-    product_set_id = Column(UUID(as_uuid=False), nullable=True)
+    product_set_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("product_sets.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     show_promo_price = Column(Boolean, nullable=False, server_default="true")
     quantity = Column(Integer, nullable=False, server_default="1")
     alternatives = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))

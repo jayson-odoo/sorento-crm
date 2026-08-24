@@ -245,7 +245,12 @@ def upgrade() -> None:
             nullable=True,
         ),
         # No FK to product_sets yet - table not merged from feat/product-sets.
-        sa.Column("product_set_id", UUID(as_uuid=False), nullable=True),
+        sa.Column(
+            "product_set_id",
+            UUID(as_uuid=False),
+            sa.ForeignKey("product_sets.id", ondelete="RESTRICT"),
+            nullable=True,
+        ),
         sa.Column(
             "show_promo_price",
             sa.Boolean,
