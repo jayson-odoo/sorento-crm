@@ -51,7 +51,7 @@ def _ops_for_workflow_type(ft: Optional[str]) -> Tuple[str, List[str], bool]:
     if t in ("date", "datetime"):
         return "date", ["eq", "ne", "gt", "gte", "lt", "lte", "is_null"], True
     if t in ("multi_select", "date_range"):
-        # v1: export-only or limited — date_range JSON object; multi_select array
+        # v1: export-only or limited - date_range JSON object; multi_select array
         return "string", ["contains", "is_null"], True
     return "string", ["eq", "ne", "contains", "starts_with", "in", "is_null"], True
 
@@ -84,7 +84,7 @@ def build_dynamic_field_metas_for_definition(schema: Dict[str, Any]) -> List[Dyn
                 allowed_operators=ops,
                 filterable=filt,
                 exportable=True,
-                export_column_name=f"Header — {label}",
+                export_column_name=f"Header - {label}",
                 is_line_field=False,
                 sort_order=sort_base + len(out),
             )
@@ -112,7 +112,7 @@ def build_dynamic_field_metas_for_definition(schema: Dict[str, Any]) -> List[Dyn
                     allowed_operators=ops,
                     filterable=filt,
                     exportable=True,
-                    export_column_name=f"Line — {label}",
+                    export_column_name=f"Line - {label}",
                     is_line_field=True,
                     sort_order=sort_base + len(out),
                 )

@@ -105,7 +105,7 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
-describe('IntegrationLogsList — System Health drill-down seeding', () => {
+describe('IntegrationLogsList - System Health drill-down seeding', () => {
   it('seeds status, integration_channel and created_from from the URL into the query', () => {
     searchParams = {
       status: 'failed',
@@ -174,7 +174,7 @@ describe('IntegrationLogsList — System Health drill-down seeding', () => {
   });
 });
 
-describe('IntegrationLogsList — failure-cause drill-down (OBS-S1-19, OBS-S1-20)', () => {
+describe('IntegrationLogsList - failure-cause drill-down (OBS-S1-19, OBS-S1-20)', () => {
   it('seeds status_code and error_contains from the URL into the query', () => {
     searchParams = {
       status: 'failed',
@@ -213,7 +213,7 @@ describe('IntegrationLogsList — failure-cause drill-down (OBS-S1-19, OBS-S1-20
     const args = lastArgs();
     expect(args.status_code).toBeUndefined();
     expect(args.error_contains).toBeUndefined();
-    // the channel/status drill-down survives — only the cause narrowing is dropped
+    // the channel/status drill-down survives - only the cause narrowing is dropped
     expect(args.status).toBe('failed');
   });
 

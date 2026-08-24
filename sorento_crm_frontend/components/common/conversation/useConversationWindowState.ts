@@ -20,7 +20,7 @@ export function invalidateConversationWindow(
 }
 
 /**
- * 24h WhatsApp window state for a conversation surface. Display-only — used to
+ * 24h WhatsApp window state for a conversation surface. Display-only - used to
  * render the out-of-window hint. The actual plain-vs-template send decision is
  * made server-side at send time (no client gating), so this never blocks sends.
  */

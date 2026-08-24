@@ -1,4 +1,4 @@
-# Commercial — Data reference for analysis & questions (AI assistant + power users)
+# Commercial - Data reference for analysis & questions (AI assistant + power users)
 
 This page documents the commercial data model so the assistant (and power users) can answer "list / filter / count" questions accurately. The commercial hierarchy is:
 
@@ -12,7 +12,7 @@ Each entity below lists what it stores, the fields that matter for filtering/rep
 > * **Stages are configurable, not fixed enums.** Lead / project / tender / quotation "Status" comes from the tenant's workflow-stage list (domains `lead`, `project`, `tender`, `quotation`). Resolve stage names from the live stage list; don't assume a fixed set like "New / Won / Lost".
 > * **Tender outcome and sales-order status ARE fixed enums** (listed below).
 > * Codes (lead code, tender code, quotation code, sales-order number) are human-readable; show them, not internal UUIDs.
-> * Money fields store an amount + a separate currency code — always pair them.
+> * Money fields store an amount + a separate currency code - always pair them.
 
 ---
 
@@ -183,7 +183,7 @@ A versioned snapshot of a quotation's pricing/lines.
 Created when a tender is won, from the selected quotation revision.
 
 **Key fields:** `sales_order_number` (unique), `tender_id`, `master_quotation_id`, `quotation_revision_id`.
-**Status values (fixed enum):** `draft`, `confirmed`, `void`, `cancelled`. (A tender may have at most one active — `draft` or `confirmed` — sales order.)
+**Status values (fixed enum):** `draft`, `confirmed`, `void`, `cancelled`. (A tender may have at most one active - `draft` or `confirmed` - sales order.)
 **Date columns:** `created_at`, `updated_at`.
 
 **Example questions**
@@ -199,11 +199,11 @@ Created when a tender is won, from the selected quotation revision.
 
 Because the entities chain customer → lead → project → tender → quotation → sales order, you can roll questions up the chain:
 
-* "Won vs lost tenders this quarter" — filter Tenders on `tender_outcome` and `closed_at` / quarter.
-* "Pipeline value of open tenders by owner" — group open Tenders by `owner_user_id`, sum `forecast_amount`.
-* "Quotations per tender for project {X}" — Project → its Tenders → each tender's master quotations.
-* "Leads with no project yet" — Leads filtered by `without_project`.
-* "Conversion: leads created this quarter that reached a quotation" — Leads by `created_from`/`created_to` joined to quotations via project/tender.
+* "Won vs lost tenders this quarter" - filter Tenders on `tender_outcome` and `closed_at` / quarter.
+* "Pipeline value of open tenders by owner" - group open Tenders by `owner_user_id`, sum `forecast_amount`.
+* "Quotations per tender for project {X}" - Project → its Tenders → each tender's master quotations.
+* "Leads with no project yet" - Leads filtered by `without_project`.
+* "Conversion: leads created this quarter that reached a quotation" - Leads by `created_from`/`created_to` joined to quotations via project/tender.
 
 ## See also
 

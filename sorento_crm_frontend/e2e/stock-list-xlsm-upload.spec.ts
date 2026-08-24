@@ -5,7 +5,7 @@
  * Exercises the FE→BE→storage round-trip with the real macro workbook fixture
  * (3 sheets: "Active Loc", "Master", "Template"):
  *   1. Inventory Management → Stock (sidebar-navigated, never deep-linked)
- *   2. Import the .xlsm — the dialog must parse the "Template" sheet (not
+ *   2. Import the .xlsm - the dialog must parse the "Template" sheet (not
  *      sheet 0) and POST /api/v1/inventory/stock/bulk-import +
  *      /api/v1/resource-management/attachments/replace-latest-stock-list.
  *   3. The "Stock List" button links to the new attachment; the detail page
@@ -78,7 +78,7 @@ test('macro stock upload converts to Template-only xlsx attachment', async ({ pa
   );
   await dialog.getByRole('button', { name: 'Upload', exact: true }).click();
 
-  // Bulk import queues (202) — proves the dialog parsed the Template sheet,
+  // Bulk import queues (202) - proves the dialog parsed the Template sheet,
   // since sheet 0 ("Active Loc") has no importable stock columns.
   expect((await bulkImport).status()).toBeLessThan(300);
 

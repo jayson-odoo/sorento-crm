@@ -254,7 +254,7 @@ def _open_lines(
     co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="crl")
     qty = (
         "GREATEST(COALESCE(sol.qty_required, sol.qty_ordered) "
-        "         - COALESCE(sol.qty_delivered, 0), 0)"
+        "       - COALESCE(sol.qty_delivered, 0), 0)"
     )
     # `demand.py`'s two SQL fragments, unmodified: they are already written for the aliases
     # `so`/`sol` this query uses, so using them (rather than restating the rule) keeps this
@@ -452,7 +452,7 @@ def build(
 
     INVARIANT this endpoint guarantees when `include_lines` is set: for every demand row,
     `sum(l["qty"] for l in lines if l["product_id"] == row["product_id"]) == row["open_so_need"]`
-    - the GROSS need, not the netted `suggested_qty` (CHANGE 4 nets stock/incoming off the ask,
+  - the GROSS need, not the netted `suggested_qty` (CHANGE 4 nets stock/incoming off the ask,
     which the line-level SO book knows nothing about). Both numbers come off the
     identical predicate (`_open_need` aggregates it, `_open_lines` emits it at line grain), so
     a caller building a schedule matrix off `lines` can trust its per-product total to foot to

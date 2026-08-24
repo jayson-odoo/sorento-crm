@@ -76,7 +76,7 @@ function FulfilmentItemsPopover({ order }: { order: FulfilmentOrder }) {
                         </span>
                       )}
                     </TableCell>
-                    <TableCell className="text-right">{item.qty ?? '—'}</TableCell>
+                    <TableCell className="text-right">{item.qty ?? '-'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -139,7 +139,7 @@ export default function ComplaintFulfilmentOrdersSection({
                     <TableCell>
                       {order.actual_delivery_date
                         ? formatDate(new Date(order.actual_delivery_date))
-                        : '—'}
+                        : '-'}
                     </TableCell>
                     <TableCell className="text-right">
                       <FulfilmentItemsPopover order={order} />

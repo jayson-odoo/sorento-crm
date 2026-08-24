@@ -882,7 +882,7 @@ class WorkflowFormsService:
         def_def_id = str(getattr(submission, "definition_id", "") or "")
         sub_state = str(getattr(submission, "current_state_code", "") or "")
         def_title = str(getattr(definition, "name", "") or "") if definition is not None else ""
-        title = f"Workflow: {def_title or 'Form'} — {transition.get('label') or 'Updated'}"
+        title = f"Workflow: {def_title or 'Form'} - {transition.get('label') or 'Updated'}"
         body = f"Submission {sub_id[:8]}… moved to {sub_state}."
         submitter_body = (
             f'Your submission {sub_id[:8]}… is now in state "{sub_state}".'

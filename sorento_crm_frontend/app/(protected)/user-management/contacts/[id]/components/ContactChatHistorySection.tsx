@@ -5,7 +5,7 @@ import { useChatThread } from '@/app/(protected)/system-management/chat-history/
 import { ChatTranscript } from '@/app/(protected)/system-management/chat-history/components/ChatTranscript';
 
 interface ContactChatHistorySectionProps {
-  /** Respond.io contact id — chat_histories.contact_id is this string, not the CRM id. */
+  /** Respond.io contact id - chat_histories.contact_id is this string, not the CRM id. */
   respondIoId: string | null;
 }
 

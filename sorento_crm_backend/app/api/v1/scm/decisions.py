@@ -1,6 +1,6 @@
-"""SCM M4 Slice B — decision endpoints (Accept / Adjust / Reject + bulk) and the
-per-run decision-state read. Also S16 (captain 21 Aug): the row decision — buy /
-use stock / use PO / skip, or a mixture — recorded directly on a recommendation via
+"""SCM M4 Slice B - decision endpoints (Accept / Adjust / Reject + bulk) and the
+per-run decision-state read. Also S16 (captain 21 Aug): the row decision - buy /
+use stock / use PO / skip, or a mixture - recorded directly on a recommendation via
 ``POST/DELETE .../recommendations/{rec_id}/decision``, read back (with the results-
 grid header's decided/total counts) via ``GET .../reorder-runs/{run_id}/plan-row-
 decisions``.
@@ -158,10 +158,10 @@ def record_decision(
     db: Session = Depends(get_db),
     _user: dict = Depends(_RUN),
 ):
-    """S16 (captain 21 Aug) — the row decision: buy / use stock / use PO / skip, or a
+    """S16 (captain 21 Aug) - the row decision: buy / use stock / use PO / skip, or a
     mixture, recorded directly on the recommendation. Works on any decidable rec_type,
     not just buy (see `decision_service._get_decidable_rec`), and on a product-grain
-    run's grouped product exactly the way `set_moq_override` does — the caller sends
+    run's grouped product exactly the way `set_moq_override` does - the caller sends
     one recommendation id per member, this route never needs to know the grouping."""
     result = svc.record_plan_row_decision(
         db,
@@ -210,7 +210,7 @@ def reset_decisions(
     db: Session = Depends(get_db),
     _user: dict = Depends(_RUN),
 ):
-    """DEMO / ADMIN — roll a run's decisions back to its as-generated state (clears
+    """DEMO / ADMIN - roll a run's decisions back to its as-generated state (clears
     every accept/reject/adjust + drops the draft POs they staged) so the flow can be
     demonstrated again. Only draft POs are removed; confirmed (active) orders are left
     untouched. Guarded by ``scm.reorder.run`` (the same permission that makes the

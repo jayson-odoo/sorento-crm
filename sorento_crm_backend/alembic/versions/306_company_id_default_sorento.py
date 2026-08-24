@@ -10,7 +10,7 @@ before it reaches the DB (AC-D4). But raw ``INSERT`` paths that bypass the ORM
 (core/text() inserts in scripts, seeds, and legacy tests) omit ``company_id``
 entirely and would hit the NOT NULL constraint.
 
-Sorento is the incumbent/primary company — every pre-isolation row was
+Sorento is the incumbent/primary company - every pre-isolation row was
 backfilled to it (migration 302/305). So an unstamped raw write "belongs to"
 Sorento. This migration sets a column DEFAULT of the Sorento company id on the
 owned tables, so a raw insert that omits ``company_id`` lands under Sorento
@@ -18,7 +18,7 @@ instead of erroring. This does NOT weaken isolation:
 
 * Read filtering is unchanged (the ORM ``do_orm_execute`` filter still applies).
 * ORM writes still send an explicit ``company_id`` (scope-stamped: Sorento OR
-  Mocha), which overrides the default — a Mocha-scoped create is still Mocha.
+  Mocha), which overrides the default - a Mocha-scoped create is still Mocha.
 * An explicit ``NULL`` still violates NOT NULL (default only fills an *omitted*
   column), so AC-D4's scope-less-ORM-write rejection is untouched.
 * ``attachments`` is intentionally excluded (nullable; null = shared form

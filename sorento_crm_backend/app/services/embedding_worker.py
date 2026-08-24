@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 # source_type -> owned model carrying company_id (multi-company isolation). Types
 # absent here are synthetic / company-less (mcp_tool, form, schema_doc,
-# order_status, conversation_frame, ``debtor:`` seeds) and stay company-less —
+# order_status, conversation_frame, ``debtor:`` seeds) and stay company-less - 
 # shared knowledge visible under every scope.
 _SOURCE_MODEL_FOR_COMPANY = {
     "product": Product,
@@ -686,7 +686,7 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
         source = _canonical_for_source(db, queue_item.source_type, queue_item.source_id, payload=source_payload)
         # Company of the source entity (multi-company isolation). Prefer the
         # listener-copied value on the queue payload (guarantees a fresh embedding
-        # is never company-less when its source has a company — AC-I5); fall back to
+        # is never company-less when its source has a company - AC-I5); fall back to
         # re-deriving from the loaded source row (bulk / backfilled enqueues).
         company_id = payload.get("company_id") if isinstance(payload, dict) else None
         if company_id is None:

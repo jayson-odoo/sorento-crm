@@ -1,12 +1,12 @@
 /**
- * Dealer Kit page builder — API client.
+ * Dealer Kit page builder - API client.
  *
  * Wired to the real backend. The contract below is what
  * `app/api/v1/dealer_kit/pages.py` implements; it lives here because the FE is
  * the consumer that breaks when it drifts.
  *
  * ---------------------------------------------------------------------------
- * CONTRACT — all under `/api/v1/dealer-kit`, module-guarded on `dealer_kit`,
+ * CONTRACT - all under `/api/v1/dealer-kit`, module-guarded on `dealer_kit`,
  * company-scoped by the ORM filter. Another company's page is a 404, not a 403:
  * "exists but forbidden" would itself leak that it exists.
  * ---------------------------------------------------------------------------

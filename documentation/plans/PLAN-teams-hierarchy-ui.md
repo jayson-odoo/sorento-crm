@@ -1,6 +1,6 @@
-# PLAN — Teams hierarchy UI (tree + members popover + drag-drop reparent)
+# PLAN - Teams hierarchy UI (tree + members popover + drag-drop reparent)
 
-Status: **Done — verified in browser** (2026-06-28). BE enrich + FE tree/popover/drag-drop shipped; pytest (9) + vitest (6) green; reparent PUT 200 confirmed via Playwright MCP.
+Status: **Done - verified in browser** (2026-06-28). BE enrich + FE tree/popover/drag-drop shipped; pytest (9) + vitest (6) green; reparent PUT 200 confirmed via Playwright MCP.
 
 ## Goal
 
@@ -28,10 +28,10 @@ Redesign User Management → Teams list so admins can:
 
 - `types/team.types.ts`: add `member_count?: number`, `members?: { user_id: string; name: string }[]` to `Team`.
 - New `components/team-tree.tsx`: build tree from flat list by `parent_team_id` (roots = null parent OR parent not in set). Indented rows, chevron expand/collapse (default expanded), name, member-count badge, actions (Members link + edit/delete dropdown). Native HTML5 drag-drop:
-  - Each row `draggable`; drop on a row → `updateTeam(dragId, { parent_team_id: targetId })`.
-  - Root dropzone at top → `parent_team_id: null`.
-  - Client-side guard: disable drop on self or own descendant (compute descendant set in FE) for instant feedback; server still authoritative.
-  - On success: invalidate `['user-management-teams']` + toast.
+ - Each row `draggable`; drop on a row → `updateTeam(dragId, { parent_team_id: targetId })`.
+ - Root dropzone at top → `parent_team_id: null`.
+ - Client-side guard: disable drop on self or own descendant (compute descendant set in FE) for instant feedback; server still authoritative.
+ - On success: invalidate `['user-management-teams']` + toast.
 - New `components/team-member-popover.tsx`: count badge trigger → Popover listing member names + "Manage members" link to `[id]` page. Empty state ("No members yet") when count 0.
 - `components/team-list.tsx`: swap DataGrid table body for `<TeamTree>`, keep Card shell + Create button + search filter (filter keeps matching nodes + ancestors).
 

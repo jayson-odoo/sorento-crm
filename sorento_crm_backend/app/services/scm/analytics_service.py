@@ -1,35 +1,35 @@
-"""SCM M2 analytics engine — deterministic demand rate, ABC/XYZ, supplier performance.
+"""SCM M2 analytics engine - deterministic demand rate, ABC/XYZ, supplier performance.
 
 One entry point ``run_analytics(db, scope, config)`` computes, over a shared window:
 
-  1. **Demand** (``scm.demand_stat``, SKU x warehouse) — DO outflow read the way
+  1. **Demand** (``scm.demand_stat``, SKU x warehouse) - DO outflow read the way
      ``scm.consumption_v`` reads it (order_lines joined orders, NOT stock_ledger),
      bucketed into ~13 trailing 7-day (weekly) periods. Channel-split continuous vs spike
      by customer -> market_segment -> demand_nature (untagged defaults to continuous).
      Baseline = plain sum in the X (CV<=0.5) and Z (CV>1.0) bands; robust trimmed mean
-     ONLY in the Y band (0.5<CV<=1.0). Z (lumpy) is kept whole — a single-spike Z SKU
+     ONLY in the Y band (0.5<CV<=1.0). Z (lumpy) is kept whole - a single-spike Z SKU
      must not be trimmed to a zero baseline. ``avg_daily_demand = baseline_total / window_days``.
-  2. **Classification** (``scm.item_classification``) — ABC by cumulative trailing-12mo
+  2. **Classification** (``scm.item_classification``) - ABC by cumulative trailing-12mo
      annual value (qty*cost) over ALL costed keys (A<=80% / B<=95% / C=rest); null-cost
      keys => abc_class NULL (unknown). Ranked again, independently, within project-classed
      demand only (``abc_class_project``) and retail/dealer-classed demand only
-     (``abc_class_retail``), each on their own trailing-12mo delivered QUANTITY — hot-
+     (``abc_class_retail``), each on their own trailing-12mo delivered QUANTITY - hot-
      selling is by quantity, never money (captain, 19 Aug 2026), so these two ignore cost
      entirely and a null-cost SKU still earns a letter. A SKU can be A for a project
      customer and C for the dealer channel. XYZ by demand CV (X<=0.5 / Y<=1.0 / Z>1.0).
-  3. **Supplier performance** (``scm.supplier_performance``, supplier x product) — from
+  3. **Supplier performance** (``scm.supplier_performance``, supplier x product) - from
      PO -> GR (picking) pairs the way ``scm.receipt_lead_v`` reads them: on_time
      (receipt <= expected + grace), avg_lead_time from the COMPLETING receipt,
      lead_time_variance, reject/fill rate, weighted composite. Below min_sample it
      falls back to the supplier-level aggregate (confidence 'medium', or 'low' when the
-     supplier itself is thin) — never a fabricated score. Denormalises the supplier
+     supplier itself is thin) - never a fabricated score. Denormalises the supplier
      composite onto ``suppliers.current_performance_score``.
 
 Every execution writes one ``scm.scm_analytics_run`` row (status / scope / counts /
 window / duration / channel-coverage %). ``explain_demand`` re-derives a single SKU's
 working deterministically for debugging (AC-M2.13). Config tables (``abc_xyz_policy``,
 ``supplier_scoring_policy``) are ensured with locked defaults and drive the maths with
-no code change (AC-M2.5/2.8). No LLM anywhere — pure maths (AC-M2.15).
+no code change (AC-M2.5/2.8). No LLM anywhere - pure maths (AC-M2.15).
 """
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ from app.services.scm.demand_class import PROJECT_SEGMENTS
 
 # --- locked engine constants (see PLAN/UAC M2 + golden derivation) -----------
 WINDOW_DAYS = 90
-BUCKET_DAYS = 7  # weekly buckets — makes CV + the 10% trim meaningful
+BUCKET_DAYS = 7  # weekly buckets - makes CV + the 10% trim meaningful
 # ceil(90/7) = 13 trailing weekly buckets over the 90-day window; the oldest
 # bucket is a short (~6-day) remainder. Window stays 90d for the daily rate.
 NUM_BUCKETS = (WINDOW_DAYS + BUCKET_DAYS - 1) // BUCKET_DAYS  # == 13
@@ -75,7 +75,7 @@ _SEED = "engine"
 # Same substring match as `demand_class.class_of` (project vs retail/dealer), built from
 # `PROJECT_SEGMENTS` itself so the SQL and the Python vocabulary cannot drift apart. A
 # customer with no stated segment (or one matching neither word) is retail here, mirroring
-# the `class_of(...) or DEFAULT_DEMAND_CLASS` pattern callers use elsewhere — "nobody said"
+# the `class_of(...) or DEFAULT_DEMAND_CLASS` pattern callers use elsewhere - "nobody said"
 # is not withheld from ranking, it just does not count as a project.
 _PROJECT_SEGMENT_MATCH_SQL = " OR ".join(
     f"lower(trim(coalesce(c.market_segment_code, ''))) LIKE '%{seg}%'"
@@ -84,7 +84,7 @@ _PROJECT_SEGMENT_MATCH_SQL = " OR ".join(
 
 
 # ---------------------------------------------------------------------------
-# Policy defaults (idempotent ensure — never rely on empty policy tables)
+# Policy defaults (idempotent ensure - never rely on empty policy tables)
 # ---------------------------------------------------------------------------
 
 def ensure_policy_defaults(db: Session) -> None:
@@ -164,7 +164,7 @@ def _supplier_policy(db: Session) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Pure maths (unit-testable in isolation — no DB)
+# Pure maths (unit-testable in isolation - no DB)
 # ---------------------------------------------------------------------------
 
 def bucket_stats(buckets: list[float], x_max: float = DEFAULT_XYZ_X_MAX,
@@ -175,11 +175,11 @@ def bucket_stats(buckets: list[float], x_max: float = DEFAULT_XYZ_X_MAX,
     Returns total / mean / cv / band / method / method_reason / baseline_total.
     ``cv`` is measured over per-bucket DAILY RATES (``bucket_qty / bucket_days``) when
     ``day_lengths`` is supplied, so the short oldest weekly bucket (a 6-day remainder)
-    does not structurally inflate variability (S3). With equal lengths — or none —
+    does not structurally inflate variability (S3). With equal lengths - or none - 
     this is identical to the CV of the raw totals (CV is scale-invariant). The
     baseline maths stays on the raw weekly totals; only the CV/band decision uses rates.
 
-    The robust trim fires ONLY in the moderate-variability (Y) band — the same
+    The robust trim fires ONLY in the moderate-variability (Y) band - the same
     CV cut points that drive XYZ so the branch and the class letter agree:
 
       * X  (CV<=x_max, default 0.5): steady demand -> **plain mean** (baseline == total).
@@ -201,7 +201,7 @@ def bucket_stats(buckets: list[float], x_max: float = DEFAULT_XYZ_X_MAX,
     cv = (_st.pstdev(rates) / rate_mean) if rate_mean > 0 else 0.0
     band = "X" if cv <= x_max else ("Y" if cv <= y_max else "Z")
     if band == "Y":
-        # robust branch — trim only the moderate-variability band
+        # robust branch - trim only the moderate-variability band
         trim = int(n * 0.10)
         kept = sorted(buckets)[trim: n - trim] if trim else list(buckets)
         kept_mean = (sum(kept) / len(kept)) if kept else mean
@@ -222,7 +222,7 @@ def abc_classify(ranked_values: list[float], a_cut: float, b_cut: float) -> list
 
     The class is decided on the cumulative share of the grand total BEFORE the item
     itself is added (``prev_cum``): A when ``prev_cum <= a_cut``, B when
-    ``prev_cum <= b_cut``, else C. Standard ABC (B1) — the boundary-crossing item
+    ``prev_cum <= b_cut``, else C. Standard ABC (B1) - the boundary-crossing item
     lands in the HIGHER class and rank-1 (``prev_cum == 0``) is ALWAYS A, even when
     that single SKU alone exceeds the A cut. Deciding on the cumulative-INCLUSIVE
     share instead pushed a dominant rank-1 SKU into B (or C).
@@ -257,7 +257,7 @@ def _bucket_windows(as_of: date) -> list[tuple[date, date]]:
 
     Bucket i covers ``[as_of - 7*(i+1), as_of - 7*i)``; the oldest bucket is clamped
     to the 90-day window start so it is the short remainder. Index 0 is the most
-    recent 7 days — the same ordering as the aggregated bucket lists.
+    recent 7 days - the same ordering as the aggregated bucket lists.
     """
     lo = _window_lo(as_of)
     out: list[tuple[date, date]] = []
@@ -269,7 +269,7 @@ def _bucket_windows(as_of: date) -> list[tuple[date, date]]:
 
 
 # ---------------------------------------------------------------------------
-# Stage 1 — demand
+# Stage 1 - demand
 # ---------------------------------------------------------------------------
 
 def _ids(values: Optional[Iterable]) -> Optional[list[str]]:
@@ -339,7 +339,7 @@ def _upsert_demand_stat(db: Session, key, stats, now):
     # Delete-then-insert per key (not ON CONFLICT): warehouse_id is nullable and
     # Postgres treats NULLs as DISTINCT, so an ``ON CONFLICT (product_id, warehouse_id)``
     # never fires for network-level (warehouse_id IS NULL) rows and they duplicate every
-    # run — multiplying the dashboard LEFT JOIN. ``IS NOT DISTINCT FROM`` matches the
+    # run - multiplying the dashboard LEFT JOIN. ``IS NOT DISTINCT FROM`` matches the
     # null-warehouse row so this stays idempotent for both keyed and network rows (S2).
     db.execute(text(
         "DELETE FROM scm.demand_stat WHERE product_id = :pid "
@@ -387,7 +387,7 @@ def _json(obj) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Stage 2 — classification (ABC always ranked over the full costed universe)
+# Stage 2 - classification (ABC always ranked over the full costed universe)
 # ---------------------------------------------------------------------------
 
 def _rank_and_classify(totals: dict[tuple, float], policy: dict) -> dict[tuple, dict]:
@@ -404,7 +404,7 @@ def _rank_and_classify(totals: dict[tuple, float], policy: dict) -> dict[tuple, 
 def _abc_value_totals(db: Session, as_of: date) -> dict[tuple, float]:
     """(product_id, warehouse_id) -> trailing-12mo annual COST value, costed keys only.
 
-    Unchanged from before the project/retail split — this is the reorder engine's
+    Unchanged from before the project/retail split - this is the reorder engine's
     inventory-value lens (`abc_class`/`annual_value`), and the captain's 19 Aug 2026 ruling
     ("hot-selling is by quantity, not money") does not touch it.
     """
@@ -426,16 +426,16 @@ def _abc_class_qty_totals(db: Session, as_of: date) -> tuple[dict[tuple, float],
     delivered QUANTITY, split the SAME source of truth `outstanding_import_service`
     reads (the 4 Aug 2026 amendment): the SALESPERSON master's `sales_agents.demand_class`
     first, `customers.market_segment_code` only as a fallback when the agent is
-    unclassified. No cost join/filter — hot-selling is by quantity, so a null-cost
+    unclassified. No cost join/filter - hot-selling is by quantity, so a null-cost
     product still earns a letter (captain, 19 Aug 2026).
 
     `sales_agents` is matched the same case/whitespace-insensitive way
     `sales_agent_service._lookup` does, on `orders.agent` falling back to
-    `orders.salesman` when blank — a delivery order carries no separate "agent" concept,
+    `orders.salesman` when blank - a delivery order carries no separate "agent" concept,
     those two text columns are it. No `company_id` join condition: `_lookup` itself does
     not filter by company (every row is a shared master today), so this does not either.
 
-    `sales_agents.demand_class` needs no extra pass through `demand_class.class_of` —
+    `sales_agents.demand_class` needs no extra pass through `demand_class.class_of` - 
     its own check constraint (`ck_sales_agents_demand_class`, built from the identical
     `DEMAND_CLASSES` vocabulary) already guarantees NULL / 'project' / 'retail' and
     nothing else.
@@ -443,11 +443,11 @@ def _abc_class_qty_totals(db: Session, as_of: date) -> tuple[dict[tuple, float],
     Silence is NOT retail (S3, `outstanding_import_service._segment_of`/
     `_demand_class_for` docstrings): a key whose demand_class resolves to neither
     (unclassified agent AND no/blank market segment) is dropped from BOTH partitions in
-    Python below — unknown counts for neither letter, never a computed retail default.
+    Python below - unknown counts for neither letter, never a computed retail default.
     """
     lo = as_of - timedelta(days=ANNUAL_DAYS)
     # A CTE so the outer GROUP BY can reference the plain output name `demand_class`
-    # unambiguously — grouping directly by that alias over the raw join would instead
+    # unambiguously - grouping directly by that alias over the raw join would instead
     # resolve to the INPUT column `sales_agents.demand_class` (Postgres prefers an
     # input column of the same name over the output alias), silently dropping
     # `market_segment_code` out of the grouping key and raising "must appear in the
@@ -488,12 +488,12 @@ def _abc_class_qty_totals(db: Session, as_of: date) -> tuple[dict[tuple, float],
 def _abc_map(db: Session, as_of: date, policy: dict) -> dict:
     """(product_id, warehouse_id) -> abc_class (cost value, all demand) + the
     project/retail split (delivered QUANTITY, each ranked GLOBALLY WITHIN its own
-    partition — AC captain 19 Aug 2026: hot-selling is by quantity, never money).
+    partition - AC captain 19 Aug 2026: hot-selling is by quantity, never money).
 
     Always spans the whole universe (independent of scope) so a scoped run yields the
     same class a full run would. `abc_class`/`annual_value` keep the cost-value, costed-
     only universe exactly as before the split. `abc_class_project`/`abc_class_retail`
-    rank over EVERY product with delivered quantity in the window, cost or no cost — a
+    rank over EVERY product with delivered quantity in the window, cost or no cost - a
     key absent from a partition (no demand of that class) gets NULL there, never a
     computed 'C'.
     """
@@ -523,7 +523,7 @@ def _upsert_classification(db: Session, key, abc, xyz, annual_value, cv, now,
                            abc_class_project=None, annual_qty_project=None,
                            abc_class_retail=None, annual_qty_retail=None):
     # Delete-then-insert per key so network-level (warehouse_id IS NULL) rows stay
-    # idempotent across re-runs — see _upsert_demand_stat for why ON CONFLICT can't
+    # idempotent across re-runs - see _upsert_demand_stat for why ON CONFLICT can't
     # dedupe a nullable warehouse_id (S2).
     db.execute(text(
         "DELETE FROM scm.item_classification WHERE product_id = :pid "
@@ -543,7 +543,7 @@ def _upsert_classification(db: Session, key, abc, xyz, annual_value, cv, now,
 
 
 # ---------------------------------------------------------------------------
-# Stage 3 — supplier performance
+# Stage 3 - supplier performance
 # ---------------------------------------------------------------------------
 
 def _completing_receipts(db: Session, supplier_ids: Optional[list[str]],
@@ -645,7 +645,7 @@ def _score(samples: list[dict], policy: dict) -> Optional[dict]:
         "reject_rate": round(reject_rate, 6),
         "fill_rate": round(fill_rate, 6) if fill_rate is not None else None,
         "composite_score": round(composite, 6) if composite is not None else None,
-        # ``purchase_orders.issue_date`` / receipt dates are nullable — a group whose
+        # ``purchase_orders.issue_date`` / receipt dates are nullable - a group whose
         # completing receipts all have null dates must yield a null period, never crash
         # ``min()``/``max()`` on an empty sequence (B2).
         "period_start": min((s["issue_date"] for s in samples if s["issue_date"]), default=None),
@@ -701,7 +701,7 @@ def _compute_supplier_performance(db: Session, as_of, supplier_ids, product_ids,
         sid = str(supplier_id)
         product_id = m.get("product_id")
         by_supplier.setdefault(sid, []).append(m)
-        # product_id may legitimately be NULL — keep it as None so the
+        # product_id may legitimately be NULL - keep it as None so the
         # `IS NOT DISTINCT FROM` delete matches the supplier-level row.
         by_pair.setdefault(
             (sid, str(product_id) if product_id is not None else None), []
@@ -760,13 +760,13 @@ def on_goods_receipt_posted(db: Session, supplier_id: str,
     can NEVER roll back or block the GR commit that triggered it. Returns the number of
     ``supplier_performance`` rows written (0 on failure).
 
-    INTEGRATION POINT — where this attaches:
+    INTEGRATION POINT - where this attaches:
       Call this AFTER a goods-receipt (``picking_headers.picking_type='goods_received'``
       with ``source_entity_type='purchase_order'``) and its ``qty_received`` /
       ``qty_accepted`` are committed, passing that GR's ``po.supplier_id`` and the
       received line's ``product_id``.
 
-      No runtime "create GR from PO" flow exists in this branch yet — that lands in
+      No runtime "create GR from PO" flow exists in this branch yet - that lands in
       **M4 (create-GR-from-PO)**. Until then the only writers of the SCM PO→GR link are
       ``scripts/seed_scm_demo.py`` and the M2 tests, and the nightly ``scm_analytics``
       full run keeps supplier scores fresh. When M4's post-GR service method lands, wire
@@ -776,7 +776,7 @@ def on_goods_receipt_posted(db: Session, supplier_id: str,
     log = _logging.getLogger(__name__)
     try:
         return refresh_supplier_performance(db, supplier_id, product_id, config=config)
-    except Exception:  # noqa: BLE001 — GR posting must not be blocked by scoring
+    except Exception:  # noqa: BLE001 - GR posting must not be blocked by scoring
         log.exception(
             "on_goods_receipt_posted: supplier=%s product=%s refresh failed",
             supplier_id, product_id,
@@ -826,7 +826,7 @@ def run_analytics(db: Session, scope: Optional[dict] = None,
 
     ``scope`` (optional): ``product_ids`` / ``warehouse_ids`` / ``supplier_ids`` to
     restrict the run (ABC ranking still spans the full costed universe so classes are
-    stable). ``config`` (optional): ``as_of`` (date) — default today. Writes one
+    stable). ``config`` (optional): ``as_of`` (date) - default today. Writes one
     ``scm.scm_analytics_run`` row and returns its summary. Commits.
     """
     scope = scope or {}
@@ -919,7 +919,7 @@ def run_analytics(db: Session, scope: Optional[dict] = None,
         db.commit()
         return {"run_id": run_id, "status": "completed", "window_days": WINDOW_DAYS,
                 "as_of": as_of.isoformat(), "counts": counts}
-    except Exception as exc:  # noqa: BLE001 — record then re-raise
+    except Exception as exc:  # noqa: BLE001 - record then re-raise
         db.rollback()
         db.execute(text(
             "UPDATE scm.scm_analytics_run SET finished_at=now(), status='failed', "
@@ -930,12 +930,12 @@ def run_analytics(db: Session, scope: Optional[dict] = None,
 
 
 # ---------------------------------------------------------------------------
-# Explain (deterministic debug — AC-M2.13)
+# Explain (deterministic debug - AC-M2.13)
 # ---------------------------------------------------------------------------
 
 def _demand_dos(db: Session, as_of: date, product_id: str,
                 warehouse_id: Optional[str]) -> list[dict]:
-    """M8-A2 — the delivery orders (DOs) that drove the outflow in the demand window,
+    """M8-A2 - the delivery orders (DOs) that drove the outflow in the demand window,
     as a navigable list (one row per DO: order id + DO number + date + qty out).
 
     ``scm.consumption_v`` carries no order id, so this hits the base ``orders`` /
@@ -973,7 +973,7 @@ def explain_demand(db: Session, product_id: str, warehouse_id: Optional[str],
     """Deterministically re-derive one SKU's demand working: window, per-week sample
     points, channel split, method, CV. Same inputs => identical output (no writes).
 
-    M8-A2: also carries ``demand_dos`` — the delivery orders behind the outflow in the
+    M8-A2: also carries ``demand_dos`` - the delivery orders behind the outflow in the
     window as a navigable list (so days-cover demand reads as real DOs, not raw weekly
     buckets)."""
     as_of = _as_of(config)

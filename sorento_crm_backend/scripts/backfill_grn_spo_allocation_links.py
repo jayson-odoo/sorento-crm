@@ -10,7 +10,7 @@ strings arrive in two shapes, e.g. header `SPO-2026/06-0095` vs allocation
 `SPO-202606-0095`. Those are EQUAL under the system-wide `_spo_match_key`
 (strip-all-non-alphanumeric, used by the linked-GRN display + service FIFO) but NOT
 under the weak normalizer. So the import FIFO pool came back empty and every line
-was written with `spo_allocation_id = NULL` — while the SPO detail page still showed
+was written with `spo_allocation_id = NULL` - while the SPO detail page still showed
 the GRN as "linked" (that view uses the strong key). Hence: GRN header shows an SPO
 number, SPO detail lists the GRN, yet the GRN's per-line "SPO Allocation" column is
 all "-". The import code has been fixed to use `_spo_match_key`; this script repairs
@@ -125,7 +125,7 @@ def _fifo_chunks(
         _take(same_wh=False)  # second pass: any other warehouse
 
         if remaining > 0:
-            # No allocation left to cover this — recreate as a NULL line (unchanged).
+            # No allocation left to cover this - recreate as a NULL line (unchanged).
             chunks.append({
                 "product_id": str(line.product_id),
                 "source_warehouse_id": source_wh,

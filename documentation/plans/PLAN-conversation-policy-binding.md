@@ -1,4 +1,4 @@
-# PLAN — Backend-owned SLA policy binding (conversation) + policy as shared profile
+# PLAN - Backend-owned SLA policy binding (conversation) + policy as shared profile
 
 **Status:** Phase 2 implemented (BE wiring + FE off-mocks). Tests pending (tester agent).
 **Owner:** jayson
@@ -17,7 +17,7 @@
    reusable profiles, so near-duplicate `sla_policies` rows proliferate (one per
    binding instead of one per distinct tier-hour shape).
 3. **Per-form SLA differences are real but already modelled.** PR approval = 3 days,
-   sponsorship approval = 1 day, warehouse tiers = 0.5h / 1h — these differ even
+   sponsorship approval = 1 day, warehouse tiers = 0.5h / 1h - these differ even
    "under the same agent and model." Form SLA already supports this via
    `FormSLAConfig.policy_id` keyed by `source_entity_type`; the gap there is *data*,
    not schema.
@@ -30,7 +30,7 @@ discriminator (channel/contact-type/message_id do **not** affect policy). Tiers 
 `team_set_code` examples: `purchasing`, `warehouse`, `general_enquiries`'s sets, etc.
 
 For **forms**, the key additionally includes `source_entity_type` (PR vs sponsorship
-share agent+team_set but differ) — which is exactly why form policy stays in
+share agent+team_set but differ) - which is exactly why form policy stays in
 `FormSLAConfig` and is **not** folded into the conversation binding.
 
 ---
@@ -45,14 +45,14 @@ share agent+team_set but differ) — which is exactly why form policy stays in
 | D4 | Resolution = distinct `policy_id` over `(agent_id, team_set_code)`: exactly one ⇒ use; none/NULL ⇒ **422** (end-state); multiple distinct ⇒ **409 misconfig**. New tier rows **inherit** the team-set policy. |
 | D5 | `sla_policies` = **shared reusable profiles**, named by SLA shape (e.g. `STANDARD`, `WAREHOUSE_FAST`, `APPROVAL_1D`, `APPROVAL_3D`). Many bindings → one policy. Consolidate existing duplicates. |
 | D6 | UI: a **group-level SLA-policy picker** (one per `team_set_code` group) on the Access Agent team-assignments form, reusing `getSLAPolicies`. On save the group's `policy_id` is stamped onto every assignment row of that `code`. |
-| D7 | **No bind-time tier-coverage validation** (policy tiers and team-set tiers may differ either way). At runtime, when escalation advances past the policy's defined tiers, **clamp to the policy's highest defined tier hours** (logged) — never a phantom 24h. |
-| D8 | Rollout uses a **temporary n8n `policy_id` fallback**: resolve from `agent_teams.policy_id`; if NULL, fall back to the n8n-supplied `policy_id` + warn. Remove the fallback once all team sets are bound — then unbound = the D4 422. |
+| D7 | **No bind-time tier-coverage validation** (policy tiers and team-set tiers may differ either way). At runtime, when escalation advances past the policy's defined tiers, **clamp to the policy's highest defined tier hours** (logged) - never a phantom 24h. |
+| D8 | Rollout uses a **temporary n8n `policy_id` fallback**: resolve from `agent_teams.policy_id`; if NULL, fall back to the n8n-supplied `policy_id` + warn. Remove the fallback once all team sets are bound - then unbound = the D4 422. |
 | D9 | Form side = **data entry** into the existing `FormSLAConfig` dialog (PR/sponsorship/warehouse stage rows). No schema change. Optional one-time seed script. |
 
 ### Out of scope / unchanged
 - Round-robin assignee selection stays n8n's job (`assigned_to` still supplied).
-- Form SLA orchestration, escalation, idempotent-create semantics — unchanged.
-- `team_set_code → team/tier` resolution (`resolve_team_with_tier_fallback`) — unchanged.
+- Form SLA orchestration, escalation, idempotent-create semantics - unchanged.
+- `team_set_code → team/tier` resolution (`resolve_team_with_tier_fallback`) - unchanged.
 
 ---
 
@@ -79,7 +79,7 @@ create_tracking():
 ```
 
 ### Form (unchanged mechanism, data added)
-`FormSLAConfig.policy_id` per `(source_entity_type, stage_code/team_set_code)` — already
+`FormSLAConfig.policy_id` per `(source_entity_type, stage_code/team_set_code)` - already
 the source of truth. Add the missing rows (PR/sponsorship/warehouse).
 
 ### Escalation tier clamp (D7)
@@ -93,21 +93,21 @@ and form recompute paths.
 ## 4. Affected files (from codebase exploration)
 
 ### Backend
-- `app/models/access.py` — `AgentTeam` (~line 321): add `policy_id` nullable FK → `sla_policies.id` (`ondelete="RESTRICT"`).
-- `alembic/versions/247_agent_team_policy_id.py` — new migration (add column; chains off `246_sla_tier_hours_decimal`).
-- `app/schemas/user.py` — `AgentTeamAssignment` (~line 352): add `policy_id: Optional[str]`. `AgentTeamsUpdate` unchanged shape.
+- `app/models/access.py` - `AgentTeam` (~line 321): add `policy_id` nullable FK → `sla_policies.id` (`ondelete="RESTRICT"`).
+- `alembic/versions/247_agent_team_policy_id.py` - new migration (add column; chains off `246_sla_tier_hours_decimal`).
+- `app/schemas/user.py` - `AgentTeamAssignment` (~line 352): add `policy_id: Optional[str]`. `AgentTeamsUpdate` unchanged shape.
 - `app/services/user_service.py`
-  - `AccessAgentService.set_agent_teams` — stamp the group `policy_id` onto every row of each `code`; new tier rows inherit.
-  - New helper `resolve_policy_id_for(agent_id, team_set_code)` → distinct-policy rule (D4).
-- `app/services/sla_service.py` — `ConversationSLATrackingService.create_tracking` (~line 2488): replace "policy from body" with resolver + D8 fallback; force `current_tier=1`; D7 tier clamp in `compute_tracking_timings` / due recompute helpers.
-- `app/schemas/sla.py` — `ConversationSLATrackingCreate`: make `agent_code`, `team_set_code` required; keep `policy_id`/`current_tier` accepted-but-ignored.
-- `app/api/v1/sla/sla_tracking.py` — POST "/": no signature change; resolver lives in service.
+ - `AccessAgentService.set_agent_teams` - stamp the group `policy_id` onto every row of each `code`; new tier rows inherit.
+ - New helper `resolve_policy_id_for(agent_id, team_set_code)` → distinct-policy rule (D4).
+- `app/services/sla_service.py` - `ConversationSLATrackingService.create_tracking` (~line 2488): replace "policy from body" with resolver + D8 fallback; force `current_tier=1`; D7 tier clamp in `compute_tracking_timings` / due recompute helpers.
+- `app/schemas/sla.py` - `ConversationSLATrackingCreate`: make `agent_code`, `team_set_code` required; keep `policy_id`/`current_tier` accepted-but-ignored.
+- `app/api/v1/sla/sla_tracking.py` - POST "/": no signature change; resolver lives in service.
 
 ### Frontend
-- `app/(protected)/user-management/access-agents/components/AccessAgentForm.tsx` (~328–481) — add per-group SLA-policy picker; include `policy_id` in each `AgentTeamAssignment` on submit.
-- `app/(protected)/user-management/access-agents/services/accessAgentService.ts` — `AgentTeamAssignment` type + `setAgentTeams` payload gain `policy_id`.
+- `app/(protected)/user-management/access-agents/components/AccessAgentForm.tsx` (~328 - 481) - add per-group SLA-policy picker; include `policy_id` in each `AgentTeamAssignment` on submit.
+- `app/(protected)/user-management/access-agents/services/accessAgentService.ts` - `AgentTeamAssignment` type + `setAgentTeams` payload gain `policy_id`.
 - Reuse `getSLAPolicies` from `app/(protected)/sla-management/sla-policies/services/slaPolicyService.ts` for the picker.
-- `FormSLAConfig` dialog — no change (already has policy picker); used for D9 data entry.
+- `FormSLAConfig` dialog - no change (already has policy picker); used for D9 data entry.
 
 ### Data
 - Bind a policy to **every existing `(agent, team_set)`** via the UI before removing the D8 fallback.
@@ -118,18 +118,18 @@ and form recompute paths.
 
 ## 5. Phased delivery (three-phase loop)
 
-**Phase 1 — FE prototype**
+**Phase 1 - FE prototype**
 - Group-level policy picker in `AccessAgentForm` against mock policy list. States: unbound group, bound group, loading, save. Screenshot golden path + unbound case.
 
-**Phase 2 — BE wiring + tests**
+**Phase 2 - BE wiring + tests**
 - Migration 247, model/schema changes, `set_agent_teams` cast + inherit, `resolve_policy_id_for`, `create_tracking` resolver + D8 fallback + D7 clamp, required field changes.
 - FE off-mocks: real `getSLAPolicies`, `policy_id` in `setAgentTeams`.
 - Tests:
-  - **pytest**: resolver one/none/many; cast-to-all-rows; new-row inherit; create_tracking ignores n8n policy_id when bound; fallback-to-n8n when unbound (rollout flag); tier clamp; required-field 422.
-  - **vitest**: `AccessAgentForm` group picker (bound/unbound/save payload includes policy_id).
-  - **playwright**: bind a policy to a team set → create conversation via API → asserts resolved policy.
+ - **pytest**: resolver one/none/many; cast-to-all-rows; new-row inherit; create_tracking ignores n8n policy_id when bound; fallback-to-n8n when unbound (rollout flag); tier clamp; required-field 422.
+ - **vitest**: `AccessAgentForm` group picker (bound/unbound/save payload includes policy_id).
+ - **playwright**: bind a policy to a team set → create conversation via API → asserts resolved policy.
 
-**Phase 3 — review**
+**Phase 3 - review**
 - `/code-review`; verify CLAUDE.md rules (extractApiError, no hand-built params, hard-delete N/A here).
 
 **Rollout (D8)**
@@ -158,7 +158,7 @@ and form recompute paths.
 - **UAC-11** Sub-hour SLAs work: a `WAREHOUSE_FAST` policy with tier-1 `response_hours = 0.5` produces a `due_at` 30 minutes out.
 
 ### Forms (data, existing mechanism)
-- **UAC-12** PR approval stage uses a 3-day policy; sponsorship approval uses a 1-day policy — both configured as `FormSLAConfig` rows, verified by spawning each form's SLA and checking the due date.
+- **UAC-12** PR approval stage uses a 3-day policy; sponsorship approval uses a 1-day policy - both configured as `FormSLAConfig` rows, verified by spawning each form's SLA and checking the due date.
 - **UAC-13** Warehouse form stage uses the short (0.5/1h) policy.
 
 ### Policies as profiles
@@ -171,6 +171,6 @@ and form recompute paths.
 ---
 
 ## 7. Open risks / notes
-- The D8 fallback must be **removed** (a code change, not a flag left on) — track it as a follow-up so unbound silently using n8n's policy doesn't become permanent.
-- Consolidation repoints bindings — do it JOIN-based and idempotent (set binding to canonical policy where it currently points at a duplicate), per the backfill lesson in CLAUDE.md.
-- `agent_teams.policy_id` uses `RESTRICT` so a policy in use can't be deleted — matches the existing SLA-policy delete guard.
+- The D8 fallback must be **removed** (a code change, not a flag left on) - track it as a follow-up so unbound silently using n8n's policy doesn't become permanent.
+- Consolidation repoints bindings - do it JOIN-based and idempotent (set binding to canonical policy where it currently points at a duplicate), per the backfill lesson in CLAUDE.md.
+- `agent_teams.policy_id` uses `RESTRICT` so a policy in use can't be deleted - matches the existing SLA-policy delete guard.

@@ -10,9 +10,9 @@
  *   Planning          : Available for planning (switch), Draws stock from (select)
  *
  * Plus two rules the current form breaks:
- *   - "Draws stock from" is optional, so it must be clearable. The user-reported bug is that
+ * - "Draws stock from" is optional, so it must be clearable. The user-reported bug is that
  *     once a pool is chosen it can be changed but never unset.
- *   - No multi-sentence explanatory prose in the UI.
+ * - No multi-sentence explanatory prose in the UI.
  *
  * The data layer (hooks + service) is mocked at the module boundary; nothing hits the network.
  */

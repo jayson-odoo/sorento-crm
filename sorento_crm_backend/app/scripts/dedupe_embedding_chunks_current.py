@@ -1,9 +1,9 @@
 """Collapse duplicate *current* embedding rows so each (source, model, chunk_index) wins once.
 
 Fixes two failure modes:
-  1) Multiple *batches* (different source_hash) all left is_current=true — picks the newest
+  1) Multiple *batches* (different source_hash) all left is_current=true - picks the newest
      batch by max(embedded_at) per hash, marks others non-current, syncs embedding_documents.
-  2) Multiple rows for the same chunk_index still current (e.g. partial unique index missing) —
+  2) Multiple rows for the same chunk_index still current (e.g. partial unique index missing) - 
      keeps the newest row per (source_type, source_id, model_name, model_version, chunk_index).
 
 RAG reads only is_current=true; this script does not change vectors, only flags (unless --delete-superseded).

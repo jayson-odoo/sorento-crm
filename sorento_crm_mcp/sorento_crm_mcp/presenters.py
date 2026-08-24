@@ -18,7 +18,7 @@ generic renderer instead of per-tool field-mapping code:
       "has_result": true
     }
 
-The envelope is intentionally MARKDOWN-FREE — `fields` carry label/value pairs only.
+The envelope is intentionally MARKDOWN-FREE - `fields` carry label/value pairs only.
 The consumer owns the skin (bold, numbering, footer). This keeps the envelope
 channel-agnostic (WhatsApp, email, web can each render it differently).
 
@@ -124,7 +124,7 @@ def _money(v: Any) -> str | None:
 
 
 def _qty(v: Any) -> Any:
-    """Render a quantity compactly — drop a meaningless fractional part.
+    """Render a quantity compactly - drop a meaningless fractional part.
 
     ``2.0000`` -> ``"2"``, ``2.5000`` -> ``"2.5"``, ``2.125`` -> ``"2.125"``.
     Non-numeric / None passes through unchanged. Decimal (not float) so we never
@@ -216,7 +216,7 @@ class _Builder:
                 "flags": {
                     "discontinued": bool(discontinued),
                     "expired": bool(expired),
-                    # Mutually exclusive with `expired` — a renewal deadline is
+                    # Mutually exclusive with `expired` - a renewal deadline is
                     # not a dead document, and collapsing the two would have the
                     # consumer refuse to serve a certificate that is still valid.
                     "expiring_soon": bool(expiring_soon),
@@ -272,7 +272,7 @@ def _alloc_state(row: Any) -> tuple[bool, bool, Any]:
     warehouse yet; `partially_allocated` = some but not all of the shipped quantity is
     claimed, with `gap` carrying the remainder for the consumer's badge text.
 
-    The gap is NOT computed here — the backend derives it against `quantity_shipped`
+    The gap is NOT computed here - the backend derives it against `quantity_shipped`
     (allocations are never decremented on receipt, so `remaining_incoming_quantity` is
     the wrong base) and ships only the gap, so the shipped total never reaches a
     consumer. A backend that predates the field simply omits it: allocations exist, so
@@ -622,7 +622,7 @@ def _certificate_file(row: dict) -> dict | None:
 
 
 # The backend's derived validity codes, in the words a person reads. An
-# unmapped code falls through de-slugged rather than being dropped — a state the
+# unmapped code falls through de-slugged rather than being dropped - a state the
 # envelope cannot name is still better than silence about validity.
 _VALIDITY_LABELS = {
     "valid": "Valid",
@@ -724,7 +724,7 @@ def _annotate_field_access(envelope: dict[str, Any], tool_name: str) -> None:
 
 
 def _resource_attachments(rows: list[dict], b: _Builder) -> None:
-    # No "Type" line — the attachment type (e.g. "Direct Access") is internal
+    # No "Type" line - the attachment type (e.g. "Direct Access") is internal
     # plumbing, not meaningful to the end user. Just the file name + the file.
     for att in rows:
         name = att.get("original_filename") or att.get("stored_filename")
@@ -798,24 +798,24 @@ def _stock(rows: list[dict], b: _Builder) -> None:
             or _as_str(s.get("warehouse"))
             # Flat-key fallback. Its sibling `system_location` is already handled
             # flat in the sysloc chain above; without this line a flat row renders
-            # System Location but leaves Warehouse as "—".
+            # System Location but leaves Warehouse as "-".
             or _as_str(s.get("system_location_description"))
             or s.get("warehouse_name")
         )
         is_discontinued = (prod.get("is_discontinued") is True) or (s.get("is_discontinued") is True)
         qoh = s.get("quantity_on_hand") if s.get("quantity_on_hand") is not None else s.get("quantity")
         # Warehouse / System Location always render (even when absent) so every
-        # stock row has the same shape — a row with no warehouse joined must not
-        # silently drop the fields. "—" placeholder keeps the field present.
+        # stock row has the same shape - a row with no warehouse joined must not
+        # silently drop the fields. "-" placeholder keeps the field present.
         b.item(
             product_code,
             [
                 ("company_name", "Company", s.get("company_name")),
                 ("product_code", "Product Code", product_code),
                 ("product_name", "Product Name", _distinct_name(product_code, product_name)),
-                ("warehouse", "Warehouse", wh_name if _filled(wh_name) else "—"),
-                ("system_location", "System Location", sysloc if _filled(sysloc) else "—"),
-                ("quantity_on_hand", "Quantity On Hand", qoh if qoh is not None else "—"),
+                ("warehouse", "Warehouse", wh_name if _filled(wh_name) else "-"),
+                ("system_location", "System Location", sysloc if _filled(sysloc) else "-"),
+                ("quantity_on_hand", "Quantity On Hand", qoh if qoh is not None else "-"),
             ],
             discontinued=is_discontinued,
         )
@@ -943,7 +943,7 @@ def present_response(tool_name: str, raw: str) -> str:
         builder(rows, b)
 
     # de-dupe attachments by (url, filename). The `url` is the DB `file_path` and is
-    # the ONLY resolvable object key — return it verbatim. Do NOT rewrite its last
+    # the ONLY resolvable object key - return it verbatim. Do NOT rewrite its last
     # segment from `filename` (the editable `stored_filename`): the stored/display
     # name often differs from the real key (parens/spaces sanitized at upload), so
     # patching it in produced URLs that 404 (e.g. a promotion whose stored_filename

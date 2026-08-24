@@ -147,7 +147,7 @@ export default function TemplateDefaultsSection() {
               <h4 className="text-sm font-semibold">Chat reply templates</h4>
               <p className="text-xs text-muted-foreground mb-1">
                 When a contact&apos;s 24-hour window is closed and a staff member sends a free-text
-                chat reply, it is delivered using the chat template for that form — carrying the
+                chat reply, it is delivered using the chat template for that form - carrying the
                 sender&apos;s name and the typed message. Map a parameter to{' '}
                 <span className="font-medium">Full update message</span> (required) and, ideally,{' '}
                 <span className="font-medium">Sender name</span>.

@@ -5,7 +5,7 @@ are **superadmin-only**; ``my-context`` / ``switch`` are for any authenticated u
 (they drive the top-right company switcher).
 
 The ``companies`` / ``user_companies`` / ``respond_contact_companies`` tables are NOT
-``CompanyScopedMixin`` (they have no ``company_id`` of their own — they ARE the
+``CompanyScopedMixin`` (they have no ``company_id`` of their own - they ARE the
 partition dimension + its membership tables), so the ``do_orm_execute`` scope filter
 never touches them regardless of the request scope.
 
@@ -196,7 +196,7 @@ def my_context(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Current user's switchable companies + active/last-active — consumed by the
+    """Current user's switchable companies + active/last-active - consumed by the
     NextAuth ``jwt`` callback (later slice) and the company switcher."""
     user_id = current_user["id"]
     is_super = _is_superadmin(db, user_id)

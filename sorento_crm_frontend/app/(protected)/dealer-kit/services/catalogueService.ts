@@ -1,8 +1,8 @@
 /**
- * Collections and bundles — API client.
+ * Collections and bundles - API client.
  *
  * ---------------------------------------------------------------------------
- * CONTRACT — all under `/api/v1/dealer-kit`, company-scoped by the ORM filter.
+ * CONTRACT - all under `/api/v1/dealer-kit`, company-scoped by the ORM filter.
  *
  * GET    /collections                          -> CollectionOut[]   page.view
  *          REUSABLE ones only. Page-scoped collections are an editor detail and

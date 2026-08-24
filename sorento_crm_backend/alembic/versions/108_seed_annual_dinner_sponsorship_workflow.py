@@ -75,7 +75,7 @@ def upgrade() -> None:
             "name": def_meta.get("name", "Annual Dinner Sponsorship (Dealer)"),
             "desc": def_meta.get(
                 "description",
-                "Sponsorship request — customer detail, criteria/SKUs, contact, dealer dinner.",
+                "Sponsorship request - customer detail, criteria/SKUs, contact, dealer dinner.",
             ),
             "draft": schema_json,
         },

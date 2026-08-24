@@ -1,12 +1,12 @@
 /**
  * Coverage Timeline presentation helpers - the three that carry a real trap.
  *
- *  - `dayLabel` must not move a date. A plain calendar date run through a
+ * - `dayLabel` must not move a date. A plain calendar date run through a
  *    local-timezone formatter shifts a day west of Greenwich, which would reorder
  *    the timeline against the balances the server accumulated.
- *  - `computedAtLabel` must NOT convert. `computed_at` is already naive Malaysia
+ * - `computedAtLabel` must NOT convert. `computed_at` is already naive Malaysia
  *    wall-clock, so treating it as UTC would add eight hours.
- *  - `supplySplit` must read the rows rather than recompute anything, and must keep
+ * - `supplySplit` must read the rows rather than recompute anything, and must keep
  *    on-order separate from in-transit: only the on-order half is still negotiable.
  */
 import { describe, it, expect } from 'vitest';

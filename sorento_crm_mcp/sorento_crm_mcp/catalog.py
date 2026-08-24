@@ -3,7 +3,7 @@
 UUID-first contract: data tools filter by canonical UUID lists (`<entity>_ids`,
 accepting csv / JSON array / repeated query params) plus structured filters
 (price, dimensions, dates, status). Free-text fuzzy `query` search is intentionally
-NOT exposed — callers (the n8n / RAG layer) resolve names → UUIDs upstream and pass
+NOT exposed - callers (the n8n / RAG layer) resolve names → UUIDs upstream and pass
 the UUIDs in.
 """
 from __future__ import annotations
@@ -50,7 +50,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "SORT KEYS: created_at, updated_at, product_code, product_name, list_price (alias price), "
             "cost_price, invoice_price, is_active, dimensions_length (alias length), dimensions_width "
             "(alias width), dimensions_height (alias height), largest_dimension, smallest_dimension; "
-            "combine with dir=asc|desc. Each row returns `currency` (default MYR) — render prices with that "
+            "combine with dir=asc|desc. Each row returns `currency` (default MYR) - render prices with that "
             "code, never $. Rows may include `field_attachments` (map of product field → linked docs). "
             "ATTACHMENTS: pass `attachment_type_ids` (canonical AttachmentType UUIDs, csv / JSON / repeated) "
             "to nest each product's files of those types under `attachments[]` (e.g. Product Photos, "
@@ -127,8 +127,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "List per-SKU product↔attachment links (BROCHURE / SPEC SHEET / DATASHEET / MANUAL / "
             "INSTALLATION GUIDE / CERTIFICATE for a specific product). FILTER BY UUID: `product_ids` "
             "(canonical product UUIDs), `attachment_ids` (canonical attachment UUIDs), and / or "
-            "`attachment_type_ids` (canonical AttachmentType UUIDs — narrows to a doc class such as "
-            "brochure or spec sheet), and / or `certificate_ids` (canonical Certificate UUIDs — the "
+            "`attachment_type_ids` (canonical AttachmentType UUIDs - narrows to a doc class such as "
+            "brochure or spec sheet), and / or `certificate_ids` (canonical Certificate UUIDs - the "
             "product↔file rows whose file is a filed revision of those certificates; get the UUID from "
             "crm_certificates_list first). All accept csv / JSON list / repeated query params.\n\n"
             "CERTIFICATE VALIDITY: a row whose file is a filed certificate carries `certificate` "
@@ -164,13 +164,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`validity_state=unknown` means the register holds no expiry date: say the expiry is not "
             "recorded, never that the certificate does not expire.\n\n"
             "NARROWING FILTERS (all optional; csv / JSON list / repeated where they take ids):\n"
-            "  - `certificate_ids` (canonical certificate UUIDs)\n"
-            "  - `certificate_number` (raw text, normalized server-side: 'PPS 0119', 'pps-0119' and "
+            " - `certificate_ids` (canonical certificate UUIDs)\n"
+            " - `certificate_number` (raw text, normalized server-side: 'PPS 0119', 'pps-0119' and "
             "'PPS0119' all match the same certificate)\n"
-            "  - `product_ids` (canonical product UUIDs: certificates covering any of them)\n"
-            "  - `scheme` (e.g. PPS, SPAN), `status` (active | archived)\n"
-            "  - `validity_state`, `expiring_within_days` (integer), `valid_on` (YYYY-MM-DD)\n"
-            "  - `needs_review` (true = the register flagged the extracted data for a human)\n\n"
+            " - `product_ids` (canonical product UUIDs: certificates covering any of them)\n"
+            " - `scheme` (e.g. PPS, SPAN), `status` (active | archived)\n"
+            " - `validity_state`, `expiring_within_days` (integer), `valid_on` (YYYY-MM-DD)\n"
+            " - `needs_review` (true = the register flagged the extracted data for a human)\n\n"
             "THE SAME NUMBER CAN EXIST UNDER TWO SCHEMES (04124FC is approved under both PPS and SPAN, "
             "with different expiries). When a number filter returns more than one row, ask which scheme "
             "rather than answering from the first row.\n\n"
@@ -199,7 +199,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "Resolve a raw user keyword into the canonical option value for a CRM dropdown set. "
             "Body: {set_key, raw, locale?}. Returns {value,label,matched_keyword,match_type,score} or 404. "
-            "Use whenever a user gives a free-text value for a CRM dropdown field — translate first, then "
+            "Use whenever a user gives a free-text value for a CRM dropdown field - translate first, then "
             "send the canonical value to the matching write API.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
@@ -215,18 +215,18 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "List promotions (summary fields + linked attachments inline; no product lines). Each row carries "
             "its `attachments` array.\n\n"
-            "WHICH PROMOTIONS COME BACK is decided by the backend, per promotion TYPE — a live promotion "
+            "WHICH PROMOTIONS COME BACK is decided by the backend, per promotion TYPE - a live promotion "
             "always wins, and a type with no live promotion may still contribute the one that just ended. "
             "Every row carries `promotion_type_name`, `is_expired` and `expired_but_usable`:\n"
-            "  • `is_expired=false` — live. Present it normally.\n"
-            "  • `is_expired=true` AND `expired_but_usable=true` — say the promotion HAS EXPIRED (give its "
+            "  • `is_expired=false` - live. Present it normally.\n"
+            "  • `is_expired=true` AND `expired_but_usable=true` - say the promotion HAS EXPIRED (give its "
             "end_date) BUT STILL APPLIES, e.g. \"the July promotion ended on 31/07 and can still be used\". "
             "Never hide it and never present it as live.\n"
-            "  • `is_expired=true` and `expired_but_usable=false` — FOUND but EXPIRED; never present it as "
+            "  • `is_expired=true` and `expired_but_usable=false` - FOUND but EXPIRED; never present it as "
             "usable.\n"
             "A promotion type that cannot be honoured after its end date (a special) is not returned at all "
             "once it ends, so there is nothing to explain away.\n\n"
-            "NO HISTORY THROUGH THIS TOOL. It only ever returns the promotions Sorento currently serves — "
+            "NO HISTORY THROUGH THIS TOOL. It only ever returns the promotions Sorento currently serves - "
             "the live ones, plus per type config at most the latest ended one that is still honoured, and "
             "never an expired special. Inactive, superseded and no-longer-honoured promotions cannot be "
             "retrieved here at all. If the user asks for past promotions (\"every promo that ended in "
@@ -234,14 +234,14 @@ CATALOG: tuple[ToolSpec, ...] = (
             "than presenting the served set as if it were the history.\n"
             "  • DO NOT PASS `active`. The backend discards it; `active=false` does NOT return inactive "
             "promotions, it returns the same served set.\n"
-            "  • `period_from` / `period_to` (YYYY-MM-DD) and `date_mode` only NARROW the served set — they "
+            "  • `period_from` / `period_to` (YYYY-MM-DD) and `date_mode` only NARROW the served set - they "
             "never reach past it. `date_mode` picks which date the window tests: `overlap` (default, promo "
             "running during the window), `started` (start_date in window), `ended` (end_date in window). "
             "`ended` is therefore not an archive query: it can only return served promotions that happen to "
             "have ended in the window, so never answer \"what ended in July\" from it.\n\n"
             "OPTIONAL narrowing filters (call without any to get the latest 10 currently-served promotions):\n"
             "  • `promotion_ids` (canonical promotion UUIDs, csv / JSON / repeated)\n"
-            "  • `product_ids` (canonical product UUIDs — promotions containing any)\n"
+            "  • `product_ids` (canonical product UUIDs - promotions containing any)\n"
             "  When BOTH `promotion_ids` and `product_ids` are supplied, they combine\n"
             "  via OR: a promotion is returned if it is in `promotion_ids` OR contains\n"
             "  any product in `product_ids` (no AND option).\n\n"
@@ -249,7 +249,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "\"what is sorento's latest promo\" return a bounded page instead of the full catalog.\n\n"
             "ACCESS LEVELS: `access_levels` filters promotions whose `access_levels` JSONB overlaps the "
             "supplied names (case-insensitive). Phrases like `sorento dealer`, `mocha office`, `end user` "
-            "are `access_levels` ONLY — never `*_ids` values.\n\n"
+            "are `access_levels` ONLY - never `*_ids` values.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -264,12 +264,12 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_marketing_promotion_products_list",
         (
             "Promotion product lines (paginated). Each row carries the parent promotion's "
-            "`promotion_attachments` inline, plus `promotion_type_name`, `is_expired` — true when the parent "
-            "promotion is NOT currently live (is_active off OR today outside its start/end window) — and "
+            "`promotion_attachments` inline, plus `promotion_type_name`, `is_expired` - true when the parent "
+            "promotion is NOT currently live (is_active off OR today outside its start/end window) - and "
             "`expired_but_usable`. When `expired_but_usable` is true, say the promotion HAS EXPIRED (give the "
             "end date) BUT STILL APPLIES. When is_expired is true without it, the line was FOUND but its "
             "promotion is EXPIRED; never present an is_expired row as a live promotion.\n\n"
-            "REQUIRED — at least ONE narrowing filter or the tool returns an empty page:\n"
+            "REQUIRED - at least ONE narrowing filter or the tool returns an empty page:\n"
             "  • `promotion_ids` (canonical promotion UUIDs)\n"
             "  • `product_ids` (canonical product UUIDs)\n\n"
             "STRUCTURED FILTERS: PRICE price_min/max (MYR); DIMENSIONS (mm) length_min/max, width_min/max, "
@@ -277,7 +277,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "EXACT vs FUZZY: bare number is EXACT (min == max == value); hedge words apply ±5 mm. "
             "ACCESS LEVELS: `access_levels` filters by parent promotion access overlap.\n\n"
             "PARENT-PROMOTION ACTIVITY (NOT product status): lines come back only for the promotions "
-            "Sorento currently serves — live promotions, plus per type config at most the latest ended one "
+            "Sorento currently serves - live promotions, plus per type config at most the latest ended one "
             "that is still honoured, and never an expired special. Lines under an inactive, superseded or "
             "no-longer-honoured promotion cannot be retrieved here at all, so never present a result as the "
             "full history of a product's promotions. DO NOT PASS `active`: the backend discards it, and "
@@ -307,19 +307,19 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_marketing_promotion_attachments_list",
         (
             "List / filter promotion-attachment links (BROCHURE / FLYER documents). Each row carries "
-            "`promotion_type_name`, `is_expired` — true when the parent promotion is NOT currently live "
-            "(is_active off OR today outside its start/end window) — and `expired_but_usable`. When "
+            "`promotion_type_name`, `is_expired` - true when the parent promotion is NOT currently live "
+            "(is_active off OR today outside its start/end window) - and `expired_but_usable`. When "
             "`expired_but_usable` is true, say the promotion HAS EXPIRED (give the end date) BUT STILL "
             "APPLIES. When is_expired is true without it, the document was FOUND but its promotion is "
             "EXPIRED; never present an is_expired row as a live promotion.\n\n"
-            "REQUIRED — at least ONE narrowing filter or the tool returns an empty page:\n"
+            "REQUIRED - at least ONE narrowing filter or the tool returns an empty page:\n"
             "  • `promotion_ids` (canonical promotion UUIDs)\n"
             "  • `attachment_ids` (canonical attachment UUIDs)\n\n"
             "ACCESS LEVELS: `access_levels` filters by parent promotion access overlap. Pass a single name "
             "(e.g. \"Sorento Dealer\") or a JSON array. Phrases like `sorento dealer`, `mocha office`, "
-            "`end user` are `access_levels` ONLY — never `*_ids` values.\n\n"
+            "`end user` are `access_levels` ONLY - never `*_ids` values.\n\n"
             "PARENT-PROMOTION ACTIVITY: documents come back only for the promotions Sorento currently "
-            "serves — live promotions, plus per type config at most the latest ended one that is still "
+            "serves - live promotions, plus per type config at most the latest ended one that is still "
             "honoured, and never an expired special. Documents of an inactive, superseded or "
             "no-longer-honoured promotion cannot be retrieved here at all, so never offer a result as the "
             "full set of past promotion flyers. DO NOT PASS `active`: the backend discards it, and "
@@ -391,7 +391,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "documents only). Use when the n8n flow has already resolved one or "
             "more catalogue attachment UUIDs and needs metadata / signed URLs "
             "for them.\n\n"
-            "REQUIRED — `attachment_ids` (canonical attachment UUIDs csv / JSON "
+            "REQUIRED - `attachment_ids` (canonical attachment UUIDs csv / JSON "
             "/ repeated) MUST be supplied or the tool returns an empty page. "
             "This tool does NOT browse the catalogue library; it resolves a "
             "known set of UUIDs scoped to the catalogue type.\n\n"
@@ -432,7 +432,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Paged active-warehouse stock balances. Exposes quantity_on_hand and Malaysia-time updated_at "
             "only. Response uses Sage-aligned warehouse vocabulary: `system_location` (was warehouse_code), "
             "`system_location_description` (was warehouse_name), `warehouse` (was location).\n\n"
-            "ALL FILTERS OPTIONAL — call with none to span every product + active warehouse.\n"
+            "ALL FILTERS OPTIONAL - call with none to span every product + active warehouse.\n"
             "FILTER BY UUID: `product_ids` (canonical product UUIDs csv / JSON / repeated); "
             "`warehouse_ids` (canonical warehouse UUIDs csv / JSON / repeated). "
             "quantity_operator / quantity_value filter on-hand; status = critical|low|normal|overstock.\n"
@@ -469,14 +469,14 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_order_management_orders_list",
         (
             "List orders. Response uses `pickup_time` (was delivery_time); `order_status` is a plain string. "
-            "Rows carry NO UUIDs — identify orders by `order_number`. "
-            "External/AI callers are HARD-CAPPED at limit=20 server-side — narrow via UUID + date filters "
+            "Rows carry NO UUIDs - identify orders by `order_number`. "
+            "External/AI callers are HARD-CAPPED at limit=20 server-side - narrow via UUID + date filters "
             "and paginate via `page` when more results are needed.\n\n"
             "FILTER BY UUID (typed canonical UUIDs, csv / JSON / repeated):\n"
-            "  • `order_ids` — specific orders\n"
-            "  • `customer_ids` — customers (Order.customer_id, falls back to debtor_name for legacy rows)\n"
-            "  • `product_ids` — orders containing any of these products\n"
-            "  • `transporter_ids` — transporters (Order.transporter_id, text fallback for legacy rows)\n"
+            "  • `order_ids` - specific orders\n"
+            "  • `customer_ids` - customers (Order.customer_id, falls back to debtor_name for legacy rows)\n"
+            "  • `product_ids` - orders containing any of these products\n"
+            "  • `transporter_ids` - transporters (Order.transporter_id, text fallback for legacy rows)\n"
             "Date window: actual_delivery_date_from / actual_delivery_date_to.\n"
             "DELIVERY BUCKET: `order_status` = 'outstanding' | 'delivered' (omit for all). "
             "'outstanding' = NOT yet delivered (New Order, Processing, In Transit, Cancelled, or a "
@@ -501,9 +501,9 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_order_management_orders_by_product_list",
         (
             "List distinct CUSTOMER SALES orders containing a specific product (outgoing / sold, NOT incoming "
-            "stock). A product narrower is REQUIRED — pass `product_ids` (canonical product UUIDs, csv / JSON "
+            "stock). A product narrower is REQUIRED - pass `product_ids` (canonical product UUIDs, csv / JSON "
             "/ repeated) or the tool returns an empty page.\n\n"
-            "External/AI callers are HARD-CAPPED at limit=20 server-side — narrow via UUID + date filters "
+            "External/AI callers are HARD-CAPPED at limit=20 server-side - narrow via UUID + date filters "
             "and paginate via `page` when more results are needed.\n\n"
             "OPTIONAL UUID FILTERS: `customer_ids`, `transporter_ids` (canonical UUIDs). "
             "Date window: actual_delivery_date_from / actual_delivery_date_to (YYYY-MM-DD). "
@@ -525,7 +525,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_order_analytics",
         (
-            "AGGREGATE / ANALYTICAL tool for customer sales orders — computes a single "
+            "AGGREGATE / ANALYTICAL tool for customer sales orders - computes a single "
             "number (or ranked buckets), NOT a row list. Use this (NOT crm_order_management_orders_list) "
             "whenever the user asks for a TOTAL, SUM, AVERAGE, COUNT or REVENUE figure:\n"
             "  • 'total order value' / 'sum of orders' / 'total revenue' / 'how much did X buy' → "
@@ -535,11 +535,11 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  • 'how many orders' / 'order count' → metric=count\n\n"
             "metric (REQUIRED): count | total_value | avg_delivery_days.\n"
             "group_by (optional): customer | product | month | none (default none = one overall figure).\n"
-            "FILTER BY UUID: `customer_ids` (canonical customer UUIDs — pass the customer's name/debtor, "
+            "FILTER BY UUID: `customer_ids` (canonical customer UUIDs - pass the customer's name/debtor, "
             "it is resolved to a UUID upstream), `product_ids` (canonical product UUIDs), or `product_code` "
             "(partial). `date_from` / `date_to` scope by order_date (e.g. a year '2026', 'YYYY-MM', or "
             "YYYY-MM-DD). Returns ranked `groups` [{group_key, group_label, metric, value}] plus an overall "
-            "`total`. Exposes ONLY computed aggregates — never per-order cost/invoice pricing.\n\n"
+            "`total`. Exposes ONLY computed aggregates - never per-order cost/invoice pricing.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -570,7 +570,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "as the per-item booleans `flags.unallocated` / `flags.partially_allocated`. Does NOT expose received "
             "quantities, SPO numbers, or internal IDs. FILTER BY UUID: `product_ids` (canonical product UUIDs).\n\n"
             "OPTIONAL ETA WINDOW: `eta_from` / `eta_to` (YYYY-MM-DD, inclusive) narrow to shipments arriving "
-            "within the window — e.g. 'is SKU X arriving before month end?'. Applied on top of the product "
+            "within the window - e.g. 'is SKU X arriving before month end?'. Applied on top of the product "
             "filter (a product hint is still required); never a standalone filter.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
@@ -588,11 +588,11 @@ CATALOG: tuple[ToolSpec, ...] = (
             "on date X?' / 'open shipments from supplier Y'. Returns shipment headers (shipment_number, "
             "container, ETA, total_remaining_incoming_quantity, distinct_products_incoming, packing-list "
             "attachment).\n\n"
-            "REQUIRED — at least ONE narrowing filter or the tool returns an empty page:\n"
+            "REQUIRED - at least ONE narrowing filter or the tool returns an empty page:\n"
             "  • `shipment_ids` (canonical inbound-shipment UUIDs)\n"
             "  • `supplier_ids` (canonical supplier UUIDs)\n"
             "  • `eta_from` / `eta_to` (ETA window, YYYY-MM-DD)\n\n"
-            "For 'incoming for product X' use crm_incoming_stock_by_product instead — do NOT call this tool "
+            "For 'incoming for product X' use crm_incoming_stock_by_product instead - do NOT call this tool "
             "without a narrower just to enumerate every open shipment.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
@@ -607,12 +607,12 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_incoming_stock_list",
         (
-            "UNIFIED incoming-stock list — shipment-rooted with nested product lines. Covers BOTH "
+            "UNIFIED incoming-stock list - shipment-rooted with nested product lines. Covers BOTH "
             "'any incoming for product X / SKU X?' (pass `product_ids`) AND 'what is arriving this "
             "month / from supplier Y / shipment Z?' (pass `eta_from`/`eta_to`, `supplier_ids`, "
             "`shipment_ids`). Returns one row per still-incoming shipment: "
             "shipment_number, shipping_container_number, estimated_arrival_date, packing-list "
-            "attachment, and a `lines[]` array — each line carries product_code, product_name, "
+            "attachment, and a `lines[]` array - each line carries product_code, product_name, "
             "batch_number, remaining_incoming_quantity, warehouse_allocations (warehouse_code, "
             "warehouse_name, allocated_quantity), and unallocated_quantity.\n\n"
             "ALLOCATION SIGNAL: `unallocated_quantity` is how much of that line no salesperson has "
@@ -621,7 +621,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "allocated; null = fully allocated, nothing to flag. In `view=render` the same signal arrives "
             "as the per-item booleans `flags.unallocated` / `flags.partially_allocated`.\n\n"
             "When `product_ids` is given, lines are filtered to "
-            "those products. NO aggregate totals are returned — sum the line quantities yourself for "
+            "those products. NO aggregate totals are returned - sum the line quantities yourself for "
             "a product total or per-warehouse summary. Never exposes received/rejected quantities, "
             "SPO numbers, or internal IDs. REQUIRED: at least ONE narrowing filter (product_ids / "
             "shipment_ids / supplier_ids / eta_from / eta_to) or the tool returns an empty page.\n\n"
@@ -655,7 +655,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "List forms (newest-first by updated_at when sort omitted). Caller-supplied "
             "`limit` is respected verbatim (server max 100). OPTIONAL narrowing filter:\n"
             "  • `form_ids` (canonical form UUIDs csv / JSON / repeated)\n\n"
-            "Without `form_ids`, returns the page as requested — use page + limit to paginate."
+            "Without `form_ids`, returns the page as requested - use page + limit to paginate."
         ),
         "/api/v1/forms-management/forms",
         (),
@@ -718,7 +718,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Mint a 7-day user submission portal link for the active contact. Use when the user wants to file "
             "a complaint, stock inquiry, purchase request or sponsorship form. Send the returned `portal_url`. "
             "Required: `contact_id` (string) and `space_id` (string). Optional: `submission_type` "
-            "(PREFERRED: complaint | stock_inquiry | purchase_request | sponsorship_form — opens the portal "
+            "(PREFERRED: complaint | stock_inquiry | purchase_request | sponsorship_form - opens the portal "
             "directly on that tab) and `base_url` (host override)."
         ),
         "/api/v1/external/portal-tokens/",
@@ -732,10 +732,10 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_master_customers_list",
         (
             "List / search / RANK distinct customers, deduplicated by debtor_name aggregated from the orders "
-            "table (the customers master table is not used by the business — real customer identity lives on "
+            "table (the customers master table is not used by the business - real customer identity lives on "
             "orders.debtor_name / debtor_code). Each row returns debtor_name, debtor_code AND order_count "
             "(the number of orders that customer placed).\n\n"
-            "THIS TOOL AGGREGATES AND RANKS CUSTOMERS BY ORDER COUNT — use it (NOT the orders list) for "
+            "THIS TOOL AGGREGATES AND RANKS CUSTOMERS BY ORDER COUNT - use it (NOT the orders list) for "
             "'top customers', 'top 5 / top N customers by order count', 'busiest customers', 'which "
             "customers have the most orders', 'rank customers by orders', 'customer order counts', "
             "'who orders the most'. Pass `sort=order_count` with `dir=desc` and `limit=N` to get the top N. "
@@ -763,13 +763,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Each row returns complaint_number, complaint_date, delivery_order_number, customer_name, "
             "product_code / product_type, defect_description, status, assigned_to_name, root_cause_name "
             "and resolution_name.\n\n"
-            "ALL FILTERS OPTIONAL — call with none to get the newest complaints page.\n"
-            "  • `status` — EXACT single complaint status. Known values: draft, submitted, new, "
+            "ALL FILTERS OPTIONAL - call with none to get the newest complaints page.\n"
+            "  • `status` - EXACT single complaint status. Known values: draft, submitted, new, "
             "responded, updated, approved, rejected, processed_by_cs, fulfilled, closed. There is NO "
             "combined 'open' value: for 'open / unresolved complaints' either omit status (list all "
             "newest-first) or pass one concrete in-progress status; closed / fulfilled are the terminal "
             "states.\n"
-            "  • `assigned_to` — respond_user_id of the assignee (or `__unassigned__` for unassigned).\n"
+            "  • `assigned_to` - respond_user_id of the assignee (or `__unassigned__` for unassigned).\n"
             "SORT KEYS: complaint_date, created_at, delivery_order_number, customer_name, product_code, "
             "salesperson, assigned_to, status; combine with dir=asc|desc (use sort=complaint_date&dir=desc "
             "for the most recent complaints first)."
@@ -784,17 +784,17 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_complaint_analytics",
         (
-            "AGGREGATE / ANALYTICAL tool for complaints — returns COUNTS (a single number or ranked "
+            "AGGREGATE / ANALYTICAL tool for complaints - returns COUNTS (a single number or ranked "
             "buckets), NOT a row list. Use this (NOT crm_complaints_list) whenever the user asks 'how "
             "many complaints', 'which product has the most complaints', 'complaints by product / status "
             "/ month', or 'how many complaints were resolved in <period>'.\n\n"
             "metric: count (only supported value).\n"
             "group_by (optional): status | product | month | none (default none = one overall count). "
-            "For 'which product has the most complaints' pass group_by=product — rows are ranked by count "
+            "For 'which product has the most complaints' pass group_by=product - rows are ranked by count "
             "descending, so the first group is the answer.\n"
             "date_field (optional): complaint_date (when raised, default) or resolved_at (when resolved). "
             "For 'complaints resolved last month / in <period>' pass date_field=resolved_at with "
-            "`date_from`/`date_to` — do NOT pass status=resolved (there is no such status; resolved_at "
+            "`date_from`/`date_to` - do NOT pass status=resolved (there is no such status; resolved_at "
             "being set already means resolved).\n"
             "`status` filters an exact complaint status (approved, processed_by_cs, closed, ...). "
             "`date_from` / `date_to` accept YYYY-MM-DD, DD/MM/YYYY, or 'YYYY-MM'. Returns ranked `groups` "
@@ -830,15 +830,15 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_it_support_ticket_create",
         (
             "Submit an IT-support ticket / report a bug / log an issue with the IT admin team. "
-            "INVOCATION RULES: 1. NEVER ask the user for anything — infer all fields from the recent 1-5 "
+            "INVOCATION RULES: 1. NEVER ask the user for anything - infer all fields from the recent 1-5 "
             "turns. 2. CALL ONCE with payload_json = {title, priority (low|medium|high|urgent), category "
             "(bug|feature|question|other), description}. Server creates a DRAFT and returns draft_url. "
-            "Optionally pass `message_id` (Respond.io message id) at the TOP LEVEL of the tool arguments — "
+            "Optionally pass `message_id` (Respond.io message id) at the TOP LEVEL of the tool arguments - "
             "NOT inside payload_json; omit if unknown. 3. Reply with ONE short message containing the "
-            "draft_url verbatim. 4. STOP — do not call again in the same turn. "
+            "draft_url verbatim. 4. STOP - do not call again in the same turn. "
             "USE when the user reports something broken / not working / errored / crashed / slow / can't "
             "access / login fails / data missing, OR asks to file / raise a ticket / report a problem. "
-            "DO NOT use for how-to questions — those belong to user_guides_read."
+            "DO NOT use for how-to questions - those belong to user_guides_read."
         ),
         "/api/v1/external/it-support/tickets/",
         (),
@@ -857,10 +857,10 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_complaint_close",
         (
-            "Close (resolve / finalise) a complaint that can't be actioned further — sets the complaint "
+            "Close (resolve / finalise) a complaint that can't be actioned further - sets the complaint "
             "status to 'closed', closes its customer-service SLA stage, and sends a status-update message "
             "to the contact. INVOCATION: pass `complaint_id` (canonical complaint UUID; the assistant "
-            "resolves a complaint code such as C-1042 to its UUID before calling). Optionally pass `note` — "
+            "resolves a complaint code such as C-1042 to its UUID before calling). Optionally pass `note` - "
             "a short closing remark shown to the contact. USE when the user says 'close complaint', 'mark "
             "complaint resolved', 'finalise this complaint', 'shut the complaint'. This is a WRITE action; "
             "the assistant asks the user to confirm before it runs."
@@ -877,10 +877,10 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_order_cancel",
         (
-            "Cancel a sales order / delivery order — marks the order as cancelled (is_cancelled=true), "
+            "Cancel a sales order / delivery order - marks the order as cancelled (is_cancelled=true), "
             "which also unlinks and re-evaluates any complaints tied to it. INVOCATION: pass `order_id` "
             "(canonical order UUID; the assistant resolves an order number to its UUID). Optionally pass "
-            "`reason` — a short remark stored on the order. USE when the user says 'cancel order', 'cancel "
+            "`reason` - a short remark stored on the order. USE when the user says 'cancel order', 'cancel "
             "this DO', 'void the order', 'call off the order'. WRITE action; the assistant confirms first."
         ),
         "/api/v1/order-management/orders/{order_id}/cancel",
@@ -895,7 +895,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_purchase_request_approve",
         (
-            "Approve a purchase request or sponsorship form that is pending approval — records an in-system "
+            "Approve a purchase request or sponsorship form that is pending approval - records an in-system "
             "approval decision (identical to clicking Approve on the form or the emailed approval link): "
             "advances the status, sends notifications, and fires the approval automation. INVOCATION: pass "
             "`purchase_request_id` (canonical PR UUID; the assistant resolves a PR number such as PR-88). "
@@ -914,10 +914,10 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_purchase_request_reject",
         (
-            "Reject a purchase request or sponsorship form that is pending approval — records an in-system "
+            "Reject a purchase request or sponsorship form that is pending approval - records an in-system "
             "rejection decision (identical to clicking Reject on the form or the emailed approval link). "
             "INVOCATION: pass `purchase_request_id` (canonical PR UUID; the assistant resolves a PR number "
-            "such as PR-88). Optionally pass `reason` — the rejection comment. USE when the user says "
+            "such as PR-88). Optionally pass `reason` - the rejection comment. USE when the user says "
             "'reject PR', 'decline the purchase request', 'turn down the sponsorship form', 'do not approve "
             "PR'. WRITE action; the assistant confirms first."
         ),

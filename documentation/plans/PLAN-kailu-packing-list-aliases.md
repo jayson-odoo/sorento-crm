@@ -32,11 +32,11 @@ label at all, and `Date：2026-07-17` resolves no alias. Untouched.
 1. **Migration `375_kailu_packing_list_aliases`** (mirrors 357's shape: `_ALIASES`,
    importable `seed(bind)`, idempotent `ON CONFLICT DO NOTHING`, exact-row `downgrade`).
    Read fields:
-   - `("packing_list", "item_code", "型号", "zh")`
-   - `("packing_list", "product_name", "货名", "zh")`
-   - `("packing_list", "cbm_total", "体积", "zh")` (per line: cartons x CBM/CTN; the
+ - `("packing_list", "item_code", "型号", "zh")`
+ - `("packing_list", "product_name", "货名", "zh")`
+ - `("packing_list", "cbm_total", "体积", "zh")` (per line: cartons x CBM/CTN; the
      reader derives cbm_per_unit = total/qty itself)
-   - `("packing_list", "brand", "牌子/LOGO", "zh")`
+ - `("packing_list", "brand", "牌子/LOGO", "zh")`
    Resolved-and-deliberately-not-read (357's "cried wolf" mechanism, so the unmapped
    warning stays meaningful): `No.`→row_no, `材质`→material, `PCS/CTN`→pcs_per_carton,
    `包装规格cm`→packing_dim, `CBM/CTN`→cbm_per_carton, `NW`→carton_net_weight,

@@ -1,4 +1,4 @@
-"""agent_teams.notify_on_extension — per-tier deadline-extension notify control.
+"""agent_teams.notify_on_extension - per-tier deadline-extension notify control.
 
 Revision ID: 249_agent_team_notify_ext
 Revises: 248_coverage_created_by

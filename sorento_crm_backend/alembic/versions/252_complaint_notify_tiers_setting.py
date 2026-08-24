@@ -1,4 +1,4 @@
-"""system_settings.complaint_do_delivered_notify_tiers — DB-configurable notify tiers.
+"""system_settings.complaint_do_delivered_notify_tiers - DB-configurable notify tiers.
 
 Revision ID: 252_complaint_notify_tiers_setting
 Revises: 251_complaint_fulfilment_orders

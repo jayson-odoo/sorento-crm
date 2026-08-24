@@ -1,7 +1,7 @@
 """De-dup state for the system-health watchdog (WS3).
 
 One row per alert condition (`alert_key`). The watchdog re-alerts only on a
-transition into a bad state, or when still-bad past a cooldown — so a persistently
+transition into a bad state, or when still-bad past a cooldown - so a persistently
 overdue task doesn't spam every 10-min tick. See PLAN-system-health-observability WS3.
 """
 from sqlalchemy import Column, String, DateTime, Text

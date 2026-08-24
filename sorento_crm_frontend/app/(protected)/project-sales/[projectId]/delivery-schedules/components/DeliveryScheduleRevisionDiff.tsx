@@ -103,7 +103,7 @@ export function DeliveryScheduleRevisionDiff({
                       }
                     >
                       {row.dateMove.deltaDays === null
-                        ? '—'
+                        ? '-'
                         : `${row.dateMove.deltaDays >= 0 ? '+' : ''}${row.dateMove.deltaDays} d`}
                     </span>
                   </p>

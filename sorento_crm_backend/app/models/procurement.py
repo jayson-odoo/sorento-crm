@@ -731,7 +731,7 @@ class PurchaseRequestHeader(Base):
         """Requestor display name resolved LIVE from the FK (see
         StockInquiry.salesperson_contact_name)."""
         return _contact_display_name(self.requested_by_contact)
-    requested_at = Column(Date, nullable=True)  # DEPRECATED — superseded by submitted_at (top date) + request_date (footer date)
+    requested_at = Column(Date, nullable=True)  # DEPRECATED - superseded by submitted_at (top date) + request_date (footer date)
     submitted_at = Column(DateTime(timezone=False), nullable=True)  # auto-stamped on every submit (incl. resubmit); top "Date" on the document
     status = Column(String(50), default="draft", nullable=False)
     portal_draft_at = Column(DateTime(timezone=False), nullable=True)  # set while user is editing in submission portal; cleared on Submit

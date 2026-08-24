@@ -283,7 +283,7 @@ def test_product_grain_chosen_qty_zero_pulls_the_line_and_is_not_confirmed(db):
 
 
 def test_confirm_decisions_endpoint_reaches_product_grain(db):
-    """The route dispatches by the run's own stamped grain (S16 follow-up, 21 Aug)  - 
+    """The route dispatches by the run's own stamped grain (S16 follow-up, 21 Aug) - 
     a product-grain run is no longer refused by the blanket location-grain gate."""
     from app.database import get_db
     from app.dependencies import get_current_user_or_api_key

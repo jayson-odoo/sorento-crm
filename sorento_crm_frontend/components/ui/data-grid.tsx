@@ -66,8 +66,8 @@ export interface DataGridProps<TData extends object> {
    * Optional row grouping. Return a label when `row` starts a new group, or
    * null/undefined otherwise; the grid draws a divider row above it.
    *
-   * The caller owns the grouping rule. Members must already be contiguous —
-   * order them server-side — or the same group will render more than once.
+   * The caller owns the grouping rule. Members must already be contiguous - 
+   * order them server-side - or the same group will render more than once.
    */
   renderGroupHeader?: (row: any, previousRow: any | null) => ReactNode | null;
   /**
@@ -103,12 +103,12 @@ export interface DataGridProps<TData extends object> {
     edgeCell?: string;
   };
   /**
-   * @deprecated No-op. The auto-rendered standard toolbar was removed — every list
+   * @deprecated No-op. The auto-rendered standard toolbar was removed - every list
    * owns its toolbar via `DataGridListToolbar` in `CardHeader`. Kept only so existing
    * `standardToolbar={false}` call-sites keep type-checking; safe to delete on touch.
    */
   standardToolbar?: boolean;
-  /** @deprecated No longer wired — pass `onRefresh` to `DataGridListToolbar` instead. */
+  /** @deprecated No longer wired - pass `onRefresh` to `DataGridListToolbar` instead. */
   onRefresh?: () => void | Promise<void>;
   /** @deprecated See `onRefresh`. */
   isRefreshing?: boolean;

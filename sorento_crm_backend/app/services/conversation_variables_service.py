@@ -1,6 +1,6 @@
 """Conversation-state service: plain JSON state on `respond_contacts.session_vars`.
 
-The column holds whatever JSON the caller writes — no turn buffer, no merge,
+The column holds whatever JSON the caller writes - no turn buffer, no merge,
 no sliding window. Reads return the stored dict; writes overwrite it whole.
 """
 from __future__ import annotations
@@ -131,7 +131,7 @@ def get_referenced_state(
         except Exception:
             return None
     # `after: null` means the turn wrote no state (no-access refusal, LLM fallback).
-    # That is a MISS, never `{}` — an empty baseline would WIPE continuity, which is
+    # That is a MISS, never `{}` - an empty baseline would WIPE continuity, which is
     # strictly worse than the pre-pointer behaviour.
     if not isinstance(raw, dict):
         return None

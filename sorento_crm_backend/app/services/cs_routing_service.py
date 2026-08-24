@@ -53,7 +53,7 @@ def _normalized_conditions(match_conditions: Optional[list]) -> list:
             )
         out.append({"field": field, "operator": operator, "value": value})
     # Store in canonical (sorted) order so the DB unique index
-    # md5(match_conditions::text) is deterministic per logical condition-set —
+    # md5(match_conditions::text) is deterministic per logical condition-set - 
     # matching app-side canonical_conditions (predicate order is not semantic; AND).
     out.sort(key=lambda c: (str(c["field"]), str(c["operator"]), str(c["value"])))
     return out

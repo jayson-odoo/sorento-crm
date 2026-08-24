@@ -1,4 +1,4 @@
-"""notification_subscriptions.created_by_id — HoD-assigned coverage audit.
+"""notification_subscriptions.created_by_id - HoD-assigned coverage audit.
 
 Revision ID: 248_coverage_created_by
 Revises: 247_agent_team_policy_id

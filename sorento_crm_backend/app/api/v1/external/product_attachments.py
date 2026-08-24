@@ -47,9 +47,9 @@ def _notify_product_attachment_external(
     product_id: str | None = None,
     linked_codes: list[str] | None = None,
 ) -> None:
-    """Notify attachment uploaders / notify_user_id after successful external product–attachment link."""
+    """Notify attachment uploaders / notify_user_id after successful external product - attachment link."""
     if mode == "single" and product_id and product_code is not None:
-        pc = product_code or "—"
+        pc = product_code or "-"
         summary_plain = (
             f'Your file was linked to product "{pc}" in Sorento CRM'
         )
@@ -71,7 +71,7 @@ def _notify_product_attachment_external(
 
     if mode == "bulk":
         codes = linked_codes or []
-        codes_str = ", ".join(codes[:30]) if codes else "—"
+        codes_str = ", ".join(codes[:30]) if codes else "-"
         summary_plain = (
             "Your file was linked to product(s) in Sorento CRM "
             f"Products: {codes_str}."

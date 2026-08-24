@@ -4,12 +4,12 @@ Creates:
 - AccessAgent(code='it_support')
 - Team(name='IT Admin Tier 1')
 - AgentTeam(agent=it_support, code='it_admin', tier=1, team=<tier-1 team>)
-- TeamMember(team=<tier-1>, user=<tehjayson@gmail.com>) — only when that user
+- TeamMember(team=<tier-1>, user=<tehjayson@gmail.com>) - only when that user
   exists in the target environment (dev/staging convenience). Production
   installs without that seed user simply skip the member; admin can add
   members through the existing User Management → Teams UI.
 
-Idempotent — re-running upgrade is a no-op.
+Idempotent - re-running upgrade is a no-op.
 
 Revision ID: 183_seed_it_support_agent
 Revises: 182_ticket_source_channel

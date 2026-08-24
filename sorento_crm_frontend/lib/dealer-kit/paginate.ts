@@ -3,8 +3,8 @@
  *
  * Deliberately split in two:
  *
- *   measured  - how tall is each section once rendered? Needs a real browser.
- *   pure      - given those heights, which page does each section land on?
+ *   measured - how tall is each section once rendered? Needs a real browser.
+ *   pure    - given those heights, which page does each section land on?
  *
  * This file is the pure half. Print Preview and the PDF worker BOTH read it, and
  * that shared reading is the only reason a break line drawn on the canvas can be

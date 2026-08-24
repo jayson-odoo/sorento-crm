@@ -1,7 +1,7 @@
 """The semantic half: understand the sentence, but never let a model invent vocabulary.
 
 The ranker stays deterministic and explainable. This module is the only place a model
-touches spec search, and the whole design is the boundary around it — the model decides
+touches spec search, and the whole design is the boundary around it - the model decides
 what the customer MEANT, the registry still decides what EXISTS. Every test here is
 about that boundary holding, not about the model being clever.
 
@@ -318,7 +318,7 @@ def test_an_excluded_value_is_never_offered_to_the_model(db):
     """OTHERS and NO LOGO record the ABSENCE of a brand.
 
     Offered as enum options they read as "none of the above", and the model filed every
-    word it could not place under one — "interlignet wc" came back branded OTHERS. Not
+    word it could not place under one - "interlignet wc" came back branded OTHERS. Not
     being shown a value is a harder guarantee than a rule telling the model to avoid it.
     """
     from app.services.product_spec_understanding import _vocabulary
@@ -349,8 +349,8 @@ def test_an_excluded_value_is_rejected_even_if_the_model_returns_it(db, monkeypa
 def test_a_refused_value_is_kept_out_of_the_specs(db, monkeypatch):
     """"not glass" must not arrive as material=glass.
 
-    The literal resolver sees the word "glass" and nothing else — it has no concept of
-    "not" — so a phrase that rules a material out was scoring products made of it. The
+    The literal resolver sees the word "glass" and nothing else - it has no concept of
+    "not" - so a phrase that rules a material out was scoring products made of it. The
     model's refusal has to survive being merged with that reading, or the deterministic
     floor reinstates the exact thing the customer refused.
     """

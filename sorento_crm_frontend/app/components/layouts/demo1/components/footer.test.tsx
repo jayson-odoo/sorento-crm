@@ -1,5 +1,5 @@
 /**
- * Footer — UAC1.2: only Support + copyright; no demo/template links.
+ * Footer - UAC1.2: only Support + copyright; no demo/template links.
  */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';

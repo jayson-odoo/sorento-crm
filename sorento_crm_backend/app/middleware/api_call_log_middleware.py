@@ -1,4 +1,4 @@
-"""Request telemetry for `/api/v1/external/*` — total coverage by construction.
+"""Request telemetry for `/api/v1/external/*` - total coverage by construction.
 
 Today only 3 of ~30 external endpoints log anything, because logging is opt-in
 per endpoint. Middleware inverts that: a new external route is logged the day it
@@ -10,7 +10,7 @@ it and the downstream handler receives an empty body. Here the body is buffered
 and replayed, and the response is captured as it streams past.
 
 **Synchronous write, deliberately.** A buffered/async writer drops exactly the
-records you need at the moment the process dies — i.e. the incident you are
+records you need at the moment the process dies - i.e. the incident you are
 trying to explain. The cost is per-request latency (measured, see the test
 report). The write failing must never affect the response.
 """
@@ -24,7 +24,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # Strictly scoped. Widening this to all of /api/v1 would log the health
-# dashboard's own polling and the log page's own reads back into the table —
+# dashboard's own polling and the log page's own reads back into the table - 
 # a feedback loop that grows without bound and drowns the real traffic.
 _LOGGED_PREFIX = "/api/v1/external"
 
@@ -37,7 +37,7 @@ _OVERSIZE_MARKER = "[body too large to log]"
 def _is_sourced_call(headers: dict) -> bool:
     """True when the caller identified itself with `X-Source` (today: the MCP client).
 
-    Needed because MCP tools mostly proxy ordinary CRM endpoints — the products
+    Needed because MCP tools mostly proxy ordinary CRM endpoints - the products
     catalogue lives at `/api/v1/master-data/*`, not under `/api/v1/external/*`.
     Scoping on the path prefix alone silently missed most MCP traffic even though
     the client was sending full attribution.
@@ -56,7 +56,7 @@ def _should_log(path: str, headers: dict) -> bool:
 
     Internal UI traffic sends no `X-Source` and does not sit under the external
     prefix, so the health dashboard's polling and this table's own reads stay out
-    — logging them would feed the table its own traffic.
+  - logging them would feed the table its own traffic.
     """
     return path.startswith(_LOGGED_PREFIX) or _is_sourced_call(headers)
 

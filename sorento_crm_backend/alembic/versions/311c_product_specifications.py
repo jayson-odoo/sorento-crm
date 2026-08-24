@@ -9,7 +9,7 @@ nothing detecting it.
 with routine successes the filter is wrong, and the queue becomes the data-entry
 programme this design exists to avoid. Two reasons ship with it:
 
-  shape_mismatch  - the stored L/W/H describe a round or square product. 231 codes have
+  shape_mismatch - the stored L/W/H describe a round or square product. 231 codes have
                     length = width, and a round basin's diameter has been forced into
                     `length` catalog-wide, so ranking "600mm wide basin" against one
                     compares against its depth.

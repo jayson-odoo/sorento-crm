@@ -27,7 +27,7 @@ class Form(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     # Multi-company: stamped from the request scope when a staff user creates a
-    # form. DELIBERATELY NOT a CompanyScopedMixin — portal / public / workflow /
+    # form. DELIBERATELY NOT a CompanyScopedMixin - portal / public / workflow /
     # embedding reads of forms MUST keep working under any scope, so the global
     # ``do_orm_execute`` filter must never touch this table. Only the staff
     # forms-management listing filters it via ``admin_listing_company_filter``.

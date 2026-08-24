@@ -40,7 +40,7 @@ export function useGRNs(params: GRNListParams) {
 /**
  * Prev/next neighbours of a GRN within the active filtered+sorted list set.
  * Serializes the list query (search/sort/status filters) with `buildDataGridParams`
- * — the same serialization the list page uses — so the backend honours filters
+ * - the same serialization the list page uses - so the backend honours filters
  * identically. `page`/`limit` are sent but ignored by the neighbours endpoint.
  */
 export function useGRNNeighbours(

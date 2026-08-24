@@ -39,7 +39,7 @@ def test_inventory_tool_top_level_warehouse_keys_are_relabeled():
 
 
 def test_inventory_warehouse_list_keeps_full_relabeled_record():
-    """`crm_inventory_warehouses_list` is the master record — keep all fields,
+    """`crm_inventory_warehouses_list` is the master record - keep all fields,
     just relabeled. Slimming only applies to nested `warehouse` on stock rows."""
     raw = json.dumps(
         {
@@ -181,7 +181,7 @@ def test_non_inventory_tool_keeps_legacy_warehouse_keys():
 
 def test_collision_guard_preserves_existing_target_key():
     """If a dict already carries a target key (e.g. a nested `warehouse`
-    object alongside a scalar `location`), do not overwrite — keep both
+    object alongside a scalar `location`), do not overwrite - keep both
     keys under their original names rather than colliding. Use a non-stock
     inventory tool so the stock slimmer does not also fire."""
     raw = json.dumps(

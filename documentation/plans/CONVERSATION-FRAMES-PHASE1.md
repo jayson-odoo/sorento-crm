@@ -1,4 +1,4 @@
-# Conversation Frames — Phase 1 (backend + FE) — Implementation & Verification Handoff
+# Conversation Frames - Phase 1 (backend + FE) - Implementation & Verification Handoff
 
 > Status: **Phase 1 shipped, smoke-tested on localhost.** Phase 2 (n8n rewire)
 > deferred to user. This doc is the handoff for the frontend Playwright agent
@@ -16,7 +16,7 @@ n8n chatbot orchestration (`automate-sorento.foundryx.my` →
   because raw chat history is text-only.
 - AI Agent system prompt (~2,375 tokens) duplicates routing tables already
   encoded in DB (`agent_mcp_tools × AgentTeam`), and asks gpt-4.1-mini to
-  chain a second tool call for escalation — which fails unreliably on small
+  chain a second tool call for escalation - which fails unreliably on small
   models.
 
 Phase 1 solves the **state architecture** half:
@@ -33,7 +33,7 @@ Phase 1 solves the **state architecture** half:
 - MCP server auto-attaches `suggested_escalation` to empty tool results so the
   AI Agent never needs a second tool call.
 
-Phase 2 (n8n) is documented but **not yet wired** — production behavior
+Phase 2 (n8n) is documented but **not yet wired** - production behavior
 unchanged until user imports the new n8n flow nodes from
 `/Users/tehjayson/Desktop/n8n/n8n_code_snippets/`.
 
@@ -137,7 +137,7 @@ Required env (set in your shell or `.env.test`):
 PORTAL_E2E_BASE_URL=http://localhost:3000
 MCP_ROUTING_E2E_EMAIL=tehjayson@gmail.com
 MCP_ROUTING_E2E_PASSWORD=TestAdmin#2026
-# Optional — pin to a known-good tool name; default falls back to first row.
+# Optional - pin to a known-good tool name; default falls back to first row.
 MCP_ROUTING_E2E_TOOL_NAME=crm_marketing_promotions_list
 ```
 
@@ -154,10 +154,10 @@ Backend must be running on `localhost:8000` with the migration applied
 5. Pick any row (or `MCP_ROUTING_E2E_TOOL_NAME` if set). Click the cell text
    under the **Routing** column (either the team-name link or "View").
 6. `browser_snapshot` the popover. Verify:
-   - Popover header shows `Escalation chain for <tool_name>` with the tool
+ - Popover header shows `Escalation chain for <tool_name>` with the tool
      name in monospace.
-   - At least one row inside, each formatted as `T<tier> <team_name> → <agent_name>`.
-   - Footer: "First row = primary, sent as `suggested_escalation` on empty results."
+ - At least one row inside, each formatted as `T<tier> <team_name> → <agent_name>`.
+ - Footer: "First row = primary, sent as `suggested_escalation` on empty results."
 7. Network-tab style check: confirm a `GET /api/system/mcp-routing?tool_name=...`
    fires when the popover opens. Use `browser_network_requests` after step 5.
    It should return a `RoutingResultOut` JSON with `entries: [...]` and
@@ -168,12 +168,12 @@ Backend must be running on `localhost:8000` with the migration applied
 ### 5.3 Edge-case checks
 
 - **Orphan tool**: pick a row whose "Linked agents" cell shows "Unassigned"
-  (amber). Open Routing popover — should display "No teams linked.
+  (amber). Open Routing popover - should display "No teams linked.
   Configure via …".
 - **No primary**: in DB, temporarily set `AccessAgent.is_active = false` for
-  the agent that owns the chosen tool, refresh page, open popover — should
+  the agent that owns the chosen tool, refresh page, open popover - should
   show "No teams linked" (no crash).
-- **Tooltip rerender**: open popover, close, reopen the SAME row — should
+- **Tooltip rerender**: open popover, close, reopen the SAME row - should
   show data immediately from React-Query cache (`staleTime: 5min`).
 
 ### 5.4 Suggested spec file path
@@ -194,14 +194,14 @@ sidebar-navigation pattern from `contact-access-types.spec.ts`.
 Code/prompt snippets are in
 `/Users/tehjayson/Desktop/n8n/n8n_code_snippets/`:
 
-- `README.md` — wiring instructions, HTTP-node configs.
-- `reformulator-system-prompt.md` — new reformulator prompt with 3 added booleans
+- `README.md` - wiring instructions, HTTP-node configs.
+- `reformulator-system-prompt.md` - new reformulator prompt with 3 added booleans
   (`memory_search_required`, `role_switch_detected`, `frame_should_close`).
-- `ai-agent-system-prompt.md` — slimmed AI Agent prompt (~50% reduction);
+- `ai-agent-system-prompt.md` - slimmed AI Agent prompt (~50% reduction);
   new user-template binding `<active_frame>`, `<semantic_parse>`, `<recalled_frame>`.
-- `compile-current-state.js` — rewritten Code node deciding
+- `compile-current-state.js` - rewritten Code node deciding
   `frameAction ∈ {open, update, close_and_open, rehydrate}`.
-- `output_exchange.js` — unchanged; included for completeness.
+- `output_exchange.js` - unchanged; included for completeness.
 
 Architecture diagram lives in the user's chat transcript and at
 `/Users/tehjayson/Desktop/n8n/PLAN_conversation_frames.md`.

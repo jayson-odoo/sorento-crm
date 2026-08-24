@@ -414,7 +414,7 @@ async def create_packing_list(
         raise
     except DuplicatePackingListError as exc:
         # Same container + ETA + shipment date as an already-received shipment.
-        # Surface the explanation as a 409 — the bare `except Exception` below
+        # Surface the explanation as a 409 - the bare `except Exception` below
         # would otherwise turn a user-fixable mistake into a 500.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.message)
     except Exception as e:

@@ -18,7 +18,7 @@ def scope_to_attachment_company(db: Session, attachment) -> Optional[str]:
 
     The n8n binding endpoints run under X-API-Key with a ``None`` (all-companies)
     scope, so a match-by-code (product code, packing-list number, ...) could
-    otherwise resolve — and bind — an entity in the WRONG company. When the
+    otherwise resolve - and bind - an entity in the WRONG company. When the
     attachment carries a ``company_id`` we set the session scope to that single
     company so (1) the central filter restricts every entity-resolution query to
     in-company rows and (2) any child rows created here auto-stamp that company.

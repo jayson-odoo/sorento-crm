@@ -18,7 +18,7 @@ What is pinned here:
     `so_qty`, `spo_qty`, `available_qty` (SIGNED), `qty_free`, `qty_committed`;
   * the list is ORDERED by `available_after` (available less the whole of what this donor
     could give) descending, then by free descending, and the first one - and only the first
-    - is `recommended`;
+  - is `recommended`;
   * one builder serves both surfaces, so the sheet's donor list and the board's are the
     same list in the same order.
 

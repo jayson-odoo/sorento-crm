@@ -214,7 +214,7 @@ def test_keep_data_sheet_case_insensitive_match():
 
 
 # ---------------------------------------------------------------------------
-# extract_macro_template_xlsx — Stock List macro pipeline
+# extract_macro_template_xlsx - Stock List macro pipeline
 # (docs/plans/PLAN-stock-list-xlsm-macro-upload.md)
 # ---------------------------------------------------------------------------
 
@@ -377,7 +377,7 @@ def test_extract_template_real_fixture():
     reason="Real .xlsm fixture only available on the developer machine",
 )
 def test_keep_data_sheet_real_fixture():
-    """User fixture has 3 sheets — only 'Template' (the data sheet) survives."""
+    """User fixture has 3 sheets - only 'Template' (the data sheet) survives."""
     from openpyxl import load_workbook
 
     with open(_LOCAL_FIXTURE, "rb") as fh:

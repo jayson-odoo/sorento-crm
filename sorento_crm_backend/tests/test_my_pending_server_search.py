@@ -2,7 +2,7 @@
 soonest-50.
 
 Bug: the My Pending widget fetched the soonest-50 trackers only. That both
-under-counted the badge and — because search filtered client-side over that page — hid
+under-counted the badge and - because search filtered client-side over that page - hid
 any match past the soonest-50 (a user with 50+ overdue items could never find a
 later-due one by number). Fix: return everything (safety-capped), so the widget shows
 an honest total and searches/paginates over the complete set.
@@ -59,7 +59,7 @@ def _add_tracker(db, pid, *, due_days: int, source_type="complaint"):
 
 def test_returns_full_set_not_just_soonest_window(db):
     """A later-due tracker must be present in the result (the old 50-cap dropped it,
-    which is why search — filtering client-side over the page — could never find it)."""
+    which is why search - filtering client-side over the page - could never find it)."""
     session, pid = db
     svc = ConversationSLATrackingService(session)
 

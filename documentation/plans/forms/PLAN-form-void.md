@@ -11,7 +11,7 @@ schema; no new tables; reuses event bus, banner, notify, status-pill).
 
 ## Problem
 
-No dedicated void state today — forms use `status` strings + rejection only. A mistaken form cannot
+No dedicated void state today - forms use `status` strings + rejection only. A mistaken form cannot
 be cleanly killed; a kill must stop the SLA and inform assignee + handler + salesperson.
 
 ## Solution
@@ -30,14 +30,14 @@ config); gray `VoidBanner`; full read-only lock; three-target notify.
 | D5 | **SLA stop = pure config.** Void calls `emit_form_event(..., 'voided')`; admin adds `voided` to each `form_sla_config.resolve_event`. No bespoke stop code. |
 | D6 | **Irreversible.** No un-void/reopen. |
 | D7 | **`VoidBanner`** mirrors `RejectionReasonBanner` (gray), reuses `PersonLink` (wa.me / plain-text fallback), gated on `status==='voided'`, on all 4 detail pages. |
-| D8 | **Voided form = fully read-only** — hide every action button. |
+| D8 | **Voided form = fully read-only** - hide every action button. |
 | D9 | **Notify 3 targets:** assignee (in-app) + handling-lock holder (in-app) + salesperson `respond_contact_id` (WhatsApp via `send_text_or_template`, `integration_log` on success+failure). No egress to anyone else. Best-effort post-commit. |
 
 ## Critical files
 
 - BE: migration (status value + reason quad ×3 tables);
   `app/models/procurement.py` (PR + StockInquiry cols), `app/models/complaints.py` (Complaint cols);
-  new void service methods + routes — `app/services/procurement_service.py` (PR/SF + SI),
+  new void service methods + routes - `app/services/procurement_service.py` (PR/SF + SI),
   `app/services/complaints_service.py` (Complaint); `app/api/v1/procurement/*`, `.../complaints/*`
   (`/void` endpoints, `require_module_enabled_with_api_key` + `<form>.void` guard);
   `emit_form_event` call; `send_text_or_template` for the salesperson WhatsApp; notification service
@@ -73,14 +73,14 @@ config); gray `VoidBanner`; full read-only lock; three-target notify.
 
 ## Risks
 
-- **R1 — read-only completeness:** every detail page has its own action set (approve/reject/process/
+- **R1 - read-only completeness:** every detail page has its own action set (approve/reject/process/
   close/reply/extend/take-over). Missing one leaves an actionable button on a voided form. Enumerate
   per page in Phase 1; assert in vitest (BAN-3).
-- **R2 — terminal-state matrix:** "non-terminal" differs per form (PR uses `approval_status` +
+- **R2 - terminal-state matrix:** "non-terminal" differs per form (PR uses `approval_status` +
   `status`; SI has reopen fields; Complaint has its own states). Define the voidable-state predicate
   per form explicitly, don't assume a shared string set.
-- **R3 — SF via shared router:** the PR router serves both; the `/void` endpoint must apply the right
+- **R3 - SF via shared router:** the PR router serves both; the `/void` endpoint must apply the right
   slug (`sponsorship_form.void` when `request_type='sponsorship_form'`) and the right status-message
   use_case.
-- **R4 — WhatsApp closed-window:** reuse `send_text_or_template` exactly as the process/close messages
-  do (per the pin-point plan D10) so a closed 24h window falls back to a template — no new gap.
+- **R4 - WhatsApp closed-window:** reuse `send_text_or_template` exactly as the process/close messages
+  do (per the pin-point plan D10) so a closed 24h window falls back to a template - no new gap.

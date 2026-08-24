@@ -1,8 +1,8 @@
-# PLAN — SCM Policy Configuration UI
+# PLAN - SCM Policy Configuration UI
 
 Status: Phase 1 (FE prototype) + Phase 2 (BE + off-mocks + tests) COMPLETE; Phase 3 (review) in progress.
-Tests: pytest 30 · vitest 67 · playwright 1 — all green. Report: `scm-policy-config-test-report.md`.
-Classification: **MODULE** (`scm`). No new tables, no schema migration, no RBAC migration —
+Tests: pytest 30 · vitest 67 · playwright 1 - all green. Report: `scm-policy-config-test-report.md`.
+Classification: **MODULE** (`scm`). No new tables, no schema migration, no RBAC migration - 
 `scm.policy.manage` already exists (`274_scm_m0_views_reg.py:106`) and all target tables exist from
 M0 (`app/models/scm.py`). New surface only: 1 router file + schemas + 1 service + FE area + 1 menu leaf.
 UAC: `documentation/plans/scm/scm-policy-config-acceptance-criteria.md` (binding contract; written first).
@@ -12,7 +12,7 @@ Worktree: `/Users/tehjayson/Documents/foundryx/sorento_crm-scm`, branch `feat/sc
 
 Add a single "Policies" area under Supply Chain at `/scm/policies`, gated `scm.policy.manage`, that
 edits the three existing policy families and offers a resolution preview. This is **config for the
-M3 reorder engine already built** — the golden constraint is that the preview and all validation
+M3 reorder engine already built** - the golden constraint is that the preview and all validation
 mirror the engine's real behaviour, never a parallel reimplementation.
 
 Key design decisions:
@@ -49,20 +49,20 @@ Key design decisions:
   `dashboard.view` because that knob is shown *alongside* dashboard numbers; the Policies area is
   standalone.) Recorded in AC-CFG-3.
 - FE menu leaf added to `config/menu.config.tsx` Supply Chain group (`menu.config.tsx:384`) with
-  `permission: 'scm.policy.manage'` — verify via sidebar click-through, not deep URL (feedback rule).
+  `permission: 'scm.policy.manage'` - verify via sidebar click-through, not deep URL (feedback rule).
 
 ## 3. Migrations / registry / worker / embeddings
 
 - **Migrations: NONE.** Tables + RBAC slug already exist. If a stray need appears (e.g. a partial
-  unique index to enforce AC-VAL-8 at the DB level), flag it — but the plan enforces uniqueness in
+  unique index to enforce AC-VAL-8 at the DB level), flag it - but the plan enforces uniqueness in
   the service layer against active rows, matching how the engine already tolerates duplicates.
 - **list_query registry: no change** (bespoke endpoint).
 - **Embedding pipeline: no impact** (policy config is numeric OLTP config; not embedded).
 - **Worker / RQ: no change.** No task edits. Note in PR: policy edits are consumed by the existing
   reorder-run task (reorder policies) and the analytics job (classification/supplier) on their next
-  run — no new enqueue.
+  run - no new enqueue.
 
-## 4. Phase 1 — FE prototype (mock data; NO backend, NO tests yet)
+## 4. Phase 1 - FE prototype (mock data; NO backend, NO tests yet)
 
 Location: `sorento_crm_frontend/app/(protected)/scm/policies/` mirroring the reorder folder shape
 (`components/`, `hooks/`, `services/`, `types/`, `page.tsx`).
@@ -70,11 +70,11 @@ Location: `sorento_crm_frontend/app/(protected)/scm/policies/` mirroring the reo
 Build against mock fixtures/stubbed hooks:
 
 - `page.tsx` → `PolicyConfigView` with three sections, each rendering even when empty (AC-STD-4):
-  1. **Reorder policies** — DataGrid (AC-LIST-1/2) + "Add policy" toolbar button + row Edit/Delete;
+  1. **Reorder policies** - DataGrid (AC-LIST-1/2) + "Add policy" toolbar button + row Edit/Delete;
      `AddEditPolicyModal` (AC-EDIT-*) with scope-driven target picker; `ConfirmDeleteDialog`.
-  2. **Classification thresholds** — `ClassificationThresholdsPanel` inline form (AC-CFG-*).
-  3. **Supplier scoring** — `SupplierScoringPanel` inline form (AC-SUP-*).
-  4. **Resolution preview** — `ResolutionPreviewCard` (product + optional warehouse pickers →
+  2. **Classification thresholds** - `ClassificationThresholdsPanel` inline form (AC-CFG-*).
+  3. **Supplier scoring** - `SupplierScoringPanel` inline form (AC-SUP-*).
+  4. **Resolution preview** - `ResolutionPreviewCard` (product + optional warehouse pickers →
      winner + chain, AC-PREV-*).
 - Mock every hook state: loading / empty / error / data, plus modal create-success / validation-error
   / delete-confirm, and preview "global wins (no cell/class match)" (AC-PREV-3).
@@ -119,18 +119,18 @@ GET    /api/v1/scm/policies/resolve?product_id=&warehouse_id=
 
 All FE fetches go through `policyService.ts` → `lib/api-client`; params via `buildDataGridParams`;
 scope-target product/class pickers via `SearchableSelect` reusing `scmOptionsService`
-(`getProductOptions`, `getCategoryOptions`) — but note those return `product_code`/`category_id`
+(`getProductOptions`, `getCategoryOptions`) - but note those return `product_code`/`category_id`
 today; add `getProductOptionsById` (value = `products.id`) and a class-by-`category_code` option
 source, since storage keys differ (see Risk #2). Do NOT touch backend in Phase 1.
 
 Output of Phase 1: clickable mocked area + this locked contract. STOP for sign-off before Phase 2.
 
-## 5. Phase 2 — Backend wiring + FE off-mocks, TEST-FIRST (red → green → refactor)
+## 5. Phase 2 - Backend wiring + FE off-mocks, TEST-FIRST (red → green → refactor)
 
 New backend files:
-- `app/api/v1/scm/policies.py` — router (mounted in `scm/__init__.py`), all endpoints above.
-- `app/schemas/scm_policy.py` — Pydantic request/response with validators encoding AC-VAL-*.
-- `app/services/scm/policy_service.py` — CRUD + upsert + resolve-assembly (reusing
+- `app/api/v1/scm/policies.py` - router (mounted in `scm/__init__.py`), all endpoints above.
+- `app/schemas/scm_policy.py` - Pydantic request/response with validators encoding AC-VAL-*.
+- `app/services/scm/policy_service.py` - CRUD + upsert + resolve-assembly (reusing
   `reorder_engine.resolve_policy_for_sku` / `load_policies` / `resolve_policy`;
   `analytics_service.ensure_*` canonical-row helpers for the two global upserts).
 
@@ -153,7 +153,7 @@ pytest (`sorento_crm_backend/tests/scm/test_policy_config.py`):
   active row).
 
 vitest (`app/(protected)/scm/policies/**`):
-- `policyService.test.ts` — request shaping (buildDataGridParams), extractApiError on failure,
+- `policyService.test.ts` - request shaping (buildDataGridParams), extractApiError on failure,
   factor_toggles hoist mapping.
 - Hook tests for `usePolicies` query + create/update/delete mutations (invalidate + toast).
 - Component tests: grid (loading/empty/error/data + empty-hint AC-LIST-4), modal (scope-driven
@@ -168,7 +168,7 @@ Then wire FE off mocks onto the real service, delete mock fixtures (keep any reu
 Re-verify with Playwright MCP against the live stack (`:3000` + `:8000`; worker not required for this
 feature). Output: BE merged, FE off-mocks, three suites green.
 
-## 6. Phase 3 — Code review
+## 6. Phase 3 - Code review
 
 `/code-review` on the Phase-1+2 diff; address with `--fix` / `/simplify`. PR must include: Phase-1
 prototype screenshots, evidence Phase 2 drove from failing tests, and the test report keyed to the
@@ -205,20 +205,20 @@ UAC ids. Reviewer checklist = `documentation/reference/PR-CHECKLIST.md` + DoD ga
 
 ## 8. Internal grill round (self-review of this plan)
 
-- *Q: Is a resolution "chain" over-engineering vs just the winner?* No — the user explicitly wants to
+- *Q: Is a resolution "chain" over-engineering vs just the winner?* No - the user explicitly wants to
   understand most-specific-wins (locked decision). The chain is the teaching surface; keep it.
-- *Q: Should the global reorder default be creatable/deletable?* No — exactly one global default,
+- *Q: Should the global reorder default be creatable/deletable?* No - exactly one global default,
   always present, edited via modal, never deleted (AC-DEL-2, AC-EDIT-4).
-- *Q: Read gate — dashboard.view or policy.manage?* Chose policy.manage (Section 2 justification);
+- *Q: Read gate - dashboard.view or policy.manage?* Chose policy.manage (Section 2 justification);
   flagged as an explicit decision the user can veto.
 - *Q: Do the two global forms belong in this feature at all, given they feed analytics not the run?*
-  Yes — user locked "ALL engine policies in one Policies area"; but the copy must not conflate the
+  Yes - user locked "ALL engine policies in one Policies area"; but the copy must not conflate the
   two consumption paths (Risk #5). This was the main grill correction to the naive plan.
 - *Q: Any migration hiding here?* Only if we want DB-level uniqueness for AC-VAL-8. Chose
   service-layer enforcement to match how the engine already tolerates duplicate rows; a partial
   unique index is a possible hardening the user can request.
-- *Q: SKU scope_ref as UUID vs product_code — could we store product_code and change the resolver?*
-  No — the engine is already built and shipped for M3; the config UI adapts to it, never the reverse
+- *Q: SKU scope_ref as UUID vs product_code - could we store product_code and change the resolver?*
+  No - the engine is already built and shipped for M3; the config UI adapts to it, never the reverse
   (do not refactor a shipped engine for a config screen). Store `products.id`.
 
 ## 9. Open questions for the user (grill before Phase 1)
@@ -231,9 +231,9 @@ UAC ids. Reviewer checklist = `documentation/reference/PR-CHECKLIST.md` + DoD ga
 3. **AC-VAL-7 strictness:** hard-block saving statistical SS without service_level (my pick), or
    allow-with-warning banner? Hard-block prevents a policy that silently won't do what it says.
 4. **Supplier-weight sum:** enforce delivery_weight + quality_weight == 1.0 (my pick, AC-SUP-2) or
-   allow arbitrary positive weights the analytics job normalizes? Depends on how M2 consumes them —
+   allow arbitrary positive weights the analytics job normalizes? Depends on how M2 consumes them - 
    confirm the intended contract.
 5. **Affected-SKU estimate (AC-PREV-5):** in scope for v1 or DEFERRED? It's the most expensive piece
    and a nice-to-have; I'll DEFER unless you want it now.
-6. **Legacy duplicate global rows:** leave as-is (my pick — upsert the canonical row) or add a
+6. **Legacy duplicate global rows:** leave as-is (my pick - upsert the canonical row) or add a
    one-off cleanup migration to collapse duplicates? Out of scope unless you ask.

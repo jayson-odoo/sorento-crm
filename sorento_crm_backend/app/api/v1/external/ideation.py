@@ -6,7 +6,7 @@ and returns ``{ status, reply_text, link?, session_vars }`` for n8n to relay + p
 
 Every call writes an ``integration_log`` on success AND failure (AC-20), mirroring the
 conversation-variables endpoint. A shared-service outage is handled inside the service
-(graceful reply, never a 500 — AC-19); an unexpected error still logs then re-raises.
+(graceful reply, never a 500 - AC-19); an unexpected error still logs then re-raises.
 """
 import json
 import logging
@@ -56,7 +56,7 @@ def ideation_turn(
         response_status = http_exc.status_code
         error_message = str(http_exc.detail)
         _http_exc_to_reraise = http_exc
-    except Exception as exc:  # noqa: BLE001 — log then surface a clean 500
+    except Exception as exc:  # noqa: BLE001 - log then surface a clean 500
         logger.exception("ideation turn failed: %s", exc)
         response_status = status.HTTP_500_INTERNAL_SERVER_ERROR
         error_message = "Failed to handle ideation turn."

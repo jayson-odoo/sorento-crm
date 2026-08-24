@@ -18,10 +18,16 @@ export const metadata: Metadata = {
   },
   manifest: '/manifest.webmanifest',
   appleWebApp: { capable: true, title: 'Sorento', statusBarStyle: 'default' },
-  /** Browser tab icon (served from /public). Override by replacing the file or changing this path. */
+  /** Served from our own origin (/public), like the manifest's icons - this is
+      the icon of an app people are asked to install onto a home screen, so it
+      cannot be a hotlink to someone else's CDN (AC-P15). */
   icons: {
-    icon: [{ url: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcT0W8EVfDgMH4jzzsPWOuT94DxFjJ47M2WkZg&s', type: 'image/svg+xml' }],
-    shortcut: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcT0W8EVfDgMH4jzzsPWOuT94DxFjJ47M2WkZg&s',
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/icon-192.png', type: 'image/png', sizes: '192x192' },
+    ],
+    shortcut: '/favicon.ico',
+    apple: '/icon-192.png',
   },
 };
 

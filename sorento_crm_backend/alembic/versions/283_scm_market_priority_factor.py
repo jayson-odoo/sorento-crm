@@ -1,4 +1,4 @@
-"""SCM M7 — market-research priority factor.
+"""SCM M7 - market-research priority factor.
 
 Adds an opt-in per-run flag (`scm.reorder_run.include_market`) and a configurable
 market weight on the cash-ranking policy (`scm.cash_ranking_policy.weight_market`).

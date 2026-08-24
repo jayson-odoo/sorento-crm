@@ -21,7 +21,7 @@ interface AttachmentBulkDeleteDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   attachmentIds: string[];
-  /** Selected FOLDER ids — deleted via the directory delete (cascades subtree). */
+  /** Selected FOLDER ids - deleted via the directory delete (cascades subtree). */
   folderIds?: string[];
   onSuccess?: () => void;
   /** When true, permanently delete. When false, archive (move to trash). */

@@ -8,7 +8,7 @@ function asUtc(iso: string): string {
 }
 
 /** A depleting countdown bar driven by the server's absolute `commit_at` timestamp
- *  (never a local-only counter — survives refresh). Depletes from full at mount to
+ *  (never a local-only counter - survives refresh). Depletes from full at mount to
  *  empty at `commit_at`, then shows "Finalizing…" until the parent refetch confirms
  *  the commit. Calls `onExpire` once when it crosses zero so the parent can poll. */
 export function TakeoverCountdown({
@@ -18,13 +18,13 @@ export function TakeoverCountdown({
   className,
 }: {
   commitAt: string | null;
-  /** Total cooldown window (s) — fixed bar denominator. Falls back to remaining-at-mount. */
+  /** Total cooldown window (s) - fixed bar denominator. Falls back to remaining-at-mount. */
   windowSeconds?: number | null;
   onExpire?: () => void;
   className?: string;
 }) {
   // commit_at is naive UTC from the backend (no timezone suffix). new Date() would
-  // parse it as LOCAL time — 8h off in UTC+8 — making the bar instantly "Finalizing".
+  // parse it as LOCAL time - 8h off in UTC+8 - making the bar instantly "Finalizing".
   // Treat a tz-less timestamp as UTC by appending 'Z'.
   const target = commitAt ? Date.parse(asUtc(commitAt)) : 0;
   // Denominator = the FULL window (server-provided) so the bar reflects true progress

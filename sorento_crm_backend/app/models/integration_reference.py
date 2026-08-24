@@ -6,7 +6,7 @@ tables. The trade, stated plainly:
   + No DDL on products/orders/order_lines and no backfill across ~110k rows.
   + A tenth consumed entity needs no schema change.
   + "What came from AutoCount?" is one query, not nine.
-  - No foreign keys. A polymorphic ``entity_id`` cannot reference nine tables,
+ - No foreign keys. A polymorphic ``entity_id`` cannot reference nine tables,
     so nothing cascades on delete and integrity is the service layer's job.
 
 Because of that last point, ``IntegrationReferenceService`` validates

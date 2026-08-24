@@ -1,7 +1,7 @@
 """Form SLA escalation: event trigger columns + clock reset + manual-escalate permission.
 
 - conversation_sla_event_log: add `trigger` ('auto'|'manual', default 'auto') +
-  `triggered_by_id` (nullable FK users) — distinguishes manual from auto escalations.
+  `triggered_by_id` (nullable FK users) - distinguishes manual from auto escalations.
 - Rollout reset: for unresolved form-SLA trackers at current_tier >= 2, reset
   current_tier_started_at = now and recompute due_at / due_at_resolution from the
   current tier's hours, so dropping the old escalated_at guard does NOT escalate

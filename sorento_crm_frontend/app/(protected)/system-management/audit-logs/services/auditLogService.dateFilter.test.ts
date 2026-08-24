@@ -20,7 +20,7 @@ function calledUrl(): URL {
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('getAuditLogs — changed_from / changed_to (System Health drill-down)', () => {
+describe('getAuditLogs - changed_from / changed_to (System Health drill-down)', () => {
   it('adds changed_from and changed_to to the request params when supplied', async () => {
     mockedFetch.mockResolvedValue(
       okResponse({ data: [], pagination: { total: 0, page: 1, limit: 50 }, empty: true }),

@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 """RQ worker + APScheduler combined.
 
-Single process owns both queue draining (`imports`, `respond_io`, `catalogue_render`,
-`media`, `project_docs`, `flyer_read`) and cron ticks fired by
+Single process owns both queue draining (see DEFAULT_QUEUES) and cron ticks fired by
 `app.scheduler.task_scheduler`. Compose runs exactly one `worker` service so jobs
 and ticks are never duplicated across blue/green API containers.
 
@@ -48,7 +47,7 @@ class ForkSafeWorker(Worker):
     work-horse before running the job.
 
     RQ forks a work-horse per job. The child inherits the parent's open DB
-    sockets — and when ``ENABLE_SCHEDULER=true`` the parent's APScheduler
+    sockets - and when ``ENABLE_SCHEDULER=true`` the parent's APScheduler
     threads are frequently mid-query, so a live connection is shared across the
     fork. Two processes on one libpq socket corrupts the protocol, surfacing far
     from the cause as "This result object does not return rows. It has been
@@ -81,9 +80,79 @@ def _maybe_start_scheduler():
         # Fail fast: this container is the single owner of all cron ticks
         # (email outbox drainer, scheduled tasks heartbeat). Running on with a
         # dead scheduler silently strands work (e.g. email_outbox rows pending
-        # forever) — crash instead so `restart: unless-stopped` surfaces it.
+        # forever) - crash instead so `restart: unless-stopped` surfaces it.
         logger.exception("Failed to start APScheduler; exiting so the container restarts visibly")
         sys.exit(1)
+
+
+# Ordered because RQ drains queues in list order.
+#
+# `catalogue_render` is separate on purpose: a Chromium render is slow and
+# memory-hungry, and sharing the imports queue means one catalogue PDF blocks
+# every Excel upload behind it. `flyer_read` is separate for the same reason and
+# is listed LAST: a 20 to 60 second PyMuPDF extraction should not sit in front of
+# every Excel import. `project_docs` (quotation PDF and Excel rendering) sits
+# between them: slower than an import, faster than a flyer read.
+#
+# `media` drains the chatbot media extraction jobs. The /external/media endpoint
+# enqueues and then AWAITS the job, so a worker not draining this queue does not
+# merely delay the work - every media turn waits out media_sync_wait_seconds and
+# returns `pending`.
+#
+# `notifications` drains EVERY notification delivery - email, web push, WhatsApp
+# (notification_service enqueues them all with queue_name="notifications"). It
+# was missing from this list, so those jobs enqueued and nothing ever ran them:
+# 86 notification_deliveries rows sat `pending` in production, 32 in one month.
+# The failure is silent by construction - the enqueue succeeds and no exception
+# is raised anywhere - so tests/test_worker_queue_defaults.py pins it.
+#
+# PRODUCTION: the compose file on the server is hand-edited and gitignored. If it
+# pins WORKER_QUEUES explicitly, a queue added here does NOT reach production
+# until that file is edited too. Adding a queue is therefore a two-place change.
+DEFAULT_QUEUES = (
+    'imports',
+    'respond_io',
+    'catalogue_render',
+    'media',
+    'project_docs',
+    'flyer_read',
+    'notifications',
+)
+
+
+def resolve_queue_names():
+    """The queues this worker drains, in drain order.
+
+    WORKER_QUEUES overrides the default so a checkout can run a worker for only
+    the queues it cares about: every worktree on this machine points at the SAME
+    Redis db 0, so a hardcoded list means whichever worker happens to be running
+    drains another checkout's `imports` jobs with its own branch's task code.
+
+    A blank or whitespace-only override falls back to the default rather than
+    producing a worker that drains nothing at all.
+    """
+    raw = os.getenv('WORKER_QUEUES') or ''
+    names = [q.strip() for q in raw.split(',') if q.strip()]
+    return names or list(DEFAULT_QUEUES)
+
+
+def _warn_if_vapid_missing():
+    """Say so at boot when web push cannot possibly work.
+
+    `notification_tasks._send_web_push_for_notification` reads VAPID_PRIVATE_KEY
+    from os.environ and, when it is absent, marks each delivery
+    failed/"VAPID not configured" and moves on. 158 deliveries died that way over
+    eleven weeks with nothing surfacing it. A WARNING, not a hard failure: a
+    worker that refuses to start over one optional channel is worse than one that
+    runs without it.
+    """
+    missing = [k for k in ('VAPID_PRIVATE_KEY', 'VAPID_SUBJECT') if not os.environ.get(k)]
+    if missing:
+        logger.warning(
+            "Web push is DISABLED for this worker: %s not set. Notification "
+            "deliveries on the web_push channel will be marked failed.",
+            ', '.join(missing),
+        )
 
 
 if __name__ == '__main__':
@@ -91,7 +160,7 @@ if __name__ == '__main__':
     # auto-stamp here too. The worker never runs the API's startup_event, and
     # RQ forks a work-horse per job that inherits these Session-class listeners
     # from the parent. NOTE: worker jobs must set the session scope from the
-    # ImportJob company snapshot (later slice) — until then owned-table writes in
+    # ImportJob company snapshot (later slice) - until then owned-table writes in
     # jobs are fail-closed (rejected). See app/services/company_scope.py.
     from app.services.company_scope import register_company_scope_listeners
     register_company_scope_listeners()
@@ -106,37 +175,8 @@ if __name__ == '__main__':
     register_spec_write_backstop()
 
     _maybe_start_scheduler()
-    # `catalogue_render` is separate on purpose: a Chromium render is slow and
-    # memory-hungry, and sharing the imports queue means one catalogue PDF
-    # blocks every Excel upload behind it. `flyer_read` is separate for the same
-    # reason and is listed LAST: a 20 to 60 second PyMuPDF extraction should not
-    # sit in front of every Excel import, and RQ drains queues in list order.
-    # `project_docs` (quotation PDF and Excel rendering) sits between them for the
-    # same reason: slower than an import, faster than a flyer read.
-    #
-    # PRODUCTION: the compose file on the server is hand-edited and gitignored.
-    # If it pins WORKER_QUEUES explicitly, `flyer_read` and `project_docs` have
-    # to be added there or those jobs enqueue and never run. If it does not pin
-    # it, this default is picked up on the next deploy.
-    #
-    # 'media' drains the chatbot media extraction jobs. The /external/media
-    # endpoint enqueues and then AWAITS the job, so a worker that is not draining
-    # this queue does not merely delay the work - every media turn waits out
-    # media_sync_wait_seconds and returns `pending`.
-    #
-    # WORKER_QUEUES makes the list overridable, matching the project-sales
-    # checkout. Every worktree on this machine points at the SAME Redis db 0, so
-    # a hardcoded list means whichever worker happens to be running drains
-    # another checkout's `imports` jobs with its own branch's task code. It also
-    # lets a checkout run a worker for only the queues it cares about.
-    queues = [
-        q.strip()
-        for q in os.getenv(
-            'WORKER_QUEUES',
-            'imports,respond_io,catalogue_render,media,project_docs,flyer_read',
-        ).split(',')
-        if q.strip()
-    ]
+    _warn_if_vapid_missing()
+    queues = resolve_queue_names()
     worker = ForkSafeWorker(queues, connection=redis_conn)
     logger.info("Starting RQ worker for queues: %s", ', '.join(queues))
     worker.work()

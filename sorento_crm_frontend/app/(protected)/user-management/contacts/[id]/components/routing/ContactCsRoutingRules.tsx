@@ -20,7 +20,7 @@ import {
 } from './csRoutingMock';
 
 /**
- * R2 — CS-routing predicate rules editor for a contact. Extends the old
+ * R2 - CS-routing predicate rules editor for a contact. Extends the old
  * per-use_case pin table with an ORDERED (drag = priority) list of rules, each
  * with a predicate builder. Highest row = highest priority; a new row appends
  * last. A wildcard (no predicates) ordered above a more-specific row shadows it,
@@ -121,7 +121,7 @@ export default function ContactCsRoutingRules({ contactId }: { contactId: string
     <div className="px-6 pb-6 space-y-4">
       <p className="text-sm text-muted-foreground">
         Route this salesman&apos;s forms to a specific CS PIC based on the form&apos;s own
-        fields. Rules are evaluated top-to-bottom — drag to reorder priority; the first
+        fields. Rules are evaluated top-to-bottom - drag to reorder priority; the first
         matching rule wins. A rule with no conditions is a catch-all.
       </p>
 
@@ -144,7 +144,7 @@ export default function ContactCsRoutingRules({ contactId }: { contactId: string
             >
               <AlertTriangle className="mt-0.5 size-4 shrink-0" />
               <p className="min-w-0">
-                A catch-all rule (no conditions) is ordered above a more specific rule —
+                A catch-all rule (no conditions) is ordered above a more specific rule - 
                 it will match first and shadow the rules below it. Move specific rules
                 above catch-alls.
               </p>

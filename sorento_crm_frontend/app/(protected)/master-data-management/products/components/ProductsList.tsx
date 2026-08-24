@@ -122,7 +122,7 @@ const ProductsList = () => {
     if (isReloadRef.current) {
       isReloadRef.current = false;
       if (searchParams.toString()) {
-        // Preserve a "products discontinued" deep link through the reload-clean —
+        // Preserve a "products discontinued" deep link through the reload-clean - 
         // it is an explicit navigation intent, not persisted list state. The link
         // carries the recipient's brand filter too (brand_id=a,b), and dropping it
         // would widen the list to products they were never notified about.
@@ -192,7 +192,7 @@ const ProductsList = () => {
   const { data: categories } = useProductCategorySelectQuery();
   const { data: brands } = useBrandSelectQuery();
 
-  // Deep link from a "products discontinued" notification — restrict the list to
+  // Deep link from a "products discontinued" notification - restrict the list to
   // exactly the products reported in that batch.
   const discontinuedBatchId = searchParams.get('discontinued_batch_id') || undefined;
   // ...and, for a recipient scoped to specific brands, to their slice of it. The
@@ -466,12 +466,12 @@ const ProductsList = () => {
         cell: ({ row }) => {
           const parent = row.original.variant_of;
           if (!parent) {
-            return <span className="text-muted-foreground">—</span>;
+            return <span className="text-muted-foreground"> - </span>;
           }
           return (
             <div
               className="truncate text-sm"
-              title={`${parent.product_code} — ${parent.product_name}`}
+              title={`${parent.product_code} - ${parent.product_name}`}
             >
               {parent.product_code}
             </div>

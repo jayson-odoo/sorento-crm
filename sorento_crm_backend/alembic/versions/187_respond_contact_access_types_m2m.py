@@ -1,7 +1,7 @@
 """Replace single respond_contacts.access_type_code with respond_contact_access_types pivot.
 
 Drops respond_contacts.user_type and respond_contacts.access_type_code (Respond.io is no
-longer the source of truth for access type — multiple access types per contact are now
+longer the source of truth for access type - multiple access types per contact are now
 managed in the CRM directly). Drops respond_access_type_mappings (no longer needed).
 
 Revision ID: 187_respond_contact_access_types_m2m
@@ -97,7 +97,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Recreate respond_access_type_mappings (empty — admins re-seed if needed).
+    # Recreate respond_access_type_mappings (empty - admins re-seed if needed).
     op.create_table(
         "respond_access_type_mappings",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=False), primary_key=True),

@@ -1,11 +1,11 @@
-"""SCM module foundation — public SO/PO core + scm brain schema (M0 CP1).
+"""SCM module foundation - public SO/PO core + scm brain schema (M0 CP1).
 
 Creates the ``scm`` Postgres schema and its brain tables, the public
 ``sales_orders``/``purchase_orders`` core records, and extends
 ``product_suppliers``/``suppliers``/``picking_lines``/``market_segments``/``customers``
 with SCM columns. Cross-schema FKs (scm.* → public.*) are normal Postgres FKs.
 
-No views, no module registration, no seed, no RBAC here — those land in later
+No views, no module registration, no seed, no RBAC here - those land in later
 checkpoints. Data model only.
 
 Revision ID: 273_scm_module_schema

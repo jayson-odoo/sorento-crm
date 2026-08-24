@@ -1,6 +1,6 @@
 """notifications.source_entity_id split into a uuid entity ref + a text dedup_key.
 
-`source_entity_id` used to be overloaded — a real entity uuid for entity
+`source_entity_id` used to be overloaded - a real entity uuid for entity
 notifications, or a synthetic idempotency key with no entity behind it
 (`alert:...`, `digest:<date>`, `{type}_{batch}`) for batched/periodic ones. That
 overload forced the column to be text. It now holds only a uuid (or NULL), and
@@ -30,7 +30,7 @@ from tests._pg_fixture import blank_session
 
 
 # --------------------------------------------------------------------------- #
-# The pure helper — the crux of why the split is transparent to callers.
+# The pure helper - the crux of why the split is transparent to callers.
 # --------------------------------------------------------------------------- #
 def test_split_uuid_source_populates_both():
     u = str(uuid.uuid4())

@@ -1,13 +1,13 @@
 /**
- * Feature service — Form Void (R3).
+ * Feature service - Form Void (R3).
  *
  * ============================================================================
- * EXPECTED API CONTRACT (Phase 2 wiring target — NOT yet implemented)
+ * EXPECTED API CONTRACT (Phase 2 wiring target - NOT yet implemented)
  * ============================================================================
  * A form (purchase request / sponsorship form / complaint / stock inquiry) can
  * be VOIDED: an administrative cancellation that makes the record permanently
  * read-only. Voiding is NOT deletion (the row is retained) and NOT rejection
- * (no approval semantics) — hence the neutral gray banner, not red.
+ * (no approval semantics) - hence the neutral gray banner, not red.
  *
  *   POST /api/v1/<resourcePath>/{id}/void
  *     resourcePath ∈ {
@@ -20,7 +20,7 @@
  *     200 response:  {
  *       id: string,
  *       status: 'voided',
- *       voided_by: string,          // internal user id (UUID) — never shown in UI
+ *       voided_by: string,          // internal user id (UUID) - never shown in UI
  *       voided_by_name: string,     // human-readable, shown in the banner
  *       voided_at: string,          // ISO-8601 naive UTC (rendered in Malaysia tz)
  *       void_reason: string,
@@ -28,13 +28,13 @@
  *     Permission: gated on the per-domain `<form>.void` permission slug
  *       (e.g. 'procurement.purchase_requests.void').
  *     Errors: 403 (no permission), 409 (already voided / terminal state),
- *             422 (missing/blank reason) — surfaced via extractApiError().
+ *             422 (missing/blank reason) - surfaced via extractApiError().
  *
  * A voided record echoes these fields back on its detail GET so the FE can
  * render the banner and force full read-only.
  * ============================================================================
  *
- * PHASE 1 (current): the mutation is MOCKED — it returns synthetic data after a
+ * PHASE 1 (current): the mutation is MOCKED - it returns synthetic data after a
  * Phase 2: wired to the real FastAPI `/void` endpoint.
  */
 import { apiFetch } from '@/lib/api';

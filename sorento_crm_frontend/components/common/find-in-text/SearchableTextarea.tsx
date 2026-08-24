@@ -94,7 +94,7 @@ export function SearchableTextarea({
     try {
       el.setSelectionRange(start, end);
     } catch {
-      /* selection can throw on detached nodes — ignore */
+      /* selection can throw on detached nodes - ignore */
     }
     const before = textValue.slice(0, start);
     const line = before.split('\n').length - 1;
@@ -136,7 +136,7 @@ export function SearchableTextarea({
       }}
     >
       <FindBar controller={find} />
-      {/* Highlight backdrop — same text metrics as the textarea, text hidden,
+      {/* Highlight backdrop - same text metrics as the textarea, text hidden,
           only the <mark> rectangles are visible under the transparent textarea. */}
       <div
         ref={backdropRef}

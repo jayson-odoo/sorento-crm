@@ -1,4 +1,4 @@
-"""SCM M0 CP1 — data-model migration tests (Postgres-backed).
+"""SCM M0 CP1 - data-model migration tests (Postgres-backed).
 
 Verifies AC-M0.1 (migration up/down reverses cleanly, in isolation from the
 sibling 272 revision), AC-M0.2 (cross-schema FK integrity), AC-M0.3
@@ -72,7 +72,7 @@ def test_scm_schema_and_tables_present(conn):
 
 
 def test_source_cols_on_every_new_table(conn):
-    """AC-M0.3 — every new SCM table carries source_system + source_ref."""
+    """AC-M0.3 - every new SCM table carries source_system + source_ref."""
     missing = []
     for schema, tables in (("scm", SCM_TABLES), ("public", PUBLIC_NEW)):
         for t in tables:
@@ -102,7 +102,7 @@ def test_existing_tables_extended(conn):
 
 
 def test_cross_schema_fk_integrity(conn):
-    """AC-M0.2 — a scm row with a bad public FK is rejected; a valid one is accepted."""
+    """AC-M0.2 - a scm row with a bad public FK is rejected; a valid one is accepted."""
     from sqlalchemy.exc import IntegrityError
 
     # bad product_id -> reject (savepoint rolls back the aborted insert)
@@ -126,7 +126,7 @@ def test_cross_schema_fk_integrity(conn):
 
 
 def test_migration_downgrade_upgrade_isolated(conn):
-    """AC-M0.1 — 273 reverses cleanly, tested in a rolled-back txn so the sibling
+    """AC-M0.1 - 273 reverses cleanly, tested in a rolled-back txn so the sibling
     272 revision and the live DB state are never disturbed."""
     import importlib.util
 
@@ -136,7 +136,7 @@ def test_migration_downgrade_upgrade_isolated(conn):
     mig = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mig)
 
-    sp = conn.begin_nested()  # savepoint — everything below is rolled back, DB untouched
+    sp = conn.begin_nested()  # savepoint - everything below is rolled back, DB untouched
     try:
         # CP2 (274) builds views on top of 273's columns (e.g. scm.consumption_v uses
         # customers.market_segment_code). In the real chain 274 downgrades first; here we

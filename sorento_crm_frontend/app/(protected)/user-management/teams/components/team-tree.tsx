@@ -176,7 +176,7 @@ export default function TeamTree({
 
   return (
     <div className="flex flex-col">
-      {/* Root drop zone — drag here to detach a team to the top level */}
+      {/* Root drop zone - drag here to detach a team to the top level */}
       <div
         onDragOver={(e) => {
           if (canDrop(null)) {

@@ -3,16 +3,16 @@
 Covers docs/plans/PLAN-variant-manual-curation.md §9 / §10:
 
 Endpoints (auth = get_current_user JWT):
-  - PUT    /api/v1/master-data/products/{id}/variant-parent   (set / change / attach-child)
-  - DELETE /api/v1/master-data/products/{id}/variant-parent   (unlink / remove-child)
-  - POST   /api/v1/master-data/products/{id}/variant-reset     (reset to auto)
-  - GET    /api/v1/master-data/products?variant_filter=...     (base|variant|all + refs/count)
+ - PUT    /api/v1/master-data/products/{id}/variant-parent   (set / change / attach-child)
+ - DELETE /api/v1/master-data/products/{id}/variant-parent   (unlink / remove-child)
+ - POST   /api/v1/master-data/products/{id}/variant-reset     (reset to auto)
+ - GET    /api/v1/master-data/products?variant_filter=...     (base|variant|all + refs/count)
 
-Service (D1 — "manual wins, sticky"):
-  - reconcile_variant_links does NOT re-derive a manual row's own parent but STILL
+Service (D1 - "manual wins, sticky"):
+ - reconcile_variant_links does NOT re-derive a manual row's own parent but STILL
     adopts its auto orphans.
-  - _adopt_orphans does NOT steal a manual child.
-  - backfill main()/derive_parents skips manual rows (0 changes on re-run) while
+ - _adopt_orphans does NOT steal a manual child.
+ - backfill main()/derive_parents skips manual rows (0 changes on re-run) while
     still letting them be candidate parents.
 
 Runs against a blank copy of the real Postgres schema, rolled back per test. The
@@ -133,7 +133,7 @@ def client(db):
 
 @pytest.fixture()
 def anon_client(db):
-    """No auth override — the real get_current_user / or_api_key deps run, so an
+    """No auth override - the real get_current_user / or_api_key deps run, so an
     unauthenticated request is rejected before the route body."""
     from app.main import app
     from app.database import get_db
@@ -149,7 +149,7 @@ BASE = "/api/v1/master-data/products"
 
 
 # =========================================================================== #
-# 1. SET PARENT — PUT /{id}/variant-parent
+# 1. SET PARENT - PUT /{id}/variant-parent
 # =========================================================================== #
 def test_set_parent_happy_path_uuid(client, db):
     parent = _mk(db, "SRTKT71SS")
@@ -273,7 +273,7 @@ def test_set_parent_auth_denied_readonly_api_key(db):
 
 
 # =========================================================================== #
-# 2. UNLINK — DELETE /{id}/variant-parent
+# 2. UNLINK - DELETE /{id}/variant-parent
 # =========================================================================== #
 def test_unlink_happy_path(client, db):
     parent = _mk(db, "UNL-0")
@@ -302,7 +302,7 @@ def test_unlink_auth_denied_anonymous(anon_client, db):
 
 
 # =========================================================================== #
-# 3. RESET — POST /{id}/variant-reset
+# 3. RESET - POST /{id}/variant-reset
 # =========================================================================== #
 def test_reset_re_derives_via_reconcile(client, db):
     # Base + a code-derivable variant, but hand-linked (manual=true).
@@ -348,7 +348,7 @@ def test_reset_auth_denied_anonymous(anon_client, db):
 
 
 # =========================================================================== #
-# 4. SERVICE-LEVEL — D1 manual-wins guards
+# 4. SERVICE-LEVEL - D1 manual-wins guards
 # =========================================================================== #
 def test_reconcile_skips_manual_own_parent_but_adopts_orphans(db):
     # base ZZM100; a MANUAL child hand-pointed at a WRONG parent; plus an AUTO
@@ -390,14 +390,14 @@ def test_adopt_orphans_does_not_steal_manual_child(db):
 
 
 # =========================================================================== #
-# 4c. BACKFILL — skips manual rows, still a candidate parent
+# 4c. BACKFILL - skips manual rows, still a candidate parent
 # =========================================================================== #
 def test_backfill_skips_manual_rows(db, engine, monkeypatch, capsys):
     import scripts.backfill_variant_links as bf
     from scripts.backfill_variant_links import derive_parents
 
     base = _mk(db, "ZZB100")
-    # manual child hand-pointed at a wrong parent — backfill must NOT overwrite it.
+    # manual child hand-pointed at a wrong parent - backfill must NOT overwrite it.
     wrong = _mk(db, "ZZBWRONG")
     manual_child = _mk(db, "ZZB100-BL", parent_id=wrong, manual=True)
     # an auto orphan that the backfill SHOULD link to the base.
@@ -427,7 +427,7 @@ def test_backfill_skips_manual_rows(db, engine, monkeypatch, capsys):
     assert _parent_of(db, auto_child) == base
     assert _parent_of(db, manual_child) == wrong  # untouched
 
-    # Re-run is a no-op for everyone (0 changes) — manual row never overwritten.
+    # Re-run is a no-op for everyone (0 changes) - manual row never overwritten.
     monkeypatch.setattr("sys.argv", ["backfill_variant_links.py"])
     assert bf.main() == 0
     out2 = capsys.readouterr().out
@@ -436,7 +436,7 @@ def test_backfill_skips_manual_rows(db, engine, monkeypatch, capsys):
 
 
 # =========================================================================== #
-# 5. LIST — variant_filter + parent ref + child count + no N+1
+# 5. LIST - variant_filter + parent ref + child count + no N+1
 # =========================================================================== #
 def test_list_variant_filter_base(client, db):
     base = _mk(db, "LST100")
@@ -493,7 +493,7 @@ def test_list_row_exposes_variant_of_and_child_count(client, db):
 
 def test_list_variant_fields_no_n_plus_one(db, engine):
     """`_populate_list_variant_fields` runs a FIXED two queries (one parent-ref,
-    one child-count) regardless of page size — proving no per-row N+1."""
+    one child-count) regardless of page size - proving no per-row N+1."""
     base = _mk(db, "NPL100")
     svc = ProductService(db)
 

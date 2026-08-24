@@ -1,8 +1,8 @@
-# Dealer Sales Kit — How It Works
+# Dealer Sales Kit - How It Works
 
 **For:** product, sales and dealer-facing teams
 **What this is:** a walkthrough of what each person sees and does. No technical detail.
-**Companion document:** *Dealer Sales Kit — Design and Build Plan* (the engineering view).
+**Companion document:** *Dealer Sales Kit - Design and Build Plan* (the engineering view).
 
 ---
 
@@ -58,12 +58,12 @@ The customer leaves having *seen* their bathroom instead of imagining it.
 2. She builds it by adding blocks to a canvas: a heading, some text, an image, a grid of
    products, a bundle offer.
 3. For the product grid, she chooses which products appear in one of two ways:
-   - **By rule** — "every basin in this category under RM 800". The page then keeps itself
+ - **By rule** - "every basin in this category under RM 800". The page then keeps itself
      current: a new basin that matches simply appears.
-   - **By hand** — she picks the exact products she wants featured.
+ - **By hand** - she picks the exact products she wants featured.
    She can also combine the two, and remove individual products she does not want. Removing
    always wins over including, so she can never be surprised by something she took out.
-4. She decides **what each product tile shows** — photo, name, code, price — and can save that
+4. She decides **what each product tile shows** - photo, name, code, price - and can save that
    as a reusable style so every page in a campaign looks the same.
 5. She checks the page on **desktop, tablet, phone and paper**, because dealers use all four.
 6. She hits **Publish**.
@@ -87,7 +87,7 @@ there.
 1. The dealer opens the catalogue, or goes straight to **Room Designer**.
 2. **The room.** The screen starts with a simple 4m x 3m room. The dealer drags the corners to
    match the customer's actual room. Each wall shows its length in millimetres **as they drag**,
-   so they can match the customer's measurements exactly. The floor area updates itself — nobody
+   so they can match the customer's measurements exactly. The floor area updates itself - nobody
    types it.
 3. **The products.** They pick products from the same catalogue the customer was just looking
    at. Each one appears in the room at its **real size**.
@@ -111,20 +111,20 @@ there.
   than one that admits it is a placeholder. This also tells the data team exactly which products
   need measuring.
 - **A discontinued product stays in the design, marked, and is left out of the total.** It is
-  not silently deleted — the customer chose it and deserves to be told. It is also not counted,
+  not silently deleted - the customer chose it and deserves to be told. It is also not counted,
   because a total including something unbuyable is a promise we cannot keep.
 
 ---
 
 ## 6. Walkthrough: the consumer at home
 
-**Goal:** browse, try it in their own room, ask for a quote — without an account.
+**Goal:** browse, try it in their own room, ask for a quote - without an account.
 
 1. They follow a link (from WhatsApp, an email, a QR code on a leaflet).
 2. They see the published catalogue at **consumer prices**. Dealer and internal pricing simply
    are not there.
 3. They can do the same room exercise: shape the room, add products, look at it in 3D.
-4. They confirm, and a **request goes to the dealer** — not an order. A consumer cannot place an
+4. They confirm, and a **request goes to the dealer** - not an order. A consumer cannot place an
    order directly; a person always handles it.
 
 The consumer never creates a password. If they have contacted Sorento before, the system already
@@ -137,7 +137,7 @@ knows who they are from their phone number.
 Some customers still want a document.
 
 1. Office staff open a published catalogue page and choose **Export PDF**.
-2. They choose **who it is for** — staff, dealer, or consumer.
+2. They choose **who it is for** - staff, dealer, or consumer.
 3. They get a PDF priced correctly for that audience.
 
 The PDF is produced from the actual page, so it cannot drift from what is on screen. And because
@@ -165,7 +165,7 @@ know, that is a fault in the product.**
 
 ## 9. One rule worth understanding: prices are never stored in the document
 
-A catalogue page does not contain prices. It contains *instructions* — "show this set of
+A catalogue page does not contain prices. It contains *instructions* - "show this set of
 products here". The price is worked out when someone opens it, for that person.
 
 **Why this matters to you:**
@@ -190,7 +190,7 @@ answer.
 - Product photos on tiles, with trade-only imagery withheld from consumers
 - Product sets, defined by rule or by hand, reusable across pages
 - Tile styling
-- Bundles — several products sold at one price, with the parts listed underneath
+- Bundles - several products sold at one price, with the parts listed underneath
 - The public catalogue page
 - PDF export at the right prices for the chosen audience
 - The room designer: draw the room, add products, plan and 3D views, live wall dimensions
@@ -201,7 +201,7 @@ answer.
 
 | Missing | What it means in practice | Why not yet |
 |---------|---------------------------|-------------|
-| **Turning a design into a quote** | The dealer can save a design but cannot yet press "send as quote" | The business has never defined what a quote *is* — see §11 |
+| **Turning a design into a quote** | The dealer can save a design but cannot yet press "send as quote" | The business has never defined what a quote *is* - see §11 |
 | **Upload a floor plan photo** | The dealer draws the room by hand, which works but takes a minute longer | Drawing had to exist first; upload is a shortcut on top |
 | **Editing a saved product set from the library** | A set can be created and reused, but changing it means going into a page | Known gap, needs prioritising |
 
@@ -216,13 +216,13 @@ knowledge, extra discount, exhibition request.
 
 These are business decisions. Engineering cannot pick them.
 
-### 11.1 What is a quote? — *blocking*
+### 11.1 What is a quote? - *blocking*
 
 The dealer designs a room, presses confirm, and then... what exactly?
 
 - Does the quote get a number, and who issues it?
 - Does it expire? After how long?
-- Who owns it — the dealer, or Sorento?
+- Who owns it - the dealer, or Sorento?
 - Does anyone approve it before the customer sees it?
 - When the customer accepts, how does it become an order?
 
@@ -241,7 +241,7 @@ view is that honest scale beats partial glamour, and it works for the whole cata
 If sales believe photo-realism is required to win dealers, that is a separate investment and we
 should scope it now rather than discover it in a demo.
 
-### 11.4 Only 7% of products have a photo — *this decides how the launch looks*
+### 11.4 Only 7% of products have a photo - *this decides how the launch looks*
 
 Of 17,402 sellable products, **1,363 have a photograph** attached. The other 93%
 will render as a clean "no image" tile.
@@ -285,7 +285,7 @@ the prerequisite.
 
 ### 11.6 Which of the remaining six packages comes next?
 
-Stock check is the cheapest — it already exists and needs surfacing. Warranty is the most
+Stock check is the cheapest - it already exists and needs surfacing. Warranty is the most
 designed. Everything else is greenfield.
 
 ---
@@ -300,7 +300,7 @@ availability correct.
 **Can a dealer see Sorento's cost?** No. Internal pricing is never sent to a dealer's device,
 regardless of settings.
 
-**What if two dealers want different prices?** That is exactly the design — one catalogue,
+**What if two dealers want different prices?** That is exactly the design - one catalogue,
 prices resolved per viewer.
 
 **What happens when a product is discontinued mid-campaign?** Catalogue pages built by rule drop

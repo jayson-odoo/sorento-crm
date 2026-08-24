@@ -101,8 +101,8 @@ def _product_code_candidates(raw_code: Optional[str]) -> list[str]:
 def _resolve_product_codes(raw_code: Optional[str], products_map: dict) -> list[str]:
     """
     Resolve payload product_code into concrete product codes:
-    - exact match first
-    - fallback to '+' split parts when exact doesn't exist
+  - exact match first
+  - fallback to '+' split parts when exact doesn't exist
     """
     candidates = _product_code_candidates(raw_code)
     if not candidates:
@@ -121,16 +121,16 @@ def create_promotion(
 ):
     """
     Create a promotion linked to products. Use either:
-    - `promotion_products` (flat list), or
-    - `promotion_groups` (bundle / FOC groups with nested products; same SKU may appear in multiple groups).
+  - `promotion_products` (flat list), or
+  - `promotion_groups` (bundle / FOC groups with nested products; same SKU may appear in multiple groups).
 
     Products are matched by exact product_code (trim only, no case change).
     Optional `dealer_discount` per line (0.37 = 37% off list) stores dealer_cost and list-to-dealer margin.
     Per group you may set `dealer_discount` as default for all lines; line `dealer_discount` overrides.
 
     FOC tiers per group (optional; one of):
-    - `foc_rules`: `[{ "purchase_quantity_for_foc", "foc_quantity" }, ...]` (integration shape), or
-    - `foc_tiers`: `[{ "purchase_quantity", "foc_quantity" }, ...]`.
+  - `foc_rules`: `[{ "purchase_quantity_for_foc", "foc_quantity" }, ...]` (integration shape), or
+  - `foc_tiers`: `[{ "purchase_quantity", "foc_quantity" }, ...]`.
 
     Notifications (in-app + email): same as before for attachments + notify_user_id.
     """
@@ -206,7 +206,7 @@ def create_promotion(
     #
     # Resolve the existing row by ATTACHMENT first, description second. n8n posts
     # `description = attachment_filename`, but the upload path runs that name through
-    # `sanitize_storage_filename`, which strips `@ ( ) , &` — so a promotion stored as
+    # `sanitize_storage_filename`, which strips `@ ( ) , &` - so a promotion stored as
     # "@ CABANA COMBINE PROMO (OFFICE)_08072026.pdf" is linked to an attachment named
     # "CABANA COMBINE PROMO OFFICE_08072026.pdf" and the two never compare equal.
     # Matching on description alone therefore missed and created a SECOND active

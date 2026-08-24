@@ -41,8 +41,8 @@
 
 **Logic**:
 - For each order in the array:
-  - If `id` is provided and exists: Update the order
-  - If `id` is not provided or doesn't exist: Create a new order
+ - If `id` is provided and exists: Update the order
+ - If `id` is not provided or doesn't exist: Create a new order
 - Return counts of created/updated records
 - Return any errors encountered
 
@@ -76,8 +76,8 @@
 
 **Logic**:
 - For each stock item in the array:
-  - If `id` is provided and exists: Update the stock
-  - If `id` is not provided or doesn't exist: Create a new stock record
+ - If `id` is provided and exists: Update the stock
+ - If `id` is not provided or doesn't exist: Create a new stock record
 - Return counts of created/updated records
 - Return any errors encountered
 
@@ -90,8 +90,8 @@
 
 **Implementation**:
 - Apply SQL WHERE clause based on operator:
-  - `gt`: `quantity > quantity_value`
-  - `gte`: `quantity >= quantity_value`
-  - `lt`: `quantity < quantity_value`
-  - `lte`: `quantity <= quantity_value`
-  - `eq`: `quantity = quantity_value`
+ - `gt`: `quantity > quantity_value`
+ - `gte`: `quantity >= quantity_value`
+ - `lt`: `quantity < quantity_value`
+ - `lte`: `quantity <= quantity_value`
+ - `eq`: `quantity = quantity_value`

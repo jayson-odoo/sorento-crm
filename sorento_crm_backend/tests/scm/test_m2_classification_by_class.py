@@ -1,22 +1,22 @@
-"""SCM M2 — ABC split by demand class (captain, 19 Aug 2026, PLAN item this file covers).
+"""SCM M2 - ABC split by demand class (captain, 19 Aug 2026, PLAN item this file covers).
 
 `scm.item_classification.abc_class` ranks over ALL demand by trailing-12mo COST VALUE
-(unchanged, costed keys only — the reorder engine's inventory-value lens). `abc_class_project`
+(unchanged, costed keys only - the reorder engine's inventory-value lens). `abc_class_project`
 and `abc_class_retail` rank a SEPARATE maths: trailing-12mo delivered QUANTITY, each over
-ONLY its own demand-class partition — see `analytics_service._abc_class_qty_totals`.
-Captain, 19 Aug 2026: "hot-selling is by quantity, not related to money" — so the
+ONLY its own demand-class partition - see `analytics_service._abc_class_qty_totals`.
+Captain, 19 Aug 2026: "hot-selling is by quantity, not related to money" - so the
 project/retail letters need no cost at all, and a null-cost product still earns one even
 though its `abc_class` stays NULL.
 
 The demand class itself, per the 4 Aug 2026 amendment, is read `sales_agents.demand_class`
 FIRST (matched on `orders.agent` falling back to `orders.salesman`), `customers.
-market_segment_code` only as a FALLBACK when the agent said nothing — never the segment
+market_segment_code` only as a FALLBACK when the agent said nothing - never the segment
 alone. An order whose agent AND segment are both silent counts for NEITHER partition
 (S3: silence is not retail). A product can be A for a project customer and C for the
 dealer channel; a key with no demand of a class is NULL there, never a computed 'C'.
 
 Every test picks an `as_of` that puts the trailing-365-day window entirely AFTER the last
-real order date in this (shared, prod-copy) database — `_isolated_as_of` — so the "whole
+real order date in this (shared, prod-copy) database - `_isolated_as_of` - so the "whole
 universe" `_abc_map` ranks over is exactly this test's own seeded rows and nothing
 borrowed from production data makes the class letters non-deterministic. Postgres,
 marker-prefixed, rolled back with the `scm_app` savepoint.
@@ -52,7 +52,7 @@ def _code(stem: str) -> str:
 
 
 def _isolated_as_of(db) -> date:
-    """A date whose trailing-365-day window holds no real order — see module docstring."""
+    """A date whose trailing-365-day window holds no real order - see module docstring."""
     last_real = db.execute(text("SELECT MAX(order_date) FROM orders")).scalar()
     base = last_real if last_real else date.today()
     if hasattr(base, "date"):
@@ -82,7 +82,7 @@ def _mk_warehouse(db) -> str:
 
 
 def _mk_product(db, cat_id, uom_id, cost_price=100) -> str:
-    """``cost_price=None`` seeds a product with NO cost — still eligible for the
+    """``cost_price=None`` seeds a product with NO cost - still eligible for the
     quantity-based project/retail letters, ineligible for the cost-value `abc_class`."""
     p = Product(id=_u(), product_code=_code("P"), product_name="M2C test product",
                category_id=cat_id, base_uom_id=uom_id, list_price=(cost_price or 0),
@@ -150,7 +150,7 @@ def _classification(db, product_id, warehouse_id):
 
 def test_project_only_product_is_A_project_null_retail(env):
     """A product whose entire demand is one project-segment customer is A on the project
-    partition and, having no retail demand at all, NULL — not a computed C — on retail."""
+    partition and, having no retail demand at all, NULL - not a computed C - on retail."""
     db, as_of, order_date = env
     cat, uom, wh = _mk_category(db), _mk_uom(db), _mk_warehouse(db)
     pid = _mk_product(db, cat, uom, cost_price=100)
@@ -170,10 +170,10 @@ def test_project_only_product_is_A_project_null_retail(env):
 
 def test_partitions_rank_independently(env):
     """Two products, opposite dominance: the retail-heavy one is A on retail and only a
-    minor share of project quantity, while the project-heavy one dominates project —
+    minor share of project quantity, while the project-heavy one dominates project - 
     proving the two rankings are computed independently rather than one letter reused
     twice. Same `cost_price` on both, so the qty ratio mirrors what a value ratio would
-    have been — this pins that the ranking is genuinely qty-driven, not a leftover value
+    have been - this pins that the ranking is genuinely qty-driven, not a leftover value
     computation that happens to agree."""
     db, as_of, order_date = env
     cat, uom, wh = _mk_category(db), _mk_uom(db), _mk_warehouse(db)
@@ -206,7 +206,7 @@ def test_partitions_rank_independently(env):
 def test_no_cost_product_gets_class_letters_but_all_demand_stays_null(env):
     """Captain, 19 Aug 2026: hot-selling is by quantity, not money. A product with NO
     `cost_price` cannot earn a cost-value `abc_class` (unknown), but the project/retail
-    letters — pure quantity — do not need one at all."""
+    letters - pure quantity - do not need one at all."""
     db, as_of, order_date = env
     cat, uom, wh = _mk_category(db), _mk_uom(db), _mk_warehouse(db)
     pid = _mk_product(db, cat, uom, cost_price=None)
@@ -266,7 +266,7 @@ def test_unclassified_agent_and_no_segment_lands_in_neither_partition(env):
 
 
 def test_segment_is_the_fallback_when_agent_is_unclassified(env):
-    """The market segment still classifies a key — but only because the agent said
+    """The market segment still classifies a key - but only because the agent said
     nothing. A classified agent would win; see the previous two tests."""
     db, as_of, order_date = env
     cat, uom, wh = _mk_category(db), _mk_uom(db), _mk_warehouse(db)

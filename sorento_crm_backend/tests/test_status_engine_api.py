@@ -1,4 +1,4 @@
-"""S1 gate — status engine routes (happy path, auth denial, validation).
+"""S1 gate - status engine routes (happy path, auth denial, validation).
 
 Runs against a real Postgres session in a rolled-back transaction, so the graph
 these tests build never escapes. Rows are marker-prefixed (``zzt_``) and cleanup is

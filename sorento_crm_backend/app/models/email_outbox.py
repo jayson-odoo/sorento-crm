@@ -1,4 +1,4 @@
-"""Email outbox + per-event configs — single chokepoint for all outbound mail.
+"""Email outbox + per-event configs - single chokepoint for all outbound mail.
 
 Every outbound email is one row in `email_outbox` (status: pending|sending|sent|failed|cancelled|deferred).
 A scheduled drainer worker reads pending rows, applies rate-limit guardrails, and dispatches via SMTP.

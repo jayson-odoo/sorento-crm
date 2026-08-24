@@ -14,7 +14,7 @@
  *
  * The rows are chosen to make every state in the ACs reachable by clicking:
  *
- *   - `B2155-NL-BLUE`  chosen 600 against a shortfall of 278. A chosen quantity
+ * - `B2155-NL-BLUE`  chosen 600 against a shortfall of 278. A chosen quantity
  *                      ABOVE the shortfall is the normal case, not a warning
  *                      (AC-C2.7). Carries BOTH a demand rate and dimensions, so
  *                      the consequence panel can state all five figures. Its
@@ -25,24 +25,24 @@
  *                      UNCLASSIFIED demand, so that exception is reachable, and
  *                      the only one with a chosen quantity split back across two
  *                      locations (AC-F08).
- *   - `SRTWT7408`      the first row of the first report anyone read: 4,397 in
+ * - `SRTWT7408`      the first row of the first report anyone read: 4,397 in
  *                      the pool against 307 of demand, so nothing to buy. Has a
  *                      demand rate but NO recorded dimensions, so the volume
  *                      figure must name the missing input.
- *   - `SRTBS4832`      the ADR-0011 case: net position +133 yet 67 short on a
+ * - `SRTBS4832`      the ADR-0011 case: net position +133 yet 67 short on a
  *                      date, because the PO of 200 lands 22 days late. Has
  *                      NEITHER a demand rate nor dimensions.
- *   - `SRTSK2210`      last bought in 2021. Its only supplier is flagged stale,
+ * - `SRTSK2210`      last bought in 2021. Its only supplier is flagged stale,
  *                      which is what separates a fast mover from a dead line
  *                      (AC-C2.6), and its single retail line has waited 402 days.
- *   - `SRTSH6120`      already decided, at exactly the engine's suggestion.
- *   - `SRTAC0904`      nothing to decide and no supplier on file, so the empty
+ * - `SRTSH6120`      already decided, at exactly the engine's suggestion.
+ * - `SRTAC0904`      nothing to decide and no supplier on file, so the empty
  *                      states are reachable.
- *   - `SRTTB1120`      the AC-F11 worked case: 1 needed at BRW and 1 at JB, a
+ * - `SRTTB1120`      the AC-F11 worked case: 1 needed at BRW and 1 at JB, a
  *                      total unrounded need of 2 against a supplier multiple of
  *                      10, so the ONE product row rounds once to 10. Sold in `EA`
  *                      at 0 decimal places, so `2.5` is refused on it (AC-F12).
- *   - `SRTAD9002`      the AC-F12 pair to it: sold in `kg` at 3 decimal places,
+ * - `SRTAD9002`      the AC-F12 pair to it: sold in `kg` at 3 decimal places,
  *                      total need 2.5 and no supplier constraint, so the suggested
  *                      quantity is 2.5 and `2.5` is accepted.
  *
@@ -1282,8 +1282,8 @@ export async function mockOrderSummarySuppliers(
  * `services/summaryOrderService.ts`), because a prototype that always says yes
  * cannot show what a refusal looks like:
  *
- *   - too many fractional digits for the row's frozen precision (the 422);
- *   - a run whose stamped grain is not `product`, or a legacy run (the 409).
+ * - too many fractional digits for the row's frozen precision (the 422);
+ * - a run whose stamped grain is not `product`, or a legacy run (the 409).
  */
 export async function mockRecordOrderDecision(
   productCode: string,

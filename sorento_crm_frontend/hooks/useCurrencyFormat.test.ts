@@ -5,8 +5,8 @@
  * narrow `/settings/app-config` projection instead.
  *
  * Two things are pinned here because getting either wrong is silent:
- *  - the URL, since the old one now 403s for the roles that render currency;
- *  - the FLAT read (`currency_format`, not `settings.currency_format`), since the
+ * - the URL, since the old one now 403s for the roles that render currency;
+ * - the FLAT read (`currency_format`, not `settings.currency_format`), since the
  *    old nested shape would just fall through to the default and every price on
  *    the screen would quietly render in the shipped format instead of the
  *    configured one.

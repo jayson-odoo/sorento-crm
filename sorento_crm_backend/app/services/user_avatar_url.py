@@ -25,7 +25,7 @@ def resolve_avatar_url_for_client(
     s = str(stored).strip()
     if not s:
         return None
-    # Non-HTTPS (relative or unusual) — pass through
+    # Non-HTTPS (relative or unusual) - pass through
     if not s.startswith("https://"):
         return s
     try:

@@ -1,7 +1,7 @@
 """Render a formal complaint PDF (supporting-document copy) via WeasyPrint.
 
 Decoupled from the request path: called by the RQ task ``generate_complaint_pdf``.
-Content is the formal subset agreed with the complaint team — details, customer
+Content is the formal subset agreed with the complaint team - details, customer
 info, product lines, defect description, technical response, resolution, and
 embedded image attachments. Internal-only fields (audit trail, assignee, SLA)
 are deliberately excluded.
@@ -37,11 +37,11 @@ __all__ = ["ComplaintPDFService", "PDFRenderingUnavailable"]
 
 def _fmt(value) -> str:
     if value is None:
-        return "—"
+        return "-"
     if isinstance(value, (datetime, date)):
         return value.strftime("%d %b %Y")
     s = str(value).strip()
-    return escape(s) if s else "—"
+    return escape(s) if s else "-"
 
 
 def _row(label: str, value) -> str:
@@ -74,7 +74,7 @@ class ComplaintPDFService:
 
     def _attachment_links(self, complaint: Complaint) -> list:
         """Linked attachments for the complaint, from the generic
-        entity_attachment_links table (the source the detail UI uses) — NOT the
+        entity_attachment_links table (the source the detail UI uses) - NOT the
         legacy complaint_attachments join, which the "Link Attachment" flow no
         longer writes to. Each link exposes ``.attachment`` (an Attachment row)."""
         try:

@@ -64,7 +64,7 @@ export async function deleteIntegration(id: string): Promise<void> {
 
 /**
  * Mint a key. The plaintext in the response is the only copy that will ever
- * exist — it is not retrievable afterwards, only rotated. Show it to the user
+ * exist - it is not retrievable afterwards, only rotated. Show it to the user
  * immediately; never write it to storage, a URL, or a log.
  */
 export async function issueKey(integrationId: string): Promise<IssuedKey> {
@@ -77,7 +77,7 @@ export async function issueKey(integrationId: string): Promise<IssuedKey> {
 
 /**
  * Issue a replacement key and start the grace window on the current one.
- * `graceDays: 0` kills the old key immediately — correct for a leaked
+ * `graceDays: 0` kills the old key immediately - correct for a leaked
  * credential, disruptive for a routine rotation.
  */
 export async function rotateKey(

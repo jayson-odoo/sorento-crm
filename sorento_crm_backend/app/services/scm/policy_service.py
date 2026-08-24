@@ -1,9 +1,9 @@
-"""SCM Policy Configuration — service layer.
+"""SCM Policy Configuration - service layer.
 
 CRUD for scoped ``scm.reorder_policy`` rows, single-row upserts for the two global
 config tables (``abc_xyz_policy`` / ``supplier_scoring_policy``), and a resolution
 preview that assembles its answer from the SAME shipped engine the reorder run uses
-(``reorder_engine.resolve_policy_for_sku`` / ``load_policies`` / ``resolve_policy``) —
+(``reorder_engine.resolve_policy_for_sku`` / ``load_policies`` / ``resolve_policy``) - 
 never a reimplementation (Risk #1, AC-PREV-2).
 
 Storage keys match the engine's ``_policy_matches`` comparison keys verbatim:
@@ -99,7 +99,7 @@ _ROW_SELECT = """
 def _label(m) -> str:
     st = m["scope_type"]
     if st == "global":
-        return "—"
+        return "-"
     if st == "sku":
         if m["product_code"]:
             return f'{m["product_code"]} · {m["product_name"]}'
@@ -162,12 +162,12 @@ def _get_row(db: Session, policy_id: str) -> Optional[dict]:
 
 def _require_row(db: Session, policy_id: str) -> dict:
     row = _get_row(db, policy_id)
-    if row is None:  # pragma: no cover — the row was just written, always present
+    if row is None:  # pragma: no cover - the row was just written, always present
         raise AppException(status_code=500, message="Reorder policy row not found after write.")
     return row
 
 
-# --- validation (DB-dependent — AC-VAL-7/8/9) -------------------------------
+# --- validation (DB-dependent - AC-VAL-7/8/9) -------------------------------
 
 def _validate_referential(db: Session, body: ReorderPolicyWrite) -> None:
     if body.scope_type == "sku":
@@ -187,7 +187,7 @@ def _validate_referential(db: Session, body: ReorderPolicyWrite) -> None:
 
 
 def _validate_coherence(body: ReorderPolicyWrite) -> None:
-    # AC-VAL-7 — the engine silently falls back to fixed_days at run time; block the
+    # AC-VAL-7 - the engine silently falls back to fixed_days at run time; block the
     # save so the config UI never lies about what the run will do.
     if body.safety_stock_method == "statistical" and body.service_level is None:
         raise AppException(status_code=422,
@@ -196,7 +196,7 @@ def _validate_coherence(body: ReorderPolicyWrite) -> None:
 
 def _validate_unique(db: Session, body: ReorderPolicyWrite,
                      exclude_id: Optional[str] = None) -> None:
-    # AC-VAL-8 — a second ACTIVE policy at the same (scope_type, scope_ref) would
+    # AC-VAL-8 - a second ACTIVE policy at the same (scope_type, scope_ref) would
     # silently tie-break on priority. Block it (editing the same row is allowed).
     if body.scope_type == "global":
         sql = ("SELECT 1 FROM scm.reorder_policy WHERE scope_type = 'global' "
@@ -340,7 +340,7 @@ def delete_policy(db: Session, policy_id: str) -> None:
     ), {"id": policy_id}).mappings().first()
     if not row:
         raise AppException(status_code=404, message="Reorder policy not found.")
-    # AC-DEL-2 — the global default is edited, never deleted.
+    # AC-DEL-2 - the global default is edited, never deleted.
     if row["scope_type"] == "global":
         raise AppException(status_code=422,
                            message="The global default policy cannot be deleted.")
@@ -377,7 +377,7 @@ def put_classification(db: Session, body: AbcXyzWrite) -> dict:
         "SELECT id FROM scm.abc_xyz_policy WHERE is_active = true "
         "ORDER BY updated_at DESC, created_at ASC LIMIT 1"
     )).scalar()
-    # Store the fraction values verbatim — the analytics engine's _normalize_abc_cuts
+    # Store the fraction values verbatim - the analytics engine's _normalize_abc_cuts
     # reads (0.80, 0.15) and maps it to cumulative (80, 95) with no code change.
     db.execute(text(
         "UPDATE scm.abc_xyz_policy SET abc_a_pct=:a, abc_b_pct=:b, xyz_x_max=:x, "
@@ -491,9 +491,9 @@ def resolve(db: Session, product_id: str, warehouse_ref: Optional[str]) -> dict:
                     "product_class": category, "global": None}
     label_by_scope = {
         "sku": f'{prod["product_code"]} · {prod["product_name"]}',
-        "abc_xyz_cell": cell or "—",
-        "product_class": (category_name or category or "—"),
-        "global": "—",
+        "abc_xyz_cell": cell or "-",
+        "product_class": (category_name or category or "-"),
+        "global": "-",
     }
 
     chain = []

@@ -1,4 +1,4 @@
-"""SCM M3 reorder engine — RESOLVER layer (reads the live M1/M2 tables).
+"""SCM M3 reorder engine - RESOLVER layer (reads the live M1/M2 tables).
 
 The pure maths are golden-tested in ``test_m3_engine.py``; this file proves the thin
 resolver reads ``scm.reorder_policy`` / ``scm.item_classification`` /

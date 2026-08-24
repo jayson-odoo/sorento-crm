@@ -3,10 +3,10 @@
  *
  * Two rules are pinned here:
  *
- *  - A chosen quantity ABOVE the shortfall produces a STATEMENT, not a warning:
+ * - A chosen quantity ABOVE the shortfall produces a STATEMENT, not a warning:
  *    the shortfall is fully covered, the excess is reported as spare with the
  *    pool it lands in, and nothing in the returned shape marks it as invalid.
- *  - A figure with no input behind it is NAMED, never zeroed. Months of cover
+ * - A figure with no input behind it is NAMED, never zeroed. Months of cover
  *    needs a demand statistic (present for 62% of the book) and container volume
  *    needs recorded dimensions (16%), so both are nullable and carry the name of
  *    the missing input instead of a 0 that reads as "already out of stock" and

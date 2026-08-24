@@ -1,4 +1,4 @@
-"""Market-segment CS routing — service + endpoints (PLAN/UAC cs-team-market-segment-routing).
+"""Market-segment CS routing - service + endpoints (PLAN/UAC cs-team-market-segment-routing).
 
 Runs against the live Postgres test DB (retail/project seeded by migration 263). Seeds an
 isolated agent/team/members/contacts with a unique prefix, asserts, cleans up.

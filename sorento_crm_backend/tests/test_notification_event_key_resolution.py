@@ -35,7 +35,7 @@ def test_deadline_extended_occurrence_suffix_maps_to_sla_event(notif_type, n):
 # Conversation-SLA coverage fan-out keys each assignment OCCURRENCE as
 # "assigned:<unix_ts>" so a re-assignment of the reused tracker re-notifies coverers.
 # The resolver must strip the numeric suffix and resolve WITHOUT error to a REGISTERED
-# key — "conversation_sla:assigned" is not mapped, so it falls back to the registered
+# key - "conversation_sla:assigned" is not mapped, so it falls back to the registered
 # "notification_delivery". (Without the strip, the raw "assigned:1782282875" would carry
 # into the lookup and silently never match, re-introducing the silent-drop class.)
 @pytest.mark.parametrize("ts", [0, 1, 1782282875])
@@ -48,7 +48,7 @@ def test_assigned_occurrence_suffix_resolves_to_registered_key(ts):
 
 
 def test_deadline_extended_no_suffix_still_maps(notif_type="form_sla"):
-    """The base composite (no suffix) also maps — registry has both forms."""
+    """The base composite (no suffix) also maps - registry has both forms."""
     assert _resolve_event_key(_note("form_sla", "deadline_extended")) == "sla_deadline_extended"
     assert (
         _resolve_event_key(_note("conversation_sla", "deadline_extended"))
@@ -58,7 +58,7 @@ def test_deadline_extended_no_suffix_still_maps(notif_type="form_sla"):
 
 # CHANGE 2 guard: non-trailing-digit colon composites are NOT stripped.
 def test_external_created_composite_not_stripped():
-    """Only a trailing ':<digits>' is stripped — 'external_created' is a real
+    """Only a trailing ':<digits>' is stripped - 'external_created' is a real
     composite suffix and must resolve to its own key, not be mangled."""
     key = _resolve_event_key(
         _note("stock_inquiry_notification", "external_created")

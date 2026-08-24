@@ -21,21 +21,21 @@ merged in the same release:
   `project_quotations` + versions + lines, `project_samples`, `project_purchase_orders`, and
   the sponsorship link.
 
-Stakeholder roles — decision maker, influencer, info provider, architect — are **template
+Stakeholder roles - decision maker, influencer, info provider, architect - are **template
 configuration**, not an enum, exactly as EMS models participant roles.
 
 The pairing rule is the point of this ADR. A `commercial_core` / `commercial_activity` module
 (~5,000 LOC: leads, master quotations, pipeline, process config, project tasks) was built in
 `c77560009` and deleted as unused in `7f0eb94f1`. It died because it was a generic CRM
-skeleton with nothing fitted to how Sorento actually sells — no registration lock, no sample
+skeleton with nothing fitted to how Sorento actually sells - no registration lock, no sample
 submission, no sponsorship, no brand or architect intelligence. This is attempt #2. The
 skeleton is permitted only because the specific guts land with it.
 
 ## Rejected
 
-- **Fully generic with per-type JSONB custom fields** — developer, launch date, brands and GDV
+- **Fully generic with per-type JSONB custom fields** - developer, launch date, brands and GDV
   become untyped JSON: no FKs, no fuzzy dedup on developer, no forecast SQL, no brand
   intelligence. This is the failure mode above, repeated.
-- **Sorento-specific now, generalise later** — fastest to the client's value, but retrofitting
+- **Sorento-specific now, generalise later** - fastest to the client's value, but retrofitting
   types and templates onto a live pipeline is a migration on production data, and the EMS
   convergence is near.

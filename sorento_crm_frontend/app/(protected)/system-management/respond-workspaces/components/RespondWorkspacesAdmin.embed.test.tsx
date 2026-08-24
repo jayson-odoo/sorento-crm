@@ -6,10 +6,10 @@ import RespondWorkspacesAdmin from './RespondWorkspacesAdmin';
 import type { RespondWorkspace } from '../services/respondWorkspaceService';
 
 /**
- * Ideas embed (iframe SSO) admin fields — AC-E-1 / AC-E-12.
+ * Ideas embed (iframe SSO) admin fields - AC-E-1 / AC-E-12.
  *
  * The three embed fields are present + editable in the Ideation section, and the
- * signing secret input is write-only (password type — the browser never echoes the
+ * signing secret input is write-only (password type - the browser never echoes the
  * stored plaintext). The dialog is opened via the toolbar "Add workspace" button:
  * DataGrid row-action buttons don't drive React state reliably under jsdom, so the
  * edit-mode masked-placeholder display is left to the backend masking tests
@@ -94,7 +94,7 @@ async function openAddDialog() {
   );
 }
 
-describe('RespondWorkspacesAdmin — Ideas embed fields', () => {
+describe('RespondWorkspacesAdmin - Ideas embed fields', () => {
   it('renders the three embed fields in the Ideation section', async () => {
     await openAddDialog();
 

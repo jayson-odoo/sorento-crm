@@ -21,8 +21,8 @@ import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 
 /**
  * Prev/next neighbours of a supplier within the active filtered+sorted list set.
- * Serializes the list query (search/sort) with `buildDataGridParams` — the same
- * serialization the list page uses — so the backend honours the filter/sort
+ * Serializes the list query (search/sort) with `buildDataGridParams` - the same
+ * serialization the list page uses - so the backend honours the filter/sort
  * identically. `page`/`limit` are sent but ignored by the neighbours endpoint.
  */
 export function useSupplierNeighbours(

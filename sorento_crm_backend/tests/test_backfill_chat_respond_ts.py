@@ -3,7 +3,7 @@
 Covers UAC OBS-S4-31.
 
 CAVEAT ON COVERAGE: these run on sqlite, which has no server-side cursors, so they
-CANNOT reproduce the production failure that prompted the rewrite — psycopg2's
+CANNOT reproduce the production failure that prompted the rewrite - psycopg2's
 "named cursor isn't valid anymore", raised when `yield_per`'s server-side cursor is
 killed by a mid-iteration `commit()`. What they do pin is the keyset paging that
 replaced it: that committing mid-run neither skips nor re-processes rows, and that
@@ -105,7 +105,7 @@ def test_dry_run_writes_nothing(engine, run, capsys):
 
 @pytest.mark.parametrize("batch", ["1", "2", "1000"])
 def test_every_derivable_row_is_filled_regardless_of_batch_size(engine, run, batch):
-    """batch=1 commits per row — the paging path that a mid-loop commit breaks."""
+    """batch=1 commits per row - the paging path that a mid-loop commit breaks."""
     _seed(engine)
     run("--batch", batch)
 

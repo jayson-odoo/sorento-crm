@@ -100,7 +100,7 @@ describe('ExtendDueDialog', () => {
     fireEvent.change(daysInput, { target: { value: '0' } });
     fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: 'valid reason' } });
 
-    // give the debounce a chance — it must NOT fire for invalid input
+    // give the debounce a chance - it must NOT fire for invalid input
     await new Promise((r) => setTimeout(r, 500));
     expect(getExtendPreview).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: /extend deadline/i })).toBeDisabled();

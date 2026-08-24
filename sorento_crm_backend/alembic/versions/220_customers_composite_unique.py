@@ -14,7 +14,7 @@ keep one row per code, collapsing those two debtors into one. This migration:
   2. Adds a functional UNIQUE INDEX on
      (lower(btrim(customer_code)), lower(btrim(customer_name))).
 
-Migration 219 (re-sync) is updated below as well — both migrations should run
+Migration 219 (re-sync) is updated below as well - both migrations should run
 once before this one for the data to be clean enough to add the new index.
 
 Revision ID: 220_customers_composite_unique
@@ -48,7 +48,7 @@ def upgrade() -> None:
 
     # 2. Dedupe existing rows BEFORE the unique index is created. Production
     #    DBs already contain duplicate (lower(btrim(code)), lower(btrim(name)))
-    #    pairs from earlier seed runs + manual edits — without merging them
+    #    pairs from earlier seed runs + manual edits - without merging them
     #    first the CREATE UNIQUE INDEX below fails with UniqueViolation.
     #
     #    Strategy per dup group:
@@ -95,7 +95,7 @@ def upgrade() -> None:
                 END IF;
 
                 -- Re-point every FK referencing customers(id) to canonical.
-                -- Discovered dynamically — covers orders, customer_contacts,
+                -- Discovered dynamically - covers orders, customer_contacts,
                 -- and any future child table without revising this migration.
                 FOR fk IN
                     SELECT
@@ -123,7 +123,7 @@ def upgrade() -> None:
         """
     )
 
-    # 3. Composite functional UNIQUE — case + whitespace normalized so casing
+    # 3. Composite functional UNIQUE - case + whitespace normalized so casing
     #    drift in Sage exports doesn't sneak duplicates past the constraint.
     #    CREATE INDEX (not CONCURRENTLY) so it stays inside the migration
     #    transaction; table is small enough that the brief lock is acceptable.
@@ -137,6 +137,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute(f"DROP INDEX IF EXISTS {_NEW_UNIQUE_INDEX};")
-    # Re-creating the legacy column UNIQUE would fail if duplicates now exist —
+    # Re-creating the legacy column UNIQUE would fail if duplicates now exist - 
     # leave it off on downgrade. Operators that need it back must reconcile
     # data first then add it manually.

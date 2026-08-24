@@ -69,7 +69,7 @@ router = APIRouter(prefix="/references")
 _ALLOWED_MATCH_MODES = {"or", "and"}
 
 # Union of every domain's noise words. Tokens like "order 202605-2651" come in
-# from chatbot phrasing — the user means the order_number, not a literal
+# from chatbot phrasing - the user means the order_number, not a literal
 # substring. Cleaning leaves "202605-2651" so the exact-match probe succeeds.
 _ENTITY_STOPWORDS: frozenset[str] = frozenset().union(*DOMAIN_STOPWORDS.values())
 _TOKEN_PUNCT_STRIP = ".,!?;:\"'()[]{}"
@@ -143,7 +143,7 @@ def _resolve_with_domain_hint(
     else:
         terms = [w for w in (query_text or "").split() if len(w) >= 3]
     if not terms:
-        # Empty input — return all attachments of this type capped at 20 so the
+        # Empty input - return all attachments of this type capped at 20 so the
         # caller still gets the catalogue browse shape.
         terms = [""]
 
@@ -344,7 +344,7 @@ def _attach_and_coverage(result: dict[str, Any]) -> dict[str, Any]:
 
     Runs after `_apply_promotion_access_levels_filter`,
     `_expand_products_via_promotions` and `_apply_limit` have all had their
-    turn — coverage computed any earlier describes rows a later stage removed
+    turn - coverage computed any earlier describes rows a later stage removed
     (the original version asserted "every word matched" on zero-row
     entitlement-filtered responses). No-op for OR-shaped results.
 
@@ -366,7 +366,7 @@ def _attach_and_coverage(result: dict[str, Any]) -> dict[str, Any]:
     finally:
         result.pop("_truncated_entity_types", None)
         # The filters rebuild `by_entity_type` from the same row dicts as
-        # `intersection`, so the blob can appear in both views — strip both.
+        # `intersection`, so the blob can appear in both views - strip both.
         for m in result.get("intersection") or []:
             if isinstance(m, dict):
                 m.pop("_match_blob", None)
@@ -420,7 +420,7 @@ def _stamp_brand_on_products(db: Session, result: dict[str, Any]) -> dict[str, A
         return result
     try:
         brands = fetch_product_brands(db, [str(r["uuid"]) for r in pending])
-    except Exception:  # noqa: BLE001 — brand is additive, never fatal
+    except Exception:  # noqa: BLE001 - brand is additive, never fatal
         logger.exception("brand stamp on resolve payload failed")
         return result
     for row in pending:
@@ -506,7 +506,7 @@ def _build_promotion_resolutions(
     Used when `domain_hint=promotion` and the resolver itself didn't run the
     promotion probe (e.g. caller's whitelist was `[product]`). Returns
     `entity_type=promotion` rows so the agent sees promotion candidates ranked
-    first — domain_hint is highest priority.
+    first - domain_hint is highest priority.
     """
     if not promotion_ids:
         return []
@@ -618,7 +618,7 @@ def _build_promotions_for_products(
     """Reverse membership walk: promotions that CONTAIN the given product UUIDs.
 
     The description-text probe (`_resolve_promotion_ids_for_token`) can't find a
-    promo from a product SKU — a SKU never appears in the promo description. When
+    promo from a product SKU - a SKU never appears in the promo description. When
     the token already resolved to product(s), this walks `promotion_products`
     backward so `domain_hint=promotion` can still answer "the promo for X".
 
@@ -734,7 +734,7 @@ def _resolve_products_by_brand_access(
 
     Used by the promotion-domain fallback: when no promotion matches the
     token under the caller's access levels, surface products from brands the
-    contact can see — gives the agent enough context to answer "no promo
+    contact can see - gives the agent enough context to answer "no promo
     found, but here are matching products".
 
     `access_codes` is REQUIRED for this helper to run. Callers must scope to
@@ -817,7 +817,7 @@ def _caller_wants_products(allowed_entity_types: list[str] | None) -> bool:
 
     Brand / category aliases also canonicalize to `product` via
     `_DOMAIN_HINT_EXPANSIONS`, but the caller did NOT explicitly ask for
-    products in those cases — they want promotion headers. We use this flag
+    products in those cases - they want promotion headers. We use this flag
     to gate the through-promotion product expansion so a `brand` hint with
     matched promotions stays at promotion-level only.
     """
@@ -843,7 +843,7 @@ def _expand_products_via_promotions(
       1. For each token, find promotion UUIDs whose description matches.
       2. Optionally filter promos by access_levels intersection.
       3. Look up all products in those promotions.
-      4. Replace the token's `product` matches with these — they are the
+      4. Replace the token's `product` matches with these - they are the
          products the user actually wants ("send me water closet promotion"
          means "give me products in water-closet promos").
 
@@ -893,7 +893,7 @@ def _expand_products_via_promotions(
             kept_existing_promos = _apply_serving_policy_to_promo_matches(
                 db, [m for m in existing if m.get("entity_type") == "promotion"]
             )
-            # The resolved products are KEPT — a product SKU must still resolve
+            # The resolved products are KEPT - a product SKU must still resolve
             # under domain_hint=promotion (the expander used to wipe them, so a
             # valid SKU returned empty just because it wasn't a promo name).
             kept_products = [
@@ -904,7 +904,7 @@ def _expand_products_via_promotions(
             ]
 
             # Reverse membership: promotions that CONTAIN the resolved products.
-            # This is how "check the promo for <SKU>" gets answered — the SKU
+            # This is how "check the promo for <SKU>" gets answered - the SKU
             # can't match a promo description, so walk promotion_products back.
             product_uuids = {
                 str(m.get("uuid")) for m in kept_products if m.get("uuid")
@@ -922,7 +922,7 @@ def _expand_products_via_promotions(
 
             # Promo-first short-circuit: when any promotion matches exist
             # (existing, name-synthesized, or via product membership), DON'T
-            # enumerate through-promotion products — the caller's products are
+            # enumerate through-promotion products - the caller's products are
             # already kept above, and enumeration would be noise.
             has_promo = bool(
                 kept_existing_promos or new_promo_matches or member_promo_matches
@@ -1083,7 +1083,7 @@ def _filter_products_in_promotions(db: Session, result: dict[str, Any]) -> dict[
     """When domain_hint=promotion, drop product matches not linked to any promotion.
 
     The agent's intent under a promotion domain is "find products that have an
-    active promo" — surfacing products that aren't in any `promotion_products`
+    active promo" - surfacing products that aren't in any `promotion_products`
     row wastes context. Walks resolutions + intersection, collects product
     UUIDs, queries `promotion_products.product_id` once, and filters out the
     misses. Non-product entities untouched. Idempotent: re-running on an
@@ -1118,7 +1118,7 @@ def _filter_products_in_promotions(db: Session, result: dict[str, Any]) -> dict[
     kept_ids: set[str] = {str(r[0]) for r in rows if r[0]}
 
     if kept_ids == product_ids:
-        return result  # everything already linked — no-op
+        return result  # everything already linked - no-op
 
     def _filter_matches(matches: Any) -> list[Any]:
         if not isinstance(matches, list):
@@ -1254,8 +1254,8 @@ class ResolveReferenceRequest(BaseModel):
     match_mode: str = Field(
         default="or",
         description=(
-            "'or' (default): each token resolves independently — per-token candidate lists, "
-            "ambiguity surfaced per token. 'and': cross-token intersection — returns ONLY rows "
+            "'or' (default): each token resolves independently - per-token candidate lists, "
+            "ambiguity surfaced per token. 'and': cross-token intersection - returns ONLY rows "
             "whose concatenated searchable columns contain EVERY token. Use 'and' for compound "
             "filters like 'cabana filter tap promotion'. Code-only entity types (SPO / GRN / "
             "inbound shipment) are skipped in 'and' mode."
@@ -1266,7 +1266,7 @@ class ResolveReferenceRequest(BaseModel):
         description=(
             "Restrict resolution to these entity types. Always treated as a set "
             "filter / whitelist: every token is probed against EVERY supplied type "
-            "(cross product). Example — tokens=['Sorento water closet','latest "
+            "(cross product). Example - tokens=['Sorento water closet','latest "
             "promo'] with allowed_entity_types=['product','promotion'] resolves "
             "both tokens against both product and promotion probes. Callers that "
             "need 1:1 positional pairing (token[i] resolved only against "
@@ -1284,7 +1284,7 @@ class ResolveReferenceRequest(BaseModel):
         default=None,
         description=(
             "Post-filter for promotion AND attachment matches. Array of contact-"
-            "access-type NAMES (e.g. ['Dealer','End User']) — translated to codes "
+            "access-type NAMES (e.g. ['Dealer','End User']) - translated to codes "
             "via contact_access_types.name and intersected with the entity's "
             "`access_levels` JSONB column. A match survives only when at least one "
             "of its stored access codes is in the translated set. Non-promotion / "
@@ -1351,12 +1351,12 @@ class ResolveReferenceRequest(BaseModel):
         default=None,
         description=(
             "Shape B: a domain predicate over the DESCRIBED set (\"what faucets "
-            "have certs\"). Keys — `attachment_type` (the customer's LABEL, e.g. "
+            "have certs\"). Keys - `attachment_type` (the customer's LABEL, e.g. "
             "'technical drawing', resolved server-side), `certificate` (true, or "
             "{scheme, validity_state}), `promotion` (true), `stock` (true = "
             "on-hand > 0). Multiple keys AND. The intersection with the class "
             "set named by `free_terms` is computed inside the CRM over the full "
-            "company-scoped catalogue, so the count is honest — never a top-K "
+            "company-scoped catalogue, so the count is honest - never a top-K "
             "join across the wire. Response gains a `predicate` block "
             "(qualifying_total / truncated / unrecognized_terms) and the "
             "qualifying top-K lands in `resolutions[].matches` with "
@@ -1369,7 +1369,7 @@ class ResolveReferenceRequest(BaseModel):
         description=(
             "Read `query` with a language model before ranking, so a phrasing nobody "
             "wrote a synonym for still lands on a spec. OFF by default because it "
-            "costs 2-3 SECONDS on the reply path — a real wait for a customer.\n\n"
+            "costs 2-3 SECONDS on the reply path - a real wait for a customer.\n\n"
             "When on, the response carries `semantic_used` and `semantic_ms` so the "
             "caller can tell the customer WHY the reply is slow ('looking properly, "
             "one moment') instead of leaving them watching nothing happen. "
@@ -1411,13 +1411,13 @@ def _product_words_unanswered(result: dict[str, Any]) -> bool:
 
     This catalog writes description words INTO product codes
     (SRTWB7104-WALL HUNG), so max-coverage AND-mode collects partial code
-    matches for exactly the phrases spec search exists to answer — "wall hung
+    matches for exactly the phrases spec search exists to answer - "wall hung
     basin" finds 13 codes containing "wall hung" and the zero-match gate never
     fires. Partially matching a code is not answering the description.
 
     Reads the `token_coverage` the AND exit already computed. Product rows
     only: a promotion whose description covered the words DID answer the turn.
-    A missing/unscored coverage block stays False — this widens the fallback
+    A missing/unscored coverage block stays False - this widens the fallback
     gate, and a widening must never fire on absence of evidence.
     """
     for entry in result.get("token_coverage") or []:
@@ -1546,13 +1546,13 @@ def _resolve_input(
     if _q_norm.lower() in {"null", "none", "undefined"}:
         _q_norm = ""
 
-    # Domain-hint dispatch — entity-type takes precedence over AttachmentType
+    # Domain-hint dispatch - entity-type takes precedence over AttachmentType
     # because labels collide (e.g. AttachmentType code='promotion' for
     # promotion-attached files vs `promotion` entity-type).
     #   1. Entity-type label (`order`, `product`, `promotion`, `customer`,
     #      `brand`, `category`, ...):
-    #         - When `allowed_entity_types` is empty → merge hint as sole scope.
-    #         - When `allowed_entity_types` is set → hint is CONTEXT ONLY (no
+    #       - When `allowed_entity_types` is empty → merge hint as sole scope.
+    #       - When `allowed_entity_types` is set → hint is CONTEXT ONLY (no
     #           additive expansion). Caller's whitelist stays authoritative;
     #           hint only informs brand/category expansion overrides via
     #           `_DOMAIN_HINT_EXPANSIONS` inside the resolver.
@@ -1574,7 +1574,7 @@ def _resolve_input(
                     _resolve_with_domain_hint(db, hint_clean, hint_tokens, _q_norm),
                     limit,
                 )
-            # Unknown hint — same "context-only when whitelist set" rule.
+            # Unknown hint - same "context-only when whitelist set" rule.
             if not (allowed_entity_types or []):
                 allowed_entity_types = [hint_clean]
 
@@ -1611,11 +1611,11 @@ def _resolve_input(
     else:
         # AND-mode is per-row intersection, undefined without explicit tokens.
         # Silently degrade to empty result so callers that always send
-        # `match_mode='and'` regardless of token shape don't hit a 400 — they
+        # `match_mode='and'` regardless of token shape don't hit a 400 - they
         # get the "nothing matched" payload the agent already knows how to
         # handle. Whitespace splitting a free-text `query` for AND-mode would
         # over-tokenize compound entity names ("sorento latest promo office
-        # use" → 5 tokens, intersection guaranteed empty) — not worth doing.
+        # use" → 5 tokens, intersection guaranteed empty) - not worth doing.
         if mode == "and":
             return {
                 "tokens": [],
@@ -1668,9 +1668,9 @@ def _resolve_input(
             ).as_dict()
         raw = _apply_promotion_access_levels_filter(db, raw, access_levels)
         # Promotion-domain hint: run the expander. It owns the dispatch:
-        #   - promo matches found → return promotion entries only
+        # - promo matches found → return promotion entries only
         #     (regardless of whether caller asked for products).
-        #   - no promo matches → if caller wants products, surface
+        # - no promo matches → if caller wants products, surface
         #     through-promotion products; else (and access_levels present)
         #     fallback to brand-access-scoped products as a rescue path.
         if hint and _canonical_entity_type(hint) == "promotion":
@@ -1684,12 +1684,12 @@ def _resolve_input(
         return raw
 
     # ------------------------------------------------------------------
-    # Primary pass — caller's mode + whitelist applied as-is.
+    # Primary pass - caller's mode + whitelist applied as-is.
     # ------------------------------------------------------------------
     result = _run(allowed_entity_types)
 
     if not (fallback_to_all_types and allowed_entity_types):
-        # NOTE: `limit` is not applied on this exit — pre-existing behaviour,
+        # NOTE: `limit` is not applied on this exit - pre-existing behaviour,
         # deliberately preserved (live callers see uncapped counts today, and
         # capping here would move rows under them). Coverage/strip must still
         # run on every AND-shaped exit.
@@ -1697,7 +1697,7 @@ def _resolve_input(
 
     # ------------------------------------------------------------------
     # Per-token fallback (only for tokens unresolved under the whitelist).
-    # Tokens that DID resolve under the whitelist stay untouched — caller's
+    # Tokens that DID resolve under the whitelist stay untouched - caller's
     # hint is respected and we never expand "technical drawing" into
     # `attachment` matches when they explicitly asked for `attachment_type`.
     #
@@ -1727,7 +1727,7 @@ def _resolve_input(
         if not (r.get("matches") or [])
     ]
     if not unresolved:
-        # Tag and return — at least we've already noted the AND→OR switch.
+        # Tag and return - at least we've already noted the AND→OR switch.
         if fallback_match_mode_override:
             result["fallback_match_mode"] = fallback_match_mode_override
             result["fallback_reason"] = fallback_reason
@@ -1742,7 +1742,7 @@ def _resolve_input(
     # Raw `attachment` (file) entities are EXCLUDED from this expansion unless the
     # caller explicitly whitelisted `attachment`. A caller resolving product /
     # attachment_type wants a product + a type to query attachments BY downstream;
-    # a raw attachment-file row can't be used as a product_id and just pollutes —
+    # a raw attachment-file row can't be used as a product_id and just pollutes - 
     # e.g. "WC 8609" (no product hit) would otherwise resolve to a photo file
     # `MWC8609-RL.jpg` whose name contains "8609", drowning the real intent. Files
     # stay reachable for callers that ask for them (whitelist `attachment`, or the
@@ -1820,13 +1820,13 @@ def resolve_reference(
         "or",
         description=(
             "'or' (default) returns per-token candidates. 'and' returns cross-token intersection "
-            "— rows matching every token. AND-mode requires `tokens` (cannot use `query`)."
+            " - rows matching every token. AND-mode requires `tokens` (cannot use `query`)."
         ),
     ),
     allowed_entity_types: list[str] | None = Query(
         None,
         description=(
-            "Entity-type whitelist. Always a global set filter — every token is "
+            "Entity-type whitelist. Always a global set filter - every token is "
             "resolved against EVERY supplied type (cross product). Positional 1:1 "
             "pairing is not auto-triggered on equal-length lists; issue one resolve "
             "call per (token, type) pair if you need it. Canonical types include "
@@ -2034,7 +2034,7 @@ def _emit_spec_matches(
         result["by_entity_type"] = by_type
         result["empty"] = not spec_matches
         # Coverage was computed inside _resolve_input over rows this branch just
-        # REPLACED — recompute over what the route actually sends, or the field
+        # REPLACED - recompute over what the route actually sends, or the field
         # describes rows that no longer exist. Spec rows carry no scored text,
         # so this honestly yields no claims.
         _attach_and_coverage(result)
@@ -2129,7 +2129,7 @@ def resolve_reference_post(
         return _stamp_brand_on_products(db, result)
 
     # Spec search is a FALLBACK, never a parallel path. It runs only when the caller
-    # asked for it AND the normal (code-only) product probes found nothing — or
+    # asked for it AND the normal (code-only) product probes found nothing - or
     # found only PARTIAL code-word overlap (`_product_words_unanswered`): a code
     # that happens to contain "WALL HUNG" has not answered "wall hung basin".
     # The response stays byte-identical for every existing caller and for every

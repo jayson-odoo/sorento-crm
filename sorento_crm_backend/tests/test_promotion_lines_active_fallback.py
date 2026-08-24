@@ -77,7 +77,7 @@ def _seed_product(db, code: str) -> str:
 
 def _seed_group(db, promotion_id: str):
     # PromotionGroup.id / PromotionProduct.promotion_group_id are UUID(as_uuid=True)
-    # — pass a real UUID object, not a str.
+    # - pass a real UUID object, not a str.
     g = PromotionGroup(
         id=uuid.uuid4(),
         promotion_id=promotion_id,

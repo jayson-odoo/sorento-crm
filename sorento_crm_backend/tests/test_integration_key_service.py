@@ -1,4 +1,4 @@
-"""Slice 3 of AutoCount Group A — key lifecycle: issue, verify, rotate, revoke.
+"""Slice 3 of AutoCount Group A - key lifecycle: issue, verify, rotate, revoke.
 
   AC-AC-02  each integration has its own key; revoking one leaves the other alone
   AC-AC-03  plaintext returned once at issue, never retrievable afterwards

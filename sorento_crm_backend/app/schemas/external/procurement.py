@@ -48,7 +48,7 @@ class PackingListRequest(BaseModel):
 class PackingListCreateResponse(BaseModel):
     shipment: InboundShipmentResponse
     skipped_product_codes: List[str] = []
-    # TCK-2026-000019: alias for skipped_product_codes — explicit "unknown in master data"
+    # TCK-2026-000019: alias for skipped_product_codes - explicit "unknown in master data"
     # signal that n8n and other consumers can read without diving into log warnings.
     unknown_product_codes: List[str] = []
     already_existed: bool = False

@@ -11,16 +11,16 @@
  *
  * Three rules are baked into the shapes below.
  *
- *   - **No ids.** Product code, supplier code, a human name. `run_id` is the one
+ * - **No ids.** Product code, supplier code, a human name. `run_id` is the one
  *     opaque value and it is never rendered.
- *   - **A decision to buy NOTHING is a row** (AC-E2.5). A chosen quantity of zero is
+ * - **A decision to buy NOTHING is a row** (AC-E2.5). A chosen quantity of zero is
  *     the "use the pool" answer, and it appears saying no PO is needed rather than
  *     being filtered out, so the worklist reconciles one-for-one against the
  *     decisions. A missing row is indistinguishable from a decision nobody made.
- *   - **The worklist reads ONE grain**, the run's own stamped `decision_grain`
+ * - **The worklist reads ONE grain**, the run's own stamped `decision_grain`
  *     (AC-F09). Rows from the comparison grain are not merged in, because keying
  *     both would buy the same requirement twice.
- *   - **A missing date is named, never filled in.** `need_by` comes from the frozen
+ * - **A missing date is named, never filled in.** `need_by` comes from the frozen
  *     dated shortfall, and a product with no uncovered committed order genuinely has
  *     no need-by date - which is most of the book today. Sending today's date, or the
  *     place-by date computed from a guess, would manufacture urgency. Null, and the

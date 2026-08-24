@@ -122,7 +122,7 @@ messaging counterparties, and ADR 0007's keep-entities-in-their-right-table reas
   demand_class NULL) and report it in the Test result as "new agent, unclassified". Never
   block the file on it. The report is a `unmapped_agents` list of its own on both the preview
   and the apply response - never merged into the rejected-row lists, since nothing was skipped
-  - and **S4** is the slice that renders it (see AC-3.3).
+ - and **S4** is the slice that renders it (see AC-3.3).
 - **AC-6.5** Orders store the agent: outstanding SO import stamps the resolved agent onto the
   sales order (nullable FK). The future agent-serves-customer assignment is out of scope but
   must not be foreclosed: FK from a future join table to `sales_agents.id` remains possible.

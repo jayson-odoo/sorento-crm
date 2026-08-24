@@ -2,10 +2,10 @@
 
 Two nullable columns on ``project_series_products``:
 
-* ``selling_price``     - the price this SERIES sells the product at. The client's sheet calls
+* ``selling_price``   - the price this SERIES sells the product at. The client's sheet calls
   it DEVELOPERS. It is not the product's list price and does not replace it: the same product
   can sit in two series at two prices, which is why this lives on the link row.
-* ``max_discount_pct``  - how much further a distributor may come down from that price,
+* ``max_discount_pct`` - how much further a distributor may come down from that price,
   stored as a PERCENT (``6`` means 6%). The sheet calls it DISTRIBUTORS and writes it two ways,
   ``6 % MAX`` in one tab and ``0.06`` in another; both normalise to ``6`` on the way in.
 

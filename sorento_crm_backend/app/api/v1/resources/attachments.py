@@ -123,14 +123,14 @@ def _create_and_send_webhook(
 def _find_filename_collision(db: Session, directory_id: Optional[str], display_name: str):
     """Return the live Attachment row colliding on (directory_id, lower(stored_filename)) or None.
 
-    Scoped to the user-facing name (stored_filename) — that's what "a file with this name
+    Scoped to the user-facing name (stored_filename) - that's what "a file with this name
     already exists in this folder" means to a user. Storage-key uniqueness is guaranteed
     separately by the uuid-segregated key, so this is a pure UX check.
     """
     from sqlalchemy import func as _sa_func
     from app.models.resources import Attachment
 
-    # "No folder" (directory_id NULL) is its own scope — two same-named files
+    # "No folder" (directory_id NULL) is its own scope - two same-named files
     # uploaded from the All-attachments view should still collide.
     scope = (
         Attachment.directory_id.is_(None)
@@ -233,7 +233,7 @@ async def get_attachments(
     query: Optional[str] = Query(None),
     entities: Optional[List[str]] = Query(
         None,
-        description="DEPRECATED — free-text entity bag. Prefer `attachment_ids`.",
+        description="DEPRECATED - free-text entity bag. Prefer `attachment_ids`.",
     ),
     attachment_ids: Optional[List[str]] = Query(
         None,
@@ -457,7 +457,7 @@ async def get_drive_contents(
         description="When true (or any non-empty query), list the current folder + ALL descendant subfolders. Otherwise immediate children only.",
     ),
     query: Optional[str] = Query(
-        None, description="Search term — matches both file names and folder names; forces recursive scope."
+        None, description="Search term - matches both file names and folder names; forces recursive scope."
     ),
     sort: Optional[str] = Query(
         None, description="name (default, interleaves folders+files) | type | size | modified | uploaded_by | attachment_type (non-name sorts push folders to the end)."
@@ -481,7 +481,7 @@ async def get_drive_contents(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """Unified Drive listing — folders + files as ONE server-sorted, server-paginated
+    """Unified Drive listing - folders + files as ONE server-sorted, server-paginated
     stream of discriminated rows (`{kind: 'folder'|'file', ...}`).
 
     Browse (empty query, no filter) = immediate children only and folders are
@@ -538,7 +538,7 @@ async def get_drive_contents(
                 _stamp_company(row, att, company_names)
                 row["directory_path"] = it.get("directory_path")
                 # Grid thumbnail URL. R2's CDN domain is public, so the stored
-                # thumbnail_path is already a stable, cacheable URL — serve it
+                # thumbnail_path is already a stable, cacheable URL - serve it
                 # as-is. A per-load presigned signature would change every render
                 # and bust the browser/CDN cache, forcing a re-download of every
                 # thumbnail on every grid load (the "not instant" symptom).
@@ -828,7 +828,7 @@ async def create_attachment(
         # WhatsApp/Meta reject CMYK JPEGs (print-pipeline tech-spec drawings)
         # with a generic "Media upload error". Transcode CMYK/YCCK -> RGB JPEG
         # at the upload boundary so stored bytes are always WhatsApp-safe.
-        # CPU-bound — run off the event loop so one upload can't freeze every
+        # CPU-bound - run off the event loop so one upload can't freeze every
         # other request on this async worker.
         file_content, upload_filename, upload_mime = await run_in_threadpool(
             ensure_rgb_image, file_content, upload_filename, upload_mime
@@ -866,7 +866,7 @@ async def create_attachment(
         # Calculate SHA-256 hash for duplicate detection
         file_hash = await run_in_threadpool(lambda: hashlib.sha256(file_content).hexdigest())
 
-        # Pre-generate the row id so the object key can embed it (uuid-segregated key —
+        # Pre-generate the row id so the object key can embed it (uuid-segregated key - 
         # collision-proof, independent of the editable name; see
         # PLAN-attachment-key-uuid-segregation.md).
         attachment_id = str(uuid.uuid4())
@@ -875,7 +875,7 @@ async def create_attachment(
 
         # ------------------------------------------------------------------
         # Google-Drive dup-filename behaviour (TCK-2026-000020).
-        # Only relevant when a directory_id is supplied — that scopes the
+        # Only relevant when a directory_id is supplied - that scopes the
         # collision check to "this folder". Resolved BEFORE the S3 upload so
         # 409 paths don't waste storage. Scoped to the user-facing display name.
         # ------------------------------------------------------------------
@@ -950,8 +950,8 @@ async def create_attachment(
             final_entity_type = "general"
 
         # Construct storage key. Basename = immutable original_filename.
-        #  - promotion: already scoped by entity_id (unchanged).
-        #  - generic: uuid-segregated by attachment_id so same-name uploads across folders
+        # - promotion: already scoped by entity_id (unchanged).
+        # - generic: uuid-segregated by attachment_id so same-name uploads across folders
         #    can NEVER share a key (the old flat {type}/{name} scheme could silently clobber).
         if existing_to_replace is not None:
             # Replace-in-place: overwrite the EXISTING object at its own key so we
@@ -976,7 +976,7 @@ async def create_attachment(
         provider = default_provider()
         backend = get_backend(provider)
         try:
-            # Real network PUT via sync boto3 — must not run directly on the event
+            # Real network PUT via sync boto3 - must not run directly on the event
             # loop, or one slow/large upload freezes every other request this
             # worker is holding (the WORKER TIMEOUT / cascading-504 incident).
             s3_key, _ = await run_in_threadpool(
@@ -995,7 +995,7 @@ async def create_attachment(
         is_promotion_upload = (entity_type or "").strip().lower() == "promotion"
         # Persist only a stable, non-signed CDN URL in DB; signing happens on read.
         stored_file_path = cdn_base_url(provider, s3_key)
-        # Grid thumbnail (image uploads only) — small variant so the Files grid
+        # Grid thumbnail (image uploads only) - small variant so the Files grid
         # paints a ~320px image instead of the full-resolution original. Same
         # blocking-upload concern as above.
         stored_thumbnail_path = await run_in_threadpool(
@@ -1364,7 +1364,7 @@ async def bulk_import_attachments(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or corrupted ZIP file")
 
     # Upload to object storage so the RQ worker (separate pod, separate /tmp)
-    # can fetch it. Transient key under a non-attachment prefix — NOT written to
+    # can fetch it. Transient key under a non-attachment prefix - NOT written to
     # the attachments table; worker deletes the object on completion.
     from app.services.storage_router import default_provider, get_backend
 
@@ -1520,7 +1520,7 @@ async def get_attachment_preview_url(
     attachment_id: str,
     variant: str = Query(
         "original",
-        description="original (default) | thumb — thumb signs the grid thumbnail, falling back to the original when none exists.",
+        description="original (default) | thumb - thumb signs the grid thumbnail, falling back to the original when none exists.",
     ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
@@ -1789,7 +1789,7 @@ async def resubmit_attachment_webhook(
         payload_dict["file_path"] = attachment_file_path
         payload_dict["attachment_id"] = str(attachment.id)
         # User-facing name (stored_filename) so the downstream n8n record's filename
-        # matches the display/rename — consistent with create_and_send_webhook.
+        # matches the display/rename - consistent with create_and_send_webhook.
         payload_dict["attachment_filename"] = attachment.stored_filename or attachment.original_filename
         payload_dict["attachment_mime_type"] = attachment.mime_type
         payload_dict["file_size"] = getattr(attachment, "file_size_bytes", None)

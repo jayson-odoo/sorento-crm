@@ -39,7 +39,7 @@ export interface DatePickerProps {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
-  /** If true, required field – clearing the input does not call onChange(undefined). */
+  /** If true, required field - clearing the input does not call onChange(undefined). */
   required?: boolean;
   /** Forwarded to the typed input, for a table cell's own label/id. */
   id?: string;

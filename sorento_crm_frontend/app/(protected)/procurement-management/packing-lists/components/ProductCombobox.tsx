@@ -41,7 +41,7 @@ export function ProductCombobox({
     if (debounceRef.current) clearTimeout(debounceRef.current);
   }, []);
 
-  // 300ms balances responsiveness against backend hit rate while typing — the standard
+  // 300ms balances responsiveness against backend hit rate while typing - the standard
   // component reports every keystroke, so the debounce lives here.
   const handleSearch = (query: string) => {
     if (!onSearch) return;

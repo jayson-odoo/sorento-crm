@@ -44,7 +44,7 @@ describe('CompanySwitcher', () => {
     expect(screen.getByTestId('company-indicator')).toBeInTheDocument();
     expect(screen.getByText('Sorento')).toBeInTheDocument();
     expect(screen.getByText('SRT')).toBeInTheDocument();
-    // informational only — nothing to switch to
+    // informational only - nothing to switch to
     expect(screen.queryByRole('button')).toBeNull();
   });
 

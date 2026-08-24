@@ -1,13 +1,13 @@
 /**
- * Conversation SLA tracking actions end-to-end — post-schema-migration verification.
+ * Conversation SLA tracking actions end-to-end - post-schema-migration verification.
  *
  * Guards migrations 298/299/300 (market_segments uuid PK, notifications dedup split,
  * conversation_sla_tracking.source_entity_id -> uuid). Drives the three write actions
  * on the Conversation SLA Tracking detail page through the real browser -> FE hook ->
  * service -> api-client -> FastAPI -> Postgres round-trip:
- *   - Mark as responded   -> POST /{id}/test-overrides {is_responded:true}
- *   - Escalate            -> POST /{id}/escalate         (tier N -> N+1)
- *   - Mark as resolved    -> POST /{id}/test-overrides {is_resolved:true}
+ * - Mark as responded   -> POST /{id}/test-overrides {is_responded:true}
+ * - Escalate            -> POST /{id}/escalate         (tier N -> N+1)
+ * - Mark as resolved    -> POST /{id}/test-overrides {is_resolved:true}
  *
  * NAVIGATION: sidebar only (SLA Management -> Conversation SLA Tracking), never deep-link
  * (project memory feedback_playwright_via_sidebar).
@@ -16,7 +16,7 @@
  * tier 1, unresolved, unresponded. Seeded out-of-band before the run so real customer
  * trackers are never mutated.
  *
- * Creds: reuses REQUEST_BATCH_E2E_* (the only committed-env login) — mapped in via the
+ * Creds: reuses REQUEST_BATCH_E2E_* (the only committed-env login) - mapped in via the
  * npx invocation. Skips if unset.
  */
 import { test, expect, type Page } from '@playwright/test';

@@ -1164,10 +1164,10 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
     # decision recorded anywhere else could not be shown next to the one it competes with.
     #
     # Three columns rather than one, each earning its place:
-    #   - `changes_requested_at`  : when they said it, the fact the salesperson sorts by.
-    #   - `changes_requested_note`: the words themselves. Required at the boundary; a stamped time
+    # - `changes_requested_at`  : when they said it, the fact the salesperson sorts by.
+    # - `changes_requested_note`: the words themselves. Required at the boundary; a stamped time
     #                              with nothing behind it is a settled state nobody can act on.
-    #   - `changes_requested_by_name`: who said it. Acceptance gets a name for free off the
+    # - `changes_requested_by_name`: who said it. Acceptance gets a name for free off the
     #                              signature row; a request has no signature, so without this the
     #                              salesperson is handed feedback from "somebody".
     # The row holds the LATEST request. Every one of them is also written to the project activity

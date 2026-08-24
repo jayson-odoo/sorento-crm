@@ -28,10 +28,10 @@ def _svctest_wipe():
     """Delete ONLY this file's own rows.
 
     AutomationService commits inside its own transaction, so the per-test
-    Session rollback is not enough — we delete rows directly via the engine.
+    Session rollback is not enough - we delete rows directly via the engine.
 
     SCOPED to this file's own rows only. This DB is the local prod-copy dev DB
-    (per CLAUDE.md) — an unscoped ``DELETE FROM automations`` / ``DELETE FROM
+    (per CLAUDE.md) - an unscoped ``DELETE FROM automations`` / ``DELETE FROM
     email_templates WHERE code LIKE 'tpl-%'`` here destroys the developer's real
     automations and every email template. Test rows carry the ``[svctest]``
     automation-name / ``tpl-svctest-`` template-code markers; runs + notifications
@@ -84,7 +84,7 @@ def _svctest_wipe():
 
 @pytest.fixture(autouse=True)
 def _clean_automation_state():
-    """Clean this file's rows before AND after each test (symmetric — no
+    """Clean this file's rows before AND after each test (symmetric - no
     ``[svctest]`` / ``tpl-svctest-`` leftovers linger in the shared dev DB)."""
     _svctest_wipe()
     yield
@@ -149,7 +149,7 @@ def _mk_template(db: Session) -> EmailTemplate:
 
 
 # The promotion-expiry trigger matches EVERY active promo whose end_date is
-# exactly ``days_before`` out — including real promos on the shared prod-copy dev
+# exactly ``days_before`` out - including real promos on the shared prod-copy dev
 # DB. Offset this file's test promos AND the automation target ~10 years out (the
 # relative day-difference is preserved, so match/no-match logic is unchanged) so
 # no real promo can collide with the assertions on match count.
@@ -425,7 +425,7 @@ def test_run_now_with_no_matching_promotion_completes_with_zero_recipients(
 
     creator = _mk_user(db, email=f"creator2-{uuid.uuid4().hex[:6]}@test.local")
     template = _mk_template(db)
-    # promotion expiring in 30 days, automation watches 7 — no match
+    # promotion expiring in 30 days, automation watches 7 - no match
     _mk_promotion(db, days_until_end=30)
     db.commit()
 

@@ -5,7 +5,7 @@ Mints a signed assertion for that user, exchanges it at the shared-service
 ``/embed/session`` endpoint, and returns ``{ iframe_url, token, expires_at }`` the FE
 iframes.
 
-Auth: JWT logged-in user with ``ideation.board.view`` permission — this is a first-party FE call,
+Auth: JWT logged-in user with ``ideation.board.view`` permission - this is a first-party FE call,
 never an X-API-Key / n8n path. Dormant settings → a clean 404 (feature not available),
 never a 500; a shared-service outage → a clean 502 the FE turns into a retry state.
 Secrets (signing secret, assertion, embed token) are never logged or echoed in errors.
@@ -45,13 +45,13 @@ def create_ideation_embed_session(
     try:
         result = create_embed_session(db, current_user, idea_id=payload.idea_id)
     except IdeationEmbedNotConfigured:
-        # Feature dormant (settings blank) — clean 4xx, not a 500 (AC-32).
+        # Feature dormant (settings blank) - clean 4xx, not a 500 (AC-32).
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="The Ideas workspace isn't available on this deployment.",
         )
     except IdeationEmbedUpstreamError:
-        # Shared-service down/misconfigured — clean 502, FE shows retry (AC-44).
+        # Shared-service down/misconfigured - clean 502, FE shows retry (AC-44).
         # Detail is generic: no secret, assertion, or internal URL leaks.
         logger.warning("ideation embed session mint upstream error.")
         raise HTTPException(

@@ -1,4 +1,4 @@
-"""Form-banner person links — historical escalated-FROM backfill (UAC HIST-2).
+"""Form-banner person links - historical escalated-FROM backfill (UAC HIST-2).
 
 The backfill sets each legacy escalation row's from_assigned_to_id to the
 assigned_to_id of the immediately-prior event-log row (per tracking, by event_at);

@@ -26,7 +26,7 @@ export default function LookupBoundField({
   const hasBinding = !!data?.set_key;
   const options = useMemo(() => data?.options ?? [], [data]);
 
-  // Pre-select the binding's declared default_value — but ONLY on a NEW form
+  // Pre-select the binding's declared default_value - but ONLY on a NEW form
   // (the field started empty). We never override an existing value (edit form),
   // and we fire exactly once so a user who deliberately clears the field is not
   // re-defaulted on the next render. The empty-at-mount check discriminates
@@ -39,11 +39,11 @@ export default function LookupBoundField({
   const defaultValue = data?.default_value ?? null;
   useEffect(() => {
     if (appliedDefaultRef.current) return;
-    if (!startedEmptyRef.current) return; // edit form — leave the existing value
+    if (!startedEmptyRef.current) return; // edit form - leave the existing value
     if ((value ?? '').trim()) return; // something already set it
     if (!defaultValue) return;
     if (!options.some((o) => o.value.toLowerCase() === defaultValue.toLowerCase())) {
-      return; // default not a valid option — ignore defensively
+      return; // default not a valid option - ignore defensively
     }
     appliedDefaultRef.current = true;
     onChange(defaultValue);

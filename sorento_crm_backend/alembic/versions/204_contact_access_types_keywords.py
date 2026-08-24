@@ -6,8 +6,8 @@ Create Date: 2026-05-17
 
 Admin-curated synonym list per access level. The MCP/backend matcher
 (``ContactAccessTypeService.enforce_access_levels_for_contact``) consults this
-list when resolving free-text AI / user phrasing — e.g. "customer" or
-"homeowner" → ``end_user``; "reseller" → ``dealer`` — so admins do NOT have to
+list when resolving free-text AI / user phrasing - e.g. "customer" or
+"homeowner" → ``end_user``; "reseller" → ``dealer`` - so admins do NOT have to
 rename catalog rows to accommodate every caller variant.
 """
 from alembic import op
@@ -31,7 +31,7 @@ def upgrade() -> None:
             server_default=sa.text("'[]'::jsonb"),
         ),
     )
-    # Seed defaults for legacy bootstrap rows. Idempotent — only overwrites
+    # Seed defaults for legacy bootstrap rows. Idempotent - only overwrites
     # when the existing value is still the empty JSONB array.
     op.execute(
         sa.text("""

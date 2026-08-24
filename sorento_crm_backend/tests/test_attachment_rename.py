@@ -2,8 +2,8 @@
 
 Rename is DB-only: the object key is uuid-segregated and independent of the
 display name (see PLAN-attachment-key-uuid-segregation.md), so renaming must NOT
-touch storage. The copy/verify/delete primitives still exist — the key-relocation
-migration uses them — so they keep their own tests here.
+touch storage. The copy/verify/delete primitives still exist - the key-relocation
+migration uses them - so they keep their own tests here.
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def test_copy_object_verified_happy(monkeypatch):
     _patch_backend(monkeypatch, be)
     copy_object_verified("r2", "resource/old.pdf", "resource/new.pdf")
     assert be.copied == [("resource/old.pdf", "resource/new.pdf")]
-    # never deletes the old object — caller does that after commit
+    # never deletes the old object - caller does that after commit
     assert be.deleted == []
 
 
@@ -133,7 +133,7 @@ def _attachment(**over):
 
 def test_update_rename_is_db_only(monkeypatch):
     """Rename edits stored_filename (user-facing) only. original_filename + the uuid key are
-    immutable. Object never moves — no copy, no delete, file_path untouched."""
+    immutable. Object never moves - no copy, no delete, file_path untouched."""
     att = _attachment()
     be = FakeBackend(existing=["resource/old.pdf"])
     svc = _make_service(monkeypatch, att, be)

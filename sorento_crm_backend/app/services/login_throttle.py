@@ -1,7 +1,7 @@
 """Brute-force throttle for staff /login.
 
 Counts failed attempts per (email, ip) in Redis and locks for a window after a
-threshold. Fail-open: if Redis is unavailable we allow the attempt — an infra
+threshold. Fail-open: if Redis is unavailable we allow the attempt - an infra
 outage must never lock every user out. Successful login clears the counter.
 """
 from __future__ import annotations

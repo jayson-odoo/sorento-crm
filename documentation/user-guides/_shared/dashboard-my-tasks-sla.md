@@ -1,4 +1,4 @@
-# 0.2-Dashboard — My Tasks & My Team Tasks (SLA actions)
+# 0.2-Dashboard - My Tasks & My Team Tasks (SLA actions)
 
 The dashboard home page shows your pending SLA tasks and your team's, with the actions you can take on each. This explains **My Pending** vs **My Team** and what each button does.
 
@@ -6,26 +6,26 @@ The dashboard home page shows your pending SLA tasks and your team's, with the a
 
 Open the [**Dashboard**](/) (home page). The **My Pending SLA** widget has two tabs:
 
-- **My Pending** — tasks assigned to **you** that still need action.
-- **My Team** — tasks owned by your **teammates** (peers + teams below you) that you could take over.
+- **My Pending** - tasks assigned to **you** that still need action.
+- **My Team** - tasks owned by your **teammates** (peers + teams below you) that you could take over.
 
 Each row is one task (a conversation or a form awaiting your team). The buttons shown depend on the tab, the task type, and your permissions.
 
 ## The buttons
 
-**[Escalate](#guide_target=dashboard.sla-tasks.escalate)** — *(My Pending, conversation tasks)*
+**[Escalate](#guide_target=dashboard.sla-tasks.escalate)** - *(My Pending, conversation tasks)*
 Moves the task up to the next tier and reassigns it per the SLA policy. Asks you for a **reason**; the new assignee is notified. Not available once it's already at the top tier (3).
 
-**[Resolve](#guide_target=dashboard.sla-tasks.resolve)** — *(My Pending, conversation tasks)*
-Marks the task resolved: stops the SLA clock and closes the conversation in Respond.io. Asks you to confirm — **this cannot be undone**.
+**[Resolve](#guide_target=dashboard.sla-tasks.resolve)** - *(My Pending, conversation tasks)*
+Marks the task resolved: stops the SLA clock and closes the conversation in Respond.io. Asks you to confirm - **this cannot be undone**.
 
-**[Extend](#guide_target=dashboard.sla-tasks.extend)** — *(My Pending, when you are the assignee)*
-Pushes the resolution deadline out — either by a number of **working days** or to a **specific date** (it respects the holiday calendar). A **reason** is required; you'll see a live preview of the new due date before confirming. Resets the reminder cycle.
+**[Extend](#guide_target=dashboard.sla-tasks.extend)** - *(My Pending, when you are the assignee)*
+Pushes the resolution deadline out - either by a number of **working days** or to a **specific date** (it respects the holiday calendar). A **reason** is required; you'll see a live preview of the new due date before confirming. Resets the reminder cycle.
 
-**[Reassign](#guide_target=dashboard.sla-tasks.reassign)** — *(both tabs)*
-Hands the task to a colleague you pick from the list. The team, tier, and SLA clock stay the same — only the owner changes.
+**[Reassign](#guide_target=dashboard.sla-tasks.reassign)** - *(both tabs)*
+Hands the task to a colleague you pick from the list. The team, tier, and SLA clock stay the same - only the owner changes.
 
-**[Takeover](#guide_target=dashboard.sla-tasks.takeover)** — *(My Team)*
+**[Takeover](#guide_target=dashboard.sla-tasks.takeover)** - *(My Team)*
 Takes a teammate's task onto **your** pending list at your tier. The SLA clock is **not** reset. Use this when you're picking up a task a colleague can't get to.
 
 ## Which button when

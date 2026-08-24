@@ -142,7 +142,7 @@ export default function AutomationsList() {
         header: ({ column }) => <DataGridColumnHeader title="Template" column={column} />,
         cell: ({ row }) => (
           <span className="truncate max-w-[180px] block" title={row.original.email_template_name ?? ''}>
-            {row.original.email_template_name ?? '—'}
+            {row.original.email_template_name ?? '-'}
           </span>
         ),
         size: 200,
@@ -158,14 +158,14 @@ export default function AutomationsList() {
       {
         accessorKey: 'last_status',
         header: ({ column }) => <DataGridColumnHeader title="Last status" column={column} />,
-        cell: ({ row }) => row.original.last_status || '—',
+        cell: ({ row }) => row.original.last_status || '-',
         size: 110,
         meta: { headerTitle: 'Last status' },
       },
       {
         accessorKey: 'next_run_at',
         header: ({ column }) => <DataGridColumnHeader title="Next run" column={column} />,
-        cell: ({ row }) => (row.original.next_run_at ? formatDateTimeInMalaysia(row.original.next_run_at) : '—'),
+        cell: ({ row }) => (row.original.next_run_at ? formatDateTimeInMalaysia(row.original.next_run_at) : '-'),
         size: 160,
         meta: { headerTitle: 'Next run' },
       },

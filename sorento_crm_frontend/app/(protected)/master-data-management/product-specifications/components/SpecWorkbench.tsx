@@ -14,8 +14,8 @@ import SpecSearchPreview from './SpecSearchPreview';
  *
  * The page used to be one column of five cards with no stated relationship, so the
  * only way to find the thing you wanted was to read all of it. The jobs are genuinely
- * different — trying a phrase is a question, editing a spec is a change, reading the
- * derived data is verification — and each one wants the whole width when you are doing it.
+ * different - trying a phrase is a question, editing a spec is a change, reading the
+ * derived data is verification - and each one wants the whole width when you are doing it.
  *
  * The phrase box stays OUTSIDE the tabs on purpose. It is the only part of this screen
  * that tells you whether a change worked, so it has to still be there after you make one.

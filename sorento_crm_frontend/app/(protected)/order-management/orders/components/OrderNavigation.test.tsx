@@ -2,11 +2,11 @@
  * Tests for the OrderNavigation wrapper (record-navigation, IDs mode).
  *
  * The wrapper:
- *  - reconstructs the list query from the detail URL via parseDetailSearch,
- *  - threads the order-specific filters (order_status_id, has_order_lines),
- *  - feeds it to useOrderNeighbours (thin wrapper over useRecordNeighbours),
- *  - renders RecordNavigation in IDs mode (prevId/nextId/index/total/isLoading),
- *  - preserves the active list query in the URL when stepping to a neighbour.
+ * - reconstructs the list query from the detail URL via parseDetailSearch,
+ * - threads the order-specific filters (order_status_id, has_order_lines),
+ * - feeds it to useOrderNeighbours (thin wrapper over useRecordNeighbours),
+ * - renders RecordNavigation in IDs mode (prevId/nextId/index/total/isLoading),
+ * - preserves the active list query in the URL when stepping to a neighbour.
  *
  * useOrderNeighbours is mocked so we assert the wrapping/threading, not the
  * network layer (that is covered by the backend pytest + the shared hook test).

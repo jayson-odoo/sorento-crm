@@ -1,5 +1,5 @@
 /**
- * sessionService — the signed-in user's active staff sessions ("your devices").
+ * sessionService - the signed-in user's active staff sessions ("your devices").
  *
  * Backend contract (FastAPI-owned rolling sessions):
  *   GET    /api/v1/auth/sessions                 -> SessionInfo[]

@@ -1,14 +1,14 @@
-"""Variant graph — ``variant_link_service`` + product-API variant contract.
+"""Variant graph - ``variant_link_service`` + product-API variant contract.
 
 Covers PLAN-suggest-on-miss-variant-graph.md §1 / §7.5:
 
-  AC-V1  backfill / reconcile is idempotent — a second pass changes nothing;
+  AC-V1  backfill / reconcile is idempotent - a second pass changes nothing;
          a deliberately-wrong seed is CORRECTED (set-to-correct, not where-NULL).
   AC-V2  boundary rule truth table (dash / letter = variant; continued digit =
          different product; non-existent prefix = base).
-  AC-V3  delete never blocks — DB ``ondelete=SET NULL`` orphans children; the
+  AC-V3  delete never blocks - DB ``ondelete=SET NULL`` orphans children; the
          re-derive step re-anchors them to the next existing ancestor.
-  AC-V4  parent-added-later — a child created before its base is a base; creating
+  AC-V4  parent-added-later - a child created before its base is a base; creating
          the base adopts the orphan (adopt-orphans path).
 
 Plus the product GET-by-id variant/base serialization contract
@@ -41,7 +41,7 @@ from app.services.variant_link_service import (
 
 
 # --------------------------------------------------------------------------- #
-# AC-V2 — boundary truth table (pure function, DB-free)
+# AC-V2 - boundary truth table (pure function, DB-free)
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "child, prefix, expect",
@@ -200,7 +200,7 @@ def _parent_of(db, pid):
 
 
 # --------------------------------------------------------------------------- #
-# AC-V1 — idempotency + wrong-seed correction
+# AC-V1 - idempotency + wrong-seed correction
 # --------------------------------------------------------------------------- #
 def test_v1_reconcile_links_and_is_idempotent(db, family):
     base = family["mk"](_TEST_PREFIX + "100")
@@ -236,7 +236,7 @@ def test_v1_corrects_deliberately_wrong_seed(db, family):
 
 
 # --------------------------------------------------------------------------- #
-# AC-V2 (existence anchoring) — a prefix that is not a product yields a base
+# AC-V2 (existence anchoring) - a prefix that is not a product yields a base
 # --------------------------------------------------------------------------- #
 def test_v2_existence_anchoring_base_when_prefix_absent(db, family):
     # ZZVLINK300 base does NOT exist; only the child does -> child is a base.
@@ -269,7 +269,7 @@ def test_v2_longest_existing_prefix_wins(db, family):
 
 
 # --------------------------------------------------------------------------- #
-# AC-V3 — delete SET NULL + re-anchor to next existing ancestor
+# AC-V3 - delete SET NULL + re-anchor to next existing ancestor
 # --------------------------------------------------------------------------- #
 def test_v3_delete_sets_null_and_reanchors(db, family):
     # This asserts the re-derive DERIVATION is correct once fed a string id.
@@ -325,13 +325,13 @@ def test_v3_delete_product_reanchors_END_TO_END(db, family):
     uuid.UUID (raw text() over a pg `uuid` column) which is fed straight into
     reconcile_variant_links()'s `Product.product_code == code_or_id` ORM lookup.
     Whether `varchar = uuid` raises depends on a global psycopg2 uuid adapter
-    that is registered when the FULL app is imported (as uvicorn does in prod) —
+    that is registered when the FULL app is imported (as uvicorn does in prod) - 
     so it WORKS in production and under the full pytest suite, but a partial
     import path would 500 inside reconcile and the best-effort handler would
     swallow it, silently orphaning the sub-tree. We import app.main here to match
     the production runtime deterministically. A one-line str() coercion in
     reconcile_variant_links / child_ids_of would remove the dependency."""
-    import app.main  # noqa: F401 — register the prod-runtime psycopg2 uuid adapter
+    import app.main  # noqa: F401 - register the prod-runtime psycopg2 uuid adapter
     from app.services.product_service import ProductService
 
     base = family["mk"](_TEST_PREFIX + "610")
@@ -349,7 +349,7 @@ def test_v3_delete_product_reanchors_END_TO_END(db, family):
 
 
 # --------------------------------------------------------------------------- #
-# AC-V4 — parent added later adopts the orphan
+# AC-V4 - parent added later adopts the orphan
 # --------------------------------------------------------------------------- #
 def test_v4_parent_added_later_adopts_orphan(db, family):
     # Child created FIRST, before its base exists -> it is a base.
@@ -421,7 +421,7 @@ def test_api_variant_contract(db, family):
 
 def test_api_list_row_is_variant_cheap_no_extra_attrs(db, family):
     """A plain ORM row (as LIST returns it, no _variant_* stashed attrs) still
-    serializes is_variant from the column — and does NOT emit variant_of /
+    serializes is_variant from the column - and does NOT emit variant_of /
     variants (no N+1 on list)."""
     from sqlalchemy.orm import Session as _Session
 
@@ -431,7 +431,7 @@ def test_api_list_row_is_variant_cheap_no_extra_attrs(db, family):
 
     variant_id, _, _, _ = _seed_variant_and_base(db, family, "910")
     # Fresh session so the module-session identity map (which a prior
-    # get_product test stashed _variant_of_ref onto) can't leak into this row —
+    # get_product test stashed _variant_of_ref onto) can't leak into this row - 
     # this mirrors a LIST query that never calls _populate_variant_graph.
     fresh = _Session(bind=db.get_bind())
     # A brand-new session's FIRST ORM statement runs before conftest's

@@ -1,10 +1,10 @@
-"""Wave 3c — data-miss neighbour helper + stock / incoming entity-axis wiring.
+"""Wave 3c - data-miss neighbour helper + stock / incoming entity-axis wiring.
 
 Covers PLAN-suggest-on-miss-variant-graph.md §3.3 / §3.5 / §7.2:
 
   AC-N2  data-miss prefers STORED variants (graph) over trigram digit-neighbours.
   AC-N3  the has-data gate drops a no-data neighbour even when highly similar
-         (the "8518 rule") — the walk continues to the next neighbour WITH data.
+         (the "8518 rule") - the walk continues to the next neighbour WITH data.
   AC-N4  when no data-bearing neighbour clears SUGGEST_FLOOR -> alternatives == [].
   AC-R1  a with-data (non-empty) result carries NO alternatives / relaxed_axis keys.
 
@@ -89,7 +89,7 @@ def _no_data(ids):
 
 
 # --------------------------------------------------------------------------- #
-# Helper — happy path (real graph, stubbed has_data)
+# Helper - happy path (real graph, stubbed has_data)
 # --------------------------------------------------------------------------- #
 def test_helper_returns_variants_ranked_and_capped(db):
     _require_codes(db, "SRTWC8066", "SRTWC8066-SC")
@@ -108,7 +108,7 @@ def test_helper_returns_variants_ranked_and_capped(db):
 
 
 # --------------------------------------------------------------------------- #
-# AC-N2 — stored variant beats a trigram-only digit-neighbour
+# AC-N2 - stored variant beats a trigram-only digit-neighbour
 # --------------------------------------------------------------------------- #
 def test_ac_n2_stored_variant_ranks_above_trgm_neighbour(db):
     # CB889SS-GM has a stored child CB889SS-GM-DIY (graph, is_variant=True) and a
@@ -128,7 +128,7 @@ def test_ac_n2_stored_variant_ranks_above_trgm_neighbour(db):
 
 
 # --------------------------------------------------------------------------- #
-# AC-N3 — has-data gate drops a no-data neighbour (deterministic via stub)
+# AC-N3 - has-data gate drops a no-data neighbour (deterministic via stub)
 # --------------------------------------------------------------------------- #
 def test_ac_n3_has_data_gate_drops_no_data_neighbour(db):
     _require_codes(db, "SRTWC8066", "SRTWC8066-SC")
@@ -155,7 +155,7 @@ def test_ac_n3_empty_when_no_neighbour_has_data(db):
 
 
 # --------------------------------------------------------------------------- #
-# AC-N4 — distance floor: nearest data-bearing neighbour too far -> []
+# AC-N4 - distance floor: nearest data-bearing neighbour too far -> []
 # --------------------------------------------------------------------------- #
 def test_ac_n4_floor_excludes_all(db):
     _require_codes(db, "SRTWC8066")
@@ -242,7 +242,7 @@ def test_incoming_empty_no_alternatives_for_unresolved(db):
 
 
 # --------------------------------------------------------------------------- #
-# Unified incoming-list tool (crm_incoming_stock_list) — same data-miss probe
+# Unified incoming-list tool (crm_incoming_stock_list) - same data-miss probe
 # --------------------------------------------------------------------------- #
 def test_incoming_list_empty_with_alternatives(db):
     from app.services.incoming_stock_service import IncomingStockService

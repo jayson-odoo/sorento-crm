@@ -14,7 +14,7 @@ The annotation script (`scripts/annotate_user_guides_routes.py`) leaves explicit
 
 ## Key naming
 
-`<module>.<page>.<element>` — kebab-case for the element. Keys are stable; renaming a key is a breaking change that requires updating every guide that links to it.
+`<module>.<page>.<element>` - kebab-case for the element. Keys are stable; renaming a key is a breaking change that requires updating every guide that links to it.
 
 ## Registered keys
 
@@ -28,11 +28,11 @@ The annotation script (`scripts/annotate_user_guides_routes.py`) leaves explicit
 | `/procurement-management/grn` | `procurement.grn.import-options-button` | GRN toolbar "Import options" trigger | `app/(protected)/procurement-management/grn/components/GRNList.tsx` |
 | `/order-management/orders` | `order-management.delivery-orders.import-button` | Delivery Orders toolbar "Import" trigger | `app/(protected)/order-management/orders/components/OrdersList.tsx` |
 | `/procurement-management/stock-inquiries/{id}` | `procurement.stock-inquiries.approve-button` | "Approve (send to purchasing)" detail action | `app/(protected)/procurement-management/stock-inquiries/components/StockInquiryDetail.tsx` |
-| `/procurement-management/stock-inquiries/{id}` | `procurement.stock-inquiries.reject-button` | "Reject" detail action (project_sales OR purchasing context — single key, only one rendered at a time) | `app/(protected)/procurement-management/stock-inquiries/components/StockInquiryDetail.tsx` |
+| `/procurement-management/stock-inquiries/{id}` | `procurement.stock-inquiries.reject-button` | "Reject" detail action (project_sales OR purchasing context - single key, only one rendered at a time) | `app/(protected)/procurement-management/stock-inquiries/components/StockInquiryDetail.tsx` |
 | `/procurement-management/stock-inquiries/{id}` | `procurement.stock-inquiries.edit-purchasing-response-button` | "Edit purchasing response" detail action | `app/(protected)/procurement-management/stock-inquiries/components/StockInquiryDetail.tsx` |
 | `/procurement-management/stock-inquiries/{id}` | `procurement.stock-inquiries.reopen-button` | "Reopen" detail action (rejected status) | `app/(protected)/procurement-management/stock-inquiries/components/StockInquiryDetail.tsx` |
-| `/procurement-management/purchase-requests/{id}`, `/procurement-management/sponsorship-forms/{id}` | `procurement.approvals.change-to-pending-approval-button` | "Change to pending approval" — shared between PR and SF detail (same component) | `app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestDetail.tsx` |
-| `/procurement-management/purchase-requests/{id}`, `/procurement-management/sponsorship-forms/{id}` | `procurement.approvals.send-for-approval-button` | "Send for approval" — shared | `app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestDetail.tsx` |
+| `/procurement-management/purchase-requests/{id}`, `/procurement-management/sponsorship-forms/{id}` | `procurement.approvals.change-to-pending-approval-button` | "Change to pending approval" - shared between PR and SF detail (same component) | `app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestDetail.tsx` |
+| `/procurement-management/purchase-requests/{id}`, `/procurement-management/sponsorship-forms/{id}` | `procurement.approvals.send-for-approval-button` | "Send for approval" - shared | `app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestDetail.tsx` |
 
 ### Popup-internal targets (require user to open the parent dialog first)
 
@@ -70,6 +70,6 @@ These keys live inside dialogs/modals. The spotlight component falls back to a `
 
 ## Known limitations
 
-- **Targets nested inside closed `DropdownMenu` / `Popover`** are not rendered until the trigger is clicked, so the 1s retry window expires. The MutationObserver fallback now keeps watching for 30s — if the user opens the dropdown within that window, the spotlight fires.
+- **Targets nested inside closed `DropdownMenu` / `Popover`** are not rendered until the trigger is clicked, so the 1s retry window expires. The MutationObserver fallback now keeps watching for 30s - if the user opens the dropdown within that window, the spotlight fires.
 - **Popup/dialog-internal targets** (every key in the section above) rely on the same MutationObserver fallback. The user must open the parent dialog within ~30 seconds of clicking the chat link, otherwise the spotlight quietly times out.
-- **Detail-page action targets** (`procurement.stock-inquiries.*`, `procurement.approvals.*`) are attached to buttons that only exist on a record's detail page. The current guide deep-links point to the **list** page (no canonical record id to encode). User lands on the list and must click into a record to see the glow. This is acceptable for v1 — the deep link still gets them to the right module.
+- **Detail-page action targets** (`procurement.stock-inquiries.*`, `procurement.approvals.*`) are attached to buttons that only exist on a record's detail page. The current guide deep-links point to the **list** page (no canonical record id to encode). User lands on the list and must click into a record to see the glow. This is acceptable for v1 - the deep link still gets them to the right module.

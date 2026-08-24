@@ -50,7 +50,7 @@ vi.mock('sonner', () => ({ toast: { custom: vi.fn() } }));
 /** The settings POST, located by URL.
  *
  * `apiFetch` is also used by the page's user-select query, so it is not
- * necessarily call[0] — indexing by position made these tests depend on request
+ * necessarily call[0] - indexing by position made these tests depend on request
  * ordering they do not control. */
 function saveCall(): [string, { body: string }] {
   const call = apiFetch.mock.calls.find(
@@ -73,7 +73,7 @@ function wrap(node: ReactNode) {
  *
  * One mock serves both the settings POST and the page's user-select query. A
  * blanket `mockResolvedValue({ json: () => ({}) })` therefore handed the
- * user-select query an object, and `users?.map(...)` threw — optional chaining
+ * user-select query an object, and `users?.map(...)` threw - optional chaining
  * guards null, not a non-array. Those escaped as unhandled rejections: the
  * assertions still passed, but vitest exited non-zero, which the deploy gate
  * treats as a failure. `/users/select` really does return an array
@@ -138,7 +138,7 @@ describe('SystemHealthSettingsPage', () => {
       health_notify_user_ids: [],
       health_integration_fail_threshold: 10,
       health_audit_volume_floor: 5,
-      // Latency SLA — asserted exactly rather than via toMatchObject, so a key
+      // Latency SLA - asserted exactly rather than via toMatchObject, so a key
       // silently added to or dropped from the payload fails here.
       chat_latency_p99_target_seconds: 10,
       chat_latency_percentile: 99,
@@ -209,7 +209,7 @@ describe('SystemHealthSettingsPage', () => {
   });
 });
 
-describe('SystemHealthSettingsPage — WhatsApp round-trip latency (OBS-S4-21)', () => {
+describe('SystemHealthSettingsPage - WhatsApp round-trip latency (OBS-S4-21)', () => {
   beforeEach(() => {
     apiFetch.mockReset();
     stubApiFetch();
@@ -243,7 +243,7 @@ describe('SystemHealthSettingsPage — WhatsApp round-trip latency (OBS-S4-21)',
   });
 
   it('clamps a blank or zero duration back to the saved value', async () => {
-    // 0 is not a meaningful duration here — it would either disable the check
+    // 0 is not a meaningful duration here - it would either disable the check
     // silently or collapse the window, so it must not be persisted.
     wrap(<SystemHealthSettingsPage />);
     fireEvent.change(screen.getByTestId('chat-latency-target'), { target: { value: '' } });
@@ -264,7 +264,7 @@ describe('SystemHealthSettingsPage — WhatsApp round-trip latency (OBS-S4-21)',
     const summary = screen.getByTestId('chat-latency-summary');
     expect(summary).toHaveTextContent('p99 exceeds 10s');
     expect(summary).toHaveTextContent('30 turns');
-    // ceiling is derived, not typed — the operator should not have to multiply
+    // ceiling is derived, not typed - the operator should not have to multiply
     expect(summary).toHaveTextContent('30s');
     expect(summary).toHaveTextContent('5 minutes');
   });

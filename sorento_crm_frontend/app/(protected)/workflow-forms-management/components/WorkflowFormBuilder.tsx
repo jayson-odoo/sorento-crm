@@ -253,8 +253,8 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
                   {flow.nodes.map((n) => (
                     <li key={n.id}>
                       {n.name} ({n.code})
-                      {n.is_initial ? ' — initial' : ''}
-                      {n.is_terminal ? ' — terminal' : ''}
+                      {n.is_initial ? ' - initial' : ''}
+                      {n.is_terminal ? ' - terminal' : ''}
                     </li>
                   ))}
                 </ul>
@@ -323,7 +323,7 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
             Published: v{def.published_version_number}
           </span>
         ) : (
-          <span className="text-sm text-amber-600">Not published yet — submissions require publish.</span>
+          <span className="text-sm text-amber-600">Not published yet - submissions require publish.</span>
         )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -752,7 +752,7 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
                 <div key={g.id} className="border rounded-md p-3 space-y-2">
                   <p className="font-medium">{g.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {g.fields.length} column(s) — users add rows at runtime.
+                    {g.fields.length} column(s) - users add rows at runtime.
                   </p>
                 </div>
               ))}

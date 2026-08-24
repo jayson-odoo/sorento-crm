@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
  * A row of pills that stops at a sensible number and offers the rest on request.
  *
  * `finish` carries 17 customer words and `product_type` 31 values. Rendered in full,
- * one row of the table was three lines tall and the grid stopped being scannable — the
+ * one row of the table was three lines tall and the grid stopped being scannable - the
  * words that matter were lost among the ones that happened to be listed first.
  */
 export default function PillList({
@@ -19,7 +19,7 @@ export default function PillList({
   values: string[];
   /** How many to show before the rest collapse behind a +N. */
   max?: number;
-  /** Rendered solid rather than outline — used to mark a search hit. */
+  /** Rendered solid rather than outline - used to mark a search hit. */
   emphasis?: string[];
   ariaLabel?: string;
 }) {

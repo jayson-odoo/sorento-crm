@@ -192,7 +192,7 @@ def test_extend_overdue_base_is_current_due_not_now(db):
 
     _seed_user(db)
     pid = _seed_policy(db)
-    # Fixed overdue date with a known time-of-day (Wed 2024-05-15 09:00 — long past).
+    # Fixed overdue date with a known time-of-day (Wed 2024-05-15 09:00 - long past).
     current_due = datetime(2024, 5, 15, 9, 0, 0)
     tid = _seed_tracking(db, pid, due_res=current_due)
 
@@ -203,7 +203,7 @@ def test_extend_overdue_base_is_current_due_not_now(db):
     advanced = CalendarService(db).add_working_days(current_due, 1)
     expected = datetime.combine(advanced.date(), current_due.time())
     assert tracking.due_at_resolution == expected
-    # Strictly after the current due — but NOT anchored to today (still in the past).
+    # Strictly after the current due - but NOT anchored to today (still in the past).
     assert tracking.due_at_resolution > current_due
     assert tracking.due_at_resolution < datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -336,7 +336,7 @@ def test_extend_works_for_form_sla_row(db):
 
 
 # ---------------------------------------------------------------------------
-# Form-SLA extend is ASSIGNEE-ONLY too — consistent with conversation (F-block).
+# Form-SLA extend is ASSIGNEE-ONLY too - consistent with conversation (F-block).
 # ---------------------------------------------------------------------------
 def test_form_extend_non_assignee_403(db):
     """A non-assignee cannot extend a form SLA (assignee-only, same as conversation)."""
@@ -837,7 +837,7 @@ def test_extend_succeeds_when_notify_raises(db):
 
     Drives the real _notify_next_tier_deadline_extended to a resolved recipient
     (via mocked AccessAgentService) then makes the inner _notify_user_deadline_extended
-    raise — the method's own try/except must swallow it so extend still commits."""
+    raise - the method's own try/except must swallow it so extend still commits."""
     _seed_user(db)
     pid = _seed_policy(db)
     tid = _seed_tracking(db, pid, due_res=datetime(2026, 7, 1, 9, 0, 0))
@@ -861,7 +861,7 @@ def test_extend_succeeds_when_notify_raises(db):
 
 # ---------------------------------------------------------------------------
 # Notify-only must NOT advance the round-robin cursor (reviewer guard against the
-# cursor-advance bug — extend is notify-only, PLAN decision 11).
+# cursor-advance bug - extend is notify-only, PLAN decision 11).
 # ---------------------------------------------------------------------------
 def test_extend_does_not_advance_round_robin_cursor(db):
     """An extend whose notify resolves a next tier must PEEK the round-robin cursor,
@@ -943,7 +943,7 @@ def test_extend_overdue_days_mode_advances_from_current_due_keeps_time(db):
 
     new_due = tracking.due_at_resolution
     # Expected date = current_due advanced by 2 working days (tracks weekends/holidays),
-    # with the current due's time-of-day re-applied — relative to current due, not now.
+    # with the current due's time-of-day re-applied - relative to current due, not now.
     advanced = CalendarService(db).add_working_days(current_due, 2)
     expected = datetime.combine(advanced.date(), current_due.time())
     assert new_due == expected
@@ -1033,7 +1033,7 @@ def test_two_extends_create_two_distinct_notifications(db):
 
 def test_retrying_same_occurrence_is_idempotent(db):
     """CHANGE 1: re-notifying the SAME extension occurrence (same extension_count)
-    returns the existing notification — no duplicate row."""
+    returns the existing notification - no duplicate row."""
     agent_id, _team, recipient = _seed_next_tier_chain(db)
     pid = _seed_policy(db)
     tid = _seed_tracking(
@@ -1044,7 +1044,7 @@ def test_retrying_same_occurrence_is_idempotent(db):
 
     svc = _svc(db)
     svc.extend_tracking(tid, ASSIGNEE_ID, days=1, reason="first")  # count -> 1, notify :1
-    # Re-run the notify for the SAME occurrence (count is still 1) — must dedup.
+    # Re-run the notify for the SAME occurrence (count is still 1) - must dedup.
     tracking = svc.get_tracking(tid, load_event_logs=False)
     svc._notify_user_deadline_extended(tracking, recipient_user_id=recipient, reason="retry")
 

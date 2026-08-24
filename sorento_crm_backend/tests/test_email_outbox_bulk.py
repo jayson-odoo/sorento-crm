@@ -1,4 +1,4 @@
-"""Sub-plan D-2 — email-outbox bulk retry/cancel.
+"""Sub-plan D-2 - email-outbox bulk retry/cancel.
 
 Partial success: a row that can't transition is reported in failed_ids, never
 aborting the batch. Duplicates collapse. Selection size is bounded.

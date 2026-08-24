@@ -59,7 +59,7 @@ So the frontend needs the same alias treatment the other two already have.
 
 ```yaml
   networks:
-    - sorento_network
+  - sorento_network
 ```
 
 with:
@@ -68,7 +68,7 @@ with:
   networks:
     sorento_network:
       aliases:
-        - frontend
+      - frontend
 ```
 
 This mirrors `x-backend-base` and `x-mcp-base` exactly. Only one colour runs at

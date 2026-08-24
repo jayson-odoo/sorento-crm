@@ -1,4 +1,4 @@
-"""S6b — linking a complaint to a registered project (UAC AC-L3).
+"""S6b - linking a complaint to a registered project (UAC AC-L3).
 
 Same shape as the sponsorship link in S4, and for the same reason: complaints already carry a
 free-text `project_title` that nobody can report on. The nullable FK adds the reportable link

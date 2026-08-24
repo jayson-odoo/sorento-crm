@@ -33,7 +33,7 @@ from app.services.entity_resolver import (
 
 
 # Every list tool that supports `entities` opts the resolver into the full type
-# catalogue — RAG/substring scope is wider than what the tool can FILTER on,
+# catalogue - RAG/substring scope is wider than what the tool can FILTER on,
 # but echoing unfilterable types (e.g. matched a form but tool only filters by
 # product) is useful context for the agent.
 DEFAULT_ALLOWED_TYPES: tuple[str, ...] = (
@@ -59,7 +59,7 @@ def resolve_or_empty(
 ) -> Optional[EntityFilterBuckets]:
     """Resolve `entities` to filter buckets, or return None when the caller passed nothing.
 
-    Returns None when `entities` is falsy (nothing to do — caller proceeds with
+    Returns None when `entities` is falsy (nothing to do - caller proceeds with
     existing typed filters). Otherwise returns the populated `EntityFilterBuckets`
     so the caller can branch on which bucket fields the resource cares about.
     """

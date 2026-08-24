@@ -4,15 +4,15 @@
  * The panel is where an exception becomes a decision that changes a supplier's placed
  * order, so what these pin is the set of refusals:
  *
- *   - **Reject without a reason is impossible** (AC-D6).
- *   - **Approve without choosing an action is impossible.** The first action is the
+ * - **Reject without a reason is impossible** (AC-D6).
+ * - **Approve without choosing an action is impossible.** The first action is the
  *     engine's proposal, not a preselected inevitability.
- *   - **A split must be strictly inside the quantity** (AC-D11b), because the remainder is
+ * - **A split must be strictly inside the quantity** (AC-D11b), because the remainder is
  *     what stays on the original line and the two parts must sum to it.
- *   - **Before and after are both rendered** (AC-D4), and each reading signal names the
+ * - **Before and after are both rendered** (AC-D4), and each reading signal names the
  *     field it came from (AC-D12) - a reviewer who cannot see the reasoning can only
  *     disagree with the outcome.
- *   - **A decided exception is read-only.** Re-deciding is a different operation, and
+ * - **A decided exception is read-only.** Re-deciding is a different operation, and
  *     silently overwriting loses who decided what.
  */
 import React from 'react';

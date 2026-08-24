@@ -56,7 +56,7 @@ export default function IntegrationLogsList() {
     () => searchParams.get('created_to') ?? '',
   );
   // A failure-cause drill-down from System Health. These have no control in the
-  // filter panel — they are set by the link and cleared as a unit, so the banner
+  // filter panel - they are set by the link and cleared as a unit, so the banner
   // below is the only place they are visible. Without it the list would look
   // inexplicably short.
   const [statusCode, setStatusCode] = useState<string>(
@@ -383,7 +383,7 @@ export default function IntegrationLogsList() {
                   {(createdFrom || createdTo) && (
                     // A drill-down seeds a date window from the URL. The date
                     // inputs are day-granular, so a window like 09:05 renders as
-                    // a bare date and looks like the user set it — this says the
+                    // a bare date and looks like the user set it - this says the
                     // range is active and where it came from.
                     <Badge
                       variant="secondary"

@@ -2,11 +2,11 @@
 """Backfill chat_histories.respond_ts from the Respond message id.
 
 Respond mints `messageId` as the message's epoch-MICROSECOND timestamp, so the
-authoritative SLA clock was always present on the row — the ingest path just never
+authoritative SLA clock was always present on the row - the ingest path just never
 read it, and the resolver (the only writer of `respond_ts`) was failing every call.
 Net effect on production: `turn_id` paired rows correctly, but every `respond_ts`
 was NULL, so `chat_history_query` dropped every turn and the admin grid's Latency
-and Delivery columns rendered "—" on every row.
+and Delivery columns rendered "-" on every row.
 
 This reconciles the history using the SAME parser the live ingest path now uses
 (`chat_message_resolver.respond_ts_from_message_id`), so a backfilled row and a
@@ -17,11 +17,11 @@ Run from sorento_crm_backend/ AFTER deploying the ingest fix:
 
 Two passes:
 
-1. `respond_ts` — set wherever the id parses to a timestamp plausibly near `sent_at`.
+1. `respond_ts` - set wherever the id parses to a timestamp plausibly near `sent_at`.
    Ids that don't (sequence-style test rows, nulls) are left alone; a NULL respond_ts
    is honest and the row simply sits out of the SLA.
 
-2. `delivery_status='not_sent'` — cleared ONLY on rows where pass 1 derived a
+2. `delivery_status='not_sent'` - cleared ONLY on rows where pass 1 derived a
    timestamp. Respond minted an id for those, so "never sent" was a false verdict
    written by the resolver exhausting MAX_RESOLVE_ATTEMPTS against a failing call.
    `resolve_attempts` resets with it so the resolver retries and fills the real

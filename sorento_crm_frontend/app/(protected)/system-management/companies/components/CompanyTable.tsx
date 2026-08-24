@@ -59,7 +59,7 @@ export function buildCompanyColumns(handlers: {
           className="text-muted-foreground truncate block"
           title={row.original.autocount_ref ?? undefined}
         >
-          {row.original.autocount_ref ?? '—'}
+          {row.original.autocount_ref ?? '-'}
         </span>
       ),
     },

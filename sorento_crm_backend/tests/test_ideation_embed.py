@@ -1,16 +1,16 @@
-"""Slice D — Ideas iframe embed-session mint (SSO) endpoint + service.
+"""Slice D - Ideas iframe embed-session mint (SSO) endpoint + service.
 
 Keys back to ``documentation/plans/ideation/ideation-embed-sso-acceptance-criteria.md``:
 
-- **AC-E-2 [BE]** — a logged-in sorento user's request mints a signed assertion
+- **AC-E-2 [BE]** - a logged-in sorento user's request mints a signed assertion
   (resolved embed signing secret + connection id), POSTs it to
   ``{ideation_shared_service_url}/embed/session`` (backend base), and returns
   ``{ iframe_url, token, expires_at }``.
-- **AC-E-3 [BE]** — ``iframe_url`` is built from the distinct FE base
+- **AC-E-3 [BE]** - ``iframe_url`` is built from the distinct FE base
   (``ideation_embed_fe_base_url``), NOT the backend base used for the POST.
-- **AC-E-4 [BE]** — blank config keeps the feature DORMANT: a clean 4xx (not a 500)
+- **AC-E-4 [BE]** - blank config keeps the feature DORMANT: a clean 4xx (not a 500)
   and no shared-service call.
-- **AC-E-12 [BE]** — secrets (signing secret, the minted assertion) are never echoed
+- **AC-E-12 [BE]** - secrets (signing secret, the minted assertion) are never echoed
   in the response body.
 
 The shared-service ``/embed/session`` handshake is STUBBED here (monkeypatched
@@ -37,7 +37,7 @@ from app.services.ideation_embed_service import (
 _SIGNING_SECRET = "test-embed-signing-secret-value"
 _CONNECTION_ID = "e5407a68-13ff-59f6-a337-408b46ca369b"
 _SHARED_URL = "https://shared.test/be"       # backend base (POST /embed/session)
-_FE_URL = "https://shared.test"              # FE root (iframe_url) — distinct (AC-E-3)
+_FE_URL = "https://shared.test"              # FE root (iframe_url) - distinct (AC-E-3)
 
 _USER = {"id": "user-uuid-1", "email": "staff@example.com", "name": "Staff Member"}
 
@@ -54,7 +54,7 @@ def configured(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# AC-E-2 — mint a signed assertion for the logged-in user                      #
+# AC-E-2 - mint a signed assertion for the logged-in user                      #
 # --------------------------------------------------------------------------- #
 def test_mint_assertion_is_signed_and_carries_identity():
     token = mint_embed_assertion(_USER, secret=_SIGNING_SECRET, connection_id=_CONNECTION_ID)
@@ -85,7 +85,7 @@ def test_mint_assertion_dormant_when_secret_blank():
 
 
 # --------------------------------------------------------------------------- #
-# AC-E-2/E-3 — create_embed_session posts to backend base, iframe uses fe base #
+# AC-E-2/E-3 - create_embed_session posts to backend base, iframe uses fe base #
 # --------------------------------------------------------------------------- #
 def test_create_embed_session_board(configured, monkeypatch):
     captured: dict = {}
@@ -135,7 +135,7 @@ def test_backend_and_fe_bases_never_collapse(configured, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# AC-E-4 — dormant when any required field blank                                #
+# AC-E-4 - dormant when any required field blank                                #
 # --------------------------------------------------------------------------- #
 def _blank_all(monkeypatch):
     monkeypatch.setattr(svc.settings, "ideation_shared_service_url", None)
@@ -172,7 +172,7 @@ def test_dormant_when_secret_blank(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# AC-E-4 (mirrored) — shared-service outage → clean upstream error, not a crash #
+# AC-E-4 (mirrored) - shared-service outage → clean upstream error, not a crash #
 # --------------------------------------------------------------------------- #
 def test_upstream_outage_raises_upstream_error(configured, monkeypatch):
     def _boom(base_url, payload):  # noqa: ANN001
@@ -199,7 +199,7 @@ def test_post_embed_session_wraps_httpx_error(configured, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# Endpoint — auth + status-code contract + secrets not echoed                  #
+# Endpoint - auth + status-code contract + secrets not echoed                  #
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def api_client(monkeypatch):
@@ -286,7 +286,7 @@ def test_endpoint_upstream_failure_is_not_500(api_client):
 
 
 def test_endpoint_never_echoes_secrets(api_client, monkeypatch):
-    """A real (service-level) round-trip with the shared-service POST stubbed —
+    """A real (service-level) round-trip with the shared-service POST stubbed - 
     the response must not contain the signing secret, the connection id, or the
     minted assertion."""
     client, mp = api_client

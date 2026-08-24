@@ -6,10 +6,10 @@ missing.
 
 Three shapes in the nine fixture rows, all of them real:
 
-  * `ORDER`                          - nothing placed for this line yet
-  * `202605-S0042`                   - waiting on one purchase order
-  * `202606-S0024 & 202607-S0043`    - ONE line split across two purchase orders
-  * `202605-S0042 & ORDER`           - partly ordered, partly not
+  * `ORDER`                        - nothing placed for this line yet
+  * `202605-S0042`                 - waiting on one purchase order
+  * `202606-S0024 & 202607-S0043`  - ONE line split across two purchase orders
+  * `202605-S0042 & ORDER`         - partly ordered, partly not
 
 The reader moved to Project Sales ownership with its importer (ADR 0010), so this suite lives
 in `tests/` rather than `tests/scm/`. The workbook itself stays in `tests/scm/fixtures/`

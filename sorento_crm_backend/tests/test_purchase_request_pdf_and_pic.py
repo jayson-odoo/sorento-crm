@@ -3,7 +3,7 @@
 Two problems this covers, both reported from production.
 
 1. **Printing.** The only export was Excel. A long delivery address stretched one
-   cell to an enormous width and the printed sheet was unusable — a data format
+   cell to an enormous width and the printed sheet was unusable - a data format
    doing a document's job. PR/SF now render a fixed-layout PDF through the same
    mechanism complaints and stock inquiries use, so "tidy" is the acceptance
    criterion, not a nice-to-have: a pathological address must WRAP inside its
@@ -16,7 +16,7 @@ Two problems this covers, both reported from production.
    separate, optional, free-text field, printed on the PDF.
 
 PR and SF share one table and one detail component, so every assertion here runs
-against BOTH request_type values — a field that works for one and not the other
+against BOTH request_type values - a field that works for one and not the other
 is the regression this guards.
 """
 from __future__ import annotations
@@ -77,7 +77,7 @@ def test_pic_persists_on_both_form_types(db, request_type):
 
 @pytest.mark.parametrize("request_type", BOTH_TYPES)
 def test_pic_is_optional(db, request_type):
-    """Explicitly not mandatory — a form with no named contact must still save."""
+    """Explicitly not mandatory - a form with no named contact must still save."""
     row = _make(db, request_type=request_type)
     db.commit()
     db.expire_all()
@@ -188,7 +188,7 @@ def test_the_form_closes_with_a_signoff_block(db, request_type):
     html = PurchaseRequestPDFService(db)._html(row)
     assert "Requested by:" in html
     assert "Approved by:" in html
-    assert "—" not in html, "an unfilled sign-off must be blank, not a dash"
+    assert "—" not in html, "an unfilled sign-off must be blank, not an em-dash"
 
 
 @pytest.mark.parametrize("request_type", BOTH_TYPES)
@@ -406,7 +406,7 @@ def test_pic_survives_a_portal_submission(kind):
     # instance method, but the allowlist depends only on `kind`
     fields = PortalService._editable_fields(None, kind)  # type: ignore[arg-type]
     assert "pic" in fields, (
-        f"pic missing from the {kind} portal allowlist — the field renders, accepts "
+        f"pic missing from the {kind} portal allowlist - the field renders, accepts "
         "input, and is then silently dropped on submit"
     )
 

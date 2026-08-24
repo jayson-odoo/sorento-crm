@@ -42,7 +42,7 @@ TOOL_REQUIRED_NARROWING_FILTERS: dict[str, tuple[str, ...]] = {
     "crm_marketing_promotion_attachments_list": ("promotion_ids", "attachment_ids"),
     "crm_order_management_orders_by_product_list": ("product_ids",),
     "crm_incoming_stock_by_product": ("product_ids",),
-    # Shipments without any narrower returns the entire open inbound list — too
+    # Shipments without any narrower returns the entire open inbound list - too
     # broad for an AI answer. Require shipment / supplier UUID or an ETA window
     # so questions about a specific shipment, supplier, or date scope get a
     # targeted result. "Incoming for product X" questions should be routed to
@@ -56,7 +56,7 @@ TOOL_REQUIRED_NARROWING_FILTERS: dict[str, tuple[str, ...]] = {
     # Domain-scoped attachment lookup: only resolves known catalogue UUIDs.
     # No UUIDs → empty page (mirrors n8n's domain-hint filtering contract).
     "crm_resource_attachments_catalogue": ("attachment_ids",),
-    # Global document library: never browse the whole library — require at least
+    # Global document library: never browse the whole library - require at least
     # one narrower (attachment / directory / type / uploader UUID) or empty page.
     "crm_resource_attachments_list": (
         "attachment_ids", "directory_id", "attachment_type_id", "attachment_type_ids",
@@ -97,7 +97,7 @@ def _empty_narrowing_response(tool_name: str, query: dict[str, Any] | None, need
     )
 
 
-# Body params a tool accepts but does NOT require — generated as `str | None =
+# Body params a tool accepts but does NOT require - generated as `str | None =
 # None` so callers can omit them (the rest stay required). Lets a POST tool take
 # discrete fields instead of one wrapped JSON blob.
 TOOL_OPTIONAL_BODY_PARAMS: dict[str, tuple[str, ...]] = {
@@ -105,7 +105,7 @@ TOOL_OPTIONAL_BODY_PARAMS: dict[str, tuple[str, ...]] = {
     # Multi-company isolation (AC-F7): contact_id + space_id optionally scope the
     # lookup resolution to the contact's company/companies. Forwarded via BODY
     # (not query) because a POST tool with required body params (set_key, raw)
-    # can't carry optional query args before them in the generated signature —
+    # can't carry optional query args before them in the generated signature - 
     # the same limitation the compiler notes for the `view` param. Optional so
     # existing n8n calls without them keep resolving across all companies
     # (required-first ordering keeps set_key/raw/locale ahead of these two).
@@ -114,7 +114,7 @@ TOOL_OPTIONAL_BODY_PARAMS: dict[str, tuple[str, ...]] = {
 
 
 TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
-    # NOTE: promotions list intentionally has NO status/active default — the
+    # NOTE: promotions list intentionally has NO status/active default - the
     # backend owns the semantics (active-first, fallback to expired rows with
     # per-row `is_expired` so the agent can answer "found but expired").
     # Orders (DO discovery) surface the latest DELIVERED order first by default
@@ -127,7 +127,7 @@ TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
     # the n8n catalogue-hinted agent cannot accidentally return non-catalogue rows.
     "crm_resource_attachments_catalogue": {"attachment_type_code": "catalogue"},
     # Resource library list is hard-pinned to dealer-downloadable (direct-access)
-    # types — it only ever surfaces files flagged is_direct_access.
+    # types - it only ever surfaces files flagged is_direct_access.
     # Deliberately NOT resolve_signed_urls: the tool returns the bare storage key
     # ("import-sources/<uuid>/Container Status 2026.xlsx") and n8n signs it on the
     # way out. Signing here would mint a 1-hour URL at list time that expires on
@@ -169,7 +169,7 @@ ORDERS_LIST_TOOL = "crm_order_management_orders_list"
 ORDERS_GET_TOOL = "crm_order_management_orders_get"
 _ORDERS_SLIM_TOOLS = (ORDERS_LIST_TOOL, ORDERS_GET_TOOL)
 _ORDERS_LIST_DROP_ROW_KEYS = {
-    # No UUIDs in agent-facing rows — order_number is the human identifier;
+    # No UUIDs in agent-facing rows - order_number is the human identifier;
     # UUID narrowing on the way IN comes from crm_resolve_references, never
     # from echoing row ids back.
     "id",
@@ -194,7 +194,7 @@ _ORDERS_LIST_DROP_ROW_KEYS = {
     "estimated_delivery_date",
 }
 _ORDERS_LIST_DROP_LINE_KEYS = {
-    # UUID columns — product/warehouse identity stays via the nested
+    # UUID columns - product/warehouse identity stays via the nested
     # product/warehouse blocks (code + name, id stripped separately).
     "id",
     "order_id",
@@ -282,7 +282,7 @@ def _looks_like_uuid(value: str | None) -> bool:
 
 
 # Names that should be UUID-validated when present as query/path params.
-# Skip respond.io identifiers (contact_id, space_id) — those are Respond's own
+# Skip respond.io identifiers (contact_id, space_id) - those are Respond's own
 # numeric / opaque IDs, not server-side UUIDs.
 _UUID_PARAM_SUFFIXES = ("_id", "_ids")
 _UUID_PARAM_EXEMPT: frozenset[str] = frozenset({"contact_id", "space_id"})
@@ -300,7 +300,7 @@ def _validate_uuid_param(name: str, value: Any) -> Any:
     Accepts: single UUID string, CSV string of UUIDs, list of UUID strings,
     JSON array string of UUIDs. Returns the original value (unchanged) so the
     HTTP serialization stays untouched. Raises ValueError with a structured
-    payload on invalid input — caught by the envelope wrapper as status=error.
+    payload on invalid input - caught by the envelope wrapper as status=error.
     """
     if value is None or value == "":
         return value
@@ -641,7 +641,7 @@ def _normalize_updated_at(value: Any) -> Any:
 def _strip_stock_hidden_fields(value: Any) -> Any:
     """Recursively drop quantity / status fields the stock MCP tools must hide.
 
-    Stock tools only — see `_STOCK_HIDDEN_FIELDS`.
+    Stock tools only - see `_STOCK_HIDDEN_FIELDS`.
     """
     if isinstance(value, list):
         return [_strip_stock_hidden_fields(item) for item in value]
@@ -811,7 +811,7 @@ _PROMO_PRODUCT_TOOL_PREFIXES = (
 _PROMOTIONS_LIST_TOOL = "crm_marketing_promotions_list"
 _PROMOTIONS_LIST_DROP_KEYS = frozenset({"id", "created_by"})
 _PRODUCTS_LIST_TOOL = "crm_master_products_list"
-# Confidential product economics — never surface to chat / WhatsApp. list_price
+# Confidential product economics - never surface to chat / WhatsApp. list_price
 # (customer-facing) stays; cost + invoice price are internal.
 _PRODUCTS_LIST_DROP_KEYS = ("cost_price", "invoice_price")
 
@@ -832,7 +832,7 @@ _PORTAL_LINK_TOOL = "crm_portal_link_get"
 # Forms-list rows: the agent only needs the form NAME (to name it back to the
 # user) plus `attachment_id` (to deliver the downloadable file). code, purpose,
 # form_type, language, version, is_active, access_levels are internal noise the
-# assistant should never surface. Whitelist projection — keep ONLY these keys.
+# assistant should never surface. Whitelist projection - keep ONLY these keys.
 _FORMS_LIST_TOOL = "crm_forms_management_forms_list"
 # Browse (no form_ids → "what forms do you have"): name only.
 # Narrowed (form_ids → a specific form): name + the attachment object so the
@@ -842,16 +842,16 @@ _FORMS_LIST_KEEP_BROWSE = ("name",)
 _FORMS_LIST_KEEP_NARROW = ("name", "attachment")
 
 # Tools whose row payload carries an inline attachment(s) blob. Browse-mode
-# calls (no UUID narrowing — agent listing the whole catalog) strip those
+# calls (no UUID narrowing - agent listing the whole catalog) strip those
 # inline blobs to keep the response small and to stop the agent from echoing
 # every linked file when the user just asked "what forms / promos do we have".
-# UUID-narrowed calls keep attachments — the agent asked for a specific row
+# UUID-narrowed calls keep attachments - the agent asked for a specific row
 # and needs the linked files in the answer.
 #
 # (tool_name, narrowing_query_keys, row_keys_to_strip_when_browsing)
 _BROWSE_ATTACHMENT_STRIP_RULES: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
     # Note: crm_marketing_promotions_list no longer browse-strips its header
-    # `attachments` — the promotion's packing-list file is exactly what n8n needs
+    # `attachments` - the promotion's packing-list file is exactly what n8n needs
     # to deliver, and the consolidated tool returns full granular data regardless
     # of browse vs narrowed mode.
     # Note: crm_forms_management_forms_list is handled by the stronger
@@ -967,7 +967,7 @@ async def _fetch_all_child_rows(
 ) -> list[Any]:
     """Page a child list endpoint (limit cap 100) until exhausted; return all rows.
 
-    Used by the merge-tool enrichers — a single page of parents can have more
+    Used by the merge-tool enrichers - a single page of parents can have more
     child rows (promotion products / product attachments) than the backend's
     per-page cap, so we must paginate or nesting would silently truncate.
     """
@@ -990,7 +990,7 @@ async def _fetch_all_child_rows(
 async def _enrich_products_with_attachments(client: Any, raw: str, query: dict[str, Any] | None) -> str:
     """Nest each product's attachments under an `attachments[]` key (merge tool).
 
-    ONLY runs when the caller passed `attachment_type_ids` — then it fans out to
+    ONLY runs when the caller passed `attachment_type_ids` - then it fans out to
     /product-attachments?product_ids=<page ids>&attachment_type_ids=<types> and
     nests just those file types. Without `attachment_type_ids` the response is a
     plain product listing with no attachments (e.g. a price/spec list). Attachment
@@ -1027,7 +1027,7 @@ async def _enrich_products_with_attachments(client: Any, raw: str, query: dict[s
 async def _enrich_list_response(tool_name: str, client: Any, raw: str, query: dict[str, Any] | None) -> str:
     """Dispatch the merge-tool nesting enrichment for the consolidated list tools.
 
-    Note: promotions_list returns the promo HEADER + its PDF only — products are
+    Note: promotions_list returns the promo HEADER + its PDF only - products are
     intentionally NOT nested (the user reads SKU detail from the PDF).
     """
     if tool_name == "crm_master_products_list":
@@ -1063,7 +1063,7 @@ _ATTACHMENT_TOOL_PREFIXES = (
     "crm_resource_attachments_",
 )
 
-# Extra fields stripped only from the global resource library list view —
+# Extra fields stripped only from the global resource library list view - 
 # noisy for chat answers; admins use the UI when they need them.
 _RESOURCE_ATTACHMENT_LIST_EXTRA_KEYS = frozenset(
     {
@@ -1077,7 +1077,7 @@ _RESOURCE_ATTACHMENT_LIST_TOOL = "crm_resource_attachments_list"
 
 # Catalogue-domain tool slims each row to a keep-list. Caller already supplied
 # attachment_ids on the way in (REQUIRED narrowing); the n8n catalogue flow only
-# needs file metadata + URL to forward the doc — never the row UUID, linkage
+# needs file metadata + URL to forward the doc - never the row UUID, linkage
 # arrays, audit columns, or soft-delete bookkeeping. Keep-list (not drop-list)
 # so new backend columns don't leak into chat context by default.
 _RESOURCE_ATTACHMENT_CATALOGUE_TOOL = "crm_resource_attachments_catalogue"
@@ -1119,12 +1119,12 @@ def _strip_attachment_internals(node: Any, _parent_key: str | None = None) -> An
     lists so nested `attachment` blocks (e.g. promotion_attachment rows that
     embed an `attachment` sub-object) are slimmed too.
 
-    Also drops `description` from any nested `attachment_type` dict — the
+    Also drops `description` from any nested `attachment_type` dict - the
     long-form description on AttachmentType is taxonomy admin noise (e.g.
     "Product Photos / Actual Photos / Photos by Marketing") that the LLM
     doesn't need to surface in chat. `type_name` already conveys what the
     file class is. Care: only stripped when the dict was reached via an
-    `attachment_type` key — the sibling `Attachment.description` column
+    `attachment_type` key - the sibling `Attachment.description` column
     (per-file caption) stays intact.
     """
     if isinstance(node, list):
@@ -1409,7 +1409,7 @@ def _sanitize_tool_response(
         # The portal link is the deliverable; the raw expiry timestamp is
         # internal bookkeeping the assistant should not surface to the user.
         data.pop("expires_at", None)
-    # Browse-mode attachment strip — applied LAST so it runs after the
+    # Browse-mode attachment strip - applied LAST so it runs after the
     # promotion / forms row-level sanitizers have already done their work.
     for rule_tool, narrowing_keys, drop_keys in _BROWSE_ATTACHMENT_STRIP_RULES:
         if tool_name == rule_tool and _is_browse_mode(query, narrowing_keys):
@@ -1565,7 +1565,7 @@ def _compile_tool(spec: ToolSpec):
                 query_params_with_aliases.append(alias_name)
     # Opt-in `view=render` param: presenter tools expose it so callers can ask for
     # the uniform render envelope. Popped before the backend call (see impl).
-    # Skip tools with body params — an optional query arg cannot precede a
+    # Skip tools with body params - an optional query arg cannot precede a
     # required body arg in the generated signature (e.g. portal_link_get).
     if (
         spec.name in PRESENTER_TOOLS
@@ -1696,7 +1696,7 @@ def _compile_tool(spec: ToolSpec):
         "json": json,
         "_spec": spec,
     }
-    exec(code, ns)  # noqa: S102 — catalog-only templates
+    exec(code, ns)  # noqa: S102 - catalog-only templates
     return ns[fname]
 
 
@@ -1731,7 +1731,7 @@ def create_mcp_app(settings: Settings) -> FastMCP:
             continue
         if getattr(spec, "external", False):
             # External tools (e.g. Outline-backed user_guides_*) are registered
-            # by their dedicated handler below — skip the HTTP-backed compile.
+            # by their dedicated handler below - skip the HTTP-backed compile.
             continue
         impl = _compile_tool(spec)
         mcp.add_tool(impl, name=spec.name, description=spec.description)

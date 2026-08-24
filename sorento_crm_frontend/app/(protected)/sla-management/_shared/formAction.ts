@@ -2,9 +2,9 @@
  * Form SLA Undo - framework-free types + view-state resolver (PLAN-form-sla-undo.md).
  *
  * Two mechanisms share one surface:
- *   - IN-GRACE: the click created a `pending` action and NOTHING else happened. Undo
+ * - IN-GRACE: the click created a `pending` action and NOTHING else happened. Undo
  *     deletes the row; nobody is told. Actor (or an admin) only, no permission needed.
- *   - POST-GRACE: the action already committed. Undo is a compensating reversal, is
+ * - POST-GRACE: the action already committed. Undo is a compensating reversal, is
  *     permission-gated, needs a reason, and is refused once the next stage has been
  *     acted on.
  *

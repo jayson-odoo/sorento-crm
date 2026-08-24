@@ -13,9 +13,9 @@ import type { TrajectoryEntry } from './trajectory';
 /**
  * Pure-math coverage for the two order-qty-ledger follow-ups (user feedback, 2026-08-12):
  *
- *  - `lineBreachStatus`: a covered row above its own line must never read a bogus
+ * - `lineBreachStatus`: a covered row above its own line must never read a bogus
  *    "Gap to line" figure.
- *  - `forecastAddOn`: the forecast add-on's horizon must name its source, and follow the
+ * - `forecastAddOn`: the forecast add-on's horizon must name its source, and follow the
  *    SAME trajectory verdict as the row's own Trend pill.
  */
 

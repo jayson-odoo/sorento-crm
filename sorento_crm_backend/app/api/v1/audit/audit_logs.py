@@ -46,7 +46,7 @@ def _contact_display_names(db: Session, contact_ids: list[str]) -> dict[str, str
 
 
 # Human-readable one-liner for a status transition, e.g. "status: pending → approved".
-# Derived at serialize time from the JSONB diff — no schema/storage change.
+# Derived at serialize time from the JSONB diff - no schema/storage change.
 def _derive_description(it) -> Optional[str]:
     if it.description:
         return it.description
@@ -63,7 +63,7 @@ def _derive_description(it) -> Optional[str]:
         if new.get("stored_filename") and new.get("stored_filename") != old.get("stored_filename"):
             return f"Renamed to {new.get('stored_filename')}"
         if new.get("description") != old.get("description"):
-            return f"Edited file details{f' — {fname}' if fname else ''}"
+            return f"Edited file details{f' - {fname}' if fname else ''}"
         return f"Updated {fname}" if fname else "Updated a file"
     for key in ("status", "approval_status", "order_status"):
         if key in new and new.get(key) != old.get(key):

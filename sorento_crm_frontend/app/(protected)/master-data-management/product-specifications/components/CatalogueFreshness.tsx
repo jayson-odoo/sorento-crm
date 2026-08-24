@@ -11,7 +11,7 @@ import type { CatalogueStatus } from '../services/productSpecService';
  * Whether the stored specifications were read with the rules that are live now.
  *
  * Editing a rule changes how a product WOULD be read. It does not change the 22,805
- * values already stored — those were read under the old rules and stay that way until
+ * values already stored - those were read under the old rules and stay that way until
  * the catalogue is read again. Without this, a rule saves, the screen says saved, every
  * search keeps returning the old answer, and the only reasonable conclusion is that the
  * setting does nothing.
@@ -104,7 +104,7 @@ export default function CatalogueFreshness({ refreshKey = 0 }: { refreshKey?: nu
           'The rules have changed since the products were last read, so searches are still using the old values. Read the catalogue again to apply them.'}
         {!running && !failed && !stale && state.ever_read &&
           `Products were last read with the current rules${
-            state.result?.written ? ` — ${state.result.written.toLocaleString()} rows` : ''
+            state.result?.written ? ` - ${state.result.written.toLocaleString()} rows` : ''
           }.`}
         {!running && !failed && !stale && !state.ever_read &&
           'Products have not been read from this screen yet, so it is not known whether the stored values match the current rules.'}

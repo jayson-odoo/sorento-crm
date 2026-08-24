@@ -1,4 +1,4 @@
-"""Field-linkage registry — maps an entity_type (product/promotion/packing_list/form)
+"""Field-linkage registry - maps an entity_type (product/promotion/packing_list/form)
 to the list of fields an attachment can be linked against, plus shared validation."""
 
 from app.services.field_linkage.registry import (

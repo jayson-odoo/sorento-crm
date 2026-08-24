@@ -45,7 +45,7 @@ class AIAssistantConfigResponse(BaseModel):
 class PageEntityRef(BaseModel):
     """The specific record the user is viewing, registered by the FE per-screen
     context provider. Covers detail pages AND modals (URL-parse alone can't see
-    modals). Additive/optional on the snapshot — old clients omit it."""
+    modals). Additive/optional on the snapshot - old clients omit it."""
 
     entity_type: str
     id: str

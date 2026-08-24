@@ -1,4 +1,4 @@
-"""Form void — action + guards, per form x4 (UAC ACT-1..ACT-5).
+"""Form void - action + guards, per form x4 (UAC ACT-1..ACT-5).
 
 Per form: happy (200 + voided), 403 (no perm), 422 (blank reason), 409 (terminal).
 Plus: sponsorship form uses its own slug (R3); irreversibility = a voided form
@@ -49,7 +49,7 @@ def _actor(db, slugs):
 
 
 # =========================================================================== #
-# ACT-1 / ACT-2 — happy path per form
+# ACT-1 / ACT-2 - happy path per form
 # =========================================================================== #
 def test_pr_void_happy(db):
     uid = _actor(db, {"procurement.purchase_requests.void"})
@@ -88,7 +88,7 @@ def test_stock_inquiry_void_happy(db):
 
 
 # =========================================================================== #
-# ACT-2 (R3) — PR + SF SHARE one void slug (shared router + detail component):
+# ACT-2 (R3) - PR + SF SHARE one void slug (shared router + detail component):
 # procurement.purchase_requests.void unlocks a sponsorship-form void too.
 # =========================================================================== #
 def test_sponsorship_form_shares_pr_void_slug_200(db):
@@ -101,7 +101,7 @@ def test_sponsorship_form_shares_pr_void_slug_200(db):
 
 
 # =========================================================================== #
-# ACT-4 — no permission -> 403 (per form)
+# ACT-4 - no permission -> 403 (per form)
 # =========================================================================== #
 @pytest.mark.parametrize("form", ["pr", "complaint", "si"])
 def test_void_no_permission_403(db, form):
@@ -120,7 +120,7 @@ def test_void_no_permission_403(db, form):
 
 
 # =========================================================================== #
-# ACT-3 — blank reason -> 422 (per form)
+# ACT-3 - blank reason -> 422 (per form)
 # =========================================================================== #
 @pytest.mark.parametrize("form", ["pr", "complaint", "si"])
 def test_void_blank_reason_422(db, form):
@@ -142,7 +142,7 @@ def test_void_blank_reason_422(db, form):
 
 
 # =========================================================================== #
-# ACT-3 — terminal state -> 409 (per form). Covers voided / rejected / resolved
+# ACT-3 - terminal state -> 409 (per form). Covers voided / rejected / resolved
 # / closed / (CS-processed). Also ACT-5: a voided form re-voided -> 409.
 # =========================================================================== #
 @pytest.mark.parametrize("status", ["voided", "rejected", "closed", "processed_by_cs"])
@@ -175,7 +175,7 @@ def test_stock_inquiry_void_terminal_409(db, status):
 
 
 # =========================================================================== #
-# ACT-5 — irreversible: no un-void / reopen route for a voided form
+# ACT-5 - irreversible: no un-void / reopen route for a voided form
 # =========================================================================== #
 def test_no_unvoid_route():
     """Voiding is irreversible: no un-void / reopen route may exist.
@@ -184,7 +184,7 @@ def test_no_unvoid_route():
     `app.main.app`. The app-global walk was not dependable: in CI the imported
     app carried only its 6 default routes, meaning some earlier test leaves
     `app.main` half-initialised (its `include_router` call never ran on the
-    object this test sees) — while the routes are plainly live, since every
+    object this test sees) - while the routes are plainly live, since every
     other test in this file POSTs to `/void` successfully in that same run.
 
     That import-order pollution is worth fixing on its own, but this test should

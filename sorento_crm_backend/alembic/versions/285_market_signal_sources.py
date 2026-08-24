@@ -1,4 +1,4 @@
-"""Add ``scm.market_signal.sources`` (JSONB) — multiple citation sources per signal.
+"""Add ``scm.market_signal.sources`` (JSONB) - multiple citation sources per signal.
 
 SCM M8-F: the market card must cite SOURCES (several, when available) to prove the
 figure is factual. A signal previously carried a single ``source_url``; this adds a

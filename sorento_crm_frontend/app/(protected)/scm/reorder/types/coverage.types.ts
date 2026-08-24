@@ -8,9 +8,9 @@
  * implements is documented at the top of `services/coverageService.ts`.
  *
  * Two deliberate omissions, both hard rules:
- *   - No id fields. `product_id` / `pool_id` are NOT serialised, so a UUID cannot
+ * - No id fields. `product_id` / `pool_id` are NOT serialised, so a UUID cannot
  *     leak into the UI (AC-B2). Everything is addressed by human code.
- *   - No stored timeline. The payload carries `computed_at` because it is computed
+ * - No stored timeline. The payload carries `computed_at` because it is computed
  *     per request and never persisted (AC-B6).
  */
 

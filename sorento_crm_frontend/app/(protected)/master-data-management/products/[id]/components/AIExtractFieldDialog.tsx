@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * AIExtractFieldDialog — runs the AI extract pipeline against an
+ * AIExtractFieldDialog - runs the AI extract pipeline against an
  * already-stored attachment, shows the suggested values per field, lets the
  * user drop bad guesses, and writes the kept values back to the product.
  *

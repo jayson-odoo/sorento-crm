@@ -1,9 +1,9 @@
-"""POST /conversation-sla-tracking/integration — error-code propagation.
+"""POST /conversation-sla-tracking/integration - error-code propagation.
 
 Covers UAC OBS-S1-05b.
 
 This is the endpoint n8n calls to open a conversation SLA. A deliberate refusal
-from the service — "Respond contact not found for phone number: X" — is raised as
+from the service - "Respond contact not found for phone number: X" - is raised as
 an `AppException` carrying 400 / VALIDATION_ERROR, but the route's bare
 `except Exception: raise handle_internal_error(str(e))` re-wrapped it into
 500 / INTERNAL_ERROR. The caller was told the server broke when in fact its input
@@ -101,7 +101,7 @@ def test_http_exception_is_not_flattened_to_500(client, monkeypatch):
 
 
 def test_a_genuine_crash_is_still_a_500(client, monkeypatch):
-    """The narrowing must not swallow real faults — that would be the opposite
+    """The narrowing must not swallow real faults - that would be the opposite
     regression, hiding a broken server behind a 4xx."""
     monkeypatch.setattr(
         mod.ConversationSLATrackingService,

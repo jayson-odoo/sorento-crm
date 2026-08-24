@@ -1,11 +1,11 @@
 """Deterministic router unit tests (M0 Semantic Parser revamp).
 
 ``AIAssistantChatService._route(parse, *, record_available)`` is a PURE switch on
-the ``ParseResult`` params — no LLM, no DB. These tests construct the ParseResult
+the ``ParseResult`` params - no LLM, no DB. These tests construct the ParseResult
 directly and assert the resulting ``_RouteDecision`` (``.kind`` / ``.is_how_to``
 / ``.skip_rag``). This is deterministic and does NOT overfit an LLM: we never
 assert how a literal sentence classifies (that is the parser's job, exercised
-offline via a stub) — only that a GIVEN ParseResult routes to the documented
+offline via a stub) - only that a GIVEN ParseResult routes to the documented
 branch (PLAN §12 router-precedence table). See feedback_no_overfit_llm_nlp.
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ from app.services.ai_assistant_service import _LOW_CONFIDENCE_FLOOR, AIAssistant
 
 
 def _svc() -> AIAssistantChatService:
-    # _route touches neither the DB nor any collaborator — pure function.
+    # _route touches neither the DB nor any collaborator - pure function.
     return AIAssistantChatService(db=None)  # type: ignore[arg-type]
 
 
@@ -46,7 +46,7 @@ _CASES = [
     ("capability", _parse("capability"), False, "capability", False, False),
     # --- smalltalk: agent loop with NO tools (skip RAG) -----------------------
     ("smalltalk", _parse("smalltalk"), False, "agent", False, True),
-    # --- definition: agent loop WITH tools — a term question mislabelled from a
+    # --- definition: agent loop WITH tools - a term question mislabelled from a
     #     real data lookup ("what is DO-123?") must still reach MCP read tools ---
     ("definition", _parse("definition"), False, "agent", False, False),
     # --- how_to: agent loop with deterministic guide pre-fetch ----------------

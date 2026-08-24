@@ -5,14 +5,14 @@ The original incident: `sla_deadline_extended` was NOT in EMAIL_EVENT_REGISTRY, 
 `email_outbox_service.enqueue` raised UnknownEmailEvent and the email was silently
 dropped (no outbox row, delivery marked failed). These tests pin:
 
-  CHANGE 3 — registry coverage:
+  CHANGE 3 - registry coverage:
     * get_event_def("sla_deadline_extended") is not None.
     * GUARD: every target value in _NOTIFICATION_TYPE_TO_EVENT_KEY has a registry
-      entry — catches any future notification key that lacks an email registry def.
+      entry - catches any future notification key that lacks an email registry def.
 
-  CHANGE 4 — end-to-end enqueue:
+  CHANGE 4 - end-to-end enqueue:
     * A registered key enqueues an EmailOutbox row + marks the delivery 'queued'.
-    * An UNREGISTERED key raises UnknownEmailEvent (proves the guard is real — this
+    * An UNREGISTERED key raises UnknownEmailEvent (proves the guard is real - this
       is exactly what dropped the email before the registry fix).
 
 Run:
@@ -141,7 +141,7 @@ def test_enqueue_email_for_deadline_extended_creates_outbox_row(db):
 
 def test_enqueue_with_unregistered_key_raises_unknown_email_event(db):
     """CHANGE 4 (proves the guard is real): enqueueing an UNREGISTERED key raises
-    UnknownEmailEvent — the exact failure that silently dropped deadline-extended
+    UnknownEmailEvent - the exact failure that silently dropped deadline-extended
     emails before 'sla_deadline_extended' was added to the registry."""
     with pytest.raises(UnknownEmailEvent):
         email_outbox_service.enqueue(

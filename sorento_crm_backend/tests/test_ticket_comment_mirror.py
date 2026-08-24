@@ -4,11 +4,11 @@ Respond has no comment read-back API, so the CRM DB is the source of truth and
 this mirror exists purely so staff still living in the Respond inbox see the
 note. It must therefore:
 
-  - POST the comment text to Respond's contact comment endpoint
-  - render mentioned users that HAVE a Respond mapping as `{{@user.<id>}}` and
+ - POST the comment text to Respond's contact comment endpoint
+ - render mentioned users that HAVE a Respond mapping as `{{@user.<id>}}` and
     leave unmapped ones as the plain "@Name" the author typed
-  - write an `integration_log` outbox row on success AND on failure (repo rule)
-  - never raise: the comment is already committed
+ - write an `integration_log` outbox row on success AND on failure (repo rule)
+ - never raise: the comment is already committed
 
 Run:
     venv/bin/pytest tests/test_ticket_comment_mirror.py -q

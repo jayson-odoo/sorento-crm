@@ -1,5 +1,5 @@
 /**
- * useDriveViewMode — list/grid persistence per user (UAC A5).
+ * useDriveViewMode - list/grid persistence per user (UAC A5).
  */
 import React from 'react';
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -42,7 +42,7 @@ describe('useDriveViewMode', () => {
   it('hydrates from localStorage on mount (survives reload)', () => {
     window.localStorage.setItem(STORAGE_KEY, 'grid');
     render(<Harness />);
-    // effect runs synchronously under RTL act() — mode hydrates to grid.
+    // effect runs synchronously under RTL act() - mode hydrates to grid.
     expect(screen.getByTestId('mode').textContent).toBe('grid');
   });
 });

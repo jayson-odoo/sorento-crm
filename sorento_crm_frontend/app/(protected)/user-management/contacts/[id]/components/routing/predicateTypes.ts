@@ -1,5 +1,5 @@
 /**
- * R2 — CS-routing predicate builder types + helpers (pure, UI-side).
+ * R2 - CS-routing predicate builder types + helpers (pure, UI-side).
  *
  * A routing row carries an ordered list of AND-combined predicates evaluated
  * against a form's own field values. Mirrors the backend engine
@@ -42,7 +42,7 @@ export const ALL_OPERATORS: { value: PredicateOperator; label: string }[] = [
 
 /**
  * Operators offered for a field type. `contains` / `not_contains` are hidden for
- * enum, numeric AND lookup fields (fixed-option / numeric — substring matching is
+ * enum, numeric AND lookup fields (fixed-option / numeric - substring matching is
  * meaningless there); only free-text string fields get all four.
  */
 export function operatorsForFieldType(

@@ -146,7 +146,7 @@ function dataState() {
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('RuleBuilder — fetch states', () => {
+describe('RuleBuilder - fetch states', () => {
   it('renders null when there are no sources', () => {
     dataState();
     const { container } = render(
@@ -179,7 +179,7 @@ describe('RuleBuilder — fetch states', () => {
   });
 });
 
-describe('RuleBuilder — editing', () => {
+describe('RuleBuilder - editing', () => {
   it('empty root renders the always-matches hint and Add buttons', () => {
     dataState();
     render(<RuleBuilder sources={['promotion']} value={null} onChange={vi.fn()} />);
@@ -309,7 +309,7 @@ describe('RuleBuilder — editing', () => {
 
     render(<RuleBuilder sources={['promotion']} value={value} onChange={vi.fn()} />);
     // Groups at depth 0..3 still offer "Add group" (depth < RULE_MAX_DEPTH-1 = 4);
-    // the depth-4 group does NOT — so exactly 4 "Add group" buttons.
+    // the depth-4 group does NOT - so exactly 4 "Add group" buttons.
     expect(screen.getAllByRole('button', { name: /add group/i }).length).toBe(4);
   });
 

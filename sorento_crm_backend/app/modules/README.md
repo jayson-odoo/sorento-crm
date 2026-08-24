@@ -1,7 +1,7 @@
 # Domain modules (incremental layout)
 
 **Catalog (source of truth for the App Store UI and install resolver):** PostgreSQL table
-`app_modules_catalog` — `module_key`, `display_name`, `description`, `dependencies` (JSON array of
+`app_modules_catalog` - `module_key`, `display_name`, `description`, `dependencies` (JSON array of
 keys), `sort_order`, `is_core`. Change those columns to update names, copy, dependency edges, and
 ordering without a deploy.
 

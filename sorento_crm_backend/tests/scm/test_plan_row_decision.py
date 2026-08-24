@@ -1,4 +1,4 @@
-"""S16 (captain 21 Aug, 3rd time requested) — the row decision: buy / use stock /
+"""S16 (captain 21 Aug, 3rd time requested) - the row decision: buy / use stock /
 use PO / skip, or a mixture, recorded directly on a recommendation.
 
 > "I want the decision made here... there is only buy / use stock / use SPO / mixture,
@@ -85,7 +85,7 @@ def _decision_row(db, rec_id):
 
 
 # ===========================================================================
-# record — every kind, incl. a mixture summing correctly
+# record - every kind, incl. a mixture summing correctly
 # ===========================================================================
 
 def test_record_buy_decision(scm_app):
@@ -187,7 +187,7 @@ def test_clear_decision_is_idempotent(scm_app):
 
 
 # ===========================================================================
-# a non-buy rec accepts use_stock (S16 gap #2 — the buy-only guard is relaxed)
+# a non-buy rec accepts use_stock (S16 gap #2 - the buy-only guard is relaxed)
 # ===========================================================================
 
 def test_non_buy_rec_accepts_use_stock(scm_app):
@@ -204,7 +204,7 @@ def test_non_buy_rec_accepts_use_stock(scm_app):
     row = _decision_row(db, rec_id)
     assert row["kind"] == "use_stock"
 
-    # the OLD buy-only accept/adjust/reject path still refuses this same row —
+    # the OLD buy-only accept/adjust/reject path still refuses this same row - 
     # the relaxation is additive, not a removal of the old invariant.
     with pytest.raises(AppException):
         dsvc.accept_recommendation(db, rec_id, actor="tester")
@@ -333,7 +333,7 @@ def test_confirm_decisions_drafts_only_the_buy_portion_of_a_mixture(scm_app):
         "SELECT qty_ordered FROM purchase_order_lines WHERE source_ref = :r"
     ), {"r": rec_id}).mappings().first()
     assert line is not None
-    # only the BUY portion (30) reaches the draft PO line — never 30+15+5
+    # only the BUY portion (30) reaches the draft PO line - never 30+15+5
     assert float(line["qty_ordered"]) == 30
 
 
@@ -358,7 +358,7 @@ def test_confirm_decisions_drafts_nothing_for_a_use_stock_only_decision(scm_app)
 
 
 def test_plan_row_decision_takes_priority_over_legacy_accept(scm_app):
-    """A rec accepted the OLD way, then decided the NEW way — the row decision is
+    """A rec accepted the OLD way, then decided the NEW way - the row decision is
     authoritative at confirm, so the buy qty raised is the NEW figure, not the old
     accepted rounded_qty."""
     _, db, _, _ = scm_app

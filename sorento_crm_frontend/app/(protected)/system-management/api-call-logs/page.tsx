@@ -57,7 +57,7 @@ function OutcomeCell({ row }: { row: ApiCallLogRow }) {
     row.outcome === 'success' ? 'success' : row.outcome === 'client_error' ? 'warning' : 'destructive';
   return (
     <Badge variant={variant} appearance="light" size="sm">
-      {row.status_code ?? '—'}
+      {row.status_code ?? '-'}
     </Badge>
   );
 }
@@ -149,7 +149,7 @@ export default function ApiCallLogsPage() {
         header: ({ column }) => <DataGridColumnHeader title="MCP tool" column={column} />,
         cell: ({ row }) => (
           <span className="block truncate text-xs" title={row.original.tool_name ?? ''}>
-            {row.original.tool_name ?? '—'}
+            {row.original.tool_name ?? '-'}
           </span>
         ),
         size: 150,
@@ -166,7 +166,7 @@ export default function ApiCallLogsPage() {
         accessorKey: 'latency_ms',
         header: ({ column }) => <DataGridColumnHeader title="Latency" column={column} />,
         cell: ({ row }) =>
-          row.original.latency_ms === null ? '—' : `${row.original.latency_ms} ms`,
+          row.original.latency_ms === null ? '-' : `${row.original.latency_ms} ms`,
         size: 100,
         meta: { headerTitle: 'Latency' },
       },

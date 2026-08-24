@@ -24,10 +24,10 @@ export function inferOrderFieldSubgroup(f: ListQueryFieldMeta): 'product' | 'war
 /** Shorter label inside nested Product / Warehouse groups. */
 export function shortNestedOrderLineLabel(label: string, subgroup: 'product' | 'warehouse'): string {
   if (subgroup === 'product') {
-    const s = label.replace(/^Line\s*[—–-]\s*product\s*/i, '').trim();
+    const s = label.replace(/^Line\s*[ - - -]\s*product\s*/i, '').trim();
     return s || label;
   }
-  const s = label.replace(/^Line\s*[—–-]\s*warehouse\s*/i, '').trim();
+  const s = label.replace(/^Line\s*[ - - -]\s*warehouse\s*/i, '').trim();
   return s || label;
 }
 

@@ -1,4 +1,4 @@
-# MCP Tool Catalog + AccessAgent Tool Ownership + Per-Call Guard — Design
+# MCP Tool Catalog + AccessAgent Tool Ownership + Per-Call Guard - Design
 
 **Status:** Draft for review
 **Date:** 2026-05-01
@@ -13,7 +13,7 @@
 
 The MCP server (`sorento_crm_mcp`) exposes ~150 read-only tools that mirror
 backend GET endpoints. Today the server only checks a single shared
-`X-API-Key` header — it has no concept of *which user is calling* or *which
+`X-API-Key` header - it has no concept of *which user is calling* or *which
 tools that user should be allowed to invoke*. There is no DB table that lists
 the registered MCP tools, and no link between MCP tools and the existing
 `access_agents` model (which already groups contacts via
@@ -28,7 +28,7 @@ We need:
 
 1. A persisted catalog of MCP tools that mirrors the code catalog and stays
    in sync as modules are uploaded / removed.
-2. An ownership link between `access_agents` and tools — **each tool belongs
+2. An ownership link between `access_agents` and tools - **each tool belongs
    to at most one agent** (N:1). Surfaced on the AccessAgent edit form as a
    multi-select; selecting a tool already owned by another agent reassigns
    it (with explicit warning in the picker label).
@@ -41,7 +41,7 @@ We need:
 
 - Single source of truth: code catalog (`catalog.py:CATALOG` + per-module
   `mcp/tools.json`) is authoritative; the DB table is a materialised view.
-- Zero manual sync — auto-runs on backend startup and after every module
+- Zero manual sync - auto-runs on backend startup and after every module
   upload (which is when `tools.json` slices change).
 - Mandatory `contact_id` + `space_id` on every MCP tool call. Backend
   performs the actual access decision; MCP server just enforces presence and
@@ -120,7 +120,7 @@ CREATE INDEX ix_mcp_tools_is_active ON mcp_tools(is_active);
 CREATE INDEX ix_mcp_tools_agent_id ON mcp_tools(agent_id);
 ```
 
-(No separate link table — ownership is a single FK column on `mcp_tools`.)
+(No separate link table - ownership is a single FK column on `mcp_tools`.)
 
 ```sql
 CREATE TABLE mcp_access_log (
@@ -143,7 +143,7 @@ CREATE INDEX ix_mcp_access_log_tool_name ON mcp_access_log(tool_name);
 SQLAlchemy models added to `app/models/access.py`:
 `McpTool` (with `agent = relationship("AccessAgent", back_populates="mcp_tools")`)
 and `McpAccessLog`. `AccessAgent` grows
-`mcp_tools = relationship("McpTool", back_populates="agent")` (no cascade —
+`mcp_tools = relationship("McpTool", back_populates="agent")` (no cascade - 
 deleting an agent sets its tools' `agent_id` to NULL via the FK rule).
 
 ## 6. Catalog sync
@@ -164,7 +164,7 @@ Algorithm:
    `ON CONFLICT (tool_name) DO UPDATE`). Fields touched on update:
    `description`, `module_key` (defaults to `""`), `http_path`,
    `http_method`, `is_active=true`, `last_seen_at=sync_started_at`.
-   **Do NOT touch `agent_id` on update** — admin-set ownership must
+   **Do NOT touch `agent_id` on update** - admin-set ownership must
    survive every catalog sync.
 4. After the upsert pass, mark stragglers:
    `UPDATE mcp_tools SET is_active=false WHERE last_seen_at < :sync_started_at`.
@@ -177,7 +177,7 @@ Triggers:
   `sync_catalog()` after `_run_alembic_upgrade()` (newly-extracted module's
   `mcp/tools.json` is now on disk and `merged_catalog` picks it up).
 
-The MCP server itself never writes the table — its in-memory `CATALOG +
+The MCP server itself never writes the table - its in-memory `CATALOG +
 merged_catalog` is the source.
 
 ## 7. MCP server guard
@@ -201,7 +201,7 @@ Modify `sorento_crm_mcp/server.py::_compile_tool`:
   query param (forms scope tools listed in `TOOL_REQUIRED_QUERY_HINTS`
   already accept them as filters).
 
-Deny payloads — verbatim user phrasing, JSON-wrapped:
+Deny payloads - verbatim user phrasing, JSON-wrapped:
 
 ```json
 // Case 1: tool owned by an agent, but contact is not under that agent
@@ -237,7 +237,7 @@ Deny payloads — verbatim user phrasing, JSON-wrapped:
 }
 ```
 
-`<agent_name>` is the single owning agent's display name (only one — N:1).
+`<agent_name>` is the single owning agent's display name (only one - N:1).
 Same value returned in `agent_name` for programmatic use.
 
 Allow path: tool runs as today, `contact_id`/`space_id` consumed by guard
@@ -247,7 +247,7 @@ only (not forwarded unless the spec declares them as query params).
 
 New router file `app/api/v1/system/mcp_access.py` mounted under
 `/api/v1/system/mcp-access`. Guarded by the existing X-API-Key
-dependency (no module guard — platform-level).
+dependency (no module guard - platform-level).
 
 ```python
 class McpAccessCheckIn(BaseModel):
@@ -300,27 +300,27 @@ Two new routes under `/api/v1/access-agents/{agent_id}/mcp-tools`:
 
 | Method | Path | Body | Returns |
 |--------|------|------|---------|
-| GET    | `/{agent_id}/mcp-tools` | — | `[{tool_id, tool_name, description, module_key}]` (tools whose `agent_id = :agent_id`) |
+| GET    | `/{agent_id}/mcp-tools` | - | `[{tool_id, tool_name, description, module_key}]` (tools whose `agent_id = :agent_id`) |
 | PUT    | `/{agent_id}/mcp-tools` | `{tool_ids: [UUID]}` | `[{...}]` (full new set for this agent) |
 
-`PUT` semantics — single transaction:
+`PUT` semantics - single transaction:
 
 1. `UPDATE mcp_tools SET agent_id = :agent_id WHERE id IN :tool_ids`
-   — claims every selected tool for this agent (reassigns from any prior
+ - claims every selected tool for this agent (reassigns from any prior
    owner). Each reassignment is logged in a structured backend log
    (`logger.info("mcp tool reassigned", tool_id, from_agent, to_agent)`)
    so admins can trace ownership moves.
 2. `UPDATE mcp_tools SET agent_id = NULL WHERE agent_id = :agent_id
-   AND id NOT IN :tool_ids` — releases tools previously owned by this
+   AND id NOT IN :tool_ids` - releases tools previously owned by this
    agent that are no longer selected.
 
 Plus a list endpoint for the picker:
 
 | Method | Path | Returns |
 |--------|------|---------|
-| GET    | `/api/v1/system/mcp-tools?is_active=true&limit=500` | `[{id, tool_name, description, module_key, current_agent_id, current_agent_name}]` — `current_agent_*` populated when tool is owned by another agent so the UI can warn before reassignment. Grouped client-side by `module_key`. |
+| GET    | `/api/v1/system/mcp-tools?is_active=true&limit=500` | `[{id, tool_name, description, module_key, current_agent_id, current_agent_name}]` - `current_agent_*` populated when tool is owned by another agent so the UI can warn before reassignment. Grouped client-side by `module_key`. |
 
-## 10. UI — AccessAgentForm
+## 10. UI - AccessAgentForm
 
 `sorento_crm_frontend/app/(protected)/user-management/access-agents/components/AccessAgentForm.tsx`
 grows one new card after the existing "Team Assignments" card, **edit mode
@@ -353,26 +353,26 @@ only** (parallels the team assignments treatment which is also edit-only):
   (or "Unbound" when empty); each row shows `tool_name` + truncated
   `description` with `title` tooltip.
 - For tools whose `current_agent_id` is set and != the agent being edited,
-  render a "currently owned by &lt;agent_name&gt; — selecting will reassign"
+  render a "currently owned by &lt;agent_name&gt; - selecting will reassign"
   badge next to the tool name, and require a `confirm()` step before the
   PUT submits if any reassignments are pending. This makes the N:1 move
   explicit instead of silent.
 - On submit, after `updateMutation`, call
   `setAgentMcpTools(agentId, selectedToolIds)` (parallel to existing
   `setAgentTeams`).
-- Empty state: "No MCP tools registered yet — modules with `mcp/tools.json`
+- Empty state: "No MCP tools registered yet - modules with `mcp/tools.json`
   populate this list on upload."
 
 CLAUDE.md mandates `<SearchableSelect>` for FK pickers, but that primitive
 is single-value. We add a sibling `<SearchableMultiSelect>` modelled on it
 (same Radix Combobox + checkbox rows + chip display), or reuse an existing
 multi-select if `npm run` reveals one. Decision deferred to implementation
-plan — interface above is independent of that primitive.
+plan - interface above is independent of that primitive.
 
 ## 11. Migration
 
 Single Alembic revision in `app/alembic/versions/` (matches where
-`access.py` tables were originally migrated — we don't move them into a
+`access.py` tables were originally migrated - we don't move them into a
 per-module migration just for this change). Revision creates the two new
 tables (`mcp_tools`, `mcp_access_log`) and indexes from §5. No data
 backfill (catalog sync seeds rows on first boot).
@@ -385,30 +385,30 @@ Down-revision drops the two tables in reverse order
 Backend:
 
 - `tests/services/test_mcp_tool_registry.py`
-  - First sync inserts every `ToolSpec` with `is_active=true`,
+ - First sync inserts every `ToolSpec` with `is_active=true`,
     `agent_id=NULL`.
-  - Second sync with one tool removed flips that row to `is_active=false`.
-  - Re-adding a tool flips it back to `is_active=true`.
-  - Sync **preserves** `agent_id` set by an admin between runs.
+ - Second sync with one tool removed flips that row to `is_active=false`.
+ - Re-adding a tool flips it back to `is_active=true`.
+ - Sync **preserves** `agent_id` set by an admin between runs.
 - `tests/services/test_mcp_access_service.py` covers all five decision
   branches with explicit fixtures.
 - `tests/api/test_mcp_access_check.py` integration: hits the FastAPI
   endpoint with X-API-Key, asserts response shape + `mcp_access_log` row.
 - `tests/api/test_access_agent_mcp_tools.py` for GET/PUT ownership routes:
-  - Selecting a tool currently owned by another agent reassigns it
+ - Selecting a tool currently owned by another agent reassigns it
     (`agent_id` flips to the new owner; old agent's GET no longer lists it).
-  - Removing a tool from an agent's set sets its `agent_id` to NULL.
+ - Removing a tool from an agent's set sets its `agent_id` to NULL.
 
 MCP server:
 
 - `sorento_crm_mcp/tests/test_access_guard.py`
-  - Patches the backend access-check to return allow → tool executes.
-  - Patches deny case 1 (no access) → returns verbatim Case 1 payload,
+ - Patches the backend access-check to return allow → tool executes.
+ - Patches deny case 1 (no access) → returns verbatim Case 1 payload,
     underlying CRM client never called.
-  - Patches deny case 2 (unlinked) → returns Case 2 payload.
-  - TTL cache: second call within 60s does not re-hit backend; after
+ - Patches deny case 2 (unlinked) → returns Case 2 payload.
+ - TTL cache: second call within 60s does not re-hit backend; after
     `time.monotonic` advance, re-hits.
-  - Missing `contact_id` or `space_id` → MCP raises `ValueError` before
+ - Missing `contact_id` or `space_id` → MCP raises `ValueError` before
     backend call.
 
 Frontend:
@@ -423,7 +423,7 @@ Frontend:
   `is_active=false` flag and `agent_name` deny payload make it
   visible. If a tool is renamed in code without a migration, the old name
   stays in the table as `is_active=false`; any agent linkage on the old id
-  becomes dead — accepted, since renames should be rare and the UI shows
+  becomes dead - accepted, since renames should be rare and the UI shows
   inactive tools as crossed-out.
 - 60s cache means revoking access takes up to a minute to take effect on
   active MCP sessions. Acceptable for the current threat model. A
@@ -441,17 +441,17 @@ Frontend:
 
 ## 14. Phased rollout
 
-- **Phase 1 — Tables + sync.** Migration + `mcp_tool_registry_service` +
+- **Phase 1 - Tables + sync.** Migration + `mcp_tool_registry_service` +
   startup hook + module-upload integration. Catalog populates; nothing
   enforces yet. Ship + verify rows match `merged_catalog(CATALOG)`.
-- **Phase 2 — Access-check endpoint + admin routes + UI card.** Backend
+- **Phase 2 - Access-check endpoint + admin routes + UI card.** Backend
   endpoint + `/access-agents/{id}/mcp-tools` GET/PUT + UI card. Admins can
   link tools but no enforcement on MCP traffic. Ship + verify linkage UX.
-- **Phase 3 — MCP guard.** Modify `_compile_tool` to require
+- **Phase 3 - MCP guard.** Modify `_compile_tool` to require
   `contact_id`/`space_id` and call the access-check. Cache + deny payload.
   Ship + watch `mcp_access_log` for unexpected deny patterns. Roll back is
   a single MCP-server revert.
-- **Phase 4 — Cleanup.** Remove forms-scope `TOOL_REQUIRED_QUERY_HINTS`
+- **Phase 4 - Cleanup.** Remove forms-scope `TOOL_REQUIRED_QUERY_HINTS`
   for `contact_id`/`space_id` since the guard now enforces them globally
   (the existing per-tool list becomes redundant for those two keys). Keep
   the hint mechanism for any other required params.

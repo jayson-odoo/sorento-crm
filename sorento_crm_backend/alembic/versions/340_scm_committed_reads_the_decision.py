@@ -49,14 +49,14 @@ CREATE OR REPLACE VIEW scm.committed_v AS
 SELECT sol.product_id,
        sol.warehouse_id,
        SUM(GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-                    - COALESCE(sol.qty_delivered, 0), 0)) AS committed
+                  - COALESCE(sol.qty_delivered, 0), 0)) AS committed
 FROM sales_order_lines sol
 JOIN sales_orders so ON so.id = sol.sales_order_id
 WHERE so.status = 'open'
   AND sol.line_status = 'open'
   AND sol.purchasing_status <> 'covered'
   AND GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-               - COALESCE(sol.qty_delivered, 0), 0) > 0
+             - COALESCE(sol.qty_delivered, 0), 0) > 0
 GROUP BY sol.product_id, sol.warehouse_id;
 """
 

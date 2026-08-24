@@ -4,8 +4,8 @@ Everything the ranker weighs was a module constant. That made two things impossi
 without a deploy, both of which are ordinary merchandising decisions rather than
 engineering ones:
 
-  * "our own brand should come up first"  - a preference for a VALUE of a key
-  * "discontinued should rank lower"      - 4,969 active-but-discontinued products
+  * "our own brand should come up first" - a preference for a VALUE of a key
+  * "discontinued should rank lower"    - 4,969 active-but-discontinued products
                                             currently rank as if they were live
 
 They are stored differently because they are different shapes. A house preference is

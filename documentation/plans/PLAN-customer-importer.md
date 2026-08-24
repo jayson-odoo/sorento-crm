@@ -34,11 +34,11 @@ against a stubbed `onTest` / `onUpload` first so the states are exercised before
 exists, then wire in Phase 2.
 
 1. `app/(protected)/order-management/customers/components/CustomerImportDialog.tsx`
-   - Copy behaviour from `procurement-management/spo-allocations/components/SPOImportDialog.tsx`:
+ - Copy behaviour from `procurement-management/spo-allocations/components/SPOImportDialog.tsx`:
      `Test` then `Confirm`, warning-confirm `AlertDialog`, `sonner` toasts, `.xlsx,.xls`.
-   - Use shared `components/common/FileDropzone.tsx`, NOT the hand-rolled drag handlers in
+ - Use shared `components/common/FileDropzone.tsx`, NOT the hand-rolled drag handlers in
      SPO/GRN (AC-5.2).
-   - Test result renders: created / updated / unchanged / needs-a-look counts, unmapped header
+ - Test result renders: created / updated / unchanged / needs-a-look counts, unmapped header
      names, and the first N row problems with a show-all toggle (AC-4.3, AC-5.6).
 2. `.../customers/services/customerImportService.ts` - `validateCustomerImport(file)` and
    `importCustomers(file)`. Use `extractApiError`; do not hand-roll error parsing.
@@ -79,19 +79,19 @@ Order matters: 1 to 3 are independently testable before the route exists.
 5. **Service** - `app/services/customer_import_service.py`, two entry points sharing one
    resolver so Test and Confirm can never disagree (the `reorder_level_import_service`
    contract):
-   - `preview(db, file_data) -> dict` - `persist=False` `ImportOutcome`, writes nothing.
-   - `apply(db, file_data, outcome, actor) -> dict`.
-   - Match per AC-1.1 on `(company scope, lower(btrim(code)), lower(btrim(name)))` via the ORM.
-   - Per row: no match -> insert; match with changed values -> update only AC-3.1 fields;
+ - `preview(db, file_data) -> dict` - `persist=False` `ImportOutcome`, writes nothing.
+ - `apply(db, file_data, outcome, actor) -> dict`.
+ - Match per AC-1.1 on `(company scope, lower(btrim(code)), lower(btrim(name)))` via the ORM.
+ - Per row: no match -> insert; match with changed values -> update only AC-3.1 fields;
      match with no change -> `outcome.unchanged()`, no write (AC-3.3).
-   - `market_segment_code` fill-if-empty only (AC-3).
-   - Blank cell = not supplied; never clear a populated field (AC-3.2).
-   - Near-name check (AC-1.6): on insert, if a row exists under the same code in scope whose
+ - `market_segment_code` fill-if-empty only (AC-3).
+ - Blank cell = not supplied; never clear a populated field (AC-3.2).
+ - Near-name check (AC-1.6): on insert, if a row exists under the same code in scope whose
      name is trigram-similar above threshold, still insert but record
      `code_exists_under_other_name` on the success outcome. Threshold and the exact `similarity()`
      call go in the service with a comment naming the two live examples from AC-1.6. Exact
      matches are already handled as updates and never reach this branch.
-   - `IntegrityError` on insert -> `outcome.fail(code=UPSERT_ERROR)`, row fails, file continues.
+ - `IntegrityError` on insert -> `outcome.fail(code=UPSERT_ERROR)`, row fails, file continues.
 
 6. **Task** - `app/tasks/import_tasks.py`: `process_customer_import(db_job_id, file_data,
    filename, user_id)` and `validate_customer_import(file_data, company_scope=...)`. Follow
@@ -101,16 +101,16 @@ Order matters: 1 to 3 are independently testable before the route exists.
 7. **Route** - `app/api/v1/order_management/customers.py`,
    `POST /customers/import`, 202, `validate_only` query param, mirroring
    `app/api/v1/procurement/grn.py:152-212`:
-   - extension guard; `maybe_strip` for macro workbooks, retaining the pre-strip bytes;
-   - `validate_only=true` -> run the validator at `get_company_scope(db)` and return 200
+ - extension guard; `maybe_strip` for macro workbooks, retaining the pre-strip bytes;
+ - `validate_only=true` -> run the validator at `get_company_scope(db)` and return 200
      `{valid, errors, warnings, summary}`;
-   - **before creating the job**: if `active_company_id_from_scope(db)` is None, raise 400
+ - **before creating the job**: if `active_company_id_from_scope(db)` is None, raise 400
      "Select a single company before importing customers." (AC-2.3);
-   - `JobService.create_job(job_type="customer_import", ...)`,
+ - `JobService.create_job(job_type="customer_import", ...)`,
      `store_import_source_file(job, source_bytes, source_name, source_ctype)` (AC-5.5),
      `db.commit()`, `enqueue_job(..., queue_name="imports", job_timeout=3600,
      job_id=str(job.job_id))`, `update_job_with_rq_id`.
-   - Permission: a new `order_management.customers.import` slug, granted to the roles that
+ - Permission: a new `order_management.customers.import` slug, granted to the roles that
      already hold `order_management.customers.create`. Do not reuse a procurement slug.
 
 8. **Wire FE off mocks.** Delete stubs; real service calls.

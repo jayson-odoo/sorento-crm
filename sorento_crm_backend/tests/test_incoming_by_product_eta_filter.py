@@ -1,7 +1,7 @@
 """IncomingStockService.incoming_for_product ETA window filter.
 
 eta_from / eta_to (inclusive) narrow to shipments whose estimated_arrival_date
-falls in the window. Applied on top of the product hint — never standalone.
+falls in the window. Applied on top of the product hint - never standalone.
 """
 from __future__ import annotations
 

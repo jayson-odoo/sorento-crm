@@ -7,8 +7,8 @@ imported, ``apply_pending()`` walks the queue, resolves each target class from
 the live SQLAlchemy registry, and adds the property via ``mapper.add_property``.
 
 Why deferred: at module import time, target classes may not be loaded yet.
-Resolving lazily — and against the live registry rather than via direct imports
-— avoids the silent ``except ImportError`` skip that produced the original
+Resolving lazily - and against the live registry rather than via direct imports
+ -  avoids the silent ``except ImportError`` skip that produced the original
 ``Mapper has no property 'leads'`` failure (spec §1, §6).
 
 Design contract:
@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, List, Tuple
 
-# (target_class_name, attr_name, factory) — factory returns a fresh
+# (target_class_name, attr_name, factory) - factory returns a fresh
 # RelationshipProperty when called.
 _pending: List[Tuple[str, str, Callable[[], Any]]] = []
 
@@ -59,7 +59,7 @@ def apply_pending(base_registry: Any) -> None:
     """Apply every queued inverse to its target class.
 
     Drains the queue. Subsequent registrations require another call to
-    ``apply_pending`` — the upload pipeline does this after importing a freshly
+    ``apply_pending`` - the upload pipeline does this after importing a freshly
     extracted module so the new module's reciprocals attach before
     ``configure_mappers()`` runs.
 

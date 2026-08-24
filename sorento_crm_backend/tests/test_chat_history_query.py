@@ -3,7 +3,7 @@
 Covers UAC OBS-S5-01 .. OBS-S5-12.
 
 `chat_histories` is high-volume and its `contact_id` is the **Respond.io id string**,
-not `respond_contacts.id` — so name resolution is a join, and the UI must never surface
+not `respond_contacts.id` - so name resolution is a join, and the UI must never surface
 the raw id (no opaque identifiers in the UI). Pagination is keyset on
 `(sent_at, id)` because OFFSET degrades badly once the table is large.
 """
@@ -211,7 +211,7 @@ def test_breached_only_returns_both_sides_of_the_breaching_turn(db):
     """Deliberate: the filter keeps the incoming *and* the reply.
 
     A lone outgoing row would show a slow answer with no visible question, which is
-    useless for triage — the first thing you want to know is what was asked.
+    useless for triage - the first thing you want to know is what was asked.
     """
     fast = NOW - timedelta(minutes=10)
     slow = NOW - timedelta(minutes=5)
@@ -229,7 +229,7 @@ def test_breached_only_returns_both_sides_of_the_breaching_turn(db):
 
 
 def test_breached_only_ignores_unresolved_rows(db):
-    """No respond_ts means no honest latency — must not be reported as a breach."""
+    """No respond_ts means no honest latency - must not be reported as a breach."""
     t = NOW - timedelta(minutes=5)
     _msg(db, sent_at=t, type="incoming", turn_id="u", respond_ts=None)
     _msg(db, sent_at=t, type="outgoing", turn_id="u", respond_ts=None)
@@ -238,7 +238,7 @@ def test_breached_only_ignores_unresolved_rows(db):
 
 
 # --------------------------------------------------------------------------- #
-# Contact display — no opaque ids in the UI                                   #
+# Contact display - no opaque ids in the UI                                   #
 # --------------------------------------------------------------------------- #
 def test_display_name_prefers_stored_name(db):
     _msg(db, sent_at=NOW, first_name="Johnson", last_name=None, phone="+60165622487")
@@ -254,7 +254,7 @@ def test_display_name_falls_back_to_phone_not_respond_id(db):
 
 
 # --------------------------------------------------------------------------- #
-# Offset paging (the grid path) — total + arbitrary page jump                 #
+# Offset paging (the grid path) - total + arbitrary page jump                 #
 # --------------------------------------------------------------------------- #
 def test_page_returns_total_for_the_filtered_set(db):
     for i in range(7):
@@ -299,7 +299,7 @@ class TestGroupByOrdering:
     """Grouping is a SERVER-ordering concern, not a rendering one.
 
     The listing is offset-paginated, so if the server does not make group members
-    contiguous the frontend can only group within the current page — every page
+    contiguous the frontend can only group within the current page - every page
     shows fragments of many groups and the header counts are wrong. So `group_by`
     selects the ordering; the frontend only draws the headers.
 
@@ -344,7 +344,7 @@ class TestGroupByOrdering:
         self._seed(db)
         rows, _ = svc.list_messages_page(db, now=NOW, limit=10, group_by="contact")
         phones = [r.phone_number for r in rows]
-        # Every contact appears as one unbroken run — the property the frontend
+        # Every contact appears as one unbroken run - the property the frontend
         # relies on to draw a header once per group.
         assert phones == sorted(phones)
         assert len(set(phones)) == 2
@@ -386,7 +386,7 @@ class TestGroupByOrdering:
 
     def test_contact_date_uses_contact_ordering(self, db):
         """contact_date is contact-outer/date-inner, so it needs the same
-        contiguity as plain contact grouping — the date split is drawn inside
+        contiguity as plain contact grouping - the date split is drawn inside
         each contact run by the frontend."""
         self._seed(db)
         by_contact, _ = svc.list_messages_page(db, now=NOW, limit=10, group_by="contact")

@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-# MUST be first app import — resolves circular-import in app.modules.runtime.guards
+# MUST be first app import - resolves circular-import in app.modules.runtime.guards
 # (app.models.__init__ → app.modules.runtime.guards → app.dependencies during partial init).
 from app.main import app  # noqa: E402
 
@@ -270,9 +270,9 @@ def test_send_link_propagates_respond_io_failure(db, cleanup, monkeypatch):
 @pytest.fixture
 def client(db, monkeypatch):
     """TestClient that:
-    - injects a stub current user
-    - reuses the live Postgres session (so test setup writes are visible to routes)
-    - defaults UserPermissionService.check_user_has_permission to True
+  - injects a stub current user
+  - reuses the live Postgres session (so test setup writes are visible to routes)
+  - defaults UserPermissionService.check_user_has_permission to True
       (each test can monkeypatch.setattr again to flip it).
     """
     from app.dependencies import get_current_user, get_db
@@ -329,7 +329,7 @@ def test_portal_link_endpoint_returns_url(client, db, cleanup):
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["token"]
-    # Durable slug URL: /portal/c/{slug}?token={token} — slug half stays a
+    # Durable slug URL: /portal/c/{slug}?token={token} - slug half stays a
     # bookmarkable re-entry point after the token half expires.
     assert re.search(
         rf"/portal/c/[0-9A-Z]{{10}}\?token={body['token']}$", body["portal_url"]
@@ -550,7 +550,7 @@ def test_portal_link_endpoint_falls_back_to_request_base_url(client, db, cleanup
     assert res.status_code == 200
     # TestClient base URL is http://testserver/
     assert body["portal_url"].startswith("http"), f"expected absolute URL, got {body['portal_url']}"
-    # Durable slug URL: /portal/c/{slug}?token={token} — slug half stays a
+    # Durable slug URL: /portal/c/{slug}?token={token} - slug half stays a
     # bookmarkable re-entry point after the token half expires.
     assert re.search(
         rf"/portal/c/[0-9A-Z]{{10}}\?token={body['token']}$", body["portal_url"]

@@ -10,24 +10,24 @@
  * deliberately reproduced because they are the states the screen has to handle and
  * the ones a made-up fixture would never contain:
  *
- *   - **Most rows have no need-by date.** The committed order book is 17 sales
+ * - **Most rows have no need-by date.** The committed order book is 17 sales
  *     orders, so almost nothing is dated-short: the buy is a policy replenishment.
  *     A fixture where every row has a need-by would let the null path ship untested.
- *   - **On-time rate and lead time are frequently unknown**, because
+ * - **On-time rate and lead time are frequently unknown**, because
  *     `scm.supplier_performance` is empty. Lead time then falls back to the supplier
  *     link's standard figure, and where even that is missing the place-by date cannot
  *     be derived at all.
  *
  * The rows are chosen so every state in Group E2 is reachable by clicking:
  *
- *   - `SRTWC8613-RL`   keyed already, by a named person at a time.
- *   - `C-FH24`         not keyed, no need-by (policy buy), so no place-by either.
- *   - `SRTWB1514-FULL GLAZE`  LATE: dated short next week against a 45-day lead, so
+ * - `SRTWC8613-RL`   keyed already, by a named person at a time.
+ * - `C-FH24`         not keyed, no need-by (policy buy), so no place-by either.
+ * - `SRTWB1514-FULL GLAZE`  LATE: dated short next week against a 45-day lead, so
  *                      the place-by date is a month in the past.
- *   - `SRTWT7408`      chosen ZERO - the use-pool decision, present and saying no PO
+ * - `SRTWT7408`      chosen ZERO - the use-pool decision, present and saying no PO
  *                      is needed (AC-E2.5).
- *   - `ACC6002`        keying, mid-flight, which is what stops two people keying it.
- *   - `SRT367-GM`      no lead time recorded anywhere, so place-by is null even though
+ * - `ACC6002`        keying, mid-flight, which is what stops two people keying it.
+ * - `SRT367-GM`      no lead time recorded anywhere, so place-by is null even though
  *                      need-by is not.
  */
 import { frontPlanningScenario, runGrainFields } from './frontPlanningMockStore';

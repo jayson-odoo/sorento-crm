@@ -1,10 +1,10 @@
 """Promotion fact-registry tests (app/rule_engine/registry.py).
 
 resolve_facts on a Promotion ORM object -> flat fact dict:
-  - promotion.name  == description (there is no `name` column)
-  - promotion.accessLevels == the access_levels list
-  - promotion.isActive == bool
-  - promotion.endDate.daysUntil / .daysSince compute against Malaysia *today*
+ - promotion.name  == description (there is no `name` column)
+ - promotion.accessLevels == the access_levels list
+ - promotion.isActive == bool
+ - promotion.endDate.daysUntil / .daysSince compute against Malaysia *today*
 
 Plus the accessLevels dynamic-options resolver returns active ContactAccessType
 rows as {value: code, label: name}.

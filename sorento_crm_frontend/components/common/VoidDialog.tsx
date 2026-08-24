@@ -17,7 +17,7 @@ import { Textarea } from '@/components/ui/textarea';
 /**
  * Destructive confirm dialog for VOIDING a form (R3). Voiding permanently makes
  * the record read-only, so it follows the AlertDialog destructive-confirm
- * convention (red action button, "cannot be undone" copy) — the same family as
+ * convention (red action button, "cannot be undone" copy) - the same family as
  * the reject / delete dialogs.
  *
  * A void REASON is required (min 3 chars) with inline validation: the error text
@@ -33,7 +33,7 @@ export interface VoidDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: (reason: string) => Promise<unknown> | void;
-  /** External pending flag (e.g. mutation.isPending) — disables the controls. */
+  /** External pending flag (e.g. mutation.isPending) - disables the controls. */
   isPending?: boolean;
   title?: string;
   description?: React.ReactNode;
@@ -77,7 +77,7 @@ export function VoidDialog({
       reset();
       onOpenChange(false);
     } catch {
-      // Error already toasted by the mutation hook — keep the dialog open.
+      // Error already toasted by the mutation hook - keep the dialog open.
     } finally {
       setSubmitting(false);
     }

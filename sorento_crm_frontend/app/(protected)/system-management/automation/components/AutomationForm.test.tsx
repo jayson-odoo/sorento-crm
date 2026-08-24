@@ -108,7 +108,7 @@ async function pickTemplate() {
   fireEvent.click(await screen.findByText('Promo expire (promo expire)'));
 }
 
-describe('AutomationForm — combine into one email toggle', () => {
+describe('AutomationForm - combine into one email toggle', () => {
   it('shows the toggle for the promotion-expiry trigger (default trigger)', () => {
     renderForm();
     expect(screen.getByText('Combine into one email')).toBeInTheDocument();
@@ -158,7 +158,7 @@ describe('AutomationForm — combine into one email toggle', () => {
   });
 });
 
-describe('AutomationForm — the trigger X is settable (schema-driven)', () => {
+describe('AutomationForm - the trigger X is settable (schema-driven)', () => {
   it('renders the days input for the CERTIFICATE trigger, labelled from its schema', async () => {
     renderForm();
     fireEvent.click(screen.getByText('Days before promotion end'));
@@ -220,7 +220,7 @@ describe('AutomationForm — the trigger X is settable (schema-driven)', () => {
   });
 });
 
-describe('AutomationForm — editing an automation saved before X was settable', () => {
+describe('AutomationForm - editing an automation saved before X was settable', () => {
   it('falls back to that trigger\'s own default, not a hardcoded 7', async () => {
     render(
       <AutomationForm

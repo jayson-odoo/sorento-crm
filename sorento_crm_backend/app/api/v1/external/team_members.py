@@ -35,7 +35,7 @@ async def get_team_members(
     ),
     space_id: Optional[str] = Query(
         None,
-        description="Respond.io space id (respond_workspaces.space_id) — optional, "
+        description="Respond.io space id (respond_workspaces.space_id) - optional, "
         "disambiguates contact_id across workspaces.",
     ),
     contact_phone_number: Optional[str] = Query(
@@ -68,7 +68,7 @@ async def get_team_members(
     Return active members of the resolved team, ordered by sort_order then user_id.
 
     Query (team): team_id, or team_code (+ tier when the same team_code spans SLA tiers).
-    Query (agent): agent_id or agent_code — required to resolve a team_code via the agent link.
+    Query (agent): agent_id or agent_code - required to resolve a team_code via the agent link.
     Query (segment): contact_id (respond_io_id) [+ space_id] to filter by the contact's
     market segment(s). No filter when omitted / contact unknown / contact untagged.
     Query (brand/company): brand_code and company_id - the same two axes next-assignee

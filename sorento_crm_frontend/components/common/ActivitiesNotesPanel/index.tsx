@@ -59,7 +59,7 @@ function formatSystemEvent(
       return `Ticket ${(p.ticket_number as string) ?? ''} was created.`;
     case 'status.changed':
       return `Status changed: ${(p.from as string) ?? '?'} → ${(p.to as string) ?? '?'}${
-        p.note ? ` — ${p.note as string}` : ''
+        p.note ? ` - ${p.note as string}` : ''
       }`;
     case 'assignee.changed':
       return `Assignee changed.`;

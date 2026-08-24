@@ -184,7 +184,7 @@ SUPPORTED_ENTITY_TYPES: tuple[str, ...] = tuple(_REGISTRY.keys())
 def get_field_specs(entity_type: str) -> tuple[FieldSpec, ...]:
     """Return the (immutable) tuple of FieldSpecs for an entity_type.
 
-    Returns an empty tuple for unknown entity_types — callers that want a
+    Returns an empty tuple for unknown entity_types - callers that want a
     hard error should use :func:`validate_field_keys` first.
     """
     return _REGISTRY.get(entity_type, ())
@@ -206,7 +206,7 @@ def validate_field_keys(
 ) -> tuple[list[str], list[str]]:
     """Split ``keys`` into ``(ok, unknown)`` for the given entity_type.
 
-    An unknown ``entity_type`` returns ``(ok=[], unknown=list(keys))`` — link
+    An unknown ``entity_type`` returns ``(ok=[], unknown=list(keys))`` - link
     APIs that hit non-registered entity types should treat this as a no-op
     rather than a hard 400.
     """

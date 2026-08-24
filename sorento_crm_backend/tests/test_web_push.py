@@ -1,4 +1,4 @@
-"""TCK-2026-000033 — web push: mirror in-app + prune dead subscriptions.
+"""TCK-2026-000033 - web push: mirror in-app + prune dead subscriptions.
 
 Covers AC-33-F4 (web_push delivery mirrors in-app when subscribed / skipped when not)
 and AC-33-F3/S1 (expired endpoint pruned on HTTP 410).

@@ -16,7 +16,7 @@
  *   PROMO_E2E_PASSWORD=...
  *
  * The compile flow merges each promotion's ALREADY-LINKED attachment flyers
- * server-side (real bytes via the storage router) — no upload fixture is needed
+ * server-side (real bytes via the storage router) - no upload fixture is needed
  * here; it exercises whatever promotions the environment already has.
  */
 import { test, expect, type Page } from '@playwright/test';
@@ -87,7 +87,7 @@ test.describe('Promotion compile-PDF + expiry batch deep link', () => {
     await login(page);
     await navigateToPromotions(page);
 
-    // Deep link from a reminder email — the list re-queries scoped to the batch.
+    // Deep link from a reminder email - the list re-queries scoped to the batch.
     const listReq = page.waitForResponse(
       (resp) =>
         resp.url().includes('/api/v1/marketing/promotions') &&

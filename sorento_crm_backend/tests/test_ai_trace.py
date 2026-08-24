@@ -42,9 +42,9 @@ def db() -> Session:
 
 
 # UUID-typed columns (conversation/message/trace/span ids) reject non-UUID
-# strings on read-back — use valid UUIDs. User.id is a String PK, so a plain
+# strings on read-back - use valid UUIDs. User.id is a String PK, so a plain
 # slug is fine there.
-# Must contain hex letters — SQLite's NUMERIC affinity coerces all-digit
+# Must contain hex letters - SQLite's NUMERIC affinity coerces all-digit
 # hyphenated strings to floats on read-back.
 _CONV_ID = "0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d"
 _MSG_ID = "1b2c3d4e-5f6a-7b8c-9d0e-1f2a3b4c5d6e"
@@ -249,7 +249,7 @@ def test_flush_is_best_effort_on_broken_session(db: Session, message: AIAssistan
 
 def _seed_trace(db: Session, *, label: str, status: str, flagged: bool, days_old: int) -> str:
     """Insert a trace with a valid-UUID id, return that id (labels are for the
-    test's own bookkeeping — UUID columns reject slug ids)."""
+    test's own bookkeeping - UUID columns reject slug ids)."""
     tid = str(uuid.uuid4())
     created = datetime.utcnow() - timedelta(days=days_old)
     db.add(

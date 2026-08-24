@@ -2,7 +2,7 @@
 
 Recomputes the blessed demand / ABC / XYZ numbers in tests/scm/fixtures/golden_m2.json
 straight from the REAL historical DO ``order_lines`` in the local prod-copy DB, using
-raw SQL + Python ``statistics`` — deliberately a DIFFERENT code path than
+raw SQL + Python ``statistics`` - deliberately a DIFFERENT code path than
 ``app/services/scm/analytics_service.py`` so the golden test isn't circular. Run it
 once to (re)bless the fixture; the engine is then written to reproduce these frozen
 numbers.

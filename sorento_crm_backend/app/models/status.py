@@ -1,4 +1,4 @@
-"""Status engine — configurable per-entity state machines (ADR-0001).
+"""Status engine - configurable per-entity state machines (ADR-0001).
 
 CORE, always on: this is plumbing that other modules depend on, not a sellable
 capability. Ported from ``foundryx-shared-service`` (``app/models/status.py`` +
@@ -22,7 +22,7 @@ ADR-0001:
 **Two-tier graphs.** ``scope_id IS NULL`` is an entity's DEFAULT graph. A scope
 (e.g. a project template) that overrides gets its own forked copy of every row,
 stamped with ``scope_id``. Resolution is "forked rows if any exist for this scope,
-else the default" — so a template that never overrides keeps inheriting, and
+else the default" - so a template that never overrides keeps inheriting, and
 changing the default afterwards does not silently rewrite a tuned fork.
 
 **NULL uniqueness.** The source's ``UniqueConstraint(entity_type, tenant_id,

@@ -1,4 +1,4 @@
-"""Phase C — the ingest/read HTTP surface itself.
+"""Phase C - the ingest/read HTTP surface itself.
 
 ``test_master_ingest.py`` exercises ``MasterIngestService`` directly. That left
 the *route* untested, and the gap hid a real defect: every ``AppException`` in

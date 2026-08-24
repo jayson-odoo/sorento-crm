@@ -10,7 +10,7 @@ stored form as bare digits with the ``60`` country code because
 through this function makes the link deterministic.
 
 MY-only by design (the business is single-region). If multi-region is ever
-needed, swap the body for the ``phonenumbers`` library — the call sites only
+needed, swap the body for the ``phonenumbers`` library - the call sites only
 depend on this function's contract.
 """
 import re

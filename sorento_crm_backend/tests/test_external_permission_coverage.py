@@ -1,4 +1,4 @@
-"""Every /external route enforces a permission — checked structurally.
+"""Every /external route enforces a permission - checked structurally.
 
 A per-endpoint test can only cover the endpoints someone remembered to write a
 test for. The failure mode that matters here is *omission*: a new router mounted

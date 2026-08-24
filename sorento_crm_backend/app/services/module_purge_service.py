@@ -110,7 +110,7 @@ def purge_workflow_forms(db: Session) -> Dict[str, int]:
 
 # Module key -> purge function (must match app_modules_catalog.module_key).
 # Table lists shown in App Store uninstall UI: MODULE_PURGE_TABLES in
-# sorento_crm_frontend/.../app-store/services/appModulesService.ts — keep in sync.
+# sorento_crm_frontend/.../app-store/services/appModulesService.ts - keep in sync.
 MODULE_PURGE_HANDLERS: Dict[str, PurgeFn] = {
     "notifications": purge_notifications,
     "audit": purge_audit,

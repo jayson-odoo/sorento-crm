@@ -5,7 +5,7 @@ Runs after ``sync_catalog`` so the four record-action rows
 ``crm_purchase_request_approve`` / ``crm_purchase_request_reject``) exist in
 ``mcp_tools``. Idempotently, for each tool it appends the tool name to
 ``AIAssistantConfig.enabled_tools`` so the in-app AI assistant's Tool-RAG
-includes it as a candidate — see ``ai_assistant_service: _rag_select_tools``,
+includes it as a candidate - see ``ai_assistant_service: _rag_select_tools``,
 which filters candidates by this list. The write-confirmation gate
 (``_is_write_tool``) still halts each call until the user confirms.
 

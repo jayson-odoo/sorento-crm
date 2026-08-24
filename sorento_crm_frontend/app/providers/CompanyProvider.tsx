@@ -2,20 +2,20 @@
 
 /**
  * ============================================================================
- * CompanyProvider — active-company context (Phase 2, live backend)
+ * CompanyProvider - active-company context (Phase 2, live backend)
  * ============================================================================
  * `company` is a data-partition dimension below tenant (Sorento + Mocha share
  * one deployment). See documentation/plans/PLAN-multi-company-isolation.md.
  *
  * Source of truth:
- *  - Switchable companies (grants) come from GET /companies/my-context.
- *  - The ACTIVE company is my-context's resolved `active_company_id` - what the
+ * - Switchable companies (grants) come from GET /companies/my-context.
+ * - The ACTIVE company is my-context's resolved `active_company_id` - what the
  *    backend actually scopes to - falling back to the NextAuth JWT claim
  *    `session.user.active_company_id` for the first render after login, before
  *    my-context resolves.
- *  - setActiveCompany() persists server-side (POST /companies/switch) then
+ * - setActiveCompany() persists server-side (POST /companies/switch) then
  *    re-mints the token via useSession().update({ active_company_id }) so the
- *    claim — not localStorage — is authoritative across reloads/tabs.
+ *    claim - not localStorage - is authoritative across reloads/tabs.
  * ============================================================================
  */
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
@@ -37,7 +37,7 @@ export interface ActiveCompany {
 interface CompanyContextValue {
   /** Companies the current user is allowed to switch into. */
   companies: ActiveCompany[];
-  /** Same list — kept explicit so callers reason about switchable grants. */
+  /** Same list - kept explicit so callers reason about switchable grants. */
   grants: ActiveCompany[];
   /** The active company, or null when the user has no company grants / still loading. */
   activeCompany: ActiveCompany | null;
@@ -111,7 +111,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         try {
           await switchCompany(companyId);
           // Re-mint the JWT so the active-company claim is authoritative. This
-          // MUST complete before we refetch — the backend scope resolver prefers
+          // MUST complete before we refetch - the backend scope resolver prefers
           // the token's active_company_id claim over persisted last_active, so a
           // refetch on the OLD token would still be scoped to the previous company.
           await update({ active_company_id: companyId });

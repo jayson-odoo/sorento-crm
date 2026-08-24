@@ -1,13 +1,13 @@
-"""Cross-company IDOR matrix (multi-company data isolation — Group D5-D11).
+"""Cross-company IDOR matrix (multi-company data isolation - Group D5-D11).
 
 Drives the SERVICE layer under an explicit ``company_scope`` to prove the
 ``do_orm_execute`` filter turns every cross-company object reference into a clean
 404 (never a leak) while same-company access still works, and that a create
 payload can never smuggle a foreign ``company_id``:
 
-  - AC-D6: a Sorento-scoped get / update / delete of a Mocha-owned row -> 404.
-  - AC-D5/D7: the SAME row is readable / editable / deletable under Mocha scope.
-  - AC-D11: a create payload carrying a foreign ``company_id`` is ignored — the
+ - AC-D6: a Sorento-scoped get / update / delete of a Mocha-owned row -> 404.
+ - AC-D5/D7: the SAME row is readable / editable / deletable under Mocha scope.
+ - AC-D11: a create payload carrying a foreign ``company_id`` is ignored - the
     row is stamped with the ACTIVE company, not the injected one.
 
 Runs against the local Postgres dev DB inside a nested transaction that is ALWAYS
@@ -118,7 +118,7 @@ def _seed_product(db: Session, company_id: str, code: str, cat: str, uom: str) -
 
 
 # --------------------------------------------------------------------------- #
-# Warehouse — get / update / delete matrix                                     #
+# Warehouse - get / update / delete matrix                                     #
 # --------------------------------------------------------------------------- #
 def test_warehouse_get_by_id_cross_company_is_404(db, mocha):
     from app.services.inventory_service import WarehouseService
@@ -187,7 +187,7 @@ def test_warehouse_delete_cross_company_is_404_same_company_ok(db, mocha):
 
 
 # --------------------------------------------------------------------------- #
-# Product — cross-company get is 404                                           #
+# Product - cross-company get is 404                                           #
 # --------------------------------------------------------------------------- #
 def test_product_get_by_id_cross_company_is_404(db, mocha):
     from app.services.product_service import ProductService
@@ -211,7 +211,7 @@ def test_product_get_by_id_cross_company_is_404(db, mocha):
 
 
 # --------------------------------------------------------------------------- #
-# AC-D11 — a foreign company_id in a create payload is ignored                 #
+# AC-D11 - a foreign company_id in a create payload is ignored                 #
 # --------------------------------------------------------------------------- #
 def test_create_ignores_foreign_company_id_and_stamps_active(db, mocha):
     from app.schemas.inventory import WarehouseCreate

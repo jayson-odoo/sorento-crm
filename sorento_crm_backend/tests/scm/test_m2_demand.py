@@ -1,4 +1,4 @@
-"""SCM M2 — demand engine golden + pure-maths tests (AC-M2.1/2.2/2.3/2.13).
+"""SCM M2 - demand engine golden + pure-maths tests (AC-M2.1/2.2/2.3/2.13).
 
 Golden numbers (avg_daily_demand / demand_cv / method) are blessed in
 ``fixtures/golden_m2.json``, derived INDEPENDENTLY from the real prod-copy outflow
@@ -33,7 +33,7 @@ def _wid(db, code):
 
 
 # ---------------------------------------------------------------------------
-# Pure maths — no DB (AC-M2.2: trim ONLY the moderate-variability Y band)
+# Pure maths - no DB (AC-M2.2: trim ONLY the moderate-variability Y band)
 # ---------------------------------------------------------------------------
 
 def test_bucket_stats_steady_x_band_uses_plain_mean():
@@ -49,7 +49,7 @@ def test_bucket_stats_y_band_trims_and_is_not_inflated():
     inflate the baseline (asserted vs the naive sum)."""
     series = [100.0] * 11 + [400.0, 0.0]  # 13 weekly totals -> CV ~0.75 (Y band)
     s = svc.bucket_stats(series)
-    naive_total = sum(series)  # 1500 — inflated by the spike
+    naive_total = sum(series)  # 1500 - inflated by the spike
     assert 0.5 < s["cv"] <= 1.0 and s["band"] == "Y"
     assert s["method"] == "trimmed_mean"
     assert s["baseline_total"] < naive_total
@@ -58,7 +58,7 @@ def test_bucket_stats_y_band_trims_and_is_not_inflated():
 
 
 def test_bucket_stats_z_band_lumpy_uses_plain_mean_and_is_nonzero():
-    """Z band (CV>1.0): lumpy demand IS the signal — a single real spike week among
+    """Z band (CV>1.0): lumpy demand IS the signal - a single real spike week among
     zeros (the C-FH24 shape) must NOT be trimmed to a zero baseline. Plain mean keeps
     the whole outflow; the Z class letter carries the low-confidence signal."""
     s = svc.bucket_stats([1246.0] + [0.0] * 12)  # 13 weekly totals, one lone spike
@@ -97,7 +97,7 @@ def test_bucket_stats_daily_rate_cv_neutralizes_short_bucket():
 def test_bucket_stats_small_n_y_band_trim_is_noop_numerically():
     """Edge (pure-function): with only 3 periods the 10% trim removes 0 periods, so a
     Y-band key still reports the plain sum as baseline (branch label = trimmed_mean).
-    The engine runs on ~13 weekly buckets where the trim DOES fire — this pins the
+    The engine runs on ~13 weekly buckets where the trim DOES fire - this pins the
     small-n boundary itself."""
     s = svc.bucket_stats([100.0, 50.0, 10.0])  # CV ~0.69 (Y band), n=3
     assert s["method"] == "trimmed_mean" and s["band"] == "Y"
@@ -128,13 +128,13 @@ def test_demand_stat_matches_golden(scm_app, g):
 
 
 # ---------------------------------------------------------------------------
-# Robust trim fires on REAL weekly data (AC-M2.2 — weekly bucketing)
+# Robust trim fires on REAL weekly data (AC-M2.2 - weekly bucketing)
 # ---------------------------------------------------------------------------
 
 def test_weekly_trim_fires_on_real_data(scm_app):
     """AC-M2.2 on real data: with ~13 weekly buckets a high-CV SKU's trimmed_mean
     baseline is STRICTLY below its plain window total because a spike week is dropped
-    — the trim is no longer the 3-bucket no-op. Proven end-to-end via explain_demand's
+  - the trim is no longer the 3-bucket no-op. Proven end-to-end via explain_demand's
     baseline_total, cross-checked against the independently-derived golden number."""
     _, db, _, _ = scm_app
     g = next(x for x in _GOLDEN["demand"] if x.get("trim_demonstration"))
@@ -160,7 +160,7 @@ def test_lumpy_z_sku_uses_plain_mean_and_is_nonzero(scm_app):
     """AC-M2.2 (revised): a lumpy Z SKU (CV>1.0) with real outflow concentrated in a
     single spike week (C-FH24: one 1246-unit order) must NOT be trimmed to a zero
     baseline. The Z band uses the plain mean end-to-end, so avg_daily_demand reflects
-    the real sale — a regression against the old 'trim both tails => 0 demand' bug."""
+    the real sale - a regression against the old 'trim both tails => 0 demand' bug."""
     _, db, _, _ = scm_app
     g = next(x for x in _GOLDEN["demand"] if x.get("lumpy_nonzero_demonstration"))
     pid, wid = _pid(db, g["product_code"]), _wid(db, g["warehouse_code"])
@@ -205,7 +205,7 @@ def test_channel_split_separates_and_does_not_double_count(scm_app):
     cont = float(split["continuous"]["qty"])
     spike = float(split["spike"]["qty"])
     # blessed: continuous(tagged+untagged) and spike are separated, and reconcile to
-    # the window total — a project (spike) sale is NOT also counted as continuous.
+    # the window total - a project (spike) sale is NOT also counted as continuous.
     assert cont == pytest.approx(cs["continuous_qty"])
     assert spike == pytest.approx(cs["spike_qty"])
     assert cont + spike == pytest.approx(cs["total"])

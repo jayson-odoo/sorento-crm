@@ -1,10 +1,10 @@
 /**
- * Product Specifications workbench end-to-end — FE→BE→DB round-trip.
+ * Product Specifications workbench end-to-end - FE→BE→DB round-trip.
  *
  * The thing worth testing here is the promise the screen makes: a specification can be
  * added, taught how to read itself, and tuned, WITHOUT a release. Hand-clicking through
  * it is how "Add a specification" stayed missing from the UI for a whole build while the
- * API endpoint sat there unused — nothing failed, because nothing was checking.
+ * API endpoint sat there unused - nothing failed, because nothing was checking.
  *
  * Asserts the FE hit the real backend routes:
  *   GET   /api/v1/master-data/spec-registry

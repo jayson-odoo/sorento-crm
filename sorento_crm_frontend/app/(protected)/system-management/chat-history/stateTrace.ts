@@ -17,7 +17,7 @@ interface Entity {
 }
 
 export interface StateSummary {
-  /** false when the turn wrote no state (`after: null`) — set arithmetic is suppressed. */
+  /** false when the turn wrote no state (`after: null`) - set arithmetic is suppressed. */
   wroteState: boolean;
   /** Entities present BEFORE but absent AFTER. null (not []) when !wroteState. */
   entitiesLost: string[] | null;
@@ -48,13 +48,13 @@ function entitiesFrom(layer: unknown): Entity[] {
   return out;
 }
 
-/** true only when the layer is a real object — a present-but-null `after` is false. */
+/** true only when the layer is a real object - a present-but-null `after` is false. */
 function isObject(v: unknown): v is Record<string, unknown> {
   return v != null && typeof v === 'object' && !Array.isArray(v);
 }
 
 function truthyFlag(applied: Record<string, unknown> | null | undefined, key: string): boolean {
-  // Match the view: (papp->>key)::text = 'true' — the stringified value equals "true".
+  // Match the view: (papp->>key)::text = 'true' - the stringified value equals "true".
   return applied != null && String(applied[key]) === 'true';
 }
 

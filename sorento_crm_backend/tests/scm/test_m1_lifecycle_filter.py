@@ -1,4 +1,4 @@
-"""SCM M1 — product-lifecycle filter tests (Postgres-backed, rolled back).
+"""SCM M1 - product-lifecycle filter tests (Postgres-backed, rolled back).
 
 The dashboard defaults to the FOCUSED view (active + ongoing) so inactive /
 discontinued SKUs never inflate the headline stockout / valuation figures. These
@@ -135,7 +135,7 @@ def test_default_focus_excludes_discontinued(scm_app):
 
 
 def test_all_scope_is_superset_of_focus(scm_app):
-    """``active_status=all&lifecycle=all`` is a strict superset — its Stockouts
+    """``active_status=all&lifecycle=all`` is a strict superset - its Stockouts
     count is ≥ the focused default (the demo carries inactive/discontinued SKUs)."""
     app, _ = _client(scm_app, "purchasing")
     with TestClient(app) as c:

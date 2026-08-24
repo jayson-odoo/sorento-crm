@@ -17,7 +17,7 @@ export function malaysiaDateLabel(iso: string): string {
  * grouping is off (the grid then renders exactly as before).
  *
  * Only decides where to draw a divider. Making group members *contiguous* is the
- * API's job — see `group_by` in `chat_history_query`. Grouping a paginated set
+ * API's job - see `group_by` in `chat_history_query`. Grouping a paginated set
  * purely client-side would render the same group once per page.
  */
 export function buildGroupHeader(
@@ -37,7 +37,7 @@ export function buildGroupHeader(
     }
 
     // contact_date: contact is the outer group and date the inner one, so a new
-    // contact always opens a new date section too — otherwise the first day of
+    // contact always opens a new date section too - otherwise the first day of
     // each conversation would be unlabelled.
     if (row.contact_display !== prev?.contact_display) {
       return `${row.contact_display} · ${date}`;

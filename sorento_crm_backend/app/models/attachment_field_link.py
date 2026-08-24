@@ -3,7 +3,7 @@
 One row per (entity_type, entity_id, attachment_id, field_key). Sits orthogonal
 to the four existing entity-attachment join tables (``product_attachments``,
 ``promotion_attachments``, ``inbound_shipments.attachment_id``,
-``forms.attachment_id``) — only adds the field-level dimension.
+``forms.attachment_id``) - only adds the field-level dimension.
 
 Populated by the link APIs: when n8n (or the FE manual link) creates a per-row
 attachment link, ``AttachmentFieldLinkService.apply_template_to_row`` reads

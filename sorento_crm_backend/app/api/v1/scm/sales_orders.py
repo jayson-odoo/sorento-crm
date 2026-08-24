@@ -1,7 +1,7 @@
-"""SCM M1 sales-order endpoints — CRUD + create-DO-from-SO.
+"""SCM M1 sales-order endpoints - CRUD + create-DO-from-SO.
 
 Read gated on ``scm.dashboard.view``; write gated on ``scm.reorder.run`` (the
-SCM operator capability). No UUIDs surfaced — SO by so_number.
+SCM operator capability). No UUIDs surfaced - SO by so_number.
 """
 from __future__ import annotations
 

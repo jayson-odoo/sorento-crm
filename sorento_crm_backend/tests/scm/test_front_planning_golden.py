@@ -80,7 +80,7 @@ def test_the_dealer_hot_selling_worked_case_offers_no_pool_and_buys_the_whole_li
 def test_a_dealer_hot_selling_product_offers_no_pool_reserve_at_all():
     """Ladder v2 (section E rule 7): the line's own location is never a Reserve source any
     more, so a dealer hot-selling product's own stock is not touched by this ladder either
-    - only the pool rung is gated by hot-selling, and dealer-hot excludes it entirely.
+  - only the pool rung is gated by hot-selling, and dealer-hot excludes it entirely.
     """
     from app.services.scm.front_planning_engine import propose_line
 

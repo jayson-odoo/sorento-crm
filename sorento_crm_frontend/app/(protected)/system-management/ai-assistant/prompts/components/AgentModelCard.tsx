@@ -16,7 +16,7 @@ import { useProviderModels } from '@/hooks/useProviderModels';
  * Every agent shared one model until now, which meant the setting was tuned for the
  * hardest job or for none of them: reading a misspelt customer sentence and writing an
  * explanatory paragraph do not want the same model. Left blank, the agent keeps using
- * the global assistant model — so nothing changes until someone makes a choice here.
+ * the global assistant model - so nothing changes until someone makes a choice here.
  */
 export function AgentModelCard({ name, canEdit }: { name: string; canEdit: boolean }) {
   const keysQuery = usePromptKeys();

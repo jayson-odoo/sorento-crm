@@ -3,8 +3,8 @@
 ROUTE-layer tests for the two new endpoints on the conversation-SLA router,
 mirroring tests/test_intervention_ticket_detail_route.py:
 
-  POST /{tracking_id}/comments   - create, assignee-or-manager scoped
-  GET  /{tracking_id}/comments   - list, oldest first
+  POST /{tracking_id}/comments - create, assignee-or-manager scoped
+  GET  /{tracking_id}/comments - list, oldest first
 
 Covered here: happy path, auth denial, out-of-scope viewer (404, never 403),
 validation (empty body, unknown mentioned user), the in-app mention

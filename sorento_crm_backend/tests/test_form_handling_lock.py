@@ -1,4 +1,4 @@
-"""Form handling-lock ("I'm handling this") — Phase 2 BE tests.
+"""Form handling-lock ("I'm handling this") - Phase 2 BE tests.
 
 Covers PLAN-form-handling-lock §12 Phase 2 UAC:
   P2-2  claim happy + concurrent-409
@@ -58,7 +58,7 @@ def db():
         yield s
 
 
-# Recorder for notification fan-out — asserts the recipient set (actor-exclusion).
+# Recorder for notification fan-out - asserts the recipient set (actor-exclusion).
 _NOTIFY_CALLS: list[str] = []
 
 
@@ -246,7 +246,7 @@ def test_claim_non_escalated_rejected(db, seed):  # P2-3
 
 def test_claim_tier2_start_never_escalated_rejected(db, seed):  # regression: project_sales
     # A config may START at tier 2 (project_sales has no tier 1). A fresh tracker sits at
-    # tier 2 with escalated_at=None and is NOT escalated — claim must be rejected.
+    # tier 2 with escalated_at=None and is NOT escalated - claim must be rejected.
     t = _tracker(db, seed, tier=2, escalated=False)
     with pytest.raises(AppException) as e:
         HandlingLockService(db).claim_handling(t.id, _actor(seed, "member_a"))

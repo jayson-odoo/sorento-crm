@@ -1,24 +1,24 @@
-"""Slice A — parser ``ideate`` intent + router branch (ideation pipeline).
+"""Slice A - parser ``ideate`` intent + router branch (ideation pipeline).
 
 Keys back to ``documentation/plans/ideation/ideation-ideate-intent-acceptance-criteria.md``:
 
-- **AC-01 [T]** — ``ideate`` exists in the ``Intent`` literal, in
+- **AC-01 [T]** - ``ideate`` exists in the ``Intent`` literal, in
   ``PARSE_RESULT_JSON_SCHEMA`` enum + intent description, and the schema still
   validates under OpenAI strict mode.
-- **AC-04 [T]** — a low-confidence ``ideate`` guess (< 0.4) demotes to the agent
+- **AC-04 [T]** - a low-confidence ``ideate`` guess (< 0.4) demotes to the agent
   loop, never hijacking a CRM turn.
-- **AC-05 [T]** — ``ideate`` at/above the floor routes to a DEDICATED decision
-  (``kind="ideate"``) — it does not fall through to record_answer/capability.
-- **AC-06 [T]** — the in-app WEB brain (``respond``) recognises ``ideate`` and
+- **AC-05 [T]** - ``ideate`` at/above the floor routes to a DEDICATED decision
+  (``kind="ideate"``) - it does not fall through to record_answer/capability.
+- **AC-06 [T]** - the in-app WEB brain (``respond``) recognises ``ideate`` and
   returns a friendly redirect to ``/ideas`` WITHOUT calling create_idea and
   without raising.
 
 AC-02 (paraphrase classification) and AC-03 (no-regression corpus) are
-live-LLM evals — they exercise how a real model classifies literal sentences,
+live-LLM evals - they exercise how a real model classifies literal sentences,
 which cannot run deterministically in CI. They are DEFERRED to the opt-in
 live-LLM harness (see the tester note); the deterministic tests below MUST be
 green. This follows the repo's split of "routing tests (offline, deterministic)"
-vs "classifier-quality eval (live LLM, opt-in)" — see
+vs "classifier-quality eval (live LLM, opt-in)" - see
 ``test_ai_assistant_record_context_preroute.py`` + ``feedback_no_overfit_llm_nlp``.
 """
 from __future__ import annotations
@@ -56,12 +56,12 @@ def _parse(intent: str, *, confidence: float = 0.9) -> ParseResult:
 
 
 def _svc() -> AIAssistantChatService:
-    # _route is a pure switch — touches neither DB nor collaborator.
+    # _route is a pure switch - touches neither DB nor collaborator.
     return AIAssistantChatService(db=None)  # type: ignore[arg-type]
 
 
 # ===========================================================================
-# AC-01 — schema exposes ``ideate`` and stays OpenAI strict-compliant
+# AC-01 - schema exposes ``ideate`` and stays OpenAI strict-compliant
 # ===========================================================================
 def test_ideate_in_intent_literal():
     assert "ideate" in typing.get_args(Intent), "ideate must be a closed Intent value"
@@ -92,7 +92,7 @@ def test_schema_still_openai_strict_after_ideate():
 
 
 # ===========================================================================
-# AC-04 / AC-05 — deterministic router branch
+# AC-04 / AC-05 - deterministic router branch
 # ===========================================================================
 def test_ideate_above_floor_gets_dedicated_decision():
     """AC-05: a confident ideate turn routes to the dedicated ideate branch,
@@ -114,7 +114,7 @@ def test_low_confidence_ideate_demotes_to_agent():
 
 
 # ===========================================================================
-# AC-06 — in-app WEB brain redirects ideate to /ideas (no create_idea)
+# AC-06 - in-app WEB brain redirects ideate to /ideas (no create_idea)
 # ===========================================================================
 @pytest.fixture
 def db_session() -> Session:

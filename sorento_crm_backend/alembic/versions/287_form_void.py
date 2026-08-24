@@ -1,7 +1,7 @@
 """Form void: terminal status='voided' + reason quad on the three form tables.
 
 Adds ``void_reason`` (TEXT), ``voided_by`` (FK -> users.id; type matches each
-table's existing user-id column — String(100) on purchase_requests, TEXT on
+table's existing user-id column - String(100) on purchase_requests, TEXT on
 complaints / stock_inquiries) and ``voided_at`` (naive TIMESTAMP) to
 ``purchase_requests`` (PR + sponsorship form), ``complaints`` and
 ``stock_inquiries``.

@@ -314,6 +314,6 @@ class AIPromptService:
             label_row.updated_by = user_id
         self.db.commit()
         # Immediate cache invalidation so the very next chat turn uses the new
-        # version (UAC B4) — do not wait for the TTL.
+        # version (UAC B4) - do not wait for the TTL.
         ai_prompt_registry.bust_cache(name)
         return self._labels_map(name)

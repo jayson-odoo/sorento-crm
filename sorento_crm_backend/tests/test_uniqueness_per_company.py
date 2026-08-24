@@ -1,12 +1,12 @@
-"""Per-company natural-key uniqueness — AC-J1/J2 (composite unique indexes).
+"""Per-company natural-key uniqueness - AC-J1/J2 (composite unique indexes).
 
 Migration 305 swapped every single-column natural-key unique (product_code,
 order_number, warehouse_code, customer code/name, ...) for a composite
 ``(company_id, key)`` unique index. The business consequence:
 
-  - AC-J1: two DIFFERENT companies may each own a row with the SAME code — they
+ - AC-J1: two DIFFERENT companies may each own a row with the SAME code - they
     are distinct rows, not a conflict.
-  - AC-J2: the SAME company still cannot hold two rows with that code.
+ - AC-J2: the SAME company still cannot hold two rows with that code.
 
 Exercised through the ORM insert path (auto-stamp fills ``company_id`` from the
 active scope) so both the stamp and the DB constraint are proven end-to-end.
@@ -79,7 +79,7 @@ def _seed_cat_uom(db: Session, company_id: str, suffix: str):
 
 
 # --------------------------------------------------------------------------- #
-# product_code — composite (company_id, product_code)                          #
+# product_code - composite (company_id, product_code)                          #
 # --------------------------------------------------------------------------- #
 def test_same_product_code_allowed_across_companies(db, mocha):
     from app.models.product import Product
@@ -134,7 +134,7 @@ def test_duplicate_product_code_same_company_rejected(db, mocha):
 
 
 # --------------------------------------------------------------------------- #
-# order_number — composite (company_id, order_number)                          #
+# order_number - composite (company_id, order_number)                          #
 # --------------------------------------------------------------------------- #
 def test_same_order_number_allowed_across_companies(db, mocha):
     from app.models.order import Order

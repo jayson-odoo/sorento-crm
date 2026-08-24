@@ -1,14 +1,14 @@
-"""AI assistant prompt registry — runtime resolver + PROMPT_KEYS constant.
+"""AI assistant prompt registry - runtime resolver + PROMPT_KEYS constant.
 
 Industry-standard immutable-versions + movable-labels model
 (see ``documentation/plans/PLAN-ai-assistant-prompt-registry.md`` §5/§6).
 
 Runtime resolution:
-- ``get_prompt(db, name, label="production")`` — in-process TTL cache keyed by
+- ``get_prompt(db, name, label="production")`` - in-process TTL cache keyed by
   ``(name, label)``; on cache miss SELECT the labelled version; on DB error OR
   missing row fall back to ``PROMPT_KEYS[name].fallback()`` with ``version=None``.
   NEVER raises on a DB-unreachable condition (UAC B2).
-- ``render(db, name, **vars)`` — fetch then substitute ``{{var}}``; a declared
+- ``render(db, name, **vars)`` - fetch then substitute ``{{var}}``; a declared
   var not supplied raises ``ValueError`` naming it (UAC B3).
 
 The hardcoded fallback strings below are the SINGLE SOURCE for the current
@@ -66,36 +66,36 @@ def _reformulator_fallback() -> str:
 
 
 def _semantic_parser_fallback() -> str:
-    """System prompt for the M0 Semantic Parser — the single front-of-pipeline
+    """System prompt for the M0 Semantic Parser - the single front-of-pipeline
     node. It UNDERSTANDS the turn and emits PARAMETERS (a schema-forced JSON
     object), never prose. ``{{current_date}}`` is substituted at call time so it
     can resolve relative dates to absolute. The output schema itself is enforced
     by the provider (strict json_schema / forced tool); this prompt governs the
-    VALUES — how to classify intent, extract entities, and decide clarification."""
+    VALUES - how to classify intent, extract entities, and decide clarification."""
     return (
         "You are the Semantic Parser for an in-app CRM assistant used by internal staff. "
         "Your ONLY job: understand the user's latest turn (using the conversation history "
         "for context) and emit the structured parameters the downstream deterministic "
-        "router needs. You do NOT answer the user and you do NOT write prose — every field "
+        "router needs. You do NOT answer the user and you do NOT write prose - every field "
         "is a parameter for the next processing step.\n\n"
-        "INTENT — choose exactly one:\n"
+        "INTENT - choose exactly one:\n"
         "- capability: asks what the system/assistant can do.\n"
         "- smalltalk: greeting, thanks, chit-chat; no data or action needed.\n"
         "- how_to: asks for steps/instructions to perform a CRM action (answered from a user guide).\n"
         "- definition: asks the meaning of a term/status/abbreviation; no live data, no guide.\n"
-        "- record_question: asks about the SPECIFIC record currently open on screen — its "
+        "- record_question: asks about the SPECIFIC record currently open on screen - its "
         "state, who acted, when, why, how long, SLA, next step. 'this/it/here' signals it.\n"
         "- record_action: asks to CHANGE an existing record (close, cancel, approve, reject).\n"
         "- data_query: asks to look up live system data across records (stock, orders, "
         "products, promotions, customers, SLA, shipments).\n"
-        "- form_submit: wants to CREATE a form — complaint, stock inquiry, purchase request, "
+        "- form_submit: wants to CREATE a form - complaint, stock inquiry, purchase request, "
         "or sponsorship form.\n"
         "- ideate: proposes a NEW product idea, feature wish, or improvement suggestion for "
         "the software itself ('I wish it could...', 'can we add a feature that...', 'idea: ...'). "
         "This is NOT a question about existing data and NOT a support form.\n"
         "- unknown: genuinely cannot tell; the request is too vague to route.\n\n"
         "RULES:\n"
-        "- standalone_query: rewrite the turn into ONE self-contained question — resolve "
+        "- standalone_query: rewrite the turn into ONE self-contained question - resolve "
         "pronouns/ellipsis from history; expand CRM abbreviations on first mention keeping the "
         "abbreviation (DO -> delivery order (DO), GRN -> goods received note (GRN), SPO, PO, "
         "SO, PR, SKU -> product). This is used only to search; keep it concise (<=2 sentences).\n"
@@ -128,7 +128,7 @@ def _ideate_extractor_fallback() -> str:
         "or refining a product idea over WhatsApp. Your ONLY job: read their latest "
         "message in the context of the current draft and emit the STRUCTURED updates the "
         "downstream intake tool needs. You do NOT reply to the user and you do NOT write "
-        "prose — every field is a parameter.\n\n"
+        "prose - every field is a parameter.\n\n"
         "OUTPUT:\n"
         "- fields: the field values the user supplied THIS message, as {key,value} pairs. "
         "Use the intake answer keys shown in the draft context "
@@ -138,12 +138,12 @@ def _ideate_extractor_fallback() -> str:
         "('remove the impact', 'forget the department').\n"
         "- confirm: true ONLY when the draft status is 'review' AND the user explicitly "
         "confirms the summary is correct ('yes', 'confirm', 'that's right', 'looks good'). "
-        "Any question, edit, or new detail is NOT a confirmation — set confirm=false and "
+        "Any question, edit, or new detail is NOT a confirmation - set confirm=false and "
         "put the change in fields/remove instead.\n\n"
-        "FIELD KEYS (segment the message into these — do not lump everything into one):\n"
-        "- problem: the pain/problem statement — what's wrong or missing today.\n"
+        "FIELD KEYS (segment the message into these - do not lump everything into one):\n"
+        "- problem: the pain/problem statement - what's wrong or missing today.\n"
         "- proposed_solution: what the user wants built / how to solve it.\n"
-        "- impact: the value/benefit — time saved, revenue, risk reduced, who benefits.\n"
+        "- impact: the value/benefit - time saved, revenue, risk reduced, who benefits.\n"
         "- department: the team/department the idea concerns (e.g. operations, sales, CS).\n\n"
         "RULES:\n"
         "- Do not paraphrase the whole message into one field; decompose it into the "
@@ -159,7 +159,7 @@ def _router_fallback() -> str:
         "You classify a single user message from an in-app assistant. The user is "
         "viewing ONE specific record (a case/form) on screen, and most of their "
         "questions are about THAT open record.\n"
-        "Answer YES when the message asks about the specific record in front of them — "
+        "Answer YES when the message asks about the specific record in front of them - "
         "its subject/summary/details, its current state, who acted on it, when, why it "
         "is in this state, how long something took, its SLA, or what to do next on it. "
         "Words like 'this', 'it', 'now', or naming the record's type ('this complaint') "
@@ -169,12 +169,12 @@ def _router_fallback() -> str:
         "catalog/data lookup across many records (products, promotions, orders, stock, "
         "customers, shipments), a definition of a term, or how a feature works in "
         "general (a how-to / process-in-general question).\n"
-        "A procedural question SCOPED TO THE OPEN RECORD is YES — its process flow, how "
+        "A procedural question SCOPED TO THE OPEN RECORD is YES - its process flow, how "
         "it works, its stages, or what to do next, when phrased about 'this' or 'here'. "
         "The SAME question asked generally or about a named type WITHOUT 'this' (e.g. "
         "'for a complaint', 'in general') is NO.\n"
         "Tie-breaker: if it could plausibly be about the open record, answer YES.\n"
-        "Examples — YES: 'who handled this?' / 'what stage is it at?' / 'give me the "
+        "Examples - YES: 'who handled this?' / 'what stage is it at?' / 'give me the "
         "gist of this case' / 'what do I do next here?' / 'what is the process flow for "
         "this?' / 'how does this work?'. "
         "NO: 'list all open complaints' / 'how does the approval step work in general?' "
@@ -185,7 +185,7 @@ def _router_fallback() -> str:
 
 
 def _agent_system_fallback() -> str:
-    """ReAct core system prompt — ``_default_system_prompt`` MINUS the trailing
+    """ReAct core system prompt - ``_default_system_prompt`` MINUS the trailing
     USER GUIDE PROTOCOL block (that block is now the ``synthesizer`` key and is
     appended at runtime, preserving the exact combined text)."""
     return (
@@ -223,13 +223,13 @@ def _agent_system_fallback() -> str:
         "the user just supplied, MERGE them into the running form state, and "
         "reply with a reflection block shaped exactly like this:\n"
         "     Captured so far:\n"
-        "       - <Field label>: <value>\n"
+        "     - <Field label>: <value>\n"
         "       ...\n"
         "     Still needed:\n"
-        "       - <Field label> [required|optional]\n"
+        "     - <Field label> [required|optional]\n"
         "       ...\n"
         "     Validation issues (if any):\n"
-        "       - <field>: <short reason>\n"
+        "     - <field>: <short reason>\n"
         "   Then ask only for the still-needed REQUIRED fields.\n"
         "3) Once all REQUIRED fields are valid, you MUST send one FINAL summary "
         "for user review and ask them to edit anything if needed. Do NOT submit "
@@ -273,19 +273,19 @@ def _agent_system_fallback() -> str:
 
 
 def _synthesizer_fallback() -> str:
-    """Answer policy — the former ``_user_guide_protocol_addendum`` body. Appended
+    """Answer policy - the former ``_user_guide_protocol_addendum`` body. Appended
     to ``agent_system`` at runtime (idempotent on the 'USER GUIDE PROTOCOL' header)."""
     return (
         "USER GUIDE PROTOCOL (applies to `user_guides_read`)\n"
-        "When the user asks a how-to / process question — phrasings like 'how do I…', "
+        "When the user asks a how-to / process question - phrasings like 'how do I…', "
         "'how to…', 'where do I…', 'what's the process for…', 'steps to…', 'guide me on…', "
         "or any request for instructions on a CRM action (uploading a packing list, "
         "submitting a stock inquiry, sending a purchase request for approval, flowing a "
         "stock inquiry to purchasing, approving via email link, OTP / portal access, etc.) "
-        "— follow this exact flow:\n"
+        " - follow this exact flow:\n"
         "1) Call `user_guides_read` ONCE with the user's question verbatim as `query`. The "
         "tool searches Outline and returns the full markdown body of the best match in a "
-        "single round trip. There is no separate search tool — do NOT try to call "
+        "single round trip. There is no separate search tool - do NOT try to call "
         "`user_guides_search`.\n"
         "2) If the response contains `\"code\": \"NO_MATCH\"` or `\"code\": \"OUTLINE_ERROR\"`, "
         "tell the user no guide matches and ask them to rephrase. Do NOT invent steps.\n"
@@ -295,12 +295,12 @@ def _synthesizer_fallback() -> str:
         "when the guide describes steps.\n"
         "3a) PRESERVE INLINE MARKDOWN LINKS from the guide verbatim. When the guide body "
         "contains a markdown link like `[**Resource Management → Files**](/resource-management/attachment-directories)`, "
-        "your reply MUST keep the WHOLE markdown link — square brackets, label, parens, "
-        "URL, all of it — exactly as written. Do NOT unwrap it to plain bold. Do NOT replace "
+        "your reply MUST keep the WHOLE markdown link - square brackets, label, parens, "
+        "URL, all of it - exactly as written. Do NOT unwrap it to plain bold. Do NOT replace "
         "it with the label only. Do NOT replace it with the URL only. Do NOT move the URL "
         "to a separate sentence. The frontend renders these inline markdown links as "
         "clickable shortcuts to the actual CRM page; that is the primary value to the user.\n"
-        "    EXAMPLE — guide says:\n"
+        "    EXAMPLE - guide says:\n"
         "      `1. Open [**Resource Management → Files**](/resource-management/attachment-directories) (URL: \\`/resource-management/attachment-directories\\`).`\n"
         "    Your reply must say (label-with-link kept intact):\n"
         "      `1. Open [**Resource Management → Files**](/resource-management/attachment-directories) in the left menu.`\n"
@@ -308,7 +308,7 @@ def _synthesizer_fallback() -> str:
         "      `1. Open Resource Management → Files in your CRM.`\n"
         "    NOT (link separated, BAD):\n"
         "      `1. Open Resource Management → Files. Link: /resource-management/attachment-directories`\n"
-        "3b) Do NOT just paste the doc URL on its own and tell the user to go read it — the "
+        "3b) Do NOT just paste the doc URL on its own and tell the user to go read it - the "
         "user came here to avoid that. Do NOT append a 'Full guide: <doc URL>' line either; "
         "the inline links inside the steps are sufficient. Keep the response tight: short "
         "intro line, numbered steps, optional one-line caveat. No raw URLs at the bottom.\n"
@@ -326,7 +326,7 @@ def _synthesizer_fallback() -> str:
 
 def _planner_fallback() -> str:
     return (
-        "PLANNER (dormant — activates in M2.5)\n"
+        "PLANNER (dormant - activates in M2.5)\n"
         "You decompose the user's request into an ordered list of tool steps for the "
         "executor to run. Identify the goal, the minimal data needed, and the sequence of "
         "tool calls (with their arguments) that gathers it. Do NOT answer the user; output "
@@ -336,7 +336,7 @@ def _planner_fallback() -> str:
 
 def _semantic_compressor_fallback() -> str:
     return (
-        "SEMANTIC COMPRESSOR (dormant — activates in M2.5)\n"
+        "SEMANTIC COMPRESSOR (dormant - activates in M2.5)\n"
         "You convert raw tool JSON into token-tight, faithful natural-language sentences "
         "that preserve every id, code, quantity, status, and date. Drop nothing factual; "
         "invent nothing. Output only the compressed facts, no commentary.\n"
@@ -345,7 +345,7 @@ def _semantic_compressor_fallback() -> str:
 
 def _validator_fallback() -> str:
     return (
-        "VALIDATOR (dormant — activates in M3a)\n"
+        "VALIDATOR (dormant - activates in M3a)\n"
         "You confidence-gate a drafted answer before it is sent. Check that every claim is "
         "grounded in the turn's tool results or record facts. If the answer asserts an "
         "unsupported fact, or the evidence is insufficient, respond that the assistant "
@@ -355,7 +355,7 @@ def _validator_fallback() -> str:
 
 def _clarifier_fallback() -> str:
     return (
-        "CLARIFIER (dormant — activates in M3a)\n"
+        "CLARIFIER (dormant - activates in M3a)\n"
         "You decide whether an underspecified request needs a clarifying question before "
         "the assistant acts. Ask ONE concise question only when a required parameter is "
         "genuinely missing or ambiguous; otherwise say the request is answerable as-is. "
@@ -365,16 +365,16 @@ def _clarifier_fallback() -> str:
 
 def _scm_recommendation_explainer_fallback() -> str:
     return (
-        "SCM RECOMMENDATION EXPLAINER (bounded — no tools, no computing)\n"
+        "SCM RECOMMENDATION EXPLAINER (bounded - no tools, no computing)\n"
         "You turn a supply-chain reorder recommendation's ALREADY-COMPUTED numbers into "
         "plain language for a non-expert planner. You are given the recommendation's frozen "
         "facts as JSON. Hard rules:\n"
         "- NEVER compute, estimate, forecast, or invent any number. Only restate numbers that "
         "appear verbatim in the given facts.\n"
-        "- No markdown, no lists, no preamble — just the sentence(s) requested.\n"
+        "- No markdown, no lists, no preamble - just the sentence(s) requested.\n"
         "EXPLAIN mode: write ONE clear sentence saying what to do and why, citing only the "
         "given numbers (e.g. net position vs reorder point, order quantity, cash impact). "
-        "Format only — the numbers come from the facts, never from you.\n"
+        "Format only - the numbers come from the facts, never from you.\n"
         "ASK mode: answer the planner's question using ONLY the given facts. If the answer "
         "requires a number or fact that is NOT in the given data, reply with EXACTLY this "
         "sentence and nothing else: \"I can't compute that from this recommendation's data.\" "
@@ -384,17 +384,17 @@ def _scm_recommendation_explainer_fallback() -> str:
 
 def _scm_market_advisory_fallback() -> str:
     return (
-        "SCM MARKET ADVISORY (bounded — advisory only, no compute)\n"
+        "SCM MARKET ADVISORY (bounded - advisory only, no compute)\n"
         "You condense ONE already-captured market/economic signal into a single "
         "decision-support sentence for a supply-chain planner looking at a reorder "
         "recommendation. You are given the recommendation context and the cached "
         "signal as JSON. Hard rules:\n"
         "- NEVER compute, forecast, or invent a number. Only reference the figure and "
         "trend that appear in the given signal.\n"
-        "- This is market CONTEXT, advisory only — never restate it as a new "
+        "- This is market CONTEXT, advisory only - never restate it as a new "
         "recommendation quantity, reorder point, or any changed number; the "
         "recommendation's figures are not yours to touch.\n"
-        "- One plain sentence, no markdown, no preamble — make the market implication "
+        "- One plain sentence, no markdown, no preamble - make the market implication "
         "for this buy clear (e.g. rising input cost favours bringing the order "
         "forward; a softening index supports deferring).\n"
     )
@@ -431,7 +431,7 @@ def _conversation_reply_draft_fallback() -> str:
 
 def _judge_fallback() -> str:
     return (
-        "JUDGE (dormant — activates in M3b)\n"
+        "JUDGE (dormant - activates in M3b)\n"
         "You are an offline/online quality evaluator (LLM-as-judge). Given a user question, "
         "the assistant's answer, and the available ground truth, score the answer for "
         "correctness, grounding, and helpfulness, and give a one-line justification. Output "
@@ -640,10 +640,10 @@ the customer used another unit (8 inch = 203.2 mm).
 "no more than 800", "maximum 700" are at_most. Leave "op" out when they name a size they \
 want ("600mm basin"), which means about that size.
 - A brand name or a product class IS a specification whenever it appears in the list \
-you were given. Return it, even when the customer says nothing else — "cabana wc" is a \
+you were given. Return it, even when the customer says nothing else - "cabana wc" is a \
 brand and a class, not an empty enquiry.
-- Put words that carry meaning but map onto no spec — a model name, a room, a colour \
-you were not given — into free_terms. A word you cannot place is a free term. Never \
+- Put words that carry meaning but map onto no spec - a model name, a room, a colour \
+you were not given - into free_terms. A word you cannot place is a free term. Never \
 file it under the nearest-looking value: an unrecognised word is not evidence for any \
 specification.
 - Prefer a misspelling of a WORD you were given over a resemblance to a NAME. \
@@ -651,7 +651,7 @@ specification.
 - If the customer is not describing a product at all, return empty lists.
 - A specification the customer RULES OUT goes in `exclusions`, never in `specs`. "not \
 glass", "no glass", "anything but glass", "without a drainer" all mean the customer does \
-not want it — putting it in `specs` asks for the exact thing they refused. Same key and \
+not want it - putting it in `specs` asks for the exact thing they refused. Same key and \
 value rules apply: exact strings, and silence when you are not sure it is a refusal.
 - A refusal is not a request for the opposite. "not glass" excludes glass; it does not \
 select ceramic.
@@ -719,19 +719,19 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     # --- Active front-of-pipeline node (M0) ---
     "semantic_parser": PromptKeySpec(
         name="semantic_parser",
-        role="Semantic parser — understand the turn, emit routing parameters (JSON)",
+        role="Semantic parser - understand the turn, emit routing parameters (JSON)",
         active=True,
         activates_in=None,
         variables=["current_date"],
         fallback=_semantic_parser_fallback,
         dry_runnable=True,
     ),
-    # --- Ideation pipeline brain extractor (D-CONFIRM) — active, gated by the
+    # --- Ideation pipeline brain extractor (D-CONFIRM) - active, gated by the
     #     ideation config being set (dormant when unset). Emits structured
     #     {fields, remove, confirm} for the external ideate-turn endpoint. ---
     "ideate_extractor": PromptKeySpec(
         name="ideate_extractor",
-        role="Ideate extractor — NLU for ideation turns (fields/remove/confirm)",
+        role="Ideate extractor - NLU for ideation turns (fields/remove/confirm)",
         active=True,
         activates_in=None,
         variables=[],
@@ -744,7 +744,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     #     rolled back without a deploy, like every other prompt. ---
     "po_extractor": PromptKeySpec(
         name="po_extractor",
-        role="PO extractor — scanned customer purchase order to lines and handwriting",
+        role="PO extractor - scanned customer purchase order to lines and handwriting",
         active=True,
         activates_in=None,
         # page_text (19 Aug follow-up, "text + image together"): the page's own PDF text
@@ -755,7 +755,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     ),
     "schedule_extractor": PromptKeySpec(
         name="schedule_extractor",
-        role="Schedule extractor — delivery schedule matrix to phase by product quantities",
+        role="Schedule extractor - delivery schedule matrix to phase by product quantities",
         active=True,
         activates_in=None,
         variables=["page_no", "page_count", "page_text"],
@@ -766,7 +766,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     #     live node in the FE prompt editor's default view. ---
     "reformulator": PromptKeySpec(
         name="reformulator",
-        role="Reformulator — DORMANT, replaced by semantic_parser (M0)",
+        role="Reformulator - DORMANT, replaced by semantic_parser (M0)",
         active=False,
         activates_in=None,
         variables=["current_date"],
@@ -774,7 +774,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     ),
     "router": PromptKeySpec(
         name="router",
-        role="Router — DORMANT, replaced by semantic_parser (M0)",
+        role="Router - DORMANT, replaced by semantic_parser (M0)",
         active=False,
         activates_in=None,
         variables=[],
@@ -782,7 +782,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     ),
     "agent_system": PromptKeySpec(
         name="agent_system",
-        role="Agent system — ReAct thinker/executor core",
+        role="Agent system - ReAct thinker/executor core",
         active=True,
         activates_in=None,
         variables=[],
@@ -791,7 +791,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     ),
     "synthesizer": PromptKeySpec(
         name="synthesizer",
-        role="Synthesizer — answer policy (cite, preserve links, format, anti-invent)",
+        role="Synthesizer - answer policy (cite, preserve links, format, anti-invent)",
         active=True,
         activates_in=None,
         variables=[],
@@ -802,7 +802,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     #     ``ai_assistant_role_split_enabled`` system setting) ---
     "planner": PromptKeySpec(
         name="planner",
-        role="Planner — decompose task, order tool steps",
+        role="Planner - decompose task, order tool steps",
         active=True,
         activates_in=None,
         variables=[],
@@ -811,7 +811,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     ),
     "semantic_compressor": PromptKeySpec(
         name="semantic_compressor",
-        role="Semantic compressor — raw tool JSON into token-tight sentences",
+        role="Semantic compressor - raw tool JSON into token-tight sentences",
         active=True,
         activates_in=None,
         variables=[],
@@ -821,7 +821,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     # --- Registered but dormant (seed + editable, no call site yet) ---
     "validator": PromptKeySpec(
         name="validator",
-        role="Validator — confidence-gate the answer before send",
+        role="Validator - confidence-gate the answer before send",
         active=False,
         activates_in="M3a",
         variables=[],
@@ -829,7 +829,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     ),
     "clarifier": PromptKeySpec(
         name="clarifier",
-        role="Clarifier — ask-vs-guess when the query is underspecified",
+        role="Clarifier - ask-vs-guess when the query is underspecified",
         active=False,
         activates_in="M3a",
         variables=[],
@@ -837,16 +837,16 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     ),
     "judge": PromptKeySpec(
         name="judge",
-        role="Judge — offline/online quality eval (LLM-as-judge)",
+        role="Judge - offline/online quality eval (LLM-as-judge)",
         active=False,
         activates_in="M3b",
         variables=[],
         fallback=_judge_fallback,
     ),
-    # --- SCM M5 semantic layer (bounded explainer flow — NOT the agent) ---
+    # --- SCM M5 semantic layer (bounded explainer flow - NOT the agent) ---
     "scm_recommendation_explainer": PromptKeySpec(
         name="scm_recommendation_explainer",
-        role="SCM explainer — reorder recommendation prose + bounded Q&A (no compute)",
+        role="SCM explainer - reorder recommendation prose + bounded Q&A (no compute)",
         active=True,
         activates_in=None,
         variables=[],
@@ -855,7 +855,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     # --- Spec search (product recommendation by description) ---
     "spec_understanding": PromptKeySpec(
         name="spec_understanding",
-        role="Spec understanding — read a customer's product description onto the Spec Registry",
+        role="Spec understanding - read a customer's product description onto the Spec Registry",
         active=True,
         activates_in=None,
         variables=[],
@@ -873,7 +873,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     ),
     "scm_market_advisory": PromptKeySpec(
         name="scm_market_advisory",
-        role="SCM market advisory — condense a cached market signal into one advisory line",
+        role="SCM market advisory - condense a cached market signal into one advisory line",
         active=True,
         activates_in=None,
         variables=[],
@@ -980,9 +980,9 @@ def get_prompt(
 ) -> RenderedPrompt:
     """Resolve a prompt to its live text + version.
 
-    - ``override_version_id`` (dry-run): resolve THAT specific version, bypassing
+  - ``override_version_id`` (dry-run): resolve THAT specific version, bypassing
       the cache and the label. Falls back if the id is missing.
-    - Otherwise: TTL cache by ``(name, label)`` → labelled version → fallback.
+  - Otherwise: TTL cache by ``(name, label)`` → labelled version → fallback.
     Never raises on a DB error; returns the hardcoded fallback with ``version=None``.
     """
     if name not in PROMPT_KEYS:

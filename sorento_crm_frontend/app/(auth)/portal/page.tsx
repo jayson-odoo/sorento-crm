@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Legacy `/portal` entry — thin resolver in front of the stable slug tree.
+ * Legacy `/portal` entry - thin resolver in front of the stable slug tree.
  *
  * - `?token=` links (old WhatsApp messages, impersonation) land here: the
  *   token is stored, then the contact's slug is resolved and the browser is
@@ -84,7 +84,7 @@ function PortalRootContent() {
         }
         const slug = (me.portal_slug || '').trim();
         if (!slug) {
-          // Extremely unlikely (BE lazily mints on /me) — stay on the legacy
+          // Extremely unlikely (BE lazily mints on /me) - stay on the legacy
           // tree rather than break the session.
           setMode('legacy-landing');
           return;
@@ -94,7 +94,7 @@ function PortalRootContent() {
       } catch (e) {
         if (cancelled) return;
         if (e instanceof PortalUnauthorizedError) {
-          // Expired/revoked token — recover via the legacy verify page, which
+          // Expired/revoked token - recover via the legacy verify page, which
           // can look the contact up from the dead token.
           router.replace(
             portalVerifyPath({ slug: null, reason: 'expired', token, type }),

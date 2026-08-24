@@ -1,7 +1,7 @@
 """Raw-SQL company-scope helper (multi-company data isolation).
 
 The central ``do_orm_execute`` filter in ``app.services.company_scope`` only
-covers ORM SELECTs — a raw ``text()`` statement bypasses it entirely. Any raw
+covers ORM SELECTs - a raw ``text()`` statement bypasses it entirely. Any raw
 query that touches an owned (``CompanyScopedMixin``) table must reproduce the
 same four-state predicate by hand; this helper builds that WHERE fragment from
 the session scope so the two enforcement paths can't drift.

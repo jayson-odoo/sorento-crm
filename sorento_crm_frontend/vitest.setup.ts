@@ -17,7 +17,7 @@ import { configure } from '@testing-library/dom';
 configure({ asyncUtilTimeout: 5000 });
 
 // jsdom implements none of these, but cmdk (Command) and Radix (Popover) both call them on
-// mount — so any test touching the standard searchable dropdowns dies with a ReferenceError
+// mount - so any test touching the standard searchable dropdowns dies with a ReferenceError
 // before it can assert anything. Stub them globally rather than per-test file.
 if (!globalThis.ResizeObserver) {
   globalThis.ResizeObserver = class {

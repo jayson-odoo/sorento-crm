@@ -89,7 +89,7 @@ def test_pairs_incoming_to_outgoing_by_turn_id(db):
 
 
 def test_pairing_is_immune_to_bursts(db):
-    """3 rapid incomings, 3 replies — proximity pairing would mis-assign these."""
+    """3 rapid incomings, 3 replies - proximity pairing would mis-assign these."""
     _turn(db, "a", in_at=NOW, latency_s=30)          # slow
     _turn(db, "b", in_at=NOW + timedelta(seconds=1), latency_s=2)
     _turn(db, "c", in_at=NOW + timedelta(seconds=2), latency_s=3)
@@ -117,7 +117,7 @@ def test_multi_part_reply_measures_the_first_outgoing(db):
 
 
 def test_unresolved_respond_ts_is_not_measured(db):
-    """A row awaiting resolution has no trustworthy clock yet — omit, don't guess."""
+    """A row awaiting resolution has no trustworthy clock yet - omit, don't guess."""
     _msg(db, type="incoming", turn_id="t", respond_ts=None, sent_at=NOW)
     _msg(db, type="outgoing", turn_id="t", respond_ts=None, sent_at=NOW + timedelta(seconds=5))
     assert svc.get_turns(db, since=NOW - timedelta(hours=1)) == []
@@ -154,7 +154,7 @@ def test_unanswered_within_threshold_is_not_flagged(db):
 def test_p99_tolerates_exactly_one_percent(db):
     """99 fast + 1 slow is *compliant*: p99 by definition allows 1% to exceed.
 
-    Pinned because it is tempting to read p99 as "the worst case" — the single slow
+    Pinned because it is tempting to read p99 as "the worst case" - the single slow
     turn shows up in `max`, not in p99, and an alert wired to p99 must not fire here.
     """
     for i in range(100):
@@ -203,7 +203,7 @@ def test_min_sample_size_prevents_alerting_on_one_turn(db):
 
 
 # --------------------------------------------------------------------------- #
-# Hard ceiling — a single catastrophic turn                                   #
+# Hard ceiling - a single catastrophic turn                                   #
 # --------------------------------------------------------------------------- #
 def test_stalled_turn_detected_regardless_of_sample_size(db):
     """The webhook-failure case: one turn blows past 3x target, alert immediately."""
@@ -258,7 +258,7 @@ def test_recently_sent_not_yet_delivered_is_not_counted(db):
 
 
 # --------------------------------------------------------------------------- #
-# Webhook lag — the failure mode this whole slice exists to catch              #
+# Webhook lag - the failure mode this whole slice exists to catch              #
 # --------------------------------------------------------------------------- #
 def test_webhook_lag_is_measurable_and_separate_from_latency(db):
     _msg(
@@ -278,7 +278,7 @@ def test_webhook_lag_null_when_ingest_at_missing(db):
 
 
 # --------------------------------------------------------------------------- #
-# Watchdog entry point — fire / suppress / recover                            #
+# Watchdog entry point - fire / suppress / recover                            #
 #                                                                             #
 # Added after `run_chat_latency_watchdog` was found calling a `_mark_ok` helper #
 # that did not exist: the recovery branch would have raised NameError in        #
@@ -355,8 +355,8 @@ def test_watchdog_quiet_when_healthy(wdb, monkeypatch):
 class TestConfigurablePercentile:
     """p50/p95/p99 were all computed but only p99 could alert, hardcoded.
 
-    Which percentile you hold yourself to is a policy decision — a chattier
-    channel may want p95 — so it belongs in settings, not in the code.
+    Which percentile you hold yourself to is a policy decision - a chattier
+    channel may want p95 - so it belongs in settings, not in the code.
     """
 
     def _stats(self):
@@ -374,7 +374,7 @@ class TestConfigurablePercentile:
     def test_p95_can_be_selected(self):
         stats = self._stats()
         v = svc.evaluate_breach(stats, target_seconds=10, min_sample=30, percentile=95)
-        # p95 = 5s, comfortably inside a 10s target — the same data that breaches
+        # p95 = 5s, comfortably inside a 10s target - the same data that breaches
         # at p99 passes at p95. That is the whole point of making it selectable.
         assert v.breached is False
 

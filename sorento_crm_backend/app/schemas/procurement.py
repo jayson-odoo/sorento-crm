@@ -884,7 +884,7 @@ class PurchaseRequestHeaderBase(BaseModel):
     # resolved display name is a READ-ONLY derived field and lives on the
     # response schemas only (see StockInquiryBase for why it must not sit here).
     requested_by_contact_id: Optional[str] = None
-    requested_at: Optional[date] = None  # DEPRECATED — see submitted_at + request_date
+    requested_at: Optional[date] = None  # DEPRECATED - see submitted_at + request_date
     submitted_at: Optional[datetime] = None  # auto-stamped on submit; top "Date" on the document (read-only)
     status: Optional[str] = None
     source: Optional[str] = None

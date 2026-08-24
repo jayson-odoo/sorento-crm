@@ -8,7 +8,7 @@ ASGI round-trip, and so a future caller cannot bypass them by writing a row
 directly.
 
 Redaction is deliberately key-based and case-insensitive. Matching on *values*
-(e.g. "looks like a token") is the tempting version and the wrong one — it fails
+(e.g. "looks like a token") is the tempting version and the wrong one - it fails
 open on the secret you did not anticipate.
 """
 import json
@@ -100,7 +100,7 @@ def test_undecodable_bytes_do_not_raise():
 
 
 # --------------------------------------------------------------------------- #
-# sanitize_body — what actually reaches the column                            #
+# sanitize_body - what actually reaches the column                            #
 # --------------------------------------------------------------------------- #
 def test_json_body_secrets_are_redacted():
     """The path that matters: redact_mapping is useless if the middleware stores
@@ -157,7 +157,7 @@ def test_missing_header_falls_back_to_unknown():
 
 
 def test_unrecognised_source_is_kept_but_bounded():
-    """A new caller should be visible, not silently relabelled 'unknown' — but it
+    """A new caller should be visible, not silently relabelled 'unknown' - but it
     cannot be allowed to write 10KB into a 32-char column."""
     assert resolve_source({"x-source": "some-new-caller"}) == "some-new-caller"
     assert len(resolve_source({"x-source": "z" * 500})) <= 32
@@ -180,6 +180,6 @@ def test_outcome_classification(code, expected):
 
 
 def test_missing_status_is_a_server_error():
-    """No status means the request died before producing one — that is our fault,
+    """No status means the request died before producing one - that is our fault,
     not the caller's, and it must not land in the success bucket."""
     assert classify_outcome(None) == "server_error"

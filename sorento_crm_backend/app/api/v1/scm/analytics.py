@@ -1,9 +1,9 @@
-"""SCM M2 analytics endpoints — trigger a demand/classification/supplier run and
+"""SCM M2 analytics endpoints - trigger a demand/classification/supplier run and
 read the run log.
 
 Running the engine is a planning action (``scm.reorder.run``); reading the run log /
 explain working is a dashboard view (``scm.dashboard.view``). The scheduled trigger is
-a later slice — this is the manual on-demand entry point plus the observability read.
+a later slice - this is the manual on-demand entry point plus the observability read.
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def list_runs(
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    """Recent analytics run logs (newest first) — status / counts / window / coverage."""
+    """Recent analytics run logs (newest first) - status / counts / window / coverage."""
     # Raw SQL, so the ORM scope filter does not reach it: this company's run log only.
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="car")
     rows = db.execute(text(

@@ -310,7 +310,7 @@ export function SalesOrderLinesTable({
         id: 'description',
         header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
         cell: ({ row }) => {
-          const text = row.original.line.description || '—';
+          const text = row.original.line.description || '-';
           return (
             <span className="block truncate" title={text}>
               {text}
@@ -338,7 +338,7 @@ export function SalesOrderLinesTable({
         header: ({ column }) => <DataGridColumnHeader title="UOM" column={column} />,
         cell: ({ row }) => (
           <span className="block truncate text-muted-foreground">
-            {row.original.line.uom || '—'}
+            {row.original.line.uom || '-'}
           </span>
         ),
         size: 80,
@@ -412,7 +412,7 @@ export function SalesOrderLinesTable({
         header: ({ column }) => <DataGridColumnHeader title="From PO line" column={column} />,
         cell: ({ row }) => (
           <span className="block truncate text-muted-foreground tabular-nums">
-            {row.original.sourcePoLineNo ?? '—'}
+            {row.original.sourcePoLineNo ?? '-'}
           </span>
         ),
         size: 120,
@@ -528,7 +528,7 @@ export function SalesOrderLinesTable({
         ) : (
           <ChevronDown className="size-3.5" aria-hidden />
         )}
-        {`Set from PO line ${row.sourcePoLineNo ?? '—'}: ${row.companionCount + 1} components`}
+        {`Set from PO line ${row.sourcePoLineNo ?? '-'}: ${row.companionCount + 1} components`}
       </button>
     );
   };

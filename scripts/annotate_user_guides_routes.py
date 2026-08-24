@@ -6,7 +6,7 @@ If the guide reads `**Resource Management → Files**`, the FE renders only
 text. If it reads `[**Resource Management → Files**](/resource-management/attachment-directories)`,
 the user gets a clickable shortcut to the page.
 
-This script is idempotent — running it twice is a no-op (skips any mention
+This script is idempotent - running it twice is a no-op (skips any mention
 that's already inside a markdown link).
 
 Run:
@@ -75,7 +75,7 @@ def annotate(text: str) -> tuple[str, int]:
         # Match `**<label>**` not already inside `[**<label>**](...)`.
         # Negative-lookbehind: not preceded by `](`. Negative-lookahead: not
         # followed by `](`. We also skip when the bold marker is wrapped in
-        # backticks (code) — uncommon for menu paths.
+        # backticks (code) - uncommon for menu paths.
         pattern = re.compile(
             r"(?<!\]\()(?<!`)\*\*"
             + re.escape(label)

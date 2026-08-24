@@ -2,7 +2,7 @@
 
 Decoupled from the request path: called by the RQ task
 ``generate_purchase_request_pdf``. Mirrors ``stock_inquiry_pdf_service`` and
-``complaint_pdf_service`` — same helpers, same "printed copy agrees with the
+``complaint_pdf_service`` - same helpers, same "printed copy agrees with the
 screen" rule, same exclusion of internal-only fields (SLA tier/assignee, handling
 lock, audit trail) because the printed sheet gets handed to a driver.
 
@@ -108,7 +108,7 @@ def _blank(value) -> str:
 
     The Excel export leaves an unfilled cell blank and the printed form is meant
     to be signed off by hand, so a row like ``Approved by:`` has to print as an
-    empty space someone can write in - a "—" reads as "not applicable".
+    empty space someone can write in - a "-" reads as "not applicable".
     """
     if value is None:
         return ""

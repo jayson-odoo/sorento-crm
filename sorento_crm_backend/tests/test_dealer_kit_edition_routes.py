@@ -2,9 +2,9 @@
 
 The real subject here is WHO may do what. Three rights, deliberately separate:
 
-* ``page.edit``        - Designer: start, submit, reopen
-* ``edition.approve``  - Approver: approve, reject
-* ``page.publish``     - move the published label, i.e. mark it done
+* ``page.edit``      - Designer: start, submit, reopen
+* ``edition.approve`` - Approver: approve, reject
+* ``page.publish``   - move the published label, i.e. mark it done
 
 A Designer holding only ``page.edit`` must get a 403 on approve, including on
 their own Edition (AC-L3), and the fixture below gives each user exactly one of

@@ -150,7 +150,7 @@ def test_max_age_bound_and_reconfiguring_it():  # S4
         assert _evaluate(db, [old]).is_served(old.id)
 
 
-def test_live_of_one_type_does_not_suppress_expired_of_another():  # S5 — the SRTWC286 bug
+def test_live_of_one_type_does_not_suppress_expired_of_another():  # S5 - the SRTWC286 bug
     with blank_session() as db:
         standard = _standard(db)
         flyer = _type(db, "a3_flyer", expired_max_age_days=180)

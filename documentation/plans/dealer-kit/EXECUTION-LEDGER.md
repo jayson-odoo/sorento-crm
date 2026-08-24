@@ -1,4 +1,4 @@
-# Execution ledger — Dealer Kit S1–S3
+# Execution ledger - Dealer Kit S1 - S3
 
 **Owner:** Claude (orchestrating). **Status line is updated as work lands.**
 Companions: `dealer-kit-builder-acceptance-criteria.md` (what "done" means) ·
@@ -6,7 +6,7 @@ Companions: `dealer-kit-builder-acceptance-criteria.md` (what "done" means) ·
 
 A phase is entered only after the previous phase is **approved** here. A slice is entered
 only after the previous slice is **approved** here. Approval means every gate item below is
-observed — not asserted.
+observed - not asserted.
 
 ---
 
@@ -71,7 +71,7 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
 
 ---
 
-## S1 — Builder core
+## S1 - Builder core
 
 ### End-to-end flow this slice must deliver
 
@@ -81,25 +81,25 @@ and see derived layouts → toggle **Paper mode** and see where page 2 starts �
 version 1) → **Publish** (moves the `published` label) → open the public URL and see it → edit,
 save (version 2), publish → **roll back** to version 1 → public URL follows the label.
 
-### Phase 1 — FE prototype (mocks only, no backend)
+### Phase 1 - FE prototype (mocks only, no backend)
 
 Build: pages list, editor shell, section + 12-col grid with drag/resize/collide/compact,
 breakpoint tabs with derived layouts, paper mode, asset library, tile-template editor, version
 history + publish/rollback UI, public renderer. All against fixtures.
 
-**Gate — every item observed in a real browser before Phase 2 opens:**
+**Gate - every item observed in a real browser before Phase 2 opens:**
 - [ ] Reached by **clicking the sidebar from `/`**, never a deep URL (menu gating is real)
 - [ ] Grid: drag, resize, collide-push, vertical compact all work; snapping is to cells, never px
 - [ ] Breakpoints: editing mobile flips `isDerived` false and desktop edits stop re-deriving it
 - [ ] Paper mode shows break lines; the desktop canvas shows **none** (AC-H6)
 - [ ] Usable at **375px and 1280px**; every modal scrolls to its submit button
 - [ ] Loading / empty / error states exist for every list and the editor
-- [ ] Only `components/ui` + `components/common` primitives — no bespoke table, no raw `<select>`
+- [ ] Only `components/ui` + `components/common` primitives - no bespoke table, no raw `<select>`
 - [ ] `browser_console_messages` clean of unexpected errors/warnings
 - [ ] Derivation golden-set test written **before** the derivation implementation (AC-K2)
 - [ ] Documented API contract at the top of the service file
 
-#### Phase 1 gate result — PASSED, with the gaps named
+#### Phase 1 gate result - PASSED, with the gaps named
 
 Verified in a real browser against a **prod build** on :3020, 7 Playwright cases green in ~27s,
 plus 32 vitest cases and the full 1285-test suite with no regressions.
@@ -136,14 +136,14 @@ plus 32 vitest cases and the full 1285-test suite with no regressions.
 the re-derive button; the populated and empty grid bodies in vitest, which do not mount under
 jsdom and are covered by Playwright instead.
 
-### Phase 2 — Backend + wiring + tests
+### Phase 2 - Backend + wiring + tests
 
 Build: migration (schema + 5 tables + 2 core column adds), models, module catalog + guard, six
 permissions + grant sweep, version/label service, routes, then FE off mocks onto real hooks.
 
 **Gate:**
 - [ ] Migration chains onto the **committed** head; `alembic heads` shows exactly one
-- [ ] `alembic upgrade head` then `downgrade -1` then `upgrade head` — clean both ways
+- [ ] `alembic upgrade head` then `downgrade -1` then `upgrade head` - clean both ways
 - [ ] Every owned table on `CompanyScopedMixin`; leak test asserts UNSET scope → 0 rows
 - [ ] Versions immutable; `max(version)+1` **per page_id**; label move busts the cache
 - [ ] `page.edit` without `page.publish` → publish absent in UI **and** 403 on the API
@@ -154,7 +154,7 @@ permissions + grant sweep, version/label service, routes, then FE off mocks onto
 - [ ] Playwright spec drives the full flow above and asserts the `/api/v1/*` calls
 - [ ] All three suites green
 
-#### Phase 2 gate result — PASSED, with one claim explicitly withheld
+#### Phase 2 gate result - PASSED, with one claim explicitly withheld
 
 > **Corrected in Phase 3.** This gate was signed off while the public renderer was still
 > missing, which is part of the flow S1 declares. The gate items below were all genuinely met;
@@ -203,7 +203,7 @@ is not available to compare against, so the honest claim is the narrower one: ev
 touching Dealer Kit passes, and `test_company_scope.py` (the one shared file this slice
 edits) passes.
 
-### Phase 3 — Review
+### Phase 3 - Review
 
 - [ ] `/code-review` run, findings addressed
 - [ ] `documentation/PR-CHECKLIST.md` walked
@@ -211,7 +211,7 @@ edits) passes.
 - [ ] Delete + unlink confirmed via `ConfirmDeleteDialog`, hard delete, count in bulk copy
 - [ ] Prod build (`npm run build && npm start`) before handoff
 
-#### Phase 3 gate result — PASSED after the review found a missing leg of the slice
+#### Phase 3 gate result - PASSED after the review found a missing leg of the slice
 
 **13 Playwright · 67 pytest · 32 vitest green**, against backend :8020 and a prod build on
 :3020. Review was done by reading the slice diff rather than trusting the green suites, which
@@ -254,14 +254,14 @@ their submit button · delete is hard and confirmed.
 
 ---
 
-## S2 — Collections, binding, bundles
+## S2 - Collections, binding, bundles
 
 **Flow:** editor → *Add products* → pick by rule (RuleBuilder) or by hand → silently a
 page-scoped Collection → bind it to a Tile Template → tiles render → *Save as reusable
 collection* → bind the same one to a second page → add a product → **both** pages reflect it.
 Bundles render as one priced heading with components beneath.
 
-#### S2 progress — the two deterministic engines, test-first
+#### S2 progress - the two deterministic engines, test-first
 
 Both golden sets were written and confirmed RED before either implementation existed, which
 is what the gate below asks for. **46 engine tests + 7 fact-source tests green.**
@@ -293,7 +293,7 @@ guessed a `{type, children[]}` shape with camelCase operators, and the tests fai
 an empty `rules` array evaluates TRUE, so a wrong-shaped tree matches everything silently. Any
 future caller building a tree by hand should copy the shape from a test, not from memory.
 
-#### S2 Phase 1 gate — PASSED (FE prototype on mocks)
+#### S2 Phase 1 gate - PASSED (FE prototype on mocks)
 
 **17 Playwright · 16 vitest · 89 pytest green**, prod build on :3020 against backend :8020.
 
@@ -339,7 +339,7 @@ bundles and the resolution itself. The mock resolver only filters discontinued p
 does not evaluate rules, which is why the rule tab's live count is approximate in the
 prototype and the real evaluator is exercised by `test_dealer_kit_product_facts.py` instead.
 
-#### S2 Phase 2 gate — PASSED (backend + FE off mocks)
+#### S2 Phase 2 gate - PASSED (backend + FE off mocks)
 
 **145 pytest · 44 vitest · 15 Playwright green**, prod build on :3020 against backend :8020.
 
@@ -392,7 +392,7 @@ predicate cannot be pushed into SQL without the second evaluator this design exi
 Fine at Sorento's catalogue size; it will need a bounded candidate set (category prefilter, or
 a cached membership table refreshed on publish) before a much larger catalogue.
 
-#### S2 sharing flow — landed after the Phase 2 gate
+#### S2 sharing flow - landed after the Phase 2 gate
 
 The collections library screen (sidebar -> **Dealer Kit -> Product Collections**) and the
 **Save as reusable** action in the block inspector. **16 Playwright** now, including the
@@ -409,7 +409,7 @@ collection and watching BOTH bound pages change is not covered by an E2E yet - o
 same-row assertion in pytest. The test was originally named as though it proved the whole of
 AC-F7 and has been renamed to what it actually asserts.
 
-#### Tile designs and bundle authoring — landed
+#### Tile designs and bundle authoring - landed
 
 Sidebar now carries **Tile Designs** and **Bundles**. No production code references a mock
 fixture any more; only `BundleCard`'s own test does.
@@ -424,7 +424,7 @@ The field list is a server-side whitelist. A design binding a field the renderer
 would leave a blank space in a printed catalogue that nobody notices until it is at the
 printer, so it is a 422 while authoring instead.
 
-#### S2 Phase 3 gate — PASSED
+#### S2 Phase 3 gate - PASSED
 
 **19 Playwright · 44 vitest · 191 pytest green.** Reviewed by reading the S2 diff rather than
 trusting the suites, which is what turned up the first two below.
@@ -475,12 +475,12 @@ the cent · bundle unavailable when any component is discontinued (derived, neve
 invoice price gated by document toggle **AND** viewer access, absent from the *response* when
 denied · `product` fact source registered on the existing `app/rule_engine`, no second evaluator.
 
-## S3 — PDF export
+## S3 - PDF export
 
 **Flow:** page → *Export PDF* → `UserDownload` row `pending` → worker renders the print route
 through headless Chromium → My Downloads → download → **matches the screen**.
 
-#### S3 foundation — the enqueue snapshot (2026-07-26)
+#### S3 foundation - the enqueue snapshot (2026-07-26)
 
 Migration **311** (`dealer_kit.export_request`), the service, and
 `POST /pages/{id}/exports`. **213 pytest.** Migration verified upgrade / downgrade / upgrade
@@ -508,7 +508,7 @@ database directly (additive `create_all` for that one table), because this branc
 `alembic upgrade` there - the shared dev database sits on another branch's 310. The migration
 itself is verified independently on a throwaway database.
 
-#### S3 Phase 2 gate — PASSED
+#### S3 Phase 2 gate - PASSED
 
 **227 pytest · 20 Playwright.** The full round trip runs for real: request -> queue ->
 Chromium -> R2 -> `ready` with a storage key.
@@ -548,7 +548,7 @@ a worker started without the env exported silently falls back to `s3` - and loca
 fails on a missing CloudFront key. Start the local worker with `set -a; . ./.env; set +a`.
 This affects every export in the system, not just Dealer Kit.
 
-#### S3 Phase 3 gate — PASSED
+#### S3 Phase 3 gate - PASSED
 
 **227 pytest · 20 Playwright.** Three findings, all fixed:
 
@@ -584,7 +584,7 @@ in the worker container, verified in a container, not only on macOS.
 
 ---
 
-## S4 Phase 2 — the Selection spine, persistence, and the contact link — **APPROVED**
+## S4 Phase 2 - the Selection spine, persistence, and the contact link - **APPROVED**
 
 Built in the order agreed: the contact link first (the plan named it as S4's blocker), then
 Selection, then room persistence, then real dimensions. The fifth item, the quote handoff, was
@@ -956,9 +956,9 @@ was a comment asserting a behaviour that nothing implemented.
 ## Standing constraints (violating any of these fails the gate)
 
 - Tests are **Postgres only**. No sqlite. Committing tests use a private `zzt_` schema.
-- All pytest cleanup **scoped to marker rows** — the local DB is a copy of prod data.
+- All pytest cleanup **scoped to marker rows** - the local DB is a copy of prod data.
 - Frontend iterates on `npm run dev` (HMR). Handoff is `npm run build && npm start`.
 - Reuse `components/ui` + `components/common`. `SearchableSelect`, `DataGrid`,
-  `ConfirmDeleteDialog`, `RuleBuilder`, `FormDialogScaffold` already exist — use them.
+  `ConfirmDeleteDialog`, `RuleBuilder`, `FormDialogScaffold` already exist - use them.
 - No UUIDs rendered in the UI. No em-dashes in any writing.
 - Deploy only on explicit per-deploy permission. Nothing here deploys.

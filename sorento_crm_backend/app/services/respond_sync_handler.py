@@ -214,7 +214,7 @@ def run_respond_contacts_sync(db: Session, task: ScheduledTask) -> dict[str, Any
                 failed += 1
                 continue
 
-            # Fetch full single-contact payload — same shape that manual sync parses correctly.
+            # Fetch full single-contact payload - same shape that manual sync parses correctly.
             # The list endpoint payload is unreliable for firstName/lastName/id extraction.
             try:
                 full_payload = client.get_contact_by_phone(phone)
@@ -271,7 +271,7 @@ def run_respond_contacts_sync(db: Session, task: ScheduledTask) -> dict[str, Any
                 created_local += 1
             processed_local_ids.add(str(local_id))
 
-            # PUT /v2/contact/{identifier} – Respond.io expects snake_case custom_fields, value = internal contact URL
+            # PUT /v2/contact/{identifier} - Respond.io expects snake_case custom_fields, value = internal contact URL
             identifier = _contact_identifier(contact)
             backend_id_value = _internal_contact_url(str(local_id))
             request_body_put = {

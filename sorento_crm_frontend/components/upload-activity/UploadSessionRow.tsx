@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Collapsible session row — single | multi | bulk_zip.
+ * Collapsible session row - single | multi | bulk_zip.
  *
  * For bulk_zip with >25 files we surface a counts dashboard +
  * "Needs attention" subtab (failed + unlinked); "All files" tab is
@@ -95,8 +95,8 @@ export function UploadSessionRow({
     'needs_action',
   );
 
-  // Excel/data import jobs: no file rows to expand — flat row, whole row
-  // navigates to the import-job detail page. (After all hooks — keep order stable.)
+  // Excel/data import jobs: no file rows to expand - flat row, whole row
+  // navigates to the import-job detail page. (After all hooks - keep order stable.)
   if (session.session_type === 'import_job') {
     return (
       <div className="border-b border-border">
@@ -257,7 +257,7 @@ export function UploadSessionRow({
                 )}
                 {bulkSubtab === 'all' && session.files.length > 200 && (
                   <div className="px-4 py-2 text-center text-xs text-muted-foreground">
-                    Showing first 200 of {session.files.length} —{' '}
+                    Showing first 200 of {session.files.length} - {' '}
                     <button
                       type="button"
                       onClick={() => {

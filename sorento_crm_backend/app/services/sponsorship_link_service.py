@@ -92,9 +92,9 @@ def assert_project_requirement(
 
     Two separate refusals, worded differently on purpose:
 
-    - nothing picked while flagged -> "register it on the web first", because that is the
+  - nothing picked while flagged -> "register it on the web first", because that is the
       action, and it is not guessable from "a project is required";
-    - picked something that is not theirs -> named as an ownership problem, and when the
+  - picked something that is not theirs -> named as an ownership problem, and when the
       contact is linked to no company at all, named as THAT instead, so the user does not
       go hunting for a project problem when an admin has to link their company.
     """

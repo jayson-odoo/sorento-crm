@@ -4,7 +4,7 @@ Before this, the CRM could not tell an MCP call from an n8n call at all: both
 authenticate with the same shared EXTERNAL_API_KEY and neither sent anything
 else. Every external request landed in one undifferentiated bucket.
 
-`X-Correlation-Id` is the piece that makes the two halves joinable — the client
+`X-Correlation-Id` is the piece that makes the two halves joinable - the client
 already measured `elapsed_ms` but only wrote it to stdout, so network time and
 server time could never be separated.
 """
@@ -47,7 +47,7 @@ async def test_tool_name_is_sent(client, captured):
 
 @pytest.mark.asyncio
 async def test_tool_name_is_omitted_when_absent(client, captured):
-    """An empty header is worse than none — it would store '' as a tool name."""
+    """An empty header is worse than none - it would store '' as a tool name."""
     await client.get("/api/v1/external/thing")
     assert "X-Tool-Name" not in captured[0]["headers"]
 
@@ -67,7 +67,7 @@ async def test_correlation_id_is_present_and_unique_per_call(client, captured):
 @pytest.mark.asyncio
 async def test_api_key_header_is_still_sent(client, captured):
     """Per-request headers merge with the client defaults rather than replacing
-    them — dropping X-API-Key here would 401 every MCP tool."""
+    them - dropping X-API-Key here would 401 every MCP tool."""
     await client.get("/api/v1/external/thing", tool_name="a")
     # httpx.Headers is a case-insensitive mapping; dict() would lowercase the
     # keys and hide that the client default is still in place.

@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import type { BreadcrumbCrumb } from './drivePath';
 
 // Distinct from the tree's `folder-` (a path ancestor appears in both the
-// breadcrumb and the expanded tree — same id would collide in dnd-kit). Must
+// breadcrumb and the expanded tree - same id would collide in dnd-kit). Must
 // match DND_ID_CRUMB_FOLDER_PREFIX in AttachmentDirectoriesView.
 const FOLDER_DROP_PREFIX = 'crumbfolder-';
 const FOLDER_ALL_ID = 'crumbfolder-all';

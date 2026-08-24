@@ -1,4 +1,4 @@
-"""SCM M1 dashboard endpoints — net position / warehouses / suppliers / rollups /
+"""SCM M1 dashboard endpoints - net position / warehouses / suppliers / rollups /
 products drill-down. All read the M0 views and resolve UUIDs to human codes/names.
 
 Shared filter query params (per the FE contract header in scmDashboardService.ts):
@@ -8,8 +8,8 @@ Shared filter query params (per the FE contract header in scmDashboardService.ts
   supplier     supplier_code
   health       stockout|dead|healthy|incoming
   q            free-text SKU-code / product-name search
-  active_status  active|inactive|all — products.is_active. DEFAULT active.
-  lifecycle      ongoing|discontinued|all — products.is_discontinued (ongoing=false).
+  active_status  active|inactive|all - products.is_active. DEFAULT active.
+  lifecycle      ongoing|discontinued|all - products.is_discontinued (ongoing=false).
                  DEFAULT ongoing.
 
 The two lifecycle params DEFAULT to the FOCUSED view (active + ongoing) when
@@ -198,12 +198,12 @@ def products_drilldown(
 
 @router.get("/dashboard/demand-series", response_model=DemandSeries)
 def demand_series(
-    sku: str = Query(..., description="Product code (SKU) — human, never a UUID."),
+    sku: str = Query(..., description="Product code (SKU) - human, never a UUID."),
     warehouse: Optional[str] = Query(None, description="Optional warehouse_code scope."),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    """~12 MONTHLY buckets of DO outflow for one SKU — the expandable product row's
+    """~12 MONTHLY buckets of DO outflow for one SKU - the expandable product row's
     "last 12 months" demand trend. Distinct from the 90-day weekly analytics rate
     window; reads the same DO consumption source (``scm.consumption_v``)."""
     return ScmDashboardService(db).demand_series(sku, warehouse)

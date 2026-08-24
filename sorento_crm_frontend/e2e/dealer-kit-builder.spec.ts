@@ -3,7 +3,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { purgeWithFreshLogin } from './dealerKitCleanup';
 
 /**
- * Dealer Kit page builder — full FE → BE → DB round-trip.
+ * Dealer Kit page builder - full FE → BE → DB round-trip.
  *
  * Run:
  *   PORTAL_E2E_BASE_URL=http://localhost:3020 \

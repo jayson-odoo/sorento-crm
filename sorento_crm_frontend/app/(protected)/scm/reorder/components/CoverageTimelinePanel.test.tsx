@@ -2,12 +2,12 @@
  * CoverageTimelinePanel (UAC Group B) - loading / empty / error / data, plus the
  * two cases that are the reason the slice exists:
  *
- *  - AC-B4: a POSITIVE closing balance with a REAL shortfall must not read as
+ * - AC-B4: a POSITIVE closing balance with a REAL shortfall must not read as
  *    healthy. The ADR-0011 worked example (opening 140, -135 due 1 Jul, -72 due
  *    3 Aug, +200 arriving 25 Aug) closes at +133 while being 67 short on 3 Aug.
  *    The shortfall must be stated, the late PO named with the 22-day gap, and the
  *    closing figure captioned as not clearing it.
- *  - AC-B1c: demand 67 against a pool holding 4,397 must read "use the pool" and
+ * - AC-B1c: demand 67 against a pool holding 4,397 must read "use the pool" and
  *    never a buy of 67.
  *
  * The real fixtures from `lib/coverageMockStore` are used rather than hand-typed

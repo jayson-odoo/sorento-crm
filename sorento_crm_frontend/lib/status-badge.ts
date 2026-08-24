@@ -102,7 +102,7 @@ export function getStatusBadgeVariant(status: string | null | undefined): Status
  * Formats status for display: capitalize words, replace underscores with spaces.
  */
 export function formatStatusLabel(status: string | null | undefined): string {
-  if (status == null || String(status).trim() === '') return '—';
+  if (status == null || String(status).trim() === '') return '-';
   return String(status)
     .trim()
     .replace(/_/g, ' ')

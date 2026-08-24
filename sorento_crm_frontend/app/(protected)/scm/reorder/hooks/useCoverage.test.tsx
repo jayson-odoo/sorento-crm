@@ -3,9 +3,9 @@
  *
  * Two properties matter and both are cheap to break:
  *
- *  - LAZY. Nothing is fetched until the row's dialog is open AND there is a pool to
+ * - LAZY. Nothing is fetched until the row's dialog is open AND there is a pool to
  *    date against, so opening the plan grid never costs N timelines.
- *  - KEYED ON THE ROW. The query key carries product + pool + floor, so stepping the
+ * - KEYED ON THE ROW. The query key carries product + pool + floor, so stepping the
  *    dialog to the next record refetches instead of leaving the previous row's
  *    timeline on screen under a new heading, which would be a wrong answer presented
  *    confidently.

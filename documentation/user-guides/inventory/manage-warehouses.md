@@ -1,4 +1,4 @@
-# Inventory — Manage warehouses
+# Inventory - Manage warehouses
 
 Warehouses are the storage locations stock is held against. Every stock balance, batch, and ledger entry is tied to exactly one warehouse. Use this page to create, edit, and deactivate them.
 
@@ -22,18 +22,18 @@ The DataGrid shows one row per warehouse with these columns:
 
 Toolbar:
 
-* **Create Warehouse** — opens the new-warehouse page.
-* **Import** — bulk-create warehouses from a file.
-* **Delete** — bulk-delete the selected rows (appears when rows are checked; confirmation required).
+* **Create Warehouse** - opens the new-warehouse page.
+* **Import** - bulk-create warehouses from a file.
+* **Delete** - bulk-delete the selected rows (appears when rows are checked; confirmation required).
 
 ## Create or edit a warehouse
 
 1. Click **Create Warehouse** (or **Edit** on a warehouse detail page).
 2. Fill in the form:
-   * **System Location \*** — the warehouse code. Placeholder `WH-001`. The form notes *"Must be unique."* Required.
-   * **System Location Description** — the descriptive name. Placeholder `e.g. Selangor Main DC`.
-   * **Warehouse** — physical location / address. Placeholder `Warehouse name / address`.
-   * **Active Status** — a toggle. The form notes *"Inactive warehouses will not appear in dropdowns"*.
+   * **System Location \*** - the warehouse code. Placeholder `WH-001`. The form notes *"Must be unique."* Required.
+   * **System Location Description** - the descriptive name. Placeholder `e.g. Selangor Main DC`.
+   * **Warehouse** - physical location / address. Placeholder `Warehouse name / address`.
+   * **Active Status** - a toggle. The form notes *"Inactive warehouses will not appear in dropdowns"*.
 3. Click **Create Warehouse** (new) or **Update Warehouse** (edit). **Cancel** discards.
 
 ## The detail page
@@ -44,7 +44,7 @@ The **Basic Information** card lists: **System Location**, **System Location Des
 
 ## Active vs. inactive
 
-`is_active` controls whether the warehouse appears in pickers elsewhere in the app. Deactivating is **not** a delete — existing stock, batches, and ledger rows keep their warehouse link; the warehouse simply stops appearing in dropdowns. Use **Delete** (hard delete, with confirmation) only to remove a warehouse entirely.
+`is_active` controls whether the warehouse appears in pickers elsewhere in the app. Deactivating is **not** a delete - existing stock, batches, and ledger rows keep their warehouse link; the warehouse simply stops appearing in dropdowns. Use **Delete** (hard delete, with confirmation) only to remove a warehouse entirely.
 
 ## What's captured
 
@@ -52,5 +52,5 @@ Per warehouse: `warehouse_code`, `warehouse_name`, `location`, `manager_id` (opt
 
 ## See also
 
-* [Inventory — Manage storage zones](manage-storage-zones.md) — subdivide a warehouse into zones.
-* [Inventory — Understand stock levels](understand-stock-levels.md)
+* [Inventory - Manage storage zones](manage-storage-zones.md) - subdivide a warehouse into zones.
+* [Inventory - Understand stock levels](understand-stock-levels.md)

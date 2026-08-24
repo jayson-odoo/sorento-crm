@@ -1,12 +1,12 @@
-# PLAN — PR/SF in-form Approve/Reject + Escalate SLA buttons
+# PLAN - PR/SF in-form Approve/Reject + Escalate SLA buttons
 
 Status: **Done** (BE + FE shipped; pytest green; buttons verified in browser on a pending-approval PR)
 
 ## Goal
 On the Purchase Request / Sponsorship Form detail header, add:
-1. **Escalate SLA** button — same as the SLA Tracking tab's escalate, but reachable
+1. **Escalate SLA** button - same as the SLA Tracking tab's escalate, but reachable
    directly on the form (parity with how staff escalate elsewhere).
-2. **Approve / Reject** buttons (when the request is pending approval) — the approver
+2. **Approve / Reject** buttons (when the request is pending approval) - the approver
    can decide in-system instead of only via the emailed approval link. MUST behave
    identically to the public approval form (same state transition, notifications,
    SLA event, automation).
@@ -18,15 +18,15 @@ On the Purchase Request / Sponsorship Form detail header, add:
 - PR detail header lives in `PurchaseRequestDetail.tsx`. It already has Send-for-approval, a *reject-submitted* (pre-approval) dialog, Edit, Delete, DetailActionsMenu.
 
 ## BE
-1. Extract `_apply_approval_decision(header, action, approved_by, comments)` from `submit_approval` (everything after token validation: status set, notifications, SLA emit, automation). `submit_approval` validates+consumes the token, then calls it — behavior unchanged.
+1. Extract `_apply_approval_decision(header, action, approved_by, comments)` from `submit_approval` (everything after token validation: status set, notifications, SLA emit, automation). `submit_approval` validates+consumes the token, then calls it - behavior unchanged.
 2. New authenticated endpoint `POST /api/v1/procurement/purchase-requests/{request_id}/approval-decision` body `{action: approved|rejected, comments?}`. Permission-gated (same perm as send-for-approval). Loads header, guards `status == pending_approval`/`submitted` per current rules, `approved_by` = current user's name, calls `_apply_approval_decision`. No token. Works for PR + SF.
 3. pytest: approve transitions status→approved + emits SLA `approved`; reject requires reason + emits `approval_rejected`; auth denial.
 
 ## FE
 4. `purchaseRequestService`: `submitApprovalDecision(requestId, action, comments?)`.
 5. `PurchaseRequestDetail` header:
-   - **Escalate** button → load active tracker via `getFormSLATrackers`, open reason dialog → `escalateFormTracking`. Hidden when no active/unresolved tracker.
-   - **Approve** / **Reject** buttons shown when pending approval → `submitApprovalDecision`. Reject requires a reason (AlertDialog), matching the public form.
+ - **Escalate** button → load active tracker via `getFormSLATrackers`, open reason dialog → `escalateFormTracking`. Hidden when no active/unresolved tracker.
+ - **Approve** / **Reject** buttons shown when pending approval → `submitApprovalDecision`. Reject requires a reason (AlertDialog), matching the public form.
 6. vitest: buttons render only in the right state; reject requires reason.
 
 ## Verify

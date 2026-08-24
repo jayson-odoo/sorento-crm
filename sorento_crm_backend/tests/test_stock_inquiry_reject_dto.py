@@ -1,4 +1,4 @@
-"""Form-banner person links — StockInquiry rejection DTO (UAC REJ-1).
+"""Form-banner person links - StockInquiry rejection DTO (UAC REJ-1).
 
 The stock-inquiry detail DTO exposes rejected_by_name, rejected_by_wa_phone and
 rejected_at (rejected_by = users.id). Phone resolves via the shared resolver.

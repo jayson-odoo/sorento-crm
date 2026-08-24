@@ -106,7 +106,7 @@ class ComplaintRootCauseService:
         )
         if in_use > 0:
             raise handle_conflict(
-                f"Cannot delete — {in_use} complaint(s) still reference this root cause. "
+                f"Cannot delete - {in_use} complaint(s) still reference this root cause. "
                 "Reassign or remove them first."
             )
         self.db.delete(row)
@@ -206,7 +206,7 @@ class ComplaintResolutionService:
         )
         if in_use > 0:
             raise handle_conflict(
-                f"Cannot delete — {in_use} complaint(s) still reference this resolution. "
+                f"Cannot delete - {in_use} complaint(s) still reference this resolution. "
                 "Reassign or remove them first."
             )
         self.db.delete(row)

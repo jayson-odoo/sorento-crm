@@ -202,8 +202,8 @@ def forward_match_grn_lines_for_spo(db, spo_number) -> ForwardMatchResult
    back to the expected one for a line that has not been picked yet (see the convention note in
    `grn_spo_matching`); `draws = draw_fifo(pool,
    warehouse_id=str(line.source_warehouse_id) if set else None, quantity=qty)`.
-   - No linked draw -> leave the line completely untouched (AC-FM-17).
-   - Otherwise the **existing row takes `draws[0]`** (set `spo_allocation_id` and
+ - No linked draw -> leave the line completely untouched (AC-FM-17).
+ - Otherwise the **existing row takes `draws[0]`** (set `spo_allocation_id` and
      `quantity_picked` = that draw's quantity). `quantity_expected` is overwritten **only when
      the receipt was actually SPLIT** (`len(draws) > 1`): a split cannot carry an
      expected-vs-picked discrepancy because the split IS the fact, but an unsplit line still
@@ -352,8 +352,8 @@ has two heads and is resolved with an `alembic merge`, per `PRINCIPLES.md`.
 1. `add_column("picking_lines", Column("spo_number_raw", String(255), nullable=True))`
 2. The partial functional index above.
 3. Backfill existing rows (DoD gate 2), two `UPDATE ... FROM` statements:
-   - linked lines take their allocation's `spo_number`;
-   - unlinked lines under a `goods_received` header whose `spo_number` is non-blank and
+ - linked lines take their allocation's `spo_number`;
+ - unlinked lines under a `goods_received` header whose `spo_number` is non-blank and
      contains none of `, ; CR LF` or a run of two spaces (the import's `_GRN_SPO_SEPARATORS`
      set, i.e. single-SPO headers only) take that header value.
 

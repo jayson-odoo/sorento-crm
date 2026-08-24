@@ -49,7 +49,7 @@ async def get_promotions(
     entities: Optional[list[str]] = Query(
         None,
         description=(
-            "DEPRECATED — free-text entity bag. Prefer `promotion_ids` / `product_ids`."
+            "DEPRECATED - free-text entity bag. Prefer `promotion_ids` / `product_ids`."
         ),
     ),
     promotion_ids: Optional[list[str]] = Query(
@@ -60,7 +60,7 @@ async def get_promotions(
         None,
         description=(
             "Filter to promotions whose products include any of these UUIDs. "
-            "Combines with `promotion_ids` via OR — a promotion is returned if it "
+            "Combines with `promotion_ids` via OR - a promotion is returned if it "
             "is in `promotion_ids` OR contains any product in `product_ids`."
         ),
     ),
@@ -95,9 +95,9 @@ async def get_promotions(
         pattern="^(overlap|started|ended)$",
         description=(
             "Which promotion date the period window tests. `overlap` (default): "
-            "promotion's [start_date, end_date] overlaps the window — 'valid/"
-            "running during X'. `started`: start_date within the window — "
-            "'released/launched in X'. `ended`: end_date within the window — "
+            "promotion's [start_date, end_date] overlaps the window - 'valid/"
+            "running during X'. `started`: start_date within the window - "
+            "'released/launched in X'. `ended`: end_date within the window - "
             "'ended/expired in X'. started/ended skip the active gate (include "
             "both active and historical rows) unless `active`/`status` is "
             "passed explicitly."
@@ -109,7 +109,7 @@ async def get_promotions(
         description=(
             "Cleanup filter. `unlinked`: promotion has no attachment linkages. "
             "`linked_to_trashed`: linked to at least one soft-deleted (trashed) "
-            "attachment. `unlinked_or_trashed`: either — the delete-candidate set."
+            "attachment. `unlinked_or_trashed`: either - the delete-candidate set."
         ),
     ),
     expiry_notify_batch_id: Optional[str] = Query(
@@ -167,7 +167,7 @@ async def get_promotions(
             or (expiry_notify_batch_id and expiry_notify_batch_id.strip())
         )
         # API-key / MCP callers without a narrowing filter are answering open
-        # questions like "what is sorento's latest promo" — return a bounded
+        # questions like "what is sorento's latest promo" - return a bounded
         # newest-first page rather than empty. Cap limit so the chatbot can't
         # accidentally enumerate the whole catalog. Interactive JWT users (FE
         # DataGrid) keep their existing unbounded list behaviour.
@@ -199,7 +199,7 @@ async def get_promotions(
         )
         # Data-miss path (§3.3): when the service attached `alternatives` /
         # `relaxed_axis` (empty result only), bypass the strict `ListResponse`
-        # response_model — which would silently drop those keys — and emit the raw
+        # response_model - which would silently drop those keys - and emit the raw
         # dict. `data` is always [] here, so the with-data path stays byte-identical
         # (AC-R1).
         if isinstance(result, dict) and result.get("alternatives"):

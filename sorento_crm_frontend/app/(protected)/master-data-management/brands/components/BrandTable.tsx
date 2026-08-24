@@ -61,7 +61,7 @@ export function buildBrandColumns(handlers: {
           className="text-muted-foreground truncate block"
           title={row.original.description ?? undefined}
         >
-          {row.original.description ?? '—'}
+          {row.original.description ?? '-'}
         </span>
       ),
     },

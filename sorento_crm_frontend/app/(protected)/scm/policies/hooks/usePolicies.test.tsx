@@ -2,10 +2,10 @@
  * usePolicies - query + mutation hook tests (AC-EDIT-5, AC-STD-2).
  *
  * Mocks the feature service so the hooks are exercised in isolation:
- *   - query hooks return the resolved data
- *   - create/update/delete mutations invalidate the reorder list key + toast on
+ * - query hooks return the resolved data
+ * - create/update/delete mutations invalidate the reorder list key + toast on
  *     success, and toast the extracted message on error
- *   - classification / supplier-scoring save mutations behave the same
+ * - classification / supplier-scoring save mutations behave the same
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';

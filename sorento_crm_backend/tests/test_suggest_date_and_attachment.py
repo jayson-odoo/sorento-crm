@@ -1,4 +1,4 @@
-"""Wave 3d — date-axis (M4) + product-attachment entity-axis (M5) relaxation.
+"""Wave 3d - date-axis (M4) + product-attachment entity-axis (M5) relaxation.
 
 Covers PLAN-suggest-on-miss-variant-graph.md §3.4 / §3.5 / §7.3:
 
@@ -105,7 +105,7 @@ _PROD_ISOLATED = '1/2" ULTRA CIRCULAR'  # no attachment, no data-bearing neighbo
 
 
 # --------------------------------------------------------------------------- #
-# M4 — date-axis (service layer)
+# M4 - date-axis (service layer)
 # --------------------------------------------------------------------------- #
 def _svc_orders(db):
     from app.services.order_service import OrderService
@@ -161,7 +161,7 @@ def test_m4_no_customer_scope_does_not_relax(db):
 
 
 # --------------------------------------------------------------------------- #
-# M5 — product-attachment entity-axis (service layer)
+# M5 - product-attachment entity-axis (service layer)
 # --------------------------------------------------------------------------- #
 def _svc_attachments(db):
     from app.services.product_service import ProductAttachmentService

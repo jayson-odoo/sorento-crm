@@ -2,6 +2,7 @@
 
 import { useState, useRef, useLayoutEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -89,10 +90,15 @@ export default function NotificationItem({
     setHasOverflow(el.scrollHeight > el.clientHeight);
   }, [item.body, expanded]);
 
+  const router = useRouter();
   const handleRowClick = () => {
     if (isUnread) {
       onMarkRead(item.id);
       onInvalidate();
+    }
+    const link = (item.data as Record<string, unknown> | undefined)?.link;
+    if (typeof link === 'string' && link.startsWith('/')) {
+      router.push(link);
     }
   };
   const handleClear = (e: React.MouseEvent) => {

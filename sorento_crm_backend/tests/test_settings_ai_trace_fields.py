@@ -67,7 +67,7 @@ def test_general_settings_put_partial_update_leaves_others(db: Session):
     )
     db.commit()
 
-    # Only flip the role-split flag — exclude_unset must not clobber the rest.
+    # Only flip the role-split flag - exclude_unset must not clobber the rest.
     _update_general_settings_impl(
         SystemSettingUpdate(ai_assistant_role_split_enabled=True), db
     )

@@ -8,7 +8,7 @@ without a binding).
 
 Idempotent: ADD/DROP COLUMN ... IF (NOT) EXISTS so a re-run is a no-op. Chained
 onto 272 (the ideate-parser prompt head) so the alembic graph stays a single
-linear head — see the dual-head / down_revision lessons in LESSONS-LEARNT.md.
+linear head - see the dual-head / down_revision lessons in LESSONS-LEARNT.md.
 
 See documentation/plans/ideation/PLAN-ideation-ideate-intent.md (Group C, AC-30).
 

@@ -17,7 +17,7 @@ const DATA_TYPES = [
   { value: 'boolean', label: 'Yes or no (it has one, or it does not)' },
 ];
 
-/** `bowl_count` from "Number of bowls" — the key the chatbot and the parser share. */
+/** `bowl_count` from "Number of bowls" - the key the chatbot and the parser share. */
 function toKey(label: string): string {
   return label
     .toLowerCase()
@@ -31,7 +31,7 @@ function toKey(label: string): string {
  *
  * Deliberately asks for the least it can. A new key is useless until it has rules that
  * read it out of a product and words customers say for it, and both of those are edited
- * on the key itself — so this collects the name and the shape, then hands straight over
+ * on the key itself - so this collects the name and the shape, then hands straight over
  * rather than presenting a long form nobody can complete in one sitting.
  */
 export default function AddSpecKey({
@@ -130,7 +130,7 @@ export default function AddSpecKey({
       )}
 
       <p className="text-xs text-muted-foreground">
-        Once it exists, open it and add the rules that read it out of a product — until
+        Once it exists, open it and add the rules that read it out of a product - until
         then it is a name with nothing behind it. Products only carry the new value after
         the catalogue is derived again.
       </p>

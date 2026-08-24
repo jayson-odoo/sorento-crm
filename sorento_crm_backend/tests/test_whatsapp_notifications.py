@@ -1,4 +1,4 @@
-"""TCK-2026-000029 — WhatsApp notification delivery on escalation + assignment.
+"""TCK-2026-000029 - WhatsApp notification delivery on escalation + assignment.
 
 Covers AC-29-F1/F2 (delivery created when opted-in + linked), F3 (not for other
 events), F5 (skip when opt-out / no contact), D1 (whatsapp channel), F4 + S2

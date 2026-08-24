@@ -1,6 +1,6 @@
 """Unit tests for the pure rule evaluator (app/rule_engine/evaluator.py).
 
-No I/O, no ORM — just condition-tree + fact-dict -> bool. Covers the operator
+No I/O, no ORM - just condition-tree + fact-dict -> bool. Covers the operator
 truth table, fail-closed behaviour (missing / null / garbage fact, unknown
 operator, over-deep tree), the AND vs OR combinators, ``collect_fact_keys`` and
 the combinator-aware ``failed_conditions``.
@@ -214,7 +214,7 @@ def test_depth_guard_over_five_is_false():
 def test_within_depth_limit_passes():
     inner = _cond("f", "eq", "x")
     node = _group("and", inner)
-    for _ in range(3):  # depth 4 for the leaf group — within limit
+    for _ in range(3):  # depth 4 for the leaf group - within limit
         node = _group("and", node)
     assert evaluate(node, {"f": "x"}) is True
 
@@ -270,7 +270,7 @@ def test_failed_conditions_empty_when_tree_passes():
 
 
 def test_failed_conditions_ignores_passing_or_sibling():
-    # In an OR group that PASSES, a failing sibling leaf must NOT be reported —
+    # In an OR group that PASSES, a failing sibling leaf must NOT be reported - 
     # the group is not blocking.
     tree = _group(
         "or",

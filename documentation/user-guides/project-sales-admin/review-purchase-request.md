@@ -1,4 +1,4 @@
-# Project Sales Admin — Review and send a purchase request for approval
+# Project Sales Admin - Review and send a purchase request for approval
 
 Project sales reps submit purchase requests through the [portal](../project-sales-rep/portal-overview.md). They land in the system as **Draft** (still being edited by the rep) or **Pending approval** once the rep clicks **Submit**. As project sales admin, your job is to **review** the submitted request and send it for approval to the project sales manager.
 
@@ -25,15 +25,15 @@ When the request is in **Pending approval**, click **[Send for approval](#guide_
 
 * If your tenant has a **default approver** configured, the system **immediately** generates a one-time approval link and emails it to the configured approver. Toast: *"Approval link sent to {email}"*.
 * If there is no default approver, the **Send for approval** dialog opens. Fill in:
-  * **Choose approver (optional)** — pick a user from the dropdown to pre-fill their email, or leave it blank.
-  * **Approver email** — required. Use the manager's email if they're not in the system.
+  * **Choose approver (optional)** - pick a user from the dropdown to pre-fill their email, or leave it blank.
+  * **Approver email** - required. Use the manager's email if they're not in the system.
 * Then click one of:
-  * **[Create link only](#guide_target=procurement.approvals.create-link-only-button)** — generates the link without sending an email. Useful when you want to share the link via another channel (e.g. paste into chat).
-  * **[Create link & send email](#guide_target=procurement.approvals.create-link-and-send-button)** — generates the link **and** emails it to the approver address.
+  * **[Create link only](#guide_target=procurement.approvals.create-link-only-button)** - generates the link without sending an email. Useful when you want to share the link via another channel (e.g. paste into chat).
+  * **[Create link & send email](#guide_target=procurement.approvals.create-link-and-send-button)** - generates the link **and** emails it to the approver address.
 
 After the link is created, the dialog shows **Approval link (one-time use)** with a copy icon. Click **Done** to close.
 
-The link is **token-based** and **one-time-use** — the manager can open it without logging in, and it expires after 24 hours.
+The link is **token-based** and **one-time-use** - the manager can open it without logging in, and it expires after 24 hours.
 
 ## What the manager sees
 
@@ -46,16 +46,16 @@ Opening the emailed link takes the manager to a token-protected approve page whe
 
 ## Other actions on the toolbar
 
-* **Edit** — open the form to amend any field.
-* **Delete** — delete the request (destructive; confirmation required).
+* **Edit** - open the form to amend any field.
+* **Delete** - delete the request (destructive; confirmation required).
 * **Actions menu (**`**⋯**`**)**:
-  * **Copy view link** — a read-only link you can share without giving full access.
-  * **Export to Excel** — exports the request and items to Excel.
-  * **Chat records** — opens the Respond.io conversation panel.
-  * **Update & Reply** — composes a reply on Respond.io with the saved message text.
+  * **Copy view link** - a read-only link you can share without giving full access.
+  * **Export to Excel** - exports the request and items to Excel.
+  * **Chat records** - opens the Respond.io conversation panel.
+  * **Update & Reply** - composes a reply on Respond.io with the saved message text.
 
 ## See also
 
-* [Review and send a sponsorship form for approval](review-sponsorship-form.md) — same shape, separate module
-* [Project Sales Manager — Approve via email link](../project-sales-manager/approve-via-email.md)
-* [Project Sales Rep — Portal overview](../project-sales-rep/portal-overview.md)
+* [Review and send a sponsorship form for approval](review-sponsorship-form.md) - same shape, separate module
+* [Project Sales Manager - Approve via email link](../project-sales-manager/approve-via-email.md)
+* [Project Sales Rep - Portal overview](../project-sales-rep/portal-overview.md)

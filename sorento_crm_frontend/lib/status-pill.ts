@@ -1,5 +1,5 @@
 /**
- * Shared soft-pastel status pill — the look used by Complaints, applied across
+ * Shared soft-pastel status pill - the look used by Complaints, applied across
  * Purchase Requests / Sponsorship Forms / Stock Inquiries so every form status
  * pill reads the same. Mirrors the palette in lib/complaint-status.ts.
  *
@@ -28,7 +28,7 @@ const STATUS_PILL_CLASS: Record<string, string> = {
   // like resolved/processed rather than like closed, which is merely over.
   done: 'bg-emerald-100 text-emerald-800',
   // Voided = form was cancelled/annulled after creation. Neutral gray (muted),
-  // deliberately NOT red — voiding is administrative, not an error/rejection.
+  // deliberately NOT red - voiding is administrative, not an error/rejection.
   voided: 'bg-gray-200 text-gray-600',
   // Outbound delivery (supplier notices, and anything else that leaves the building). Added
   // here rather than as a local vocabulary so "failed" is the same red everywhere; falling back

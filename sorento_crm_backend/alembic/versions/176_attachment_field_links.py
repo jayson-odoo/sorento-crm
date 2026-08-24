@@ -5,7 +5,7 @@ Adds two columns to ``attachments`` to capture the upload-time template:
 ``target_field_keys`` (JSONB array of field keys it answers).
 
 Adds ``attachment_field_links`` (entity_type, entity_id, attachment_id,
-field_key) — populated by link APIs when an attachment is linked to a
+field_key) - populated by link APIs when an attachment is linked to a
 specific row, so the AI agent and FE can surface the doc per-field.
 
 Revision ID: 176_attachment_field_links

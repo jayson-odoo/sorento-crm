@@ -3,7 +3,7 @@
 LESSONS-LEARNT: the backend serializes `updated_at` as naive UTC (no `Z`).
 Converting it to an offset-aware `...+08:00` string is technically correct but
 downstream consumers (n8n / luxon) re-convert an offset-aware timestamp back to
-UTC for display — undoing the conversion, so 09:28 MYT rendered as 01:28.
+UTC for display - undoing the conversion, so 09:28 MYT rendered as 01:28.
 
 The contract is therefore: convert to Asia/Kuala_Lumpur, then STRIP the offset.
 An offset-aware output is the bug, not a stylistic difference.
@@ -59,7 +59,7 @@ def test_non_timestamp_values_pass_through_untouched():
 def test_normalization_reaches_nested_rows_and_skips_other_keys():
     """`_normalize_updated_at` recurses, and touches ONLY the `updated_at` key.
 
-    Guards the "generic on the updated_at key" property — the fix was applied
+    Guards the "generic on the updated_at key" property - the fix was applied
     once centrally so every tool benefits; a narrowed implementation that only
     handled top-level rows would silently regress nested payloads.
     """

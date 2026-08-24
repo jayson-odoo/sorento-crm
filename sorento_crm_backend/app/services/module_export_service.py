@@ -3,7 +3,7 @@ Module export service: assembles a portable zip from an installed module so it c
 be dropped into another Sorento CRM deployment via the App Store upload flow.
 
 Walks `EXPORT_FILES_BACKEND` and `EXPORT_FILES_FRONTEND` declared in each module's
-manifest.py — supports the pragmatic "manifest with file refs" layout where module
+manifest.py - supports the pragmatic "manifest with file refs" layout where module
 code still lives in shared backend dirs (app/api/v1, app/models, app/services).
 
 Stream the result via FastAPI's `StreamingResponse`.
@@ -44,7 +44,7 @@ def _load_manifest(module_key: str) -> Dict[str, Any]:
     manifest_path = _module_dir(module_key) / "manifest.py"
     if not manifest_path.is_file():
         raise ModuleExportError(
-            f"Module '{module_key}' has no manifest.py — not yet migrated to per-module package."
+            f"Module '{module_key}' has no manifest.py - not yet migrated to per-module package."
         )
     spec = importlib.util.spec_from_file_location(
         f"_export_manifest_{module_key}", manifest_path

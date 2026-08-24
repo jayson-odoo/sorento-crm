@@ -1,4 +1,4 @@
-"""TCK-2026-000032 — SLA KPI aggregations.
+"""TCK-2026-000032 - SLA KPI aggregations.
 
 Covers AC-32-F1 (summary reconciles), F2 (per-task rows + trigger split),
 F4 (scope partition), F5 (split-clock met/breach), leaderboard.

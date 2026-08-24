@@ -4,7 +4,7 @@ UAC: documentation/plans/sla/sla-clock-start-next-working-window-acceptance-crit
 
 Supersedes the earlier one-sided due-date clamp (`_clamp_offhours_due_to_workday_end`,
 removed with its test file). That clamp relaxed the *deadline* to the end of the
-working day; this fixes the *start* instead — an off-hours submit begins its clock
+working day; this fixes the *start* instead - an off-hours submit begins its clock
 at the next working-window open, then the policy duration is added from there.
 Sat 09:01 + 24h is therefore due Tue at the window open, not Mon 09:01 (raw) and
 not Mon 17:00 (clamped).
@@ -26,7 +26,7 @@ KL = ZoneInfo("Asia/Kuala_Lumpur")
 
 
 class _StubCalendar(CalendarService):
-    """Mon–Fri, configurable window (default 09:00–17:00), injectable holidays, no DB."""
+    """Mon - Fri, configurable window (default 09:00 - 17:00), injectable holidays, no DB."""
 
     def __init__(
         self,

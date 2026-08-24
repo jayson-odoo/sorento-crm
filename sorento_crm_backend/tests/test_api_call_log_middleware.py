@@ -1,4 +1,4 @@
-"""ApiCallLogMiddleware — total coverage of /api/v1/external/* by construction.
+"""ApiCallLogMiddleware - total coverage of /api/v1/external/* by construction.
 
 Covers UAC OBS-S3-02, OBS-S3-03, OBS-S3-05, OBS-S3-11.
 
@@ -7,7 +7,7 @@ test is that the MIDDLEWARE logs any external route, which is only demonstrated
 if the route is one the middleware has never seen. Mounting the real app would
 prove the routes work, not that coverage is automatic.
 
-The `test_a_brand_new_route_is_logged` case is the whole point of the slice —
+The `test_a_brand_new_route_is_logged` case is the whole point of the slice - 
 today logging is opt-in per endpoint and 27 of ~30 external routes forgot.
 """
 import json
@@ -77,7 +77,7 @@ def client(written, monkeypatch):
 # --------------------------------------------------------------------------- #
 def test_a_brand_new_route_is_logged(client, written):
     """OBS-S3-03. This route has no logging code of its own and the middleware
-    has no knowledge of it — that is exactly the condition that failed before."""
+    has no knowledge of it - that is exactly the condition that failed before."""
     r = client.post("/api/v1/external/brand-new-route", json={"echo": "hi"})
     assert r.status_code == 200
     assert len(written) == 1
@@ -93,7 +93,7 @@ def test_exactly_one_row_per_request(client, written):
 
 def test_mcp_calls_to_NON_external_routes_are_logged(client, written):
     """Found in verification, not by a test: MCP tools mostly proxy ordinary CRM
-    endpoints — the products catalogue is /api/v1/master-data/*, not
+    endpoints - the products catalogue is /api/v1/master-data/*, not
     /api/v1/external/*. Scoping on the path prefix alone silently missed most
     MCP traffic while the client was sending full attribution."""
     client.get(
@@ -139,7 +139,7 @@ def test_request_and_response_payloads_are_captured(client, written):
 
 def test_secret_header_never_reaches_the_row(client, written):
     """Headers are not persisted at all, which is the strongest version of this
-    guarantee — assert it rather than trusting it."""
+    guarantee - assert it rather than trusting it."""
     client.post(
         "/api/v1/external/brand-new-route",
         json={"echo": "hi"},

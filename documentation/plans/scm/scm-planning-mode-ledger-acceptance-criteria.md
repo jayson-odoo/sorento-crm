@@ -14,15 +14,15 @@ planning tab) from the sidebar.
    overrides remain possible later through policy rows, but no UI for that now.
 2. The buyer opens a row's order-qty popover. They read a LEDGER that runs in the same
    order their decision runs:
-   - **THE LINE**: where the trigger came from. Manual mode: the reorder level, its
+ - **THE LINE**: where the trigger came from. Manual mode: the reorder level, its
      source and date. Auto mode: the computed ROP with its derivation (current popover).
      Then net now (broken into on hand + SPO - SO), the open PO book (named but not
      counted), and the gap.
-   - **COVER BEFORE BUYING**: the live cover parts of the decision - use stock at a
+ - **COVER BEFORE BUYING**: the live cover parts of the decision - use stock at a
      named warehouse, SPO arriving (named, never re-offered), use an open PO. Each line
      is the same toggle the Adjust dialog offers; unticking one recomputes the lines
      below in place.
-   - **THE BUY**: an OPTIONAL forecast add-on line the buyer clicks to include
+ - **THE BUY**: an OPTIONAL forecast add-on line the buyer clicks to include
      (engine proposes the number = demand rate x horizon; never assumed), then the buy
      before rounding, then MoQ / order multiple rounding with the "+N extra, clears in
      ~X" note. When cover eats the whole gap this block collapses to "Nothing to buy -

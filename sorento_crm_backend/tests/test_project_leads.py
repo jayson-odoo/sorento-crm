@@ -657,8 +657,8 @@ def test_the_customer_portfolio_spans_both_routes_a_project_can_arrive_by():
 
     Two independent routes reach the same customer, and a section that shows only one
     of them under-reports the account:
-      - a project whose DEVELOPER party is bridged to that customer, and
-      - a project qualified out of one of that customer's leads (the informant may be
+    - a project whose DEVELOPER party is bridged to that customer, and
+    - a project qualified out of one of that customer's leads (the informant may be
         an architect who never buys anything).
     """
     from app.services import project_lead_service as leads

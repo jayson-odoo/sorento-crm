@@ -1,7 +1,7 @@
 # Emdash Ban - Acceptance Criteria
 
 > Status: DRAFT (2026-07-17). Cross-cutting FE + BE quality rule. Own branch off main, own PR.
-> Goal: purge em-dash (`—` U+2014) and en-dash (`–` U+2013) from human-authored source so the UI
+> Goal: purge em-dash (`-` U+2014) and en-dash (` - ` U+2013) from human-authored source so the UI
 > stops reading as LLM-generated ("vibe coded"), and lock the rule into the governing docs.
 
 ## Criteria
@@ -50,6 +50,6 @@
 
 ## Rule text (canonical, for PRINCIPLES.md + CLAUDE.md)
 
-> No em-dash (`—`) or en-dash (`–`) in human-authored source. Use a hyphen (`-`) or reword. Applies
+> No em-dash (`-`) or en-dash (` - `) in human-authored source. Use a hyphen (`-`) or reword. Applies
 > to FE JSX/TS UI strings, BE user-facing strings, and LLM output (post-process strip). Excludes
 > markdown docs and code comments. Enforced by the ESLint `no-emdash` rule on the frontend.

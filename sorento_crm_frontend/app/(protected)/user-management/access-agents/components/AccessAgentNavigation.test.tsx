@@ -2,10 +2,10 @@
  * Tests for the AccessAgentNavigation wrapper (record-navigation, IDs mode).
  *
  * The wrapper:
- *  - reconstructs the list query from the detail URL via parseDetailSearch,
- *  - feeds it to useAccessAgentNeighbours (thin wrapper over useRecordNeighbours),
- *  - renders RecordNavigation in IDs mode (prevId/nextId/index/total/isLoading),
- *  - preserves the active list query in the URL when stepping to a neighbour.
+ * - reconstructs the list query from the detail URL via parseDetailSearch,
+ * - feeds it to useAccessAgentNeighbours (thin wrapper over useRecordNeighbours),
+ * - renders RecordNavigation in IDs mode (prevId/nextId/index/total/isLoading),
+ * - preserves the active list query in the URL when stepping to a neighbour.
  *
  * useAccessAgentNeighbours is mocked so we assert the wrapping/threading, not the
  * network layer (that is covered by the backend pytest + the shared hook test).

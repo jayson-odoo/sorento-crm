@@ -71,7 +71,7 @@ def test_separator_variants_all_normalize_to_one_form():
 
 
 # --------------------------------------------------------------------------- #
-# Seeders — each returns the id of the row its token must resolve to
+# Seeders - each returns the id of the row its token must resolve to
 # --------------------------------------------------------------------------- #
 def _uid() -> str:
     return str(uuid.uuid4())

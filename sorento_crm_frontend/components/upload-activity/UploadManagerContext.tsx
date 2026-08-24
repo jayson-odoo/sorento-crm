@@ -1,17 +1,17 @@
 'use client';
 
 /**
- * UploadManagerContext — FE-only optimistic state for upload sessions.
+ * UploadManagerContext - FE-only optimistic state for upload sessions.
  *
  * Owns sessions that the user just submitted, before the backend has
  * acknowledged all POSTs. Each session is merged with the BE
- * `/upload-activity` feed by `useUploadActivity` — the BE entry, once
+ * `/upload-activity` feed by `useUploadActivity` - the BE entry, once
  * present, wins, and the optimistic copy is cleared via `reconcile`.
  *
  * Phase 2: callers MUST pass an `uploader` closure to `startSession`. The
  * simulated uploader has been removed.
  *
- * No Zustand in repo — uses React Context + useReducer.
+ * No Zustand in repo - uses React Context + useReducer.
  */
 
 import {
@@ -161,7 +161,7 @@ function reducer(state: OptimisticState, action: Action): OptimisticState {
     }
 
     case 'reconcileSession': {
-      // BE has the session — drop the optimistic copy. The drawer
+      // BE has the session - drop the optimistic copy. The drawer
       // merge layer will keep showing the BE version.
       const { [action.sessionId]: _drop, ...rest } = state.sessions;
       return { ...state, sessions: rest };
@@ -194,7 +194,7 @@ export interface StartSessionInput {
   sessionType: SessionType;
   /** Optional pre-generated upload_batch_id; auto-generated if absent. */
   uploadBatchId?: string;
-  /** Per-file uploader. Required — must wrap the api-client POST and
+  /** Per-file uploader. Required - must wrap the api-client POST and
    *  resolve to the attachment id (or throw on failure). */
   uploader: (file: File, batchId: string) => Promise<{ attachment_id: string }>;
 

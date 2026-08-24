@@ -8,11 +8,11 @@ These are shape tests, deliberately separate from the behaviour suites. Both
 endpoints feed n8n branch conditions, and n8n's strict type validation coerces
 an ABSENT key to `false` and routes on silently:
 
-  - drop `in_working_hours` from a create response and every in-hours contact is
+ - drop `in_working_hours` from a create response and every in-hours contact is
     told "we are outside working hours", with nothing red anywhere - no error, no
     failed integration_log, no alert. The n8n side fails loudly on a missing key
     via a sentinel; this file is the CRM-side half of that contract.
-  - answer open-count with a 404 (or omit `open_count`) and the "conversation
+ - answer open-count with a 404 (or omit `open_count`) and the "conversation
     closed and resolved" message goes out to a contact whose enquiry is open.
 
 So the assertion is on the KEY and its TYPE, not only on the value: a null

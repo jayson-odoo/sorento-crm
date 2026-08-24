@@ -1,4 +1,4 @@
-# Commercial — Create, compare and close tenders
+# Commercial - Create, compare and close tenders
 
 A **tender** belongs to a project and is the competitive opportunity you quote against. One tender can carry several **master quotations**; you compare them, and when the customer decides you either progress the winning quotation into a **sales order** or close the tender with a lost/withdrawn/no-award outcome. This guide covers the tender list, creating a tender, comparing quotations, and the win/close progression.
 
@@ -8,7 +8,7 @@ Open [**Commercial → Tenders**](/commercial-management/tenders) (URL: `/commer
 
 | Column | Meaning |
 |--------|---------|
-| **Tender** | Tender code — click the row to open the tender detail page. |
+| **Tender** | Tender code - click the row to open the tender detail page. |
 | **Title** | Tender title. |
 | **Stage** | Pipeline stage (free-text label on the tender). |
 | **Lifecycle** | **open** or **closed** (badge). |
@@ -20,10 +20,10 @@ Click a row to open the tender by its code (URL: `/commercial-management/tenders
 
 Click **New tender** (URL: `/commercial-management/tenders/new`). The form card is **New tender**:
 
-* **Project ID** — required. Placeholder: *"Paste project ID from project detail"*. (Tenders are always raised under a project; open the project to copy its ID, or use the **New tender** button on the project's own page, which pre-fills it.)
-* **Tender code** — required.
-* **Title** — required.
-* **Pipeline stage** — optional.
+* **Project ID** - required. Placeholder: *"Paste project ID from project detail"*. (Tenders are always raised under a project; open the project to copy its ID, or use the **New tender** button on the project's own page, which pre-fills it.)
+* **Tender code** - required.
+* **Title** - required.
+* **Pipeline stage** - optional.
 
 Click **Create**. On success you see the toast *"Tender created"* and land on the new tender's detail page. A tender starts with **Lifecycle = open** and **Outcome = pending**.
 

@@ -1,4 +1,4 @@
-"""Ideation brain extractor (D-CONFIRM) — the sorento-side NLU for `ideate` turns.
+"""Ideation brain extractor (D-CONFIRM) - the sorento-side NLU for `ideate` turns.
 
 shared-service `create_idea` runs NO LLM: it composes the echo/summary and owns the
 durable draft, but it needs sorento to hand it STRUCTURED updates, never free text
@@ -8,15 +8,15 @@ fields) and emits:
 
     { fields: {answer_key: value}, remove: [answer_key], confirm: bool }
 
-- ``fields`` — answer-key -> value updates the user just supplied.
-- ``remove`` — answer keys the user asked to clear ("remove who", "forget the module").
-- ``confirm`` — ``true`` ONLY on an explicit confirmation of a ``review`` summary
+- ``fields`` - answer-key -> value updates the user just supplied.
+- ``remove`` - answer keys the user asked to clear ("remove who", "forget the module").
+- ``confirm`` - ``true`` ONLY on an explicit confirmation of a ``review`` summary
   (guarded deterministically below: confirm can never be true unless status=="review").
 
 Reuses the same provider plumbing as the semantic parser (``get_provider`` +
 ``json_schema`` forced output) and the prompt registry (``ideate_extractor`` key).
 On any failure (no api key, provider/parse error) it degrades to an EMPTY extraction
-so the turn still calls ``create_idea`` with ``message_text`` — never raises.
+so the turn still calls ``create_idea`` with ``message_text`` - never raises.
 """
 from __future__ import annotations
 
@@ -95,7 +95,7 @@ def extract_ideate_turn(
     field_labels: dict[str, str] | None = None,
 ) -> IdeateExtraction:
     """Extract ``{ fields, remove, confirm }`` from ``message_text`` given the draft
-    context. Never raises — degrades to an empty extraction on any failure.
+    context. Never raises - degrades to an empty extraction on any failure.
 
     ``confirm`` is force-cleared unless ``status == "review"`` (D-CONFIRM / AC-11b):
     a confirmation only means anything once the draft is being reviewed.
@@ -106,7 +106,7 @@ def extract_ideate_turn(
 
     try:
         config = AIAssistantConfigService(db).get()
-    except Exception:  # noqa: BLE001 — never break the turn on a config read
+    except Exception:  # noqa: BLE001 - never break the turn on a config read
         logger.warning("ideate_extractor: config read failed; empty extraction", exc_info=True)
         return IdeateExtraction()
 
@@ -145,7 +145,7 @@ def extract_ideate_turn(
             json_schema_name=IDEATE_EXTRACTION_SCHEMA_NAME,
         )
         data = json.loads((result.content or "").strip() or "{}")
-    except Exception:  # noqa: BLE001 — provider/parse error → empty extraction
+    except Exception:  # noqa: BLE001 - provider/parse error → empty extraction
         logger.warning("ideate_extractor: LLM call failed; empty extraction", exc_info=True)
         return IdeateExtraction()
 

@@ -9,7 +9,7 @@ import { getAttachmentPreviewUrl } from '../../attachments/services/attachmentSe
  * Lazy thumbnail for an `image/*` card in the Drive grid view (UAC G1/G3).
  *
  * Fast path: when the caller supplies `thumbnailUrl` (a freshly-signed ~320px
- * thumbnail from the drive-list response), we render it directly — no extra
+ * thumbnail from the drive-list response), we render it directly - no extra
  * per-image round-trip and the browser paints a tiny image instead of a full-
  * resolution original (the fix for grid scroll jank; see
  * docs/plans/PLAN-attachment-grid-thumbnails.md).
@@ -50,7 +50,7 @@ export default function DriveImageThumbnail({
   }, [thumbnailUrl]);
 
   // Reveal once the card intersects the viewport. Only needed for the fallback
-  // fetch path — with a thumbnail we already have the src.
+  // fetch path - with a thumbnail we already have the src.
   useEffect(() => {
     if (hasThumb) return;
     const el = ref.current;

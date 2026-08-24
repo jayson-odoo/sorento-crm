@@ -30,7 +30,7 @@ import {
 import type { CoverageSub } from '../services/coverageService';
 
 /** `expires_at` is a DATE (coverage end day), not a timezone-bearing instant. Take the
- *  yyyy-mm-dd calendar prefix directly — never round-trip through `new Date(...)`, which
+ *  yyyy-mm-dd calendar prefix directly - never round-trip through `new Date(...)`, which
  *  parses a naive backend timestamp as local then shifts it to UTC (−1 day in UTC+8). */
 function dateOnly(iso: string | null): string {
   if (!iso) return '';
@@ -137,7 +137,7 @@ export function CoverageSection() {
               options={selectable.map((u) => ({
                 value: u.id,
                 label: u.name || u.email,
-                // Search both name and email — the old picker matched on both.
+                // Search both name and email - the old picker matched on both.
                 searchText: `${u.name ?? ''} ${u.email}`.trim(),
               }))}
               placeholder="Select a colleague"
@@ -180,7 +180,7 @@ export function CoverageSection() {
           </Button>
         </div>
 
-        {/* Coverage list — always rendered with an explicit empty state */}
+        {/* Coverage list - always rendered with an explicit empty state */}
         {error ? (
           <p className="text-sm text-destructive">{(error as Error).message}</p>
         ) : isLoading ? (

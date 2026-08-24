@@ -2,7 +2,7 @@
 
 Contact-scoped tokens grant a contact (identified by Respond.io contact id) access
 to view and edit their own submissions across complaints, stock inquiries,
-purchase requests and sponsorship forms — without a CRM login. After token
+purchase requests and sponsorship forms - without a CRM login. After token
 expiry the contact re-verifies via OTP sent to their phone via Respond.io.
 """
 from sqlalchemy import (
@@ -80,7 +80,7 @@ class PortalFormRevision(Base):
     # conversation_sla_tracking.source_entity_id.
     source_entity_id = Column(UUID(as_uuid=False), nullable=False)
     # TWO counters, never collapsed into one (UAC C0):
-    #   version_no  - every submitted version, for history ordering. Unique per entity.
+    #   version_no - every submitted version, for history ordering. Unique per entity.
     #   revision_no - contact-initiated revisions only, the cap counter. NOT unique:
     #                 a resubmission after an office rejection repeats the current value.
     version_no = Column(Integer, nullable=False)

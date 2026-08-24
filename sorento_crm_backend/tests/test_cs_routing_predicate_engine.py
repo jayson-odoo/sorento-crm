@@ -1,4 +1,4 @@
-"""R2 — CS-routing predicate engine unit tests (pure, no DB).
+"""R2 - CS-routing predicate engine unit tests (pure, no DB).
 
 UAC groups ME (matching) + RES (ranking). Rows are lightweight fakes so the engine
 is proven without the migration / DB.

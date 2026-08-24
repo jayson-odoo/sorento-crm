@@ -1,4 +1,4 @@
-"""Derived transitions — the wiring for auto edges.
+"""Derived transitions - the wiring for auto edges.
 
 An **auto edge** is a ``status_transitions`` row with ``trigger_mode='auto'`` and a
 ``conditions_json`` tree. When the conditions become true the engine moves the

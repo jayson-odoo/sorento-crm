@@ -97,7 +97,7 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
 
   // Create-mode seed: fill default access levels exactly once, the first
   // time the catalog arrives. Do NOT re-seed when the field is later cleared
-  // — that would block "Clear all" in the multi-select.
+  // - that would block "Clear all" in the multi-select.
   useEffect(() => {
     if (
       !isEditMode &&

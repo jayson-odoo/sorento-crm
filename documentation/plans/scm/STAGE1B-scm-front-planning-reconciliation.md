@@ -23,9 +23,9 @@ and the core `sales_order_lines` under it (product, quantity, required date, war
 1. **First screen: Fulfilment Planning list.** One row per published or amended Project SO
    across projects: project, Project SO reference, AutoCount doc no, customer, customer PO,
    area group, lines, and one **review state** pill for the whole SO. Two values in this slice:
-   - **Awaiting reconciliation** - the header or at least one line is not yet uniquely linked
+ - **Awaiting reconciliation** - the header or at least one line is not yet uniquely linked
      (the pill carries the count: "3 exceptions").
-   - **Needs CS review** - header linked and every line has exactly one core line. Entered only
+ - **Needs CS review** - header linked and every line has exactly one core line. Entered only
      here, never earlier (plan 7, AC-A02).
    No line-level state exists anywhere; nothing reads "partially confirmed", "confirmed" or
    "purchasing-ready" (AC-A03).

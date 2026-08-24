@@ -139,7 +139,7 @@ def kpi_summary(db: Session, *, scope="all", date_from=None, date_to=None,
             func.sum(_resolution_breach_expr(now)).label("reso_breach"),
             # Subset-scoped timeliness: among RESPONDED tasks, late = responded after due;
             # among RESOLVED tasks, late = resolved after resolution due. Denominator is
-            # the subset (responded / resolved), not the whole population — distinct from
+            # the subset (responded / resolved), not the whole population - distinct from
             # resp_met/resp_breach whose breach also counts never-responded-past-due.
             func.sum(case(
                 (and_(ConversationSLATracking.is_responded.is_(True),
@@ -294,7 +294,7 @@ def kpi_leaderboard(db: Session, *, scope="all", date_from=None, date_to=None,
     return [
         {
             "assignee_id": r.uid,
-            "assignee_name": names.get(r.uid) or "—",
+            "assignee_name": names.get(r.uid) or "-",
             "total": int(r.total or 0),
             "resolved": int(r.resolved or 0),
             "avg_response_time_hours": round(float(r.avg_resp), 2) if r.avg_resp is not None else None,
@@ -471,7 +471,7 @@ def kpi_tasks(db: Session, *, scope="all", date_from=None, date_to=None,
             "resolution_due": _iso(t.due_at_resolution),
             "escalates_at": _iso(_escalates_at(t)),
             "assignee_id": t.assigned_to_id,
-            "assignee_name": names.get(t.assigned_to_id) or "—",
+            "assignee_name": names.get(t.assigned_to_id) or "-",
             "response_time_hours": float(t.response_time) if t.response_time is not None else None,
             "resolution_time_hours": float(t.resolution_duration) if t.resolution_duration is not None else None,
             "is_resolved": bool(t.is_resolved),

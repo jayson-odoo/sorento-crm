@@ -1,5 +1,5 @@
 /**
- * Complaint Management e2e — verifies the new master data (root causes,
+ * Complaint Management e2e - verifies the new master data (root causes,
  * resolutions) under Complaint Management, plus the notify-salesperson buttons
  * on the complaint detail view.
  *
@@ -11,7 +11,7 @@
  *
  * Skipped automatically when credentials env vars aren't set so it doesn't
  * block local dev. Per project memory rules every navigation goes through the
- * sidebar — no deep `page.goto('/complaint-management/...')`.
+ * sidebar - no deep `page.goto('/complaint-management/...')`.
  */
 import { test, expect, Page } from '@playwright/test';
 
@@ -169,7 +169,7 @@ test('detail view renders Root Cause + Resolution sections (always rendered)', a
     timeout: 15_000,
   });
 
-  // Both sections render even when the FK is unset — per ADR product standard.
+  // Both sections render even when the FK is unset - per ADR product standard.
   await expect(page.getByText('Root Cause', { exact: true })).toBeVisible();
   await expect(page.getByText('Resolution', { exact: true })).toBeVisible();
   // Two "Notify salesperson" buttons exist.

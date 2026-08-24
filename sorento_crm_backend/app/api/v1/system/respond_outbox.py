@@ -1,7 +1,7 @@
 """Respond.io outbox: read-only list of outgoing WhatsApp/Respond messages.
 
 A presentation view over ``integration_log`` rows where
-``integration_channel='respond_io'`` and ``direction='outbound'`` — the same
+``integration_channel='respond_io'`` and ``direction='outbound'`` - the same
 rows every send already writes. Parses the stored request_payload into readable
 columns (message text / template, status, the linked complaint/inquiry, who
 sent it, when) and resolves the contact name/phone from respond_contacts.
@@ -47,7 +47,7 @@ def _button_final_url(msg: dict) -> Optional[str]:
     """Assemble the final URL-button link from a stored button payload.
 
     button = {"text", "url" (with {{1}}), "suffix"}. The contact taps
-    ``url`` with {{1}} replaced by ``suffix`` — so a host mismatch shows up as a
+    ``url`` with {{1}} replaced by ``suffix`` - so a host mismatch shows up as a
     double-host link (https://prod/http://localhost/...). Surface it verbatim.
     """
     btn = msg.get("button")
@@ -74,7 +74,7 @@ def _parse_payload(
     mtype = (msg.get("type") or "text").lower()
     if mtype in ("whatsapp_template", "template"):
         # message_text = the template body with variables filled in (falls back to
-        # any literal text, then the raw param list) so the column is never "—".
+        # any literal text, then the raw param list) so the column is never "-".
         rendered = _render_template_body(msg.get("body_text"), msg.get("parameters"))
         if not rendered:
             rendered = msg.get("text")

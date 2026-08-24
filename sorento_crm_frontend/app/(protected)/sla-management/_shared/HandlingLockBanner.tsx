@@ -9,7 +9,7 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { HandlingLockState, HandlingLockTracker } from './handlingLock';
 import { TakeOverConfirmDialog } from './HandlingLockActions';
 
-/** "since <time>" suffix — formats the raw naive-UTC string in Malaysia time (no Date round-trip). */
+/** "since <time>" suffix - formats the raw naive-UTC string in Malaysia time (no Date round-trip). */
 function sinceLabel(handledAt?: string | null): string {
   if (!handledAt) return '';
   const when = formatDateTimeInMalaysia(handledAt);
@@ -41,7 +41,7 @@ export function HandlingLockBanner({
 
   const tier = tracker?.current_tier ?? null;
   const tierText = tier != null ? `Tier ${tier}` : 'a higher tier';
-  // WHO — a wa.me link when the holder has a resolvable phone, else plain text
+  // WHO - a wa.me link when the holder has a resolvable phone, else plain text
   // (PersonLink handles the fallback). Falls back to "Someone" when unnamed.
   const handlerNode = tracker?.handled_by_name?.trim() ? (
     <PersonLink name={tracker.handled_by_name} waPhone={tracker.handled_by_wa_phone} />
@@ -62,7 +62,7 @@ export function HandlingLockBanner({
         <p className="flex items-start gap-2 min-w-0">
           <Lock className="mt-0.5 size-4 shrink-0" />
           <span>
-            <span className="font-medium">Escalated to {tierText}</span> — no one handling
+            <span className="font-medium">Escalated to {tierText}</span> - no one handling
             yet. Claim it to act on this form.
           </span>
         </p>
@@ -134,14 +134,14 @@ export function HandlingLockBanner({
         <p className="flex items-start gap-2 min-w-0">
           <Info className="mt-0.5 size-4 shrink-0" />
           <span>
-            Escalated to {tierText} — not yet claimed. You can act as admin.
+            Escalated to {tierText} - not yet claimed. You can act as admin.
           </span>
         </p>
       </div>
     );
   }
 
-  // not_eligible — read-only, no button.
+  // not_eligible - read-only, no button.
   return (
     <div
       className={`${shellClass} border-border bg-muted/40 text-muted-foreground`}

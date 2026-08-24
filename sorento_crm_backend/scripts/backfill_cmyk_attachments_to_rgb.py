@@ -2,7 +2,7 @@
 """Convert existing CMYK/YCCK image attachments to RGB JPEG in place.
 
 WhatsApp Cloud API (and Meta's media validator behind Respond.io) reject CMYK
-JPEGs with a generic "Media upload error" — print-pipeline tech-spec drawings
+JPEGs with a generic "Media upload error" - print-pipeline tech-spec drawings
 hit this constantly. New uploads are normalized at the upload boundary
 (`app.services.image_normalizer`); this script fixes rows already in storage.
 
@@ -21,7 +21,7 @@ Idempotent: a row already in an accepted color space is skipped, so re-runs are
 safe and only touch rows that still need fixing. The storage key and filenames
 are left unchanged (CMYK source is always JPEG, so the extension already fits),
 so n8n linkages, signed URLs, and display names stay stable. No n8n webhook is
-re-triggered — this is a byte-level fix, not a content change.
+re-triggered - this is a byte-level fix, not a content change.
 """
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ logging.basicConfig(
 logger = logging.getLogger("backfill_cmyk_attachments")
 
 # Candidate rows: JPEG mime or .jpg/.jpeg/.jfif name. (PNG can't be CMYK, so the
-# byte-level check below is what actually decides — this just narrows the scan.)
+# byte-level check below is what actually decides - this just narrows the scan.)
 _IMAGE_MIMES = ("image/jpeg", "image/jpg", "image/pjpeg")
 _IMAGE_SUFFIXES = (".jpg", ".jpeg", ".jfif")
 
@@ -96,7 +96,7 @@ def _process_one(db: Session, row: Attachment, dry_run: bool) -> str:
 
     new_content, _name, new_mime = ensure_rgb_image(content, row.original_filename, row.mime_type)
     if new_content is content or len(new_content) == 0:
-        # ensure_rgb_image bailed (decode/convert failure) — leave row untouched.
+        # ensure_rgb_image bailed (decode/convert failure) - leave row untouched.
         logger.warning("attachment %s flagged CMYK but conversion no-op'd", row.id)
         return "error"
 

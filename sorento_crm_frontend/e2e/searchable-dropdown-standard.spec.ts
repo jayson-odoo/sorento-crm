@@ -1,5 +1,5 @@
 /**
- * Searchable Dropdown Standard — browser regression cover.
+ * Searchable Dropdown Standard - browser regression cover.
  *
  * Run:
  *   PORTAL_E2E_BASE_URL=http://localhost:3100 \
@@ -10,7 +10,7 @@
  * specs). Skips automatically when unset so local dev isn't blocked.
  *
  * Why a spec rather than ad-hoc clicking: this standard has already produced one bug that
- * passed every DOM assertion and was only visible on screen — a popover inside a dialog
+ * passed every DOM assertion and was only visible on screen - a popover inside a dialog
  * flipped upward and was clipped by the dialog's overflow, while getBoundingClientRect
  * happily reported it on-screen. So the clipping check here asserts real paint geometry
  * (elementFromPoint), not layout coordinates.
@@ -104,7 +104,7 @@ test('multi-select offers select all, and it respects the active search', async 
 });
 
 test('a dropdown inside a dialog is not clipped when its menu flips upward', async ({ page }) => {
-  // The config viewport is 1400x1600 — tall enough that the menu always opens downward and
+  // The config viewport is 1400x1600 - tall enough that the menu always opens downward and
   // never exercises the flip. Shrink it so the dialog sits low and the Column menu is forced
   // upward, which is the case that was clipped.
   await page.goto('/master-data-management/lookup-sets', { waitUntil: 'domcontentloaded' });

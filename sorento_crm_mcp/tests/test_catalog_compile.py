@@ -1,6 +1,6 @@
 """Ensure every catalog entry compiles to a Context-aware tool.
 
-MCP tools are NOT access-gated at this layer — access control lives in the n8n
+MCP tools are NOT access-gated at this layer - access control lives in the n8n
 flow, not the MCP server. So compiled tools take only their declared
 path/query/body params; there is no contact_id/space_id guard injection.
 """
@@ -73,7 +73,7 @@ def test_catalog_covers_all_prefix_domains():
 def test_orders_list_uses_actual_delivery_date_only():
     """orders_list exposes ONLY `actual_delivery_date_from` / `_to` for date
     filtering. Whatever timeframe the user gives is always translated to
-    actual_delivery_date — no order_date params.
+    actual_delivery_date - no order_date params.
     """
     spec = next(s for s in CATALOG if s.name == "crm_order_management_orders_list")
     desc = spec.description
@@ -90,7 +90,7 @@ def test_orders_list_uses_actual_delivery_date_only():
 def test_no_freetext_query_on_data_list_tools():
     """UUID-first contract: entity list tools must not expose a fuzzy `query`
     param. (user_guides_read is a documentation search and lookup_resolve takes
-    `raw` — those are not entity filters and are exempt.)
+    `raw` - those are not entity filters and are exempt.)
     """
     exempt = {"user_guides_read", "crm_lookup_resolve"}
     for spec in CATALOG:

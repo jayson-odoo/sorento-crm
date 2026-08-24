@@ -1,4 +1,4 @@
-"""SCM M2 — dashboard binding tests (Postgres-backed, rolled back).
+"""SCM M2 - dashboard binding tests (Postgres-backed, rolled back).
 
 Runs the analytics engine inside the test's savepoint, then asserts the dashboard
 reads surface the REAL demand / classification / overstock / supplier-performance
@@ -22,7 +22,7 @@ pytestmark = requires_pg
 
 
 # ---------------------------------------------------------------------------
-# Overstock predicate — pure maths (S1: ∞-cover-with-stock counts as overstock)
+# Overstock predicate - pure maths (S1: ∞-cover-with-stock counts as overstock)
 # ---------------------------------------------------------------------------
 
 def test_is_overstock_pure_predicate():
@@ -114,7 +114,7 @@ def test_overstock_rollup_and_filter(scm_app):
 
 def test_infinite_cover_stocked_zero_demand_is_overstock(scm_app):
     """S1: a stocked SKU with no demand (∞ cover, days_of_cover null) is over-invested
-    capital — it must be RETURNED by the health=overstock filter AND counted in
+    capital - it must be RETURNED by the health=overstock filter AND counted in
     overstock_count, matching the grid's ∞-cover overstock colour. Grid, count and
     filter now agree; previously the count/filter excluded the ∞ case."""
     app, db = _client(scm_app, "purchasing")
@@ -132,7 +132,7 @@ def test_infinite_cover_stocked_zero_demand_is_overstock(scm_app):
     # the ∞-cover case (stock but no demand → days_of_cover null) is now INCLUDED
     infinite = [r for r in over if r["days_of_cover"] is None and not r["avg_daily_demand"]]
     assert infinite, "∞-cover stocked zero-demand SKU missing from health=overstock (S1)"
-    # the count agrees — the ∞ rows it now includes are also in the filter above
+    # the count agrees - the ∞ rows it now includes are also in the filter above
     assert rollups["overstock_count"] >= 1
 
 
@@ -166,7 +166,7 @@ def test_supplier_scorecard_after_run(scm_app):
 
 
 def test_supplier_scorecard_null_when_unscored(scm_app):
-    """A supplier with no completing receipts is returned with performance=null —
+    """A supplier with no completing receipts is returned with performance=null - 
     never a fabricated score."""
     app, db = _client(scm_app, "purchasing")
     _run(db)

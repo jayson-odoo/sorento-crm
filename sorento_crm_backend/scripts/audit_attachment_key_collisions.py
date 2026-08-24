@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """READ-ONLY audit of attachment storage-key collisions and flat-key blast radius.
 
-Background: generic resource attachment keys are `{entity_type}/{stored_filename}` — no
-folder/id scope — so two live rows (same type + same name, different folders) can share one
+Background: generic resource attachment keys are `{entity_type}/{stored_filename}` - no
+folder/id scope - so two live rows (same type + same name, different folders) can share one
 object, silently clobbering each other. Portal (`portal/{contact}/{uuid}{ext}`) and promotion
 (`promotion/{entity_id}/{name}`) keys are already scoped. This script quantifies the damage
 BEFORE the uuid-segregation migration (see PLAN-attachment-key-uuid-segregation.md).
@@ -10,10 +10,10 @@ BEFORE the uuid-segregation migration (see PLAN-attachment-key-uuid-segregation.
 Run from sorento_crm_backend/:
     python scripts/audit_attachment_key_collisions.py [--limit N]
 
-Makes ZERO writes — DB and storage untouched. Reports:
-  * SHARED KEYS  — keys claimed by >1 live attachment (already-corrupted; the migration must
+Makes ZERO writes - DB and storage untouched. Reports:
+  * SHARED KEYS - keys claimed by >1 live attachment (already-corrupted; the migration must
                    NOT auto-relocate these, they need manual disambiguation).
-  * FLAT-SCHEME  — count of rows on the `{type}/{name}` shape = migration blast radius.
+  * FLAT-SCHEME - count of rows on the `{type}/{name}` shape = migration blast radius.
 """
 from __future__ import annotations
 
@@ -53,9 +53,9 @@ def _scheme(key: str) -> str:
     if top == "promotion" and len(segs) >= 3:
         return "promotion"         # promotion/{entity_id}/{name}
     if len(segs) >= 3 and _looks_uuid(segs[1]):
-        return "uuid-scoped"       # {type}/{uuid}/{name} — already migrated
+        return "uuid-scoped"       # {type}/{uuid}/{name} - already migrated
     if len(segs) == 2:
-        return "flat"              # {type}/{name} — AT RISK, migration target
+        return "flat"              # {type}/{name} - AT RISK, migration target
     return "other"
 
 
@@ -92,14 +92,14 @@ def main() -> int:
         print(f"  {s:14s} {scheme_counts[s]}")
     print(f"\nflat-scheme rows (migration blast radius): {scheme_counts.get('flat', 0)}")
 
-    print(f"\nSHARED KEYS (>1 live row — already clobbered, needs manual review): {len(shared)}")
+    print(f"\nSHARED KEYS (>1 live row - already clobbered, needs manual review): {len(shared)}")
     for key, atts in sorted(shared.items()):
         print(f"  {key}")
         for a in atts:
             print(f"      id={a.id} original={a.original_filename!r} dir={a.directory_id} type={a.target_entity_type}")
 
     if not shared:
-        print("  (none — no active clobbers)")
+        print("  (none - no active clobbers)")
     return 0
 
 

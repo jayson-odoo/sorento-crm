@@ -1470,7 +1470,7 @@ class ProjectOrderInquiryService:
         """G2 rule 2, "take from the earliest PO, then subsequently from subsequent PO":
         `min(remaining balance, still needed)` off each line in the order it is given,
         until the need is covered or the candidates run out. Partial coverage is allowed
-        - a `need` bigger than every line's remaining balance combined simply returns
+      - a `need` bigger than every line's remaining balance combined simply returns
         less than `need`, and it is the CALLER's job to decide what an unfinished walk
         means for the row (the uncovered remainder stays a raised Buy).
         """
@@ -1828,7 +1828,7 @@ class ProjectOrderInquiryService:
         the identical assembly the fulfilment board and the Loading Plan already use,
         rather than a private sort this method grew on its own. That answers the
         captain's 20 Aug question - "do we account for both SO date and delivery date?"
-        - with both: `need_by_date` from the row's own `delivery_date`, and
+      - with both: `need_by_date` from the row's own `delivery_date`, and
         `document_age` from the sales order's own document date (`published_at`, or
         `created_at` before publish - see `_rank_raised_rows`). With no active
         `PriorityPolicy` the call falls back to `DEFAULT_WEIGHTS` on its own; ties

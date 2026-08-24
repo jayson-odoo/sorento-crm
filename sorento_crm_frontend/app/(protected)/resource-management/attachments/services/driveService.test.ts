@@ -1,5 +1,5 @@
 /**
- * driveService — request-shaping for the Unified Drive endpoint.
+ * driveService - request-shaping for the Unified Drive endpoint.
  *
  * Covers UAC: B1 (browse = no recursive), B2/B8 (recursive flag), C6 (pagination),
  * filter passthrough, access_levels repetition.

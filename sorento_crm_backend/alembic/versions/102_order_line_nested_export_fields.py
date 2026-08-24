@@ -68,12 +68,12 @@ def upgrade() -> None:
             },
         )
 
-    ins("line_product_code", "Line — product code", "string", "line.product.product_code", str_ops, 201, "line_product_code")
-    ins("line_product_name", "Line — product name", "string", "line.product.product_name", str_ops, 202, "line_product_name")
-    ins("line_product_list_price", "Line — product list price", "number", "line.product.list_price", num_ops, 203, "line_product_list_price")
-    ins("line_product_item_type", "Line — product item type", "string", "line.product.item_type", str_ops, 204, "line_product_item_type")
-    ins("line_warehouse_code", "Line — warehouse code", "string", "line.warehouse.warehouse_code", str_ops, 211, "line_warehouse_code")
-    ins("line_warehouse_name", "Line — warehouse name", "string", "line.warehouse.warehouse_name", str_ops, 212, "line_warehouse_name")
+    ins("line_product_code", "Line - product code", "string", "line.product.product_code", str_ops, 201, "line_product_code")
+    ins("line_product_name", "Line - product name", "string", "line.product.product_name", str_ops, 202, "line_product_name")
+    ins("line_product_list_price", "Line - product list price", "number", "line.product.list_price", num_ops, 203, "line_product_list_price")
+    ins("line_product_item_type", "Line - product item type", "string", "line.product.item_type", str_ops, 204, "line_product_item_type")
+    ins("line_warehouse_code", "Line - warehouse code", "string", "line.warehouse.warehouse_code", str_ops, 211, "line_warehouse_code")
+    ins("line_warehouse_name", "Line - warehouse name", "string", "line.warehouse.warehouse_name", str_ops, 212, "line_warehouse_name")
 
 
 def downgrade() -> None:

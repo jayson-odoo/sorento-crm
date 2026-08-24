@@ -1,7 +1,7 @@
 """Canonical shapes for master data pushed in by the ESB (Phase C).
 
 **Canonical, not AutoCount.** Sorento never sees `DocKey`, `AccNo` or `ItemCode`
-— the ESB translates before it gets here. That boundary is what keeps vendor
+ -  the ESB translates before it gets here. That boundary is what keeps vendor
 quirks (`"T"`/`"F"` booleans, `Dtlkey` vs `DtlKey` casing, per-customer UDF
 arrays) out of Sorento entirely.
 

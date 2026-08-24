@@ -1,7 +1,7 @@
 """Global default grace percentage for scheduled-task overdue detection.
 
 Overdue was previously derived from `scheduled_tasks.next_run_at`, a display-only
-column the scheduler never consults, with no tolerance at all — so ordinary run
+column the scheduler never consults, with no tolerance at all - so ordinary run
 jitter produced alert emails. Overdue is now `last_run_at + interval + grace`,
 where grace is this percentage of each task's own interval, clamped to
 [60s, 30min] in code.

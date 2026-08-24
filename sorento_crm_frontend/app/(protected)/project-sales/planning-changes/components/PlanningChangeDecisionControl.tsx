@@ -36,11 +36,11 @@ const SEGMENT_BASE =
  * unchanged: it is acting on an EXISTING decision, not composing a fresh one.
  *
  * Rows outside review render no control at all, per the state they are actually in:
- *  - no active decision and no proposal -> "Not decided" (should not occur in practice: every
+ * - no active decision and no proposal -> "Not decided" (should not occur in practice: every
  *    changed planned line without a decision is `replan` and therefore carries a proposal, but
  *    the fallback stays honest if the board ever fails to build one);
- *  - `superseded` (AC-R11) -> "Superseded on the board", disabled;
- *  - `applied` / `failed` -> the outcome, disabled, with the reason on hover.
+ * - `superseded` (AC-R11) -> "Superseded on the board", disabled;
+ * - `applied` / `failed` -> the outcome, disabled, with the reason on hover.
  */
 export function PlanningChangeDecisionControl({
   row,

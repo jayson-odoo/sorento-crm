@@ -43,7 +43,7 @@ import type { Supplier } from '../types/supplier.types';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 
-// Whitelist of bulk-editable fields for suppliers (the safety boundary — mirrors
+// Whitelist of bulk-editable fields for suppliers (the safety boundary - mirrors
 // the backend registry in app/services/bulk_update_registry.py). Only these
 // fields/values can be bulk-edited; every row still runs through the normal
 // SupplierService.update_supplier path (validated + audit-trailed).
@@ -185,7 +185,7 @@ export default function SuppliersList() {
     await queryClient.invalidateQueries({ queryKey: ['suppliers'] });
     setRowSelection({});
     toast.success(
-      `Bulk update applied — ${result.updated} updated${
+      `Bulk update applied - ${result.updated} updated${
         result.skipped.length ? `, ${result.skipped.length} skipped` : ''
       }.`,
     );

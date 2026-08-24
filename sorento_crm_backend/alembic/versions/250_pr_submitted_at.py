@@ -1,4 +1,4 @@
-"""purchase_requests.submitted_at — auto-stamped submit date (top document "Date").
+"""purchase_requests.submitted_at - auto-stamped submit date (top document "Date").
 
 Revision ID: 250_pr_submitted_at
 Revises: 249_agent_team_notify_ext

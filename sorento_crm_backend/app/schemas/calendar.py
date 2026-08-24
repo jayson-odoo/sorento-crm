@@ -64,7 +64,7 @@ class WorkCalendarConfigResponse(WorkCalendarConfigBase):
 
 
 class ExternalWorkingDayRange(BaseModel):
-    """One contiguous run of working days (Monday–Sunday order)."""
+    """One contiguous run of working days (Monday - Sunday order)."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -119,7 +119,7 @@ class ExternalWorkingDayCheckResponse(BaseModel):
         description="Instant evaluated, as ISO 8601 in the requested timezone.",
     )
     local_date: dt_date = Field(..., description="Calendar date in that timezone.")
-    weekday: str = Field(..., description="English weekday name (Monday–Sunday).")
+    weekday: str = Field(..., description="English weekday name (Monday - Sunday).")
     is_public_holiday: bool = Field(
         ...,
         description="True if this local_date matches a row in the CRM public holiday calendar.",

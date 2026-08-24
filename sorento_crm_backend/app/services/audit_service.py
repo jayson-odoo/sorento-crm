@@ -212,7 +212,7 @@ def list_audit_logs(
 ) -> tuple[list[AuditLog], int]:
     """List audit logs with optional filters. Returns (items, total).
 
-    ``entity_id`` and ``user_id`` are UUID columns — a non-UUID value (e.g. a
+    ``entity_id`` and ``user_id`` are UUID columns - a non-UUID value (e.g. a
     typed name in the User filter) would raise a Postgres DataError (500). Guard
     both: an unparseable value can never match a row, so short-circuit to empty.
     """
@@ -405,7 +405,7 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
     # Acting contact for portal/public writes. Prefer session.info (set by the portal
     # token dependency) over the contextvar: FastAPI runs sync dependencies in a
     # SEPARATE threadpool thread from the path op, so a contextvar mutated in the
-    # dependency is NOT visible here — but session.info lives on the shared Session
+    # dependency is NOT visible here - but session.info lives on the shared Session
     # object and survives across threads. Fall back to the contextvar for in-thread callers.
     contact_id = session.info.get("actor_contact_id") or get_actor_contact_id()
     session.info["audit_flushing"] = True

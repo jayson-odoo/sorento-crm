@@ -1,7 +1,7 @@
 """Sliding-window rate limiter for the email guardrail.
 
 Uses Redis sorted sets (one entry per send, scored by unix timestamp).
-On Redis failure falls back to a DB count over the same window — production
+On Redis failure falls back to a DB count over the same window - production
 must never silently lose the cap.
 
 Counters are bumped *after* a successful SMTP send, not at enqueue, so the drainer

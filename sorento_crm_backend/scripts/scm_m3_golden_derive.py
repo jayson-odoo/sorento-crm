@@ -2,7 +2,7 @@
 
 Recomputes every blessed ROP / SS / order-qty / allocation / trigger / confidence
 number in ``tests/scm/fixtures/golden_m3.json`` from FIRST PRINCIPLES using plain
-Python arithmetic + ``statistics.NormalDist`` — deliberately a DIFFERENT code path
+Python arithmetic + ``statistics.NormalDist`` - deliberately a DIFFERENT code path
 than ``app/services/scm/reorder_engine.py`` so the golden test is NOT circular. The
 engine is written to reproduce these frozen numbers; re-run this only to deliberately
 re-bless.
@@ -206,7 +206,7 @@ def main() -> None:
     # -- Case N: network buy is TRIGGER-GATED (ROP < net < OUP → no buy) ------
     #   A reorder_point network cell whose aggregate net sits ABOVE ROP but BELOW the
     #   order-up-to level must NOT trigger a buy (matches per-warehouse). Sizing a buy
-    #   (OUP - net > 0) is not a trigger — the trigger is net <= ROP.
+    #   (OUP - net > 0) is not a trigger - the trigger is net <= ROP.
     ltNb, sdNb, revNb = 30.0, 7.0, 30.0
     whNb = [
         {"warehouse_id": "WH1", "demand_rate": 6.0, "net": 300.0},
@@ -224,7 +224,7 @@ def main() -> None:
         "agg_demand": agg_demand_b, "agg_net": agg_net_b, "safety_stock": ssNb,
         "reorder_point": ropNb, "order_up_to": oupNb,
         "net_above_rop": agg_net_b > ropNb, "net_below_oup": agg_net_b < oupNb,
-        "triggered_reorder_point": agg_net_b <= ropNb,   # False — no buy in the band
+        "triggered_reorder_point": agg_net_b <= ropNb,   # False - no buy in the band
         "buy_qty": 0}
 
     # -- Case I: supplier precedence + alternatives --------------------------

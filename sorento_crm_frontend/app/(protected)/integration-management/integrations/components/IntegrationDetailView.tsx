@@ -33,7 +33,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-const EMPTY = <span className="text-muted-foreground">—</span>;
+const EMPTY = <span className="text-muted-foreground"> - </span>;
 
 function KeysCard({ integration }: { integration: Integration }) {
   const issue = useIssueKey();
@@ -146,7 +146,7 @@ function KeysCard({ integration }: { integration: Integration }) {
 
       <IssuedKeyDialog issued={issued} onClose={() => setIssued(null)} />
 
-      {/* Revoking is destructive and immediate — never one click. */}
+      {/* Revoking is destructive and immediate - never one click. */}
       <ConfirmDeleteDialog
         open={!!confirmRevoke}
         onOpenChange={(open) => !open && setConfirmRevoke(null)}
@@ -231,7 +231,7 @@ export function IntegrationDetailView({ id }: { id: string }) {
           <Field label="Acts as">
             {integration.act_as_user_name ?? (
               <span className="text-destructive">
-                No principal — this integration cannot authenticate
+                No principal - this integration cannot authenticate
               </span>
             )}
           </Field>
@@ -241,7 +241,7 @@ export function IntegrationDetailView({ id }: { id: string }) {
             ) : (
               // Only meaningful for integrations Sorento calls out to.
               <span className="text-muted-foreground">
-                Not set — Sorento cannot push documents or events to this system
+                Not set - Sorento cannot push documents or events to this system
               </span>
             )}
           </Field>
@@ -255,7 +255,7 @@ export function IntegrationDetailView({ id }: { id: string }) {
           </Field>
           <Field label="Rate limit">
             {rateLimit === 0 ? (
-              <span className="text-muted-foreground">Disabled — no ceiling applied</span>
+              <span className="text-muted-foreground">Disabled - no ceiling applied</span>
             ) : rateLimit ? (
               `${rateLimit} requests/minute`
             ) : (

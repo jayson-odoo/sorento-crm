@@ -6,9 +6,9 @@ enforced per-agent only via `contact_agent_access` +
 `mcp_access_service.evaluate_agent`.
 
 Drops:
-- `agent_mcp_tools` — both halves: legacy ownership rows (`team_id IS NULL`)
+- `agent_mcp_tools` - both halves: legacy ownership rows (`team_id IS NULL`)
   and per-tool team/tier routing bindings (`team_id IS NOT NULL`).
-- `mcp_access_log` — the per-decision audit table. It also held the
+- `mcp_access_log` - the per-decision audit table. It also held the
   `access-agent:*` rows written by `evaluate_agent`; logging was dropped with
   the table by explicit decision.
 
