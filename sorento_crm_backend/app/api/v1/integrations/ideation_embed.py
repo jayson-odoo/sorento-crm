@@ -5,7 +5,7 @@ Mints a signed assertion for that user, exchanges it at the shared-service
 ``/embed/session`` endpoint, and returns ``{ iframe_url, token, expires_at }`` the FE
 iframes.
 
-Auth: JWT logged-in user only (``get_current_user``) — this is a first-party FE call,
+Auth: JWT logged-in user with ``ideation.board.view`` permission — this is a first-party FE call,
 never an X-API-Key / n8n path. Dormant settings → a clean 404 (feature not available),
 never a 500; a shared-service outage → a clean 502 the FE turns into a retry state.
 Secrets (signing secret, assertion, embed token) are never logged or echoed in errors.
@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import require_permission
 from app.schemas.ideation_embed import (
     IdeationEmbedSessionRequest,
     IdeationEmbedSessionResponse,
@@ -38,7 +38,7 @@ router = APIRouter()
 )
 def create_ideation_embed_session(
     payload: IdeationEmbedSessionRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("ideation.board.view")),
     db: Session = Depends(get_db),
 ):
     """Mint an embed session for the logged-in user (board or a specific idea)."""
