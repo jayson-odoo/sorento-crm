@@ -583,6 +583,35 @@ def test_the_update_schema_carries_the_per_line_supplier_and_its_volume(db):
     assert str(shipment.supplier_id) == str(w.kailu.id)
 
 
+def test_an_edit_that_states_only_products_and_quantities_keeps_the_price(db):
+    """BL-025: a routine save must not wipe the captured `unit_cost` and `currency`.
+
+    The proforma ingest fills both columns on the line; the procurement edit form's line
+    schema sends only `{product_id, quantity_shipped}`. When the save rebuilt every line
+    from that payload the price went with it, and the supplier then read as "never
+    received" on the Order Decision sheet while the PI-vs-PO check lost its incoming side.
+    Same rule as the supplier / cbm / remarks case above - the payload states the line set,
+    not everything about a line - pinned separately because these two columns are the ones
+    the money reports read.
+    """
+    w = World(db)
+    shipment = w.upload(supplier_id=str(w.kailu.id), lines=[(w.tap, 10, None)])
+    db.commit()
+    for line in w.lines(shipment.id):
+        line.unit_cost = Decimal("12.50")
+        line.currency = "USD"
+    db.commit()
+
+    w.update(shipment.id, lines=[(w.tap, 12, None)])
+    db.commit()
+
+    lines = w.lines(shipment.id)
+    assert len(lines) == 1
+    assert lines[0].quantity_shipped == 12
+    assert lines[0].unit_cost == Decimal("12.50")
+    assert lines[0].currency == "USD"
+
+
 # --------------------------------------------------------------------------- #
 # packing_list_service.apply - the same story through a workbook                #
 # --------------------------------------------------------------------------- #

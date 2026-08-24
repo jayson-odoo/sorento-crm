@@ -41,7 +41,7 @@ class Supplier(Base, CompanyScopedMixin):
     __audit_track__ = True  # who changed what (Sub-plan D Tier-2)
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    supplier_code = Column(String(50), unique=True, nullable=False)
+    supplier_code = Column(String(50), nullable=False)
     supplier_name = Column(String(255), nullable=False)
     contact_name = Column(String(150), nullable=True)
     email = Column(String(150), nullable=True)
@@ -64,6 +64,15 @@ class Supplier(Base, CompanyScopedMixin):
     inbound_shipments = relationship("InboundShipment", back_populates="supplier")
     
     __table_args__ = (
+        # Per company, not globally: each company imports its own creditor list, so two
+        # companies legitimately hold the same supplier_code. Production has carried this
+        # since migration 305 (`uq_suppliers_company_supplier_code`); the model kept a bare
+        # column-level `unique=True`, so every `create_all` schema (CI, the blank scratch
+        # schemas) was stricter than production and rejected the second company's row.
+        # Same name as the migration, so the two schemas describe one constraint. BL-036.
+        UniqueConstraint(
+            "company_id", "supplier_code", name="uq_suppliers_company_supplier_code"
+        ),
         Index("ix_suppliers_is_active", "is_active"),
         Index("ix_suppliers_country", "country"),
         Index("ix_suppliers_city", "city"),
