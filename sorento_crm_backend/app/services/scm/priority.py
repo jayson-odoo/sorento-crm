@@ -15,10 +15,10 @@ The factors:
 
   * `po_document_sequence` - the order the buyer already reads off the list. Sequence, not date:
     two orders raised the same day still have an order.
-  * `demand_class`        - project versus dealer, resolved through the SO<->PO claim.
-  * `need_by_date`        - sooner is higher.
-  * `document_age`        - older document is higher, which is the same helper read the other way.
-  * `customer_credit`     - shorter payment terms are higher. Only a SALES-ORDER demand row can
+  * `demand_class`      - project versus dealer, resolved through the SO<->PO claim.
+  * `need_by_date`      - sooner is higher.
+  * `document_age`      - older document is higher, which is the same helper read the other way.
+  * `customer_credit`   - shorter payment terms are higher. Only a SALES-ORDER demand row can
     carry it (see `factors_for_demand_rows`); a purchase-order candidate never does.
 
 Every factor degrades gracefully: a value we do not have is ABSENT, not zero. `rank_score`
@@ -87,17 +87,17 @@ SEEDED_CLASS_WEIGHTS = {"project": 1.0, "retail": 0.4}
 #: a demand row actually has - and keeps what the purchase-order path already relied on, because
 #: ONE policy serves three moments and a change made for the board reaches container loading:
 #:
-#:   * `need_by_date` 3.0     - the captain's "delivery date", and the strongest voice. It
+#:   * `need_by_date` 3.0   - the captain's "delivery date", and the strongest voice. It
 #:                              outweighs document age and credit together, so a sooner
 #:                              delivery wins even against an older document from a prompter
 #:                              payer.
-#:   * `demand_class` 3.0     - KEPT at what migration 374 deliberately switched on. On the
+#:   * `demand_class` 3.0   - KEPT at what migration 374 deliberately switched on. On the
 #:                              board it separates nothing (every row is project-class by
 #:                              construction) and only shifts every score by the same amount;
 #:                              on the purchase-order path it is what keeps a line owed to a
 #:                              customer ahead of one owed to nobody.
-#:   * `document_age` 1.0     - the captain's "document date", older first.
-#:   * `customer_credit` 1.0  - shorter payment terms first. Absent for a purchase-order
+#:   * `document_age` 1.0   - the captain's "document date", older first.
+#:   * `customer_credit` 1.0 - shorter payment terms first. Absent for a purchase-order
 #:                              candidate, and absent for a customer nobody has assessed, which
 #:                              in both cases means DROPPED from the average rather than zeroed.
 #:   * `po_document_sequence` 1.0 - the buyer's original rule, kept as the tie-break it always

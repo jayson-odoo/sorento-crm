@@ -866,7 +866,7 @@ async def create_attachment(
         # Calculate SHA-256 hash for duplicate detection
         file_hash = await run_in_threadpool(lambda: hashlib.sha256(file_content).hexdigest())
 
-        # Pre-generate the row id so the object key can embed it (uuid-segregated key  - 
+        # Pre-generate the row id so the object key can embed it (uuid-segregated key - 
         # collision-proof, independent of the editable name; see
         # PLAN-attachment-key-uuid-segregation.md).
         attachment_id = str(uuid.uuid4())
@@ -950,8 +950,8 @@ async def create_attachment(
             final_entity_type = "general"
 
         # Construct storage key. Basename = immutable original_filename.
-        #  - promotion: already scoped by entity_id (unchanged).
-        #  - generic: uuid-segregated by attachment_id so same-name uploads across folders
+        # - promotion: already scoped by entity_id (unchanged).
+        # - generic: uuid-segregated by attachment_id so same-name uploads across folders
         #    can NEVER share a key (the old flat {type}/{name} scheme could silently clobber).
         if existing_to_replace is not None:
             # Replace-in-place: overwrite the EXISTING object at its own key so we

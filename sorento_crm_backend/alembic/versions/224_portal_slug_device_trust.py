@@ -46,7 +46,7 @@ def upgrade() -> None:
         """
     )
     # Backfill: any token ever referenced by an impersonation session is an
-    # impersonation token (JOIN-based "set to correct value where mismatch"  - 
+    # impersonation token (JOIN-based "set to correct value where mismatch" - 
     # safe to re-run).
     op.execute(
         """

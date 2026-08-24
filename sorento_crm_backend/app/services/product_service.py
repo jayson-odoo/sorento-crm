@@ -2569,11 +2569,11 @@ class ProductAttachmentService:
     def _resolve_product_identifiers(self, product_identifier: Optional[str]) -> Optional[list[str]]:
         """Resolve a product UUID or product_code to one or more product UUIDs.
 
-        - UUID input -> [uuid].
-        - Non-UUID input -> case-insensitive substring (ilike) match across product_code,
+      - UUID input -> [uuid].
+      - Non-UUID input -> case-insensitive substring (ilike) match across product_code,
           so callers passing a partial/base code (e.g. ``SRTMCB6084-WH``) also find
           variants (``SRTMCB6084-WH-DF`` etc.).
-        - Returns ``None`` when input is empty; ``[]`` when no product matches.
+      - Returns ``None`` when input is empty; ``[]`` when no product matches.
         """
         if not product_identifier:
             return None
@@ -2842,7 +2842,7 @@ class ProductAttachmentService:
         Only fires when exactly ONE input product resolved. The has-data gate =
         the candidate product has at least one non-trashed product-attachment,
         narrowed to ``attachment_type_ids`` when the caller asked for a specific
-        document class (e.g. a certificate). Reuses the shared neighbour helper  - 
+        document class (e.g. a certificate). Reuses the shared neighbour helper - 
         no bespoke neighbour ranking here.
         """
         ids = list(product_ids or [])

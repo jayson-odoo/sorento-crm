@@ -209,7 +209,7 @@ describe('CoverageManager - manager', () => {
   it('renders the backend role-explicit summary in the DOM (sr-only) for the AI snapshot', () => {
     useTeamCoverage.mockReturnValue({ data: [teamSub], isLoading: false, error: null });
     render(<CoverageManager canManageTeam />);
-    // The canonical sentence - unambiguous about coverer vs covers-for vs assigned-by  - 
+    // The canonical sentence - unambiguous about coverer vs covers-for vs assigned-by - 
     // is present in the DOM (sr-only is captured by innerText / read by AT).
     expect(
       screen.getByText(

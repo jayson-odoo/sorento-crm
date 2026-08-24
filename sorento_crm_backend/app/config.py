@@ -172,7 +172,7 @@ class Settings(BaseSettings):
     ai_assistant_mcp_url: str = "http://localhost:8765/mcp"
     ai_assistant_mcp_timeout_seconds: int = 20
     ai_assistant_tool_call_limit: int = 3
-    # RAG: how many MCP tools to BIND to the agent per turn. Default 1  - 
+    # RAG: how many MCP tools to BIND to the agent per turn. Default 1 - 
     # deterministic single-tool resolution (the parser already fixes intent+domain,
     # so the top-1 candidate is the tool; the runners-up are kept in the trace as
     # is_current=false for visibility but are not bound). Raise to expose more.
@@ -182,7 +182,7 @@ class Settings(BaseSettings):
     # Reformulator: include the last N history messages (user+assistant) as context.
     ai_assistant_reformulator_history_turns: int = 6
 
-    # Outline (user-guide knowledge base) base URL. INTERNAL Foundryx asset  - 
+    # Outline (user-guide knowledge base) base URL. INTERNAL Foundryx asset - 
     # its URL must never be surfaced to end users by the AI assistant. Used
     # here only to derive the host to STRIP from guide tool-results and from
     # the assistant's final answer (see ai_assistant_service redaction).

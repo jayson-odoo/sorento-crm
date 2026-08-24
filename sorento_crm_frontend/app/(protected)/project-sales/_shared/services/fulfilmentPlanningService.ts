@@ -40,7 +40,7 @@ import type {
  *        An unknown value is a 422, never an empty 200.
  *
  *        The list is a UNION of two arms, one row per subject, disjoint by construction:
- *          arm 1 `row_kind = 'sales_order'`   - an outstanding project-class CORE sales
+ *          arm 1 `row_kind = 'sales_order'` - an outstanding project-class CORE sales
  *                order, whether or not anybody has planned it. Unplanned reads not_started
  *                and carries no `id`, no `provisional_ref` and no `status`, because no
  *                planning record exists to carry them.

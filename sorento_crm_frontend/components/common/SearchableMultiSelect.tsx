@@ -63,7 +63,7 @@ export type SearchableMultiSelectProps = {
   renderTriggerLabel?: (selected: SearchableMultiSelectOption[]) => React.ReactNode;
   /**
    * Render the option body (everything right of the checkbox). Parity with SearchableSelect.
-   * Needed by pickers whose rows carry their own interactive bits - a tooltip trigger, say  - 
+   * Needed by pickers whose rows carry their own interactive bits - a tooltip trigger, say - 
    * which `badgeText` / `description` cannot express.
    */
   renderOption?: (opt: SearchableMultiSelectOption) => React.ReactNode;

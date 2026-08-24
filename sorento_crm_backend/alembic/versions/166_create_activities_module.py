@@ -5,7 +5,7 @@ ActivitiesNotesPanel: ``activity_events`` (system + user-update feed),
 ``internal_notes`` (private to author) and ``activity_mentions``
 (@-mentions emitted from user updates).
 
-Models live in ``app/models/activities.py``. Tables are entity-agnostic  - 
+Models live in ``app/models/activities.py``. Tables are entity-agnostic - 
 consumers reference them via ``(entity_type, entity_id)`` pairs.
 
 Revision ID: 166_create_activities_module

@@ -36,7 +36,7 @@ Already a **dual-mode** component (good foundation - we keep it):
 - **IDs mode** (`RecordNavigationIdsProps`, lines 9-21): caller passes `prevId`, `nextId`, optional `currentIndex` + `totalCount`. Renders `"{currentIndex+1} / {totalCount}"`. This is exactly the shape a backend-driven design needs. **Currently used by zero pages.**
 - **List mode** (`RecordNavigationListProps`, lines 23-38): caller passes `currentId` + `items: {id}[]`, optional `circular`, `totalCount`, `pageItemOffset`. Computes prev/next via `items.findIndex` (lines 83-102), displays `pageItemOffset + idx + 1 / (totalCount ?? items.length)` (lines 81-86). **This is the flawed path every real page uses today.**
 
-The counter logic (lines 113-121) already supports a `positionUnknown` state (" -  / N" when the current id isn't in the fetched page). That's a symptom of the core bug: the page the record lives on often isn't the page that was fetched.
+The counter logic (lines 113-121) already supports a `positionUnknown` state (" - / N" when the current id isn't in the fetched page). That's a symptom of the core bug: the page the record lives on often isn't the page that was fetched.
 
 ### 2.2 The neighbours hook exists but is unused
 
@@ -116,7 +116,7 @@ Rendered via `RecordNavigation` **IDs mode** with `currentIndex = index - 1`, `t
 
 ### 3.3 Frontend: one code path
 
-1. **Keep `RecordNavigation`** as-is (dual-mode) but make **IDs mode the standard** for list pagers. Add an optional `isLoading` prop to render a neutral counter while neighbours resolve (avoids a flash of " -  / N").
+1. **Keep `RecordNavigation`** as-is (dual-mode) but make **IDs mode the standard** for list pagers. Add an optional `isLoading` prop to render a neutral counter while neighbours resolve (avoids a flash of " - / N").
 2. **Generalize `useRecordNeighbours`** to return `{ prevId, nextId, index, total }` (rename response fields to camelCase in the hook boundary; backend stays snake_case). Keep `enabled: !!currentId`.
 3. **Per resource, add a tiny `useXxxNeighbours` wrapper** (or call `useRecordNeighbours` directly) that maps the resource's list query into the endpoint params using `buildDataGridParams(params, extraFilters)` - the **same** call the list page already uses - so filter serialization is defined once.
 4. **List → detail URL threading (DRY):** each list page already builds its DataGrid params with `buildDataGridParams`. On row click, serialize the *current* list query into the detail URL search string (Orders' `orderListNavQuery` util is the template - generalize it to a shared `lib/listNavQuery.ts` `buildDetailSearch(params)` / `parseDetailSearch(searchParams)` pair). The detail page parses the same params and feeds them to the neighbours hook and to the "Back to list" link.
@@ -143,7 +143,7 @@ Given the filtered+ordered query `q` over `Model` with a stable order, compute w
 - `total = q.count()`.
 - Wrap `q` in a subquery exposing `row_number() over (<same order>)` and `id`; select the row where `id = current_id` to get `index`; select `id` at `index-1` and `index+1` for `prev_id`/`next_id`. (Single CTE/window query; falls back to two bounded `LIMIT 1` queries - "first row after current in order" / "first row before current in reversed order" - if window composition with the existing `order_by` is awkward.)
 - **Tie-breaker:** every `ORDER BY` used for neighbours MUST be deterministic. Append `Model.id` (or `created_at, id`) as a final sort key in `_build_list_query` so `row_number` is stable and prev/next are unambiguous. Verify each resource's existing sort already has, or now gets, a deterministic tail.
-- Record filtered out / not in set → `index = null`, `prev_id`/`next_id` = best-effort `null` (FE shows " -  / total", IDs mode already handles a null counter).
+- Record filtered out / not in set → `index = null`, `prev_id`/`next_id` = best-effort `null` (FE shows " - / total", IDs mode already handles a null counter).
 
 ---
 
@@ -172,18 +172,18 @@ Frontend:
 
 **Tests (land here, not deferred):**
 - **vitest** (`sorento_crm_frontend/`):
-  - `RecordNavigation` IDs mode: renders `index/total`, disables prev when `prevId==null`, disables next when `nextId==null`, " -  / total" when `index==null`, loading state.
-  - `useRecordNeighbours`: builds the right query string from list params via `buildDataGridParams`, disabled when no `currentId`, maps snake→camel.
-  - `lib/listNavQuery.ts`: round-trip `build → parse` preserves filters/sort/search.
-  - At least the complaints `useComplaintNeighbours` wrapper + the refactored `ComplaintNavigation`.
+ - `RecordNavigation` IDs mode: renders `index/total`, disables prev when `prevId==null`, disables next when `nextId==null`, " - / total" when `index==null`, loading state.
+ - `useRecordNeighbours`: builds the right query string from list params via `buildDataGridParams`, disabled when no `currentId`, maps snake→camel.
+ - `lib/listNavQuery.ts`: round-trip `build → parse` preserves filters/sort/search.
+ - At least the complaints `useComplaintNeighbours` wrapper + the refactored `ComplaintNavigation`.
 - **pytest** (`sorento_crm_backend/`): for the complaints neighbours endpoint (and a 2nd resource as a second proof):
-  - happy path: middle record → correct `prev_id`/`next_id`/`index`/`total`.
-  - **filter respected:** with `query=04` the `total` equals the filtered count and neighbours stay within the filtered set.
-  - first record → `prev_id:null`; last record → `next_id:null`.
-  - sort respected: `sort`/`dir` change reorders neighbours.
-  - record filtered out → `index:null`.
-  - **auth denial:** no token / no API key → 401/403.
-  - Service-level test for `compute_neighbours` math (incl. deterministic tie-break with equal sort keys).
+ - happy path: middle record → correct `prev_id`/`next_id`/`index`/`total`.
+ - **filter respected:** with `query=04` the `total` equals the filtered count and neighbours stay within the filtered set.
+ - first record → `prev_id:null`; last record → `next_id:null`.
+ - sort respected: `sort`/`dir` change reorders neighbours.
+ - record filtered out → `index:null`.
+ - **auth denial:** no token / no API key → 401/403.
+ - Service-level test for `compute_neighbours` math (incl. deterministic tie-break with equal sort keys).
 - **Playwright** (`sorento_crm_frontend/e2e/`): one spec - sidebar → Complaints → filter `complaint_number = 04` → open a row → assert pager total equals the filtered list count (read both from the UI) → assert `browser_network_requests` shows `GET …/complaints-management/neighbours?...&query=04` → click next → assert URL/id is the correct neighbour and counter increments.
 
 Re-verify with Playwright MCP against the live stack (FE :3000, BE :8000); states must match the prototype with real data.

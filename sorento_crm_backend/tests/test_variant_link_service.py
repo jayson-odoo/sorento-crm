@@ -325,7 +325,7 @@ def test_v3_delete_product_reanchors_END_TO_END(db, family):
     uuid.UUID (raw text() over a pg `uuid` column) which is fed straight into
     reconcile_variant_links()'s `Product.product_code == code_or_id` ORM lookup.
     Whether `varchar = uuid` raises depends on a global psycopg2 uuid adapter
-    that is registered when the FULL app is imported (as uvicorn does in prod)  - 
+    that is registered when the FULL app is imported (as uvicorn does in prod) - 
     so it WORKS in production and under the full pytest suite, but a partial
     import path would 500 inside reconcile and the best-effort handler would
     swallow it, silently orphaning the sub-tree. We import app.main here to match
@@ -431,7 +431,7 @@ def test_api_list_row_is_variant_cheap_no_extra_attrs(db, family):
 
     variant_id, _, _, _ = _seed_variant_and_base(db, family, "910")
     # Fresh session so the module-session identity map (which a prior
-    # get_product test stashed _variant_of_ref onto) can't leak into this row  - 
+    # get_product test stashed _variant_of_ref onto) can't leak into this row - 
     # this mirrors a LIST query that never calls _populate_variant_graph.
     fresh = _Session(bind=db.get_bind())
     # A brand-new session's FIRST ORM statement runs before conftest's

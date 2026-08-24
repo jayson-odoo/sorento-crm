@@ -270,9 +270,9 @@ def test_send_link_propagates_respond_io_failure(db, cleanup, monkeypatch):
 @pytest.fixture
 def client(db, monkeypatch):
     """TestClient that:
-    - injects a stub current user
-    - reuses the live Postgres session (so test setup writes are visible to routes)
-    - defaults UserPermissionService.check_user_has_permission to True
+  - injects a stub current user
+  - reuses the live Postgres session (so test setup writes are visible to routes)
+  - defaults UserPermissionService.check_user_has_permission to True
       (each test can monkeypatch.setattr again to flip it).
     """
     from app.dependencies import get_current_user, get_db

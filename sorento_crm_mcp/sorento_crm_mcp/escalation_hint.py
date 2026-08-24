@@ -93,12 +93,12 @@ def _is_empty_response(data: Any) -> bool:
     """Detect empty list / not-found shapes returned by CRM tools.
 
     Treat as empty:
-      - {"data": []} (list endpoints)
-      - {"data": null}, {"data": {}}
-      - {"items": []} (alternate list shape)
-      - bare empty list `[]`
-      - {"detail": "...not found..."} from a 404 passthrough
-      - {"error": "..."} that is not an ACCESS_DENIED (those are handled separately)
+    - {"data": []} (list endpoints)
+    - {"data": null}, {"data": {}}
+    - {"items": []} (alternate list shape)
+    - bare empty list `[]`
+    - {"detail": "...not found..."} from a 404 passthrough
+    - {"error": "..."} that is not an ACCESS_DENIED (those are handled separately)
 
     Caller must not invoke this for ACCESS_DENIED payloads.
     """

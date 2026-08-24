@@ -9,10 +9,10 @@ substring it came from.
 
 Precedence, highest first:
 
-  1. a value a person already set              - a reviewer settled it, never touch it
+  1. a value a person already set            - a reviewer settled it, never touch it
                                                  (`AUTHORED_SOURCES`, product_spec_write)
-  2. the products table's own columns          - curated data outranks parsed text
-  3. literal tokens in the description         - shape-gated, see below
+  2. the products table's own columns        - curated data outranks parsed text
+  3. literal tokens in the description       - shape-gated, see below
   4. a closed code lookup (the finish suffix)
   5. nothing
 

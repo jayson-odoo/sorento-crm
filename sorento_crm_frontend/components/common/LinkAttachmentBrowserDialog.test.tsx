@@ -4,10 +4,10 @@
  *
  * Two behaviours are the whole reason `onConfirm` exists and have to be
  * pinned precisely:
- *  - when it is given, NOTHING is linked - no `linkAttachment` call, no
+ * - when it is given, NOTHING is linked - no `linkAttachment` call, no
  *    invalidation, no success toast - and a throw from it toasts instead of
  *    silently closing.
- *  - when it is absent, the original link flow (complaints/PR/SI/packing
+ * - when it is absent, the original link flow (complaints/PR/SI/packing
  *    lists) is byte-for-byte unchanged: `linkAttachment` fires, the given
  *    query keys invalidate, a toast fires, and single-select still means
  *    single-select.

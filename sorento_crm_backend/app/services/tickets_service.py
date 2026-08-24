@@ -981,7 +981,7 @@ def create_ticket_from_mcp(
 
     The draft is intentionally minimal: no round-robin assignment, no SLA
     emit, no notifications. The submitter is expected to open the returned
-    link, review the preview on a real ticket page, and click "Submit"  - 
+    link, review the preview on a real ticket page, and click "Submit" - 
     that path (``submit_ticket_draft``) is what fires the rest of the
     workflow. This avoids the LLM-confirmation-state-machine fragility
     altogether by delegating the explicit confirm to a real UI."""

@@ -79,7 +79,7 @@ def resolve_facts(
     ``{fact_key: value}``. A None object or a raising resolver yields None
     (fail-closed downstream, D5) - stale rules never explode at runtime.
 
-    ``only_keys`` (code-review perf fix): resolve just these fact keys  - 
+    ``only_keys`` (code-review perf fix): resolve just these fact keys - 
     computed facts (e.g. a COUNT query) aren't paid for rules that never read
     them. None = resolve everything."""
     ensure_core()

@@ -5,9 +5,9 @@ Drives the SERVICE layer under an explicit ``company_scope`` to prove the
 404 (never a leak) while same-company access still works, and that a create
 payload can never smuggle a foreign ``company_id``:
 
-  - AC-D6: a Sorento-scoped get / update / delete of a Mocha-owned row -> 404.
-  - AC-D5/D7: the SAME row is readable / editable / deletable under Mocha scope.
-  - AC-D11: a create payload carrying a foreign ``company_id`` is ignored - the
+ - AC-D6: a Sorento-scoped get / update / delete of a Mocha-owned row -> 404.
+ - AC-D5/D7: the SAME row is readable / editable / deletable under Mocha scope.
+ - AC-D11: a create payload carrying a foreign ``company_id`` is ignored - the
     row is stamped with the ACTIVE company, not the injected one.
 
 Runs against the local Postgres dev DB inside a nested transaction that is ALWAYS

@@ -1,10 +1,10 @@
 /**
  * Tests for the canonical DataGridListToolbar (PLAN-unified-list-toolbar).
  * Covers the rules baked into the toolbar so pages can't diverge:
- *  - Export is selection-gated (D4 / AC-D1)
- *  - Filters renders only when wired (D3 / AC-B1)
- *  - Secondary actions: 1 inline, >=2 overflow (D7 / AC-I1/I2)
- *  - Bulk strip appears with count on selection (H / AC-H1)
+ * - Export is selection-gated (D4 / AC-D1)
+ * - Filters renders only when wired (D3 / AC-B1)
+ * - Secondary actions: 1 inline, >=2 overflow (D7 / AC-I1/I2)
+ * - Bulk strip appears with count on selection (H / AC-H1)
  */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';

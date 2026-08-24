@@ -72,7 +72,7 @@ For **open** (unfinished) work, is it still inside its live clock, or already pa
 
 Sits under the cards. By default it shows all timers in scope; **click a card or a bar segment** (within / overdue) to filter it to exactly that slice - the active filter shows as a badge, and **Clear filter** resets it. The within/overdue filters use the **same** predicates as the cards, so the table totals reconcile with the card numbers.
 
-Columns: **Type**, **Tier**, **Owner**, **Tier started**, **Response due**, **Resolution due**, **Resp** (response time, hours), **Reso** (resolution time, hours), **Esc (m/a)** (manual / auto escalation counts), **Resp met** (✓ /  - ), **Reso met** (✓ /  - ). Clicking a row opens the underlying record (complaint / inquiry / request) or, for a pure conversation timer, its Conversation SLA detail.
+Columns: **Type**, **Tier**, **Owner**, **Tier started**, **Response due**, **Resolution due**, **Resp** (response time, hours), **Reso** (resolution time, hours), **Esc (m/a)** (manual / auto escalation counts), **Resp met** (✓ / - ), **Reso met** (✓ / - ). Clicking a row opens the underlying record (complaint / inquiry / request) or, for a pure conversation timer, its Conversation SLA detail.
 
 ## Opened vs resolved trend
 

@@ -2168,7 +2168,7 @@ class AccessAgentService:
                     AgentTeam.company_id == self._active_company_id(),
                 )
             )
-            # A conflict against a FORM-SLA agent's tier-1 team must NOT block  - 
+            # A conflict against a FORM-SLA agent's tier-1 team must NOT block - 
             # only conversation-SLA tier-1 membership is unique.
             if form_codes:
                 other_links_q = other_links_q.filter(AccessAgent.code.notin_(form_codes))
@@ -2641,9 +2641,9 @@ class AccessAgentService:
         a bogus "inconsistent binding" 409.
 
         Distinct non-null ``policy_id`` over the team-set rows:
-        - zero rows  -> None (caller decides: rollout fallback vs 422 end-state)
-        - exactly one -> that policy_id
-        - more than one distinct -> 409 misconfig (inconsistent binding)
+      - zero rows  -> None (caller decides: rollout fallback vs 422 end-state)
+      - exactly one -> that policy_id
+      - more than one distinct -> 409 misconfig (inconsistent binding)
         """
         c = str(team_set_code).strip() if team_set_code is not None else ""
         if not agent_id or not c:

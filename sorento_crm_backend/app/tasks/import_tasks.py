@@ -1122,11 +1122,11 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
     """Process SPO allocation import from Excel in background.
 
     Parsing rules:
-    - Filename (without extension) = SPO number.
-    - Item Code = product code.
-    - Loading Date = cell text; text after first space = shipping container number (link to inbound shipment).
-    - Location = warehouse code.
-    - Qty = allocated quantity.
+  - Filename (without extension) = SPO number.
+  - Item Code = product code.
+  - Loading Date = cell text; text after first space = shipping container number (link to inbound shipment).
+  - Location = warehouse code.
+  - Qty = allocated quantity.
 
     Rows are grouped by (spo_number, product_id, warehouse_id); quantities are summed.
     One allocation is created per group, linked to the first valid inbound shipment for that group.
@@ -2360,7 +2360,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
             A single bad row (constraint / type / FK error) must not abort the
             whole job's transaction: without the savepoint, the swallowed error
             below would leave the Postgres tx in a failed state and every later
-            statement - including ``update_job_progress`` and ``fail_job``  - 
+            statement - including ``update_job_progress`` and ``fail_job`` - 
             would blow up with StaleDataError / PendingRollbackError.
             """
             nonlocal first_line_error

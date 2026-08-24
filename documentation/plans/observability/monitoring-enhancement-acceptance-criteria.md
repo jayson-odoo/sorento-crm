@@ -220,7 +220,7 @@ already been trained to ignore alert email.
 
 Found on production after S4 shipped: `turn_id` was pairing rows correctly, but **every**
 `respond_ts` was NULL, so `chat_history_query` dropped every turn and the admin grid showed
-"-" in Latency and Delivery on every row. The resolver - the only writer of `respond_ts`  - 
+"-" in Latency and Delivery on every row. The resolver - the only writer of `respond_ts` - 
 was failing every call (`resolve_attempts` climbing 1→5 on production rows).
 
 Root cause of the blank column is that the SLA clock had a single point of failure. Respond

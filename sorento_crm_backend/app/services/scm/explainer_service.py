@@ -404,7 +404,7 @@ def _deterministic_run_overview(facts: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def _run_market_signals(db: Session, run_id: str, limit: int = 15) -> list[dict]:
-    """Latest cached market signals whose category matches any product in the run  - 
+    """Latest cached market signals whose category matches any product in the run - 
     so a plan-chat question like 'given the colour trend, what should I stock?' has
     the signal text to reason over. Matched on the product's category **id** (what
     the topic picker + ad-hoc search store as ``category_ref``)."""

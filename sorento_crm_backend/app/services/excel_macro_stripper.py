@@ -107,13 +107,13 @@ def extract_macro_template_xlsx(
 
     Non-`.xlsm` files pass through untouched (the `.xls`/`.xlsx` flow must not
     change). For `.xlsm`:
-    - VBA is dropped (`keep_vba=False`) and formulas are baked to their cached
+  - VBA is dropped (`keep_vba=False`) and formulas are baked to their cached
       values (`data_only=True`) so pruning sibling sheets can't leave `#REF!`
       in the file n8n/the chatbot reads.
-    - Sheet selection: `template_sheet` (case-insensitive) if present; a
+  - Sheet selection: `template_sheet` (case-insensitive) if present; a
       single-sheet workbook keeps its only sheet; multi-sheet without the
       template raises `MacroWorkbookError`.
-    - `require_data=True` additionally raises `MacroWorkbookError` when the
+  - `require_data=True` additionally raises `MacroWorkbookError` when the
       kept sheet has no data rows below the header - macro workbooks whose
       Template the user forgot to populate (run the macro) before uploading.
     Returns (bytes, filename, mime) with the `.xlsm` suffix and MIME rewritten

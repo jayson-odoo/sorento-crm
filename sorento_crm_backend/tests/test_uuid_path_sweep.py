@@ -168,7 +168,7 @@ def test_sla_tracking_tracking_id_not_guarded():
     ],
 )
 def test_conversation_dual_id_contact_lookup_preserved(rel):
-    """The RespondContact (respond_io_id OR internal id) fallback must remain  - 
+    """The RespondContact (respond_io_id OR internal id) fallback must remain - 
     the sweep only guarded the entity PK path param, never this contact lookup."""
     s = _src(rel)
     assert "respond_io_id == contact_id_val" in s

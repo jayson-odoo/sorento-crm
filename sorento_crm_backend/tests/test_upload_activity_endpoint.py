@@ -280,7 +280,7 @@ def _add_import_job(db: Session, *, job_type: str, status: str, **kw) -> str:
 
 
 def test_import_job_sessions_in_feed(client):
-    """Excel/data import jobs (stock/DO/GRN/...) render as import_job sessions  - 
+    """Excel/data import jobs (stock/DO/GRN/...) render as import_job sessions - 
     replaces the per-page LatestImportStatusPanel bar."""
     c, db = client
     running = _add_import_job(

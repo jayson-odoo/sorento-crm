@@ -154,10 +154,10 @@ Backend must be running on `localhost:8000` with the migration applied
 5. Pick any row (or `MCP_ROUTING_E2E_TOOL_NAME` if set). Click the cell text
    under the **Routing** column (either the team-name link or "View").
 6. `browser_snapshot` the popover. Verify:
-   - Popover header shows `Escalation chain for <tool_name>` with the tool
+ - Popover header shows `Escalation chain for <tool_name>` with the tool
      name in monospace.
-   - At least one row inside, each formatted as `T<tier> <team_name> → <agent_name>`.
-   - Footer: "First row = primary, sent as `suggested_escalation` on empty results."
+ - At least one row inside, each formatted as `T<tier> <team_name> → <agent_name>`.
+ - Footer: "First row = primary, sent as `suggested_escalation` on empty results."
 7. Network-tab style check: confirm a `GET /api/system/mcp-routing?tool_name=...`
    fires when the popover opens. Use `browser_network_requests` after step 5.
    It should return a `RoutingResultOut` JSON with `entries: [...]` and

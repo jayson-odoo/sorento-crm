@@ -257,7 +257,7 @@ def list_messages_page(
     ordering = sort_col.asc() if dir_ == "asc" else sort_col.desc()
 
     # Grouping is a server-ordering concern. The listing is offset-paginated, so
-    # unless group members are contiguous the UI can only group *within a page*  - 
+    # unless group members are contiguous the UI can only group *within a page* - 
     # every page then shows fragments of many groups and the header counts lie.
     #
     # `date` deliberately keeps the default ordering: a fixed +8h offset preserves

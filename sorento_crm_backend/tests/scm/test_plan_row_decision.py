@@ -204,7 +204,7 @@ def test_non_buy_rec_accepts_use_stock(scm_app):
     row = _decision_row(db, rec_id)
     assert row["kind"] == "use_stock"
 
-    # the OLD buy-only accept/adjust/reject path still refuses this same row  - 
+    # the OLD buy-only accept/adjust/reject path still refuses this same row - 
     # the relaxation is additive, not a removal of the old invariant.
     with pytest.raises(AppException):
         dsvc.accept_recommendation(db, rec_id, actor="tester")

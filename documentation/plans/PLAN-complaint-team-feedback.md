@@ -8,10 +8,10 @@
 - **Item 2:** working-hours applies to **create + escalate** (conversation `create_tracking`/`escalate_tracking` + form `_start_for_config`/`scan_overdue_and_escalate`) and admin test-override. The assignee-team-derivation routing reset (`apply_assignee_team_derivation`) was **reverted to calendar math** - it's a team-flip correction, out of the "create + escalate" scope, and its unit tests assert calendar semantics. External-API create + escalate both verified still working. New helper `CalendarService.add_working_hours` (9 unit tests).
 - **Item 3:** PDF generation is **async + decoupled** - `POST /complaints/{id}/export/pdf` creates a `user_downloads` row + enqueues `generate_complaint_pdf` (imports queue); the worker renders (WeasyPrint), uploads to the storage provider, marks the row ready/failed. New **My Downloads drawer** (top-nav icon + Sheet, polls while in-flight) consumes `GET /api/v1/downloads` + `GET /api/v1/downloads/{id}/url`. Verified live: render→upload→signed-URL round-trip (35KB PDF from a real complaint). Worker needs `DYLD_FALLBACK_LIBRARY_PATH` locally (see memory).
 - **Item 4 (revised after live feedback):** two CS finalize actions on an approved complaint, both close the CS SLA stage (emit `resolved` form-SLA event) and send a Respond.io status-update message (+ optional note) to the contact:
-  - **"Processed by CS"** → status `processed_by_cs` (emerald pill). Endpoint `POST /complaints/{id}/process`, perm `complaint_management.complaints.resolve`. (Renamed from "resolve" - CS processed it, it isn't literally resolved.)
-  - **"Mark as closed"** → status `closed` (slate pill). Endpoint `POST /complaints/{id}/close`, **separate** perm `complaint_management.complaints.close` so it can be hidden independently. For the can't-resolve case.
-  - Migration 227 adds `resolved_at`/`resolved_by` (used as the generic finalized-at/by for both). Status renders as a coloured pill; `processed_by_cs` shows the label "Processed by CS". Both finalize paths are decoupled best-effort (status commits first; Respond send + SLA emit are try/except).
-  - **Pre-existing bug fixed:** `lookup_write_listener` re-validated *all* columns on every UPDATE, so any update to a complaint holding a legacy unmapped lookup value (e.g. `defects_discovered="Before DLP"`) 422'd. Now `before_update` only validates *changed* columns (`app/services/lookup_write_listener.py`; regression tests in `test_lookup_write_enforcement.py`). This had been silently blocking status changes on real complaints.
+ - **"Processed by CS"** → status `processed_by_cs` (emerald pill). Endpoint `POST /complaints/{id}/process`, perm `complaint_management.complaints.resolve`. (Renamed from "resolve" - CS processed it, it isn't literally resolved.)
+ - **"Mark as closed"** → status `closed` (slate pill). Endpoint `POST /complaints/{id}/close`, **separate** perm `complaint_management.complaints.close` so it can be hidden independently. For the can't-resolve case.
+ - Migration 227 adds `resolved_at`/`resolved_by` (used as the generic finalized-at/by for both). Status renders as a coloured pill; `processed_by_cs` shows the label "Processed by CS". Both finalize paths are decoupled best-effort (status commits first; Respond send + SLA emit are try/except).
+ - **Pre-existing bug fixed:** `lookup_write_listener` re-validated *all* columns on every UPDATE, so any update to a complaint holding a legacy unmapped lookup value (e.g. `defects_discovered="Before DLP"`) 422'd. Now `before_update` only validates *changed* columns (`app/services/lookup_write_listener.py`; regression tests in `test_lookup_write_enforcement.py`). This had been silently blocking status changes on real complaints.
 
 ### Test status
 
@@ -87,14 +87,14 @@ So today a 24h SLA started Fri noon is due Sat noon; holidays ignored everywhere
 
 **Build:**
 1. New helper `CalendarService.add_working_hours(start_naive_utc, hours) -> datetime` (naive UTC out):
-   - Convert start → KL local.
-   - Walk forward consuming `hours` only within working windows (weekday flag true, not a holiday, time within `work_day_start_time`..`work_day_end_time`).
-   - If start is outside a window, accumulation begins at the next window open.
-   - Convert result back to naive UTC.
-   - Honor partial-hour fractions (tiers can be non-integer hours).
+ - Convert start → KL local.
+ - Walk forward consuming `hours` only within working windows (weekday flag true, not a holiday, time within `work_day_start_time`..`work_day_end_time`).
+ - If start is outside a window, accumulation begins at the next window open.
+ - Convert result back to naive UTC.
+ - Honor partial-hour fractions (tiers can be non-integer hours).
 2. Replace every due_at computation site:
-   - `sla_service.py`: `create_tracking` (1786), `escalate_tracking` (1093), `apply_assignee_team_derivation` (1577), `admin_test_override_tracking` (2162). Both `due_at` and `due_at_resolution`.
-   - `form_sla_service.py`: `_start_for_config` (371), `scan_overdue_and_escalate` (238).
+ - `sla_service.py`: `create_tracking` (1786), `escalate_tracking` (1093), `apply_assignee_team_derivation` (1577), `admin_test_override_tracking` (2162). Both `due_at` and `due_at_resolution`.
+ - `form_sla_service.py`: `_start_for_config` (371), `scan_overdue_and_escalate` (238).
 3. No change to breach scan / time-remaining math - they compare wall-clock `now` vs `due_at`, still correct.
 
 **No n8n double-count risk:** `create_tracking` reads tier hours from the DB; n8n sends `policy_id`, not hours or dates.
@@ -139,15 +139,15 @@ So today a 24h SLA started Fri noon is due Sat noon; holidays ignored everywhere
 **Build (code):**
 1. New `resolve` action: `POST /api/v1/complaints/{id}/resolve` → sets `status="resolved"`, emits `emit_form_event(..., "resolved", ...)` best-effort. New RBAC permission. Validate prior status is `approved`.
 2. Add `resolved` to the event vocabulary:
-   - BE emit (above).
-   - FE `FORM_SLA_EVENT_OPTIONS.complaint` in `_shared/formSLAService.ts:155` → append `'resolved'`.
+ - BE emit (above).
+ - FE `FORM_SLA_EVENT_OPTIONS.complaint` in `_shared/formSLAService.ts:155` → append `'resolved'`.
 3. FE: "Mark resolved" button on `ComplaintDetail.tsx` for the customer-service team (RBAC-gated).
 
 **Config data (admin UI - set up, no code):**
 - **SLA Management → SLA Policies** - new customer-service policy (own response/resolution hours).
 - **SLA Management → Form SLA Config**:
-  - Stage 1: `source=complaint`, `agent_code=complaint`, `team_set_code=complaint`, `start_event=submit`, `respond_event=technical_team_response`, `resolve_event=approved`, `next_config_id`→stage 2, `policy_id`=complaint-team policy.
-  - Stage 2: `source=complaint`, `agent_code=complaint`, `team_set_code=customer_service`, `resolve_event=resolved`, `policy_id`=CS policy. (Started by stage 1's spawn, not a `start_event`.)
+ - Stage 1: `source=complaint`, `agent_code=complaint`, `team_set_code=complaint`, `start_event=submit`, `respond_event=technical_team_response`, `resolve_event=approved`, `next_config_id`→stage 2, `policy_id`=complaint-team policy.
+ - Stage 2: `source=complaint`, `agent_code=complaint`, `team_set_code=customer_service`, `resolve_event=resolved`, `policy_id`=CS policy. (Started by stage 1's spawn, not a `start_event`.)
 - **Access Agent admin** - complaint agent needs an `AgentTeam` row: `team_set_code=customer_service`, tier 1 → Customer Service `Team` (with `TeamMember`s for round-robin).
 
 **Tests (pytest):** submit → stage 1 tracker under complaint team; approve → stage 1 resolved + stage 2 spawned under customer_service round-robin; resolve action → status `resolved` + stage 2 resolved; resolve rejected when status not `approved`; auth denial. Vitest - Mark-resolved button gating. Playwright - submit → approve → resolve round-trip.

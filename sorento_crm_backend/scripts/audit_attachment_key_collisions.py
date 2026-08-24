@@ -11,9 +11,9 @@ Run from sorento_crm_backend/:
     python scripts/audit_attachment_key_collisions.py [--limit N]
 
 Makes ZERO writes - DB and storage untouched. Reports:
-  * SHARED KEYS  - keys claimed by >1 live attachment (already-corrupted; the migration must
+  * SHARED KEYS - keys claimed by >1 live attachment (already-corrupted; the migration must
                    NOT auto-relocate these, they need manual disambiguation).
-  * FLAT-SCHEME  - count of rows on the `{type}/{name}` shape = migration blast radius.
+  * FLAT-SCHEME - count of rows on the `{type}/{name}` shape = migration blast radius.
 """
 from __future__ import annotations
 

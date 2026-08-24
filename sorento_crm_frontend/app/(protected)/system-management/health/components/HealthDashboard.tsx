@@ -60,7 +60,7 @@ function integrationFailedHref(
 /**
  * Drill-down for ONE cause rather than a whole channel.
  *
- * Narrowed by `status_code` and `filter_terms` on top of the channel filter  - 
+ * Narrowed by `status_code` and `filter_terms` on top of the channel filter - 
  * a channel mixes several faults, so channel+status alone would land on all of
  * them. `filter_terms` is used rather than the sample message because the sample
  * embeds a record id that differs per row; every term is sent and the backend

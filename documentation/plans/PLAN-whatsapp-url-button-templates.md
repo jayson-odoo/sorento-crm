@@ -36,8 +36,8 @@ and a clickable URL - the defects only bite when the contact's 24h window is clo
 
 1. **Create + get approved** a WhatsApp template (UTILITY) for the `complaint`
    use case with:
-   - a short body (e.g. `Hi {{1}}, update on complaint {{2}}: {{3}}`), and
-   - **one dynamic URL button**: base `https://fe-sorento.foundryx.my/` + `{{1}}`
+ - a short body (e.g. `Hi {{1}}, update on complaint {{2}}: {{3}}`), and
+ - **one dynamic URL button**: base `https://fe-sorento.foundryx.my/` + `{{1}}`
      suffix (Meta allows exactly one dynamic suffix var per URL button).
 2. **Provide the "Copy API Payload" JSON** from respond.io Template Manager for that
    approved template. ✅ Provided 2026-06-22 - button-component shape locked (below).

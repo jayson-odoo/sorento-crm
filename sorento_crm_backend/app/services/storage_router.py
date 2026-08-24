@@ -353,7 +353,7 @@ def copy_object_verified(provider: str, old_key: str, new_key: str) -> None:
     """Server-side copy old_key -> new_key, then verify new exists. No byte download.
 
     Raises AppException(409) if an object already lives at new_key (never clobber),
-    AppException(500) if the copy can't be verified. Does NOT delete the old object  - 
+    AppException(500) if the copy can't be verified. Does NOT delete the old object - 
     caller deletes after its DB commit so the DB never points at a missing object.
     """
     from app.services.error_handler import AppException

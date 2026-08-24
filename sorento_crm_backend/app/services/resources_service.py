@@ -506,9 +506,9 @@ class AttachmentService:
         """List attachments. Filter by directory_id when provided. Search by filename when query is provided. is_deleted=True returns trash.
 
         ``access_levels_match`` controls how multi-code filters combine:
-        - ``any`` (default): row's access_levels overlap any selected code.
-        - ``all``: row's access_levels contain every selected code (extras allowed).
-        - ``exact``: row's access_levels equal the selected set.
+      - ``any`` (default): row's access_levels overlap any selected code.
+      - ``all``: row's access_levels contain every selected code (extras allowed).
+      - ``exact``: row's access_levels equal the selected set.
 
         ``attachment_type_id`` / ``attachment_type_code`` are the singular forms;
         ``attachment_type_ids`` / ``attachment_type_codes`` take a list and union
@@ -1168,7 +1168,7 @@ class AttachmentService:
         # Numeric/date sorts need a type-consistent key; string sorts lower-case.
         numeric_sort = sort_key in {"size", "file_size_bytes"}
 
-        # "Uploaded By" sorts on the uploader's DISPLAY NAME, not the raw UUID  - 
+        # "Uploaded By" sorts on the uploader's DISPLAY NAME, not the raw UUID - 
         # sorting by UUID is meaningless AND the column returns a mix of UUID
         # objects / strings / None that raise "'<' not supported between 'UUID'
         # and 'str'" when compared. Batch-resolve id -> name up front.

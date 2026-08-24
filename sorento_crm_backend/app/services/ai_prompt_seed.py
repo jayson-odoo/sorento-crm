@@ -107,7 +107,7 @@ def bump_prompt_to_fallback(bind: Connection, name: str) -> None:
     Existing installs already hold a seeded v1 (or a later admin edit) as the
     ``production`` version; the plain ``seed_prompt_registry`` only inserts a v1
     when missing, so it can never update a live row. This publishes a fresh
-    version (immutable-versions + movable-labels model) so a fallback change  - 
+    version (immutable-versions + movable-labels model) so a fallback change - 
     e.g. adding the ``ideate`` intent line to ``semantic_parser`` - actually
     reaches the runtime. Safe to re-run: a second call is a no-op because the
     production text now equals the fallback.

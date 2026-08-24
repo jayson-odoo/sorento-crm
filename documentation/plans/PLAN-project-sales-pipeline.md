@@ -303,8 +303,8 @@ already exists, the second is scheduling.
 
 ## 5a. Leads (slice S2c)
 
-Ecohub's `Client → Lead → Project[]` chain, adapted. `dreamz_ems` expects the same shape  - 
-its `Project` already reserves `lead_id` and `client_id` as soft-ref seams "set on lead Won"  - 
+Ecohub's `Client → Lead → Project[]` chain, adapted. `dreamz_ems` expects the same shape - 
+its `Project` already reserves `lead_id` and `client_id` as soft-ref seams "set on lead Won" - 
 so this is a convergence point across all three products, not a Sorento-only bolt-on.
 
 ```

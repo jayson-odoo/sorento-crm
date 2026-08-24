@@ -17,9 +17,9 @@ is_active is True AND (no date window at all OR today falls within
 [start_date, end_date]).
 
 For each active promotion:
-  - no flyer attachment linked at all -> flagged, nothing to check
-  - flyer isn't a PDF (image) -> flagged, text-check skipped
-  - flyer is a PDF -> extract text per page (PyMuPDF, already a dependency),
+ - no flyer attachment linked at all -> flagged, nothing to check
+ - flyer isn't a PDF (image) -> flagged, text-check skipped
+ - flyer is a PDF -> extract text per page (PyMuPDF, already a dependency),
     find product codes printed on it, diff against what's actually linked in
     promotion_products. Any code printed on the flyer, known to the product
     master, and NOT linked = a real gap a Resubmit (AI re-extraction) can fix.

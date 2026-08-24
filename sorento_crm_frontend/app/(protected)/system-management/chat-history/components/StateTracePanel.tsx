@@ -13,7 +13,7 @@ import type { StateTrace } from '../types/chatHistory.types';
  *
  * Collapsed by default: shows a one-line signal (version, lost-entity count, whether the
  * turn wrote state) so a scan surfaces the suspicious turns without opening every row.
- * Expanded: the derived summary (entities lost/gained, cause flags, parser drift  - 
+ * Expanded: the derived summary (entities lost/gained, cause flags, parser drift - 
  * mirroring `v_turn_state_transition`) plus the raw jsonb in a searchable viewer
  * (Cmd/Ctrl+F), the same pattern as the AI-assistant trace inspector.
  */

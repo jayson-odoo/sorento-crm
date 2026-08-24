@@ -2,7 +2,7 @@
 
 Status: Phase 1 (FE prototype) + Phase 2 (BE + off-mocks + tests) COMPLETE; Phase 3 (review) in progress.
 Tests: pytest 30 · vitest 67 · playwright 1 - all green. Report: `scm-policy-config-test-report.md`.
-Classification: **MODULE** (`scm`). No new tables, no schema migration, no RBAC migration  - 
+Classification: **MODULE** (`scm`). No new tables, no schema migration, no RBAC migration - 
 `scm.policy.manage` already exists (`274_scm_m0_views_reg.py:106`) and all target tables exist from
 M0 (`app/models/scm.py`). New surface only: 1 router file + schemas + 1 service + FE area + 1 menu leaf.
 UAC: `documentation/plans/scm/scm-policy-config-acceptance-criteria.md` (binding contract; written first).
@@ -231,7 +231,7 @@ UAC ids. Reviewer checklist = `documentation/reference/PR-CHECKLIST.md` + DoD ga
 3. **AC-VAL-7 strictness:** hard-block saving statistical SS without service_level (my pick), or
    allow-with-warning banner? Hard-block prevents a policy that silently won't do what it says.
 4. **Supplier-weight sum:** enforce delivery_weight + quality_weight == 1.0 (my pick, AC-SUP-2) or
-   allow arbitrary positive weights the analytics job normalizes? Depends on how M2 consumes them  - 
+   allow arbitrary positive weights the analytics job normalizes? Depends on how M2 consumes them - 
    confirm the intended contract.
 5. **Affected-SKU estimate (AC-PREV-5):** in scope for v1 or DEFERRED? It's the most expensive piece
    and a nice-to-have; I'll DEFER unless you want it now.

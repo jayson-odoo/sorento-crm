@@ -28,7 +28,7 @@
   results → B decisions + PO draft/confirm + create-GR → C LLM feedback loop → D config CRUD.
 - **M4-D16 - Uncosted buys = separate "Needs cost" bucket, NOT funded/deferred.** A buy with no
   supplier cost (`cash_impact` null) cannot be cash-ranked. It goes to a THIRD section ("Needs cost")
-  - un-rankable, still showing urgency / days-of-cover / order qty, with an "add supplier cost to
+ - un-rankable, still showing urgency / days-of-cover / order qty, with an "add supplier cost to
   cash-rank this" CTA. Funded/Deferred (and Σ funded ≤ budget) are computed over COSTED buys only.
   Rationale: real data is ~13,280 uncosted vs ~91 costed; funding uncosted "for free" would make the
   cash constraint meaningless and hide the cost-data gap. This bucket surfaces the gap as actionable.

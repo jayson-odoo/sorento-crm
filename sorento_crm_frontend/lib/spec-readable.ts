@@ -29,7 +29,7 @@ const SPECIAL: Record<string, string> = {
 };
 
 /**
- * `_self` is not a value. It holds the words that name the SPECIFICATION itself  - 
+ * `_self` is not a value. It holds the words that name the SPECIFICATION itself - 
  * "bowl", "height", "deep" - as opposed to the words for one of its values. Rendered
  * through the generic path it came out as "Self", which reads like a value nobody can
  * find in the catalogue.

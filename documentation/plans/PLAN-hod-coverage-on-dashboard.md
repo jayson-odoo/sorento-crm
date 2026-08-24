@@ -39,7 +39,7 @@ routing logic needed**; HoD-created rows flow through the same machinery.
 
 ### Schema
 - Add `created_by_id` (nullable FK `users.id`, SET NULL) to `notification_subscriptions`
-  - audit trail: distinguishes self-created (`= subscriber_id` or NULL) from
+ - audit trail: distinguishes self-created (`= subscriber_id` or NULL) from
   HoD-assigned (`= the HoD`). Alembic migration required.
 
 ### Permission
@@ -48,8 +48,8 @@ routing logic needed**; HoD-created rows flow through the same machinery.
 
 ### Service - `coverage_subscription_service.py`
 - `subscribe(...)` gains optional `subscriber_id` (the coverer) + `created_by_id`.
-  - When the coverer == actor → current self-service path (unchanged).
-  - When coverer != actor → caller must have already passed the permission gate.
+ - When the coverer == actor → current self-service path (unchanged).
+ - When coverer != actor → caller must have already passed the permission gate.
     Validate **both** coverer and covered ∈ actor's `_visible_member_ids(actor)`.
     Stamp `created_by_id = actor`. Then notify the coverer (best-effort, never raises).
 - `list_team_subscriptions(actor_id)` → all active rows where coverer OR covered ∈
@@ -78,9 +78,9 @@ Keep existing `GET /`, `POST /`, `DELETE /{target_user_id}` for self-service.
   shared component rather than duplicate - see CLAUDE.md "don't duplicate panels").
 - Section 1 **My coverage** (self-service) - the existing picker + list, as-is.
 - Section 2 **Team coverage** (only if `useHasPermission('notifications.coverage.manage_team')`):
-  - Assign form: pick **Coverer** + **Covered** (both from scope-B users) + mode
+ - Assign form: pick **Coverer** + **Covered** (both from scope-B users) + mode
     toggle + optional until → `POST /assign`.
-  - List of team coverages with "assigned by" + revoke (`DELETE /manage/{id}`).
+ - List of team coverages with "assigned by" + revoke (`DELETE /manage/{id}`).
 - Keep `/account/notifications` coverage section too (or link to the dashboard) - TBD,
   default keep both pointing at the same shared component.
 

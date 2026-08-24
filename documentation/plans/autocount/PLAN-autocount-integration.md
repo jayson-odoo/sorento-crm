@@ -209,7 +209,7 @@ Delivery Order (+lines), Goods Received Note (+lines).
 - **Ingest emits no lifecycle events** (AC-AC-18). A GRN arriving *from* AutoCount must never trigger
   a write *back* to AutoCount. This is the sync-loop guard and it is not optional.
 
-Master resolution by natural code already exists and should be reused  - 
+Master resolution by natural code already exists and should be reused - 
 `app/api/v1/external/utils.py`: `get_products_by_code`, `get_warehouses_by_code_or_name`.
 
 ## 4. Group C - read endpoints
@@ -253,7 +253,7 @@ have to maintain or quietly break. The table also makes "what came from AutoCoun
 instead of nine, and lets a tenth entity type arrive with no DDL.
 
 **No backfill (revises AC-AC-23).** Absence of a reference means the record was created locally.
-That delivers what AC-AC-23 protects against - no row left in a state that breaks a later sync  - 
+That delivers what AC-AC-23 protects against - no row left in a state that breaks a later sync - 
 without materialising rows that say nothing.
 
 **`source_ref` is `DocKey`, never `DocNo`** (AC-AC-22). `DocNo` is mutable - AutoCount exposes

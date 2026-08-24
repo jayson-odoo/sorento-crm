@@ -1,5 +1,5 @@
 /**
- * Form submission + SLA lifecycle end-to-end via CONTACT IMPERSONATION  - 
+ * Form submission + SLA lifecycle end-to-end via CONTACT IMPERSONATION - 
  * post-schema-migration verification (migrations 298/299/300).
  *
  * An admin impersonates a portal contact, submits a form through the real portal UI

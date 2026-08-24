@@ -25,17 +25,17 @@ Plus a **resolution preview** ("resolve for SKU X") that calls the SAME resolver
   `sku > abc_xyz_cell > product_class > global`; ties break on `priority` (higher wins) then
   `scope_ref`. Only `is_active` rows considered.
 - `scope_ref` semantics per `_policy_matches` (`reorder_engine.py:98`):
-  - `sku` → **`products.id` (UUID)**; matched by `str(scope_ref) == str(product_id)`.
-  - `product_class` → **`product_categories.category_code`** (string; see `load_category_code`
+ - `sku` → **`products.id` (UUID)**; matched by `str(scope_ref) == str(product_id)`.
+ - `product_class` → **`product_categories.category_code`** (string; see `load_category_code`
     `reorder_engine.py:475`).
-  - `abc_xyz_cell` → **`"{abc}-{xyz}"`** e.g. `A-X` (see `resolve_policy_for_sku:568`).
-  - `global` → `scope_ref` NULL.
+ - `abc_xyz_cell` → **`"{abc}-{xyz}"`** e.g. `A-X` (see `resolve_policy_for_sku:568`).
+ - `global` → `scope_ref` NULL.
 - `factor_toggles` JSONB carries `supplier_selection` (`primary|best_score|lowest_cost`) and
   `lead_time_default_days` (int) - see `ensure_reorder_policy_defaults` / `engine_toggles`
   (`reorder_engine.py:405-452`). These are surfaced as first-class form fields.
 - Consumption timing (verified):
-  - `scm.reorder_policy` is read by the **reorder run** → edits take effect on the **next reorder run**.
-  - `scm.abc_xyz_policy` + `scm.supplier_scoring_policy` are read by the **M2 analytics job**
+ - `scm.reorder_policy` is read by the **reorder run** → edits take effect on the **next reorder run**.
+ - `scm.abc_xyz_policy` + `scm.supplier_scoring_policy` are read by the **M2 analytics job**
     (`analytics_service.py:72-136`), which recomputes `item_classification` / `supplier_performance`
     → edits take effect on the **next analytics run**, which the following reorder run then consumes.
     (This distinction MUST be reflected in the UI copy - see AC-CFG-1 / AC-SUP-1.)
@@ -77,9 +77,9 @@ Plus a **resolution preview** ("resolve for SKU X") that calls the SAME resolver
 - **AC-EDIT-1** WHEN I click "Add policy", THEN a modal opens with: Scope type
   (`global` disabled/absent - global default is edited, not created), Scope target picker that
   switches by scope type:
-  - `sku` → product `SearchableSelect` (label `product_code · name`, hidden value = `products.id`);
-  - `product_class` → product-class `SearchableSelect` (value = `category_code`);
-  - `abc_xyz_cell` → two pickers ABC ∈ {A,B,C} × XYZ ∈ {X,Y,Z}, composed to `A-X`.
+ - `sku` → product `SearchableSelect` (label `product_code · name`, hidden value = `products.id`);
+ - `product_class` → product-class `SearchableSelect` (value = `category_code`);
+ - `abc_xyz_cell` → two pickers ABC ∈ {A,B,C} × XYZ ∈ {X,Y,Z}, composed to `A-X`.
 - **AC-EDIT-2** The modal exposes policy fields: policy_type (`reorder_point|periodic_review|min_max`),
   service_level, safety_stock_method (`fixed_days|statistical|manual`), safety_days,
   review_period_days, forecast_window_days, baseline_source, spike_handling, buy_scope,

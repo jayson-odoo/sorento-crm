@@ -5,12 +5,12 @@ Most sends go through `respond_io_tasks._send_and_log`, which writes an
 `RespondClient.send_message` directly and logged nothing at all:
 
   * `PortalService.send_link_via_respond_io` - portal link delivery
-  * `ConversationSLATrackingService.send_conversation_reply_for_tracking`  - 
+  * `ConversationSLATrackingService.send_conversation_reply_for_tracking` - 
     the SLA conversation reply
 
 Local dev runs with deliberately-wrong Respond credentials, so those sends 401
 every time. With no outbox row the failure was invisible: the admin saw an
-error, and the Respond outbox - the place you go to find out what happened  - 
+error, and the Respond outbox - the place you go to find out what happened - 
 stayed empty.
 
 These tests pin that both paths now log on BOTH outcomes. They assert on the

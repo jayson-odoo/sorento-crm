@@ -129,9 +129,9 @@ docker system prune -f
    Bump `max_connections` (or use pgbouncer) if currently tight.
 4. **RQ worker + scheduler.** If background workers live in the backend container,
    running both colors = double processing of queued jobs and cron ticks. Either:
-   - move RQ worker + scheduler to a separate service that is NOT blue/green (recreate
+ - move RQ worker + scheduler to a separate service that is NOT blue/green (recreate
      in place, accept its tiny restart window), or
-   - guard scheduled jobs with a leader election / distributed lock.
+ - guard scheduled jobs with a leader election / distributed lock.
 5. **`/health` semantics.** Endpoint must return 200 only AFTER alembic + DB ping succeed,
    not just "process up." Otherwise we swap onto a not-actually-ready container.
 6. **First boot.** `.active_color` won't exist; default to `blue` and assume the live

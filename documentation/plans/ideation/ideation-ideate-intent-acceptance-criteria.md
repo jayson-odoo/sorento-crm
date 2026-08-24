@@ -80,7 +80,7 @@ are passed structured - never a free-text "change X to Y" left for shared-servic
 `{ draft_id, status, captured, missing, reply_text }`, and persists
 `session_vars.ideation = { draft_id, status, missing, updated_at }` (§5.2 shape, ISO `updated_at`).
 
-**AC-12b [BE][T]** - *Given* `create_idea` returns `status="review"` (all required captured, not yet confirmed  - 
+**AC-12b [BE][T]** - *Given* `create_idea` returns `status="review"` (all required captured, not yet confirmed - 
 D-CONFIRM), *When* the endpoint finishes, *Then* it relays the echo `reply_text` (captured summary + confirm/
 revise ask), **keeps** `session_vars.ideation = { draft_id, status:"review", missing:[], updated_at }` (does NOT
 clear it), and makes **no** completion - the draft stays open awaiting explicit confirmation. This holds even
@@ -190,7 +190,7 @@ it in the sorento app, *Then* `/ideas/{id}` renders the same detail iframe (link
 
 **AC-50 [E2E]** - *Given* the live consume flow, *When* a normal CRM WhatsApp turn is processed after
 this feature ships, *Then* behaviour is unchanged (data_query / form_submit / how_to answers identical)
- -  proven by the Group A no-regression set plus one end-to-end CRM smoke.
+ - proven by the Group A no-regression set plus one end-to-end CRM smoke.
 
 **AC-51 [BE][T]** - *Given* the `ideate` end-to-end (parse → endpoint → `create_idea` → session_vars),
 *When* driven with a **stubbed shared-service `create_idea`** returning each of

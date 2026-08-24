@@ -58,9 +58,9 @@ The customer leaves having *seen* their bathroom instead of imagining it.
 2. She builds it by adding blocks to a canvas: a heading, some text, an image, a grid of
    products, a bundle offer.
 3. For the product grid, she chooses which products appear in one of two ways:
-   - **By rule** - "every basin in this category under RM 800". The page then keeps itself
+ - **By rule** - "every basin in this category under RM 800". The page then keeps itself
      current: a new basin that matches simply appears.
-   - **By hand** - she picks the exact products she wants featured.
+ - **By hand** - she picks the exact products she wants featured.
    She can also combine the two, and remove individual products she does not want. Removing
    always wins over including, so she can never be surprised by something she took out.
 4. She decides **what each product tile shows** - photo, name, code, price - and can save that

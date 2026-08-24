@@ -56,7 +56,7 @@ def create_schema() -> None:
     ``schema "projects" does not exist`` - a failure that never reproduces on a
     developer machine, where migration 273 or 354 already made the schema.
     """
-    import app.models  # noqa: F401  - registers every model on Base.metadata
+    import app.models  # noqa: F401 - registers every model on Base.metadata
     from sqlalchemy import text
 
     from app.database import Base, engine

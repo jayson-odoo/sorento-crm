@@ -241,7 +241,7 @@ export default function AttachmentUploadDialog({
     const filesToUpload: File[] = [];
     for (const file of selectedFiles) {
       let resolution: AttachmentConflictResolution | undefined;
-      // Check both folder uploads AND no-folder ("All attachments") uploads  - 
+      // Check both folder uploads AND no-folder ("All attachments") uploads - 
       // an undefined directory id checks the NULL-directory scope server-side.
       const check = await checkAttachmentCollision(file.name, snapshot.directoryId);
       if (check.collides) {

@@ -8,7 +8,7 @@ run the allocator over a run's buys) live in ``reorder_run_service`` +
 
 Two deterministic pieces:
 
-  * **rank_score (M4-D1/D14, graceful-degrade)**  - 
+  * **rank_score (M4-D1/D14, graceful-degrade)** - 
     ``rank_score = Σ(wᵢ·fᵢ) / Σ(wᵢ present)`` over the factors urgency, margin,
     abc, priority, committed. Each factor is normalized 0 - 1 and a factor with NO
     data is DROPPED from BOTH the numerator and the denominator (never zeroed), so

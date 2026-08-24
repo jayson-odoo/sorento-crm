@@ -37,9 +37,9 @@ import type { ConversationSLATrackingDetail } from '@/app/(protected)/sla-manage
  *     errors: 403 non-holder.
  *
  * BUSINESS-CTA GUARD (server-side, every approve/reject/process/close/submit/reopen route):
- *   - flag off for type OR tracker not escalated → allow (today's behaviour).
- *   - else require actor.id == handled_by_id OR (actor admin/superadmin AND handled_by_id IS NULL).
- *   - else 403 "This form is being handled by <name>. Take over to act."
+ * - flag off for type OR tracker not escalated → allow (today's behaviour).
+ * - else require actor.id == handled_by_id OR (actor admin/superadmin AND handled_by_id IS NULL).
+ * - else 403 "This form is being handled by <name>. Take over to act."
  *
  * PR/SF share a FE component - gate on the ACTIVE tracker's `source_entity_type`, not a
  * hardcoded form name. The BE re-checks every guard server-side (never trust the FE).

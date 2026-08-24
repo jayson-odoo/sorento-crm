@@ -730,7 +730,7 @@ class EmbeddingReadService:
                     score -= 0.06
             if "is spo_allocation" in q_lower and tool_name.startswith("crm_procurement_spo"):
                 score += 0.15
-            # If a code is explicitly unresolved, strongly penalize every data tool  - 
+            # If a code is explicitly unresolved, strongly penalize every data tool - 
             # the LLM should just tell the user "no record found".
             if "unresolved" in q_lower and "is customer_order" not in q_lower and "is product" not in q_lower:
                 score -= 0.10

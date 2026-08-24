@@ -25,8 +25,8 @@ A middleware that dedupes replays of the same action uniformly across **every** 
   1. Compute key. `SET key {in_progress} NX EX <ttl>`.
   2. If `NX` succeeded → first request → run the handler → overwrite key with `{done, status, body}` (same TTL) → return response.
   3. If `NX` failed → a replay:
-     - record `done` → return the cached `(status, body)` verbatim, **handler never runs again**.
-     - record `in_progress` (first still running) → short bounded wait/poll (e.g. up to ~5s) for it to flip to `done`, then return cached; on timeout return `409 Conflict` (`{code: "duplicate_in_flight"}`).
+   - record `done` → return the cached `(status, body)` verbatim, **handler never runs again**.
+   - record `in_progress` (first still running) → short bounded wait/poll (e.g. up to ~5s) for it to flip to `done`, then return cached; on timeout return `409 Conflict` (`{code: "duplicate_in_flight"}`).
 - **TTL:** two tiers - auto/fingerprint mode short (default **10s**, configurable) so only accidental replays collapse and a legitimate identical re-submit minutes later still runs; explicit `Idempotency-Key` mode longer (default **24h**).
 - **Exclusions (allowlist of "always re-runnable"):** endpoints that are legitimately repeatable or stream/large-body - file uploads, bulk imports, presign, export, anything reading a stream. Either skip by path-prefix allowlist or skip when `Content-Type` is multipart/stream or body > N KB. For large-body actions that still need protection, require the explicit header-key mode (don't hash the body).
 - **Failure semantics:** if the handler raises / returns 5xx, **do not cache** (delete the key) so the user can retry. Only cache 2xx (and deterministic 4xx? - open question). On Redis outage, **fail open** (process normally; never block writes on a cache miss).

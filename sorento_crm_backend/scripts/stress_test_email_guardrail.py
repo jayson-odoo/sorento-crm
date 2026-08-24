@@ -156,7 +156,7 @@ def scenario_s1_attachment_linkage_burst(db, *, count: int = 200, recipient: str
             subject="Your file was linked",
             body_text=f"file_{i}",
             metadata={
-                "attachment_plain_items": [f"  - file_{i}.pdf"],
+                "attachment_plain_items": [f" - file_{i}.pdf"],
                 "attachment_html_items": [f"<li>file_{i}.pdf</li>"],
                 "attachment_ids": [f"att_{i}"],
             },

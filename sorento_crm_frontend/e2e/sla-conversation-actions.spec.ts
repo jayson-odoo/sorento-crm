@@ -5,9 +5,9 @@
  * conversation_sla_tracking.source_entity_id -> uuid). Drives the three write actions
  * on the Conversation SLA Tracking detail page through the real browser -> FE hook ->
  * service -> api-client -> FastAPI -> Postgres round-trip:
- *   - Mark as responded   -> POST /{id}/test-overrides {is_responded:true}
- *   - Escalate            -> POST /{id}/escalate         (tier N -> N+1)
- *   - Mark as resolved    -> POST /{id}/test-overrides {is_resolved:true}
+ * - Mark as responded   -> POST /{id}/test-overrides {is_responded:true}
+ * - Escalate            -> POST /{id}/escalate         (tier N -> N+1)
+ * - Mark as resolved    -> POST /{id}/test-overrides {is_resolved:true}
  *
  * NAVIGATION: sidebar only (SLA Management -> Conversation SLA Tracking), never deep-link
  * (project memory feedback_playwright_via_sidebar).

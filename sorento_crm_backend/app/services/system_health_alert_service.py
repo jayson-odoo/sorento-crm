@@ -193,7 +193,7 @@ def _eval_chat_latency(db: Session, now: datetime, settings) -> tuple[bool, str]
     """WhatsApp round-trip health, as three independent signals.
 
     A single rolling percentile is not enough. At volume, one turn that never completes
-    - the shape a dropped webhook takes - never moves p99 at all, so it would degrade
+  - the shape a dropped webhook takes - never moves p99 at all, so it would degrade
     silently. Hence a hard ceiling with no minimum sample, plus an explicit
     unanswered-turn check whose subjects are absent from the distribution by definition.
     """

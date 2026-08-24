@@ -4,8 +4,8 @@ Moves the ideation connection config OFF `.env`/app.config and ONTO the
 workspace row, mirroring the respond.io `api_key_ciphertext` encrypted-key
 pattern. Each workspace now carries:
 
-  - ideation_shared_service_url  - the shared-service base URL (plain text)
-  - ideation_intake_api_key_ciphertext - the intake API key, Fernet-encrypted
+ - ideation_shared_service_url - the shared-service base URL (plain text)
+ - ideation_intake_api_key_ciphertext - the intake API key, Fernet-encrypted
     via app/utils/field_encryption (same scheme as api_key_ciphertext)
 
 (`ideation_product_id` already exists - migration 273.) The ideate brain path

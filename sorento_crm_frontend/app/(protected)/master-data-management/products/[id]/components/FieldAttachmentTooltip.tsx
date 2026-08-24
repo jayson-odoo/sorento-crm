@@ -3,8 +3,8 @@
 /**
  * FieldAttachmentTooltip - paperclip popover next to a Specifications field
  * that has at least one linked doc. Shows:
- *   - filename(s) of linked doc(s) with an inline preview link.
- *   - "AI Extract" button that opens AIExtractFieldDialog against the doc and
+ * - filename(s) of linked doc(s) with an inline preview link.
+ * - "AI Extract" button that opens AIExtractFieldDialog against the doc and
  *     the (possibly composite) field_keys this trigger is responsible for.
  *
  * Accepts an array of field_keys so the Dimensions trigger can pass three

@@ -100,7 +100,7 @@ test('m8 reorder plan: opens to today + Days-cover drill hits explain/demand and
   // ── Open the Days-cover drill (M8-A2) ─────────────────────────────────────
   await drillTrigger.click();
 
-  // The drill lazy-fetches the demand working from /analytics/explain/demand  - 
+  // The drill lazy-fetches the demand working from /analytics/explain/demand - 
   // proves the hook → drillService → api-client chain is wired to the right route.
   await expect
     .poll(() => seen('GET', /\/scm\/analytics\/explain\/demand/), { timeout: 20_000 })

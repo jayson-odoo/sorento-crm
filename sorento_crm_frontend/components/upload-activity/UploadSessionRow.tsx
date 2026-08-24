@@ -257,7 +257,7 @@ export function UploadSessionRow({
                 )}
                 {bulkSubtab === 'all' && session.files.length > 200 && (
                   <div className="px-4 py-2 text-center text-xs text-muted-foreground">
-                    Showing first 200 of {session.files.length}  - {' '}
+                    Showing first 200 of {session.files.length} - {' '}
                     <button
                       type="button"
                       onClick={() => {

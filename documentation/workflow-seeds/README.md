@@ -22,8 +22,8 @@ If the definition already exists (same `code`), the migration **skips** inserts 
 ### Manual import (alternative)
 
 1. **Workflow Forms → Definitions → New workflow form**  
-   - Code: `annual_dinner_sponsorship` (or copy from JSON `definition.code`)  
-   - Name / description: copy from `definition` in the JSON file.
+ - Code: `annual_dinner_sponsorship` (or copy from JSON `definition.code`)  
+ - Name / description: copy from `definition` in the JSON file.
 
 2. Open the definition → **Builder** → replace draft content by pasting **`draft_schema`** from the JSON (or merge sections manually).
 

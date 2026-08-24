@@ -32,19 +32,19 @@ minute, but it is fragile:
 ## Backend changes (`sorento_crm_backend`)
 
 1. **New** `GET /api/v1/sla-management/conversation-sla-tracking/integration/due-escalations`
-   - Filter: `conversation_tracking_scope()` AND `is_resolved = false` AND
+ - Filter: `conversation_tracking_scope()` AND `is_resolved = false` AND
      `current_tier IN (1, 2)` AND **split-clock breach** (the response clock stops on
      response, so escalation must not fire on a stopped clock - the old SQL escalated
      responded rows at the response deadline):
-     - not responded → `due_at < now`
-     - responded → `due_at_resolution < now` (never before, even if `due_at` passed)
-   - Response: `{ status, count, items: [...] }`, each item:
+   - not responded → `due_at < now`
+   - responded → `due_at_resolution < now` (never before, even if `due_at` passed)
+ - Response: `{ status, count, items: [...] }`, each item:
      `tracking_id`, `respond_contact_id` (internal), `policy_id`, `current_tier`,
      `breach_type` ("response" | "resolution"), `is_responded`, `due_at`,
      `due_at_resolution` (ISO UTC), `message_id`, `phone_number`, `respond_io_id`,
      `assigned_to_id`, `assigned_to_respond_user_id`, `source_entity_type`, `team_set_code`.
 2. **`escalation_reason` optional** on `ConversationSLAEscalateRequest`. When omitted the
-   service defaults to `"Auto-escalation: tier {from_tier} response due time breached"`  - 
+   service defaults to `"Auto-escalation: tier {from_tier} response due time breached"` - 
    n8n in signal-only mode doesn't know the tier before the call.
 3. **`escalated_at` added to escalate response** (ISO UTC). Replaces the n8n comment node's
    reference to the now-deleted event-log node's `created_at`.

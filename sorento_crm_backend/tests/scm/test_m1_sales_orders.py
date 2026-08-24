@@ -177,7 +177,7 @@ def test_create_do_number_is_valid_and_unique(scm_app):
 
 
 def test_create_do_number_retries_on_collision(scm_app):
-    """When the derived DO number is already taken, create-DO must not 500  - 
+    """When the derived DO number is already taken, create-DO must not 500 - 
     it bumps the suffix and still produces a unique number."""
     from app.models.order import Order
     from datetime import datetime

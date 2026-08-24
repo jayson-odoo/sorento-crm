@@ -499,7 +499,7 @@ def run() -> int:
     if _FAILURES:
         out(f"- FAILED assertions: {len(_FAILURES)}")
         for f in _FAILURES:
-            out(f"  - {f}")
+            out(f" - {f}")
     else:
         out("- All status / session_vars / CRM-key assertions PASSED.")
 

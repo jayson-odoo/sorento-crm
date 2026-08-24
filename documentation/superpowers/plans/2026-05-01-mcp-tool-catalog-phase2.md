@@ -288,7 +288,7 @@ def list_picker_tools(
     """Return tools for the AccessAgentForm picker.
 
     Joins to `access_agents` so the UI can render "currently owned by X"
-    warnings before the admin reassigns. Active tools only by default  - 
+    warnings before the admin reassigns. Active tools only by default - 
     inactive tools (deactivated by sync) are normally hidden.
     """
     q = (
@@ -318,8 +318,8 @@ def set_tools_for_agent(db: Session, agent_id: str, tool_ids: list[str]) -> None
     """Replace `agent_id`'s tool ownership set.
 
     Single transaction:
-    - Tools in `tool_ids` get `agent_id = :agent_id` (claim / reassign).
-    - Tools currently owned by `:agent_id` not in `tool_ids` get `agent_id = NULL`.
+  - Tools in `tool_ids` get `agent_id = :agent_id` (claim / reassign).
+  - Tools currently owned by `:agent_id` not in `tool_ids` get `agent_id = NULL`.
     """
     # Snapshot prior owners for the tools we're about to claim, so we can log
     # reassignments. Read with the same session before the UPDATE.

@@ -8,12 +8,12 @@
  * one deployment). See documentation/plans/PLAN-multi-company-isolation.md.
  *
  * Source of truth:
- *  - Switchable companies (grants) come from GET /companies/my-context.
- *  - The ACTIVE company is my-context's resolved `active_company_id` - what the
+ * - Switchable companies (grants) come from GET /companies/my-context.
+ * - The ACTIVE company is my-context's resolved `active_company_id` - what the
  *    backend actually scopes to - falling back to the NextAuth JWT claim
  *    `session.user.active_company_id` for the first render after login, before
  *    my-context resolves.
- *  - setActiveCompany() persists server-side (POST /companies/switch) then
+ * - setActiveCompany() persists server-side (POST /companies/switch) then
  *    re-mints the token via useSession().update({ active_company_id }) so the
  *    claim - not localStorage - is authoritative across reloads/tabs.
  * ============================================================================

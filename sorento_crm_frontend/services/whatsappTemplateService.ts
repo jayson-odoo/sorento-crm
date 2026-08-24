@@ -22,9 +22,9 @@
  *
  * PUT /api/v1/integrations/respond/template-defaults/{use_case}
  *   Body: { template_id: string, param_mapping: Record<string, ParamVariable> }
- *   - param_mapping keys are the template's positional params ("1".."n");
+ * - param_mapping keys are the template's positional params ("1".."n");
  *     every param of the template MUST be mapped (422 otherwise).
- *   - template must have status=approved (422 otherwise).
+ * - template must have status=approved (422 otherwise).
  *   200: TemplateDefault
  *
  * DELETE /api/v1/integrations/respond/template-defaults/{use_case}
@@ -32,13 +32,13 @@
  *
  * Per-entity chat routes (keyed by use case in ENTITY_CHAT_BASE):
  *   GET  /{entity_base}/{id}/conversation/window-state
- *     - Backend scans Respond.io list_messages for the latest incoming
+ *   - Backend scans Respond.io list_messages for the latest incoming
  *       message; window treated as 23h (margin). Degrades to chat_history
  *       when the Respond API errors; no data at all => closed.
  *     200: WindowState
  *   POST /{entity_base}/{id}/conversation/template-message
  *     Body: { template_id: string, params: Record<string, string> }
- *     - params keys "1".."n" must cover the template's param_count (422).
+ *   - params keys "1".."n" must cover the template's param_count (422).
  *       Contact is resolved server-side from the entity (no contact_id needed).
  *     200: { ok: true, template_name, rendered_body }
  *     Errors: 422 template not approved / params missing; 502 send failed.

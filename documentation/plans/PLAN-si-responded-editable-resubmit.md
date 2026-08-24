@@ -87,12 +87,12 @@ StockInquiryDetail change.
 ## Tests (Phase 2 - land with the code)
 
 - **pytest** (`sorento_crm_backend/`):
-  - `submit_draft` on a `responded` SI → status `pending_project_sales`; asserts a `project_sales`
+ - `submit_draft` on a `responded` SI → status `pending_project_sales`; asserts a `project_sales`
     form-SLA tracker exists (form-SLA `submit` emitted).
-  - `create_or_update_draft` on a `responded` SI → raises submit-only validation error.
-  - Notification path: `_post_submit_notify` called with `is_resubmission=True` for a responded
+ - `create_or_update_draft` on a `responded` SI → raises submit-only validation error.
+ - Notification path: `_post_submit_notify` called with `is_resubmission=True` for a responded
     resubmit (event type = resubmitted).
-  - Regression: `rejected`-resubmit still lands `pending_project_sales` unchanged.
+ - Regression: `rejected`-resubmit still lands `pending_project_sales` unchanged.
 - **vitest** (`sorento_crm_frontend/`): `SubmissionForm` renders fields editable + Save-as-draft
   hidden when `detail.status === 'responded'`; not-editable banner gone.
 - **playwright** (`e2e/`): portal SI in `responded` → edit a field → Submit → status pill shows

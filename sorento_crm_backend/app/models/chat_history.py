@@ -45,7 +45,7 @@ class ChatHistory(Base):
     # --- Round-trip latency telemetry -------------------------------------
     # `sent_at` above is whatever n8n supplied. `respond_ts` is the authoritative
     # Respond-side timestamp, resolved via GET /v2/message/{id}. Both ends of the
-    # SLA measurement read `respond_ts` so the two timestamps share one clock  - 
+    # SLA measurement read `respond_ts` so the two timestamps share one clock - 
     # mixing Respond's clock with ours would bake skew into the p99.
     respond_ts = Column(DateTime(timezone=False), nullable=True)
     # sent | delivered | read | failed | not_sent. Displayed and alerted on

@@ -219,7 +219,7 @@ export default function AttachmentsInFolderPanel({
     directoryId?.startsWith(TRASH_FOLDER_PREFIX) ? directoryId.slice(TRASH_FOLDER_PREFIX.length) : null;
 
   // "All attachments"/root: omit directory_id so the drive returns root contents.
-  // Trash sentinels (__trash__, trash:<id>) never leak as a real folder id  - 
+  // Trash sentinels (__trash__, trash:<id>) never leak as a real folder id - 
   // they resolve to null here; the drive call below applies is_deleted instead.
   const effectiveDirectoryId =
     directoryId === null || directoryId === FOLDER_ALL_ID || isTrashView

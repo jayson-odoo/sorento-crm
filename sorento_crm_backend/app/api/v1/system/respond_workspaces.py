@@ -42,9 +42,9 @@ def list_ideation_products(
     dropdown. Degrades gracefully - ALWAYS 200 with ``{products, error}``; never 500.
 
     Resolution (live-preview wins over the saved workspace):
-      - ``base_url`` + ``api_key`` query overrides (admin typed them but hasn't
+    - ``base_url`` + ``api_key`` query overrides (admin typed them but hasn't
         saved) are used verbatim when BOTH are present; else
-      - ``workspace_id`` -> the stored ``ideation_shared_service_url`` +
+    - ``workspace_id`` -> the stored ``ideation_shared_service_url`` +
         decrypted ``ideation_intake_api_key``.
 
     Returns ``{"products": [{id, name}], "error": <str|null>}``.

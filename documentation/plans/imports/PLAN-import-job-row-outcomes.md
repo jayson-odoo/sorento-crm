@@ -271,7 +271,7 @@ scheduler prune task, `tests/`.
    `alembic merge` migration reconciles the two heads when multi-company lands.
    Deploy guard: `alembic heads` must be re-checked before any deploy that carries both
    chains (known gotcha - a dual head fails `upgrade head` at revision resolution).
-2. **Success rows - DECIDED:** capture **every** row, successes included. Full symmetry  - 
+2. **Success rows - DECIDED:** capture **every** row, successes included. Full symmetry - 
    "was line X imported?" is always answerable from the table. Makes retention (§2.6) load-
    bearing rather than housekeeping; `max_rows` (AC-A9) stays as the runaway backstop.
 3. **Retention default - 90 days**, DB-configurable. Reassess once real volume is observed

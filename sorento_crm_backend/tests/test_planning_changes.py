@@ -259,7 +259,7 @@ def _line_payload(project_line_id, *, timely_spo_qty="0", reserve=None, borrow=N
 
 def _place_row_on_a_real_po(db, world, row: OrderInquiryRow, *, qty_ordered):
     """Places `row` through the REAL section-G path (`ProjectOrderInquiryService.place_on_po`)
-    - never by hand-setting `row.state`. The 20 Aug regression only reproduces through this
+  - never by hand-setting `row.state`. The 20 Aug regression only reproduces through this
     path: every earlier green test that hand-set `INQUIRY_ACTIONED` never exercised the state
     the live "Place on PO" workflow actually writes (`INQUIRY_PLACED`), which is why 145 live
     placed rows sat invisible to this netting for as long as they did. Returns `(po, po_line)`."""
@@ -1730,7 +1730,7 @@ def test_build_batch_proposal_for_a_covered_replan_row_is_the_boards_full_contri
 def test_apply_confirms_only_the_batchs_own_line_leaving_an_unconfirmable_sibling_carried(api):
     """Live reproduction, SO391698 rev 2, 20 August 2026: a batch with ONE row (line 39, a
     `qty_up` 12 -> 14) failed Apply with "9 lines cannot be confirmed. Nothing was written."
-    - `_apply_one_order` renamed EVERY line the active revision covered from its frozen
+  - `_apply_one_order` renamed EVERY line the active revision covered from its frozen
     snapshot (`_confirm_payload`) into the confirm body, even the 39 this batch never
     touched, so the whole order was re-validated against live facts on an apply that decided
     one line. `confirm()` already carries an UNNAMED covered line forward verbatim (PLAN

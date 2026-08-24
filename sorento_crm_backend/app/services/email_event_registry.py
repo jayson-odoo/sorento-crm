@@ -206,7 +206,7 @@ def get_event_def(event_key: str) -> Optional[EventDef]:
 
 
 def seed_event_configs(db: Session) -> int:
-    """Idempotent upsert. Returns number of rows inserted (existing rows are NOT overwritten  - 
+    """Idempotent upsert. Returns number of rows inserted (existing rows are NOT overwritten - 
     operators may have toggled `enabled` off or set overrides we must preserve)."""
     existing = {row.event_key for row in db.query(EmailEventConfig.event_key).all()}
     created = 0

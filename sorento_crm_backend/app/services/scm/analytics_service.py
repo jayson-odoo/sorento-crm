@@ -175,7 +175,7 @@ def bucket_stats(buckets: list[float], x_max: float = DEFAULT_XYZ_X_MAX,
     Returns total / mean / cv / band / method / method_reason / baseline_total.
     ``cv`` is measured over per-bucket DAILY RATES (``bucket_qty / bucket_days``) when
     ``day_lengths`` is supplied, so the short oldest weekly bucket (a 6-day remainder)
-    does not structurally inflate variability (S3). With equal lengths - or none  - 
+    does not structurally inflate variability (S3). With equal lengths - or none - 
     this is identical to the CV of the raw totals (CV is scale-invariant). The
     baseline maths stays on the raw weekly totals; only the CV/band decision uses rates.
 
@@ -435,7 +435,7 @@ def _abc_class_qty_totals(db: Session, as_of: date) -> tuple[dict[tuple, float],
     those two text columns are it. No `company_id` join condition: `_lookup` itself does
     not filter by company (every row is a shared master today), so this does not either.
 
-    `sales_agents.demand_class` needs no extra pass through `demand_class.class_of`  - 
+    `sales_agents.demand_class` needs no extra pass through `demand_class.class_of` - 
     its own check constraint (`ck_sales_agents_demand_class`, built from the identical
     `DEMAND_CLASSES` vocabulary) already guarantees NULL / 'project' / 'retail' and
     nothing else.

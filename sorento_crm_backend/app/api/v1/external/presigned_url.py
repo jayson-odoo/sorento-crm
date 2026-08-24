@@ -127,9 +127,9 @@ async def get_presigned_url(
     **Auth:** X-API-Key header (external API key).
 
     **Request body:**
-    - **file_path** (required): storage key (e.g. `promotion/abc/file.pdf`) or full CDN base URL.
-    - **filename** (optional): Display name; echoed in response.
-    - **expires_in** (optional): URL validity in seconds (60 - 86400). Default 3600.
+  - **file_path** (required): storage key (e.g. `promotion/abc/file.pdf`) or full CDN base URL.
+  - **filename** (optional): Display name; echoed in response.
+  - **expires_in** (optional): URL validity in seconds (60 - 86400). Default 3600.
 
     **Response:** `presigned_url`, `file_path`, `filename`, `expires_in`, `storage_provider`.
     """

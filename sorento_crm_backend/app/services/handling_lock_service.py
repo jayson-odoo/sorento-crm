@@ -48,7 +48,7 @@ def is_handling_lock_enabled(db: Session, source_entity_type: Optional[str]) -> 
     """Whether the handling lock is enabled for ``source_entity_type``.
 
     Reads the singleton ``system_settings.handling_lock_enabled_types`` (CSV). The
-    singleton is DB-enforced (migration 253), so ``.first()`` is deterministic  - 
+    singleton is DB-enforced (migration 253), so ``.first()`` is deterministic - 
     mirrors every other SystemSetting reader.
     """
     if not source_entity_type:
@@ -111,7 +111,7 @@ def _is_escalated(tracker: ConversationSLATracking) -> bool:
 
     NOT ``current_tier > 1``: some configs start above tier 1 (project_sales begins at
     tier 2 with no tier 1 team), so a fresh, never-escalated tracker can sit at tier 2.
-    ``escalated_at`` is set ONLY on a real escalation and never on initial assignment  - 
+    ``escalated_at`` is set ONLY on a real escalation and never on initial assignment - 
     the same signal the SLA-escalation banner keys on (``escalation_reason``).
     """
     return getattr(tracker, "escalated_at", None) is not None

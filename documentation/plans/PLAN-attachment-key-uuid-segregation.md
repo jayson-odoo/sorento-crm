@@ -152,7 +152,7 @@ guarded - reuses the kept primitives (`copy_object_verified`, `delete_object_bes
 
 ## Risks / out of scope
 
-- **Old CDN/cached links break** to relocated objects (old key deleted). App self-heals  - 
+- **Old CDN/cached links break** to relocated objects (old key deleted). App self-heals - 
   signed URLs minted from `file_path` on read; n8n gets fresh URLs on resubmit. Externally
   pasted old links do not. Accepted (same trade-off as any re-key).
 - Anything hardcoding `{type}/{name}` keys must resolve via `file_path` instead. Audit grep

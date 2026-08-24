@@ -3,7 +3,7 @@
  *
  * "5 failed" is a fact, not a lead. Two things have to hold before the number
  * is worth anything: the causes behind it are visible without navigating away,
- * and the drill-down link lands on exactly the rows that produced the count  - 
+ * and the drill-down link lands on exactly the rows that produced the count - 
  * which it previously did not, because the href hardcoded a 24h window while
  * the dashboard could be showing 30 days.
  */

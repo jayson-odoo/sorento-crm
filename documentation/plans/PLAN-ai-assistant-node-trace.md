@@ -111,12 +111,12 @@ End goal: an admin, from a recent assistant turn, opens a **trace view** that sh
 - **B2** Trace + spans are **buffered in-memory** during the turn and flushed **once post-turn** as a bulk insert. Flush is **best-effort**: any exception is caught + logged, never raised - a telemetry failure must not 500 a successful answer (CLAUDE.md post-commit-side-effect rule).
 - **B3** `ai_assistant_messages` gains a nullable `trace_id` FK (SET NULL) → the assistant message links to its trace.
 - **B4** Spans captured (Q4 - decision-or-transform → span; mechanical → attribute):
-  - `AGENT` root (whole turn),
-  - `LLM` reformulator, `LLM` router/record-classifier, each `LLM` agent-loop round, each `LLM` record-render round,
-  - `RETRIEVER` RAG tool-selection (query + selected tools + scores),
-  - `CHAIN` entity resolution,
-  - `TOOL` per MCP tool call (incl. the deterministic guide pre-fetch),
-  - `GUARDRAIL` when a tool is denied (tool_not_available / budget_exceeded / write-suppressed).
+ - `AGENT` root (whole turn),
+ - `LLM` reformulator, `LLM` router/record-classifier, each `LLM` agent-loop round, each `LLM` record-render round,
+ - `RETRIEVER` RAG tool-selection (query + selected tools + scores),
+ - `CHAIN` entity resolution,
+ - `TOOL` per MCP tool call (incl. the deterministic guide pre-fetch),
+ - `GUARDRAIL` when a tool is denied (tool_not_available / budget_exceeded / write-suppressed).
 - **B5** Each `LLM` span records: `request_model`, `tokens_in`, `tokens_out`, `finish_reason` (null if provider omits), `input_json` (messages), `output_json` (content + tool_calls), `latency_ms`, `status`, and **`prompt_name` + `prompt_version`** (M1 bridge - null version = fallback used).
 - **B6** Each `TOOL` span records: `tool_name`, `tool_call_id`, `tool_args` (json), `tool_result` (truncated), `status` (ok/error), `error`.
 - **B7** Each `RETRIEVER` span records: `query`, `documents` (`[{id,content,score}]`), `top_k`.

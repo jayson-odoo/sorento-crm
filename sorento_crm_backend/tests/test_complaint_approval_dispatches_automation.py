@@ -290,7 +290,7 @@ def test_complaint_rejection_does_not_dispatch_automation(db: Session, monkeypat
         rejection_reason="not eligible",
     )
 
-    # Only count notifications spawned by automations whose source is THIS complaint  - 
+    # Only count notifications spawned by automations whose source is THIS complaint - 
     # other tests in the same DB run may leave automation_run rows for unrelated complaints.
     notifs = (
         db.query(Notification)

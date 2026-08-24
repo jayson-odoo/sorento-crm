@@ -10,7 +10,7 @@ Backs the "I'm handling this" handling-lock (PLAN-form-handling-lock):
   unclaimed) + ``handled_at`` (when it was claimed). ``handled_by_id`` is FK
   users.id ON DELETE SET NULL and indexed for the CTA-guard lookup.
 - users: per-event channel opt-ins for the handling notification
-  (``notify_email_on_handling`` default on, ``notify_whatsapp_on_handling`` off  - 
+  (``notify_email_on_handling`` default on, ``notify_whatsapp_on_handling`` off - 
   mirrors the assignment/escalation toggle defaults).
 - system_settings: ``handling_lock_enabled_types`` - CSV of the source_entity_types
   the lock is enabled for. Empty (default) = off for every form = today's behavior.

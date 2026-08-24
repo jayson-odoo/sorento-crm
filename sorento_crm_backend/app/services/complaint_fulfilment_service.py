@@ -372,7 +372,7 @@ class ComplaintFulfilmentService:
     # Notification dispatch (post-commit, best-effort)
     # ------------------------------------------------------------------ #
     def dispatch_delivery_notifications(self, notify_payloads: list[dict]) -> None:
-        """Send per-DO delivery notices (customer + Complaint team). Best-effort  - 
+        """Send per-DO delivery notices (customer + Complaint team). Best-effort - 
         each send is isolated so one failure never aborts the rest, and never
         propagates (the import/PUT already committed)."""
         if not notify_payloads:

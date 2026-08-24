@@ -283,7 +283,7 @@ def test_N3_team_no_members_noop(db: Session, monkeypatch) -> None:
 
 
 def test_N8_notify_failure_does_not_propagate(db: Session, monkeypatch) -> None:
-    """UAC-N8: a raising notify send is swallowed by dispatch_delivery_notifications  - 
+    """UAC-N8: a raising notify send is swallowed by dispatch_delivery_notifications - 
     it never propagates, so the already-committed import/PUT is not 500'd. Both the
     customer and team send raise; dispatch must still return normally."""
     from app.services.complaint_fulfilment_service import ComplaintFulfilmentService

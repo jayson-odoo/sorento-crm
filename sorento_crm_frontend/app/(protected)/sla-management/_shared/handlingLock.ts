@@ -55,7 +55,7 @@ export interface ResolveHandlingLockInput {
 }
 
 /**
- * Resolve the guided handling-lock state for the current viewer. Order matters  - 
+ * Resolve the guided handling-lock state for the current viewer. Order matters - 
  * "mine" wins even for an admin who happens to hold the lock. See PLAN §5.
  */
 export function resolveHandlingLockState(input: ResolveHandlingLockInput): HandlingLockState {

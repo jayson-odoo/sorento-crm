@@ -1,7 +1,7 @@
 """Per-form-key field registry for AI extract.
 
 Source of truth for the *complaint* portal form mirrors the FE registry at
-``sorento_crm_frontend/app/(auth)/portal/components/SubmissionForm.tsx``  - 
+``sorento_crm_frontend/app/(auth)/portal/components/SubmissionForm.tsx`` - 
 keep both in sync; the BE side here is authoritative for the LLM prompt.
 
 Registering a new form is a one-line addition: append a list of

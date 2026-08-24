@@ -128,7 +128,7 @@ Extend the two shared normalizers to strip `[-\s]+` (was `\s+`), symmetric pytho
 - `_strip_all_ws` (entity_resolver.py:640) → `re.sub(r"[-\s]+", "", value)`.
 - `_ws_insensitive_lower` (entity_resolver.py:647) → `lower(regexp_replace(col, '[-\s]+', '', 'g'))`.
 
-Applies to **every code field** (product, order/DO, customer, transporter, shipment, supplier)  - 
+Applies to **every code field** (product, order/DO, customer, transporter, shipment, supplier) - 
 one change, all types. Only `[-\s]`; `/ . _` stay significant (no transcript evidence, unknown risk).
 
 **Collision rule (free).** Two real codes that flatten to the same normalized value (`SRTKT71SS` +
@@ -218,7 +218,7 @@ capped `k`; document the constant.
 ## 4. MCP passthrough (2 strings)
 
 Backend emits `alternatives[]` + `relaxed_axis` at the top level of the tool response on the empty
-path. MCP presenters rebuild responses into a strict envelope, but already support a whitelist  - 
+path. MCP presenters rebuild responses into a strict envelope, but already support a whitelist - 
 add the two keys to `_PASSTHROUGH_KEYS` (presenters.py:86):
 
 ```python

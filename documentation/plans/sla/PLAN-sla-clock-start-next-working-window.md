@@ -76,7 +76,7 @@ guard, before the `< 24.0` branch at line 319, so both branches receive a
 normalized start.
 
 The `< 24.0` branch delegates to `add_working_hours`, which already rolls a
-non-window start forward (`calendar_service.py:378-379`, implemented at 432-435)  - 
+non-window start forward (`calendar_service.py:378-379`, implemented at 432-435) - 
 normalizing first is a no-op there, which AC-6 (idempotence) pins.
 
 This single edit fixes `due_at` for every caller:

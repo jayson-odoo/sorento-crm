@@ -4,15 +4,15 @@ expiry-batch stamping (promotion-expiry trigger).
 Mirrors tests/test_automation_service.py - runs against the Postgres dev DB,
 isolated by direct-engine cleanup, no SMTP send. Covers:
 
-  - a Sorento conditions_json (accessLevels contains_any [sorento_*] OR name
+ - a Sorento conditions_json (accessLevels contains_any [sorento_*] OR name
     contains "Sorento") keeps ONLY Sorento promos; Cabana promos are filtered out;
-  - empty conditions_json -> all promos flow;
-  - a match carrying no fact_sources / an unset trigger keeps all (covered by the
+ - empty conditions_json -> all promos flow;
+ - a match carrying no fact_sources / an unset trigger keeps all (covered by the
     empty-tree path - the promotion trigger always carries fact_sources);
-  - stamp-first: kept promos get expiry_notified_at + a SHARED expiry_notify_batch_id
+ - stamp-first: kept promos get expiry_notified_at + a SHARED expiry_notify_batch_id
     before send; filtered-out promos are NOT stamped;
-  - a re-run mints a FRESH batch id;
-  - the grouped _send_grouped ctx carries batch_link + expiry_notify_batch_id
+ - a re-run mints a FRESH batch id;
+ - the grouped _send_grouped ctx carries batch_link + expiry_notify_batch_id
     (asserted via the rendered email body).
 """
 from __future__ import annotations

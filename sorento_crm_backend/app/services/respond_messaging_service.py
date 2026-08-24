@@ -178,7 +178,7 @@ def _message_timestamp(item: dict) -> Optional[datetime]:
     Outgoing messages carry delivery ``status`` entries (epoch ms); incoming
     messages have ``status: []`` and instead encode their time in ``messageId``,
     which Respond emits as epoch MICROSECONDS. The earlier code only read
-    ``status[0].timestamp`` and so silently dropped every inbound message  - 
+    ``status[0].timestamp`` and so silently dropped every inbound message - 
     making the 24h window look permanently closed even right after a reply.
     """
     statuses = item.get("status") or []
@@ -554,7 +554,7 @@ def send_text_or_template(
     """The choke point for every CRM auto-send to a Respond.io contact.
 
     Returns {sent_as, response, window_state, template_name?, request_payload}
-    - callers attach ``request_payload`` to their integration log so template
+  - callers attach ``request_payload`` to their integration log so template
     sends are distinguishable. Raises on Respond errors and on
     TemplateSendSkipped (so RQ/json callers record a failed log).
 

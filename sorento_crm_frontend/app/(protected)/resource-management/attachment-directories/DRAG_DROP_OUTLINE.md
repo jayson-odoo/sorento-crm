@@ -38,18 +38,18 @@ On the Attachment Directories page, allow users to **drag an attachment row** fr
 
 - **DirectoryTreeSidebar.tsx**  
   For each folder row (and the "All attachments" row), render a **droppable**:
-  - Use `useDroppable({ id: 'folder-${node.id}' or 'folder-all', data: { type: 'folder', directoryId: node.id ?? null } })`.
-  - Attach `setNodeRef` and `isOver` to the row container (or a wrapper) so the row can show a visual “drop target” state (e.g. highlight when `isOver`).
-  - "All attachments" uses `id: 'folder-all'`, `data: { type: 'folder', directoryId: null }`.
+ - Use `useDroppable({ id: 'folder-${node.id}' or 'folder-all', data: { type: 'folder', directoryId: node.id ?? null } })`.
+ - Attach `setNodeRef` and `isOver` to the row container (or a wrapper) so the row can show a visual “drop target” state (e.g. highlight when `isOver`).
+ - "All attachments" uses `id: 'folder-all'`, `data: { type: 'folder', directoryId: null }`.
 
 ### 5. Attachment table: make each row draggable
 
 - **AttachmentsInFolderPanel.tsx**  
   For each attachment row (or a drag handle in the first column):
-  - Use `useDraggable({ id: 'attachment-${attachment.id}', data: { type: 'attachment', attachmentId: attachment.id, attachmentName: attachment.original_filename } })`.
-  - Attach `setNodeRef`, `listeners`, `attributes` to the row (or to a drag-handle button so only the handle starts the drag).
-  - Optional: show a drag handle icon (e.g. `GripVertical`) so it’s clear the row is draggable; apply `listeners` and `attributes` only to that handle.
-  - When `isDragging`, apply a style (e.g. opacity, transform) so the row looks like it’s being dragged; you can use a custom drag overlay in the DndContext if you want a floating preview.
+ - Use `useDraggable({ id: 'attachment-${attachment.id}', data: { type: 'attachment', attachmentId: attachment.id, attachmentName: attachment.original_filename } })`.
+ - Attach `setNodeRef`, `listeners`, `attributes` to the row (or to a drag-handle button so only the handle starts the drag).
+ - Optional: show a drag handle icon (e.g. `GripVertical`) so it’s clear the row is draggable; apply `listeners` and `attributes` only to that handle.
+ - When `isDragging`, apply a style (e.g. opacity, transform) so the row looks like it’s being dragged; you can use a custom drag overlay in the DndContext if you want a floating preview.
 
 ### 6. Drag overlay (optional)
 

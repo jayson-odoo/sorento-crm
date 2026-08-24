@@ -3,9 +3,9 @@
  *
  * Flow: land on home (the My Pending Tasks widget lives on the dashboard), find an
  * eligible row, open the Extend dialog, submit a working-days extension, and assert:
- *   - the FE posts POST /api/v1/.../{id}/extend/preview while the user types, and
- *   - POST /api/v1/.../{id}/extend on submit (FE -> BE -> DB round-trip), and
- *   - the toast / dialog close confirms success.
+ * - the FE posts POST /api/v1/.../{id}/extend/preview while the user types, and
+ * - POST /api/v1/.../{id}/extend on submit (FE -> BE -> DB round-trip), and
+ * - the toast / dialog close confirms success.
  *
  * NAVIGATION: always sidebar/home navigation, never deep-link (project memory
  * feedback_playwright_via_sidebar).

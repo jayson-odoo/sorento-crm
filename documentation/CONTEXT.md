@@ -457,7 +457,7 @@ the SLA clock, the conversation thread, the notifications and the one
 satisfaction survey.
 
 A Complaint is never subdivided into more Complaints. Work done to settle it
-lives in its children (product lines, **Service Jobs**, linked delivery orders)  - 
+lives in its children (product lines, **Service Jobs**, linked delivery orders) - 
 so one issue is always one row, one clock, one card on the submitter's portal,
 one survey. A **Warranty Registration** claimed against becomes a Complaint; it
 does not start a parallel pipeline.
@@ -520,12 +520,12 @@ detection *seeds* a Trace; a person always confirms it. Detection is never the
 final word.
 
 ### Scale calibration
-Binding pixels to real-world millimetres. Mandatory before a Space can be used  - 
+Binding pixels to real-world millimetres. Mandatory before a Space can be used - 
 without it every downstream dimension, and therefore every Quote, is fiction.
 
 ### Proxy model
 A dimensionally-correct box standing in for a product that has no 3D model,
-sized from the product's real dimensions. Not a placeholder to be tolerated  - 
+sized from the product's real dimensions. Not a placeholder to be tolerated - 
 the accurate thing, until a real model exists.
 
 ### Render

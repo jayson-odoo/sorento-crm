@@ -2,9 +2,9 @@
  * ProductsList - variant columns + default filter.
  *
  * Covers the variant-manual-curation list additions:
- *  - the "Variant of" column renders the parent's human-readable code (never a UUID),
- *  - the variant (child) count column renders,
- *  - the default query does NOT send a variant_filter (i.e. defaults to "all").
+ * - the "Variant of" column renders the parent's human-readable code (never a UUID),
+ * - the variant (child) count column renders,
+ * - the default query does NOT send a variant_filter (i.e. defaults to "all").
  *
  * The real DataGrid infinitely re-renders in jsdom (virtualization + ResizeObserver
  * measurement), so it is stubbed to capture the react-table instance ProductsList
@@ -132,7 +132,7 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('ProductsList - variant columns', () => {
-  it('"Variant of" column renders the parent code human-readable (base shows  - ), no UUID', async () => {
+  it('"Variant of" column renders the parent code human-readable (base shows - ), no UUID', async () => {
     renderList();
     await waitFor(() => expect(grid.table).not.toBeNull());
 

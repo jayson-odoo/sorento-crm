@@ -60,7 +60,7 @@ Update `PortalService._serialize_summary` so `title` falls back to `stock_inquir
 ### Update `SubmissionForm.tsx`
 
 - Replace generic Input rendering with widget map per field:
-  - text / textarea / date / select-lookup / async-combobox / async-multi-combobox / number
+ - text / textarea / date / select-lookup / async-combobox / async-multi-combobox / number
 - Wire up defaults from `contact` (name) + today's date for `complaint_date`.
 - Replace per-form FIELDS array with full field definitions (label, name, widget, source).
 - After save-as-draft: `router.replace('/portal')`.

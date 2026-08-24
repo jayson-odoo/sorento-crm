@@ -212,10 +212,10 @@ The client's reference is the ecohub handover screen: a drawn signature on a whi
   every scope that issue carried is set to `won` and the project's outcome derives to won through
   the existing rule. The signature is the commitment, so the system stops pretending it is only
   paperwork.
-  - **A scope already marked `lost` is NOT flipped.** Somebody decided that deliberately, and a
+ - **A scope already marked `lost` is NOT flipped.** Somebody decided that deliberately, and a
     signature on a document that still lists it must not silently overrule a human decision. It
     stays lost and the acceptance is recorded anyway. **[FLAG]** say so if the opposite is wanted.
-  - Winning is recorded with `decided_at` and an audit trail naming the acceptance as the cause,
+ - Winning is recorded with `decided_at` and an audit trail naming the acceptance as the cause,
     so "why is this won" is answerable without reading the signature blob.
 - **AC-H8** Nothing about counter-signing is required for the CRM record to be complete: a
   customer who never signs leaves the issue in `Issued`, which is a legitimate resting state and

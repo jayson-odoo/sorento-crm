@@ -5,14 +5,14 @@ Three drills keyed to the M8 UAC:
   * M8-A1 - the Net drill lists the OPEN sales-order lines behind ``committed`` (SO
     number, qty, customer, order date), summing to the committed figure, and the five
     components satisfy ``on_hand + on_order + po_ordered - committed == net`` (21 Aug fix
-    - ``po_ordered`` is a new leg, added once the sizing engine started netting the
+  - ``po_ordered`` is a new leg, added once the sizing engine started netting the
     outstanding PO book into the frozen recommendation `net` itself). Endpoint
     ``GET /reorder-runs recommendations/{rec_id}/explain-net``.
   * M8-A2 - ``GET /analytics/explain/demand`` also carries ``demand_dos``: the delivery
     orders that drove the outflow in the window, as a navigable list; cancelled DOs are
     excluded and DOs outside the window are ignored.
   * M8-A3 - the recommendations grid row carries the FROZEN order-qty inputs
-    (reorder_point / order_up_to / safety_stock / recommended_qty / rounded_qty)  - 
+    (reorder_point / order_up_to / safety_stock / recommended_qty / rounded_qty) - 
     already produced server-side; this pins the contract (NO backend change was needed).
 
 DB-backed; reuse the ``scm_app`` savepoint fixture + the M4 seed helpers. Runs are

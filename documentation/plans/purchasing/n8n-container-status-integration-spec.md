@@ -203,8 +203,8 @@ vocabulary is what is frozen: `incoming: eta`, one value (D25a).
 3. **No requested attribute → do not dump.** Fall back to the identity block plus `ETA`. A user who
    asks "where is my container" wants a sentence, not a table of 20 dates.
 4. A requested attribute that is **absent** from `fields`:
-   - present in `field_access.denied` → say it cannot be shared (2.3)
-   - not in `denied` → genuinely empty; say the step has not happened yet
+ - present in `field_access.denied` → say it cannot be shared (2.3)
+ - not in `denied` → genuinely empty; say the step has not happened yet
    That branch is the entire reason `field_access` exists. Collapsing it loses the distinction the
    CRM went to some trouble to preserve.
 

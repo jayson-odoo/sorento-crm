@@ -3,7 +3,7 @@
 Single-shot draft flow. Caller posts the user's complaint (either
 ``original_message`` for server-side LLM extraction, or pre-drafted
 ``title`` + fields). Server creates a DRAFT ticket and returns a
-``draft_url`` the caller surfaces to the user. The user opens that URL  - 
+``draft_url`` the caller surfaces to the user. The user opens that URL - 
 in-app for AI-assistant calls, public portal token URL for WhatsApp
 calls - reviews the preview, then clicks Submit / Edit / Cancel on a
 real ticket page. Explicit confirmation is therefore deterministic

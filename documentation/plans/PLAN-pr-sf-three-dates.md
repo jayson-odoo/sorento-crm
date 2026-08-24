@@ -1,6 +1,6 @@
 # PLAN - PR/SF three-date model (Submitted / Request / Approved)
 
-Status: DONE - BE migration + portal stamp + schema/serializers; FE detail/footer/edit/create/public/excel; pytest (2) green; browser-verified on local PSSF26-0317 (Submitted 23/06, Request  - , Approved  - ).
+Status: DONE - BE migration + portal stamp + schema/serializers; FE detail/footer/edit/create/public/excel; pytest (2) green; browser-verified on local PSSF26-0317 (Submitted 23/06, Request - , Approved - ).
 
 ## Business requirement (from Project Sales Sponsorship Form)
 

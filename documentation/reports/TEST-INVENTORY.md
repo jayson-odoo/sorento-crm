@@ -128,7 +128,7 @@ purge changed timing only, not outcomes. `pytest --durations` went from every to
    symptom, not the cause. It will refill.
 3. **Prod Redis unverified.** If it leaks the same way, `noeviction` + unbounded growth ends in
    OOM-on-write. Read-only check:
-   `docker compose exec redis redis-cli LLEN rq:queue:embeddings` (run twice, minutes apart  - 
+   `docker compose exec redis redis-cli LLEN rq:queue:embeddings` (run twice, minutes apart - 
    a rising number means an active leak). Do **not** `FLUSHALL` prod; that would destroy
    genuinely queued `imports` / `respond_io` jobs.
 4. **`pytest-xdist` is now installed** but unused - at 58s serial it is no longer the priority.
@@ -216,7 +216,7 @@ behaviour, or real network.
 | `ideas`, `forms-management`, `complaint-management` | 1 each |
 
 Ratios: `components/` ~13%, `hooks/` ~7%, `services/` ~14%, `lib/` ~18%,
-`app/**` components ~8%. Data-fetching hooks - where API contract breaks surface first  - 
+`app/**` components ~8%. Data-fetching hooks - where API contract breaks surface first - 
 are the thinnest at ~7%.
 
 ## 6. Playwright e2e - the only true integration guards (18 specs)

@@ -195,16 +195,16 @@ Retired tools: `crm_order_management_orders_by_product_list`,
 
 ## Out of scope / unchanged
 - `inventory_stock_balance_list`, `resource_attachments_list`, `forms_list`,
-  `portal_link_get`. Forms stays minimal (name + attachment_id) per prior decision  - 
+  `portal_link_get`. Forms stays minimal (name + attachment_id) per prior decision - 
   revisit only if an n8n forms template needs more.
 
 ## Methodology note (three-phase loop)
 - **Phase 1 (FE prototype): N/A** - no UI; these are MCP/backend tools. Called out per
   CLAUDE.md.
-- **Phase 2:** implement merged tools + sanitizers; add tests  - 
-  - `sorento_crm_mcp/tests`: per merged tool, assert nested shape + that confidential/UUID
+- **Phase 2:** implement merged tools + sanitizers; add tests - 
+ - `sorento_crm_mcp/tests`: per merged tool, assert nested shape + that confidential/UUID
     fields are absent and WhatsApp-needed fields are present.
-  - `pytest` backend: any new incoming endpoint/service method (happy + auth + validation).
+ - `pytest` backend: any new incoming endpoint/service method (happy + auth + validation).
 - **Phase 3:** `/code-review` the diff before PR.
 
 ## Verification

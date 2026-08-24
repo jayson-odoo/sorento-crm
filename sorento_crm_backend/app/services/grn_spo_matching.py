@@ -111,11 +111,11 @@ def build_allocation_pool(
 
     Availability is COMPUTED, not read off ``spo_allocations.quantity_received``:
 
-    - stored ``quantity_received`` is only written when a GRN is APPROVED, and an
+  - stored ``quantity_received`` is only written when a GRN is APPROVED, and an
       imported GRN normally is not, so a line already linked to an allocation
       would leave the stored figure at 0 and forward matching would hand the same
       capacity out a second time;
-    - ``compute_received_for_allocation`` counts approved headers only, so it has
+  - ``compute_received_for_allocation`` counts approved headers only, so it has
       the same hole.
 
     So each allocation's consumption is the sum of the DRAWN quantity (see the

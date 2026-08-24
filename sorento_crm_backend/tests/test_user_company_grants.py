@@ -1,12 +1,12 @@
 """UserService company-grant tests (multi-company follow-up).
 
 Covers the user_companies grant wiring added to the Add/Edit User flow:
-  - create_user(company_ids=[SRT, MCH]) → two user_companies rows; a SINGLE
+ - create_user(company_ids=[SRT, MCH]) → two user_companies rows; a SINGLE
     company also becomes the user's last_active_company_id landing default.
-  - invite_user(company_ids=[...]) → same grant behaviour.
-  - set_user_companies() replaces the whole grant set and repoints
+ - invite_user(company_ids=[...]) → same grant behaviour.
+ - set_user_companies() replaces the whole grant set and repoints
     last_active_company_id when the previous active grant is revoked.
-  - Unknown company ids are silently skipped.
+ - Unknown company ids are silently skipped.
 
 Runs against an in-memory sqlite bind (CLAUDE.md "sqlite pytest fixtures" gotcha):
 pg ``UUID(as_uuid=False)`` works as-is; JSONB/ARRAY columns are swapped to JSON.

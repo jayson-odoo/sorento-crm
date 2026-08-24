@@ -74,7 +74,7 @@ dormant when blank), `ai_semantic_parser.py` (`ideate` enum), `ai_assistant_serv
 comment (`docs/` → `documentation/`).
 
 Sampled root causes confirm pre-existing drift / environment, not regression:
-- `test_respond_close_conversation::test_close_conversation_builds_correct_request`  - 
+- `test_respond_close_conversation::test_close_conversation_builds_correct_request` - 
   stale-test drift: asserts `/conversation/close` but prod code emits `/conversation/status`.
   (Also proves the new `respond_workspace.ideation_product_id` column did **not** break
   respond queries.)

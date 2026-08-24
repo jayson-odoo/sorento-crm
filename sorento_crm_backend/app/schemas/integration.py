@@ -137,9 +137,9 @@ class IntegrationLogUpdateRequest(BaseModel):
         Require response payload to be valid JSON object/array.
 
         v1 schema policy (see N8nCallbackPayloadV1):
-        - If payload carries `schema_version == 1`, validate every field;
+      - If payload carries `schema_version == 1`, validate every field;
           malformed v1 → ValueError (422 to caller).
-        - If `schema_version` absent → legacy free-form; accept but emit a
+      - If `schema_version` absent → legacy free-form; accept but emit a
           deprecation warning so we can track outstanding flows.
         """
         if v is None:

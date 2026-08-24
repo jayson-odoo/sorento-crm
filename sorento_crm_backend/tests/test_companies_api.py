@@ -2,11 +2,11 @@
 
 Phase-2 route-layer coverage for app/api/v1/system/companies.py - the backend half
 of UAC groups A/B:
-  - AC-A: list (superadmin sees ALL; a regular user sees only granted).
-  - AC-A4: create → 403 for a non-superadmin.
-  - AC-B4/B5: switch validates the grant (403 when not granted) + persists
+ - AC-A: list (superadmin sees ALL; a regular user sees only granted).
+ - AC-A4: create → 403 for a non-superadmin.
+ - AC-B4/B5: switch validates the grant (403 when not granted) + persists
     users.last_active_company_id.
-  - AC-B8: my-context shape ({ companies, active_company_id, last_active_company_id }).
+ - AC-B8: my-context shape ({ companies, active_company_id, last_active_company_id }).
 
 Runs against an in-memory sqlite bind (CLAUDE.md "sqlite pytest fixtures" gotcha):
 pg ``UUID(as_uuid=False)`` works as-is; JSONB/ARRAY columns are swapped to JSON.
@@ -221,7 +221,7 @@ def test_my_context_superadmin_sees_all_companies(client, seed):
 # --------------------------------------------------------------------------- #
 def test_my_context_stale_last_active_never_resolves_non_granted(client, seed, db):
     """A user with >1 grants whose last_active points at a company they are NOT
-    granted (e.g. left over after a revoke) must resolve to a GRANTED company  - 
+    granted (e.g. left over after a revoke) must resolve to a GRANTED company - 
     never the stale one. Before the H1 fix the `elif last_active` fallback picked
     the non-granted company; after, it deterministically picks a granted id."""
     third = Company(id=str(uuid.uuid4()), name="Third", code="TRD")

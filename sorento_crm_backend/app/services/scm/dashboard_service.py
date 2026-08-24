@@ -5,14 +5,14 @@ canonical ``public`` master data, and computes per SKU×warehouse **health statu
 **valuation**, **imbalance**, and the attention ranking that drives the default sort.
 
 Health status (per SKU×warehouse or per aggregated product) precedence:
-  1. ``stockout``  - quantity_on_hand == 0 (rendered "Out of stock", M8-B7)
-  2. ``dead``      - on_hand > 0 AND last outbound movement older than the resolved
+  1. ``stockout`` - quantity_on_hand == 0 (rendered "Out of stock", M8-B7)
+  2. ``dead``    - on_hand > 0 AND last outbound movement older than the resolved
                      ``reorder_policy.dead_stock_days`` (or never moved)
-  3. ``low``       - on_hand > 0, not dead, and ``net <= reorder_point`` (the demand-aware
+  3. ``low``     - on_hand > 0, not dead, and ``net <= reorder_point`` (the demand-aware
                      engine ROP from the latest completed run); rendered "Low stock" (M8-B7)
-  4. ``incoming``  - on_hand > 0, not dead/low, and supply is on its way (``on_order`` from
+  4. ``incoming`` - on_hand > 0, not dead/low, and supply is on its way (``on_order`` from
      ``scm.net_position_v``, which reads SPO ALLOCATIONS, not purchase orders)
-  5. ``healthy``   - otherwise
+  5. ``healthy`` - otherwise
 
 ``stockout_with_committed`` = on_hand == 0 AND committed > 0 (the reorder-signal
 attention badge). ``imbalance`` = the same SKU is stocked-out in one warehouse while
@@ -65,7 +65,7 @@ class ScmFilters:
     # reachable rather than silently hidden.
     abc: Optional[str] = None
     xyz: Optional[str] = None
-    # Product-lifecycle scope. DEFAULTS are the FOCUSED view - active + ongoing  - 
+    # Product-lifecycle scope. DEFAULTS are the FOCUSED view - active + ongoing - 
     # so inactive/discontinued SKUs never inflate headline counts/valuations unless
     # the user explicitly widens the scope. active_status ∈ {active,inactive,all}
     # → products.is_active; lifecycle ∈ {ongoing,discontinued,all} → is_discontinued.
@@ -434,7 +434,7 @@ class ScmDashboardService:
             cost = r["cost_price"]
             valuation = float(cost) * on_hand if cost is not None else None
             # M2 demand / classification (per SKU×warehouse). avg_daily_demand 0/None
-            # → treated as "no demand" (null) so days-of-cover reads as ∞/ -  on the FE.
+            # → treated as "no demand" (null) so days-of-cover reads as ∞/ - on the FE.
             add_raw = r["avg_daily_demand"]
             add = float(add_raw) if add_raw is not None and float(add_raw) > 0 else None
             doc = _days_of_cover(net, add)
@@ -968,7 +968,7 @@ class ScmDashboardService:
             out.append({
                 "sku": r["sku"],
                 "product_name": r["product_name"],
-                # UUIDs carried for the avg-daily-demand explain fetch only (M8-B9)  - 
+                # UUIDs carried for the avg-daily-demand explain fetch only (M8-B9) - 
                 # never displayed; the drill resolves them to DO numbers server-side.
                 "product_id": str(r["product_id"]) if r["product_id"] is not None else None,
                 "warehouse_id": str(r["warehouse_id"]) if r["warehouse_id"] is not None else None,

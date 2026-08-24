@@ -32,26 +32,26 @@ relationship and stays untouched.
 ## Ground truth (verified in code)
 
 - **Complaint** - `app/models/complaints.py`, table `complaints`.
-  - `complaint_number` (Text), `delivery_order_number` (Text, original order - leave alone),
+ - `complaint_number` (Text), `delivery_order_number` (Text, original order - leave alone),
     `status` (String(50), default `new`), `contact_id` (Text → RespondContact),
     `assigned_to` (Text), `salesperson`/`contact_person`/`contact_number` (free text).
-  - Statuses: `new, submitted, updated, responded, approved, rejected, processed_by_cs, closed`.
-  - Terminal finalize: `_finalize_complaint()` (~1635) emits
+ - Statuses: `new, submitted, updated, responded, approved, rejected, processed_by_cs, closed`.
+ - Terminal finalize: `_finalize_complaint()` (~1635) emits
     `emit_form_event(db, "complaint", id, "resolved", contact_id=...)`.
-  - Audit-tracked (`__audit_track__`).
+ - Audit-tracked (`__audit_track__`).
 - **Order (DO)** - `app/models/order.py`, table `orders`.
-  - `order_number` (unique), `remarks_cs` (Text - **the field CS types into**, backs the list grid column
+ - `order_number` (unique), `remarks_cs` (Text - **the field CS types into**, backs the list grid column
     `OrdersList.tsx:253`), `delivery_remarks_cs` (Text - *not* used here),
     `actual_delivery_date` (DateTime - **the delivered signal**), `order_status_id` (FK OrderStatus),
     `is_cancelled` (Boolean, `order.py:173`).
-  - DO `status` codes: `NEW, PENDING, APPROVED, PROCESSING, SHIPPED, DELIVERED (="Picked Up / In Transit",
+ - DO `status` codes: `NEW, PENDING, APPROVED, PROCESSING, SHIPPED, DELIVERED (="Picked Up / In Transit",
     Final=Yes), CANCELLED, COMPLETED`. Import only ever sets `new`/`delivered` (delivered ⇔
     `actual_delivery_date` present).
-  - **Import = UPSERT** by `order_number`, blind `setattr` (overwrites `remarks_cs` every run, blank→NULL).
+ - **Import = UPSERT** by `order_number`, blind `setattr` (overwrites `remarks_cs` every run, blank→NULL).
     `import_excel_tracking()` (`order_service.py:1421-1893`); `validate_only=True` = dry-run + rollback
     returning `{valid, errors, warnings, summary}`; real import is async via RQ `imports` queue
     (`process_order_tracking_import`), warnings land in `ImportJob.result['warnings']` + `ImportLog.warnings`.
-  - `PUT /orders/{id}` → `update_order()` (`order_service.py:1107`) - interactive single edit.
+ - `PUT /orders/{id}` → `update_order()` (`order_service.py:1107`) - interactive single edit.
 - **Complaint team** - Tier **1 + Tier 2** of Access Agent code `complaint`, team set code `complaint`.
   `_get_complaint_handler_user_ids()` (`complaints_service.py:640`); team notify
   `notify_team_complaint_external_created()` (in-app + email via `NotificationService`).
@@ -99,9 +99,9 @@ relationship and stays untouched.
 - **Idempotency:** stamp `complaint_fulfilment_orders.delivery_notified_at` when sent; re-import of an
   already-notified delivery does not resend. Once per `(complaint, DO)` delivery.
 - **Recipients / channels:**
-  - **Customer contact** (`complaint.contact_id`) → Respond/WhatsApp, logged to `integration_log`
+ - **Customer contact** (`complaint.contact_id`) → Respond/WhatsApp, logged to `integration_log`
     (success + failure). Skip gracefully if `contact_id` null.
-  - **Complaint team** (Tier 1 + Tier 2, agent `complaint`, set `complaint`) → in-app + email. Recipients =
+ - **Complaint team** (Tier 1 + Tier 2, agent `complaint`, set `complaint`) → in-app + email. Recipients =
     team **membership** (controlled in User Management → Teams / Access Agents, single source of truth,
     auto-tracked). **No automation-engine event** - the engine is email-only, can't WhatsApp, can't resolve
     `contact_id`, and recipients are roles/users not teams. Hardcode both audiences.
@@ -114,10 +114,10 @@ relationship and stays untouched.
   open.
 - **Delivered DO with ≥1 linked complaint → `remarks_cs` FROZEN** (its fulfilment is historical; the delivery
   notice already fired). Keys off the DO's own monotonic delivered state, not the (flapping) complaint status.
-  - **Import:** if incoming `remarks_cs` differs from frozen DB value → **keep DB value, skip that field
+ - **Import:** if incoming `remarks_cs` differs from frozen DB value → **keep DB value, skip that field
     only**, append warning *("Order X: Remarks CS change ignored - DO already delivered and linked to
     complaint Y")*. Never aborts the import. Surfaces in test-import warnings + real-import job/ImportLog.
-  - **`PUT /orders/{id}`:** **BE rejects** the `remarks_cs` change (`AppException` 422); **FE renders
+ - **`PUT /orders/{id}`:** **BE rejects** the `remarks_cs` change (`AppException` 422); **FE renders
     remarks_cs readonly** when frozen. Order response exposes a `remarks_cs_locked` boolean.
 
 ### Triggers - one centralized helper

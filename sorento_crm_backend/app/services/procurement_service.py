@@ -1975,9 +1975,9 @@ class SPOAllocationService:
         """Create or update an SPO allocation keyed by (spo_number, product_id, warehouse_id).
 
         Returns a (action, allocation) tuple where action is one of:
-        - "created"   - no existing row, a new allocation was inserted.
-        - "updated"   - existing row's allocated_quantity changed (and is still >= received).
-        - "unchanged" - existing row already had the same allocated_quantity; no write.
+      - "created" - no existing row, a new allocation was inserted.
+      - "updated" - existing row's allocated_quantity changed (and is still >= received).
+      - "unchanged" - existing row already had the same allocated_quantity; no write.
 
         Raises AllocationReceivedGuardError when the new allocated quantity is below the
         existing quantity_received (received-below-allocated is a data problem to surface).
@@ -4598,7 +4598,7 @@ class StockInquiryService:
         1. The ``:`` landed immediately after the URL, so WhatsApp's autolinker
            pulled it into the href and the contact got an invalid link.
         2. It used the read-only ``/view/stock-inquiry?token=`` page, built on
-           ``window.location.origin`` - whatever host the staff browser was on  - 
+           ``window.location.origin`` - whatever host the staff browser was on - 
            instead of the interactive portal link the backend already resolves via
            ``_stock_inquiry_portal_or_view_url`` for the template's ``portal_url``.
 
@@ -6259,12 +6259,12 @@ class PurchaseRequestService:
         """Resolve an incoming ``sponsor_subject`` against the lookup set.
 
         Returns ``(sponsor_subject, sponsor_subject_other)``:
-        - Non-sponsorship requests pass the raw value through untouched (PR never
+      - Non-sponsorship requests pass the raw value through untouched (PR never
           binds sponsor_subject), other stays None.
-        - Empty/blank → ``(None, None)``.
-        - Resolves through the lookup resolver; a match yields the canonical
+      - Empty/blank → ``(None, None)``.
+      - Resolves through the lookup resolver; a match yields the canonical
           option value with no other text.
-        - Unmatched free text (e.g. n8n submissions) → ``("others", <raw text>)``
+      - Unmatched free text (e.g. n8n submissions) → ``("others", <raw text>)``
           so the strict lookup write-validator never 422s the intake.
         """
         if (request_type or "").strip() != "sponsorship_form":

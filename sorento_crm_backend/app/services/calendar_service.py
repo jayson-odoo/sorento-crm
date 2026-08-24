@@ -419,7 +419,7 @@ class CalendarService:
             return (start_utc + timedelta(hours=float(hours))).astimezone(timezone.utc).replace(tzinfo=None)
         if out_local is None:
             return None
-        # add_business_days returns a naive datetime (same wall-clock, tz dropped)  - 
+        # add_business_days returns a naive datetime (same wall-clock, tz dropped) - 
         # re-attach the local tz before converting back to UTC.
         if out_local.tzinfo is None:
             out_local = out_local.replace(tzinfo=tz)

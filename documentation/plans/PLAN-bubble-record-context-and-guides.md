@@ -122,9 +122,9 @@ on chat turn:
 - `GET /assistant/record-context/{entity_type}/{id}` - complaint adapter; shared field-map abstraction designed for all 4.
 - Deterministic pre-route in `AIAssistantChatService` + intent classifier.
 - Tests (land here, not deferred):
-  - **pytest** - assembler happy path + auth denial (non-staff / wrong RBAC) + entity-not-found; pre-route picks assembler vs agent loop.
-  - **vitest** - entity-context provider; bubble record-answer states.
-  - **playwright** - complaint detail → ask "why was this rejected / who / lead time" → assert assembler call + grounded answer.
+ - **pytest** - assembler happy path + auth denial (non-staff / wrong RBAC) + entity-not-found; pre-route picks assembler vs agent loop.
+ - **vitest** - entity-context provider; bubble record-answer states.
+ - **playwright** - complaint detail → ask "why was this rejected / who / lead time" → assert assembler call + grounded answer.
 - Re-verify against live stack.
 
 **Phase 3 - Review** - `/code-review`, PR-CHECKLIST, then fan out PR/SF/stock_inquiry by filling field maps (each gets its own pytest + one playwright flow).

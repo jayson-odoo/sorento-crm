@@ -286,7 +286,7 @@ def test_endpoint_upstream_failure_is_not_500(api_client):
 
 
 def test_endpoint_never_echoes_secrets(api_client, monkeypatch):
-    """A real (service-level) round-trip with the shared-service POST stubbed  - 
+    """A real (service-level) round-trip with the shared-service POST stubbed - 
     the response must not contain the signing secret, the connection id, or the
     minted assertion."""
     client, mp = api_client

@@ -27,16 +27,16 @@ import pytest
 from sqlalchemy import String, Text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
-import app.models  # noqa: F401  - registers every model on Base.metadata
+import app.models  # noqa: F401 - registers every model on Base.metadata
 from app.database import Base
 
 # Every entry is a table that does NOT have a uuid `id`, mapped to why it is
 # tolerated. Categories:
-#   JUNCTION   - pure M2M association; a composite natural PK is correct, a
+#   JUNCTION - pure M2M association; a composite natural PK is correct, a
 #                surrogate uuid would add nothing.
-#   EXTERNAL   - the schema is owned by another system (NextAuth on the frontend,
+#   EXTERNAL - the schema is owned by another system (NextAuth on the frontend,
 #                n8n, the Respond ingest); we do not get to redesign its PK.
-#   LEGACY     - a uuid-shaped value stored in a text column, or a natural-key
+#   LEGACY   - a uuid-shaped value stored in a text column, or a natural-key
 #                PK, on an existing table. Converting is a real migration
 #                (usually FK-heavy auth/RBAC) tracked separately, not a licence
 #                to add more.

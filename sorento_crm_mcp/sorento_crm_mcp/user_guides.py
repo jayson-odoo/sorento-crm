@@ -110,8 +110,8 @@ async def _fetch_doc_body(settings: Settings, identifier: str) -> dict[str, Any]
 async def read_user_guide_impl(settings: Settings, query: str) -> str:
     """Resolve `query` to a single guide body.
 
-    - If `query` looks like a UUID / url-id, fetch directly via documents.info.
-    - Otherwise run documents.search (top 3) against the Sorento CRM
+  - If `query` looks like a UUID / url-id, fetch directly via documents.info.
+  - Otherwise run documents.search (top 3) against the Sorento CRM
       collection, take the best-ranked hit, and fetch its body.
     """
     q = (query or "").strip()

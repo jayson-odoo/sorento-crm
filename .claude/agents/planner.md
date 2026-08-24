@@ -20,9 +20,9 @@ Turn a feature/refactor request into a concrete, reviewable plan. You design; yo
    `documentation/plans/PLAN-*.md`. These are binding.
 2. Explore the actual code paths involved (routes in `app/api/v1/*`, services in `app/services/*`, models, FE feature services + hooks). Cite real `file_path:line` anchors.
 3. Produce the plan structured around the **three-phase dev loop**:
-   - Phase 1 - FE prototype against mock data; document the expected API contract (request/response/status enums).
-   - Phase 2 - BE wiring (models, migration, schemas, services, routes) matching the contract, FE off-mocks, and the tests that MUST land here (vitest + playwright + pytest).
-   - Phase 3 - code review.
+ - Phase 1 - FE prototype against mock data; document the expected API contract (request/response/status enums).
+ - Phase 2 - BE wiring (models, migration, schemas, services, routes) matching the contract, FE off-mocks, and the tests that MUST land here (vitest + playwright + pytest).
+ - Phase 3 - code review.
 4. Call out: migrations needed, RBAC/module-guard impact, list_query registry changes, embedding pipeline impact, worker/RQ task changes, and any CLAUDE.md "gotchas" that apply.
 5. Write the plan to `documentation/plans/PLAN-<slug>.md` with a `Status:` line at the top. Keep it updated as the single source of truth.
 

@@ -3,10 +3,10 @@
  *
  * Focus: IDs mode (the standard for backend-driven list pagers per
  * docs/plans/PLAN-record-navigation-standardization.md). Covers:
- *  - renders "index / total"
- *  - Prev disabled when prevId == null; Next disabled when nextId == null
- *  - " -  / total" when index is null (out-of-position)
- *  - isLoading -> "… / total"
+ * - renders "index / total"
+ * - Prev disabled when prevId == null; Next disabled when nextId == null
+ * - "- / total" when index is null (out-of-position)
+ * - isLoading -> "… / total"
  * Plus a smoke test that the legacy array (list) mode still renders, so the
  * dual-mode contract isn't broken.
  */
@@ -79,7 +79,7 @@ describe('RecordNavigation - IDs mode', () => {
     expect(screen.getByLabelText('Next record')).toBeDisabled();
   });
 
-  it('renders " -  / total" when index is null (position unknown)', () => {
+  it('renders "- / total" when index is null (position unknown)', () => {
     render(
       <RecordNavigation
         basePath="/x"
@@ -89,7 +89,7 @@ describe('RecordNavigation - IDs mode', () => {
         // currentIndex omitted -> index unknown
       />,
     );
-    expect(screen.getByText(' -  / 23')).toBeInTheDocument();
+    expect(screen.getByText('- / 23')).toBeInTheDocument();
   });
 
   it('renders "… / total" while loading', () => {

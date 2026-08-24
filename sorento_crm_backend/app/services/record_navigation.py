@@ -30,11 +30,11 @@ def compute_neighbours(ordered_ids: list[str], current_id: str) -> dict:
     Returns:
         ``{"total": int, "index": int|None, "prev_id": str|None, "next_id": str|None}``
 
-        - ``total`` - size of the set.
-        - ``index`` - 1-based position of ``current_id`` in the set, or ``None``
+      - ``total`` - size of the set.
+      - ``index`` - 1-based position of ``current_id`` in the set, or ``None``
           when it is not present (caller decides whether to retry with the
           unfiltered set per D2).
-        - ``prev_id`` / ``next_id`` - circular neighbours (D3). ``None`` only
+      - ``prev_id`` / ``next_id`` - circular neighbours (D3). ``None`` only
           when there is no sensible neighbour: an empty set, a single-record set
           (``total <= 1``), or ``current_id`` absent from the set.
     """

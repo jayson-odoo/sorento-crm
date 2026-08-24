@@ -2,10 +2,10 @@
  * Tests for the real `useHandlingLock` hook (Phase 2 - off mocks).
  *
  * Verifies the hook:
- *  - sources the active (first unresolved) tracker from `getFormHandlingTrackers`,
- *  - maps the API row (`tracking_id` → lock `id`) and feeds `resolveHandlingLockState`
+ * - sources the active (first unresolved) tracker from `getFormHandlingTrackers`,
+ * - maps the API row (`tracking_id` → lock `id`) and feeds `resolveHandlingLockState`
  *    with the viewer-scoped `viewer_eligible` / `viewer_is_admin` / `flag_enabled`,
- *  - passes the CURRENT holder's `handled_by_id` as the take-over `expected_handler_id`
+ * - passes the CURRENT holder's `handled_by_id` as the take-over `expected_handler_id`
  *    (optimistic-concurrency guard - the backend 409s on a null/mismatched expectation).
  *
  * The pure resolver + banner are covered by handlingLock.test.ts / HandlingLockBanner.test.tsx.

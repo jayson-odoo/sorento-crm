@@ -371,13 +371,13 @@ async def post_next_assignee(
     (independent of other tiers and of who is on the conversation).
 
     Response always includes assignee fields plus:
-    - is_working_hours: True if now is within configured working calendar in Asia/Kuala_Lumpur
-    - is_already_assigned: True if latest SLA tracking for this phone has an assignee in CRM
-    - status_flags: e.g. ["non_working_hours"], ["already_assigned"], or both
-    - message: human-readable hint for n8n (queue vs assign vs comment)
-    - conversation_assignee_*: CRM assignee on the SLA tracking row (when already assigned);
+  - is_working_hours: True if now is within configured working calendar in Asia/Kuala_Lumpur
+  - is_already_assigned: True if latest SLA tracking for this phone has an assignee in CRM
+  - status_flags: e.g. ["non_working_hours"], ["already_assigned"], or both
+  - message: human-readable hint for n8n (queue vs assign vs comment)
+  - conversation_assignee_*: CRM assignee on the SLA tracking row (when already assigned);
       distinct from assignee_* (round-robin). All null when not assigned.
-    - policy_id, tier_response_hours, tier_resolution_hours: set when policy_code and tier are sent;
+  - policy_id, tier_response_hours, tier_resolution_hours: set when policy_code and tier are sent;
       otherwise null.
 
     Body (required): contact_phone_number or contact_phone.
@@ -386,7 +386,7 @@ async def post_next_assignee(
       SLA tier - required in that case so round-robin matches the UI per-tier cursors.
     Body (ignored): current_assignee - backward compatibility only; does not affect rotation.
       Tiers are independent; use conversation_assignee_* in the response for CRM state only.
-    Body (optional): policy_code (or sla_policy_code) and tier (or tier_level) together  - 
+    Body (optional): policy_code (or sla_policy_code) and tier (or tier_level) together - 
       response includes policy_id, tier_response_hours, tier_resolution_hours from that SLA tier.
     Body (optional): brand_code - the brand this item belongs to (lower-case
       `brands.brand_code`; blank / absent = unknown). The team is unchanged; the

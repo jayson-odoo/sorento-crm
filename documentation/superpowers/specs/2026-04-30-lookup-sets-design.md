@@ -259,13 +259,13 @@ Route: `/master-data-management/lookup-sets` (sibling to `brands`, `categories`,
 Admins do not type raw table/column names. Flow:
 
 1. **Where will this dropdown appear?**
-   - "Module / Table" select - populated from `GET /master-data/lookup-eligibility` grouped by `table_label`. Friendly label only.
-   - "Field / Column" select - filtered to eligible columns of the chosen table that are not yet bound. Shows `column_label`.
-   - Optional: "Skip - create unbound set" toggle (admin can bind later from detail page).
+ - "Module / Table" select - populated from `GET /master-data/lookup-eligibility` grouped by `table_label`. Friendly label only.
+ - "Field / Column" select - filtered to eligible columns of the chosen table that are not yet bound. Shows `column_label`.
+ - Optional: "Skip - create unbound set" toggle (admin can bind later from detail page).
 2. **Set details** (auto-prefilled, editable):
-   - `set_key` suggested as `<table_name>_<column_name>` slug.
-   - `name` suggested as `"{table_label} - {column_label}"`.
-   - `description`, `is_active`.
+ - `set_key` suggested as `<table_name>_<column_name>` slug.
+ - `name` suggested as `"{table_label} - {column_label}"`.
+ - `description`, `is_active`.
 3. Save → atomically creates set + first binding (unless skipped). Redirect to detail page.
 
 ### Edit set - modal

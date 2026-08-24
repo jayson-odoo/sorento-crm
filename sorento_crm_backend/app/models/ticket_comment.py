@@ -5,7 +5,7 @@ offers no read-back endpoint, so nothing here can be re-derived from Respond.
 
 Two shapes live in this one table, discriminated by ``source``:
 
-- ``crm``     - written from the ticket drawer. Carries BOTH ``tracking_id``
+- ``crm``   - written from the ticket drawer. Carries BOTH ``tracking_id``
                 (the ticket it was written on) and ``respond_contact_id``.
 - ``respond`` - ingested from a ``comment.created`` webhook via n8n. Respond
                 comments are CONTACT-scoped, not ticket-scoped, so these carry

@@ -7,7 +7,7 @@ test is that the MIDDLEWARE logs any external route, which is only demonstrated
 if the route is one the middleware has never seen. Mounting the real app would
 prove the routes work, not that coverage is automatic.
 
-The `test_a_brand_new_route_is_logged` case is the whole point of the slice  - 
+The `test_a_brand_new_route_is_logged` case is the whole point of the slice - 
 today logging is opt-in per endpoint and 27 of ~30 external routes forgot.
 """
 import json

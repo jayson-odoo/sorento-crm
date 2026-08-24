@@ -2,11 +2,11 @@
 
 The RAG retrieves MCP tools using pgvector cosine similarity over `embedding_chunks`.
 For every MCP tool we emit:
-  - a rich `body_text` (tool name, category, intent, description, path, params),
-  - a set of disjoint `typical_user_questions` modelled after the n8n
+ - a rich `body_text` (tool name, category, intent, description, path, params),
+ - a set of disjoint `typical_user_questions` modelled after the n8n
     `next_agents/*` prompts (general enquiries, order status, incoming stock,
     marketing/forms, stock inquiries, purchase request/sponsorship, complaint),
-  - alias phrases derived from the tool name.
+ - alias phrases derived from the tool name.
 
 Both the body and the question bank are chunked and embedded, so the tool's real
 purpose - not just hand-picked phrases - drives retrieval.
@@ -287,7 +287,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "AttachmentType UUIDs - narrows to a doc class such as brochure, spec sheet, datasheet, "
             "manual, installation guide, or certificate). Use this when the user asks for product "
             "brochures, datasheets, certificates, test reports, or installation guides tied to a SKU "
-            " -  combine product_ids + attachment_type_ids to fetch only the SKU's brochure (or only its "
+            " - combine product_ids + attachment_type_ids to fetch only the SKU's brochure (or only its "
             "spec sheet, etc.). Not for global stock-list documents (use "
             "crm_resource_attachments_current_stock_list) and not for promotion flyers (use "
             "crm_marketing_promotion_attachments_list)."
@@ -2278,13 +2278,13 @@ def build_live_capability_summary(*, include_tools: bool = True) -> dict[str, An
 #
 # `build_novice_capability_overview` is a thin transform on top of the live
 # summary that:
-#   - drops every `internal_admin.*` category and every `_EMBEDDING_SKIP_TOOLS`
+# - drops every `internal_admin.*` category and every `_EMBEDDING_SKIP_TOOLS`
 #     tool (so admin / discontinued tools never surface),
-#   - drops meta / internal categories not listed in `_NOVICE_MODULES`
+# - drops meta / internal categories not listed in `_NOVICE_MODULES`
 #     (e.g. `sla_management`, `commercial`, `general_enquiries.capabilities`,
 #     `user_guides`, `it_support`) - held / staff-only surfaces stay hidden,
-#   - maps machine category codes -> friendly module names,
-#   - attaches 2-3 plain-language example questions per module.
+# - maps machine category codes -> friendly module names,
+# - attaches 2-3 plain-language example questions per module.
 #
 # Output contains NO tool slugs, UUIDs, raw category codes, methods, or paths.
 #

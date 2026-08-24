@@ -756,7 +756,7 @@ def _last_purchase_cost_map(db: Session, product_ids: list[str]) -> dict[str, di
     says which it is showing:
 
       dealer / project - a purchase whose destination is known to be that segment
-      any              - the most recent purchase regardless, used only when the segment
+      any            - the most recent purchase regardless, used only when the segment
                          has none of its own
 
     A price with no destination is NOT relabelled as dealer. Calling an unattributed cost
@@ -955,7 +955,7 @@ def _unlocated_demand_map(
     rows = db.execute(text(f"""
         SELECT sol.product_id::text AS pid, so.demand_class,
                SUM(GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-                            - COALESCE(sol.qty_delivered, 0), 0)) AS qty
+                          - COALESCE(sol.qty_delivered, 0), 0)) AS qty
         FROM sales_order_lines sol
         JOIN sales_orders so ON so.id = sol.sales_order_id
         WHERE sol.warehouse_id IS NULL

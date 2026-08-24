@@ -134,7 +134,7 @@ def notify_uploaders_after_external_attachment_event(
 
         names = [getattr(x, "original_filename", None) or "file" for x in user_atts]
         att_plain_items = [
-            f'  - "{n}": {build_attachment_detail_url(str(x.id))}'
+            f' - "{n}": {build_attachment_detail_url(str(x.id))}'
             for n, x in zip(names, user_atts)
         ]
         att_html_items = [
@@ -452,7 +452,7 @@ def notify_uploaders_after_external_promotion_created(
         names = [getattr(x, "original_filename", None) or "file" for x in user_atts]
 
         att_plain_items = [
-            f"  - {n}: {build_attachment_detail_url(str(x.id))}"
+            f" - {n}: {build_attachment_detail_url(str(x.id))}"
             for n, x in zip(names, user_atts)
         ]
         att_html_items = [

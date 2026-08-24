@@ -9,7 +9,7 @@ Three traps this module exists to avoid, all of them already paid for elsewhere:
 
 1. **A contact holds SEVERAL open conversation trackings at once.** Conversation
    SLA stopped being one-open-per-contact, so ``get_preferred_tracking_for_contact``
-   - which deliberately reduces a multi-open contact to one representative row -
+ - which deliberately reduces a multi-open contact to one representative row -
    would silence every assignee but one. Every open ticket is resolved here.
 2. **Form-SLA stage rows share ``conversation_sla_tracking``**, discriminated only
    by ``source_entity_type``. Matching one pushes whoever is handling a complaint

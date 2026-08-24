@@ -228,7 +228,7 @@ export function PlanExceptionReviewSheet({
       {/* The BODY scrolls and the footer stays put, rather than the whole panel scrolling.
           The two timelines, the reading and four action cards are taller than a laptop
           viewport, and with a footer that scrolls away the Approve button sat below the fold
-          - present in the DOM, unreachable by clicking, which is the worst of both. */}
+        - present in the DOM, unreachable by clicking, which is the worst of both. */}
       <SheetContent
         side="right"
         className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl"

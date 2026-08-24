@@ -214,7 +214,7 @@ export function SPOImportDialog({
                               </button>
                             ) : (
                               <>
-                                … and {testResult.errors.length - 50} more  - {' '}
+                                … and {testResult.errors.length - 50} more - {' '}
                                 <button
                                   type="button"
                                   onClick={() => setShowAllErrors(true)}
@@ -248,7 +248,7 @@ export function SPOImportDialog({
                               </button>
                             ) : (
                               <>
-                                … and {testResult.warnings.length - 20} more  - {' '}
+                                … and {testResult.warnings.length - 20} more - {' '}
                                 <button
                                   type="button"
                                   onClick={() => setShowAllWarnings(true)}
@@ -320,7 +320,7 @@ export function SPOImportDialog({
                       </button>
                     ) : (
                       <>
-                        … and {testResult.warnings.length - 20} more  - {' '}
+                        … and {testResult.warnings.length - 20} more - {' '}
                         <button
                           type="button"
                           onClick={() => setShowAllConfirmWarnings(true)}

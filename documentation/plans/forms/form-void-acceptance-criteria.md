@@ -53,7 +53,7 @@ notify path `send_text_or_template`.
   `voided` event fires, THEN the active `conversation_sla_tracking` row is **closed** (no further
   escalation / no staff ripple), via the existing orchestrator machinery.
 - **SLA-3 `[BE]` (REGRESSION)** GIVEN a form whose config does NOT list `voided`, WHEN it is voided,
-  THEN the void still succeeds (status + banner + notify) and the tracker simply is not auto-closed  - 
+  THEN the void still succeeds (status + banner + notify) and the tracker simply is not auto-closed - 
   documents the config dependency; no crash. *(Config wiring is an admin task, noted in the plan.)*
 
 ## Group BAN - banner + read-only lock (per form × 4)
@@ -62,7 +62,7 @@ notify path `send_text_or_template`.
   `voided_by_name`, `voided_by_wa_phone` (via the `form-banner-person-links` resolver), `voided_at`,
   and `void_reason`.
 - **BAN-2 `[FE]`** GIVEN `status==='voided'`, WHEN a detail page renders, THEN a **gray/muted**
-  `VoidBanner` at the top shows "Voided by {PersonLink(voided_by)} · {voided_at MY time}  - 
+  `VoidBanner` at the top shows "Voided by {PersonLink(voided_by)} · {voided_at MY time} - 
   {void_reason}", the name a wa.me link when a phone resolves else plain text (FB-1 pattern); no UUID.
 - **BAN-3 `[FE]`** GIVEN a voided form, THEN the page is **fully read-only** - every action button
   (edit, approve, reject, reply/respond, resolve/close, process, and void itself) is hidden/disabled.

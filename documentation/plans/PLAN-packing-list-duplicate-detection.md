@@ -142,32 +142,32 @@ first.
 ### 5.1 Backend
 
 1. **`app/services/procurement_service.py`**
-   - `_container_match_key(value) -> str` (alnum-only, upper), mirroring `_spo_match_key`.
-   - `DuplicatePackingListError(Exception)` carrying `error_code`, `message`, `existing` shipment.
-   - Rework the step-2 container lookup in `create_shipment` per §3: widen to include received
+ - `_container_match_key(value) -> str` (alnum-only, upper), mirroring `_spo_match_key`.
+ - `DuplicatePackingListError(Exception)` carrying `error_code`, `message`, `existing` shipment.
+ - Rework the step-2 container lookup in `create_shipment` per §3: widen to include received
      statuses, order `created_at desc`, branch on status, raise `DuplicatePackingListError` on a
      triple match against a received shipment.
-   - Leave steps 1 and 3, and the existing "already completed, cannot update" 409, untouched.
+ - Leave steps 1 and 3, and the existing "already completed, cannot update" 409, untouched.
 
 2. **`app/api/v1/external/packing_lists.py`**
-   - Wrap `service.create_shipment(...)` in `try/except DuplicatePackingListError`.
-   - On catch: best-effort stamp the latest `integration_log` where
+ - Wrap `service.create_shipment(...)` in `try/except DuplicatePackingListError`.
+ - On catch: best-effort stamp the latest `integration_log` where
      `business_table='attachments' AND business_id=<attachment_id>` with
      `error_code='DUPLICATE_PACKING_LIST'` + `error_message=<detail>`; **commit**, then raise 409.
-   - Stamping is `try/except` + `logger.warning` - a stamping failure must never mask the real error,
+ - Stamping is `try/except` + `logger.warning` - a stamping failure must never mask the real error,
      and must never turn a rejection into a 500. No log row (direct API call, no n8n) → skip silently.
-   - Commit before raising so the global `AppException` handler cannot roll the stamp back.
+ - Commit before raising so the global `AppException` handler cannot roll the stamp back.
 
 3. **`app/api/v1/resources/upload_activity.py`** (D7)
-   - In `_build_file`, when `log.error_message` is NULL, fall back to `response_payload.error`.
-   - Fixes every n8n failure type, not just this one.
+ - In `_build_file`, when `log.error_message` is NULL, fall back to `response_payload.error`.
+ - Fixes every n8n failure type, not just this one.
 
 ### 5.2 Frontend
 
 4. **`components/upload-activity/translation.ts`**
-   - Add `DUPLICATE_PACKING_LIST: 'Duplicate packing list - this container was already received'` to
+ - Add `DUPLICATE_PACKING_LIST: 'Duplicate packing list - this container was already received'` to
      `ERROR_CODE_FRIENDLY`.
-   - `IntegrationPanel.tsx:184-190` already renders headline + detail; no component change.
+ - `IntegrationPanel.tsx:184-190` already renders headline + detail; no component change.
 
 ### 5.2b Found during implementation (not in the original plan)
 
@@ -180,7 +180,7 @@ first.
 
 6. **Ordering tie in log selection.** `_integration_log` rows created in the same clock tick share a
    `created_at`, so "stamp the latest" is only well-defined when timestamps differ. The stamping
-   query mirrors the drawer's ordering exactly (`created_at desc`, first row  - 
+   query mirrors the drawer's ordering exactly (`created_at desc`, first row - 
    `upload_activity.py:284`) so both always agree on which row is "the latest"; the test sets
    `created_at` explicitly rather than relying on the server clock.
 

@@ -7,12 +7,12 @@ ranker, and the customer was shown 4 junk products plus "Couldn't find: double
 bowl kitchen sink".
 
 Three behaviours are pinned here:
-  - the gate fires when ANY OR-shape token found nothing (a token that matched
+ - the gate fires when ANY OR-shape token found nothing (a token that matched
     nothing is unanswered by definition),
-  - a brand word binds as a `brand` spec from the `brands` table, not from
+ - a brand word binds as a `brand` spec from the `brands` table, not from
     registry synonyms (the registry `brand` row ships empty, and a new brand must
     work the day it is added),
-  - once the ranker HAS answered, a code that merely CONTAINS the brand word is
+ - once the ranker HAS answered, a code that merely CONTAINS the brand word is
     catalogue noise and stops headlining, while an exact full code still resolves.
 
 Counterweights: junk beats silence (nothing is suppressed when the ranker found

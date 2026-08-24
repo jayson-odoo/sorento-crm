@@ -5,11 +5,11 @@
  * the contribution keys all come down the wire. Three things stay here because they are the
  * client's own business:
  *
- *   - `standingsFor`, because verdicts live in the board's draft and the server always sends
+ * - `standingsFor`, because verdicts live in the board's draft and the server always sends
  *     `decided_count: 0` (deviation 4). Everything ELSE about a standing is read, not counted:
  *     anything counted off the cells is window-scoped and therefore wrong;
- *   - `commitPreviewFor`, which turns a standing into the sentence beside its Confirm;
- *   - `amendNeedsReason`, which decides whether an edit is displacing the ranking.
+ * - `commitPreviewFor`, which turns a standing into the sentence beside its Confirm;
+ * - `amendNeedsReason`, which decides whether an edit is displacing the ranking.
  *
  * The board-CONSTRUCTION engine that used to live here (bucketing, scoring, allocation) moved to
  * `__testsupport__/boardFixture.ts` when the mock was deleted. It builds realistic boards for the
@@ -224,11 +224,11 @@ export function commitPreviewFor(
  * What is NOT named is the point. A line the body omits is left UNDECIDED and keeps flowing to
  * reorder planning, which is the captain's own reason for wanting partial confirmation. So:
  *
- *   - a REJECTED line is omitted. The planner refused the proposal; committing it anyway would
+ * - a REJECTED line is omitted. The planner refused the proposal; committing it anyway would
  *     be the opposite of what they said, and there is no "commit nothing for this line" verb;
- *   - a line with no `project_line_id` is omitted rather than posted with a null, because the
+ * - a line with no `project_line_id` is omitted rather than posted with a null, because the
  *     endpoint keys on it and a null would fail the whole confirmation for the others;
- *   - an unplannable line is never decided in the first place (AC-FP16), so it never arrives.
+ * - an unplannable line is never decided in the first place (AC-FP16), so it never arrives.
  *
  * An AMENDMENT moves the difference into Buy. The quantity a planner takes off a Reserve does
  * not evaporate: it is still owed, and somebody still has to buy it.

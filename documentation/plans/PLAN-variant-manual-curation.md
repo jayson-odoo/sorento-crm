@@ -21,10 +21,10 @@ This is a **curate-by-hand** feature: we ship the UI and do **not** run the auto
 ### Locked decisions (do NOT re-open)
 
 - **D1 - Manual wins, sticky.** New column `products.variant_link_manual boolean not null default false`. When `true`:
-  - `reconcile_variant_links` must **not** re-derive that row's own parent.
-  - `_adopt_orphans` must **not** steal a manually-linked child away.
-  - the backfill script must **skip** manual rows entirely (never overwrite).
-  - "Reset to auto" clears the flag and re-runs reconcile for that row.
+ - `reconcile_variant_links` must **not** re-derive that row's own parent.
+ - `_adopt_orphans` must **not** steal a manually-linked child away.
+ - the backfill script must **skip** manual rows entirely (never overwrite).
+ - "Reset to auto" clears the flag and re-runs reconcile for that row.
 - **D2 - Ship UI first, curate by hand.** Do **not** run `scripts/backfill_variant_links.py` on prod in this work. The coverage-ratio floor fix to the derivation is **out of scope** (see §11).
 
 ---
@@ -33,10 +33,10 @@ This is a **curate-by-hand** feature: we ship the UI and do **not** run the auto
 
 Backend:
 - Derivation service - `sorento_crm_backend/app/services/variant_link_service.py`
-  - `reconcile_variant_links` (`:140`), `_derive_parent_id` (`:73`), `_adopt_orphans` (`:103`), `child_ids_of` (`:178`), `normalize_code`/`boundary_ok`.
+ - `reconcile_variant_links` (`:140`), `_derive_parent_id` (`:73`), `_adopt_orphans` (`:103`), `child_ids_of` (`:178`), `normalize_code`/`boundary_ok`.
 - Product model - `sorento_crm_backend/app/models/product.py:93` (`variant_of_id` at `:110`, indexes at `:171`).
 - Product service - `sorento_crm_backend/app/services/product_service.py`
-  - `_populate_variant_graph` (`:597`), reconcile call sites: create `:719`, update-on-code-change `:765-773`, delete `:777-787`, wrapper `_reconcile_variant_links` (`:789`), `list_products` (`:394`), `_build_list_query` (called `:450`).
+ - `_populate_variant_graph` (`:597`), reconcile call sites: create `:719`, update-on-code-change `:765-773`, delete `:777-787`, wrapper `_reconcile_variant_links` (`:789`), `list_products` (`:394`), `_build_list_query` (called `:450`).
 - Product schemas - `sorento_crm_backend/app/schemas/product.py`: `ProductVariantRef` (`:249`), `ProductResponse` (`:273`, variant fields `:282-284`).
 - Product router - `sorento_crm_backend/app/api/v1/master_data/products.py`: list GET (`:60`), detail GET (`:233`), PUT (`:267`), DELETE (`:362`). Mounted under `/api/v1/master_data/products` (FE hits `/api/v1/master-data/products`; `lib/api.ts` rewrites the hyphen form).
 - Product select - `sorento_crm_backend/app/api/v1/master_data/products_select.py` `GET /select` (reuse for the parent combobox).

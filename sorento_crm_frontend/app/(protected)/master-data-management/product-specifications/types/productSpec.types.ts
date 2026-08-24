@@ -148,7 +148,7 @@ export interface SpecRegistryKey {
   /** Shipped values this business has taken away. Already subtracted from `allowed_values`. */
   suppressed_values: string[];
   /**
-   * A standing preference for particular values of this key ({ SORENTO: 1.5 })  - 
+   * A standing preference for particular values of this key ({ SORENTO: 1.5 }) - 
    * applied to any product carrying the value, except when the customer named the key
    * themselves.
    */

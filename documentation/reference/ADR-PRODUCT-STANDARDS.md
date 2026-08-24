@@ -228,8 +228,8 @@ but now cannot reads as data loss.
 ### Empty States
 - Each section with optional data MUST have an explicit empty state.
 - Empty state should:
-  - Explain why it's empty (e.g. "No team assignments yet")
-  - Provide a clear next step (e.g. "Edit agent to add assignments" or "Add assignment" button)
+ - Explain why it's empty (e.g. "No team assignments yet")
+ - Provide a clear next step (e.g. "Edit agent to add assignments" or "Add assignment" button)
 - Use consistent copy and styling across modules.
 
 ---

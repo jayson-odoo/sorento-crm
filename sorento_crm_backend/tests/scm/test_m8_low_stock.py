@@ -111,10 +111,10 @@ def _client(scm_app, role_slug):
 
 def _seed_rop_scenario(db):
     """A warehouse with four SKUs and a completed run's frozen reorder points:
-      LOW   - on_hand 10, net 10 <= ROP 50  → below reorder point.
-      HIGH  - on_hand 100, net 100 > ROP 50 → not below.
-      OUT   - on_hand 0 (stockout) even with ROP 50 → NEVER low (precedence).
-      NULL  - on_hand 10 but NO rec (ROP null) → not low.
+      LOW - on_hand 10, net 10 <= ROP 50  → below reorder point.
+      HIGH - on_hand 100, net 100 > ROP 50 → not below.
+      OUT - on_hand 0 (stockout) even with ROP 50 → NEVER low (precedence).
+      NULL - on_hand 10 but NO rec (ROP null) → not low.
     Returns the warehouse code."""
     wid = _mk_warehouse(db, "M8W-ROP")
     p_low = _mk_product(db, "M8P-LOW")

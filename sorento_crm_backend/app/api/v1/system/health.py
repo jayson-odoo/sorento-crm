@@ -330,7 +330,7 @@ async def get_health_summary(
     now = now_aware.replace(tzinfo=None)  # naive UTC to match stored columns
 
     # Windowed metrics honour the caller's range and filter on `created_at`.
-    # Point-in-time figures (queue backlogs, task counts) are always "as of now"  - 
+    # Point-in-time figures (queue backlogs, task counts) are always "as of now" - 
     # a date range cannot meaningfully apply to a live backlog, and the response
     # labels them so the UI can say so rather than implying they were filtered.
     if date_from is not None or date_to is not None:

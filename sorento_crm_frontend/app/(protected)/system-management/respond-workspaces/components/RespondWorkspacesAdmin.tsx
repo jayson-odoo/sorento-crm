@@ -134,7 +134,7 @@ export default function RespondWorkspacesAdmin() {
   // shows a name even before a fetch resolves) - never a raw bare UUID.
   const ideationProductSelectOptions: SearchableSelectOption[] = useMemo(() => {
     const opts: SearchableSelectOption[] = [
-      { value: '', label: ' -  None  - ' },
+      { value: '', label: ' - None - ' },
       ...ideationProductOptions,
     ];
     const sel = form.ideation_product_id;

@@ -472,7 +472,7 @@ budget:
   calls, versus 7.49-11.65s (mean 9.73s) for arm D's `gpt-4o-mini` calls and similar ranges in arms
   A/C. This is the opposite of the naive assumption that a "stronger" tier costs more latency.
 - **The reason is prompt tokens, not model size:** arm E's `prompt_tokens` were 2,963 on every call
-  - roughly 13x fewer than arm D/A/C's ~38,437-38,553 on `gpt-4o-mini` for the *identical* image and
+ - roughly 13x fewer than arm D/A/C's ~38,437-38,553 on `gpt-4o-mini` for the *identical* image and
   *identical* (or near-identical) prompt text. This is a real, documented asymmetry in how OpenAI's
   two models tokenize the same image (`gpt-4o-mini`'s vision tokenizer costs substantially more
   tokens per image tile than `gpt-4o`'s), not a bug in this harness - the text-token portion of the

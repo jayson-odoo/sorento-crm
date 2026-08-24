@@ -242,9 +242,9 @@ _STOPWORDS: frozenset[str] = frozenset(
 # Marker-driven name capture. We only run this when the user/agent has explicitly
 # tagged the value with a customer/debtor/client/account marker, to avoid pulling
 # every random capitalised word as a "name".
-#   - "customer is Jayson", "customer: Jayson Lim", "customer name IJM Land"
-#   - "debtor jayson", "debtor name IJM Land Sdn Bhd"
-#   - "client: ABC Corp", "account name Pang Holdings"
+# - "customer is Jayson", "customer: Jayson Lim", "customer name IJM Land"
+# - "debtor jayson", "debtor name IJM Land Sdn Bhd"
+# - "client: ABC Corp", "account name Pang Holdings"
 # The lookahead stops the (non-greedy) capture before common verbs / connectors so
 # "client: ABC Corp ordered RF2601-025" yields just "ABC Corp" rather than the rest.
 _NAME_STOP_WORDS_RE = (
@@ -1493,7 +1493,7 @@ def _probe_certificate(db: Session, tokens: list[str]) -> dict[str, list[Resolve
 
     Matched two ways so the user can type either half of the identity:
       * the number alone - "04124FC", "WCM PC 000321"
-      * scheme + number  - "PPS 0119", "PPS0119", "pps-0119"
+      * scheme + number - "PPS 0119", "PPS0119", "pps-0119"
 
     Both sides are normalized with the same `_strip_all_ws` / `_ws_insensitive_lower`
     pair that already makes `WC 8038` match `WC8038`, so no normalized column is
@@ -3540,7 +3540,7 @@ def token_word_coverage_for_rows(
         that SKU's promotions.
       * A type whose rows carry no scorable text is OMITTED, not reported
         all-unmatched: nobody scored any text for those rows. A type where
-        SOME rows are unscored keeps its claims but is marked ``truncated``  - 
+        SOME rows are unscored keeps its claims but is marked ``truncated`` - 
         the claims cover only the scored subset.
       * A word matched via a `_word_variants` form counts as matched but is
         echoed back AS THE CALLER TYPED IT - reporting "taps" unmatched while
@@ -4403,7 +4403,7 @@ def resolve_references(
             per_token[tok] = balanced[:PREFIX_LIMIT]
             ambiguous_tokens.add(tok)
 
-    # Snapshot which tokens already had matches BEFORE cross-type expansion  - 
+    # Snapshot which tokens already had matches BEFORE cross-type expansion - 
     # used below to flag tokens that grew into multi-type candidate sets so the
     # LLM disambiguates instead of picking the first match.
     pre_expand_type_count: dict[str, int] = {

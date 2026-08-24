@@ -10,9 +10,9 @@ Today three pain points for attachment upload visibility:
 
 1. **No feedback for single + multi-file uploads.** `POST /api/v1/resources/attachments` fires the n8n webhook in a background thread. After modal closes, user has zero indication that integration linking is in flight, succeeded, or failed.
 2. **`LatestImportStatusPanel` rejected.** Current bulk-ZIP progress bar:
-   - Steals top-of-grid space.
-   - Minimised X-button hides into bottom-right, colliding with the AI Assistant FAB.
-   - Tracks only the RQ extraction job (`import_jobs`) - has no view into the per-file n8n webhook outcomes.
+ - Steals top-of-grid space.
+ - Minimised X-button hides into bottom-right, colliding with the AI Assistant FAB.
+ - Tracks only the RQ extraction job (`import_jobs`) - has no view into the per-file n8n webhook outcomes.
 3. **`AttachmentDetailModal` has no integration log surface.** User has no way to see "why was this attachment linked to product X?" or "why isn't it linked?" without leaving the modal for `/integration-management/integration-logs`. The raw log there is technical, not user-friendly.
 
 ## 2. Solution overview
@@ -22,9 +22,9 @@ One unified **Upload Activity drawer**:
 - Top-nav icon next to the notification bell. Badge counts only `in-flight` + `needs-action` items.
 - Click icon → right-side drawer slides out. Closed by default - never steals layout space.
 - Drawer groups all upload events into **sessions**:
-  - Single upload = 1-file session
-  - Multi-file modal = group by `upload_batch_id`
-  - Bulk ZIP = group by `import_job_id` (stored on each attachment's `upload_batch_id`)
+ - Single upload = 1-file session
+ - Multi-file modal = group by `upload_batch_id`
+ - Bulk ZIP = group by `import_job_id` (stored on each attachment's `upload_batch_id`)
 - Each session expandable, showing per-file integration status with **friendly translation** of `integration_log.response_payload` (the v1 schema below). Raw technical details collapsed behind a "View raw log ↗" link.
 - `AttachmentDetailModal` gains a status chip in the header + a new **Integration card** below Linkages with the same friendly summary.
 
@@ -299,11 +299,11 @@ Per `CLAUDE.md → Development methodology`. Phase 1 (FE prototype with mocks) s
 **Goal:** click-through drawer + integration card with synthetic data covering every state. Validate UX before building backend.
 
 - Build all FE components in §5.1 against a hard-coded mock store. Mock store seeds:
-  - In-flight single upload session
-  - Multi-file (5 files) with mixed outcomes: 3 linked, 1 unlinked, 1 failed
-  - Bulk ZIP session with 50 files (3 in needs-attention)
-  - Empty state
-  - Post-failure entry with Retry button
+ - In-flight single upload session
+ - Multi-file (5 files) with mixed outcomes: 3 linked, 1 unlinked, 1 failed
+ - Bulk ZIP session with 50 files (3 in needs-attention)
+ - Empty state
+ - Post-failure entry with Retry button
 - Stub `useUploadActivity` hook to return the mock store. Real `/upload-activity` endpoint not built yet.
 - Stub `useUploadManager` Zustand store with full optimistic flow (push → mark posted → mark failed → retry), wire to `AttachmentUploadDialog`.
 - Modify `AttachmentDetailModal` with header chip + Integration card rendering from mock log data.
@@ -334,21 +334,21 @@ Frontend:
 
 Tests (all three suites land in this phase, none deferred):
 - **Vitest** (FE):
-  - `UploadActivityDrawer.test.tsx` - renders empty, loading, sessions list, badge count.
-  - `UploadSessionRow.test.tsx` - expand/collapse, aggregate counts, click leaf opens modal.
-  - `UploadFileRow.test.tsx` - every status renders friendly summary correctly.
-  - `IntegrationCard.test.tsx` - chip + summary + raw-log link.
-  - `useUploadManager.test.ts` - push → mark posted → mark failed → retry flow.
-  - `translation.test.ts` - error_code map covers every known code.
+ - `UploadActivityDrawer.test.tsx` - renders empty, loading, sessions list, badge count.
+ - `UploadSessionRow.test.tsx` - expand/collapse, aggregate counts, click leaf opens modal.
+ - `UploadFileRow.test.tsx` - every status renders friendly summary correctly.
+ - `IntegrationCard.test.tsx` - chip + summary + raw-log link.
+ - `useUploadManager.test.ts` - push → mark posted → mark failed → retry flow.
+ - `translation.test.ts` - error_code map covers every known code.
 - **Playwright spec** (`e2e/upload-activity-drawer.spec.ts`):
-  - Sidebar → Files → upload real fixture (`e2e/fixtures/CBFAL5570_1.jpg`) → drawer opens with in-flight session → BE endpoint hit → wait for n8n callback (mock or real depending on env) → drawer shows "Linked".
-  - Multi-file modal with 3 fixtures → session has 3 children → all reconcile.
-  - `browser_network_requests` asserts `GET /api/v1/resources/upload-activity` polled at 5s cadence while in-flight.
+ - Sidebar → Files → upload real fixture (`e2e/fixtures/CBFAL5570_1.jpg`) → drawer opens with in-flight session → BE endpoint hit → wait for n8n callback (mock or real depending on env) → drawer shows "Linked".
+ - Multi-file modal with 3 fixtures → session has 3 children → all reconcile.
+ - `browser_network_requests` asserts `GET /api/v1/resources/upload-activity` polled at 5s cadence while in-flight.
 - **pytest** (BE):
-  - `tests/test_upload_activity_endpoint.py` - happy path returns sessions grouped correctly; auth denied for other users; pagination via `since`.
-  - `tests/test_integration_log_sweeper.py` - seed `sent` row aged 11 min → sweep → marked failed with `N8N_CALLBACK_TIMEOUT`.
-  - `tests/test_n8n_callback_v1.py` - valid v1 payload accepted; malformed rejected with warning (non-strict mode).
-  - `tests/test_bulk_import_batch_id.py` - bulk ZIP run sets `upload_batch_id = job_id` on every attachment.
+ - `tests/test_upload_activity_endpoint.py` - happy path returns sessions grouped correctly; auth denied for other users; pagination via `since`.
+ - `tests/test_integration_log_sweeper.py` - seed `sent` row aged 11 min → sweep → marked failed with `N8N_CALLBACK_TIMEOUT`.
+ - `tests/test_n8n_callback_v1.py` - valid v1 payload accepted; malformed rejected with warning (non-strict mode).
+ - `tests/test_bulk_import_batch_id.py` - bulk ZIP run sets `upload_batch_id = job_id` on every attachment.
 
 Re-verify with Playwright MCP against live stack. All three test suites green in CI.
 
@@ -360,12 +360,12 @@ Re-verify with Playwright MCP against live stack. All three test suites green in
 - Address findings via `/code-review --fix` / `/simplify`.
 - Open human PR with: Phase 1 screenshots, Phase 2 test summary, contract doc, sweeper migration note for ops.
 - Reviewer checklist:
-  - `documentation/reference/PR-CHECKLIST.md` standard items
-  - Phase 1 screenshots present?
-  - Vitest + Playwright + pytest all added?
-  - Contract doc matches shipped endpoint?
-  - `LatestImportStatusPanel` mount actually removed (not just FE component left orphaned)?
-  - n8n v1 schema doc updated for the team running n8n flows?
+ - `documentation/reference/PR-CHECKLIST.md` standard items
+ - Phase 1 screenshots present?
+ - Vitest + Playwright + pytest all added?
+ - Contract doc matches shipped endpoint?
+ - `LatestImportStatusPanel` mount actually removed (not just FE component left orphaned)?
+ - n8n v1 schema doc updated for the team running n8n flows?
 
 ### Out-of-repo blocker (parallel to Phase 2)
 

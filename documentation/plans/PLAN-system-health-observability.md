@@ -94,7 +94,7 @@ New workflow `system-healthcheck-ping` (n8n id `FfmDkEWdt3Bian82`, personal proj
 Today: `user_id IS NULL` → display "System" (`app/api/v1/audit/audit_logs.py:56`). NULL comes
 from (i) portal contact submissions (unauthenticated, audit context never set) and
 (ii) public approval link (`app/api/v1/public/approval.py:61,68` explicit `user_id=None`).
-The `system` principal (X-API-Key, no act-as) is a *separate* NULL source with no contact  - 
+The `system` principal (X-API-Key, no act-as) is a *separate* NULL source with no contact - 
 stays "System".
 
 - **Migration:** add nullable `audit_logs.contact_id` (String/UUID) + index.
@@ -106,7 +106,7 @@ stays "System".
   pass the PR's contact into the explicit `log_audit(...)`.
 - **Display** (`audit_logs.py:_user_display_names` + serializer): resolve
   `contact_id → RespondContact name` FIRST; else `user_id ? staff name : "System"`.
-  - **Gotcha (CLAUDE.md):** `contact_id` stores `respond_contacts.id`, NOT `respond_io_id`.
+ - **Gotcha (CLAUDE.md):** `contact_id` stores `respond_contacts.id`, NOT `respond_io_id`.
     Resolve the display name via `RespondContact`.
 
 ### 2b. Coarse import auditing (currently 100% silent)
@@ -117,13 +117,13 @@ listener. Correct mechanism = **explicit `log_audit()` at the import-job boundar
 - **New helper** `log_import_audit(db, entity_type, label, row_count, user_id)` →
   writes `action="IMPORT"`, `description=f"{label}, {row_count} rows"`, `user_id`.
 - **Hook at end of each** `process_*_import` in `app/tasks/import_tasks.py` (all take `user_id`):
-  - `process_delivery_order_detail_import` (1921) → `entity_type="picking"` / DO
-  - `process_grn_listing_import` (1446), `process_grn_lines_import` (1495) → `grn`
-  - `process_stock_import` (82) → `inbound_shipment` / stock
-  - `process_order_tracking_import` (249) → `order`
-  - `process_product_import` (189) → `product` (safety net; per-row bulk may bypass ORM)
-  - `process_spo_import` (826), `process_warehouse_import` (138), packing-list flow → as-is entity types
-- One event per job, on success AND on partial/failed (record the counts). Worker task  - 
+ - `process_delivery_order_detail_import` (1921) → `entity_type="picking"` / DO
+ - `process_grn_listing_import` (1446), `process_grn_lines_import` (1495) → `grn`
+ - `process_stock_import` (82) → `inbound_shipment` / stock
+ - `process_order_tracking_import` (249) → `order`
+ - `process_product_import` (189) → `product` (safety net; per-row bulk may bypass ORM)
+ - `process_spo_import` (826), `process_warehouse_import` (138), packing-list flow → as-is entity types
+- One event per job, on success AND on partial/failed (record the counts). Worker task - 
   **restart worker after editing `app/tasks/*`** (dev-session rule).
 
 ### 2c. Human-readable descriptions for status changes
@@ -181,7 +181,7 @@ scheduled tasks, integrations, audit activity) as the data source - don't re-que
   digest/alert preview. Document the contract at the top of the health service file.
 - **Phase 2 (BE wiring + tests):** migrations (`audit_logs.contact_id`, system_settings keys),
   audit_context extension, import-boundary audit helper + hooks, date-range filter,
-  smoke-test task + n8n branch contract, digest + watchdog tasks. Tests land here  - 
+  smoke-test task + n8n branch contract, digest + watchdog tasks. Tests land here - 
   pytest (each new route/handler happy+auth+validation; watchdog condition logic),
   vitest (tiles/drill-down states), playwright (click bar → filtered list round-trip).
 - **Phase 3 (`/code-review`):** convention + correctness pass before PR.

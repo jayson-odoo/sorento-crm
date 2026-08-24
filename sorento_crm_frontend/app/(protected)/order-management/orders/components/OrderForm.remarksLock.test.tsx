@@ -66,7 +66,7 @@ describe('OrderForm Remarks CS freeze (UAC-Z3)', () => {
       return fields;
     });
     remarksFields.forEach((el) => expect(el).toBeDisabled());
-    expect(screen.getAllByText(/Locked  - /i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Locked -/i).length).toBeGreaterThan(0);
   });
 
   it('keeps the Remarks CS field editable when remarks_cs_locked is false', async () => {
@@ -81,6 +81,6 @@ describe('OrderForm Remarks CS freeze (UAC-Z3)', () => {
       return fields;
     });
     remarksFields.forEach((el) => expect(el).not.toBeDisabled());
-    expect(screen.queryByText(/Locked  - /i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Locked -/i)).not.toBeInTheDocument();
   });
 });

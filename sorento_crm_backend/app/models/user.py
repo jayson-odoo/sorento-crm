@@ -360,7 +360,7 @@ class SystemSetting(Base):
     # A single turn past target x this multiplier alerts on its own, with no minimum
     # sample size: at volume, one stalled turn would never move a windowed percentile.
     chat_latency_ceiling_multiplier = Column(Integer, nullable=False, server_default="3", default=3)
-    # An incoming with no reply after this long is the shape a dropped webhook takes  - 
+    # An incoming with no reply after this long is the shape a dropped webhook takes - 
     # the turn never completes, so it never enters the latency distribution at all.
     chat_latency_no_reply_minutes = Column(Integer, nullable=False, server_default="5", default=5)
     # Below this many paired turns a window percentile is noise, so fleet-level

@@ -2,14 +2,14 @@
 
 Covers GET /api/v1/complaints-management/complaints/analytics and
 ComplaintService.complaint_analytics:
-  - metric=count happy path (overall + group_by)
-  - group_by=product ranks products by complaint count descending
+ - metric=count happy path (overall + group_by)
+ - group_by=product ranks products by complaint count descending
     ('which product has the most complaints')
-  - date_field=resolved_at + date window counts resolved complaints
+ - date_field=resolved_at + date window counts resolved complaints
     ('how many complaints were resolved last month') and ignores unresolved rows
-  - group_by=status / month bucketing
-  - validation: unknown metric / group_by / date_field raise 422 (AppException)
-  - endpoint enforces auth (401/403 with no principal)
+ - group_by=status / month bucketing
+ - validation: unknown metric / group_by / date_field raise 422 (AppException)
+ - endpoint enforces auth (401/403 with no principal)
 
 Runs against the live Postgres test DB: seed rows with a unique complaint_number
 prefix, assert, clean up.

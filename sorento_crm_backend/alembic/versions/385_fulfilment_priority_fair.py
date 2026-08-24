@@ -15,9 +15,9 @@ one. It does NOT edit the previous row's weights: that row stays, inactive, so u
 
 What is switched on, factor by factor:
 
-  * `need_by_date` 3.0        - delivery date, and the strongest voice: it outweighs document
+  * `need_by_date` 3.0      - delivery date, and the strongest voice: it outweighs document
                                 age and customer credit together.
-  * `demand_class` 3.0        - unchanged from what migration 374 deliberately switched on for
+  * `demand_class` 3.0      - unchanged from what migration 374 deliberately switched on for
                                 the purchase-order path. ONE policy serves three moments
                                 (`app/services/scm/priority.py`), so a change made for the board
                                 reaches container loading and the arriving-stock suggestion;
@@ -25,8 +25,8 @@ What is switched on, factor by factor:
                                 which purchase order gets a container slot. On the board it
                                 separates nothing, because every row there is project-class by
                                 construction - it shifts every score by the same amount.
-  * `document_age` 1.0        - document date, older first.
-  * `customer_credit` 1.0     - shorter payment terms first. Absent for a purchase-order
+  * `document_age` 1.0      - document date, older first.
+  * `customer_credit` 1.0   - shorter payment terms first. Absent for a purchase-order
                                 candidate and for a customer nobody has assessed; absent means
                                 DROPPED from the average, never scored zero.
   * `po_document_sequence` 1.0 - the buyer's original rule, kept as a tie-break. Structurally

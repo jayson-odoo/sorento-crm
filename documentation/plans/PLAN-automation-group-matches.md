@@ -22,7 +22,7 @@ combined email per recipient** listing all expiring promotions.
 
 Grouping applies **only** to `trigger_type == "days_before_promotion_end"` (the
 only multi-match scheduled trigger). Event-driven triggers (complaint/PR/SF
-approved) always produce a single match and use singular-entity templates  - 
+approved) always produce a single match and use singular-entity templates - 
 their behavior is unchanged regardless of the flag.
 
 ## Backend
@@ -35,14 +35,14 @@ their behavior is unchanged regardless of the flag.
   `AutomationBase`; `Optional[bool]` on `AutomationUpdate`; field on
   `AutomationResponse`.
 - **Service** `automation_service.py`:
-  - `create`/`update` persist `group_matches`.
-  - `_execute`: when `group_matches` AND trigger is the promotion trigger, bucket
+ - `create`/`update` persist `group_matches`.
+ - `_execute`: when `group_matches` AND trigger is the promotion trigger, bucket
     matches by recipient (recipients still resolved per-promo so per-promo
     owner/CS-PIC entitlement is respected), then render **once per recipient** with
     `{ promotions: [...], promotion: promotions[0], promotions_count, today,
     recipient }` and enqueue one email. `event_type` keyed on
     `recipient:{email}:source:promotion_group:id:{run.id}` for idempotency.
-  - Non-grouped path unchanged.
+ - Non-grouped path unchanged.
 - **Template catalog** `email_template_service.py`: document the `promotions` list
   + `promotions_count` variables.
 - Rewrite the user's "promo expire" `EmailTemplate.body_html` to loop.

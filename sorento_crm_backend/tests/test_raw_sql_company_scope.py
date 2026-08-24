@@ -3,14 +3,14 @@
 The central ``do_orm_execute`` filter only covers ORM SELECTs. This module pins
 the hand-written enforcement added for the paths that bypass it:
 
-  - AC-I* / Group I: ``company_sql_predicate`` four-state fragment, and the
+ - AC-I* / Group I: ``company_sql_predicate`` four-state fragment, and the
     ``variant_link_service`` raw ``text()`` product queries scoped by it (a variant
     must never link across companies).
-  - AC-G1/G2 / Group G: the n8n binding endpoints scope the target-entity match to
+ - AC-G1/G2 / Group G: the n8n binding endpoints scope the target-entity match to
     the bound attachment's company - a company-A attachment must NOT bind a
     same-coded product owned by company B (product_code is globally unique, so the
     realistic leak is "bind the ONE product that lives in another company").
-  - AC-I3: ``POST /lookup/resolve`` reads ``contact_id`` + ``space_id`` from the
+ - AC-I3: ``POST /lookup/resolve`` reads ``contact_id`` + ``space_id`` from the
     BODY (not query params) and pins the session scope to the contact's companies.
 
 Live-DB tests run inside a rolled-back SAVEPOINT against the local Postgres dev DB
@@ -288,7 +288,7 @@ def test_lookup_resolve_scopes_from_body(db, two_companies, monkeypatch):
     assert result.value == "CHAIR-01"
     assert get_company_scope(db) == frozenset({a})  # scope pinned from the body
 
-    # L3: a logged-in JWT user with the SAME forged body params is NOT re-scoped  - 
+    # L3: a logged-in JWT user with the SAME forged body params is NOT re-scoped - 
     # their active-company scope is preserved (no cross-company escalation).
     set_company_scope(db, None)
     asyncio.run(

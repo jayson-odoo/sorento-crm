@@ -3,7 +3,7 @@
 The M0 schema (mig 273) already created ``scm.cash_ranking_policy`` (weights) and
 ``scm.reorder_recommendation`` already carries ``rank_score`` / ``rank`` /
 ``funding_status`` / ``cash_impact`` / ``unit_cost`` (mig 273). This migration adds
-the ONE missing piece for the cash stage - the chosen budget persisted on the run  - 
+the ONE missing piece for the cash stage - the chosen budget persisted on the run - 
 and seeds the single active ``cash_ranking_policy`` row (idempotent) with the M4-D1
 defaults (urgency + margin dominant): urgency .40 / margin .30 / abc .15 /
 priority .10 / committed .05 (Σ = 1.00).

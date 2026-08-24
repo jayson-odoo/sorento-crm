@@ -49,9 +49,9 @@ def coverage_role_view(
     together here, so they can never drift.
 
     Roles:
-      - coverer       - handles the covered colleague's tasks while they're away
-      - covers_for    - the colleague being covered (the away person)
-      - assigned_by   - who set the coverage up (a HoD); None when self-subscribed
+    - coverer     - handles the covered colleague's tasks while they're away
+    - covers_for  - the colleague being covered (the away person)
+    - assigned_by - who set the coverage up (a HoD); None when self-subscribed
     """
     mode = "auto-assign" if redirect_assignments else "notify-only"
     coverer = coverer_name or "Someone"
@@ -177,9 +177,9 @@ class CoverageSubscriptionService:
         """Self-service: create/reactivate a subscription where I am the coverer.
 
         ``redirect_assignments`` picks the mode:
-        - True  = auto-assign: the target's future SLA tasks route to the subscriber
+      - True  = auto-assign: the target's future SLA tasks route to the subscriber
           (assignment + escalation). The subscriber must be the SOLE active coverer.
-        - False = notify-only (original behaviour): coverage notification copies are
+      - False = notify-only (original behaviour): coverage notification copies are
           fanned out; the subscriber takes over manually. Multiple notify-only
           coverers per target are allowed.
 
@@ -368,9 +368,9 @@ class CoverageSubscriptionService:
             raise handle_not_found("User", target_user_id)
 
         # Mode-aware exclusivity (other subscribers only; same-subscriber is an upsert):
-        #  - redirect=ON  → reject if ANY active non-expired coverage exists for the
+        # - redirect=ON  → reject if ANY active non-expired coverage exists for the
         #    target by a different subscriber (an auto-redirect coverer must be sole).
-        #  - redirect=OFF → reject ONLY if an active redirect=ON coverage exists (can't
+        # - redirect=OFF → reject ONLY if an active redirect=ON coverage exists (can't
         #    notify-cover someone already auto-redirected); multiple notify-only OK.
         now = _now_naive()
         from sqlalchemy import or_
@@ -578,7 +578,7 @@ class CoverageSubscriptionService:
     def unsubscribe(self, subscriber_id: str, target_user_id: str) -> None:
         """Hard-delete the (subscriber, target) subscription (ADR: DELETE = hard delete).
 
-        The user no longer covers this colleague, so the row is removed entirely  - 
+        The user no longer covers this colleague, so the row is removed entirely - 
         it must not linger in the list as an "Inactive" row. Re-subscribing simply
         creates a fresh row; natural expiry still soft-deactivates via
         ``deactivate_expired_subscriptions``.
@@ -770,11 +770,11 @@ def fan_out_coverage_copies(
     the WhatsApp params are rebuilt PER SUBSCRIBER (recipient = the subscriber, message =
     the coverage body) so WhatsApp doesn't say "to you" either.
 
-    - In-app always; email/WhatsApp gated by the SUBSCRIBER's own per-event toggles.
-    - Deduped: skips the actual assignee (``target_user_id``) and the actor - if the
+  - In-app always; email/WhatsApp gated by the SUBSCRIBER's own per-event toggles.
+  - Deduped: skips the actual assignee (``target_user_id``) and the actor - if the
       subscriber already gets the notification directly, no double-send (AC-CS-6).
-    - Best-effort: never raises (the primary notification already committed).
-    - Distinct source_entity_type prefix ('coverage:') so the per-(user,source,event)
+  - Best-effort: never raises (the primary notification already committed).
+  - Distinct source_entity_type prefix ('coverage:') so the per-(user,source,event)
       idempotency in create_with_channel_preferences never collides with the
       subscriber's own direct notifications for the same tracker.
     """

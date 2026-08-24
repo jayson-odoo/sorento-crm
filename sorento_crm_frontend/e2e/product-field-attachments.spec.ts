@@ -4,16 +4,16 @@
  * Flow:
  *   1. Sign in.
  *   2. Sidebar → Resource Management → Files → Create Attachment.
- *      - Pick attachment type.
- *      - Set Linked to = Product, select Dimensions group + Weight.
- *      - Upload PRODUCT_TECH_SPEC_DIMENSIONS.pdf (real fixture).
- *      - Assert no row picker is rendered (template, not row, at upload).
+ *    - Pick attachment type.
+ *    - Set Linked to = Product, select Dimensions group + Weight.
+ *    - Upload PRODUCT_TECH_SPEC_DIMENSIONS.pdf (real fixture).
+ *    - Assert no row picker is rendered (template, not row, at upload).
  *   3. Open the new attachment → Linkages → Products tab → Link → pick the
  *      product code under PRODUCT_E2E_PRODUCT_CODE.
- *      - Assert the row appears.
+ *    - Assert the row appears.
  *   4. Sidebar → Product Management → Products → click the product.
- *      - Attachments tab should render Weight + Dimensions field badges.
- *      - Overview tab → paperclip next to Weight and next to Dimensions.
+ *    - Attachments tab should render Weight + Dimensions field badges.
+ *    - Overview tab → paperclip next to Weight and next to Dimensions.
  *   5. Click Weight paperclip → AI Extract → review → confirm → assert
  *      PUT /api/v1/master-data/products/{id} body contains weight.
  *

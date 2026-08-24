@@ -56,7 +56,7 @@ in My Pending).
   pagination, Takeover/Reassign per row.
 
 **Endpoints (new):**
-- `GET /sla-management/conversation-sla-tracking/team-pending?assignee=&team=&page=&limit=`  - 
+- `GET /sla-management/conversation-sla-tracking/team-pending?assignee=&team=&page=&limit=` - 
   visible-team tasks, optional assignee/team filter, soonest-due first. Returns assignee name +
   team label per row (resolve UUIDs → human-readable; no UUIDs in UI).
 - Service `list_team_pending(user_id, filters)` on `ConversationSLATrackingService`.
@@ -149,7 +149,7 @@ past-expiry rows.
 
 ## H. Round-robin per-member opt-out
 
-**Decision:** add `team_members.include_in_round_robin` bool, default `true` (per-team, NOT on users  - 
+**Decision:** add `team_members.include_in_round_robin` bool, default `true` (per-team, NOT on users - 
 multi-team member can be RR-eligible in one team, excluded in another).
 
 - `get_next_assignee` filters to members where `include_in_round_robin = true`.

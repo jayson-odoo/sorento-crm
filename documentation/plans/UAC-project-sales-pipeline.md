@@ -70,7 +70,7 @@ disagree, the deviation is called out inline with a **[DEVIATION]** tag and a re
 - **AC-B1** `statuses` and `status_transitions` exist as CORE tables; a code-side
   `StatusEntity` registry backs `GET /api/v1/status-entities`. `workflow_stages` is dropped.
 - **AC-B2** Cross-template reporting groups by `statuses.key`, which is stable per
-  `entity_type` and part of the `(entity_type, tenant_id, scope_id, key)` unique constraint  - 
+  `entity_type` and part of the `(entity_type, tenant_id, scope_id, key)` unique constraint - 
   so a forked graph's "Sampled" rung carries the same key as the default's. `category` stays
   nullable and cosmetic (the source model marks it legacy). A test asserts two forked graphs
   roll up correctly by key.
@@ -172,7 +172,7 @@ disagree, the deviation is called out inline with a **[DEVIATION]** tag and a re
   product → its category → that category's **ancestors** → system, and each level may be
   expressed as a **percentage of list price or an absolute amount**.
 - **AC-E6a** Management is notified on the **transition into** breach only
-  (`is_below_floor` false → true). A line that stays in breach across ten saves notifies once  - 
+  (`is_below_floor` false → true). A line that stays in breach across ten saves notifies once - 
   in-place editing must not generate an alert storm.
 - **AC-E7** The floor value in force at the time is stored on the line. Changing floor policy
   later never retro-flags an existing quotation.
@@ -192,7 +192,7 @@ disagree, the deviation is called out inline with a **[DEVIATION]** tag and a re
 - **AC-E10a** Outcome and status are **different axes and must never be conflated**. Status is
   a funnel position describing what has happened (the terminal rung is **"PO Received"**, not
   "Won"); outcome is the commercial result. A project at "PO Received" with an open Common
-  Area quotation is Open-with-a-win, and the board shows it as still live. **Every metric  - 
+  Area quotation is Open-with-a-win, and the board shows it as still live. **Every metric - 
   conversion rate, win/loss, loss reasons - reads outcome, never status.**
 
 ## Group F - Samples, sponsorship, POs
@@ -270,7 +270,7 @@ Still open in Group F:
 - **AC-G6** Project detail is URL-routed tabs: Overview · **Tasks** · Quotations · Samples ·
   Sponsorships · POs · Stakeholders · Activity · Documents. **Every tab renders even when
   empty**, with an explicit empty state and a next-step CTA.
-- **AC-G7** `is_critical` (the PDF's "Final Negotiation") is a **flag**, not a column  - 
+- **AC-G7** `is_critical` (the PDF's "Final Negotiation") is a **flag**, not a column - 
   settable at any status, with date moved to critical, management support committed, and
   management notes. **[DEVIATION]** Modelling it as a stage would force a re-quote during
   negotiation to move the card backwards and corrupt stage-duration metrics.
@@ -411,9 +411,9 @@ PLAN §5f, findings F43 and F44.
   template instantiates its tasks.
 - **AC-N2** A task carries **two independent axes** - conflating them was a design error caught
   by comparing against ecohub:
-  - `task_phase` ∈ `pursuit` | `delivery`. Lifecycle: pursuit = the sales actions needed to win
+ - `task_phase` ∈ `pursuit` | `delivery`. Lifecycle: pursuit = the sales actions needed to win
     (visit architect, submit quotation, deliver sample, chase PO); delivery = post-win execution.
-  - `category` = a **work-stream** label supplied by the template (e.g. Spec-in, Sampling,
+ - `category` = a **work-stream** label supplied by the template (e.g. Spec-in, Sampling,
     Commercial, Logistics), free-form per template. This is what ecohub's `category` is.
 - **AC-N3** The Tasks tab **groups by `category` in collapsible sections**, matching ecohub's
   board - each task shows its own status inside its section. It is *not* a status-column kanban.
@@ -425,9 +425,9 @@ PLAN §5f, findings F43 and F44.
   Done.
 - **AC-N4a** **Escalate and Stuck force their context, ecohub-style** - the status cannot be set
   without it:
-  - Choosing **Escalate** opens a dialog requiring a user; the task stores
+ - Choosing **Escalate** opens a dialog requiring a user; the task stores
     `escalated_to_user_id` and the card renders "Escalated to Eric".
-  - Choosing **Stuck** opens a dialog requiring a reason; the card renders that reason inline.
+ - Choosing **Stuck** opens a dialog requiring a reason; the card renders that reason inline.
   A status change that skips its required dialog is rejected 422 - the guard is server-side, not
   just a UI convention.
 - **AC-N5** A task carries assignee, escalated-to, stuck reason, start date, due date,

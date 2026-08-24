@@ -120,12 +120,12 @@ class JobService:
         queue and picks the job up the moment it is enqueued, so the worker can
         already be running - or even finished - by the time this commits. Two
         guards:
-        - Callers should pass job_id=str(job.job_id) to enqueue_job so the RQ
+      - Callers should pass job_id=str(job.job_id) to enqueue_job so the RQ
           id equals the DB job_id from creation; rewriting it here is then a
           no-op. (Historically the temp uuid was swapped for the RQ id, which
           made the worker's complete_job/update_job_progress - keyed on the
           job_id it resolved at start - silently miss the row.)
-        - Only promote PENDING → QUEUED; never clobber a status the worker
+      - Only promote PENDING → QUEUED; never clobber a status the worker
           already advanced (started/finished/failed).
         """
         self.db.refresh(job)

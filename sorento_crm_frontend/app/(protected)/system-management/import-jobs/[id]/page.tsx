@@ -527,7 +527,7 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                     </p>
                     <ul className="text-sm space-y-1 max-h-60 overflow-y-auto bg-muted/50 p-3 rounded list-disc pl-6 text-amber-600 dark:text-amber-500">
                       {/* Warnings are plain strings for most importers, but the
-                          order-tracking import emits {row, warning, data} objects  - 
+                          order-tracking import emits {row, warning, data} objects - 
                           rendering an object as a React child crashes the page. */}
                       {(job.result.warnings as unknown[]).map((w, i: number) => {
                         if (typeof w === 'string') return <li key={i}>{w}</li>;

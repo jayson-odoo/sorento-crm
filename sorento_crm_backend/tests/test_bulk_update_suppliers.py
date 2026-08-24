@@ -1,14 +1,14 @@
 """Whitelisted bulk-update - suppliers (`is_active`).
 
 Verifies the safe bulk-edit contract:
-  - happy path: N rows updated via the NORMAL service update path (audit fires
+ - happy path: N rows updated via the NORMAL service update path (audit fires
     for free because Supplier.__audit_track__ is on).
-  - whitelist rejection: a field not on the per-resource allow-list -> 400.
-  - value allow-list: a value not valid for the field -> 400.
-  - partial success: not-found + a service-rejected row land in `skipped` with a
+ - whitelist rejection: a field not on the per-resource allow-list -> 400.
+ - value allow-list: a value not valid for the field -> 400.
+ - partial success: not-found + a service-rejected row land in `skipped` with a
     human reason; the rest commit (never all-or-nothing).
-  - selection bounds: empty and >500 ids -> 422.
-  - auth denial: no principal -> 401.
+ - selection bounds: empty and >500 ids -> 422.
+ - auth denial: no principal -> 401.
 
 Mirrors the dependency-override pattern from tests/test_email_outbox_bulk.py.
 """

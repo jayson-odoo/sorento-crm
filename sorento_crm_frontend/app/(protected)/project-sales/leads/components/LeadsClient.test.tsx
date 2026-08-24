@@ -2,12 +2,12 @@
  * S2c - LeadsClient (AC-O3, AC-O6), now on the shared DataGrid.
  *
  * Three things carry the design and are pinned here:
- *   - the rows are the SHARED grid, with a pinned listing key rather than the pathname
+ * - the rows are the SHARED grid, with a pinned listing key rather than the pathname
  *     default, because a list that looks unlike every other list is a list people have
  *     to re-learn
- *   - a duplicate is SURFACED, never enforced, and it names the other person so the
+ * - a duplicate is SURFACED, never enforced, and it names the other person so the
  *     race becomes a conversation
- *   - search, filters and export share ONE toolbar row and nothing sits above the grid:
+ * - search, filters and export share ONE toolbar row and nothing sits above the grid:
  *     the summary tiles were removed, and the metrics request with them
  */
 import React from 'react';

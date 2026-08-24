@@ -220,8 +220,8 @@ returns a small dict, never raises (AC-J3.2). Steps:
    scope by. (`register_company_scope_listeners()` is already called by
    `worker.py`.)
 3. Bytes:
-   - staged: `storage_router.get_backend(staged_provider).download_file(staged_key)`.
-   - library: today's steps 5 and 6 of `create_reading_from_attachment`
+ - staged: `storage_router.get_backend(staged_provider).download_file(staged_key)`.
+ - library: today's steps 5 and 6 of `create_reading_from_attachment`
      (`AttachmentService(db).get_attachment`, trashed check, `extract_key`
      check, `get_file_content_for`, wrapped so a storage failure becomes
      `FLYER_SOURCE_UNREADABLE` with the same words), then

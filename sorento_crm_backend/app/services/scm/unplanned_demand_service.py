@@ -25,7 +25,7 @@ _OPEN_LINE = (
     "so.status = 'open' AND sol.line_status = 'open' "
     "AND sol.purchasing_status <> 'covered' "
     "AND GREATEST(COALESCE(sol.qty_required, sol.qty_ordered) "
-    "             - COALESCE(sol.qty_delivered, 0), 0) > 0 "
+    "           - COALESCE(sol.qty_delivered, 0), 0) > 0 "
     # S13b plus front planning 13.4: the same order-level AND line-level rules
     # committed_v applies, restated for the same reason the open-line rule already is -
     # this reports the demand the plan WOULD have used, so a line CS has already decided
@@ -33,7 +33,7 @@ _OPEN_LINE = (
     f"AND {PLAN_DEMAND_ORDER_SQL} AND {PLAN_DEMAND_LINE_SQL}"
 )
 _OPEN_QTY = ("GREATEST(COALESCE(sol.qty_required, sol.qty_ordered) "
-             "         - COALESCE(sol.qty_delivered, 0), 0)")
+             "       - COALESCE(sol.qty_delivered, 0), 0)")
 
 # The banner names a few products so the reader can go and look at one, rather than being
 # handed a number they can do nothing with.

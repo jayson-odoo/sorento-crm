@@ -101,8 +101,8 @@ def compute_next_run(
     """Display-only next-run estimate. Due-check is frequency-based at query time.
 
     Rules:
-    - If `start_at` is in the future, next run = `start_at` (UI shows when task will first fire).
-    - Otherwise next run = `from_time + interval` (typically last_run + interval).
+  - If `start_at` is in the future, next run = `start_at` (UI shows when task will first fire).
+  - Otherwise next run = `from_time + interval` (typically last_run + interval).
     """
     delta = _interval_delta(interval_unit, interval_value)
     if start_at and start_at > from_time:

@@ -102,9 +102,9 @@ Rationale: A/C are self-contained low-risk → land first. B needs integration c
 ### C3. UUIDPath sweep - ALLOWLIST, not blanket (grill catch 2026-06-30)
 - **Root cause:** Plan-1 added `UUIDPath` validator (`uuid_path_param.py`) to only 3 routes (forms/stock-batches/campaigns). Other internal-UUID detail routes still 500 on a non-UUID id instead of 422.
 - **⚠️ CRITICAL GUARDRAIL (user grill):** do **NOT** blanket-apply. Many path params are NOT internal UUIDs and UUIDPath would 422 valid calls:
-  - **`/external/conversation-variables/{respond_io_id}`** - docstring: "Respond.io contact id, not internal UUID". n8n hot path. MUST stay string.
-  - **`{contact_id}` routes that accept EITHER id** - `complaints.py:348`, `procurement/stock_inquiries.py:166`, `procurement/purchase_requests.py:194` match `RespondContact.respond_io_id == contact_id_val OR internal`. A respond_io_id is a VALID value here.
-  - Non-UUID by design: `{code}`, `{code_norm}`, `{slug}`, `{token}`, `{set_key}`, `{module_key}`, `{bundle_key}`, `{key}`, `{entity}`, `{entity_type}`, `{form_key}`, `{event_key}`, `{tz_key}`, `{status_code}`, `{contact_phone}`, `{prefix}`, `{resource_key}`. `{workspace_id}` - verify (may be UUID).
+ - **`/external/conversation-variables/{respond_io_id}`** - docstring: "Respond.io contact id, not internal UUID". n8n hot path. MUST stay string.
+ - **`{contact_id}` routes that accept EITHER id** - `complaints.py:348`, `procurement/stock_inquiries.py:166`, `procurement/purchase_requests.py:194` match `RespondContact.respond_io_id == contact_id_val OR internal`. A respond_io_id is a VALID value here.
+ - Non-UUID by design: `{code}`, `{code_norm}`, `{slug}`, `{token}`, `{set_key}`, `{module_key}`, `{bundle_key}`, `{key}`, `{entity}`, `{entity_type}`, `{form_key}`, `{event_key}`, `{tz_key}`, `{status_code}`, `{contact_phone}`, `{prefix}`, `{resource_key}`. `{workspace_id}` - verify (may be UUID).
 - **Fix:** build an **allowlist** of params that are strictly internal-UUID PKs with NO external-id fallback (e.g. `campaign_id`, `order_id`, `product_id`, `supplier_id`, `warehouse_id`, `form_id`, `tracking_id`…). Apply UUIDPath only to those. Per-route confirm the handler doesn't fall back to an external id before adding the validator.
 - **Risk:** MED if done blindly (would break n8n + dual-id lookups) → LOW with the allowlist + per-route check.
 - **UAC:** allowlisted route → bad id 422 not 500, valid UUID unchanged; **respond_io_id / code / token routes UNCHANGED (regression test: a respond_io_id on `conversation-variables/{respond_io_id}` still 200, NOT 422)**; n8n dual-id contact lookups still resolve via respond_io_id.
@@ -186,20 +186,20 @@ This is **XL** - 229+54 = ~283 mechanical sites + 14 security-sensitive + UI wor
 
 ## Implementation order (post-grill)
 1. ✅ **Phase 1 DONE** - branch `fix/phase1-bounded-bugs` (4 commits off main `551dc4012`; not yet pushed/merged).
-   - C1+C2 `7e0866899` - marketing real hard-delete + type-in-use 409 (5 pytest); dropped 5 dead campaign filter params (3 vitest).
-   - C4 `021d57309` - lookup 403 silent degrade, no retry/toast/spam (3 vitest).
-   - A  `dbfc44854` - per-IP rate limiter (signup 3/hr, reset 5/15min, portal-OTP 30/min; env-configurable; fail-open) + enumeration-safe signup/reset (7 pytest).
-   - C3 `bc8154940` - UUIDPath guard on 173 internal-UUID handlers/35 files; EXCLUDED resolve_identifier code-or-UUID routes + contacts + external/public + UUID-typed tracking_id (63 pytest; +59 suite passes, 0 new failures vs baseline).
-   - ⏳ Pending: browser-verify the 2 FE changes (C2 filters gone, C4 lookup degrade), then push/merge.
+ - C1+C2 `7e0866899` - marketing real hard-delete + type-in-use 409 (5 pytest); dropped 5 dead campaign filter params (3 vitest).
+ - C4 `021d57309` - lookup 403 silent degrade, no retry/toast/spam (3 vitest).
+ - A  `dbfc44854` - per-IP rate limiter (signup 3/hr, reset 5/15min, portal-OTP 30/min; env-configurable; fail-open) + enumeration-safe signup/reset (7 pytest).
+ - C3 `bc8154940` - UUIDPath guard on 173 internal-UUID handlers/35 files; EXCLUDED resolve_identifier code-or-UUID routes + contacts + external/public + UUID-typed tracking_id (63 pytest; +59 suite passes, 0 new failures vs baseline).
+ - ⏳ Pending: browser-verify the 2 FE changes (C2 filters gone, C4 lookup degrade), then push/merge.
 2. ✅ **Phase 2 DONE** - B `07e691b9f` - presigned-URL hardening: only signs a key with a real attachments row (escape hatch `PRESIGNED_REQUIRE_ATTACHMENT_ROW`), TTL clamp (`PRESIGNED_MAX_TTL_SECONDS`, default 3600), presign audit logger (4 pytest). Deliberately NO per-entity RBAC (shared broad service principal → theatre; real fix = require-row + TTL + audit + key rotation, per-tenant keys deferred). Portal attachment side audited → **already owner-scoped** (list/get/upload/delete gate on get_submission contact_id+space_id); audit's "weak portal authz" was a false alarm. n8n act-as role: not needed since no RBAC check added.
 3. ✅ **Phase 3 (D Tier-1) - DONE:**
-   - ✅ **D-3 already implemented** - user- AND contact-impersonation both `log_audit` on start+stop (impersonation.py:138/176, contact_impersonation.py:169/224) with admin+target+ip. §4a finding was stale. No work needed.
-   - ✅ **D-1 audit-logs FE page** `2cda7c039` - `/system-management/audit-logs` on the existing `GET /api/v1/audit/` API + sidebar entry (both menus) + details dialog + 10 vitest. Contract note: audit API has no free-text search/server sort → search maps to entity_id, sort emitted-but-ignored.
-   - ✅ **D-2 bulk retry/cancel** `1de0604f1` - RE-SCOPED honestly: the 4 lists had NO bulk endpoints (audit was wrong). Built NEW BE bulk-retry/bulk-cancel on email-outbox (partial-success, <=500, perm-gated, 6 pytest) + FE bulk-action bar (3 vitest). import-logs/respond-outbox are read-only, scheduled-tasks run-now niche → left single-action.
+ - ✅ **D-3 already implemented** - user- AND contact-impersonation both `log_audit` on start+stop (impersonation.py:138/176, contact_impersonation.py:169/224) with admin+target+ip. §4a finding was stale. No work needed.
+ - ✅ **D-1 audit-logs FE page** `2cda7c039` - `/system-management/audit-logs` on the existing `GET /api/v1/audit/` API + sidebar entry (both menus) + details dialog + 10 vitest. Contract note: audit API has no free-text search/server sort → search maps to entity_id, sort emitted-but-ignored.
+ - ✅ **D-2 bulk retry/cancel** `1de0604f1` - RE-SCOPED honestly: the 4 lists had NO bulk endpoints (audit was wrong). Built NEW BE bulk-retry/bulk-cancel on email-outbox (partial-success, <=500, perm-gated, 6 pytest) + FE bulk-action bar (3 vitest). import-logs/respond-outbox are read-only, scheduled-tasks run-now niche → left single-action.
 4. **Phase 4 (E) - MOSTLY DONE:**
-   - ✅ **E-1 lint guard** `4a113b8c0` - `no-restricted-syntax` (warn) bans new `.json().catch` + native `confirm()`; URLSearchParams left out (not cleanly lintable).
-   - ⬜ **E-2 DOMPurify** - ONLY remaining item. 12 of 14 `dangerouslySetInnerHTML` render user/external HTML (chat message.text, ticket/notes/email bodies) → sanitize; 2 safe (layout script, recharts styles). Needs new dep `isomorphic-dompurify` - **BLOCKED in this worktree**: `npm install` can't run through a symlinked node_modules (ENOTEMPTY). Do in a full checkout / CI as its own PR.
-   - ⬜ **E broad refactor** - 229 `.json().catch` + 54 `URLSearchParams` sites: opportunistic on-touch (decided), lint now surfaces new ones.
+ - ✅ **E-1 lint guard** `4a113b8c0` - `no-restricted-syntax` (warn) bans new `.json().catch` + native `confirm()`; URLSearchParams left out (not cleanly lintable).
+ - ⬜ **E-2 DOMPurify** - ONLY remaining item. 12 of 14 `dangerouslySetInnerHTML` render user/external HTML (chat message.text, ticket/notes/email bodies) → sanitize; 2 safe (layout script, recharts styles). Needs new dep `isomorphic-dompurify` - **BLOCKED in this worktree**: `npm install` can't run through a symlinked node_modules (ENOTEMPTY). Do in a full checkout / CI as its own PR.
+ - ⬜ **E broad refactor** - 229 `.json().catch` + 54 `URLSearchParams` sites: opportunistic on-touch (decided), lint now surfaces new ones.
 
 ## Status: A, B, C1 - C4, D-1/D-2/D-3, D-Tier2 (all), D-Tier3 health, E-1, E-2 - DONE + browser-verified live on :3000.
 Integration branch `fix/security-cluster-full` (off `feat/complaint-do-auto-fulfilment` + merged `fix/phase1-bounded-bugs`), 14 commits. FE rebuilt + serving on :3000; BE live on :8000 (`--reload`).

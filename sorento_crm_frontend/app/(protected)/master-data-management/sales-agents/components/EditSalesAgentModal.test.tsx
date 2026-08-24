@@ -2,11 +2,11 @@
  * EditSalesAgentModal - the two annotation fields, and nothing else.
  *
  * What this pins:
- *  - the demand-class select offers EXACTLY the two classes the policy can weigh,
+ * - the demand-class select offers EXACTLY the two classes the policy can weigh,
  *    plus a clear (unset is a real answer, and the backend refuses a third word);
- *  - saving sends `{ person_label, demand_class }` with `null` for "not set", so a
+ * - saving sends `{ person_label, demand_class }` with `null` for "not set", so a
  *    cleared class is unset rather than left as it was;
- *  - the agent code is shown, not editable: it is what documents state.
+ * - the agent code is shown, not editable: it is what documents state.
  *
  * SearchableSelect is stubbed to a native <select> (the real one is a Radix popover +
  * cmdk list, which jsdom cannot drive), and the stub records `clearable` so the

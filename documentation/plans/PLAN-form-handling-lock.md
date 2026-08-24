@@ -131,9 +131,9 @@ POST /api/v1/sla-management/form-sla-tracking/{tracking_id}/release
 
 **CTA endpoint guard** (all business CTAs across the 4 forms - complaints.py, stock_inquiries.py, purchase_requests.py):
 - New shared dependency/helper, e.g. `assert_can_act_on_form(db, source_entity_type, tracking, actor)`:
-  - If flag off for type OR tracker not escalated → allow (today's behavior).
-  - Else require `actor.id == tracking.handled_by_id` **OR** (actor is admin/superadmin AND `handled_by_id IS NULL`).
-  - Else 403 with a clear message ("This form is being handled by <name>. Take over to act.").
+ - If flag off for type OR tracker not escalated → allow (today's behavior).
+ - Else require `actor.id == tracking.handled_by_id` **OR** (actor is admin/superadmin AND `handled_by_id IS NULL`).
+ - Else 403 with a clear message ("This form is being handled by <name>. Take over to act.").
 - `responded_by`/`resolved_by` on the tracker + the business entity are set to `actor` (already the case; the guard guarantees actor == handler).
 
 **Extend gating change** (`_assert_can_extend`, `sla_service.py:2336`): when the tracker is escalated AND flag on → require `actor == handled_by_id` instead of `actor == assigned_to_id`. Not escalated / flag off → unchanged (assignee-only).
@@ -167,9 +167,9 @@ POST /api/v1/sla-management/form-sla-tracking/{tracking_id}/release
 - Settings UI: per-form flags (Settings → SLA or Forms). User notification settings: 2 new toggles.
 - FE off mocks → real hooks/services.
 - **Tests (land here, not deferred):**
-  - pytest: claim/take-over/release happy + auth-denial + validation; CTA guard denies non-handler & allows handler & admin-on-unclaimed; escalation resets lock; extend gating; flag off = no lock; scope excludes conversation-SLA rows; notify actor-exclusion; WA outbox on success+fail.
-  - vitest: `useHandlingLock` + banner across all 6 states; per-form gating; extend menu-item gating.
-  - playwright: escalate a form → CTAs disabled → claim → CTAs enabled → second user take-over → first user's action 403s → release.
+ - pytest: claim/take-over/release happy + auth-denial + validation; CTA guard denies non-handler & allows handler & admin-on-unclaimed; escalation resets lock; extend gating; flag off = no lock; scope excludes conversation-SLA rows; notify actor-exclusion; WA outbox on success+fail.
+ - vitest: `useHandlingLock` + banner across all 6 states; per-form gating; extend menu-item gating.
+ - playwright: escalate a form → CTAs disabled → claim → CTAs enabled → second user take-over → first user's action 403s → release.
 - Re-verify in Playwright MCP against live stack.
 
 ### Phase 3 - Code review

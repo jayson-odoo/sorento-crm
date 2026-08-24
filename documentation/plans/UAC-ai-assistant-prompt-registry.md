@@ -49,10 +49,10 @@ Legend: **[BE]** backend/pytest · **[FE]** vitest/browser · **[E2E]** Playwrig
 
 - **C1 [BE]** Active call sites resolve through the registry, each method's current hardcoded string becoming the
   registered fallback - no behavior change when DB == seed:
-  - `_reformulate_query` → `render("reformulator", ...)`
-  - record classifier (`intent_is_record_class`) → `router`
-  - `_default_system_prompt` → `agent_system`
-  - user-guide/answer policy → `synthesizer` (absorbs `_user_guide_protocol_addendum`; the deterministic
+ - `_reformulate_query` → `render("reformulator", ...)`
+ - record classifier (`intent_is_record_class`) → `router`
+ - `_default_system_prompt` → `agent_system`
+ - user-guide/answer policy → `synthesizer` (absorbs `_user_guide_protocol_addendum`; the deterministic
     link post-proc `_inject_route_links`/`_extract_guide_link_map`/`_strip_outline_urls` is unchanged).
   *Verify:* pytest asserts each site calls the resolver with the right key; existing assistant tests still green.
 - **C2 [BE] Metadata stamping.** Every assistant turn's `AIAssistantMessage.metadata_json` records

@@ -66,12 +66,12 @@ def _external_orders_limit(
 # Flexible date parsing for query parameters
 # --------------------------------------------------------------------------- #
 # n8n / LLM tool callers commonly send dates in any of these forms:
-#   - ISO datetime   2026-02-01T00:00:00
-#   - ISO date       2026-02-01
-#   - DD/MM/YYYY     01/02/2026   (Malaysia/Singapore default; preferred)
-#   - DD-MM-YYYY     01-02-2026
-#   - YYYY/MM/DD     2026/02/01
-#   - Month-only     "2026-02", "02/2026", "February 2026", "Feb 2026"
+# - ISO datetime   2026-02-01T00:00:00
+# - ISO date       2026-02-01
+# - DD/MM/YYYY     01/02/2026   (Malaysia/Singapore default; preferred)
+# - DD-MM-YYYY     01-02-2026
+# - YYYY/MM/DD     2026/02/01
+# - Month-only     "2026-02", "02/2026", "February 2026", "Feb 2026"
 # We accept all of them at the API layer so business logic stays in MCP/CRM.
 _MONTH_NAMES = {name.lower(): idx for idx, name in enumerate(calendar.month_name) if name}
 _MONTH_NAMES.update({name.lower(): idx for idx, name in enumerate(calendar.month_abbr) if name})
@@ -428,7 +428,7 @@ async def get_orders(
         )
         # Date-axis relaxation (§3.4): when the service attached `alternatives` /
         # `relaxed_axis` (only on an empty result), bypass the strict
-        # `ListResponse` response_model - which would silently drop those keys  - 
+        # `ListResponse` response_model - which would silently drop those keys - 
         # and emit the raw dict. `data` is always [] here so encoding is trivial,
         # and the with-data path stays byte-identical (AC-R1).
         if isinstance(result, dict) and result.get("alternatives"):
@@ -875,7 +875,7 @@ async def cancel_order(
     """Cancel an order (sets is_cancelled=true, optional reason → remarks).
 
     Narrow, single-purpose alternative to the broad PUT so automation / the AI
-    assistant (X-API-Key act-as principal) can cancel without a wide edit grant  - 
+    assistant (X-API-Key act-as principal) can cancel without a wide edit grant - 
     orders have no per-field edit permission, so this matches update_order's
     auth-only gate. Delegates to OrderService.update_order so the SAME
     complaint (un)link + re-fulfilment re-evaluation runs on cancel; only sets

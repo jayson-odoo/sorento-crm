@@ -66,7 +66,7 @@ export interface DataGridProps<TData extends object> {
    * Optional row grouping. Return a label when `row` starts a new group, or
    * null/undefined otherwise; the grid draws a divider row above it.
    *
-   * The caller owns the grouping rule. Members must already be contiguous  - 
+   * The caller owns the grouping rule. Members must already be contiguous - 
    * order them server-side - or the same group will render more than once.
    */
   renderGroupHeader?: (row: any, previousRow: any | null) => ReactNode | null;

@@ -134,7 +134,7 @@ def test_demand_stat_matches_golden(scm_app, g):
 def test_weekly_trim_fires_on_real_data(scm_app):
     """AC-M2.2 on real data: with ~13 weekly buckets a high-CV SKU's trimmed_mean
     baseline is STRICTLY below its plain window total because a spike week is dropped
-    - the trim is no longer the 3-bucket no-op. Proven end-to-end via explain_demand's
+  - the trim is no longer the 3-bucket no-op. Proven end-to-end via explain_demand's
     baseline_total, cross-checked against the independently-derived golden number."""
     _, db, _, _ = scm_app
     g = next(x for x in _GOLDEN["demand"] if x.get("trim_demonstration"))

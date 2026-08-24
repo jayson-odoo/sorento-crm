@@ -2,12 +2,12 @@
  * P1 - LeadDetailClient (AC-A1, AC-A2, AC-A4, AC-A5) as URL-routed tabs.
  *
  * What is pinned here:
- *   - one concern per tab, the tab read from `?tab=`, and an unknown tab falling back
- *   - every tab renders its own loading, empty, error and data states
- *   - the informant renders as names, never as an id, and never as the buyer
- *   - a lead with no buyer says so deliberately and offers the next step
- *   - Accept and Decline belong to the person holding the lead and nobody else
- *   - a decline cannot be sent without a reason
+ * - one concern per tab, the tab read from `?tab=`, and an unknown tab falling back
+ * - every tab renders its own loading, empty, error and data states
+ * - the informant renders as names, never as an id, and never as the buyer
+ * - a lead with no buyer says so deliberately and offers the next step
+ * - Accept and Decline belong to the person holding the lead and nobody else
+ * - a decline cannot be sent without a reason
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';

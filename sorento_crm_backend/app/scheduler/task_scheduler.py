@@ -371,7 +371,7 @@ def _handler_scm_analytics(db, task):
     process alive, so a failed analytics run never crashes the scheduler.
 
     Optional ``scheduled_tasks.metadata`` keys tune the run with no code change:
-      * ``scope``  - dict forwarded to run_analytics (product_ids / supplier_ids / ...).
+      * ``scope`` - dict forwarded to run_analytics (product_ids / supplier_ids / ...).
       * ``config`` - dict forwarded to run_analytics (e.g. ``as_of``).
     Absent metadata => full-catalog run as of today (the nightly default).
     """
@@ -402,9 +402,9 @@ def _handler_scm_reorder_run(db, task):
 
     Optional ``scheduled_tasks.metadata`` keys tune the run with no code change (the
     "configurable time" is the row's ``start_at``/interval; these tune the run body):
-      * ``budget``          - a numeric cash cap for the scheduled split; null/absent =>
+      * ``budget``        - a numeric cash cap for the scheduled split; null/absent =>
         full budget (fund everything, the default).
-      * ``include_market``  - market-trend priority factor (default false; market never
+      * ``include_market`` - market-trend priority factor (default false; market never
         enters a run per M8-D5, so leave false).
     """
     from app.services.scm import reorder_run_service as reorder_svc

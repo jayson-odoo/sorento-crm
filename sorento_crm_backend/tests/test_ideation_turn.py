@@ -56,12 +56,12 @@ def wired(monkeypatch):
     """Wire every DB/LLM/HTTP seam of the turn service to in-memory fakes.
 
     Returns a small harness object exposing:
-      - ``store``: the current session_vars blob (mutated on overwrite)
-      - ``payloads``: every create_idea payload the service built
-      - ``set_contact(phone, session_vars)``
-      - ``set_extraction(fields, remove, confirm)``
-      - ``set_create_idea(result_or_exc)``
-      - ``set_product_id(pid)``
+    - ``store``: the current session_vars blob (mutated on overwrite)
+    - ``payloads``: every create_idea payload the service built
+    - ``set_contact(phone, session_vars)``
+    - ``set_extraction(fields, remove, confirm)``
+    - ``set_create_idea(result_or_exc)``
+    - ``set_product_id(pid)``
     """
 
     state = {

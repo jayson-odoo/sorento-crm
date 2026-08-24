@@ -75,10 +75,10 @@ def _seed_product(db) -> str:
 def seeded(db):
     """Three promotions around a 10-day lookback window [today-10, today].
 
-    - old_runner: started 60 days ago, still running (overlaps window,
+  - old_runner: started 60 days ago, still running (overlaps window,
       NOT released in it).
-    - fresh: started 5 days ago, still running (released in window).
-    - just_ended: started 40 days ago, ended 3 days ago (overlaps window,
+  - fresh: started 5 days ago, still running (released in window).
+  - just_ended: started 40 days ago, ended 3 days ago (overlaps window,
       ended in it, not released in it). is_active flag still True but the
       window has passed -> treated as inactive by the active gate.
     """

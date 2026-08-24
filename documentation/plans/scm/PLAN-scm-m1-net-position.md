@@ -20,11 +20,11 @@ Supplier), that reconciles net position + stock valuation to reality. No engine,
 
 ## Phase 2 - Wire to M0 views (test-first / TDD)
 - **BE:** `list_query_registry` adapter `scm_net_position` → `scm_net_position_v` (+ per-perspective serializers). Endpoints under `require_module_enabled_with_api_key("scm")`:
-  - `GET /api/v1/scm/dashboard/net-position` (product perspective, paginated, `buildDataGridParams`)
-  - `GET /api/v1/scm/dashboard/warehouses` (warehouse boxes + health + valuation)
-  - `GET /api/v1/scm/dashboard/suppliers` (supplier perspective)
-  - `GET /api/v1/scm/dashboard/rollups` (stat tiles)
-  - export via `scm.dashboard.export`.
+ - `GET /api/v1/scm/dashboard/net-position` (product perspective, paginated, `buildDataGridParams`)
+ - `GET /api/v1/scm/dashboard/warehouses` (warehouse boxes + health + valuation)
+ - `GET /api/v1/scm/dashboard/suppliers` (supplier perspective)
+ - `GET /api/v1/scm/dashboard/rollups` (stat tiles)
+ - export via `scm.dashboard.export`.
 - Reads M0 views: `scm_net_position_v`, `scm_on_order_v`, `scm_committed_v`. Status computed in SQL/service: stockout (on_hand=0), dead (last-movement > `dead_stock_days`), healthy, incoming (open PO). Imbalance flag = per-warehouse min stocked-out while another > 0. Attention sort key in the query.
 - Valuation = `on_hand × products.cost_price`, per SKU×warehouse, subtotal + grand total.
 - **FE:** swap mocks for real hooks/services/`api-client`. Delete mock fixtures (keep any reused by tests).

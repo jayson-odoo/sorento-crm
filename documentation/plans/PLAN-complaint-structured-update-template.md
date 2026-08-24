@@ -76,19 +76,19 @@ Param mapping (set in WhatsApp Templates → set-default modal for `complaint`):
 ## Backend changes
 
 1. **`build_context_vars` (respond_messaging_service.py), complaint branch** - add discrete vars from the row:
-   - `project` = `project_title`
-   - `customer` = `customer_name`
-   - `delivery_order` = `delivery_order_number`
+ - `project` = `project_title`
+ - `customer` = `customer_name`
+ - `delivery_order` = `delivery_order_number`
    (`entity_number` = complaint_number, `status` already present.)
 
 2. **Thread `extra_context_vars` through the complaint send chain** (the action-specific `update` core + the explicit `portal_url` cannot be reconstructed from the row alone - a reply vs a status-change send touch the same row):
-   - `complaints_service._send_respond_message_for_complaint(..., extra_context_vars=None)`
-   - `complaints_service._enqueue_respond_message_for_complaint(..., extra_context_vars=None)` → into the job args
-   - `respond_io_tasks.send_complaint_respond_message(..., extra_context_vars=None)` → into `_send_and_log`
+ - `complaints_service._send_respond_message_for_complaint(..., extra_context_vars=None)`
+ - `complaints_service._enqueue_respond_message_for_complaint(..., extra_context_vars=None)` → into the job args
+ - `respond_io_tasks.send_complaint_respond_message(..., extra_context_vars=None)` → into `_send_and_log`
 
 3. **4 builders** compute the bare `update` core + pass `extra_context_vars={"update": core, "portal_url": view_url}`:
-   - reply (~1182), decide (~1375), finalize (~1566), notify-salesperson (~1862).
-   - Keep `display_message` (verbose sentence) as the chat-mirror / fallback text when no template configured.
+ - reply (~1182), decide (~1375), finalize (~1566), notify-salesperson (~1862).
+ - Keep `display_message` (verbose sentence) as the chat-mirror / fallback text when no template configured.
 
 4. **`render_in_window_text`** - for `use_case == "complaint"`, render the filled structured body (`render_filled_body`) + append `portal_url` (free text has no button so the link must be inline), instead of returning raw fallback. Other button templates (OTP) keep the skip.
 

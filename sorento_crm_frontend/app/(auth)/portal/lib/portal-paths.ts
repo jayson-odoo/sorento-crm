@@ -6,7 +6,7 @@
  * redirectors for old links. All in-app navigation MUST go through these
  * helpers so the active tree (slug vs legacy) is picked in one place.
  *
- * The active slug is persisted in localStorage so it survives tab close  - 
+ * The active slug is persisted in localStorage so it survives tab close - 
  * it is an identity hint, not a credential (entry still requires a live
  * token or OTP).
  */

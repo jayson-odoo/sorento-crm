@@ -25,8 +25,8 @@ On the Purchase Request / Sponsorship Form detail header, add:
 ## FE
 4. `purchaseRequestService`: `submitApprovalDecision(requestId, action, comments?)`.
 5. `PurchaseRequestDetail` header:
-   - **Escalate** button → load active tracker via `getFormSLATrackers`, open reason dialog → `escalateFormTracking`. Hidden when no active/unresolved tracker.
-   - **Approve** / **Reject** buttons shown when pending approval → `submitApprovalDecision`. Reject requires a reason (AlertDialog), matching the public form.
+ - **Escalate** button → load active tracker via `getFormSLATrackers`, open reason dialog → `escalateFormTracking`. Hidden when no active/unresolved tracker.
+ - **Approve** / **Reject** buttons shown when pending approval → `submitApprovalDecision`. Reject requires a reason (AlertDialog), matching the public form.
 6. vitest: buttons render only in the right state; reject requires reason.
 
 ## Verify

@@ -144,7 +144,7 @@ def test_spec_search_does_not_run_when_the_code_resolves(client):
 def test_partial_code_overlap_does_not_suppress_the_fallback(db, client):
     """SA-P1: this catalog writes description words INTO product codes
     (SRTWB7104-WALL HUNG), so an AND-mode turn like "wall hung basin" collects
-    partial code matches - the words "wall hung" literally appear in codes  - 
+    partial code matches - the words "wall hung" literally appear in codes - 
     and the zero-match gate then never fires, for exactly the phrase class the
     fallback exists to answer. "Partially matched a code" is not "the
     description was answered": the gate must also fire when no returned

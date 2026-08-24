@@ -4,10 +4,10 @@ import { useCallback, useRef, useState } from 'react';
  * Reusable guard for one-shot mutating action buttons (approve, set-pending, send…).
  *
  * Stops the duplicate-submit class of bug at the UI:
- *  - Synchronous `useRef` in-flight lock: React state does not disable the DOM button
+ * - Synchronous `useRef` in-flight lock: React state does not disable the DOM button
  *    until the next render, so a same-tick double-click would fire two handlers. The
  *    ref blocks the 2nd immediately.
- *  - `running` flag for `disabled` / label.
+ * - `running` flag for `disabled` / label.
  *
  * IMPORTANT: keep the dependent refetch INSIDE `fn` and `await` it, e.g.
  *   const setPending = useAction(async () => {

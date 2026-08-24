@@ -85,7 +85,7 @@ Unit split to respect: `sla_service.py:4187` stores response/resolution `duratio
 - **UAC-3** Not-responded tracker, `due_at` in the past → scan DOES escalate. (pytest - no regression)
 - **UAC-4** All 5 FORM_SLA_TYPES exercised for UAC-1/2/3 semantics (parametrized).
 - **UAC-5** Escalation event log "Event At" renders in MYT consistent with the extend event (within seconds of real time), verified via API `event_at` value, not just UI.
-- **UAC-6** Extend event-log row shows a non-negative, meaningful Duration (stored working-days or  - ), never a negative timespan. (vitest on EventLogTable)
+- **UAC-6** Extend event-log row shows a non-negative, meaningful Duration (stored working-days or - ), never a negative timespan. (vitest on EventLogTable)
 - **UAC-7** End-to-end browser: responded → extend via FE → response due lapses → scan → NOT escalated; both banners behave correctly. (Playwright MCP, mirrors the repro)
 - **UAC-8** Existing conversation-SLA escalation path untouched (regression: `list_due_escalations` tests still green).
 - **UAC-9** Responded tracker with `due_at_resolution` NULL → scan does NOT escalate and does NOT crash. (pytest)
@@ -94,9 +94,9 @@ Unit split to respect: `sla_service.py:4187` stores response/resolution `duratio
 ## Three-phase breakdown
 - **Phase 1 (prototype):** none - no new UI; Fix 3 is a tweak to an existing column. Skip, note here.
 - **Phase 2 (wiring + tests):**
-  - BE: Fix 1 + Fix 2 in `form_sla_service.py`.
-  - FE: Fix 3 in `EventLogTable.tsx`.
-  - Tests: pytest (UAC 1-4, 8) reusing the repro harness (`scratch_repro_*.py` → promote to `tests/test_form_sla_response_clock.py`); vitest for UAC-6; Playwright MCP for UAC-7.
+ - BE: Fix 1 + Fix 2 in `form_sla_service.py`.
+ - FE: Fix 3 in `EventLogTable.tsx`.
+ - Tests: pytest (UAC 1-4, 8) reusing the repro harness (`scratch_repro_*.py` → promote to `tests/test_form_sla_response_clock.py`); vitest for UAC-6; Playwright MCP for UAC-7.
 - **Phase 3 (review):** `/code-review`, then PR with before/after screenshots (`before-scan-tier1.png`, `after-scan-tier2-escalated.png`, `repro-0014-both-banners-like-0035.png`).
 
 ## Cleanup

@@ -1551,8 +1551,8 @@ def _resolve_input(
     # promotion-attached files vs `promotion` entity-type).
     #   1. Entity-type label (`order`, `product`, `promotion`, `customer`,
     #      `brand`, `category`, ...):
-    #         - When `allowed_entity_types` is empty → merge hint as sole scope.
-    #         - When `allowed_entity_types` is set → hint is CONTEXT ONLY (no
+    #       - When `allowed_entity_types` is empty → merge hint as sole scope.
+    #       - When `allowed_entity_types` is set → hint is CONTEXT ONLY (no
     #           additive expansion). Caller's whitelist stays authoritative;
     #           hint only informs brand/category expansion overrides via
     #           `_DOMAIN_HINT_EXPANSIONS` inside the resolver.
@@ -1668,9 +1668,9 @@ def _resolve_input(
             ).as_dict()
         raw = _apply_promotion_access_levels_filter(db, raw, access_levels)
         # Promotion-domain hint: run the expander. It owns the dispatch:
-        #   - promo matches found → return promotion entries only
+        # - promo matches found → return promotion entries only
         #     (regardless of whether caller asked for products).
-        #   - no promo matches → if caller wants products, surface
+        # - no promo matches → if caller wants products, surface
         #     through-promotion products; else (and access_levels present)
         #     fallback to brand-access-scoped products as a rescue path.
         if hint and _canonical_entity_type(hint) == "promotion":
@@ -1742,7 +1742,7 @@ def _resolve_input(
     # Raw `attachment` (file) entities are EXCLUDED from this expansion unless the
     # caller explicitly whitelisted `attachment`. A caller resolving product /
     # attachment_type wants a product + a type to query attachments BY downstream;
-    # a raw attachment-file row can't be used as a product_id and just pollutes  - 
+    # a raw attachment-file row can't be used as a product_id and just pollutes - 
     # e.g. "WC 8609" (no product hit) would otherwise resolve to a photo file
     # `MWC8609-RL.jpg` whose name contains "8609", drowning the real intent. Files
     # stay reachable for callers that ask for them (whitelist `attachment`, or the
@@ -1820,7 +1820,7 @@ def resolve_reference(
         "or",
         description=(
             "'or' (default) returns per-token candidates. 'and' returns cross-token intersection "
-            " -  rows matching every token. AND-mode requires `tokens` (cannot use `query`)."
+            " - rows matching every token. AND-mode requires `tokens` (cannot use `query`)."
         ),
     ),
     allowed_entity_types: list[str] | None = Query(

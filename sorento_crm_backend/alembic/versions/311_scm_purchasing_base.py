@@ -95,7 +95,7 @@ SELECT k.product_id, k.warehouse_id,
        COALESCE(oo.on_order, 0) AS on_order,
        COALESCE(cm.committed, 0) AS committed,
        COALESCE(s.quantity_on_hand, 0) + COALESCE(oo.on_order, 0)
-           - COALESCE(cm.committed, 0) AS net_position
+         - COALESCE(cm.committed, 0) AS net_position
 FROM keys k
 LEFT JOIN stock s ON s.product_id = k.product_id AND s.warehouse_id = k.warehouse_id
 LEFT JOIN scm.on_order_v oo

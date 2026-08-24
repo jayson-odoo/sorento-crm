@@ -3,10 +3,10 @@
  * backend exposes at GET /api/v1/master-data/field-linkage-schema.
  *
  * Used by:
- *  - the attachment upload modal (Linked Fields multi-select).
- *  - the per-row "Manage field links" dialog on the Product Attachments tab
+ * - the attachment upload modal (Linked Fields multi-select).
+ * - the per-row "Manage field links" dialog on the Product Attachments tab
  *    and AttachmentDetailModal Linkages tabs.
- *  - the Specifications tooltip when grouping composite fields under a
+ * - the Specifications tooltip when grouping composite fields under a
  *    `group_key` (e.g. dimensions_length / _width / _height share `dimensions`).
  */
 import { useQuery } from '@tanstack/react-query';

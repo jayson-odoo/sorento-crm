@@ -188,7 +188,7 @@ def test_the_form_closes_with_a_signoff_block(db, request_type):
     html = PurchaseRequestPDFService(db)._html(row)
     assert "Requested by:" in html
     assert "Approved by:" in html
-    assert "-" not in html, "an unfilled sign-off must be blank, not a dash"
+    assert "—" not in html, "an unfilled sign-off must be blank, not an em-dash"
 
 
 @pytest.mark.parametrize("request_type", BOTH_TYPES)

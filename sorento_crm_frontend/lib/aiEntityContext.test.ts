@@ -40,7 +40,7 @@ describe('getPageSnapshot entity wiring', () => {
     expect(snapshot).not.toBeNull();
     expect(snapshot?.entity).toEqual({ entity_type: 'complaint', id: 'abc-123' });
     // visible_text is still produced (entity is additive metadata, not a
-    // replacement). jsdom doesn't implement layout so innerText may be empty  - 
+    // replacement). jsdom doesn't implement layout so innerText may be empty - 
     // assert the field exists as a string rather than its content.
     expect(typeof snapshot?.visible_text).toBe('string');
   });

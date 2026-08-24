@@ -72,7 +72,7 @@ Resulting alert body:
 ```
 Scheduled tasks - overdue (1):
   • system_health_watchdog (System health watchdog) - every 10 minutes,
-    last run 20/07/2026 10:26 MYT, 3h 10m late  - 
+    last run 20/07/2026 10:26 MYT, 3h 10m late - 
     http://localhost:3000/system-management/scheduled-tasks/2ccb4ede-…
 ```
 
@@ -150,7 +150,7 @@ degraded - 40 turns @ 25s              turns=40  p99=25.0s  ALERT  p99 exceeds t
 one stalled turn among 40 healthy      turns=41  p99=90.0s  ALERT  + ceiling, worst 90s
 incoming with no reply (12m)           turns=40  p99=3.0s   ALERT  no reply, longest 12m
 webhook arrived 40s late               turns=1   p99=44.0s  ALERT  ceiling; lag max 40s
-proactive sends only (no turns)        turns=0   p99= -       ok
+proactive sends only (no turns)        turns=0   p99= -      ok
 ```
 
 The fourth row is the important one: it alerts while p99 reads a healthy 3.0s. A turn that
@@ -170,7 +170,7 @@ through exactly the dropped-webhook outage this slice exists to catch.
    tests rewritten; the percentile case is now pinned by a pair of tests that state the
    distinction explicitly.
 2. **`run_chat_latency_watchdog` called a `_mark_ok` helper that did not exist.** The
-   recovery branch would have raised `NameError` the first time the condition cleared  - 
+   recovery branch would have raised `NameError` the first time the condition cleared - 
    in production, after an incident, which is the worst possible moment. Found by reading
    the module rather than by a test: the service tests exercised `_eval_chat_latency` but
    never the entry point's fire/recover state machine. Added `_mark_ok` (symmetric with
@@ -352,7 +352,7 @@ The 5 extra rows were a genuinely different fault: `401` against
 `v2`'s digit is a volatile token), and that prefix is shared by both faults. One
 substring simply cannot express the group.
 
-Fix: emit **all** stable segments (min 4 chars, capped at 6) and AND them  - 
+Fix: emit **all** stable segments (min 4 chars, capped at 6) and AND them - 
 `/message'` is short but decisive, so the minimum length had to come down from
 12 to 4. `test_card_count_equals_link_count` now seeds exactly this two-endpoint
 shape and asserts card count == link count for every cause, so the invariant is
@@ -459,7 +459,7 @@ attribution is not.
 
 ### Pre-existing bug fixed on request: 500 for a legitimate 400 (OBS-S1-05b)
 
-`create_sla_tracking_integration` - the endpoint n8n calls to open a conversation SLA  - 
+`create_sla_tracking_integration` - the endpoint n8n calls to open a conversation SLA - 
 wrapped every failure in `except Exception: raise handle_internal_error(str(e))`. A
 deliberate refusal ("Respond contact not found for phone number: X") is raised as an
 `AppException` carrying 400 / VALIDATION_ERROR, so it was re-wrapped into
@@ -473,7 +473,7 @@ Held back initially because flipping 500→400 on n8n's hot path could change it
 branching; the user confirmed n8n does not branch on error code, so it is fixed here.
 
 Internal-regression check before changing it: no test asserts 500 for this endpoint, no
-frontend calls it, and the handler writes an `integration_log` only on the SUCCESS path  - 
+frontend calls it, and the handler writes an `integration_log` only on the SUCCESS path - 
 so the change is confined to the status code and body, with no logging side effects.
 
 Live, after: `400 {"message": "Respond contact not found for phone number: +60100000000",

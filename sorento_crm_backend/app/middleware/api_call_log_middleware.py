@@ -24,7 +24,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # Strictly scoped. Widening this to all of /api/v1 would log the health
-# dashboard's own polling and the log page's own reads back into the table  - 
+# dashboard's own polling and the log page's own reads back into the table - 
 # a feedback loop that grows without bound and drowns the real traffic.
 _LOGGED_PREFIX = "/api/v1/external"
 
@@ -56,7 +56,7 @@ def _should_log(path: str, headers: dict) -> bool:
 
     Internal UI traffic sends no `X-Source` and does not sit under the external
     prefix, so the health dashboard's polling and this table's own reads stay out
-    - logging them would feed the table its own traffic.
+  - logging them would feed the table its own traffic.
     """
     return path.startswith(_LOGGED_PREFIX) or _is_sourced_call(headers)
 

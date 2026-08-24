@@ -170,7 +170,7 @@ def test_project_only_product_is_A_project_null_retail(env):
 
 def test_partitions_rank_independently(env):
     """Two products, opposite dominance: the retail-heavy one is A on retail and only a
-    minor share of project quantity, while the project-heavy one dominates project  - 
+    minor share of project quantity, while the project-heavy one dominates project - 
     proving the two rankings are computed independently rather than one letter reused
     twice. Same `cost_price` on both, so the qty ratio mirrors what a value ratio would
     have been - this pins that the ranking is genuinely qty-driven, not a leftover value

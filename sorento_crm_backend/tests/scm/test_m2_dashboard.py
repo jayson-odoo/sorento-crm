@@ -166,7 +166,7 @@ def test_supplier_scorecard_after_run(scm_app):
 
 
 def test_supplier_scorecard_null_when_unscored(scm_app):
-    """A supplier with no completing receipts is returned with performance=null  - 
+    """A supplier with no completing receipts is returned with performance=null - 
     never a fabricated score."""
     app, db = _client(scm_app, "purchasing")
     _run(db)

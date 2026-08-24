@@ -100,7 +100,7 @@ def main() -> int:
         print(f"  deliveries stamped-no-send: {suppressed_notifies}")
         print(f"  warnings (not-linked etc): {len(all_warnings)}")
         for w in all_warnings[:20]:
-            print(f"    - {w}")
+            print(f"  - {w}")
         if len(all_warnings) > 20:
             print(f"    ... and {len(all_warnings) - 20} more")
         if args.dry_run:

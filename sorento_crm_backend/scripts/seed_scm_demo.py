@@ -21,7 +21,7 @@ DATA REALITY honored here (confirmed against the live copy):
   off a stable md5 of the product_code (re-runs identical). A re-run resets
   these back to NULL first. This keeps ``product_suppliers.unit_cost``, stock
   valuation and ABC value non-zero for every demo SKU.
-- ``market_segments`` has ``retail`` + ``project`` with null ``demand_nature``  - 
+- ``market_segments`` has ``retail`` + ``project`` with null ``demand_nature`` - 
   step 1 fills them (retail→continuous, project→spike).
 
 Run (from sorento_crm_backend/, DB up):
@@ -77,7 +77,7 @@ def _cost_for(list_price, product_code: str) -> Decimal:
 
     Most SKUs carry a real ``list_price`` → cost = 60% of it. But many fast
     movers (WESERP10B, CWCY605, M-FH12-BLUE, ...) have ``list_price = 0/NULL``
-    in the prod copy, which would zero out valuation / unit_cost / ABC / cash  - 
+    in the prod copy, which would zero out valuation / unit_cost / ABC / cash - 
     a demo killer. For those we assign a DETERMINISTIC plausible fallback in
     RM 20-300 keyed off a STABLE hash of the product_code (md5, NOT Python's
     salted ``hash()``) so re-runs stay identical.
@@ -481,7 +481,7 @@ def seed(db) -> dict:
         sol_count += 1
 
     # --- Step 5b: committed demand ON a stockout SKU (attention signal) -------
-    # A stockout WITH open committed demand is the sharpest reorder signal  - 
+    # A stockout WITH open committed demand is the sharpest reorder signal - 
     # on-hand 0 everywhere but real customers are already waiting. The general
     # step-5 loop only reaches the first ~10 (fast+multi) SKUs, so the stockout
     # bucket (e.g. C-FH24) never gets an SO. Give every stockout demo SKU its

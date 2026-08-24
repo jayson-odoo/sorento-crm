@@ -105,7 +105,7 @@ as the FK-shaped path - PIC is deliberately the informal one.
 
 - **AC-14** `pic` is an `ExtractFieldSpec` on both `_PORTAL_PURCHASE_REQUEST` and
   `_PORTAL_SPONSORSHIP_FORM`.
-- **AC-15** Its `note` must steer the model to the **site/receiving contact**  - 
+- **AC-15** Its `note` must steer the model to the **site/receiving contact** - 
   explicitly NOT the salesperson, NOT the requester, NOT the company. This is
   the same disambiguation `customer_name` already needed, and the reason that
   field's note is long.

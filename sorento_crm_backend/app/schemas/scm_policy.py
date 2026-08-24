@@ -5,8 +5,8 @@ Mirror the Phase-2 FE contract documented at the top of
 ``types/policy.types.ts`` - every response field matches those TS types
 field-for-field. Three policy families feed the shipped reorder engine:
 
-  1. ``reorder_policy``          - scoped CRUD, resolved most-specific-active-wins.
-  2. ``abc_xyz_policy``          - single global classification-threshold row.
+  1. ``reorder_policy``        - scoped CRUD, resolved most-specific-active-wins.
+  2. ``abc_xyz_policy``        - single global classification-threshold row.
   3. ``supplier_scoring_policy`` - single global supplier-scoring row.
 
 Pure-field / cross-field-no-DB validation (AC-VAL-1..6, AC-CFG-2, AC-SUP-2) lives

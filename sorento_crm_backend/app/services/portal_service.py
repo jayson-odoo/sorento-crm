@@ -1116,10 +1116,10 @@ class PortalService:
         configured rule exists for the doc_type, so installs without a rule still
         produce a number.
 
-        - ``complaint`` -> ``complaint_number`` (legacy fallback prefix ``CMP``)
-        - ``stock_inquiry`` -> ``inquiry_number``
-        - ``purchase_request`` -> ``request_number``
-        - ``sponsorship_form`` -> ``request_number``
+      - ``complaint`` -> ``complaint_number`` (legacy fallback prefix ``CMP``)
+      - ``stock_inquiry`` -> ``inquiry_number``
+      - ``purchase_request`` -> ``request_number``
+      - ``sponsorship_form`` -> ``request_number``
         """
         from app.services.numbering_service import NumberingService
 

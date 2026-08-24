@@ -144,7 +144,7 @@ export default function ContactCsRoutingRules({ contactId }: { contactId: string
             >
               <AlertTriangle className="mt-0.5 size-4 shrink-0" />
               <p className="min-w-0">
-                A catch-all rule (no conditions) is ordered above a more specific rule  - 
+                A catch-all rule (no conditions) is ordered above a more specific rule - 
                 it will match first and shadow the rules below it. Move specific rules
                 above catch-alls.
               </p>

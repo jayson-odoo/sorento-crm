@@ -39,12 +39,12 @@ Should **update** the existing allocation instead of skipping.
 
 - **`procurement_service.py`:** add `upsert_allocation(allocation_data, created_by)` (or
   `update_allocation_quantity`) that:
-  - looks up existing by `(spo_number, product_id, warehouse_id)`;
-  - none → create (existing path), return `("created", row)`;
-  - exists, new qty == current → return `("unchanged", row)`;
-  - exists, new qty < `quantity_received` → raise a distinct guarded error (own exception/marker so
+ - looks up existing by `(spo_number, product_id, warehouse_id)`;
+ - none → create (existing path), return `("created", row)`;
+ - exists, new qty == current → return `("unchanged", row)`;
+ - exists, new qty < `quantity_received` → raise a distinct guarded error (own exception/marker so
     the import loop classifies it, not a generic conflict);
-  - exists, otherwise → set `allocated_quantity`, `updated_at`, commit, refresh shipment line
+ - exists, otherwise → set `allocated_quantity`, `updated_at`, commit, refresh shipment line
     statuses, return `("updated", row)`.
 - **`import_tasks.py` `process_spo_import()`:** call the upsert; branch on the returned action to
   bump `created` / `updated` / `unchanged` / guarded-error counters. Build result with

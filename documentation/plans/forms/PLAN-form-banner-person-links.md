@@ -90,7 +90,7 @@ Verified against source (line numbers to re-confirm before editing - file may dr
 
 ## 4. Schema / migration changes
 
-Alembic revision `add_banner_person_link_fields` (chain onto the current committed main head  - 
+Alembic revision `add_banner_person_link_fields` (chain onto the current committed main head - 
 verify `alembic heads` after fetching main; id ≤ 32 chars).
 
 1. `conversation_sla_event_log.from_assigned_to_id` - `String` FK → `users.id`
@@ -222,12 +222,12 @@ for `newDue`; keep that for the due date but use `formatDateTimeInMalaysia` for 
 
 ### Phase 2 - BE wiring, test-first (red → green → refactor)
 - **pytest (write failing first):**
-  - `test_banner_person_phone_resolver.py` - PR-1..PR-6 (incl. respond_user_id path PR-4).
-  - `test_sla_escalation_from_snapshot.py` - ESC-1/ESC-2 (both write paths snapshot prior owner).
-  - `test_active_tracker_dto.py` - ESC-3, EXT-1, HIST-1.
-  - `test_stock_inquiry_reject_dto.py` / `test_complaint_reject_dto.py` / `test_pr_reject_dto.py`  - 
+ - `test_banner_person_phone_resolver.py` - PR-1..PR-6 (incl. respond_user_id path PR-4).
+ - `test_sla_escalation_from_snapshot.py` - ESC-1/ESC-2 (both write paths snapshot prior owner).
+ - `test_active_tracker_dto.py` - ESC-3, EXT-1, HIST-1.
+ - `test_stock_inquiry_reject_dto.py` / `test_complaint_reject_dto.py` / `test_pr_reject_dto.py` - 
     REJ-1..REJ-4, HIST-3 (+ happy / auth-denial / validation per route).
-  - `test_escalation_backfill.py` - HIST-2 (heuristic sets prior-event assignee; no-prior stays NULL).
+ - `test_escalation_backfill.py` - HIST-2 (heuristic sets prior-event assignee; no-prior stays NULL).
 - Implement migration → models → resolver → escalation edits → serializers to green. Run backfill on
   the local prod-copy DB; capture the set/NULL summary.
 - **vitest (test-first for logic, component-state after prototype settles):**

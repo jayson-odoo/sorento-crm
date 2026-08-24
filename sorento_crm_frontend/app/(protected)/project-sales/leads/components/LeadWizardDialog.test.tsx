@@ -2,9 +2,9 @@
  * P1 - LeadWizardDialog (AC-A1, AC-A2, AC-A3, AC-A4).
  *
  * Three things carry the design and are pinned here:
- *   - the development is the only required decision, so a lead with NO buyer submits
- *   - the informant is collected as its own thing and posted as informant_* fields
- *   - picking a salesperson calls ASSIGN after the create, because assignment stamps the
+ * - the development is the only required decision, so a lead with NO buyer submits
+ * - the informant is collected as its own thing and posted as informant_* fields
+ * - picking a salesperson calls ASSIGN after the create, because assignment stamps the
  *     clock and notifies them; it is not a column on the create
  */
 import React from 'react';

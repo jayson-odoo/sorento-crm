@@ -110,9 +110,9 @@ class SlaTakeoverService:
         if viewer_id is not None:
             # Viewer-relative affordances. Cancel is the INITIATOR's action, Reject is
             # the CONTESTED assignee's - never both for the same person:
-            #   - the initiator only Cancels (rejecting your own takeover is nonsense),
-            #   - the contested assignee only Rejects,
-            #   - a pure admin bystander (neither) may do either.
+            # - the initiator only Cancels (rejecting your own takeover is nonsense),
+            # - the contested assignee only Rejects,
+            # - a pure admin bystander (neither) may do either.
             is_initiator = str(req.initiator_id) == str(viewer_id)
             is_contested = (
                 req.contested_assignee_id is not None

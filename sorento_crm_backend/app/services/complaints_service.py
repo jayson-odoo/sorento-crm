@@ -114,9 +114,9 @@ class ComplaintService:
         """Resolve supplied DO numbers against orders.order_number.
 
         Returns:
-            - resolved: canonical order numbers found in DB (preserve user order),
-            - missing: user-provided tokens not found,
-            - provided: normalized user-provided tokens.
+          - resolved: canonical order numbers found in DB (preserve user order),
+          - missing: user-provided tokens not found,
+          - provided: normalized user-provided tokens.
         """
         provided = self.normalize_delivery_order_numbers(raw_value)
         if not provided:
@@ -142,12 +142,12 @@ class ComplaintService:
         """Infer customer + product hints from selected delivery order numbers.
 
         Returns a dict with:
-            - delivery_order_numbers
-            - customer_name (when exactly one unique debtor_name found)
-            - customer_name_candidates (all unique debtor names found)
-            - product_code (when exactly one unique product code found)
-            - product_codes (all unique product codes found)
-            - product_names (all unique product names found)
+          - delivery_order_numbers
+          - customer_name (when exactly one unique debtor_name found)
+          - customer_name_candidates (all unique debtor names found)
+          - product_code (when exactly one unique product code found)
+          - product_codes (all unique product codes found)
+          - product_names (all unique product names found)
         """
         normalized = self.normalize_delivery_order_numbers(", ".join(do_numbers))
         if not normalized:

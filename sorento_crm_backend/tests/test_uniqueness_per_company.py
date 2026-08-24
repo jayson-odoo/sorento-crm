@@ -4,9 +4,9 @@ Migration 305 swapped every single-column natural-key unique (product_code,
 order_number, warehouse_code, customer code/name, ...) for a composite
 ``(company_id, key)`` unique index. The business consequence:
 
-  - AC-J1: two DIFFERENT companies may each own a row with the SAME code - they
+ - AC-J1: two DIFFERENT companies may each own a row with the SAME code - they
     are distinct rows, not a conflict.
-  - AC-J2: the SAME company still cannot hold two rows with that code.
+ - AC-J2: the SAME company still cannot hold two rows with that code.
 
 Exercised through the ORM insert path (auto-stamp fills ``company_id`` from the
 active scope) so both the stamp and the DB constraint are proven end-to-end.

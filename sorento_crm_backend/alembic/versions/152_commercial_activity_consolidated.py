@@ -30,7 +30,7 @@ COMMERCIAL_ACTIVITY_TABLES = (
 
 
 def upgrade() -> None:
-    import app.modules.commercial_core  # noqa: F401  - parent FKs
+    import app.modules.commercial_core  # noqa: F401 - parent FKs
     import app.modules.commercial_activity  # noqa: F401
     from app.database import Base
 

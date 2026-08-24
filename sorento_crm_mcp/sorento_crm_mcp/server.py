@@ -105,7 +105,7 @@ TOOL_OPTIONAL_BODY_PARAMS: dict[str, tuple[str, ...]] = {
     # Multi-company isolation (AC-F7): contact_id + space_id optionally scope the
     # lookup resolution to the contact's company/companies. Forwarded via BODY
     # (not query) because a POST tool with required body params (set_key, raw)
-    # can't carry optional query args before them in the generated signature  - 
+    # can't carry optional query args before them in the generated signature - 
     # the same limitation the compiler notes for the `view` param. Optional so
     # existing n8n calls without them keep resolving across all companies
     # (required-first ordering keeps set_key/raw/locale ahead of these two).
@@ -1063,7 +1063,7 @@ _ATTACHMENT_TOOL_PREFIXES = (
     "crm_resource_attachments_",
 )
 
-# Extra fields stripped only from the global resource library list view  - 
+# Extra fields stripped only from the global resource library list view - 
 # noisy for chat answers; admins use the UI when they need them.
 _RESOURCE_ATTACHMENT_LIST_EXTRA_KEYS = frozenset(
     {

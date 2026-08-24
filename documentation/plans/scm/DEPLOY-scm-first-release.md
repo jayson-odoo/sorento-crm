@@ -16,11 +16,11 @@ for the first time.
 ### 1a. Migrations - SAFE (additive)
 - Every new table is in the **`scm.*` schema** (invisible to existing modules).
 - Additive ALTERs on **6 shared tables**, all nullable or NOT NULL + `server_default` (backfilled):
-  - `273`: `suppliers`, `product_suppliers`, `customers` (`market_segment_code`), `market_segments`
+ - `273`: `suppliers`, `product_suppliers`, `customers` (`market_segment_code`), `market_segments`
     (`demand_nature`), `picking_lines`. `Supplier.is_primary_supplier` NOT NULL **with
     server_default=false** → safe.
-  - `275`: `sales_orders.requested_delivery_date` (nullable date).
-  - `285`: `scm.market_signal.sources` (JSONB, scm schema).
+ - `275`: `sales_orders.requested_delivery_date` (nullable date).
+ - `285`: `scm.market_signal.sources` (JSONB, scm schema).
 - `ADD COLUMN` on nullable / default-false is a fast, brief lock in Postgres. Deploy runs during a
   low-traffic window (blue/green, see §4) so the lock is a non-issue.
 - **No existing column, type, or constraint is changed or dropped.**
@@ -106,12 +106,12 @@ this script. → Prod SCM tables are **empty** after deploy; prod has **no "Demo
   long lead), `Johor Bathware Distributors Sdn Bhd`, `Guangzhou Sanitary Imports Ltd`,
   `Penang Tile & Fixtures Sdn Bhd`.
 - **Scenarios (drive the engine off demo-only stock + demo-only DO history):**
-  - **Buy (~6):** low `on_hand` in SCM-DEMO-WH + `product_suppliers.unit_cost` set + recent frequent
+ - **Buy (~6):** low `on_hand` in SCM-DEMO-WH + `product_suppliers.unit_cost` set + recent frequent
     DO history (orders/order_lines over last 60 - 90d) → `net ≤ ROP` → costed buy.
-  - **Stockout + committed (~2):** `on_hand=0` + recent demand + open `sales_order` line → net
+ - **Stockout + committed (~2):** `on_hand=0` + recent demand + open `sales_order` line → net
     negative → strongest buy.
-  - **Overstock / hold (~3):** high `on_hand` + light recent demand → `days_of_cover > 120`.
-  - **Dead / discontinue (~2):** `on_hand>0` + one DO line >180d ago, nothing since →
+ - **Overstock / hold (~3):** high `on_hand` + light recent demand → `days_of_cover > 120`.
+ - **Dead / discontinue (~2):** `on_hand>0` + one DO line >180d ago, nothing since →
     `last_movement_days > 180`.
 - **Mandatory post-seed:** run `analytics_service.run_analytics(db)` - without it `scm.demand_stat`
   is empty, `demand_rate=0`, and **no buys emit**. Then trigger a reorder run (Manual plan / API) to

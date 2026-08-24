@@ -240,7 +240,7 @@ export function ImportJobRowsCard({
               </Badge>
               {result?.rows_truncated && (
                 <span className="text-xs text-amber-600 dark:text-amber-500">
-                  showing the first {(result.rows_total ?? 0).toLocaleString()} rows captured  - 
+                  showing the first {(result.rows_total ?? 0).toLocaleString()} rows captured - 
                   counts above remain exact
                 </span>
               )}

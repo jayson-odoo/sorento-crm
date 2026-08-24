@@ -80,7 +80,7 @@ def _unescape_jinja_tags(source: str) -> str:
     ``unexpected char '&'`` and the whole template renders as
     ``[template-error:...]``. Entities never carry meaning *inside* a Jinja tag
     (logic uses ``and``/``or``/``>``/``"``, never ``&amp;``), so decoding within
-    the delimiters is safe and leaves output text - where ``&amp;`` is real  - 
+    the delimiters is safe and leaves output text - where ``&amp;`` is real - 
     untouched.
     """
     if not source or "&" not in source:

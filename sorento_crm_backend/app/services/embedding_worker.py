@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 # source_type -> owned model carrying company_id (multi-company isolation). Types
 # absent here are synthetic / company-less (mcp_tool, form, schema_doc,
-# order_status, conversation_frame, ``debtor:`` seeds) and stay company-less  - 
+# order_status, conversation_frame, ``debtor:`` seeds) and stay company-less - 
 # shared knowledge visible under every scope.
 _SOURCE_MODEL_FOR_COMPANY = {
     "product": Product,

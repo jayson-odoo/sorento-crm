@@ -65,7 +65,7 @@ class ImportJob(Base):
     updated_at = Column(DateTime(timezone=False), nullable=True)
     
     # Retained source file (tracing): the ORIGINAL uploaded bytes are streamed to the
-    # storage bucket at import time so the file is retrievable later. All nullable  - 
+    # storage bucket at import time so the file is retrievable later. All nullable - 
     # storage is best-effort (never blocks an import) and older jobs / non-file imports
     # (products, warehouses) have none. See docs/plans/imports/.
     source_filename = Column(String, nullable=True)       # original upload name (display)

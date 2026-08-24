@@ -26,7 +26,7 @@ the same template**, so the message structure is uniform across both branches.
   the configurable use-case enum - added here so an admin can give them a template).
 - **Fallback is preserved.** When a use-case has no valid configured default
   template, the in-window branch sends the caller's raw `text` exactly as today.
-  Uniformity therefore rolls out **per use-case as templates are configured**  - 
+  Uniformity therefore rolls out **per use-case as templates are configured** - 
   zero behaviour change until a default exists. Same safety as the out-of-window
   `TemplateSendSkipped` path, but in-window degrades to text instead of failing.
 - **Out of scope (this pass):** the 2 ad-hoc auto-sends that bypass the choke
@@ -57,13 +57,13 @@ the same template**, so the message structure is uniform across both branches.
 ### Backend
 
 1. `respond_messaging_service.py`
-   - `sanitize_param(value, *, max_len, flatten=True)` - when `flatten=False`,
+ - `sanitize_param(value, *, max_len, flatten=True)` - when `flatten=False`,
      preserve newlines (tabs→space, length-bound only).
-   - `resolve_template_params(..., flatten=True)` - thread the flag to the sanitizer.
-   - New `render_in_window_text(db, *, use_case, context_vars, fallback_text) -> str`
-     - resolve the default template; if invalid/missing return `fallback_text`;
+ - `resolve_template_params(..., flatten=True)` - thread the flag to the sanitizer.
+ - New `render_in_window_text(db, *, use_case, context_vars, fallback_text) -> str`
+   - resolve the default template; if invalid/missing return `fallback_text`;
      else `render_filled_body(template.body_text, resolve_template_params(..., flatten=False))`.
-   - `send_text_or_template` - compute `vars_resolved` (with `message` / `portal_url`
+ - `send_text_or_template` - compute `vars_resolved` (with `message` / `portal_url`
      defaulting) **once, before** the window branch so in/out-of-window resolve
      variables identically. In-window: send `render_in_window_text(...)` instead of
      raw `text`; stamp the rendered string into `request_payload` + the returned

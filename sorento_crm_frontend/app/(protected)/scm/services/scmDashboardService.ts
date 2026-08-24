@@ -8,13 +8,13 @@
  * code, product category resolved to a name server-side.
  *
  * Shared filter query params (apply to every endpoint below):
- *   warehouse    - comma-separated warehouse_code list (the BE also accepts a
+ *   warehouse  - comma-separated warehouse_code list (the BE also accepts a
  *                  repeatable `warehouse` and a `warehouses` alias; we send the
  *                  comma-separated `warehouse` form).
- *   category_id  - product_categories.id (UI shows the name, never the UUID).
- *   supplier     - supplier_code.
- *   health       - stockout|dead|healthy|incoming (legend chips + drill-downs).
- *   q            - free-text product search (SKU code / name). On net-position
+ *   category_id - product_categories.id (UI shows the name, never the UUID).
+ *   supplier   - supplier_code.
+ *   health     - stockout|dead|healthy|incoming (legend chips + drill-downs).
+ *   q          - free-text product search (SKU code / name). On net-position
  *                  the BE collapses `query` → `q`, so we send it via `query`.
  * ============================================================================
  *

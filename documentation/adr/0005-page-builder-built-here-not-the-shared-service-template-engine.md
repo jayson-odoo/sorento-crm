@@ -5,7 +5,7 @@ a block model, has a canvas editor, merge tokens, contexts and a WeasyPrint PDF 
 not reusing it for the Dealer Kit's web pages. It stays where it is, serving the shared
 service's own products. (Amended below: email moves here too.)
 
-The engine is print-first, and the Kit's pages are screen-first. That is not a preference  - 
+The engine is print-first, and the Kit's pages are screen-first. That is not a preference - 
 it is the coordinate system:
 
 - `CanvasDocumentModel` is **one fixed card**: millimetres, `bleed`, `sides[front|back]`,

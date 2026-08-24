@@ -95,10 +95,10 @@ def run_bulk_update(
     """Apply ``field = value`` to each of ``ids`` via the resource's normal update
     path, returning a partial-success summary.
 
-    - Field not on the resource's whitelist -> 400 (no raw column write is ever
+  - Field not on the resource's whitelist -> 400 (no raw column write is ever
       reachable).
-    - Value not allowed for the field -> 400 (validated once, globally).
-    - Per row: not found, or rejected by the normal update path -> collected in
+  - Value not allowed for the field -> 400 (validated once, globally).
+  - Per row: not found, or rejected by the normal update path -> collected in
       ``skipped`` with a human ``label`` + ``reason``; the batch continues.
     """
     res = get_bulk_resource(resource_key)

@@ -8,12 +8,12 @@ import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
  * unit-testable.
  *
  * Gating:
- *  - Convert applies to the WHOLE selection, any suppliers - a container is routinely
+ * - Convert applies to the WHOLE selection, any suppliers - a container is routinely
  *    several factories' PIs, so picking more than one is the normal case, not an edge one.
- *  - Delete applies to the WHOLE selection too. Blocked (already-converted) invoices are
+ * - Delete applies to the WHOLE selection too. Blocked (already-converted) invoices are
  *    named in the RESULT, not filtered out of the button here - the operator selects
  *    invoices without having to know in advance which ones will refuse.
- *  - Both surface whenever anything is selected; if nothing is selected, NO action applies
+ * - Both surface whenever anything is selected; if nothing is selected, NO action applies
  *    → returns `[]` so the Actions button does not render.
  */
 export interface ProformaBulkActionState {

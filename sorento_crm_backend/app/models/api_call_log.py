@@ -1,6 +1,6 @@
 """Request telemetry for external + MCP-originated API calls.
 
-Separate from `integration_log` on purpose. That table is a **work queue**  - 
+Separate from `integration_log` on purpose. That table is a **work queue** - 
 `retry_count`, `max_retry_allowed`, `next_retry_at`, and a UUID `business_id`
 pointing at the row being synced. Chat ingest already fakes that FK with a random
 uuid because it has no business row to point at, which is the tell that it was

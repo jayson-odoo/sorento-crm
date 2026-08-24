@@ -61,12 +61,12 @@ bundle_component   id · bundle_id FK · product_id FK -> public.products · qua
 Core migrations this plan owns (small, additive, nullable):
 
 - `attachment_types.certification_logo_attachment_id` → `attachments` (AC-E2)
-- `attachments.valid_until` DATE, **and appended to `Attachment.__audit_columns__`** (AC-E3)  - 
+- `attachments.valid_until` DATE, **and appended to `Attachment.__audit_columns__`** (AC-E3) - 
   without the audit line, expiry edits are silently unaudited
 
 ## 4. The document model
 
-`page_version.doc` is the whole design. It stores **no prices and no access decisions**  - 
+`page_version.doc` is the whole design. It stores **no prices and no access decisions** - 
 AC-G1 makes a price string in a saved doc a defect.
 
 ```jsonc

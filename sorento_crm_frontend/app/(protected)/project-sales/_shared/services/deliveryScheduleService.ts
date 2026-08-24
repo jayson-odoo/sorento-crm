@@ -65,8 +65,8 @@ export async function listDeliveryScheduleVersions(
  *
  *   GET /api/v1/project-sales/delivery-schedule-versions/neighbours?id=<version_id>
  *   200 { total, index, prev_id, next_id }
- *       - index is 1-based, null when the version is not in the set.
- *       - prev_id/next_id wrap circularly; null only when total <= 1.
+ *     - index is 1-based, null when the version is not in the set.
+ *     - prev_id/next_id wrap circularly; null only when total <= 1.
  *   404 when the version id names nothing.
  */
 export const DELIVERY_SCHEDULE_VERSION_NEIGHBOURS_PATH = `${BASE}/delivery-schedule-versions/neighbours`;

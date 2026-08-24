@@ -107,7 +107,7 @@ class ConversationSLATracking(Base):
     # The company this tracker escalates within. Stamped once at creation from the
     # contact (conversation SLA) or the spawning entity's contact (form SLA), then
     # read back by every escalation. NOT a CompanyScopedMixin: escalation runs from
-    # scheduler ticks and cross-company admin views that must still see the row  - 
+    # scheduler ticks and cross-company admin views that must still see the row - 
     # the company governs which ladder is climbed, not who may read the tracker.
     # ORM-nullable / PG-NOT-NULL on purpose, matching the mixin's convention: the
     # scratch-schema fixtures insert before any stamp would fire.

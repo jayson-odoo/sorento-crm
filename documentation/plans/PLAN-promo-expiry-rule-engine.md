@@ -131,9 +131,9 @@ Port from `foundryx-shared-service/service_backend/app/rule_engine/`, with these
 - **`schemas.py`** - copy verbatim (`OPERATORS_BY_TYPE`, `validate_tree`). Import `_MAX_DEPTH` + `CROSS_FACT_OPERATORS` from local evaluator.
 - **`prose.py`** - copy verbatim (`condition_text`, `tree_text`, `_PHRASES`).
 - **`registry.py`** - copy the `FactDef`/`FactSource`/`register_fact_source`/`get_facts`/`fact_map`/`resolve_facts`/`infer_facts`/`_day_count_facts` machinery. Replace:
-  - `from app.lazy_registry import lazy_once` → local `_lazy_once` helper (a one-shot wrapper).
-  - `from app.clock import today` → sorento Malaysia-today: `datetime.now(MALAYSIA_TZ).date()` (import `MALAYSIA_TZ` from `app.services.sla_service`).
-  - `_register_core()` → register ONLY the `promotion` source (drop foundryx actor/tenant). Access-levels options resolver queries `ContactAccessType` (`app/models/access.py`) active rows → `[{value: code, label: name}]`.
+ - `from app.lazy_registry import lazy_once` → local `_lazy_once` helper (a one-shot wrapper).
+ - `from app.clock import today` → sorento Malaysia-today: `datetime.now(MALAYSIA_TZ).date()` (import `MALAYSIA_TZ` from `app.services.sla_service`).
+ - `_register_core()` → register ONLY the `promotion` source (drop foundryx actor/tenant). Access-levels options resolver queries `ContactAccessType` (`app/models/access.py`) active rows → `[{value: code, label: name}]`.
 - **`aggregates.py`, `sites.py`** - NOT ported (no COUNT/SUM facts, no observability list in v1).
 - **New `app/api/v1/.../rule_facts.py`** - `GET /rule-facts?sources=promotion` materializing dynamic options; mount in `app/api/v1/__init__.py`. Schema `RuleFactItem`.
 
@@ -152,17 +152,17 @@ Port from `foundryx-shared-service/service_backend/app/rule_engine/`, with these
 - **`_send_grouped`** - accept `batch_id`/`batch_link`; add `ctx["batch_link"]`, `ctx["expiry_notify_batch_id"]`.
 - **`email_template_service.py`** - catalog + `sample_context()` add `batch_link`, `expiry_notify_batch_id`.
 - **Compile PDF**:
-  - `app/services/promotions_pdf_service.py` - `PromotionsPdfService.render_pdf(promotion_ids) -> (bytes, filename, skipped: list)`. Load promos preserving input order; per promo load `promotion_attachments` ordered by `sort_order` NULLS LAST, `created_at`; download each via `storage_router` dispatch on the attachment's `storage_provider`; PDF → `fitz` `insert_pdf`; image (jpeg/png/webp/gif) → new page + `insert_image`; else skip+record. Empty output → raise. Filename `promotions-expiring-{DD-MM-YYYY}.pdf`.
-  - `app/tasks/export_tasks.py` - `generate_promotions_pdf(download_id, promotion_ids, user_id)` mirroring `generate_complaint_pdf` (mark_processing → render → upload `exports/promotions-pdf/{download_id}/{filename}` → mark_ready; except → mark_failed).
-  - `app/api/v1/marketing/promotions.py` - `POST /export/pdf` (see contract) + `expiry_notify_batch_id` query param on the list route + list-query service filter.
+ - `app/services/promotions_pdf_service.py` - `PromotionsPdfService.render_pdf(promotion_ids) -> (bytes, filename, skipped: list)`. Load promos preserving input order; per promo load `promotion_attachments` ordered by `sort_order` NULLS LAST, `created_at`; download each via `storage_router` dispatch on the attachment's `storage_provider`; PDF → `fitz` `insert_pdf`; image (jpeg/png/webp/gif) → new page + `insert_image`; else skip+record. Empty output → raise. Filename `promotions-expiring-{DD-MM-YYYY}.pdf`.
+ - `app/tasks/export_tasks.py` - `generate_promotions_pdf(download_id, promotion_ids, user_id)` mirroring `generate_complaint_pdf` (mark_processing → render → upload `exports/promotions-pdf/{download_id}/{filename}` → mark_ready; except → mark_failed).
+ - `app/api/v1/marketing/promotions.py` - `POST /export/pdf` (see contract) + `expiry_notify_batch_id` query param on the list route + list-query service filter.
 
 ## Frontend
 
 - **`components/platform/rule-builder/`** (new dir) - port `RuleBuilder` + `types/rules.ts` (`RULE_OPERATORS`, `CROSS_FACT_OPERATORS`, `RULE_MAX_DEPTH`, wire types) + `services/ruleEngineService.ts` (`getFacts(sources)` → `GET /rule-facts`). Adapt imports/design tokens to sorento's shadcn/ReUI components (searchable dropdowns per repo standard - NO `ui/select`). Keep operator tables in lockstep with BE `OPERATORS_BY_TYPE`.
 - **Automation form** (`app/(protected)/system-management/automation/…AutomationForm`) - fetch trigger specs; if selected trigger has `fact_sources`, render `<RuleBuilder sources={fact_sources} value={conditions_json} onChange=… />` under the trigger block; include `conditions_json` in the create/update payload.
 - **Promotions list** (`app/(protected)/marketing-management/promotions/…`):
-  - read `?expiry_notify_batch_id=` → pass through list query (`buildDataGridParams` extra) + dismissable banner (mirror `ProductsList` discontinued banner).
-  - DataGrid row selection (checkbox) + "Compile PDF" toolbar/Actions button → `useCompilePromotionsPdf()` mutation → `POST …/export/pdf` with selected ids in display order → toast "Preparing PDF… it will appear in My Downloads" → invalidate `['my-downloads']`.
+ - read `?expiry_notify_batch_id=` → pass through list query (`buildDataGridParams` extra) + dismissable banner (mirror `ProductsList` discontinued banner).
+ - DataGrid row selection (checkbox) + "Compile PDF" toolbar/Actions button → `useCompilePromotionsPdf()` mutation → `POST …/export/pdf` with selected ids in display order → toast "Preparing PDF… it will appear in My Downloads" → invalidate `['my-downloads']`.
 - **`components/my-downloads/DownloadRow.tsx`** - `KIND_LABEL['promotions_pdf'] = "Promotions PDF"`.
 
 ## Tests (Phase 2, not deferred)

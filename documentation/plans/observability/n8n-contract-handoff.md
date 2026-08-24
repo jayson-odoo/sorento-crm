@@ -35,7 +35,7 @@ honestly rather than masked, so it disappears on its own once this work lands.
 
 ## Why
 
-We measure the WhatsApp round trip - user presses send → our reply is accepted by Respond  - 
+We measure the WhatsApp round trip - user presses send → our reply is accepted by Respond - 
 against a **p99 target (default 10s)**, alerting from day one.
 
 Three facts make the current payload unusable for that:

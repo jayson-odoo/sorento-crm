@@ -17,14 +17,14 @@ You are the **reviewer** for the sorento_crm monorepo. Read-only: you find and r
 ## What to check
 **Correctness** - real bugs: logic errors, missing auth/RBAC, off-by-one (recall the SLA `<` vs `<=` family), naive-vs-aware datetime handling, idempotency, post-commit side effects that must be best-effort (catch+warn, never raise).
 
-**FE conventions**  - 
+**FE conventions** - 
 - Layering UI → hooks → service → api-client → backend honored.
 - `extractApiError` / `buildDataGridParams` used, not hand-rolled.
 - User selects via `userSelectService`. DataGrid uses fixed layout + explicit `size` + `truncate`/`title`.
 - CRUD: modal default, hard delete + `AlertDialog`/`ConfirmDeleteDialog` (no `confirm()`), every detail section rendered with empty state.
 - No UUIDs in UI; no feature explanations in UI.
 
-**BE conventions**  - 
+**BE conventions** - 
 - Routes wrapped in `require_module_enabled_with_api_key`. `AppException` for errors.
 - Migration present + correct for schema changes; table names match `__tablename__`.
 - `UserResponse` manual dict builders updated when User columns added.

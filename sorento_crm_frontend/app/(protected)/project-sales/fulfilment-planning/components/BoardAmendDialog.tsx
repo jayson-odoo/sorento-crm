@@ -42,9 +42,9 @@ import { BorrowAddDialog } from './BorrowAddDialog';
  * decision and quantity, like I can decide to reserve, or buy, or borrow". Two faults, and
  * this fixes both:
  *
- *   - the editor was a panel UNDER a 25-row table inside the breakdown's own scroll region, so
+ * - the editor was a panel UNDER a 25-row table inside the breakdown's own scroll region, so
  *     pressing Amend moved nothing the planner could see and the form was simply never found;
- *   - it held ONE input, the Reserve, so two of the four verbs were unreachable and the third
+ * - it held ONE input, the Reserve, so two of the four verbs were unreachable and the third
  *     was derived behind their back - everything taken off the Reserve was pushed into Buy.
  *
  * So it is a dialog of its own, over the one it was opened from, and it composes the SAME four

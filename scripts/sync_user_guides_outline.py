@@ -278,7 +278,7 @@ def dry_run(args: argparse.Namespace) -> None:
     if skipped:
         print("\nSKIPPED (folder not in publish allowlist - will NOT publish):")
         for s in skipped:
-            print(f"  - {s}")
+            print(f" - {s}")
     held_present = sorted(HELD_FOLDERS & {p.split('/')[0] for p in skipped})
     print(
         "\nHeld-folder check: "
@@ -445,10 +445,10 @@ def status(args: argparse.Namespace) -> None:
     if missing_in_state:
         print("Missing from state (will be created on next push):")
         for p in missing_in_state:
-            print(f"  - {p}")
+            print(f" - {p}")
     print("Outline doc titles:")
     for d in sorted(docs, key=lambda x: (x.get("parentDocumentId") or "", x["title"])):
-        prefix = "  - " if not d.get("parentDocumentId") else "    - "
+        prefix = " - " if not d.get("parentDocumentId") else "  - "
         print(f"{prefix}{d['title']}  ({d['id']})")
 
 

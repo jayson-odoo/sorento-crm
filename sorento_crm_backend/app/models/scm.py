@@ -950,9 +950,9 @@ class PlanException(Base, CompanyScopedMixin):
     the engine saw:
 
       * `timeline_json` - before and after, side by side (AC-D4).
-      * `reading_json`  - lifecycle, velocity, business class, last purchase date, each with
+      * `reading_json` - lifecycle, velocity, business class, last purchase date, each with
         the field it was read from (AC-D9, AC-D12).
-      * `actions_json`  - the proposed actions and their rank, which IS the reading's verdict
+      * `actions_json` - the proposed actions and their rank, which IS the reading's verdict
         (AC-D10) and so is stored rather than re-derived.
 
     `quantity` is always positive; the TYPE carries the direction. A signed quantity would let

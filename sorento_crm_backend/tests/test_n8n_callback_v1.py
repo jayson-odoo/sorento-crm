@@ -2,9 +2,9 @@
 n8n callback v1 schema validation tests.
 
 Covers IntegrationLogUpdateRequest validator behaviour:
-  - v1 payload (schema_version=1) → strict validation, malformed → 422 / ValueError
-  - legacy free-form payload (no schema_version) → accepted with deprecation log
-  - non-JSON payload → rejected
+ - v1 payload (schema_version=1) → strict validation, malformed → 422 / ValueError
+ - legacy free-form payload (no schema_version) → accepted with deprecation log
+ - non-JSON payload → rejected
 See app/schemas/integration.py and docs/plans/PLAN-upload-activity-drawer.md §4.4.
 """
 import json

@@ -21,11 +21,11 @@ import { useOrderSummaryLocations } from '../hooks/useSummaryOrder';
  *
  * Two rules the layout enforces:
  *
- *   - **Demand is split by channel, supply is not.** Project, Retail and
+ * - **Demand is split by channel, supply is not.** Project, Retail and
  *     Unclassified are three demand columns; stock, incoming SPO, PO and the
  *     reorder level are single shared facts of the product-location, printed once
  *     (AC-F07). Repeating them per channel would double the supply on screen.
- *   - **The once-rounded product figure is stated beside the split**, so the
+ * - **The once-rounded product figure is stated beside the split**, so the
  *     reader can check that the location quantities sum EXACTLY to the chosen
  *     quantity and that the supplier rounding happened once, at the product
  *     (AC-E06 / AC-F11 / AC-F12).

@@ -635,11 +635,11 @@ class PromotionService:
 
         period_from/period_to: optional date bounds. `date_mode` selects which
         promotion date the window tests:
-        - "overlap" (default): [start_date, end_date] overlaps the window  - 
+      - "overlap" (default): [start_date, end_date] overlaps the window - 
           "promotions valid/running during X".
-        - "started": start_date falls within the window - "promotions
+      - "started": start_date falls within the window - "promotions
           released/launched in X".
-        - "ended": end_date falls within the window - "promotions that
+      - "ended": end_date falls within the window - "promotions that
           ended/expired in X".
         started/ended skip the active gate by default (the window is the
         intent; both active and ended rows match) unless active/status is
@@ -777,7 +777,7 @@ class PromotionService:
 
         Only fires when exactly ONE input product scoped the query (`product_ids`);
         otherwise "which product's neighbours?" is undefined. The has-data gate =
-        the candidate product appears on at least one ACTIVE-window promotion  - 
+        the candidate product appears on at least one ACTIVE-window promotion - 
         ``Promotion.is_active`` AND today within ``[start_date, end_date]`` (or no
         window) - the same active definition ``_build_promotions_ordered_query``
         uses. A sibling whose only promo is expired is therefore not offered.
@@ -1319,7 +1319,7 @@ class PromotionProductService:
         Promotion.description. Structured filters (category_id, brand_id, dimensions, price,
         item_type, status) are AND-combined with the text query.
 
-        `active` gates on the PARENT promotion's active state (not Product.is_active  - 
+        `active` gates on the PARENT promotion's active state (not Product.is_active - 
         that's `status`). active=None: no gate (full catalog - FE DataGrid default).
         active=True: active-promotion lines first; if a narrowing filter is present and
         zero match, fall back to inactive-promotion lines (`fallback_used=true`).

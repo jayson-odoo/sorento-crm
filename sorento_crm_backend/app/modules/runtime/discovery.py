@@ -2,15 +2,15 @@
 Auto-discovery for self-contained modules under app/modules/<key>/.
 
 Each module may define:
-  - manifest.py     (required for participation; exposes MODULE_KEY etc.)
-  - models.py       (SQLAlchemy models - imported so Alembic sees tables)
-  - schemas.py      (Pydantic schemas)
-  - routes.py       (must expose `router: APIRouter`)
-  - services.py     (business logic)
-  - purge.py        (must expose `purge(db) -> Dict[str, int]`)
-  - migrations/     (per-module Alembic version dir, branch-labeled)
-  - frontend/       (JSON metadata for the FE; ignored by backend)
-  - mcp/tools.json  (optional per-module MCP slice)
+ - manifest.py     (required for participation; exposes MODULE_KEY etc.)
+ - models.py       (SQLAlchemy models - imported so Alembic sees tables)
+ - schemas.py      (Pydantic schemas)
+ - routes.py       (must expose `router: APIRouter`)
+ - services.py     (business logic)
+ - purge.py        (must expose `purge(db) -> Dict[str, int]`)
+ - migrations/     (per-module Alembic version dir, branch-labeled)
+ - frontend/       (JSON metadata for the FE; ignored by backend)
+ - mcp/tools.json  (optional per-module MCP slice)
 
 Discovery is additive - it does not replace any existing hardcoded registration.
 Modules listed in `LEGACY_REGISTERED_PREFIXES` (those still wired manually in

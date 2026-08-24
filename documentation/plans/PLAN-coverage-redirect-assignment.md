@@ -18,14 +18,14 @@ manual takeover. Colleague on leave → I hold their incoming work automatically
    Coverage is per-row either **auto-assign** (`redirect_assignments=True`) or **notify-only**
    (`False`, the original fan-out behaviour). The column defaults to `false` (server_default),
    so existing rows stay notify-only - backward-compatible. Enforcement in `subscribe()`:
-   - Self-coverage → 422.
-   - Adding redirect=ON → 409 if ANY active non-expired coverage exists for that target by a
+ - Self-coverage → 422.
+ - Adding redirect=ON → 409 if ANY active non-expired coverage exists for that target by a
      different subscriber (an auto-redirect coverer must be the SOLE coverer). Message names
      the current coverer + until-date.
-   - Adding redirect=OFF → 409 ONLY if an active redirect=ON coverage exists for that target
+ - Adding redirect=OFF → 409 ONLY if an active redirect=ON coverage exists for that target
      (can't notify-cover someone already auto-redirected). Otherwise allowed - MULTIPLE
      notify-only coverages per target are permitted.
-   - Same subscriber re-subscribing the same target → upsert (updates the mode + expiry),
+ - Same subscriber re-subscribing the same target → upsert (updates the mode + expiry),
      never a conflict.
    `active_coverer_for()` returns only `redirect_assignments=True` coverers (≤1 by the rule
    above), so only auto-assign coverages redirect routing; notify-only keep fanning out copies.

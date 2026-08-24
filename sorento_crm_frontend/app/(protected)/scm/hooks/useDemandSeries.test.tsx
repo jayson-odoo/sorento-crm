@@ -1,9 +1,9 @@
 /**
  * Tests for useDemandSeries - the lazy 12-month DO-outflow trend fetch backing
  * the expandable Product row's sparkline.
- *  - disabled (no fetch) when the row isn't expanded / SKU is empty
- *  - hits /dashboard/demand-series with sku (+ optional warehouse)
- *  - returns the parsed monthly series
+ * - disabled (no fetch) when the row isn't expanded / SKU is empty
+ * - hits /dashboard/demand-series with sku (+ optional warehouse)
+ * - returns the parsed monthly series
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';

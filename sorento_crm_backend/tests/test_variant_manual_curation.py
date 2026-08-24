@@ -3,16 +3,16 @@
 Covers docs/plans/PLAN-variant-manual-curation.md §9 / §10:
 
 Endpoints (auth = get_current_user JWT):
-  - PUT    /api/v1/master-data/products/{id}/variant-parent   (set / change / attach-child)
-  - DELETE /api/v1/master-data/products/{id}/variant-parent   (unlink / remove-child)
-  - POST   /api/v1/master-data/products/{id}/variant-reset     (reset to auto)
-  - GET    /api/v1/master-data/products?variant_filter=...     (base|variant|all + refs/count)
+ - PUT    /api/v1/master-data/products/{id}/variant-parent   (set / change / attach-child)
+ - DELETE /api/v1/master-data/products/{id}/variant-parent   (unlink / remove-child)
+ - POST   /api/v1/master-data/products/{id}/variant-reset     (reset to auto)
+ - GET    /api/v1/master-data/products?variant_filter=...     (base|variant|all + refs/count)
 
 Service (D1 - "manual wins, sticky"):
-  - reconcile_variant_links does NOT re-derive a manual row's own parent but STILL
+ - reconcile_variant_links does NOT re-derive a manual row's own parent but STILL
     adopts its auto orphans.
-  - _adopt_orphans does NOT steal a manual child.
-  - backfill main()/derive_parents skips manual rows (0 changes on re-run) while
+ - _adopt_orphans does NOT steal a manual child.
+ - backfill main()/derive_parents skips manual rows (0 changes on re-run) while
     still letting them be candidate parents.
 
 Runs against a blank copy of the real Postgres schema, rolled back per test. The

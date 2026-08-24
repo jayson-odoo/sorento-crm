@@ -67,7 +67,7 @@ end, what every other stakeholder is told automatically.
 Optimise for the **fewest decisions the user must make**. Anything derivable from
 something they already gave us is derived, never asked.
 
-**A plan whose first section is a schema is rejected.** No skill does this step  - 
+**A plan whose first section is a schema is rejected.** No skill does this step - 
 it is manual, and it is the one that protects the rest.
 
 ### Step 2 - Grill
@@ -120,7 +120,7 @@ inventing; a new variant is a prop on the shared component, never a parallel
 one-off. Document the expected API contract at the top of the service file.
 
 Verify in a real browser via **agent-browser** (headless;
-`npx -y agent-browser@0.27.0 <command>`), navigating by **sidebar clicks from `/`**  - 
+`npx -y agent-browser@0.27.0 <command>`), navigating by **sidebar clicks from `/`** - 
 never a deep URL. Check `console` and `errors`. Screenshot the golden path and the
 edge cases. `close` when done. Playwright MCP is retired for verification.
 

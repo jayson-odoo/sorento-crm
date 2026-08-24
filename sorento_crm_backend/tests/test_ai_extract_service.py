@@ -117,7 +117,7 @@ def test_form_schemas_keys_namespaced():
 
 
 def test_portal_stock_inquiry_schema_has_quantity_no_do_number():
-    """Stock inquiry has quantity (number) but NOT delivery_order_number  - 
+    """Stock inquiry has quantity (number) but NOT delivery_order_number - 
     proves per-form field flexibility (the user's "complaint has DO number
     but stock inquiry doesn't" requirement)."""
     schema = get_form_schema("portal.stock_inquiry")

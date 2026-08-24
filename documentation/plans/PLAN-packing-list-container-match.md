@@ -41,7 +41,7 @@ Linkages table and the Integration tab.
 ## Tests
 
 - `tests/test_packing_list_container_match.py`:
-  - container match updates a not-fully-received shipment in place (attachment
+ - container match updates a not-fully-received shipment in place (attachment
     replaced, lines replaced, shipment_number filled in);
-  - a fully-received shipment's container does **not** match → new shipment;
-  - `shipment_number` still takes precedence over container.
+ - a fully-received shipment's container does **not** match → new shipment;
+ - `shipment_number` still takes precedence over container.

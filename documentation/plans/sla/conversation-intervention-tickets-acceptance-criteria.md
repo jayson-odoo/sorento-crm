@@ -295,7 +295,7 @@ Format: per-AC id, Given/When/Then, tagged [BE] / [FE] / [E2E] / [T] (T = has au
   (deliberately NOT `form_sla_service._fmt_due`, which carries no weekday and no zone).
   Exact rendered bodies:
 
-  - out of hours (Sat 15 Aug 2026 09:25 MYT request, clock Mon 17 Aug 09:00 MYT,
+ - out of hours (Sat 15 Aug 2026 09:25 MYT request, clock Mon 17 Aug 09:00 MYT,
     due Mon 17 Aug 10:00 MYT):
 
         Aisyah Rahman has been assigned to you.
@@ -304,7 +304,7 @@ Format: per-AC id, Given/When/Then, tagged [BE] / [FE] / [E2E] / [T] (T = has au
 
         Open: https://fe-sorento.foundryx.my/?ticket=<id>
 
-  - in hours (Fri 14 Aug 2026 14:00 MYT request, due 15:00 MYT):
+ - in hours (Fri 14 Aug 2026 14:00 MYT request, due 15:00 MYT):
 
         Aisyah Rahman has been assigned to you.
 
@@ -500,15 +500,15 @@ channel - quote-prefix emulation stays), sticker sends.
   (unique where not null), `respond_mirrored`, `created_at`.
 
   Endpoints:
-  - `POST /api/v1/sla-management/conversation-sla-tracking/{tracking_id}/comments`
+ - `POST /api/v1/sla-management/conversation-sla-tracking/{tracking_id}/comments`
     body `{ body: string, mentioned_user_ids?: string[] }` -> 201
     `{ id, tracking_id, body, author_name, mentioned_names[], source, created_at }`.
     Assignee-or-manager scoped via `can_user_act_on_tracking` (404 for an outsider,
     never 403). An unknown mentioned user is a 400 `VALIDATION_ERROR`; a blank body is
     a 422 from the request schema.
-  - `GET  .../{tracking_id}/comments` -> the same shape, oldest first, carrying this
+ - `GET  .../{tracking_id}/comments` -> the same shape, oldest first, carrying this
     ticket's CRM comments PLUS the contact-scoped Respond-ingested ones.
-  - `POST /api/v1/external/chat-history/comments` (X-API-Key, `system.chat_history.view`)
+ - `POST /api/v1/external/chat-history/comments` (X-API-Key, `system.chat_history.view`)
     body `{ contact_id? (respond_io_id), phone_number?, comment_id, text,
     author_respond_user_id?, author_name?, created_at? (epoch ms) }` -> 201
     `{ id, status: "created" | "duplicate" }`. Unknown contact = 404, no contact
@@ -572,15 +572,15 @@ channel - quote-prefix emulation stays), sticker sends.
   admin page at **SLA Management -> Message Snippets**.
 
   Endpoints, all under `/api/v1/sla-management/message-snippets`:
-  - `GET  /?page&limit&query&sort&dir&is_active` -> `ListResponse[MessageSnippet]`
+ - `GET  /?page&limit&query&sort&dir&is_active` -> `ListResponse[MessageSnippet]`
     (admin listing; active and inactive).
-  - `GET  /select?query=&tracking_id=` -> `[{ id, name, shortcut, body,
+ - `GET  /select?query=&tracking_id=` -> `[{ id, name, shortcut, body,
     resolved_body }]`. ACTIVE snippets only. `body` is the stored wording with
     its `$tokens`; `resolved_body` is the same text substituted against the
     ticket. With a `tracking_id` the caller must pass `can_user_act_on_tracking`
     or it is a **404, never a 403** (same no-existence-leak rule as the sibling
     ticket routes). Without one, the neutral fallbacks are used.
-  - `GET /{id}`, `POST /`, `PUT /{id}`, `DELETE /{id}` (hard delete). A duplicate
+ - `GET /{id}`, `POST /`, `PUT /{id}`, `DELETE /{id}` (hard delete). A duplicate
     shortcut is a 409; a blank name or body is a 422.
 
   Variables: `$contact_name`, `$assignee_name`, `$ticket_ref`. **Any other
@@ -762,8 +762,8 @@ closes, so it WILL fire on our close once live. Two consequences need explicit h
   **As built (slice S4.5, 2026-08-15).** Two links, both honoured SERVER-side by the
   existing conversation list query (never a client-side slice), and both also fed into
   `/neighbours` so the detail pager walks the same filtered set:
-  - drawer, Resolved state: `?contact=<respond_io_id>` (phone as the fallback).
-  - worklist header, My Pending: `?is_resolved=true&resolved_by=me&sort=resolved_at&dir=desc`.
+ - drawer, Resolved state: `?contact=<respond_io_id>` (phone as the fallback).
+ - worklist header, My Pending: `?is_resolved=true&resolved_by=me&sort=resolved_at&dir=desc`.
 
   New list params on `GET /api/v1/sla-management/conversation-sla-tracking`:
   `contact` (Respond.io id / CRM respond_contacts.id / phone), `is_resolved` (bool),
@@ -896,7 +896,7 @@ Journey addition:
   note's `created_at`, per this AC's own wording) than on the other three (last message
   time), so the cursor's `sort_at` is tab-dependent; (b) on the Mine / Unassigned tabs
   the message join is OUTER with the sort falling back to `respond_contacts.created_at`
-  - a contact with an open ticket but no stored message must still be reachable - while
+ - a contact with an open ticket but no stored message must still be reachable - while
   All keeps the inner join, because this AC defines All as "every contact with any
   message". Scaling follow-up, unchanged from the plan: if the `DISTINCT ON` stops
   being cheap, a `respond_contacts.last_message_at` column maintained by the ingest

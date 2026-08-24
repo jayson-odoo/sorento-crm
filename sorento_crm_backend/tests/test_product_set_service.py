@@ -176,7 +176,7 @@ def test_filter_specs_resolves_a_class_term(db):
 
 
 def test_filter_specs_drops_known_spec_words_without_flagging_them(db):
-    # "wall hung" is a registry mounting value: not a class, but recognized  - 
+    # "wall hung" is a registry mounting value: not a class, but recognized - 
     # it must neither define membership nor be reported as unrecognized.
     verdict = filter_specs(db, free_terms=["wall hung"])
     assert verdict["class_labels"] == []

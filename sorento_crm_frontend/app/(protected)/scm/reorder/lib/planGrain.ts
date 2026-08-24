@@ -8,11 +8,11 @@
  *
  * Three states, and the third is not a value of the first two:
  *
- *   - `product`  - the single product row owns the chosen quantity; the per-location
+ * - `product` - the single product row owns the chosen quantity; the per-location
  *                  view stays open as a read and drill view (AC-F02).
- *   - `location` - the per-location recommendations and overrides stay actionable; the
+ * - `location` - the per-location recommendations and overrides stay actionable; the
  *                  product row is a read-only aggregate of them.
- *   - LEGACY     - a run created before the front-planning contract. It carries no
+ * - LEGACY   - a run created before the front-planning contract. It carries no
  *                  grain and no channel breakdown, accepts no decision in either grain,
  *                  and is never backfilled (AC-F10). A legacy run is identified by its
  *                  NULL contract version, not by a missing grain alone, because that is

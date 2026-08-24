@@ -41,11 +41,11 @@ The actor is the buyer (purchasing). They arrive at Reorder Planning from the si
    Order Inquiry (CS already filtered it), retail demand comes straight from the outstanding
    sales orders. A row appears when a product falls below its reorder level.
 3. **Each row makes three suggestions, in plain words**:
-   - **How many** - buy N / use stock M from a named place / both. Behind it: demand, on hand,
+ - **How many** - buy N / use stock M from a named place / both. Behind it: demand, on hand,
      incoming (SPO allocations), on order (outstanding PO), and whether this product's demand
      is holding up or dying off.
-   - **What price** - use the last price / ask this other supplier / get a new quote.
-   - **What level** - "set AutoCount reorder level to N", so the NEXT planning run triggers at
+ - **What price** - use the last price / ask this other supplier / get a new quote.
+ - **What level** - "set AutoCount reorder level to N", so the NEXT planning run triggers at
      the right time.
 4. **They review, not calculate.** Every suggestion opens the data that justifies it - last 3
    months of orders (retail) or last 12 (project), who bought it, who sold it, what we paid

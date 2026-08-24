@@ -2,9 +2,9 @@
 
 Uses REAL committed fixture bytes (a small 2-page PDF + a PNG) injected via a
 monkeypatched storage backend (no S3/R2 network). Verifies:
-  - merge preserves the caller's promotion_ids order and per-promo sort_order;
-  - a non-printable attachment (.txt) is skipped and reported;
-  - zero printable attachments -> ValueError.
+ - merge preserves the caller's promotion_ids order and per-promo sort_order;
+ - a non-printable attachment (.txt) is skipped and reported;
+ - zero printable attachments -> ValueError.
 """
 from __future__ import annotations
 

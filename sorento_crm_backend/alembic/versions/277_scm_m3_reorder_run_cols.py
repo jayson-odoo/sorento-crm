@@ -7,7 +7,7 @@ core shape but without the run-lifecycle + frozen-input columns the M3 run job n
     ``run_log`` (JSONB counts {stage, buy, disposition, exceptions,
     total_cash_impact, recommendation_count, duration_ms}) - mirrors
     ``scm.scm_analytics_run`` so a crash still leaves a 'failed'+error trace.
-  * ``scm.reorder_recommendation``: ``rec_type`` (buy|disposition|exception  - 
+  * ``scm.reorder_recommendation``: ``rec_type`` (buy|disposition|exception - 
     the discriminator the results grid filters/counts on) + ``inputs`` (JSONB
     freeze bag carrying every frozen input that has no dedicated typed column:
     reason enum, min/max qty, order_up_to, safety_stock(+method),

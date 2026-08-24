@@ -5,7 +5,7 @@ Multi-modal capture (voice/image/video/file) grilled + folded in 2026-07-20 → 
 (AC-60..AC-70), Phase 2f. Blocked on spine §5.1 (`attachments[]` + `discard_draft_id`) + the n8n contract.
 **UAC:** `ideation-ideate-intent-acceptance-criteria.md` (this plan fulfils it).
 **Program spine (authority on contracts):** `foundryx-shared-service/documentation/plans/ideation/PLAN-ideation-to-delivery-program.md`
- -  this plan keys back to **§5.1 (`create_idea`)**, **§5.2 (`session_vars.ideation`)**, **§5.3 (embed SSO + product-domain link)**, and **D6/D7/D8/D19**.
+ - this plan keys back to **§5.1 (`create_idea`)**, **§5.2 (`session_vars.ideation`)**, **§5.3 (embed SSO + product-domain link)**, and **D6/D7/D8/D19**.
 **Classification:** Additive CORE change to the existing CRM WhatsApp brain (D6) + one net-new external
 endpoint + a FE iframe host. **Not** a new tenant module (it extends the current brain, not App-Store enablement).
 **Sequencing:** choice **X** (D19) - build into the *current* sorento brain now; the small ideate logic is
@@ -96,7 +96,7 @@ with no submission boundary, and media carries no intent of its own - it inherit
 belongs with (image-then-"idea" vs image-then-"complaint" are the same shape, opposite binding).
 
 - **DC-1 - Lookback + confirm-gate, NOT an aggregation window.** Solve the "media arrived before the idea
-  text" case by a **backward lookback on the first `ideate` turn**, contained to the `ideate` branch only  - 
+  text" case by a **backward lookback on the first `ideate` turn**, contained to the `ideate` branch only - 
   zero change to the complaint/order/stock consume paths (respects D-6 live-flow safety). An aggregation
   window would wrap the entire production classifier in a timer; rejected.
 - **DC-2 - Numbered menu, last 10 inbound, backward-only; subsequent auto-attach.** Menu lists type icon +
@@ -104,7 +104,7 @@ belongs with (image-then-"idea" vs image-then-"complaint" are the same shape, op
   (context unambiguous); the user removes a wrong one in the iframe.
 - **DC-3 - Pull from Respond List Messages; no buffer.** On `ideate`-open, the endpoint calls Respond's
   List Messages via the existing `RespondClient` and filters recent inbound media. **Because the human picks
-  via the menu, there is no park endpoint, no `ideation_media_buffer` table, and no `consumed_by` tracking**  - 
+  via the menu, there is no park endpoint, no `ideation_media_buffer` table, and no `consumed_by` tracking** - 
   a complaint's photo may appear in the menu; the user simply doesn't select it. n8n stays thin (unchanged).
 - **DC-4 - Snapshot picked media to durable storage.** Respond CDN URLs expire, but the idea links them
   long-term. On confirm, the endpoint fetches the *picked* bytes and stores them via `storage_router`
@@ -125,7 +125,7 @@ belongs with (image-then-"idea" vs image-then-"complaint" are the same shape, op
   full classification - gated by `pending_media` being set. Positions present ⇒ deterministic selection route
   to `/turn`; **no position ⇒ not a selection**, the turn falls through to normal classify (a mid-selection
   CRM interrupt is never swallowed). No TTL on `pending_media`.
-- **DC-8 - Media menu appended to the first reply (front), then field collection.** Recency is the signal  - 
+- **DC-8 - Media menu appended to the first reply (front), then field collection.** Recency is the signal - 
   ask while the files are fresh; one clean selection turn, then `create_idea`'s field questions.
 - **DC-9 - Unified `attachments[]`, retire `audio_attachment_ref`.** §5.1 input gains
   `attachments: [{ source_msg_id, url, type, filename?, caption? }]`; `source_msg_id` is the idempotency key
@@ -215,7 +215,7 @@ Red → green → refactor. Write failing tests first, especially the parser gol
   1. resolve the default workspace + `ideation_product_id` (fail-closed if unset → AC-31);
   2. `get_for_contact` → read `session_vars.ideation.draft_id`;
   3. build the §5.1 input deterministically, call shared-service `create_idea` over **HTTP** (server-to-server,
-     `httpx` to `{ideation_shared_service_url}/ideation/intake/create-idea`, workspace/integration-key auth)  - 
+     `httpx` to `{ideation_shared_service_url}/ideation/intake/create-idea`, workspace/integration-key auth) - 
      **NOT** MCP (D-A5/§8-R3: shared-service has no MCP write server; `sorento_crm_mcp` is read-only). The
      `ideation_mcp_url` setting is retired in favour of `ideation_shared_service_url` + `ideation_intake_api_key`;
   4. on `collecting` → merge `session_vars.ideation = {draft_id, missing, updated_at}`; on

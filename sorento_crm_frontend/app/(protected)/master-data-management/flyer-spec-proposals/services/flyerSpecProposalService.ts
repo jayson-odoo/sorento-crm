@@ -48,7 +48,7 @@
  *     -> 202 FlyerSpecBatch with `status: 'proposing'`. The pass is an RQ job on
  *        the existing `flyer_read` queue, so this returns before it starts and
  *        the screen polls the GET above every 3 s until it settles.
- *        409 FLYER_NOT_READ_YET   - the reading is still processing, or failed.
+ *        409 FLYER_NOT_READ_YET - the reading is still processing, or failed.
  *        409 FLYER_SPEC_PROPOSING - a pass is already running for this reading.
  *        Re-proposing a settled batch deletes its proposals and runs again
  *        against the master as it is NOW (AC-A.5).

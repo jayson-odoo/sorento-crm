@@ -11,9 +11,9 @@ request - so revocation (``revoked_at``) and expiry are instant, and role/status
 changes take effect on the next request (no stale-JWT window).
 
 Lifetimes:
-  - "Remember me" checked  → 30-day rolling (``rolling=True``); each use re-extends
+ - "Remember me" checked  → 30-day rolling (``rolling=True``); each use re-extends
     ``expires_at`` to now+30d, throttled to ~once/day (29-day threshold).
-  - "Remember me" unchecked → 8-hour absolute (``rolling=False``); never slides.
+ - "Remember me" unchecked → 8-hour absolute (``rolling=False``); never slides.
 
 No absolute cap on the rolling window (matches the portal). Sessions die only by
 expiry or explicit revoke (logout, password change, admin force-logout, block).
@@ -39,7 +39,7 @@ class UserSession(Base):
     revoked_at = Column(DateTime(timezone=False), nullable=True)
     # True → 30-day sliding window; False → fixed 8h (remember-me unchecked).
     rolling = Column(Boolean, nullable=False, default=True, server_default="true")
-    # Device metadata for the "your devices" UI + admin triage. Never shown raw  - 
+    # Device metadata for the "your devices" UI + admin triage. Never shown raw - 
     # the FE parses a friendly label from user_agent.
     user_agent = Column(Text, nullable=True)
     ip_address = Column(String(64), nullable=True)

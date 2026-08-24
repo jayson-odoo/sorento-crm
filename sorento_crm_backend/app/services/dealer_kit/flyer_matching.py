@@ -298,7 +298,7 @@ def _suggestions(db: Session, codes: list[str]) -> dict[str, CodeSuggestion]:
 
     One statement for every miss, by unnesting the codes into a derived table
     and joining the products to it. The alternative - a query per unmatched code
-    - is invisible on the three-page fixture and 38 round trips on the real one.
+  - is invisible on the three-page fixture and 38 round trips on the real one.
     ``Product`` leads the query so the company predicate lands on it, which is
     what keeps a suggestion from naming another company's product.
     """

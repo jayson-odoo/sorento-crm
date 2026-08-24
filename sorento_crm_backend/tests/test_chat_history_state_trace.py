@@ -2,7 +2,7 @@
 
 Covers the CRM-side acceptance cases of the state-transition-monitor plan:
 
-- UAC-CRM-1: a POSTed state_trace actually PERSISTS (not validated-then-dropped  - 
+- UAC-CRM-1: a POSTed state_trace actually PERSISTS (not validated-then-dropped - 
   the blocker was that the raw INSERT has an explicit column list, so the pydantic
   field alone is insufficient). Asserting 201 is NOT enough; we read the row back.
 - UAC-CRM-2: `after: null` round-trips as a present key with a null value, not `{}`

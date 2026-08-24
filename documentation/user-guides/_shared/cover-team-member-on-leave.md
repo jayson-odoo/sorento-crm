@@ -14,8 +14,8 @@ It's one short form:
 2. **Covers for** - the colleague who is **away**. Pick them from the list.
 3. **Until (optional)** - the last day of the coverage (e.g. their return date). Leave blank for no end date.
 4. **Mode** - choose how their tasks are handled:
-   - **Auto-assign** - the away colleague's SLA tasks **and escalations are routed to the coverer automatically**. Only **one** auto-assign coverer is allowed per person.
-   - **Notify only** - the tasks stay assigned to the away colleague; the coverer is **notified** and can pick the task up manually with **Takeover** (on the *My Team* tab). Several people can be notify-only coverers.
+ - **Auto-assign** - the away colleague's SLA tasks **and escalations are routed to the coverer automatically**. Only **one** auto-assign coverer is allowed per person.
+ - **Notify only** - the tasks stay assigned to the away colleague; the coverer is **notified** and can pick the task up manually with **Takeover** (on the *My Team* tab). Several people can be notify-only coverers.
 5. Click **[Add](#guide_target=dashboard.coverage.add)**.
 
 The new coverage shows in the list as a **Coverer → Covers for** row, with an **Active** badge, the **Until** date, and the **Auto-assign / Notify only** mode.

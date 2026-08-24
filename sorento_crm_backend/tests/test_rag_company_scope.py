@@ -3,12 +3,12 @@
 Complements the predicate/payload unit coverage in ``test_embedding_company_scope``
 with two live-DB, entity-level assertions:
 
-  - AC-I5: mutating an OWNED entity (a Promotion) enqueues an embedding-queue row
+ - AC-I5: mutating an OWNED entity (a Promotion) enqueues an embedding-queue row
     whose payload carries the ENTITY's ``company_id`` - via the real
     ``after_insert`` change listener + the multi-company auto-stamp, not the raw
     ``build_queue_payload`` helper. This is the source-company that the embedding
     worker later stamps onto ``embedding_documents`` / ``embedding_chunks``.
-  - AC-I4: a Mocha-scoped semantic search over ``embedding_chunks`` returns only
+ - AC-I4: a Mocha-scoped semantic search over ``embedding_chunks`` returns only
     the in-scope company's rows (plus shared/null-company knowledge), never a
     Sorento entity's chunk.
 

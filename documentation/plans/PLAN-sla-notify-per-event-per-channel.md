@@ -33,8 +33,8 @@ In-app stays always-on when the stage allows the event (not user-gated).
 2. **Models**: `FormSLAConfig.notify_on_escalation`; `User` 4 new columns.
 3. **notification_service.create_with_channel_preferences**: add `email_pref_attr: Optional[str]=None` - when set, gate `send_email` on `getattr(user, email_pref_attr)`. Mirrors the existing `whatsapp_pref_attr` gate. Default None ⇒ email unchanged for other callers.
 4. **_notify_assignee(kind)**: pass per-event pref attrs:
-   - assigned → email `notify_email_on_assignment`, whatsapp `notify_whatsapp_on_assignment`.
-   - escalated → email `notify_email_on_escalation`, whatsapp `notify_whatsapp_on_escalation`.
+ - assigned → email `notify_email_on_assignment`, whatsapp `notify_whatsapp_on_assignment`.
+ - escalated → email `notify_email_on_escalation`, whatsapp `notify_whatsapp_on_escalation`.
 5. **_escalate_tracker**: before `_notify_assignee(kind="escalated")`, look up the stage config by `(source_entity_type, team_set_code)`; skip notify if `notify_on_escalation` is false (default true / notify when no config found).
 6. **Schemas/API**: extend `_ChannelPrefsUpdate` + `_channel_prefs` + user profile schemas with the 4 fields; FormSLAConfig schema + create/update with `notify_on_escalation`.
 

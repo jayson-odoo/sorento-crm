@@ -42,11 +42,11 @@ existing `image_normalizer` upload-boundary pattern.
 
 ### Thumbnail generation (new `app/services/image_thumbnailer.py`)
 - `generate_thumbnail(content: bytes, mime: str|None, *, max_edge=320, quality=80) -> bytes|None`
-  - Returns a JPEG thumbnail (RGB, `Image.thumbnail` preserves aspect) or `None`
+ - Returns a JPEG thumbnail (RGB, `Image.thumbnail` preserves aspect) or `None`
     when the bytes are not a decodable raster image (non-image files, PDFs, etc.).
-  - Best-effort: any decode/encode failure returns `None` (never blocks upload).
-  - Reuses Pillow (already a dep via image_normalizer).
-- Thumb object key = `{original_key}.thumb.jpg` (deterministic, collision-free  - 
+ - Best-effort: any decode/encode failure returns `None` (never blocks upload).
+ - Reuses Pillow (already a dep via image_normalizer).
+- Thumb object key = `{original_key}.thumb.jpg` (deterministic, collision-free - 
   original keys are already uuid-segregated).
 
 ### Upload wiring (`app/api/v1/resources/attachments.py :: create_attachment`)

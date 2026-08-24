@@ -23,10 +23,10 @@ it - every claim below is sourced from something the original run recorded.
   (**not** sqlite), holding **8,820 live (non-discontinued) product codes** at the time of the
   walk (`Verified 0 of 8,820 live codes` on the unfiltered worklist).
 - Branch: `fm/spec-pr3-verification-list`. Commits under test:
-  - `307a9268` - spec verification worklist against fixtures (PR 3 phase 1)
-  - `9b770b5e` - spec verification off mocks; verify/unverify on the Specifications tab (PR 3
+ - `307a9268` - spec verification worklist against fixtures (PR 3 phase 1)
+ - `9b770b5e` - spec verification off mocks; verify/unverify on the Specifications tab (PR 3
     phase 2 frontend)
-  - `bd4da862` - spec verification ledger, worklist and verify/unverify endpoints (PR 3 phase 2
+ - `bd4da862` - spec verification ledger, worklist and verify/unverify endpoints (PR 3 phase 2
     backend)
 
 ## Vitest (Phase 2 tests, this session)
@@ -61,15 +61,15 @@ All screenshots referenced live at
    "Product Management" in the sidebar and clicked the "Spec Verification" leaf. Landed on the
    worklist showing `Verified 0 of 8,820 live codes` (`e2e-02-worklist.png`).
    Network: `GET /api/v1/master-data/product-specifications/verification/worklist?page=1&limit=25`
-   - 200 (backend.log line 223, 1.664s).
+ - 200 (backend.log line 223, 1.664s).
 
 2. **Filter by search + state, URL-persisted params.** Typed `63524` into the search box, then
    opened the Verification filter and picked "Unverified" (`e2e-03-search-63524.png` shows the
    filter popover with "Unverified" checked). Both `query` and `state` params were carried on the
    GET, confirming the filters are wired into the request (and, per the transcript, persisted in
    the URL):
-   - `GET .../worklist?page=1&limit=25&query=63524` - 200 (line 263)
-   - `GET .../worklist?page=1&limit=25&query=63524&state=unverified` - 200 (line 290)
+ - `GET .../worklist?page=1&limit=25&query=63524` - 200 (line 263)
+ - `GET .../worklist?page=1&limit=25&query=63524&state=unverified` - 200 (line 290)
 
 3. **Single-row verify.** With the filter narrowed to 2 live codes (`63524`, `63524D`), clicked
    the row-level "Verify" button on `63524`. Pill flipped to "Verified", button became "Unverify",

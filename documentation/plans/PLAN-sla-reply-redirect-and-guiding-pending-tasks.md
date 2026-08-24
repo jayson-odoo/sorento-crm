@@ -48,9 +48,9 @@ Refs: developers.respond.io "Open/close conversation".
 
 File: `SlaTrackingConversationPanel.tsx`
 - Replace the in-system reply Textarea + Send (lines ~154-177) with a **redirect CTA**:
-  - When `respondInboxUrl` present: a note "Replies (including files) are sent from Respond"
+ - When `respondInboxUrl` present: a note "Replies (including files) are sent from Respond"
     + a primary "Open in Respond" button (`window.open(respondInboxUrl)`).
-  - Keep the message history (read-only) + refresh + existing ExternalLink.
+ - Keep the message history (read-only) + refresh + existing ExternalLink.
 - Drop `useSlaTrackingConversationReply` usage from the panel (keep history hook).
 - Leaves the BE reply endpoint in place (still used by form-SLA chat windows / other surfaces);
   only the conversation-SLA panel stops exposing it. Confirm no other caller breaks.
@@ -72,9 +72,9 @@ Files: `MyPendingSLAWidget.tsx`, `list_my_pending` (sla_service.py), `MyPendingS
 - BE `list_my_pending`: add `respond_io_id` (from joined contact) to each item so FE can build
   the Respond inbox URL for conversation rows. (Form rows already route by entity.)
 - FE row, per type:
-  - Form SLA: status sub-line ("Awaiting your response") + action line
+ - Form SLA: status sub-line ("Awaiting your response") + action line
     ("Open <entity>, review & reply to customer") + **[ Open record ]** button → entity page.
-  - Conversation SLA: action line ("Reply in Respond - files unsupported in-app") +
+ - Conversation SLA: action line ("Reply in Respond - files unsupported in-app") +
     **[ Open in Respond ]** (inbox URL) + **[ Resolve ]** (confirm dialog → resolve endpoint).
 - Keep pagination. Keep empty/loading/error states.
 

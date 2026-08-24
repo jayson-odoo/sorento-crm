@@ -473,7 +473,7 @@ class RecordContextService:
 
         # --- who/when set the current state ----------------------------------
         # Priority: rejection (rejected_*) > response (last_responded_*) > the
-        # latest status-change audit row. A stock inquiry has NO approval gate  - 
+        # latest status-change audit row. A stock inquiry has NO approval gate - 
         # "responded" means purchasing has answered (not awaiting a decision).
         if is_rejected and (inquiry.rejected_by or inquiry.rejected_at):
             set_by_id = inquiry.rejected_by or (

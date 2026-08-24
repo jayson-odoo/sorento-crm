@@ -147,7 +147,7 @@ In `AttachmentService.update_attachment`, before the generic `setattr` loop, whe
 6. **`storage_router.rename_object(provider, old_key, new_key)`** (copy → verify).
 7. Set on the row: `stored_filename = new_stored`, `file_path = cdn_base_url(provider, new_key)`,
    `original_filename = new_display`.
-8. `commit`. Then `rename_object`'s old-key delete already ran (step 6 deletes after verify)  - 
+8. `commit`. Then `rename_object`'s old-key delete already ran (step 6 deletes after verify) - 
    ordering note below.
 
 **Ordering / partial-failure:** copy+verify happen *before* the DB commit; if they raise, the
@@ -200,7 +200,7 @@ comment in `AttachmentUpdate` (it currently claims storage is never touched). Al
 
 ## Risks / out of scope
 
-- **Old CDN/cached links break** to the renamed object (old key deleted). Accepted per owner  - 
+- **Old CDN/cached links break** to the renamed object (old key deleted). Accepted per owner - 
   that is the point. Signed URLs are minted on read from the new key, so app flows self-heal;
   externally-pasted old URLs do not.
 - Cross-provider rename not needed (rename stays on the row's own provider). Provider migration

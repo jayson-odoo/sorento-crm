@@ -2,10 +2,10 @@
 
 Ownership is split, and the split is the whole point of this module:
 
-  * the SEED owns vocabulary  - label, type, unit, allowed_values, synonyms, gates.
+  * the SEED owns vocabulary - label, type, unit, allowed_values, synonyms, gates.
     These must match what the parser extracts against, so a drifted value is repaired
     on every re-seed rather than preserved.
-  * a HUMAN owns calibration  - rank_weight, is_active, the match window, and
+  * a HUMAN owns calibration - rank_weight, is_active, the match window, and
     excluded_values. Weights are tuned against the eval baseline and that tuning is the
     only calibration the ranker has, so the seed must never overwrite it.
 

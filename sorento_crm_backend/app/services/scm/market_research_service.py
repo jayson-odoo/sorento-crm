@@ -12,7 +12,7 @@ Two halves, with a hard line between them:
   exercise the whole persistence path with no network.
 
 LLM boundary (AC-M5.8): this service writes ONLY the ``scm.market_signal`` table
-(+ its run log). It NEVER writes a numeric field on ``reorder_recommendation``  - 
+(+ its run log). It NEVER writes a numeric field on ``reorder_recommendation`` - 
 signals are their own advisory-only table; the deterministic engine never reads
 them.
 

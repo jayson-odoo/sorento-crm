@@ -90,16 +90,16 @@ resolved_at           timestamp nullable
 ## Backend
 
 - **`SlaTakeoverService`** (or methods on `SLATrackingService`):
-  - `initiate(tracking_id, initiator_id, team_id)` → if cooldown==0 OR task unassigned →
+ - `initiate(tracking_id, initiator_id, team_id)` → if cooldown==0 OR task unassigned →
     commit inline (existing `takeover()` body), return committed tracking. Else create pending
     request, fire start-notification, return request. Validates: can-act, not resolved, no existing
     pending (FCFS 409/idempotent - decide: **409** with the existing request so UI shows the bar).
-  - `cancel(request_id, actor_id)` - initiator/admin; status→cancelled; notify original (in-app).
-  - `reject(request_id, actor_id)` - contested-assignee/admin; status→rejected; notify initiator.
-  - `commit_due()` - sweep handler: for each pending past `commit_at`, re-validate (Q14), then run
+ - `cancel(request_id, actor_id)` - initiator/admin; status→cancelled; notify original (in-app).
+ - `reject(request_id, actor_id)` - contested-assignee/admin; status→rejected; notify initiator.
+ - `commit_due()` - sweep handler: for each pending past `commit_at`, re-validate (Q14), then run
     the **existing takeover reassignment logic** (re-derive tier/team/agent at commit, flip
     assignee, advance RR cursor, event log, Respond push) and notify both; else `voided` + notify.
-  - `void_for_tracking(tracking_id, reason)` - called by resolve/reassign/escalate paths to
+ - `void_for_tracking(tracking_id, reason)` - called by resolve/reassign/escalate paths to
     actively void any pending request (best-effort, post-commit side-effect rules).
 - **Hook void into** `reassign()`, the resolve path, and the escalation path
   (`_escalate_tracker` / scheduler escalation) - active voiding (Q14).
@@ -120,12 +120,12 @@ resolved_at           timestamp nullable
 - **Settings (General tab):** number input "Takeover cooldown (seconds)", 0 = instant. Wire through
   `system_settings` general settings form + its API proxy.
 - **My Team widget / team-pending page (initiator + observers):**
-  - Pending row: depleting bar (server `commit_at`) + **Cancel** (initiator only); Reassign hidden.
-  - Observer row (other members): "Takeover pending · <initiator> · m:ss", buttons disabled.
+ - Pending row: depleting bar (server `commit_at`) + **Cancel** (initiator only); Reassign hidden.
+ - Observer row (other members): "Takeover pending · <initiator> · m:ss", buttons disabled.
 - **My Pending widget (original):**
-  - `?takeover=<tracking_id>` → pin-fetch that row → flashing banner at top with bar + **Reject**;
+ - `?takeover=<tracking_id>` → pin-fetch that row → flashing banner at top with bar + **Reject**;
     clear param after action/dismiss; banner shows terminal state if already resolved.
-  - Inline "Being taken over · m:ss · Reject" on the contested row even without the link (organic).
+ - Inline "Being taken over · m:ss · Reject" on the contested row even without the link (organic).
 - **Countdown component:** shared, `commit_at`-driven, local animation, "Finalizing…" at zero.
 - **Polling:** react-query `refetchInterval` ~5 - 10s while any pending takeover visible; off otherwise.
 - Hooks: `useInitiateTakeover` (already `useTakeover` - change return to request), `useCancelTakeover`,

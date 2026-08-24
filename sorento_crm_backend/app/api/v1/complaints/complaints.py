@@ -1032,8 +1032,8 @@ async def create_complaint(
 ):
     """Create a new complaint with attachments.
     Accepts either:
-    - Standard ComplaintCreate (complaint_date, salesperson, delivery_order_number, ...), or
-    - Integration payload (date_of_complaint, sales_person, delivery_order_numbers, defect_discovered_when, ...), single object or [{ ... }].
+  - Standard ComplaintCreate (complaint_date, salesperson, delivery_order_number, ...), or
+  - Integration payload (date_of_complaint, sales_person, delivery_order_numbers, defect_discovered_when, ...), single object or [{ ... }].
     """
     try:
         is_integration_payload = False

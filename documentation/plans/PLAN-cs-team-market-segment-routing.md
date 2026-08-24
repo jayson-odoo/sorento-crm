@@ -179,13 +179,13 @@ n8n adds `&contact_id={{ ...respond_io_id }}` to its existing call. Omitting it 
 ## Tests (Phase 2, not deferred)
 
 - **pytest** `tests/test_team_member_segment_routing.py` (live PG, seeded prefix):
-  - retail contact → only retail + untagged members; project contact → only project + untagged.
-  - both-contact → union.
-  - contact untagged → all members (no filter).
-  - `contact_id` omitted → all members (byte-identical to today).
-  - unknown/other-workspace `contact_id` → all members (no 404, logged).
-  - **empty match → fall back to all** (retail contact, only project members tagged).
-  - segment filter ANDs correctly with tier resolution (`tier=1` team only).
+ - retail contact → only retail + untagged members; project contact → only project + untagged.
+ - both-contact → union.
+ - contact untagged → all members (no filter).
+ - `contact_id` omitted → all members (byte-identical to today).
+ - unknown/other-workspace `contact_id` → all members (no 404, logged).
+ - **empty match → fall back to all** (retail contact, only project members tagged).
+ - segment filter ANDs correctly with tier resolution (`tier=1` team only).
 - **pytest** `next-assignee` **regression guard (primary):** with NO `contact_id` in the body, the
   full existing round-robin sequence is byte-identical to today (cursor advances over the full team,
   same order) - for a CS team AND a non-CS team. This is the hard no-regression requirement.

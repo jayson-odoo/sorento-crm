@@ -5,7 +5,7 @@ function normalizedKey(v: string): string {
   return v
     .trim()
     .toLowerCase()
-    .replace(/[ -  - −]/g, '-')
+    .replace(/[ - - −]/g, '-')
     .replace(/\s+/g, ' ');
 }
 

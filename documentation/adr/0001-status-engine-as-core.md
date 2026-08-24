@@ -26,7 +26,7 @@ Renovation template can have different ladders while most templates configure no
 - Statuses are **global**, not `CompanyScopedMixin`. SRT and MOCHA share one pipeline
   definition; per-company graphs would double the config surface for no current benefit.
   The source's `tenant_id` column comes across but stays on the stub tenant.
-- All ported PKs and FKs are `UUID(as_uuid=False)`, **not** the source's `Column(String)`  - 
+- All ported PKs and FKs are `UUID(as_uuid=False)`, **not** the source's `Column(String)` - 
   the uuid-id principle. The pg-UUID-vs-varchar drift is what broke `user_sessions.id` auth on
   production.
 - The rule engine is a hard dependency (transition `conditions_json`). It is already ported

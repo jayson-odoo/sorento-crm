@@ -39,13 +39,13 @@ views, module registration (dormant), RBAC, numbering, and a curated demo seed o
 - `DocumentNumberingRule` rows for `sales_order` / `purchase_order`; use `NumberingService.next(doc_type)`.
 
 ## 6. Seed script - `scripts/seed_scm_demo.py` (requires DB up)
-1. **Pick SKUs:** query real data for representatives  - 
-   - fast dealer mover (high steady `stock_ledger` outbound),
-   - lumpy project item (bursty outbound),
-   - dead (no movement > policy days),
-   - stockout (on_hand=0 with prior demand),
-   - multi-warehouse (stock in ≥2 warehouses),
-   - one that will carry an open PO.
+1. **Pick SKUs:** query real data for representatives - 
+ - fast dealer mover (high steady `stock_ledger` outbound),
+ - lumpy project item (bursty outbound),
+ - dead (no movement > policy days),
+ - stockout (on_hand=0 with prior demand),
+ - multi-warehouse (stock in ≥2 warehouses),
+ - one that will carry an open PO.
 2. **Customers:** top-N by DO line count → seed open SO (committed) with `order_type` (continuous/spike mix) + `priority`.
 3. **Suppliers:** seed a few plausible sanitaryware suppliers; `product_suppliers` (extended cols) for demo SKUs; seed PO + GR (`picking_headers` `picking_type='goods_received'`, linked via `source_entity_type='purchase_order'` + `picking_lines.po_line_id`) with staggered issue/receipt dates so lead-time + reject-rate compute.
 4. **Policies + budget:** global + one class + one SKU `reorder_policy` (different methods) + one `purchasing_budget`; `demand_nature_map`; `override_reason` + `reason_action_map` starter vocab; `supplier_scoring_policy`.

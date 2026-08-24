@@ -3396,10 +3396,10 @@ class AIAssistantChatService:
         """Remove every reference to the internal Outline base URL from a piece
         of text BEFORE it is returned to / persisted for the user.
 
-        - A markdown link pointing at Outline (``[Guide](https://doc.foundryx.my/...)``,
+      - A markdown link pointing at Outline (``[Guide](https://doc.foundryx.my/...)``,
           bold-wrapped or not) collapses to just its (de-bolded) label so the
           sentence still reads.
-        - A bare Outline URL (optionally angle-bracketed) is removed outright.
+      - A bare Outline URL (optionally angle-bracketed) is removed outright.
 
         In-app links (``/resource-management/...``, ``?guide_target=...``) do NOT
         point at the Outline host, so they are left untouched.

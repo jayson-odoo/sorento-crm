@@ -75,9 +75,9 @@ When sorento shows the media menu, it stores `session_vars.ideation.pending_medi
 1. **Read** `session_vars.ideation.pending_media` for the contact (conversation-variables GET, the same
    read you already do to resume a draft).
 2. If it is **set**, run the parser to extract a **reference-position** from `message_text`:
-   - a position reference present (e.g. `1,3`, `1 and 3`, `first and third`, `all`, `none`) →
+ - a position reference present (e.g. `1,3`, `1 and 3`, `first and third`, `all`, `none`) →
      send it as `media_selection` (pass the raw string; sorento parses digits/`all`/`none`).
-   - **no** position reference (the user said something else - a field answer, a new question, an
+ - **no** position reference (the user said something else - a field answer, a new question, an
      interrupt) → **do NOT** send `media_selection`; route the turn normally (classify as usual). Sorento
      treats the absence as "menu dismissed" and proceeds - a mid-selection CRM interrupt is never swallowed.
 3. This is the ONLY place `media_selection` is sent. If `pending_media` is not set, never send it.

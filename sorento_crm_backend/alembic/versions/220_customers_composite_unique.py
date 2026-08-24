@@ -137,6 +137,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute(f"DROP INDEX IF EXISTS {_NEW_UNIQUE_INDEX};")
-    # Re-creating the legacy column UNIQUE would fail if duplicates now exist  - 
+    # Re-creating the legacy column UNIQUE would fail if duplicates now exist - 
     # leave it off on downgrade. Operators that need it back must reconcile
     # data first then add it manually.

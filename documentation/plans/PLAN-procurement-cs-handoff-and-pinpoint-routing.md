@@ -65,12 +65,12 @@ In `form_sla_service._start_for_config`, before calling `get_next_assignee`:
 
 1. If `config.source_entity_type ∈ {purchase_request, sponsorship_form}` AND
    `contact_id` is not NULL:
-   - `SELECT cs_pic_user_id FROM respond_contact_cs_routing WHERE respond_contact_id=:cid AND use_case=:uc AND is_active`
-   - If a row exists AND `cs_pic_user_id` is an active member of `team_id`
+ - `SELECT cs_pic_user_id FROM respond_contact_cs_routing WHERE respond_contact_id=:cid AND use_case=:uc AND is_active`
+ - If a row exists AND `cs_pic_user_id` is an active member of `team_id`
      (the resolved tier-1 team): build the assignee dict
      `{id, email, name, respond_user_id}` for that user, **do not advance the
      round-robin cursor**, proceed.
-   - Else (`contact_id` NULL, no row, stale/inactive/non-member pin): fall through.
+ - Else (`contact_id` NULL, no row, stale/inactive/non-member pin): fall through.
 2. Fall-through → `get_next_assignee(agent_id, team_id)` (round-robin), log a warning
    on the stale-pin case.
 3. Everything downstream (tracker fields, due dates, `_notify_assignee`) identical

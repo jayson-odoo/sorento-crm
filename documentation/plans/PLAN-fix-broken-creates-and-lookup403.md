@@ -14,9 +14,9 @@
 
 ### Bug A - broken Creates + BE 500
 - **A1 design = dedicated `new/page.tsx` pages** (Option A - match the 14 working siblings; modal-migration deferred as separate optional item):
-  - **Form** - build `forms-management/forms/new/page.tsx` mirroring `[id]/edit/page.tsx`, rendering the existing `FormForm` in create mode (blank metadata form: code/name/type/purpose/lang - NOT the workflow drag-drop builder).
-  - **Campaign** - build `marketing-management/campaigns/new/page.tsx` + a NEW `CampaignForm` component (none exists; `[id]` is a Dashboard). Wire `useCreateCampaign`. **Fold in the status-casing fix (A5).**
-  - **Stock-Batch** - REMOVE the "Create Batch" button (`BatchesList.tsx:231`). Batches come from the import pipeline. Keep the BE `POST /stock-batches/` (used by import/tests); only the dead UI entry goes.
+ - **Form** - build `forms-management/forms/new/page.tsx` mirroring `[id]/edit/page.tsx`, rendering the existing `FormForm` in create mode (blank metadata form: code/name/type/purpose/lang - NOT the workflow drag-drop builder).
+ - **Campaign** - build `marketing-management/campaigns/new/page.tsx` + a NEW `CampaignForm` component (none exists; `[id]` is a Dashboard). Wire `useCreateCampaign`. **Fold in the status-casing fix (A5).**
+ - **Stock-Batch** - REMOVE the "Create Batch" button (`BatchesList.tsx:231`). Batches come from the import pipeline. Keep the BE `POST /stock-batches/` (used by import/tests); only the dead UI entry goes.
 - **A2 - BE 500→404 on non-UUID id:** build a reusable `UUIDPath` dependency/validator that try-parses the path id and raises **404** on a non-UUID. Apply to the in-scope detail GETs (marketing campaigns + forms + stock-batches) now; log "adopt UUIDPath across ALL `{id}` detail GETs" as a follow-up sweep (Option A breadth - don't touch ~40 routes in this change).
 - **A5 - campaign status casing (folded into Campaign create):** BE is canonical UPPERCASE. Make the BE create/update schema **coerce incoming `status` → uppercase + validate against `CampaignStatus`** (reject garbage). Align FE filter/badge values to uppercase. Fixes create-bad-data + the dead status filter together.
 - **A-UAC:** Create Campaign / Create Form open working create pages; submit → row appears in list with correct (uppercase) status; no 500/not-found. Create Batch button gone. `GET /…/{id}` with non-UUID → 404 (test). Mobile + desktop, 0 console errors.

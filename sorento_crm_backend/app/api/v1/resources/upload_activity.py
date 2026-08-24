@@ -65,10 +65,10 @@ def _file_status_from_log(
     """Map integration_log.status + actual DB linkages to FE file status.
 
     Ground-truth precedence:
-      - If any real linkages exist in DB → "linked" regardless of log state.
+    - If any real linkages exist in DB → "linked" regardless of log state.
         Legacy n8n payloads frequently lack the v1 schema entirely; the row
         is still linked via product_attachments etc.
-      - else fall back to the log's status / v1 outcome.
+    - else fall back to the log's status / v1 outcome.
     """
     if linked:
         return "linked"

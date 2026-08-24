@@ -98,7 +98,7 @@ export type SearchableSelectProps = {
   /** Render a custom option body (status dots, icons). Defaults to label + description. */
   renderOption?: (opt: SearchableSelectOption) => React.ReactNode;
   /**
-   * Replace the whole trigger. For pickers that hang off something other than a select box  - 
+   * Replace the whole trigger. For pickers that hang off something other than a select box - 
    * an icon button, say - where the default trigger + chevron would be wrong.
    * Receives the resolved selection and open state; must render a single focusable element.
    */

@@ -6,7 +6,7 @@ set the recommendation's ``status`` (proposed → accepted | adjusted | dismisse
 and, for adjust/reject, append a ``scm.recommendation_override`` row (M4-D7 - a
 second adjust adds a second row, never rewrites the first). NO purchase order is
 created until the human explicitly runs **Confirm decisions** (``confirm_decisions``)
- -  that is the point where accepted + adjusted recs are consolidated into ONE draft
+ - that is the point where accepted + adjusted recs are consolidated into ONE draft
 ``purchase_order`` per supplier (status ``draft_recommendation``, one line per SKU).
 This gives the planner an editable overview before any PO exists.
 
@@ -212,7 +212,7 @@ def _product_supplier_choice(
 def _draft_po_for_supplier(
     db: Session, supplier_id: Optional[str], currency: Optional[str]
 ) -> PurchaseOrder:
-    """The open draft PO for a supplier, created on first accept (consolidation  - 
+    """The open draft PO for a supplier, created on first accept (consolidation - 
     M4-D4). One draft per supplier; a null supplier gets a single 'unassigned' draft."""
     q = db.query(PurchaseOrder).filter(
         PurchaseOrder.status == DRAFT_STATUS,
@@ -516,7 +516,7 @@ def _confirm_location_grain(
     """The LOCATION-grain half of ``confirm_decisions`` (M4-D4).
 
     Idempotent reconciler: for every decided rec (optionally narrowed to ``ids``)
-    - accepted/adjusted → upsert its line into the supplier's draft PO (latest
+  - accepted/adjusted → upsert its line into the supplier's draft PO (latest
     override qty/supplier honoured); dismissed → pull its line back out. Re-running
     after a re-adjust just updates the line. Returns how many decisions were
     confirmed and how many distinct draft POs were touched.
@@ -689,7 +689,7 @@ def _confirm_product_grain(
        location-grain plan-row loop above: use_stock / use_po / skip portions never do.
     2. **The Summary Order Report's Set-quantity sheet** (``OrderSummaryRow.
        chosen_qty`` / ``chosen_supplier_id``, ``summary_order_service.record_decision``)
-       - the FALLBACK, read only for a product the grid has no decision for. This
+     - the FALLBACK, read only for a product the grid has no decision for. This
        mirrors S16's own doctrine that a row decision is authoritative over the older
        mechanism it supersedes (see ``confirm_decisions``' docstring on
        ``PlanRowDecision`` vs. legacy rec status) - here it is the grid decision that

@@ -3,9 +3,9 @@
  *
  * Validates the redesign in PLAN-unified-drive-files.md / its UAC against the
  * REAL stack (FE :3000 -> BE :8000 -> DB). Per project memory:
- *   - ALWAYS sidebar-navigate from `/` (feedback_playwright_via_sidebar);
- *   - real committed fixtures, not stubbed mocks (feedback_e2e_real_samples);
- *   - assert the FE hit the right /api/v1/* call (browser_network_requests
+ * - ALWAYS sidebar-navigate from `/` (feedback_playwright_via_sidebar);
+ * - real committed fixtures, not stubbed mocks (feedback_e2e_real_samples);
+ * - assert the FE hit the right /api/v1/* call (browser_network_requests
  *     equivalent via a request log).
  *
  * Previously ONE 300s serial golden flow - split into focused, independent

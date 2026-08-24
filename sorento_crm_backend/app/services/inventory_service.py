@@ -291,10 +291,10 @@ class WarehouseService:
         """Upsert warehouses from Excel data, keyed by warehouse_code (case-insensitive).
 
         Column mapping (Excel header → DB field):
-          - "Sytem Location" / "System Location" / "warehouse_code" → warehouse_code
-          - "System Location Descriptions" / "System Location Description" / "warehouse_name" → warehouse_name
-          - "Warehouse Location" / "location" → location
-          - "Status" / "is_active" → is_active (Active|true → True; Inactive|false → False)
+        - "Sytem Location" / "System Location" / "warehouse_code" → warehouse_code
+        - "System Location Descriptions" / "System Location Description" / "warehouse_name" → warehouse_name
+        - "Warehouse Location" / "location" → location
+        - "Status" / "is_active" → is_active (Active|true → True; Inactive|false → False)
 
         Returns dict with created/updated/skipped counts + errors/warnings; if
         validate_only=True returns valid/errors/warnings/summary without writes.

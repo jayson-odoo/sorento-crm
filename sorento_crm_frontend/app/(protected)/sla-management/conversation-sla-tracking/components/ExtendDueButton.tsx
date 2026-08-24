@@ -25,8 +25,8 @@ interface ExtendDueButtonProps {
   takeoverPending?: boolean;
   /**
    * Controls how a missing (`undefined`) `currentDueAt` is treated:
-   *  - 'require' (default): hide the button when the resolution due is unknown.
-   *  - 'allow-unknown': show the button regardless; the dialog's preview confirms
+   * - 'require' (default): hide the button when the resolution due is unknown.
+   * - 'allow-unknown': show the button regardless; the dialog's preview confirms
    *    whether a resolution deadline exists. (Both surfaces now receive
    *    `due_at_resolution`, so 'require' is the norm; this remains for any future
    *    surface that lists trackers without the field.)

@@ -1,7 +1,7 @@
 /**
  * Types for the reusable BulkUpdateDialog (safe, whitelisted bulk edit).
  *
- * A list opts into bulk edit by declaring a WHITELIST of `BulkEditableField`s  - 
+ * A list opts into bulk edit by declaring a WHITELIST of `BulkEditableField`s - 
  * only these fields are editable, and (for `select`) only their `options` are
  * allowed values. This is deliberately NOT a "generic update any column" tool:
  * it drives a per-resource, per-field allow-list so the backend can run every

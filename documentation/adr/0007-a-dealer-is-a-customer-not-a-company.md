@@ -12,7 +12,7 @@ the catalogue per dealer or reclassifying products as global - which undoes the 
 separation the partition exists to provide.
 
 **The scope model has a documented "all companies" state.** When the resolver sees an
-X-API-Key call with no contact parameters, the scope is `None` and *no predicate is added*  - 
+X-API-Key call with no contact parameters, the scope is `None` and *no predicate is added* - 
 an accepted risk, mitigated by auditing contact-facing n8n branches. Between two in-house
 companies with shared users and one owner, that is a reasonable trade. With external dealers
 in those partitions the same state is a cross-dealer leak of pricing and customer lists. The

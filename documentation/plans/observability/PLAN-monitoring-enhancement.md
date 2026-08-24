@@ -72,8 +72,8 @@ wiring, **test-first red→green→refactor**) → Phase 3 (code review). Slices
    They are reading a field the scheduler does not obey.
 
 2. **The two readers disagree with each other, by design, in code comments.**
-   - `app/api/v1/system/health.py:148` counts `enabled AND (next_run_at IS NULL OR next_run_at < now)`.
-   - `app/services/system_health_alert_service.py:110` counts `enabled AND next_run_at IS NOT NULL
+ - `app/api/v1/system/health.py:148` counts `enabled AND (next_run_at IS NULL OR next_run_at < now)`.
+ - `app/services/system_health_alert_service.py:110` counts `enabled AND next_run_at IS NOT NULL
      AND next_run_at < now`, with a comment explaining that NULL is excluded to dodge a transient
      false alert during the just-seeded window.
    So the dashboard and the alert can never agree, and the alert's NULL exclusion is a
@@ -111,7 +111,7 @@ Call sites replaced:
 **Alert email.** Itemize per task: key, `name`, human interval ("every 15 minutes"), `last_run_at`
 in Malaysia wall-clock, lateness from `due_at` ("23m late"), and a deep link to
 `/system-management/scheduled-tasks/{id}`. De-dup, cooldown, and the recovery notice ride the
-existing `health_alert_state` machinery at `app/services/system_health_alert_service.py:52`  - 
+existing `health_alert_state` machinery at `app/services/system_health_alert_service.py:52` - 
 unchanged.
 
 **Lateness is measured from `due_at`, not `due_at + grace`.** Grace decides *whether* to alert;
@@ -354,7 +354,7 @@ exactly: `mark_processing` → produce → `upload_file` → `mark_ready`, and o
 
 ## `user_downloads` purge - closing a real existing gap
 
-New scheduled task `user_downloads_purge`. **Today nothing purges `user_downloads` at all**  - 
+New scheduled task `user_downloads_purge`. **Today nothing purges `user_downloads` at all** - 
 `complaint_pdf` files accumulate in storage forever. The purge applies to **all kinds**: delete the
 storage object then the row past retention (default **30d**, configurable). A missing storage object
 must not abort the sweep (already-deleted objects are normal).
@@ -374,7 +374,7 @@ hides.
 - **list_query registry:** **yes** - a new `ADAPTERS` entry (OBS-S5-01).
 - **Embedding pipeline:** none. Chat content is already handled by the existing RAG path; this slice
   adds no new embedding source.
-- **Worker / RQ:** **yes** - new RQ task in `app/tasks/export_tasks.py`. **The worker has no reload  - 
+- **Worker / RQ:** **yes** - new RQ task in `app/tasks/export_tasks.py`. **The worker has no reload - 
   restart it after editing `app/tasks/*`.** Local worker needs
   `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` on macOS or RQ's forked work-horse aborts with signal 6.
 
@@ -428,7 +428,7 @@ total 13**. The `pending` / `processing` / `sent` rows are counted in the total 
 1. **Fix the WRITER.** `app/services/sla_service.py:3647` raises
    `handle_validation_error("Conversation is already responded.")`, which is logged as a **failure**.
    It is a **benign idempotency race**, and **all 46 historical failed rows for the `sla_management`
-   channel are this one signature**. The codebase already has the right status value  - 
+   channel are this one signature**. The codebase already has the right status value - 
    `idempotent_already_active`, used at `app/api/v1/sla/sla_tracking.py:758`. Use it here. Stop
    manufacturing false failures at the source.
 
@@ -580,7 +580,7 @@ Both current render sites already call `formatDateTimeInMalaysia` on what appear
 
 - `app/(protected)/user-management/users/components/user-list.tsx:478` - `formatDateTimeInMalaysia(v)`
   where `v` comes from `accessorFn: row => row.last_sign_in_at ?? row.lastSignInAt`.
-- `app/(protected)/user-management/users/[id]/components/user-profile.tsx:172`  - 
+- `app/(protected)/user-management/users/[id]/components/user-profile.tsx:172` - 
   `formatDateTimeInMalaysia(user.lastSignInAt)`, fed from `[id]/layout.tsx:134`.
 
 So the observed **9:05 am (should be 5:05 pm MYT)** is **not** explained by a naive

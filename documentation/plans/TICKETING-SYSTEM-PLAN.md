@@ -51,12 +51,12 @@ Requirements baked in from the conversation:
 Generic `(entity_type, entity_id)` indirection so any module can plug in.
 
 - **`ActivityEvent`** - the Activities feed.
-  - `id` uuid, `entity_type` string, `entity_id` string, `kind` string (`system` | `user_update`), `body_html` text (nullable for system), `body_text` text, `system_template` string nullable (e.g. `"entity.created"`, `"status.changed"`), `system_payload` JSONB nullable (e.g. `{"from":"submitted","to":"assigned"}`), `actor_id` uuid (nullable for system), `created_at`. Index `(entity_type, entity_id, created_at)`.
-  - Linked attachments via the existing `EntityAttachmentLink` table with `entity_type='activity_event'`.
+ - `id` uuid, `entity_type` string, `entity_id` string, `kind` string (`system` | `user_update`), `body_html` text (nullable for system), `body_text` text, `system_template` string nullable (e.g. `"entity.created"`, `"status.changed"`), `system_payload` JSONB nullable (e.g. `{"from":"submitted","to":"assigned"}`), `actor_id` uuid (nullable for system), `created_at`. Index `(entity_type, entity_id, created_at)`.
+ - Linked attachments via the existing `EntityAttachmentLink` table with `entity_type='activity_event'`.
 - **`InternalNote`** - private notes.
-  - `id`, `entity_type`, `entity_id`, `author_id`, `body_html`, `body_text`, `created_at`, `updated_at`. Index `(entity_type, entity_id, author_id, created_at)`.
+ - `id`, `entity_type`, `entity_id`, `author_id`, `body_html`, `body_text`, `created_at`, `updated_at`. Index `(entity_type, entity_id, author_id, created_at)`.
 - **`ActivityMention`** - for @-mentions, drives notifications.
-  - `id`, `activity_event_id` (FK cascade), `mentioned_user_id`, `seen_at` nullable.
+ - `id`, `activity_event_id` (FK cascade), `mentioned_user_id`, `seen_at` nullable.
 
 Per-module config registered in code: each consuming module declares `entity_type` + a function that returns the linked Respond contact id(s) for a given `entity_id` (used by the Messages tab). Stored in `app/services/activities_registry.py`:
 
@@ -107,13 +107,13 @@ Mount in `app/api/v1/__init__.py` with prefix `/activities`, tag `activities`, `
 `__audit_track__=True`, `__audit_entity_type__="ticket"`. SQLAlchemy listeners that translate `__audit_track__` change rows into `ActivityEvent(kind="system", template="...")` are still **TODO**.
 
 - **`Ticket`**:
-  - Identity: `id` uuid, `ticket_number` text monotonic (`TCK-2026-000123`).
-  - Core: `title`, `description_html`, `description_text`.
-  - Workflow: `status` default `draft`, `priority` default `medium`, `category` default `question`, `due_date` nullable.
-  - People: `raised_by` uuid → users.id, `assigned_to` uuid → users.id nullable.
-  - **Response & Resolution payloads** (rich text on the ticket itself): `response_html`, `response_text`, `responded_by`; `resolution_html`, `resolution_text`, `resolved_by`.
-  - **SLA timestamps & durations** (mirror `ConversationSLATracking`): `submitted_at`, `assigned_at`, `first_response_at`, `responded_at`, `resolved_at`, `response_time_hours` numeric(10,2), `resolution_time_hours` numeric(10,2), `sla_response_due_at`, `sla_resolution_due_at`.
-  - Bookkeeping: `created_at`, `updated_at`. Indexes on `status`, `assigned_to`, `raised_by`, `priority`, `due_date`, `sla_response_due_at`.
+ - Identity: `id` uuid, `ticket_number` text monotonic (`TCK-2026-000123`).
+ - Core: `title`, `description_html`, `description_text`.
+ - Workflow: `status` default `draft`, `priority` default `medium`, `category` default `question`, `due_date` nullable.
+ - People: `raised_by` uuid → users.id, `assigned_to` uuid → users.id nullable.
+ - **Response & Resolution payloads** (rich text on the ticket itself): `response_html`, `response_text`, `responded_by`; `resolution_html`, `resolution_text`, `resolved_by`.
+ - **SLA timestamps & durations** (mirror `ConversationSLATracking`): `submitted_at`, `assigned_at`, `first_response_at`, `responded_at`, `resolved_at`, `response_time_hours` numeric(10,2), `resolution_time_hours` numeric(10,2), `sla_response_due_at`, `sla_resolution_due_at`.
+ - Bookkeeping: `created_at`, `updated_at`. Indexes on `status`, `assigned_to`, `raised_by`, `priority`, `due_date`, `sla_response_due_at`.
 - **`TicketWatcher`**: `id`, `ticket_id` (FK cascade), `user_id`, `added_at`, `added_by`. Unique `(ticket_id, user_id)`.
 - **`TicketRespondContactLink`**: `id`, `ticket_id` (FK cascade), `respond_contact_id`, `is_primary` bool, `created_at`. The submitter's Respond contact (resolved by phone match) is auto-linked on create.
 
@@ -130,10 +130,10 @@ No standalone `TicketComment` table - comments live in `ActivityEvent`. No stand
 - `create(data, current_user)` - sets `raised_by=current_user.id`, generates `ticket_number`, status `draft` if `save_as_draft` else `submitted` (sets `submitted_at`, sets `sla_response_due_at = submitted_at + policy.response_window`). Auto-links submitter's Respond contact via phone match. Records system activity.
 - `update(id, data, current_user)`, `delete(id, current_user)`.
 - `change_status(id, new_status, current_user, note)` - validates the transition (any→any except `resolved→draft`); only assignee or admin can call. Updates the matching timestamp:
-  - `submitted` → sets `submitted_at`, computes `sla_response_due_at`.
-  - `assigned` → sets `assigned_at`.
-  - `responded` → sets `responded_at`, sets `first_response_at` if null, sets `response_time_hours = (first_response_at - submitted_at) / 3600`.
-  - `resolved` → sets `resolved_at`, `resolved_by`, `resolution_time_hours = (resolved_at - submitted_at) / 3600`.
+ - `submitted` → sets `submitted_at`, computes `sla_response_due_at`.
+ - `assigned` → sets `assigned_at`.
+ - `responded` → sets `responded_at`, sets `first_response_at` if null, sets `response_time_hours = (first_response_at - submitted_at) / 3600`.
+ - `resolved` → sets `resolved_at`, `resolved_by`, `resolution_time_hours = (resolved_at - submitted_at) / 3600`.
 
   Records system `ActivityEvent` with `template="status.changed"`, `payload={"from":..., "to":..., "note":...}`.
 - `assign(id, assignee_id, current_user)` - admin-only, sets `assigned_to`, `assigned_at`, auto-bumps `submitted → assigned`. Records system activity `template="assignee.changed"`.
@@ -257,14 +257,14 @@ So on `lg+` the panel is a 420px column that pushes the main content (mr increas
 
 - Header `p-5 border-b`: title `text-lg font-semibold` "Activities & notes", `text-sm text-muted-foreground` description, top-right `<Button variant="ghost" size="icon">` with `<X>` to close.
 - Tab strip: a `ToggleGroup` (3 items, icon-only). Selected item gets `bg-background` with red icon (`text-red-600`); unselected has muted icon. Wrapper has `bg-muted/30 rounded-lg p-0.5` like `ListBoardViewToggle`.
-  - Activity icon = `Activity` (or `HeartPulse`) from lucide.
-  - Internal Notes icon = `FileText`.
-  - Messages icon = `MessageSquare`.
+ - Activity icon = `Activity` (or `HeartPulse`) from lucide.
+ - Internal Notes icon = `FileText`.
+ - Messages icon = `MessageSquare`.
 - Body: `flex-1 overflow-y-auto p-4 space-y-3`. Each feed item is a soft card: `bg-muted/30 border rounded-md p-3` with header row `[<Badge variant="secondary">System</Badge>] [text-xs text-muted-foreground]{timestamp}` and body in `text-sm`. User updates use the same card with author Avatar + name instead of "System" badge, and the body is rendered HTML in a `prose prose-sm` wrapper.
 - Footer composer: sticky `border-t p-3` containing:
-  - Toolbar row: heading-style switcher ("Normal" `<Select>`), B / I / U / S, ordered/unordered list, link, clear-formatting (`Tx`). Icons via lucide.
-  - `<RichTextEditor>` (Tiptap) with placeholder "Share an update… Use @ to mention someone." (or "Private notes (only you can see these)…" or "Choose a contact to reply." depending on tab + state).
-  - Action row: `<Paperclip>` (attach), `<Smile>` (emoji picker via `components/ui/popover.tsx` + a small grid; can use `cmdk` we already ship), spacer, `<Button>Post</Button>` (red primary, disabled when empty / no contact selected).
+ - Toolbar row: heading-style switcher ("Normal" `<Select>`), B / I / U / S, ordered/unordered list, link, clear-formatting (`Tx`). Icons via lucide.
+ - `<RichTextEditor>` (Tiptap) with placeholder "Share an update… Use @ to mention someone." (or "Private notes (only you can see these)…" or "Choose a contact to reply." depending on tab + state).
+ - Action row: `<Paperclip>` (attach), `<Smile>` (emoji picker via `components/ui/popover.tsx` + a small grid; can use `cmdk` we already ship), spacer, `<Button>Post</Button>` (red primary, disabled when empty / no contact selected).
 - Mentions: typing `@` in the editor opens a Tiptap mention extension popup populated by `getUsersSelect()`; selected mentions become inline `<span class="text-primary">@Name</span>` chips and are sent as `mentioned_user_ids` on submit.
 
 #### Tabs
@@ -457,8 +457,8 @@ The frontend is **Tailwind v4 + shadcn/Radix + Metronic 9 / ReUI** with a rich s
 1. `alembic upgrade head` - three new migrations apply cleanly.
 2. `pytest tests/test_rbac.py -q` - existing RBAC tests still pass.
 3. New unit tests:
-   - `tests/test_activities_service.py` - post activity, post note (private), system event recording, mention writes `ActivityMention` row.
-   - `tests/test_tickets_service.py` - visibility filter for non-admin, status transition validation, response/resolution updates flip status + set SLA durations, watchers toggle.
+ - `tests/test_activities_service.py` - post activity, post note (private), system event recording, mention writes `ActivityMention` row.
+ - `tests/test_tickets_service.py` - visibility filter for non-admin, status transition validation, response/resolution updates flip status + set SLA durations, watchers toggle.
 4. Manual smoke: with both JWT and `X-API-Key`, hit list / kanban / detail / status / response / resolution.
 
 ### Frontend (Playwright MCP - required per CLAUDE.md)

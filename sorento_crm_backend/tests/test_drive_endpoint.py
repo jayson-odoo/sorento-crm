@@ -147,7 +147,7 @@ def test_drive_endpoint_root_contract(client):
 
 
 # --------------------------------------------------------------------------- #
-# D5 - route resolution: /drive?directory_id=... is the drive handler, a LIST  - 
+# D5 - route resolution: /drive?directory_id=... is the drive handler, a LIST - 
 # it is NOT swallowed by GET /{attachment_id}; and a real id still hits single-get.
 # --------------------------------------------------------------------------- #
 def test_drive_route_not_captured_by_attachment_id(client):

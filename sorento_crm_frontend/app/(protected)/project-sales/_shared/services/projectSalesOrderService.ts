@@ -103,8 +103,8 @@ export async function buildSalesOrders(
  *
  *   GET /api/v1/project-sales/projects/{project_id}/sales-orders/neighbours?id=<pso_id>
  *   200 { total, index, prev_id, next_id }
- *       - index is 1-based, null when the order belongs to another project.
- *       - prev_id/next_id wrap circularly; null only when total <= 1.
+ *     - index is 1-based, null when the order belongs to another project.
+ *     - prev_id/next_id wrap circularly; null only when total <= 1.
  *   404 when the project or the sales order id names nothing.
  */
 export function salesOrderNeighboursPath(projectId: string): string {

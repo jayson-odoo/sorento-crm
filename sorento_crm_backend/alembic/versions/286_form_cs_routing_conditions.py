@@ -6,9 +6,9 @@ Revises: 271_audit_action_allow_import
 R2 (documentation/plans/forms/PLAN-form-cs-routing-conditions.md). Additive +
 backward-safe:
 
-1. lookup_bindings.default_value  - generic: a binding may declare a default option
+1. lookup_bindings.default_value - generic: a binding may declare a default option
    the FE pre-selects on new forms.
-2. purchase_requests.sales_type   - new PR field (project / cash_sales), lookup-bound.
+2. purchase_requests.sales_type - new PR field (project / cash_sales), lookup-bound.
 3. lookup set procurement_sales_type + options (+ binding, default_value='project').
 4. respond_contact_cs_routing.match_conditions (JSONB) + priority (INT) - the generic
    predicate routing engine. Old unique (contact, use_case) → expression unique

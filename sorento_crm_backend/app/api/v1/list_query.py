@@ -73,8 +73,8 @@ def _can_view_listing_key(db: Session, user_id: str, listing_key: str) -> bool:
     Personalization configs are authorized by the listing key itself.
 
     This repo expects `listing_key` to be either:
-    - the RBAC view permission slug (e.g. `order_management.orders.view`), or
-    - a composite key prefixed with the RBAC permission slug, using `::`:
+  - the RBAC view permission slug (e.g. `order_management.orders.view`), or
+  - a composite key prefixed with the RBAC permission slug, using `::`:
       `order_management.orders.view::orders-list`.
     """
     listing_key = (listing_key or "").strip()

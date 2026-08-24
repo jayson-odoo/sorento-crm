@@ -135,7 +135,7 @@ get_prompt(name, label="production") -> RenderedPrompt
   4. return {text, name, version}  (version = None when fallback used)
 
 render(name, **vars) -> str
-  - fetch, then substitute {{var}} from vars; validate all declared vars supplied
+ - fetch, then substitute {{var}} from vars; validate all declared vars supplied
 ```
 
 Call-site edits in `ai_assistant_service.py` (mechanical, one per site):

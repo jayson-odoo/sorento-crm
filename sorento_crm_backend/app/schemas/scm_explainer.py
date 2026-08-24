@@ -97,13 +97,13 @@ class PlanComparison(BaseModel):
 
 class RunChatResult(BaseModel):
     answer: str
-    # M8-F6: attached only when a live market scan mapped a signal onto plan lines  - 
+    # M8-F6: attached only when a live market scan mapped a signal onto plan lines - 
     # the same confirm-gated proposal card the standalone market-proposal returned.
     proposal: Optional[MarketProposalResult] = None
     # M8-F16: attached when the question is a natural-language plan INSTRUCTION the
     # assistant resolved into per-line accept/reject/adjust decisions to Apply.
     action_proposal: Optional[ActionProposal] = None
-    # M8-F: attached when the question asks how this plan compares to previous plans  - 
+    # M8-F: attached when the question asks how this plan compares to previous plans - 
     # a DETERMINISTIC per-product diff (numbers computed in Python, never the LLM).
     comparison: Optional[PlanComparison] = None
 

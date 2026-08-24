@@ -184,7 +184,7 @@ def _maybe_float(x: Any) -> Optional[float]:
 
 
 def _comparable_pair(value: Any, operand: Any):
-    """(value, operand) as floats, else as datetimes. Raises on garbage  - 
+    """(value, operand) as floats, else as datetimes. Raises on garbage - 
     the caller fails closed."""
     left = _maybe_float(value)
     right = _maybe_float(operand)

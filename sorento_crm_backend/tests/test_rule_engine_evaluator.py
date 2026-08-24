@@ -270,7 +270,7 @@ def test_failed_conditions_empty_when_tree_passes():
 
 
 def test_failed_conditions_ignores_passing_or_sibling():
-    # In an OR group that PASSES, a failing sibling leaf must NOT be reported  - 
+    # In an OR group that PASSES, a failing sibling leaf must NOT be reported - 
     # the group is not blocking.
     tree = _group(
         "or",

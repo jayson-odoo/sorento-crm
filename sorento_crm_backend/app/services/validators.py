@@ -19,10 +19,10 @@ PROJECT_VALUE_MAX = Decimal(10) ** 13
 def validate_project_value(raw: Any) -> Optional[Decimal]:
     """Validate/normalize a Total Project Value for both portal and system forms.
 
-    - ``None`` / blank -> ``None`` (cleared value, allowed)
-    - non-numeric (e.g. ``"800K"``) -> 422 "must be a number"
-    - out of Numeric(15,2) range -> 422 "too large"
-    - otherwise -> ``Decimal``
+  - ``None`` / blank -> ``None`` (cleared value, allowed)
+  - non-numeric (e.g. ``"800K"``) -> 422 "must be a number"
+  - out of Numeric(15,2) range -> 422 "too large"
+  - otherwise -> ``Decimal``
     """
     if raw is None:
         return None

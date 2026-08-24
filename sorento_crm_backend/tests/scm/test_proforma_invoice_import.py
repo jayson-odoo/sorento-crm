@@ -445,7 +445,7 @@ def test_a_document_that_states_no_container_leaves_both_references_null():
 def test_a_very_long_filename_still_gives_five_distinct_invoice_numbers():
     """`pi_number` is `String(100)`. Truncating the COMPOSED name pushes the block index off
     the end, so all five blocks derive one identical number and each one overwrites the last
-    - five invoices arrive as one, and the file looks like it imported fine."""
+  - five invoices arrive as one, and the file looks like it imported fine."""
     with pg_session() as db:
         w = World(db)
         long_name = ("2026-07-31 SORENTO PRE LOADING LIST FOR KLANG " * 4) + ".xlsx"

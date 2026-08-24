@@ -38,14 +38,14 @@ Constraints:
 4. **① Owned (hard-filtered by `company_id`):** products, brands, product_categories, units_of_measure, product_attachments, warehouses, stock, stock_ledger, stock_batches, promotions, promotion_products, promotion_attachments, inbound_shipments (packing lists), spo_allocations, purchase_orders, picking_headers, picking_lines (GRN), orders, sales_orders, resource attachments, suppliers, customers/debtors, transporters.
 5. **② Shared, membership-tagged (M2M, union scope):** `respond_contacts` (via `respond_contact_companies`), `users` (via `user_companies`).
 6. **③ Global (no company):** roles, permissions, lookups (already tenant-scoped), respond_workspaces, system_settings, **all form entities** (complaints, stock_inquiries, purchase_requests, IT tickets), **SLA tracking / conversation SLA**. Rationale: anything keyed to a (multi-company) contact can't be attributed to one company. **Consequence accepted:** staff see all forms/SLA regardless of active company (CS is a shared function).
-   - **[F5 / Q3 decision - A] Global form → owned entity by a per-company key.** The Complaint↔DO auto-fulfilment linker matches `delivery_order_number` against owned orders, whose numbers become unique *per company*. Resolution: the linker **scopes candidate DOs to the complaint's contact's company set**; if the DO number exists in exactly one of those companies → link; ambiguous (in multiple) or none → **skip** (matches the existing silent-skip-on-no-match behavior - see [[project_complaint_do_auto_fulfilment]]). No `company_id` column added to the global complaint.
+ - **[F5 / Q3 decision - A] Global form → owned entity by a per-company key.** The Complaint↔DO auto-fulfilment linker matches `delivery_order_number` against owned orders, whose numbers become unique *per company*. Resolution: the linker **scopes candidate DOs to the complaint's contact's company set**; if the DO number exists in exactly one of those companies → link; ambiguous (in multiple) or none → **skip** (matches the existing silent-skip-on-no-match behavior - see [[project_complaint_do_auto_fulfilment]]). No `company_id` column added to the global complaint.
 7. **Attachments** = **nullable** `company_id`. Null = shared (form-entity attachments), non-null = owned (resource/product/promotion). Filter predicate: `company_id IS NULL OR company_id IN {scope}`.
 
 ### Enforcement
 8. **Central app-layer global filter.** `CompanyScopedMixin` on owned models + SQLAlchemy `do_orm_execute` event injecting the scope predicate automatically. **Fail-closed.**
-   - **[F1 - grill fix] Scope lives on `db.info["company_scope"]`, NOT a contextvar.** Known codebase gotcha ([[project_audit_contact_attr_gotchas]]): a contextvar set in a FastAPI sync dependency does not propagate to the ORM flush. Set the resolved scope on the session's `db.info` at request entry (via the DB-session dependency); the `do_orm_execute` handler reads it from `context.session.info`. This also survives worker paths (worker sets `db.info` from the job snapshot).
-   - **Leak test (mandatory):** enumerate every `CompanyScopedMixin` model; assert `UNSET`→0 rows (fail-closed) and scoped query → only that company's rows.
-   - **New-table guard (mandatory):** CI test fails if an owned table is added without being registered in the mixin/filter set.
+ - **[F1 - grill fix] Scope lives on `db.info["company_scope"]`, NOT a contextvar.** Known codebase gotcha ([[project_audit_contact_attr_gotchas]]): a contextvar set in a FastAPI sync dependency does not propagate to the ORM flush. Set the resolved scope on the session's `db.info` at request entry (via the DB-session dependency); the `do_orm_execute` handler reads it from `context.session.info`. This also survives worker paths (worker sets `db.info` from the job snapshot).
+ - **Leak test (mandatory):** enumerate every `CompanyScopedMixin` model; assert `UNSET`→0 rows (fail-closed) and scoped query → only that company's rows.
+ - **New-table guard (mandatory):** CI test fails if an owned table is added without being registered in the mixin/filter set.
 9. **[F2 - grill fix] FOUR-state scope** (resolved at request entry, stored on `db.info`). The default MUST be a distinct `UNSET` sentinel - not `None` - or a code path that never runs the resolver would fall into the `None`="all" branch and leak everything. Empty set MUST compile to `false()` (never rely on SQLAlchemy `.in_([])`).
 
    | State | Caller | Predicate | Behavior |
@@ -59,21 +59,21 @@ Constraints:
 
    **Accepted risk:** a contact-facing n8n branch that forgets to pass identity is indistinguishable from a system call → returns all companies. Audit contact-facing n8n branches to always pass identity.
 10. **Blind spots - manually scoped + individually tested:**
-    - **(a) Raw SQL / analytics** (`db.execute(text())`, correlated subqueries): order analytics, complaint analytics, stock-balance (latest-ledger subquery), MCP stock-balance `exclude_zero_system_adjustment`. The ORM `do_orm_execute` filter does NOT cover these. **[F6 - grill fix] Also in this set:** `crm_lookup_resolve` (`POST /lookup/resolve` - can resolve product/entity codes cross-company; takes active/contact company) and **order/SPO/GRN number-generation** (`max(number)+1` must scope its `max()` by company or numbers collide/gap across companies). Enumerate the full set early in Phase 2 - likely 12 - 20 spots, not "small".
-    - **(b) Embeddings / RAG:** embedding rows must carry `company_id`; vector search must filter by scope, else semantic search silently leaks cross-company. **[F7 - grill fix]** The `embedding_change_listener` must **copy `company_id` from the source entity on every write** - backfill alone isn't enough; fresh embeddings on entity change would otherwise land company-less and gradually re-leak. In scope, not deferred.
+  - **(a) Raw SQL / analytics** (`db.execute(text())`, correlated subqueries): order analytics, complaint analytics, stock-balance (latest-ledger subquery), MCP stock-balance `exclude_zero_system_adjustment`. The ORM `do_orm_execute` filter does NOT cover these. **[F6 - grill fix] Also in this set:** `crm_lookup_resolve` (`POST /lookup/resolve` - can resolve product/entity codes cross-company; takes active/contact company) and **order/SPO/GRN number-generation** (`max(number)+1` must scope its `max()` by company or numbers collide/gap across companies). Enumerate the full set early in Phase 2 - likely 12 - 20 spots, not "small".
+  - **(b) Embeddings / RAG:** embedding rows must carry `company_id`; vector search must filter by scope, else semantic search silently leaks cross-company. **[F7 - grill fix]** The `embedding_change_listener` must **copy `company_id` from the source entity on every write** - backfill alone isn't enough; fresh embeddings on entity change would otherwise land company-less and gradually re-leak. In scope, not deferred.
 
 ### Identity / context
 11. **UI active company:**
-    - New `user_companies` grant M2M (user ↔ allowed companies). **Global role** - one role per user, applies across all their companies (RBAC orthogonal to company).
-    - New `users.last_active_company_id` (persisted).
-    - JWT claim `active_company_id`; backend validates it ∈ grants → sets `db.info` scope.
-    - **[Q1 decision - A] NextAuth ↔ FastAPI claim plumbing:** the NextAuth `jwt` callback calls the **backend** `GET /companies/my-context` at sign-in (returns grants + `last_active_company_id`) and embeds `active_company_id` + grant list in the token. Backend is the single source of truth - grants are NOT duplicated into the frontend Prisma DB. On switch: FE calls backend `POST /companies/switch` (validates grant, persists `last_active_company_id`) → FE triggers NextAuth `session.update()` → `jwt` callback re-mints with the new `active_company_id`. This FE↔BE token dance is its own Phase-2 slice (`/companies/my-context` + `/companies/switch` + `jwt`/`session` callback wiring).
-    - `POST /companies/switch` → validate grant → persist `last_active_company_id` → re-mint token. **Logout → login returns to same company.**
-    - One active company at a time (no merged view). Single-grant users auto-selected, switcher hidden. Superadmin sees all companies in switcher.
+  - New `user_companies` grant M2M (user ↔ allowed companies). **Global role** - one role per user, applies across all their companies (RBAC orthogonal to company).
+  - New `users.last_active_company_id` (persisted).
+  - JWT claim `active_company_id`; backend validates it ∈ grants → sets `db.info` scope.
+  - **[Q1 decision - A] NextAuth ↔ FastAPI claim plumbing:** the NextAuth `jwt` callback calls the **backend** `GET /companies/my-context` at sign-in (returns grants + `last_active_company_id`) and embeds `active_company_id` + grant list in the token. Backend is the single source of truth - grants are NOT duplicated into the frontend Prisma DB. On switch: FE calls backend `POST /companies/switch` (validates grant, persists `last_active_company_id`) → FE triggers NextAuth `session.update()` → `jwt` callback re-mints with the new `active_company_id`. This FE↔BE token dance is its own Phase-2 slice (`/companies/my-context` + `/companies/switch` + `jwt`/`session` callback wiring).
+  - `POST /companies/switch` → validate grant → persist `last_active_company_id` → re-mint token. **Logout → login returns to same company.**
+  - One active company at a time (no merged view). Single-grant users auto-selected, switcher hidden. Superadmin sees all companies in switcher.
 12. **Active company drives read AND write.** Insert to owned table auto-stamps `company_id = active` (via `before_insert` listener on `CompanyScopedMixin`). **Imports snapshot `active_company_id` at enqueue** onto the import-job row (worker has no request context; stamps from snapshot). Switch → upload AutoCount/DO/SPO → stamped with active company.
-    - **Edge:** X-API-Key/system write (scope `None`) to an owned table has no company to stamp → **require explicit `company_id` or reject**; never insert an owned row with null company.
+  - **Edge:** X-API-Key/system write (scope `None`) to an owned table has no company to stamp → **require explicit `company_id` or reject**; never insert an owned row with null company.
 13. **n8n/MCP identity:** explicit `contact_id` (respond_io_id) + `space_id` params on each company-scoped ToolSpec, **expression-bound in n8n from the Respond webhook payload** (deterministic, not LLM-filled). MCP forwards as query params. Backend extends `resolve_contact_access_codes` to also return `company_ids`. Contact↔company = **explicit `respond_contact_companies` M2M, admin-managed** (not derived from access_types).
-    - **[Q2 decision - C, strict] Newly-synced untagged contacts get NO default company** → resolve to empty scope → **0 rows** until an admin tags them. Chosen over defaulting-to-Sorento: strongest isolation, no accidental cross-company exposure. **Operational cost accepted:** every new contact needs manual company-tagging before self-service (product/stock/etc.) works for them; forms/SLA (global) still work unassigned. Mitigation to consider later (not v1): an admin "untagged contacts" queue/alert so they don't sit silently empty.
+  - **[Q2 decision - C, strict] Newly-synced untagged contacts get NO default company** → resolve to empty scope → **0 rows** until an admin tags them. Chosen over defaulting-to-Sorento: strongest isolation, no accidental cross-company exposure. **Operational cost accepted:** every new contact needs manual company-tagging before self-service (product/stock/etc.) works for them; forms/SLA (global) still work unassigned. Mitigation to consider later (not v1): an admin "untagged contacts" queue/alert so they don't sit silently empty.
 14. **Binding endpoints exception** (packing-list create, product-attachment bind, promotion-attachment bind, form-create-with-attachment - all n8n-called under X-API-Key, no active company): scope entity match by **`attachment.company_id`**, not the caller. Resolve/bind only within that company; no match in that company → **fail** (never fall through to another company's row). Only applies when `attachment.company_id` is non-null (null = form attachment, no scoping).
 15. `access_levels` and `company` **coexist (AND)**; `access_levels` untouched (company = outer filter, access_levels = inner tier filter). In-CRM AI assistant rides the active-company contextvar like any UI query.
 
@@ -137,13 +137,13 @@ All 4 previously-ambiguous tables ruled **per-company** by user: `campaign_types
 - Raw-SQL/analytics manual scoping; embedding company_id + scoped vector search.
 - `/companies/switch` re-mint + persist; JWT claim plumbing (NextAuth ↔ FastAPI).
 - **Tests (land here, not deferred):**
-  - **Leak test** + **new-table guard** (pytest).
-  - Tri-state resolver test (all 4 rows of the table).
-  - Uniqueness-per-company test (Mocha "CHAIR-01" imports alongside Sorento's).
-  - Per-endpoint analytics/raw-SQL scoping tests.
-  - Embedding/RAG scoping test.
-  - Binding-endpoint attachment-company test (Mocha attachment never binds Sorento entity).
-  - vitest for switcher + admin screens; playwright FE→BE→DB for switch + scoped list.
+ - **Leak test** + **new-table guard** (pytest).
+ - Tri-state resolver test (all 4 rows of the table).
+ - Uniqueness-per-company test (Mocha "CHAIR-01" imports alongside Sorento's).
+ - Per-endpoint analytics/raw-SQL scoping tests.
+ - Embedding/RAG scoping test.
+ - Binding-endpoint attachment-company test (Mocha attachment never binds Sorento entity).
+ - vitest for switcher + admin screens; playwright FE→BE→DB for switch + scoped list.
 
 ### Phase 3 - Code review
 - `/code-review ultra` (large diff). Verify leak-test green, no unscoped owned query, no raw-SQL blind spot missed.

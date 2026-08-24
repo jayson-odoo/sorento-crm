@@ -97,8 +97,8 @@ and form recompute paths.
 - `alembic/versions/247_agent_team_policy_id.py` - new migration (add column; chains off `246_sla_tier_hours_decimal`).
 - `app/schemas/user.py` - `AgentTeamAssignment` (~line 352): add `policy_id: Optional[str]`. `AgentTeamsUpdate` unchanged shape.
 - `app/services/user_service.py`
-  - `AccessAgentService.set_agent_teams` - stamp the group `policy_id` onto every row of each `code`; new tier rows inherit.
-  - New helper `resolve_policy_id_for(agent_id, team_set_code)` → distinct-policy rule (D4).
+ - `AccessAgentService.set_agent_teams` - stamp the group `policy_id` onto every row of each `code`; new tier rows inherit.
+ - New helper `resolve_policy_id_for(agent_id, team_set_code)` → distinct-policy rule (D4).
 - `app/services/sla_service.py` - `ConversationSLATrackingService.create_tracking` (~line 2488): replace "policy from body" with resolver + D8 fallback; force `current_tier=1`; D7 tier clamp in `compute_tracking_timings` / due recompute helpers.
 - `app/schemas/sla.py` - `ConversationSLATrackingCreate`: make `agent_code`, `team_set_code` required; keep `policy_id`/`current_tier` accepted-but-ignored.
 - `app/api/v1/sla/sla_tracking.py` - POST "/": no signature change; resolver lives in service.
@@ -125,9 +125,9 @@ and form recompute paths.
 - Migration 247, model/schema changes, `set_agent_teams` cast + inherit, `resolve_policy_id_for`, `create_tracking` resolver + D8 fallback + D7 clamp, required field changes.
 - FE off-mocks: real `getSLAPolicies`, `policy_id` in `setAgentTeams`.
 - Tests:
-  - **pytest**: resolver one/none/many; cast-to-all-rows; new-row inherit; create_tracking ignores n8n policy_id when bound; fallback-to-n8n when unbound (rollout flag); tier clamp; required-field 422.
-  - **vitest**: `AccessAgentForm` group picker (bound/unbound/save payload includes policy_id).
-  - **playwright**: bind a policy to a team set → create conversation via API → asserts resolved policy.
+ - **pytest**: resolver one/none/many; cast-to-all-rows; new-row inherit; create_tracking ignores n8n policy_id when bound; fallback-to-n8n when unbound (rollout flag); tier clamp; required-field 422.
+ - **vitest**: `AccessAgentForm` group picker (bound/unbound/save payload includes policy_id).
+ - **playwright**: bind a policy to a team set → create conversation via API → asserts resolved policy.
 
 **Phase 3 - review**
 - `/code-review`; verify CLAUDE.md rules (extractApiError, no hand-built params, hard-delete N/A here).

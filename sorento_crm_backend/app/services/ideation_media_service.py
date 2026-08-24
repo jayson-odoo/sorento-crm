@@ -182,7 +182,7 @@ def build_menu_text(candidates: list[MediaCandidate], *, now: Optional[datetime]
 def parse_selection(selection: Optional[str], candidates: list[MediaCandidate]) -> list[MediaCandidate]:
     """Resolve a parser-extracted reference-position string to the picked candidates.
     ``all`` → every candidate; ``none``/empty/no digits → []; otherwise the 1-indexed
-    positions present in the string (deduped, out-of-range ignored). Deterministic  - 
+    positions present in the string (deduped, out-of-range ignored). Deterministic - 
     never an LLM call (DC-7)."""
     if not candidates:
         return []

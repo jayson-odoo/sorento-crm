@@ -1,7 +1,7 @@
 """Rejecting a stock inquiry must not depend on the contact notification.
 
 Both reject paths used to call `_send_stock_inquiry_contact_message(...)` BEFORE
-mutating status and committing. A contact with no reachable Respond.io inbox  - 
+mutating status and committing. A contact with no reachable Respond.io inbox - 
 e.g. a `respond_contacts` row missing `respond_io_id`, which leaves
 `respond_inbox_url` NULL on every form created for that contact - makes that
 send raise. The exception propagated out of the service, the route turned it

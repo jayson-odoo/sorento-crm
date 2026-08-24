@@ -1,7 +1,7 @@
 """TCK-2026-000030 - conversation SLA daily summary via WhatsApp.
 
 Covers AC-30-F1/F2 (whatsapp delivery when opted-in + linked / skip otherwise),
-F4 (notify_whatsapp_summary independent of email subscription), F3 (self-scoped  - 
+F4 (notify_whatsapp_summary independent of email subscription), F3 (self-scoped - 
 counts per user), S1 (one delivery per user per run).
 
 Run: pytest tests/test_sla_daily_summary_whatsapp.py -v

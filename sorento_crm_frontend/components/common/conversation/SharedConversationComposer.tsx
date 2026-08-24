@@ -125,7 +125,7 @@ interface SharedConversationComposerProps {
  *
  * - IN-WINDOW: a normal textbox; the raw typed text is delivered verbatim.
  * - OUT-OF-WINDOW: the form's `*_chat` template is rendered inline with its
- *   non-message parts pre-filled and an editable field where the message goes  - 
+ *   non-message parts pre-filled and an editable field where the message goes - 
  *   so you see exactly what the contact receives and only fill in the message.
  *
  * Never mutates the entity, never blocks on the window.

@@ -260,7 +260,7 @@ def _resolve_quantities(
     Nothing here guesses. A quantity is only claimed when a key's synonym is within
     `_QUANTITY_BINDING_WINDOW` characters of it, so "S trap 8\" (200mm)" reaches
     `trap_length` while a stray number in a product code reaches nothing. The
-    alternative - binding an unqualified number to the class's "obvious" dimension  - 
+    alternative - binding an unqualified number to the class's "obvious" dimension - 
     is exactly the kind of guess that puts a wrong product in front of a customer.
     """
     quantities = _extract_quantities(haystack)
@@ -683,9 +683,9 @@ def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: li
     boosts, so the customer's number is heard, just not membership-defining.
 
     Three verdicts per word, because n8n renders them differently:
-      - names a class            -> membership
-      - names a known spec value -> dropped (recognized, boost-only)
-      - names nothing            -> `unrecognized_terms` (clarify, never "none")
+    - names a class            -> membership
+    - names a known spec value -> dropped (recognized, boost-only)
+    - names nothing            -> `unrecognized_terms` (clarify, never "none")
 
     The third verdict is reached WORD by word, not term by term. A term that
     bound something can still carry an alien word inside it - "sorento grommet"

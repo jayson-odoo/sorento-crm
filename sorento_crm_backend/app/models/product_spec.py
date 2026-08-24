@@ -249,9 +249,9 @@ class ProductSpecException(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     product_code = Column(String(100), nullable=False)
     spec_key = Column(String(64), nullable=False)
-    # shape_mismatch  - stored L/W/H describe a round or square product
+    # shape_mismatch - stored L/W/H describe a round or square product
     # column_conflict - the description disagrees with a stored column
-    # low_confidence  - derived below the review threshold
+    # low_confidence - derived below the review threshold
     reason = Column(String(48), nullable=False)
     proposed = Column(JSONB, nullable=True)
     stored = Column(JSONB, nullable=True)

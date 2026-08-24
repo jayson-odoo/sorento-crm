@@ -36,9 +36,9 @@
  *
  *    PUT /api/v1/user-management/users/{id}
  *      body { ..., product_discontinued_scopes: [ { company_id, brand_id } ] }
- *      - omitted  -> scopes untouched
- *      - []       -> all scopes cleared (the user then hears nothing)
- *      - provided -> replace-all, deduped server-side
+ *    - omitted  -> scopes untouched
+ *    - []       -> all scopes cleared (the user then hears nothing)
+ *    - provided -> replace-all, deduped server-side
  *      422 (AppException) when a brand does not belong to the named company.
  *      company_id null forces brand_id null.
  *      Permission: the same dependency that already guards the notification

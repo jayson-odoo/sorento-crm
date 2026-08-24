@@ -198,13 +198,13 @@ against this).**
   Types: `message`, `ticket_created`, `ticket_updated`.
 - Payload, exactly five keys, no content ever:
   `{"type","contact_id","user_id","entity_id","ts"}`.
-  - `contact_id` = the **Respond.io contact id** (`respond_contacts.respond_io_id`),
+ - `contact_id` = the **Respond.io contact id** (`respond_contacts.respond_io_id`),
     NOT the internal `respond_contacts.id` UUID. DEVIATION from the bullet above,
     deliberate: the chat ingest receives that id verbatim (so nothing is resolved on
     the hot path) and the drawer already holds it as `respond_io_id` from
     `GET .../{tracking_id}/ticket`, so the FE has the key it must pass in `?contacts=`
     without a new field and without a UUID in a query string.
-  - `user_id` = `users.id` whose worklist changed. `entity_id` = the tracking id for
+ - `user_id` = `users.id` whose worklist changed. `entity_id` = the tracking id for
     ticket events, null for `message`. `ts` = UTC ISO-8601 with `Z` (transport clock,
     not a domain datetime).
 - Filtering is server-side: a client receives events where `user_id` is its own OR
@@ -394,18 +394,18 @@ the n8n peer builds the receiving lane from THIS text.**
   }
   ```
 
-  - `event_id` is the idempotency key (hardening 1): identical across retries of the
+ - `event_id` is the idempotency key (hardening 1): identical across retries of the
     same resolve. The n8n lane must be safe to receive it twice.
-  - `closedBySource` is a closed enum (`"crm" | "user" | "api"`); the CRM only ever
+ - `closedBySource` is a closed enum (`"crm" | "user" | "api"`); the CRM only ever
     emits `"crm"`. The Respond-trigger lane's gate fails CLOSED on unknown values
     (hardening 2).
-  - `resolved_by.respond_user_id` is `null` when the CRM user has no Respond mapping,
+ - `resolved_by.respond_user_id` is `null` when the CRM user has no Respond mapping,
     or when the mapping was filled with a CRM `users.id` UUID (never leaked as a
     Respond user id). `display_name` is ALWAYS a readable string for the
     contact-facing message: resolver name -> team name -> `"Customer Service"`
     (hardening 3). `team_name` is snapshotted BEFORE the resolve blanks
     `agent_id` / `team_set_code`.
-  - `resolved_at` is aware UTC ISO-8601 with `Z` (transport clock, not a domain naive
+ - `resolved_at` is aware UTC ISO-8601 with `Z` (transport clock, not a domain naive
     datetime).
 - **Outbox**: every attempt writes an `integration_log` with
   `integration_channel = "n8n_crm_close_convo"`, `business_table =
@@ -617,10 +617,10 @@ whatever the row gave you; unresolvable -> 404. Every read that a 403 could gate
 403 (the permission is a real gate, not an existence secret); an unknown contact is 404.
 
 1. `GET /conversations?tab=&q=&cursor=&limit=`
-   - `tab`: `mine` | `mentioned` | `unassigned` | `all` (default `all`); unknown -> 400.
-   - `q`: contact name or phone fragment, ILIKE, `%`/`_`/`\` literal.
-   - `limit`: default 30, max 100 (over -> 422). `cursor`: opaque, from `next_cursor`.
-   - Response:
+ - `tab`: `mine` | `mentioned` | `unassigned` | `all` (default `all`); unknown -> 400.
+ - `q`: contact name or phone fragment, ILIKE, `%`/`_`/`\` literal.
+ - `limit`: default 30, max 100 (over -> 422). `cursor`: opaque, from `next_cursor`.
+ - Response:
      ```json
      {
        "items": [{
@@ -643,13 +643,13 @@ whatever the row gave you; unresolvable -> 404. Every read that a 403 could gate
        "query": ""
      }
      ```
-   - `last_message_*` can be null on the ticket tabs (a contact with an open ticket but
+ - `last_message_*` can be null on the ticket tabs (a contact with an open ticket but
      no stored message). Ordering: `mentioned` is newest-NOTE first, the rest are
      newest-MESSAGE first. Paginate by passing `next_cursor` back verbatim; stop when
      it is null.
 2. `GET /conversations/{contact_ref}/page?before=&after=&around=&limit=`
-   - At most ONE of before/after/around (two -> 422). `limit` 1..200, default 50.
-   - Response is BYTE-IDENTICAL to
+ - At most ONE of before/after/around (two -> 422). `limit` 1..200, default 50.
+ - Response is BYTE-IDENTICAL to
      `GET /conversation-sla-tracking/{tracking_id}/conversation/page` (same service
      core), so `useConversationThread` works unchanged with contact-keyed loaders.
 3. `GET /conversations/{contact_ref}/search?q=&limit=` - identical to the ticket-keyed

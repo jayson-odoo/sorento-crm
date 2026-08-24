@@ -1,8 +1,8 @@
 /**
  * Verifies the shared variant picker combobox:
- *  - renders human-readable `code - name` options, never a raw UUID,
- *  - excludes the ids it is told to hide (self + existing children),
- *  - confirms with the chosen product's id.
+ * - renders human-readable `code - name` options, never a raw UUID,
+ * - excludes the ids it is told to hide (self + existing children),
+ * - confirms with the chosen product's id.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {

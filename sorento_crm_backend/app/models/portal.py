@@ -80,7 +80,7 @@ class PortalFormRevision(Base):
     # conversation_sla_tracking.source_entity_id.
     source_entity_id = Column(UUID(as_uuid=False), nullable=False)
     # TWO counters, never collapsed into one (UAC C0):
-    #   version_no  - every submitted version, for history ordering. Unique per entity.
+    #   version_no - every submitted version, for history ordering. Unique per entity.
     #   revision_no - contact-initiated revisions only, the cap counter. NOT unique:
     #                 a resubmission after an office rejection repeats the current value.
     version_no = Column(Integer, nullable=False)

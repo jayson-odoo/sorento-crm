@@ -42,11 +42,11 @@ import type { ListQueryFilterGroup, ListQueryResourceKey } from '@/lib/list-quer
  * list the strip counts the accumulated selection, not just the loaded page's share.
  *
  * Rules baked in (so pages cannot diverge):
- *  - Filters renders ONLY when `filters` is supplied (no dead "no filters" popover). (D3)
- *  - Export is DISABLED until >=1 row is selected; click opens a column modal
+ * - Filters renders ONLY when `filters` is supplied (no dead "no filters" popover). (D3)
+ * - Export is DISABLED until >=1 row is selected; click opens a column modal
  *    pre-ticked to the currently-visible columns; exports the SELECTED rows. (D4)
- *  - Secondary actions collapse into a `▾` overflow when there are >=2. (D7)
- *  - Selection is read from react-table's rowSelection (use `buildSelectColumn`).
+ * - Secondary actions collapse into a `▾` overflow when there are >=2. (D7)
+ * - Selection is read from react-table's rowSelection (use `buildSelectColumn`).
  *
  * Place inside `<CardHeader>`. This is the ONLY sanctioned list toolbar: the
  * legacy auto-rendered `DataGridStandardToolbar` and DataGrid's `standardToolbar`

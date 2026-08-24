@@ -3,7 +3,7 @@
 CRUD for scoped ``scm.reorder_policy`` rows, single-row upserts for the two global
 config tables (``abc_xyz_policy`` / ``supplier_scoring_policy``), and a resolution
 preview that assembles its answer from the SAME shipped engine the reorder run uses
-(``reorder_engine.resolve_policy_for_sku`` / ``load_policies`` / ``resolve_policy``)  - 
+(``reorder_engine.resolve_policy_for_sku`` / ``load_policies`` / ``resolve_policy``) - 
 never a reimplementation (Risk #1, AC-PREV-2).
 
 Storage keys match the engine's ``_policy_matches`` comparison keys verbatim:

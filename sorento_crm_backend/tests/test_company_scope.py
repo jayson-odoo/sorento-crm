@@ -1,14 +1,14 @@
 """Company-scope enforcement tests (multi-company data isolation).
 
 Security core - Group H of UAC-multi-company-isolation.md:
-  - AC-H1 leak test: UNSET -> 0 rows; single-company scope -> only that company;
+ - AC-H1 leak test: UNSET -> 0 rows; single-company scope -> only that company;
     None -> all companies (across a representative set of owned models).
-  - AC-H2 new-table guard: every model with a company_id column is a
+ - AC-H2 new-table guard: every model with a company_id column is a
     CompanyScopedMixin subclass (except the M2M grant/membership tables).
-  - AC-H3 four-state predicate: UNSET/empty -> false(), None -> no predicate,
+ - AC-H3 four-state predicate: UNSET/empty -> false(), None -> no predicate,
     frozenset -> IN (...); empty never renders `.in_([])`.
-  - AC-H5 attachments: shared (null) rows always visible; owned rows scoped.
-  - AC-D4: a system write (scope None/UNSET) to an owned table without a
+ - AC-H5 attachments: shared (null) rows always visible; owned rows scoped.
+ - AC-D4: a system write (scope None/UNSET) to an owned table without a
     company_id is rejected (never inserts a null-company owned row).
 
 Runs against the local Postgres dev DB (a prod-copy) inside a nested transaction
@@ -259,14 +259,14 @@ def test_predicate_attachment_unset_is_null_only():
 
 # --- AC-H2 new-table guard -----------------------------------------------------
 # Tables that legitimately carry a company_id column WITHOUT being owned/partitioned:
-#   - M2M grant/membership tables (shared bucket).
-#   - Infra/pipeline tables that snapshot a company_id but are NOT auto-filtered by
+# - M2M grant/membership tables (shared bucket).
+# - Infra/pipeline tables that snapshot a company_id but are NOT auto-filtered by
 #     the ORM listener: import_jobs (enqueue snapshot, worker re-establishes scope);
 #     embedding_documents / embedding_chunks (vector search filters company_id
 #     manually - the pipeline processes all companies).
-#   - Admin-listing tables with a MANUAL company filter (admin_listing_company_filter),
+# - Admin-listing tables with a MANUAL company filter (admin_listing_company_filter),
 #     deliberately NOT owned mixins so their other consumers (portal / public /
-#     workflow / worker / global audit listener) keep working under any scope  - 
+#     workflow / worker / global audit listener) keep working under any scope - 
 #     only the staff listing is scoped: forms, import_logs, audit_logs.
 _COMPANY_ID_ALLOWLIST = {
     "user_companies",
@@ -350,19 +350,19 @@ def test_every_company_id_table_is_registered():
     # number and the prose drifted apart twice already. The rule is what matters. A table
     # is owned when the row is a fact about ONE company that cannot be derived from
     # something already scoped:
-    #   - Planning artefacts own their company because a run, a recommendation, a budget or
+    # - Planning artefacts own their company because a run, a recommendation, a budget or
     #     an exception batch is a company's own decision queue, and an exception's warehouse
     #     is nullable (supply in transit names no location to filter through).
-    #   - Fulfilment rows (loading plans, supplier notices, supplier inventory, allocations)
+    # - Fulfilment rows (loading plans, supplier notices, supplier inventory, allocations)
     #     own it for the same reason: they are that company's shipment, not a place.
-    #   - The project-sales domain owns its company the same way: a project, a lead, a
+    # - The project-sales domain owns its company the same way: a project, a lead, a
     #     quotation, an intake PO/SO and their versions are that company's pipeline.
-    #   - Certificate children are deliberately NOT owned: they are only reachable through
+    # - Certificate children are deliberately NOT owned: they are only reachable through
     #     the certificate, which is scoped, so a second filter is redundant surface (SEC-2a).
     #     Same reasoning for the project children that inherit their partition through their
     #     parent (projects.series_categories, projects.brands, projects.collaborators,
     #     projects.takeover_requests).
-    #   - `access_agents` is NOT owned: one agent routes both brands through two ladders.
+    # - `access_agents` is NOT owned: one agent routes both brands through two ladders.
     # Derived instead of owned: demand_stat / item_classification / the views (via the
     # warehouse join), supplier_performance (via suppliers), market signals (facts about
     # the world, not about us).

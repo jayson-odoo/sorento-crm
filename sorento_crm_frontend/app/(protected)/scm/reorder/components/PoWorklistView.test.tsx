@@ -4,16 +4,16 @@
  * What these pin is the difference between a worklist and a second decision point, and
  * the states a fabricated fixture would never contain:
  *
- *   - **No Accept, no Reject, no quantity field.** Joey executes; Mr Loo decided. A
+ * - **No Accept, no Reject, no quantity field.** Joey executes; Mr Loo decided. A
  *     control here that changed the decision would make the two screens disagree about
  *     what was ordered.
- *   - **A decision to buy nothing is a ROW** (AC-E2.5) saying no PO is needed. Absent, it
+ * - **A decision to buy nothing is a ROW** (AC-E2.5) saying no PO is needed. Absent, it
  *     is indistinguishable from a decision nobody made.
- *   - **The not-keyed filter is the default** (AC-E2.4), because that is the screen's
+ * - **The not-keyed filter is the default** (AC-E2.4), because that is the screen's
  *     primary use.
- *   - **A missing date is named, never filled in.** Most of the real book has no dated
+ * - **A missing date is named, never filled in.** Most of the real book has no dated
  *     shortfall, and a place-by date derived from a guessed lead time would be acted on.
- *   - **The late flag is on the row**, not left for the reader to compute from two dates.
+ * - **The late flag is on the row**, not left for the reader to compute from two dates.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';

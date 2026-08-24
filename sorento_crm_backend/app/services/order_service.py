@@ -801,11 +801,11 @@ class OrderService:
         """Compute an aggregate metric over customer sales orders.
 
         metric:
-          - count             → number of matching orders
-          - total_value       → SUM(orders.total_amount) (order-level revenue);
+        - count             → number of matching orders
+        - total_value       → SUM(orders.total_amount) (order-level revenue);
                                  when group_by=product it is the per-product line
                                  revenue (SUM of the matching order lines' totals)
-          - avg_delivery_days → AVG(actual_delivery_date - order_date) in days,
+        - avg_delivery_days → AVG(actual_delivery_date - order_date) in days,
                                  over orders that have BOTH dates set.
 
         group_by buckets the result by customer (debtor_name), product
@@ -882,7 +882,7 @@ class OrderService:
             return q
 
         # Order value = header total_amount when set, else the sum of the order's
-        # line totals. In this dataset orders.total_amount is 0 across the board  - 
+        # line totals. In this dataset orders.total_amount is 0 across the board - 
         # the real monetary value lives on the order lines - so we coalesce to the
         # line sum to return a truthful figure (spec said SUM(total_amount); the
         # header is unpopulated, so this is the honest equivalent).
@@ -1183,7 +1183,7 @@ class OrderService:
         filters = []
         product_match_filters: list = []
 
-        # Drive matched_products enrichment off the typed UUID filter too  - 
+        # Drive matched_products enrichment off the typed UUID filter too - 
         # otherwise rows come back with matched_products=[] when the caller
         # narrows by `product_ids` (the MCP/typed path) instead of the legacy
         # `product_id` token resolver below. The order-level filter is applied

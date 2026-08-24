@@ -54,9 +54,9 @@ Seeded (Alembic migration) and granted to roles `superadmin`, `admin` by default
   }
   ```
 - Errors:
-  - 404 if contact not found
-  - 422 if contact has no `workspace_id` (cannot resolve `space_id`)
-  - Standard 401/403 on auth/permission failure
+ - 404 if contact not found
+ - 422 if contact has no `workspace_id` (cannot resolve `space_id`)
+ - Standard 401/403 on auth/permission failure
 
 Server resolves `space_id` from `RespondContact.workspace_id → RespondWorkspace.space_id`. The client never passes `space_id` on this internal endpoint.
 
@@ -89,10 +89,10 @@ Server resolves `space_id` from `RespondContact.workspace_id → RespondWorkspac
   }
   ```
 - Errors:
-  - 404 contact not found
-  - 422 contact missing workspace_id OR respond_io_id
-  - 502 Respond.io API failure (message text in detail)
-  - 401/403 standard
+ - 404 contact not found
+ - 422 contact missing workspace_id OR respond_io_id
+ - 502 Respond.io API failure (message text in detail)
+ - 401/403 standard
 
 This endpoint internally reuses `get_or_mint_token`; calling it does not require having called the plain link endpoint first. Calling both for the same contact returns the same token (reuse path).
 
@@ -128,9 +128,9 @@ Add `qrcode.react` (small, MIT, peer-deps clean against React 19) to `sorento_cr
 ### Service + hooks
 
 - `sorento_crm_frontend/services/contactPortalLinkService.ts`
-  - `getContactPortalLink(contactId): Promise<PortalLinkResponse>` → `POST /user-management/contacts/{id}/portal-link`
-  - `sendContactPortalLink(contactId): Promise<PortalLinkSendResponse>` → `POST /user-management/contacts/{id}/portal-link/send`
-  - Both use shared `apiFetch` + `extractApiError`.
+ - `getContactPortalLink(contactId): Promise<PortalLinkResponse>` → `POST /user-management/contacts/{id}/portal-link`
+ - `sendContactPortalLink(contactId): Promise<PortalLinkSendResponse>` → `POST /user-management/contacts/{id}/portal-link/send`
+ - Both use shared `apiFetch` + `extractApiError`.
 - `sorento_crm_frontend/hooks/useContactPortalLinkMutation.ts` - two react-query `useMutation` hooks: `useContactPortalLinkMutation` and `useSendContactPortalLinkMutation`. Both toast on error.
 
 Types:
@@ -192,15 +192,15 @@ Content:
 Three call sites, all use `PortalLinkButton`:
 
 1. **Contact detail page** - `app/(protected)/user-management/contacts/[id]/page.tsx`
-   - Add to `ToolbarActions`: `<PortalLinkButton contactId={id} contactLabel={contact.name ?? contact.phone} variant="button" />`
-   - Place between the existing Edit and Delete actions.
+ - Add to `ToolbarActions`: `<PortalLinkButton contactId={id} contactLabel={contact.name ?? contact.phone} variant="button" />`
+ - Place between the existing Edit and Delete actions.
 
 2. **SLA tracking detail page** - `app/(protected)/sla-management/conversation-sla-tracking/[id]/page.tsx`
-   - Existing gear-menu (DropdownMenu in screenshot). Add `<PortalLinkButton contactId={tracking.contact_id} contactLabel={tracking.contact_label} variant="menu-item" />` as a new menu item near "Open conversation".
-   - Show only when `tracking.contact_id` is resolved.
+ - Existing gear-menu (DropdownMenu in screenshot). Add `<PortalLinkButton contactId={tracking.contact_id} contactLabel={tracking.contact_label} variant="menu-item" />` as a new menu item near "Open conversation".
+ - Show only when `tracking.contact_id` is resolved.
 
 3. **Contact list row action** - `app/(protected)/user-management/contacts/page.tsx`
-   - Add a `DropdownMenuItem` to the existing per-row action menu calling the same component (`variant="menu-item"`).
+ - Add a `DropdownMenuItem` to the existing per-row action menu calling the same component (`variant="menu-item"`).
 
 ### Files touched (frontend)
 

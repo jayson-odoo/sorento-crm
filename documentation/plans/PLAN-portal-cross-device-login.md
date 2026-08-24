@@ -57,23 +57,23 @@ is right there in the URL.
 ### Backend
 
 1. **Colon fix (defense in depth)**
-   - `respond_messaging_service.extract_first_url`: strip trailing punctuation
+ - `respond_messaging_service.extract_first_url`: strip trailing punctuation
      `).,:;!?` from the matched URL.
-   - `complaints_service` status messages: ensure the portal URL is not
+ - `complaints_service` status messages: ensure the portal URL is not
      immediately followed by `:` (newline / trailing position) so WhatsApp does
      not absorb punctuation.
-   - (FE guard below is the belt to this suspenders.)
+ - (FE guard below is the belt to this suspenders.)
 
 2. **Expose name** - `PortalService.identity_hint` adds `name` (full contact
    name). Propagates to `slug_info` + `token_info`; add `name` to
    `PortalSlugInfoResponse` / `PortalTokenInfoResponse`.
 
-3. **OTP via template**  - 
-   - `models/respond_template.py`: add `"portal_otp"` to
+3. **OTP via template** - 
+ - `models/respond_template.py`: add `"portal_otp"` to
      `TEMPLATE_DEFAULT_USE_CASES` (auto-appears in the admin template-defaults
      screen via `get_defaults`).
-   - `respond_template_service.PARAM_VARIABLES`: add `"otp_code"`.
-   - `portal_service.request_otp`: replace the raw `RespondClient().send_message`
+ - `respond_template_service.PARAM_VARIABLES`: add `"otp_code"`.
+ - `portal_service.request_otp`: replace the raw `RespondClient().send_message`
      with `send_text_or_template(db, identifier=…, text=<otp message>,
      use_case="portal_otp", context_vars={"otp_code": code},
      respond_contact_id=contact.id)`. Keep the daily-cap refund on failure;
@@ -90,12 +90,12 @@ is right there in the URL.
 5. Sanitize the `[id]` route param in the deep-link page (trim trailing
    non-`[0-9a-f-]`) so a mangled link can never reach the backend as `%3A`.
 6. `PortalVerifyCard`:
-   - `SlugInfo`/`TokenInfo` types gain `name`.
-   - When entity context is present (deep link: `type` + slug), render a
+ - `SlugInfo`/`TokenInfo` types gain `name`.
+ - When entity context is present (deep link: `type` + slug), render a
      `confirm-identity` state: "This {type} belongs to **{name}** ({masked
      phone}). Log in with this number?" + [Yes, send code] → fire OTP → `otp`
      state. Preserve silent auto-fire for the plain verify entry.
-   - Keep the wa.me fallback block.
+ - Keep the wa.me fallback block.
 
 ### Tests (Phase 2)
 

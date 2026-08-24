@@ -47,11 +47,11 @@ def _implicit_promotion_and_text_query(q: Optional[str]) -> Tuple[Optional[str],
 # Robust to LLM mis-use (e.g. query="basin 365 width" → width_min/max=365 ± tol, query="basin").
 #
 # Patterns matched (case-insensitive):
-#   - "L600" / "W365" / "H140"            → length/width/height = N
-#   - "600mm wide" / "365 width"           → width = N
-#   - "365 mm" / "365mm"                   → unspecified-axis (any_dimension) = N
-#   - "L 600-650" / "width 360..370"       → range form
-#   - "price 100-200" / "rm 150"           → price_min/max
+# - "L600" / "W365" / "H140"            → length/width/height = N
+# - "600mm wide" / "365 width"           → width = N
+# - "365 mm" / "365mm"                   → unspecified-axis (any_dimension) = N
+# - "L 600-650" / "width 360..370"       → range form
+# - "price 100-200" / "rm 150"           → price_min/max
 _AXIS_WORDS = {
     "length": ("length", "long", "l"),
     "width": ("width", "wide", "w"),

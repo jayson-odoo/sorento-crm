@@ -122,7 +122,7 @@ const ProductsList = () => {
     if (isReloadRef.current) {
       isReloadRef.current = false;
       if (searchParams.toString()) {
-        // Preserve a "products discontinued" deep link through the reload-clean  - 
+        // Preserve a "products discontinued" deep link through the reload-clean - 
         // it is an explicit navigation intent, not persisted list state. The link
         // carries the recipient's brand filter too (brand_id=a,b), and dropping it
         // would widen the list to products they were never notified about.

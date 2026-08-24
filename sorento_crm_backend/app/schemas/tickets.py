@@ -359,7 +359,7 @@ class ITSupportTicketCreateResponse(BaseModel):
 
     Always creates a draft and returns a link the user opens to review +
     submit / edit / cancel. The caller (AI assistant or n8n WhatsApp agent)
-    is expected to surface ``draft_url`` to the user verbatim and stop  - 
+    is expected to surface ``draft_url`` to the user verbatim and stop - 
     no in-chat confirmation handshake."""
 
     status: Literal["draft_created"]

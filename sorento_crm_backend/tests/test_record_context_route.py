@@ -2,9 +2,9 @@
 
 Auth-override pattern copied from test_lookup_public_api.py. The route is wrapped
 in ``require_permission`` (JWT-only) so:
-  - a permitted (superadmin) principal → 200,
-  - a user lacking complaint.view → 403,
-  - an EXTERNAL_API_KEY / X-API-Key principal → denied (no JWT → 401), proving the
+ - a permitted (superadmin) principal → 200,
+ - a user lacking complaint.view → 403,
+ - an EXTERNAL_API_KEY / X-API-Key principal → denied (no JWT → 401), proving the
     assembler is never reachable from n8n/WhatsApp (UAC §3.6).
 """
 from __future__ import annotations

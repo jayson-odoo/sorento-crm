@@ -2,7 +2,7 @@
 
 `notifications.source_entity_id` was overloaded: for an entity notification it
 held the entity's uuid, but for batched / periodic notifications it held a
-synthetic idempotency key with no entity behind it  - 
+synthetic idempotency key with no entity behind it - 
 `alert:integration_spike:2026-07-13T08:24:10`, `digest:2026-07-13`,
 `{type}_{batch}`, `{uuid}:{date}`. That overload is the only reason the column
 had to be `varchar`, and it blocked typing it `uuid` (which would let Postgres

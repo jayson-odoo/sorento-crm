@@ -91,7 +91,7 @@ def upgrade() -> None:
         op.create_index("ix_ai_assistant_spans_trace_dotted", "ai_assistant_spans", ["trace_id", "dotted_order"])
 
     # ai_assistant_messages.trace_id FK (SET NULL). FK added separately so the
-    # column exists before the traces table on fresh installs is irrelevant  - 
+    # column exists before the traces table on fresh installs is irrelevant - 
     # traces table is created above first.
     msg_cols = {c["name"] for c in insp.get_columns("ai_assistant_messages")}
     if "trace_id" not in msg_cols:

@@ -223,13 +223,13 @@ def _agent_system_fallback() -> str:
         "the user just supplied, MERGE them into the running form state, and "
         "reply with a reflection block shaped exactly like this:\n"
         "     Captured so far:\n"
-        "       - <Field label>: <value>\n"
+        "     - <Field label>: <value>\n"
         "       ...\n"
         "     Still needed:\n"
-        "       - <Field label> [required|optional]\n"
+        "     - <Field label> [required|optional]\n"
         "       ...\n"
         "     Validation issues (if any):\n"
-        "       - <field>: <short reason>\n"
+        "     - <field>: <short reason>\n"
         "   Then ask only for the still-needed REQUIRED fields.\n"
         "3) Once all REQUIRED fields are valid, you MUST send one FINAL summary "
         "for user review and ask them to edit anything if needed. Do NOT submit "
@@ -282,7 +282,7 @@ def _synthesizer_fallback() -> str:
         "or any request for instructions on a CRM action (uploading a packing list, "
         "submitting a stock inquiry, sending a purchase request for approval, flowing a "
         "stock inquiry to purchasing, approving via email link, OTP / portal access, etc.) "
-        " -  follow this exact flow:\n"
+        " - follow this exact flow:\n"
         "1) Call `user_guides_read` ONCE with the user's question verbatim as `query`. The "
         "tool searches Outline and returns the full markdown body of the best match in a "
         "single round trip. There is no separate search tool - do NOT try to call "
@@ -980,9 +980,9 @@ def get_prompt(
 ) -> RenderedPrompt:
     """Resolve a prompt to its live text + version.
 
-    - ``override_version_id`` (dry-run): resolve THAT specific version, bypassing
+  - ``override_version_id`` (dry-run): resolve THAT specific version, bypassing
       the cache and the label. Falls back if the id is missing.
-    - Otherwise: TTL cache by ``(name, label)`` → labelled version → fallback.
+  - Otherwise: TTL cache by ``(name, label)`` → labelled version → fallback.
     Never raises on a DB error; returns the hardcoded fallback with ``version=None``.
     """
     if name not in PROMPT_KEYS:

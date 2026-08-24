@@ -6,14 +6,14 @@
  * Packing Lists and nothing else. This pins the fifth tab.
  *
  * What is asserted, and why each one is not incidental:
- *   - the tab exists and counts, like its four siblings
- *   - View routes to /master-data-management/certificates/<CERTIFICATE id>,
+ * - the tab exists and counts, like its four siblings
+ * - View routes to /master-data-management/certificates/<CERTIFICATE id>,
  *     not the revision id (the row carries both; using link_id would 404)
- *   - the row is READ-ONLY: no Link, no Unlink. The file is tied to the
+ * - the row is READ-ONLY: no Link, no Unlink. The file is tied to the
  *     certificate by BEING one of its filed revisions, so detaching it here
  *     would leave a revision with no document.
- *   - an empty state that says what is actually true of this file
- *   - the other four tabs keep their own items
+ * - an empty state that says what is actually true of this file
+ * - the other four tabs keep their own items
  *
  * Mocks: the metadata fetch and the attachment hooks; everything rendered is
  * the component's own markup.

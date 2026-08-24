@@ -26,12 +26,12 @@ def resolve_recipients(
     """Return list of {email, name, user_id?} dicts, deduped by lowercased email.
 
     Inputs come from ``Automation.recipient_config``:
-      - user_ids: list[str]
-      - role_ids: list[str]
-      - include_promotion_owner: bool
-      - include_assigned_cs_pic: bool  (needs source_id; resolves the active
+    - user_ids: list[str]
+    - role_ids: list[str]
+    - include_promotion_owner: bool
+    - include_assigned_cs_pic: bool  (needs source_id; resolves the active
         customer-service form-SLA assignee for that entity)
-      - extra_emails: list[str]
+    - extra_emails: list[str]
     """
     config = config or {}
     out: dict[str, dict[str, Any]] = {}

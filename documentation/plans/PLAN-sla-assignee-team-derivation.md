@@ -72,11 +72,11 @@ Applied by the caller when result ≠ current state:
 1. `app/services/sla_service.py` - `derive_team_for_assignee()` + apply-derivation helper;
    call from `set_assignee_for_tracking()` and `sync_assignee_from_respond()`.
 2. `app/services/user_service.py` (TeamService / AccessAgentService) - invariant validation:
-   - add team member → reject if team is tier-1-linked and user already in another
+ - add team member → reject if team is tier-1-linked and user already in another
      tier-1-linked `(agent, code)`. Error message names the conflicting team + agent.
-   - create/update `AgentTeam` at tier 1 → reject if any member of the linked team would
+ - create/update `AgentTeam` at tier 1 → reject if any member of the linked team would
      violate the invariant.
-   - warn-only path for team reused across tiers (log warning, allow).
+ - warn-only path for team reused across tiers (log warning, allow).
 3. New `event_type` value `reassignment` in `ConversationSLAEventLog` (Text column - no
    migration needed; confirm no enum/check constraint).
 4. `scripts/amend_tier1_membership_violations.py` - auto-fix: keep latest membership,
@@ -98,13 +98,13 @@ Applied by the caller when result ≠ current state:
 8. `/integration/escalate`: make `current_tier` **optional**. n8n sends a bare escalation
    signal; the server owns tier math. Once reassignment can change tier server-side, any
    tier cached in n8n goes stale - so n8n must not do tier arithmetic at all.
-   - `current_tier` omitted → target = `tracking.current_tier + 1`.
-   - Already at tier 3 → **no escalation**, return 200 with `escalated: false`,
+ - `current_tier` omitted → target = `tracking.current_tier + 1`.
+ - Already at tier 3 → **no escalation**, return 200 with `escalated: false`,
      `from_tier = to_tier = 3`, message "already at max tier" (n8n branches on the flag,
      e.g. keep reminding).
-   - `current_tier` provided → legacy explicit-target behavior unchanged (validation,
+ - `current_tier` provided → legacy explicit-target behavior unchanged (validation,
      multi-step jumps) for backward compatibility during n8n transition.
-   - Response gains `escalated`, `from_tier`, `to_tier` for n8n message templating
+ - Response gains `escalated`, `from_tier`, `to_tier` for n8n message templating
      ("Escalated from tier {from} to {to}: {assignee}").
 
 ### Integration (n8n / Respond.io)

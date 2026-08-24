@@ -101,7 +101,7 @@ Consuming detail pages: `StockInquiryDetail.tsx`, `PurchaseRequestDetail.tsx`, `
   WHEN timestamp, sourced from the new `rejected_by_id` column + `approved_at`.
 - **REJ-4 `[BE]`** GIVEN a Purchase Request rejected by an **approval-decision** (approver via the
   approval link) whose approver is an external email with no CRM user, WHEN its detail DTO is served,
-  THEN `rejected_by_wa_phone = null` and `rejected_by_name` shows the resolved display name / email  - 
+  THEN `rejected_by_wa_phone = null` and `rejected_by_name` shows the resolved display name / email - 
   banner falls back to plain text (FB-1). No error, no UUID.
 - **REJ-5 `[FE]`** GIVEN a rejected entity with `rejection_reason`, `rejected_by_name`,
   `rejected_by_wa_phone`, `rejected_at`, WHEN `RejectionReasonBanner` renders, THEN it shows

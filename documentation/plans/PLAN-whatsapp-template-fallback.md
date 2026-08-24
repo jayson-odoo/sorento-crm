@@ -19,8 +19,8 @@ pre-approved **message templates**, which the CRM cannot send today.
    into the CRM.
 2. Before every outbound send, check whether the contact's 24h window is open
    (last **incoming** message < 23h ago, via Respond API).
-   - Open → send the composed plain-text message (today's behaviour).
-   - Closed → send the configured **default template** for that use case, with
+ - Open → send the composed plain-text message (today's behaviour).
+ - Closed → send the configured **default template** for that use case, with
      params filled from a per-template mapping. No reactive fallback - the branch
      is decided up front.
 3. In Chat Records, gate the plain-text input on window state and add a manual
@@ -64,10 +64,10 @@ POST   /api/v1/activities/{entity_type}/{entity_id}/template-messages        →
 ## Open verification items (Phase 2 spike, before coding)
 
 - Exact Respond.io API shapes (docs are JS-rendered; verify against live workspace):
-  - List channels endpoint + response.
-  - `GET /v2/space/channel/{channelId}/message_templates` (list message templates)  - 
+ - List channels endpoint + response.
+ - `GET /v2/space/channel/{channelId}/message_templates` (list message templates) - 
     pagination, component JSON shape, status values.
-  - Template send payload on `POST /v2/contact/{identifier}/message`  - 
+ - Template send payload on `POST /v2/contact/{identifier}/message` - 
     `whatsapp_template` message type, channelId placement, param format.
 - How template messages appear in `list_messages` items (for renderer support, D9).
 - WhatsApp param length limits (truncation threshold in D7).
@@ -75,17 +75,17 @@ POST   /api/v1/activities/{entity_type}/{entity_id}/template-messages        →
 ## Phase 1 - Frontend prototype (mocks only, no backend changes)
 
 - [ ] `/integration-management/whatsapp-templates` page:
-  - Workspace/channel info card.
-  - "Sync templates" button (mock: spinner → toast).
-  - Templates DataGrid (house standards: fixed layout, resizable, explicit sizes,
+ - Workspace/channel info card.
+ - "Sync templates" button (mock: spinner → toast).
+ - Templates DataGrid (house standards: fixed layout, resizable, explicit sizes,
     truncate+title): name, language, category, status badge, body preview, synced_at.
-  - Default-template config section: 4 use-case rows; set-default flow opens
+ - Default-template config section: 4 use-case rows; set-default flow opens
     template picker → param-mapping form (`{{n}}` → variable dropdown) → save.
-  - Mock states: populated list, pending/rejected rows, "default no longer
+ - Mock states: populated list, pending/rejected rows, "default no longer
     approved" warning, empty/never-synced.
 - [ ] Chat Records (ActivitiesNotesPanel chat):
-  - Window-closed banner + disabled plain input + hint.
-  - Template-send dialog: searchable picker with body preview → required param
+ - Window-closed banner + disabled plain input + hint.
+ - Template-send dialog: searchable picker with body preview → required param
     inputs → live preview → send. States: sending, success, error.
 - [ ] Document the API contract at the top of `services/whatsappTemplateService.ts`.
 - [ ] Playwright MCP verification via sidebar navigation; screenshots of golden

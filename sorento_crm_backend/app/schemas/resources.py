@@ -125,7 +125,7 @@ def _validate_field_linkage_template(target_entity_type, target_field_keys):
     """Shared validator used on both AttachmentCreate and AttachmentUpdate.
 
     Empty inputs are tolerated: the template is opt-in. When a target_entity_type
-    is given without keys (or vice versa) we leave the row in a partial state  - 
+    is given without keys (or vice versa) we leave the row in a partial state - 
     it just won't fan out anything until a future PUT completes the pair.
     """
     from app.services.field_linkage import (
@@ -440,7 +440,7 @@ class DriveFileItem(AttachmentResponse):
 
     Inherits the full AttachmentResponse contract so file rows behave exactly
     like the existing Files list, plus a discriminator and a resolved
-    human-readable ``directory_path`` (Location column) computed in-query  - 
+    human-readable ``directory_path`` (Location column) computed in-query - 
     no N+1 (UAC D2).
     """
     kind: Literal["file"] = "file"

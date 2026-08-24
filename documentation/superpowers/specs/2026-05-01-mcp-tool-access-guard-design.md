@@ -143,7 +143,7 @@ CREATE INDEX ix_mcp_access_log_tool_name ON mcp_access_log(tool_name);
 SQLAlchemy models added to `app/models/access.py`:
 `McpTool` (with `agent = relationship("AccessAgent", back_populates="mcp_tools")`)
 and `McpAccessLog`. `AccessAgent` grows
-`mcp_tools = relationship("McpTool", back_populates="agent")` (no cascade  - 
+`mcp_tools = relationship("McpTool", back_populates="agent")` (no cascade - 
 deleting an agent sets its tools' `agent_id` to NULL via the FK rule).
 
 ## 6. Catalog sync
@@ -306,7 +306,7 @@ Two new routes under `/api/v1/access-agents/{agent_id}/mcp-tools`:
 `PUT` semantics - single transaction:
 
 1. `UPDATE mcp_tools SET agent_id = :agent_id WHERE id IN :tool_ids`
-   - claims every selected tool for this agent (reassigns from any prior
+ - claims every selected tool for this agent (reassigns from any prior
    owner). Each reassignment is logged in a structured backend log
    (`logger.info("mcp tool reassigned", tool_id, from_agent, to_agent)`)
    so admins can trace ownership moves.
@@ -385,30 +385,30 @@ Down-revision drops the two tables in reverse order
 Backend:
 
 - `tests/services/test_mcp_tool_registry.py`
-  - First sync inserts every `ToolSpec` with `is_active=true`,
+ - First sync inserts every `ToolSpec` with `is_active=true`,
     `agent_id=NULL`.
-  - Second sync with one tool removed flips that row to `is_active=false`.
-  - Re-adding a tool flips it back to `is_active=true`.
-  - Sync **preserves** `agent_id` set by an admin between runs.
+ - Second sync with one tool removed flips that row to `is_active=false`.
+ - Re-adding a tool flips it back to `is_active=true`.
+ - Sync **preserves** `agent_id` set by an admin between runs.
 - `tests/services/test_mcp_access_service.py` covers all five decision
   branches with explicit fixtures.
 - `tests/api/test_mcp_access_check.py` integration: hits the FastAPI
   endpoint with X-API-Key, asserts response shape + `mcp_access_log` row.
 - `tests/api/test_access_agent_mcp_tools.py` for GET/PUT ownership routes:
-  - Selecting a tool currently owned by another agent reassigns it
+ - Selecting a tool currently owned by another agent reassigns it
     (`agent_id` flips to the new owner; old agent's GET no longer lists it).
-  - Removing a tool from an agent's set sets its `agent_id` to NULL.
+ - Removing a tool from an agent's set sets its `agent_id` to NULL.
 
 MCP server:
 
 - `sorento_crm_mcp/tests/test_access_guard.py`
-  - Patches the backend access-check to return allow → tool executes.
-  - Patches deny case 1 (no access) → returns verbatim Case 1 payload,
+ - Patches the backend access-check to return allow → tool executes.
+ - Patches deny case 1 (no access) → returns verbatim Case 1 payload,
     underlying CRM client never called.
-  - Patches deny case 2 (unlinked) → returns Case 2 payload.
-  - TTL cache: second call within 60s does not re-hit backend; after
+ - Patches deny case 2 (unlinked) → returns Case 2 payload.
+ - TTL cache: second call within 60s does not re-hit backend; after
     `time.monotonic` advance, re-hits.
-  - Missing `contact_id` or `space_id` → MCP raises `ValueError` before
+ - Missing `contact_id` or `space_id` → MCP raises `ValueError` before
     backend call.
 
 Frontend:

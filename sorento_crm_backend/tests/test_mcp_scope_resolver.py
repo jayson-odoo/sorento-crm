@@ -4,9 +4,9 @@ The MCP server and n8n call the CRM with ``X-API-Key`` and, for a contact-scoped
 request, ``contact_id`` + ``space_id`` query params. ``resolve_company_scope``
 turns those into the four-state scope the ``do_orm_execute`` filter enforces:
 
-  - AC-F1: valid key, NO contact params            -> None  (all companies, back-compat)
-  - AC-F2: contact params -> a Mocha-only contact   -> frozenset({mocha})
-  - AC-F3: contact params that resolve to no contact / no membership -> frozenset() (0 rows)
+ - AC-F1: valid key, NO contact params            -> None  (all companies, back-compat)
+ - AC-F2: contact params -> a Mocha-only contact   -> frozenset({mocha})
+ - AC-F3: contact params that resolve to no contact / no membership -> frozenset() (0 rows)
 
 Live-DB: seeds a throwaway Mocha company + a Respond workspace/contact/membership
 via raw INSERT inside a rolled-back SAVEPOINT (``zzmcp`` marker), so it never

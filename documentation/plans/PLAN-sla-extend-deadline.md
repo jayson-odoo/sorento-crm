@@ -8,7 +8,7 @@ when work legitimately can't finish in the policy lead time (e.g. waiting on sup
 
 ## Decisions (locked)
 
-1. **Clock:** resolution only (`due_at_resolution`). Never the response clock (`due_at`)  - 
+1. **Clock:** resolution only (`due_at_resolution`). Never the response clock (`due_at`) - 
    "response has no excuse, can always reply 'will get back to you'."
 2. **Both SLA systems:** conversation SLA (n8n, `source_entity_type` NULL) and form SLA
    stages. Same shared UI + endpoint.
@@ -149,7 +149,7 @@ Gherkin-style. Each maps to a P2 test.
   2026-06-24: base is current due, never now.)
 
 ### Date input mode
-- **UAC-11** Given "Specific date" mode - When I pick a date strictly after the current due  - 
+- **UAC-11** Given "Specific date" mode - When I pick a date strictly after the current due - 
   Then the dialog shows the derived working-day count (read-only) and the resulting datetime
   (current due's time-of-day on that date).
 - **UAC-12** Picking a date on/before the current due is rejected inline ("can only extend").
