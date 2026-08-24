@@ -153,10 +153,10 @@ export function SidebarMenu() {
     label:
       'uppercase text-xs font-medium text-muted-foreground/70 pt-2.25 pb-px',
     separator: '',
-    item: 'h-8 hover:bg-transparent text-accent-foreground hover:text-primary data-[selected=true]:text-primary data-[selected=true]:bg-muted data-[selected=true]:font-medium',
+    item: 'h-8 text-accent-foreground hover:bg-accent hover:text-primary active:scale-[0.98] transition-transform duration-75 data-[selected=true]:text-primary data-[selected=true]:bg-muted data-[selected=true]:font-medium',
     sub: '',
     subTrigger:
-      'h-8 hover:bg-transparent text-accent-foreground hover:text-primary data-[selected=true]:text-primary data-[selected=true]:bg-muted data-[selected=true]:font-medium',
+      'h-8 text-accent-foreground hover:bg-accent hover:text-primary active:scale-[0.98] transition-transform duration-75 data-[selected=true]:text-primary data-[selected=true]:bg-muted data-[selected=true]:font-medium',
     subContent: 'py-0',
     indicator: '',
   };
