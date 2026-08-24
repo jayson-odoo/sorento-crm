@@ -14,29 +14,19 @@ self.addEventListener('activate', (event) => {
 /* A message push carries `data.tag` ("contact-<respond_io_id>"); every other
  * notification does not, and takes the plain show-it path below unchanged. */
 
-/* The thread a link points at: the tracking id from
- * /sla-management/conversation-sla-tracking/<id>, or the `contact` query param
- * from the list fallback. Null when the link names no single thread. */
+/* The contact a link points at: the `contact` query param from
+ * /sla-management/conversations?contact=<id>. Null when the link names no
+ * single contact. */
 function threadKeyFromLink(link) {
   if (!link) return null;
   const queryAt = link.indexOf('?');
-  if (queryAt !== -1) {
-    const contact = new URLSearchParams(link.slice(queryAt + 1)).get('contact');
-    if (contact) return contact;
-  }
-  const path = queryAt === -1 ? link : link.slice(0, queryAt);
-  const segments = path.split('/').filter(Boolean);
-  const last = segments[segments.length - 1];
-  if (!last || last === 'conversation-sla-tracking') return null;
-  return last;
+  if (queryAt === -1) return null;
+  return new URLSearchParams(link.slice(queryAt + 1)).get('contact') || null;
 }
 
 function clientIsOnThread(url, threadKey) {
   const href = String(url || '');
-  return (
-    href.indexOf('/conversation-sla-tracking/' + threadKey) !== -1 ||
-    href.indexOf('contact=' + threadKey) !== -1
-  );
+  return href.indexOf('contact=' + threadKey) !== -1;
 }
 
 /* Decides what a push should put on screen, given the worker's registration and

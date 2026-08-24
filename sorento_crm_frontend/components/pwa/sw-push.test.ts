@@ -30,7 +30,7 @@ const CONTACT_ID = 'respond-77';
 const TAG = `contact-${CONTACT_ID}`;
 
 function messagePayload(
-  link = `/sla-management/conversation-sla-tracking/${TRACKING_ID}`,
+  link = `/sla-management/conversations?contact=${CONTACT_ID}`,
 ) {
   return {
     title: 'Ah Meng (Sorento Kitchen)',
@@ -160,7 +160,7 @@ describe('sw.js handlePushPayload - visible-thread suppression (AC-M22, AC-M23)'
     const registration = fakeRegistration();
     const clients = fakeClients([
       {
-        url: `http://localhost:3000/sla-management/conversation-sla-tracking/${TRACKING_ID}`,
+        url: `http://localhost:3000/sla-management/conversations?contact=${CONTACT_ID}`,
         visibilityState: 'visible',
       },
     ]);
@@ -180,10 +180,10 @@ describe('sw.js handlePushPayload - visible-thread suppression (AC-M22, AC-M23)'
 
   it('shows nothing when a visible window is on the contact-filtered list', async () => {
     const registration = fakeRegistration();
-    const link = `/sla-management/conversation-sla-tracking?contact=${CONTACT_ID}`;
+    const link = `/sla-management/conversations?contact=${CONTACT_ID}`;
     const clients = fakeClients([
       {
-        url: `http://localhost:3000/sla-management/conversation-sla-tracking?contact=${CONTACT_ID}`,
+        url: `http://localhost:3000/sla-management/conversations?contact=${CONTACT_ID}`,
         visibilityState: 'visible',
       },
     ]);
@@ -201,7 +201,7 @@ describe('sw.js handlePushPayload - visible-thread suppression (AC-M22, AC-M23)'
     const registration = fakeRegistration();
     const clients = fakeClients([
       {
-        url: `http://localhost:3000/sla-management/conversation-sla-tracking/${TRACKING_ID}`,
+        url: `http://localhost:3000/sla-management/conversations?contact=${CONTACT_ID}`,
         visibilityState: 'hidden',
       },
     ]);
@@ -219,7 +219,7 @@ describe('sw.js handlePushPayload - visible-thread suppression (AC-M22, AC-M23)'
     const registration = fakeRegistration();
     const clients = fakeClients([
       {
-        url: 'http://localhost:3000/sla-management/conversation-sla-tracking/some-other-id',
+        url: 'http://localhost:3000/sla-management/conversations?contact=some-other-id',
         visibilityState: 'visible',
       },
       { url: 'http://localhost:3000/dashboard', visibilityState: 'visible' },
@@ -248,13 +248,13 @@ describe('sw.js handlePushPayload - visible-thread suppression (AC-M22, AC-M23)'
     const registration = fakeRegistration();
     const clients = fakeClients([
       {
-        url: 'http://localhost:3000/sla-management/conversation-sla-tracking',
+        url: 'http://localhost:3000/sla-management/conversations',
         visibilityState: 'visible',
       },
     ]);
 
     const result = await sw.handlePushPayload(
-      messagePayload('/sla-management/conversation-sla-tracking'),
+      messagePayload('/sla-management/conversations'),
       { registration, clients },
     );
 
@@ -273,7 +273,7 @@ describe('sw.js handlePushPayload - non-message pushes are untouched', () => {
       {
         title: 'SLA escalated',
         body: 'Ticket SLA-1042 breached tier 1',
-        data: { link: '/sla-management/conversation-sla-tracking/abc' },
+        data: { link: '/sla-management/conversations?contact=abc' },
       },
       { registration, clients },
     );
@@ -287,7 +287,7 @@ describe('sw.js handlePushPayload - non-message pushes are untouched', () => {
     expect(options.tag).toBeUndefined();
     expect(options.renotify).toBeUndefined();
     expect(options.data).toEqual({
-      link: '/sla-management/conversation-sla-tracking/abc',
+      link: '/sla-management/conversations?contact=abc',
     });
   });
 

@@ -40,7 +40,7 @@ from app.models.user import User
 from tests._external_auth import external_permissions_granted
 from tests._pg_fixture import TEST_PREFIX, blank_session
 
-TRACKING_LINK = "/sla-management/conversation-sla-tracking"
+CONVERSATIONS_LINK = "/sla-management/conversations"
 RESPOND_IO_ID = f"{TEST_PREFIX}-rio-{uuid.uuid4().hex[:8]}"
 PHONE = "+60166753328"
 
@@ -230,7 +230,7 @@ def test_the_bell_row_says_what_the_phone_says(db, task_session, enqueued):
     (notification,) = _notifications(db, owner)
     assert notification.title == contact.name
     assert notification.body == "Can I get the price for the 900mm hood?"
-    assert notification.data["link"] == f"{TRACKING_LINK}/{tracking_id}"
+    assert notification.data["link"] == f"{CONVERSATIONS_LINK}?contact={contact.respond_io_id}"
     assert notification.data["tag"] == f"contact-{RESPOND_IO_ID}"
     assert notification.data["contact_id"] == RESPOND_IO_ID
 
@@ -257,9 +257,9 @@ def test_each_recipient_gets_their_own_link(db, task_session, enqueued):
 
     task_session.send_message_push(row.id)
 
-    assert _notifications(db, first)[0].data["link"] == f"{TRACKING_LINK}/{first_ticket}"
+    assert _notifications(db, first)[0].data["link"] == f"{CONVERSATIONS_LINK}?contact={contact.respond_io_id}"
     assert (
-        _notifications(db, second)[0].data["link"] == f"{TRACKING_LINK}/{second_ticket}"
+        _notifications(db, second)[0].data["link"] == f"{CONVERSATIONS_LINK}?contact={contact.respond_io_id}"
     )
 
 

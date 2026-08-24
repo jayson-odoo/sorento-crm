@@ -37,7 +37,7 @@ from app.models.sla import ConversationSLATracking, SLAPolicy, SLAPolicyTier
 from app.models.user import User
 from tests._pg_fixture import TEST_PREFIX, blank_session
 
-TRACKING_LINK = "/sla-management/conversation-sla-tracking"
+CONVERSATIONS_LINK = "/sla-management/conversations"
 
 
 @pytest.fixture
@@ -202,7 +202,7 @@ def test_the_assignee_hears_it_on_every_scope_but_off(db, scope):
 
     recipients = _resolve(db, _message(db, contact))
 
-    assert _by_user(recipients) == {assignee: f"{TRACKING_LINK}/{tracking_id}"}
+    assert _by_user(recipients) == {assignee: f"{CONVERSATIONS_LINK}?contact={contact.respond_io_id}"}
 
 
 def test_an_assignee_who_turned_it_off_hears_nothing(db):
@@ -232,7 +232,7 @@ def test_an_active_coverer_hears_the_covered_assignee_s_message(db, scope):
 
     recipients = _by_user(_resolve(db, _message(db, contact)))
 
-    assert recipients[coverer] == f"{TRACKING_LINK}/{tracking_id}"
+    assert recipients[coverer] == f"{CONVERSATIONS_LINK}?contact={contact.respond_io_id}"
 
 
 @pytest.mark.parametrize("scope", ["assigned_only", "off"])
@@ -286,7 +286,7 @@ def test_all_contacts_hears_a_contact_nobody_is_assigned(db):
     recipients = _by_user(_resolve(db, _message(db, contact)))
 
     assert recipients == {
-        manager: f"{TRACKING_LINK}?contact={contact.respond_io_id}"
+        manager: f"{CONVERSATIONS_LINK}?contact={contact.respond_io_id}"
     }
 
 
@@ -312,7 +312,7 @@ def test_all_contacts_gets_the_most_recently_updated_open_ticket(db):
 
     recipients = _by_user(_resolve(db, _message(db, contact)))
 
-    assert recipients[manager] == f"{TRACKING_LINK}/{newest}"
+    assert recipients[manager] == f"{CONVERSATIONS_LINK}?contact={contact.respond_io_id}"
 
 
 def test_an_unassigned_open_ticket_pushes_only_all_contacts_users(db):
@@ -355,8 +355,8 @@ def test_every_open_ticket_s_assignee_gets_their_own_link(db):
     recipients = _by_user(_resolve(db, _message(db, contact)))
 
     assert recipients == {
-        first: f"{TRACKING_LINK}/{first_ticket}",
-        second: f"{TRACKING_LINK}/{second_ticket}",
+        first: f"{CONVERSATIONS_LINK}?contact={contact.respond_io_id}",
+        second: f"{CONVERSATIONS_LINK}?contact={contact.respond_io_id}",
     }
 
 
@@ -372,7 +372,7 @@ def test_each_multi_open_assignee_is_gated_by_their_own_scope(db):
 
     recipients = _by_user(_resolve(db, _message(db, contact)))
 
-    assert recipients == {listening: f"{TRACKING_LINK}/{listening_ticket}"}
+    assert recipients == {listening: f"{CONVERSATIONS_LINK}?contact={contact.respond_io_id}"}
 
 
 def test_a_resolved_ticket_s_assignee_drops_out_and_the_rest_stay(db):
@@ -393,7 +393,7 @@ def test_a_resolved_ticket_s_assignee_drops_out_and_the_rest_stay(db):
 
     recipients = _by_user(_resolve(db, _message(db, contact)))
 
-    assert recipients == {open_owner: f"{TRACKING_LINK}/{open_ticket}"}
+    assert recipients == {open_owner: f"{CONVERSATIONS_LINK}?contact={contact.respond_io_id}"}
 
 
 # --------------------------------------------------------------------------- #
@@ -442,7 +442,7 @@ def test_assignee_and_coverer_of_the_same_person_is_one_push(db):
     recipients = _resolve(db, _message(db, contact))
 
     assert [r.user_id for r in recipients].count(a) == 1
-    assert _by_user(recipients)[a] == f"{TRACKING_LINK}/{a_ticket}"
+    assert _by_user(recipients)[a] == f"{CONVERSATIONS_LINK}?contact={contact.respond_io_id}"
 
 
 def test_two_of_my_own_tickets_is_one_push_on_the_most_recent(db):
@@ -467,7 +467,7 @@ def test_two_of_my_own_tickets_is_one_push_on_the_most_recent(db):
     recipients = _resolve(db, _message(db, contact))
 
     assert len(recipients) == 1
-    assert recipients[0].link == f"{TRACKING_LINK}/{newest}"
+    assert recipients[0].link == f"{CONVERSATIONS_LINK}?contact={contact.respond_io_id}"
 
 
 def test_an_assignee_who_also_chose_all_contacts_keeps_their_own_ticket_link(db):
@@ -493,7 +493,7 @@ def test_an_assignee_who_also_chose_all_contacts_keeps_their_own_ticket_link(db)
     recipients = _resolve(db, _message(db, contact))
 
     assert len(recipients) == 2
-    assert _by_user(recipients)[manager] == f"{TRACKING_LINK}/{manager_ticket}"
+    assert _by_user(recipients)[manager] == f"{CONVERSATIONS_LINK}?contact={contact.respond_io_id}"
 
 
 # --------------------------------------------------------------------------- #
@@ -518,7 +518,7 @@ def test_a_form_sla_row_on_the_same_contact_pushes_nobody(db):
     # `all_contacts` still hears it - but on the no-open-ticket fallback link,
     # which proves the form row was not read as the conversation tracking.
     assert recipients == {
-        form_handler: f"{TRACKING_LINK}?contact={contact.respond_io_id}"
+        form_handler: f"{CONVERSATIONS_LINK}?contact={contact.respond_io_id}"
     }
 
 
@@ -545,7 +545,7 @@ def test_a_form_sla_row_does_not_win_the_all_contacts_link(db):
 
     recipients = _by_user(_resolve(db, _message(db, contact)))
 
-    assert recipients[manager] == f"{TRACKING_LINK}/{conversation_ticket}"
+    assert recipients[manager] == f"{CONVERSATIONS_LINK}?contact={contact.respond_io_id}"
 
 
 # --------------------------------------------------------------------------- #
