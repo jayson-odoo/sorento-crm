@@ -659,7 +659,15 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           timeout: 2m
-          command_timeout: 30m
+          # Must outlast the worker's `stop_grace_period` (3600s), or this step is
+          # the thing that fails a deploy that is otherwise fine. Step 6 of
+          # blue_green_deploy.sh recreates the worker, and `docker compose up -d
+          # --force-recreate worker` BLOCKS until the old container has stopped -
+          # which is now "until the import it is running finishes". Users are
+          # already on the new colour by then (the nginx swap is step 4), so the
+          # only thing at risk is this job's exit code. 70m = the grace plus the
+          # pull, the 4-minute health wait, the 30s drain and the 90s scheduler check.
+          command_timeout: 70m
           script: |
             set -e
             cd /opt/sorento-crm2
