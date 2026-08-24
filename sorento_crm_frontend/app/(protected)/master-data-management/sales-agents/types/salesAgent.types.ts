@@ -42,3 +42,16 @@ export interface MirrorAnnotationPayload {
 }
 
 export type SalesAgentAnnotationPayload = MirrorAnnotationPayload;
+
+/**
+ * POST body for `/bulk-annotate`. Same key semantics as the single-row PATCH - an omitted
+ * field is left alone, `null` clears it - so the bulk action is that PATCH applied N times.
+ *
+ * No `person_label`: a label names ONE human, and applying one across a selection is the
+ * write nobody means to make.
+ */
+export interface SalesAgentBulkAnnotatePayload {
+  sales_agent_ids: string[];
+  demand_class?: string | null;
+  location_group?: string | null;
+}

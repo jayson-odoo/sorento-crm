@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import date
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Optional
 
 from sqlalchemy import func, or_, text
@@ -72,6 +73,50 @@ def _source_label(source_system: Optional[str]) -> str:
     if source_system == "scm_so_history":
         return "history"
     return "manual"
+
+
+#: The precision every money column on this book stores. The sum is quantized to it so a
+#: `unit_price * qty_ordered` over a 4-decimal quantity cannot print a third decimal the
+#: columns it was built from could never hold.
+_MONEY_PLACES = Decimal("0.01")
+
+
+def _money(value) -> Optional[Decimal]:
+    """`value` as a money figure, or None when it is not a number at all."""
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _line_amount(ln: SalesOrderLine) -> Optional[Decimal]:
+    """What this line is worth, or None when nobody priced it.
+
+    The file's own `Total (Inc)` wins when it states one - it is what the customer was
+    actually charged, tax and rounding included, and recomputing it from the parts would
+    quietly disagree with the invoice. Failing that, the arithmetic the parts support.
+    `None` rather than 0, for the reason `unit_price` is nullable: a zero is a price OF
+    zero, and this book has 15,000 rows nobody has ever priced.
+    """
+    stated = _money(ln.line_total)
+    if stated is not None:
+        return stated
+    price = _money(ln.unit_price)
+    if price is None:
+        return None
+    qty = _money(ln.qty_ordered) or Decimal(0)
+    discount = _money(ln.discount) or Decimal(0)
+    return price * qty - discount
+
+
+def _order_amount(lines: list[SalesOrderLine]) -> Optional[Decimal]:
+    """The order's own total, or None when not one of its lines carries money."""
+    amounts = [a for a in (_line_amount(ln) for ln in lines) if a is not None]
+    if not amounts:
+        return None
+    return sum(amounts, Decimal(0)).quantize(_MONEY_PLACES, rounding=ROUND_HALF_UP)
 
 
 def _line_sort_key(ln: SalesOrderLine):
@@ -229,6 +274,27 @@ class SalesOrderService:
             return opt.label
         return order_type.replace("_", " ").title()
 
+    @staticmethod
+    def _demand_class(value: str) -> str:
+        """The stated class, or a 400 naming the words the fulfilment policy can weigh.
+
+        Refused rather than coerced, and for the same reason `sales_agent_service
+        .assert_demand_class` refuses one: a third word does not rank lower, it drops out of
+        the ranking entirely (`rank_score` divides by the weight of the factors present), so
+        an order stamped `dealer` is un-ranked and reads on screen exactly like one nobody
+        classified. `sales_orders.demand_class` carries no check constraint of its own - the
+        one built from this vocabulary is on `sales_agents` - so this IS the guard.
+        """
+        stated = value.strip().lower()
+        if stated not in DEMAND_CLASSES:
+            raise AppException(
+                400,
+                f"{value!r} is not a demand class the fulfilment policy can weigh. "
+                f"Use one of: {', '.join(DEMAND_CLASSES)}.",
+                code="INVALID_DEMAND_CLASS",
+            )
+        return stated
+
     def _uom_for(self, product: Product) -> str:
         if product.base_uom_id:
             uom = self.db.query(UnitOfMeasure).get(product.base_uom_id)
@@ -297,6 +363,13 @@ class SalesOrderService:
                 # The line's own override when one was set; otherwise the product's base
                 # UOM, same as before this column was mapped.
                 "uom": ln.uom or (self._uom_for(ln.product) if ln.product else ""),
+                # The money, as stored. Not folded into one figure here: the detail page
+                # shows all three columns, and a screen that could only print a total would
+                # not answer "at what price" - which is the question the buyer opens the
+                # demand popover with.
+                "unit_price": ln.unit_price,
+                "discount": ln.discount,
+                "line_total": ln.line_total,
                 # The three the detail page needs and the list does not. Per line, not per
                 # header: one order routinely ships from two locations on two dates, and
                 # folding either onto the header states something the order never said.
@@ -331,6 +404,9 @@ class SalesOrderService:
             "sales_agent_label": agent_label,
             "total_qty": total_qty,
             "committed_qty": committed,
+            # What the order is worth, summed from the SAME line figures the Lines tab
+            # prints, so the header total and the column under it cannot disagree.
+            "total_amount": _order_amount(list(so.lines)),
             # What the order SAYS versus what is still owed. Both, because a "Total qty"
             # reading 0 on a fully delivered order is the label lying - the same rule the
             # purchase-order detail already follows with `open_qty` / `total_qty`.
@@ -559,8 +635,23 @@ class SalesOrderService:
             demand = class_of(data.order_type)
             if demand:
                 so.demand_class = demand
+        # The planning class under its own name - what the detail screen RENDERS, and now
+        # what it writes. `order_type` above still derives a class when it says something,
+        # so an explicit `demand_class` is applied after it and wins: a caller that sent
+        # both meant the one it named.
+        #
+        # Blank leaves the stored class alone rather than clearing it. 96% of this book is
+        # unclassified, so the edit form opens blank on almost every order, and a save that
+        # took blank literally would un-rank an order as a side effect of correcting its
+        # delivery date. Clearing a class is not something this screen offers; setting one is.
+        if getattr(data, "demand_class", None):
+            so.demand_class = self._demand_class(data.demand_class)
         if data.priority is not None:
             so.priority = data.priority
+        if data.order_date is not None:
+            so.order_date = (
+                self._parse_date(data.order_date, "order_date") if data.order_date else None
+            )
         # `model_fields_set`, not `is not None`: an omitted field and an explicit `null`
         # both arrive as `None` on the Pydantic model, and only the latter means "clear the
         # agent" - a plain None-check could never tell "nobody touched this" from "unassign
@@ -707,11 +798,13 @@ class SalesOrderService:
         SO<->PO `OrderLinkClaim`, in which case the whole update is refused with a 409 rather
         than silently orphaning that link.
 
-        `warehouse_code` / `required_date` / `uom` are applied via `model_fields_set`, not a
-        plain `is not None` check: a key the caller never sent must leave the stored value
-        alone (this is how a same-order qty-only edit, which does not carry these keys,
-        cannot wipe out a location/date/UoM another edit set), while a key sent as an
-        explicit `null`/`""` clears it.
+        `warehouse_code` / `required_date` / `uom` / `unit_price` / `discount` are applied via
+        `model_fields_set`, not a plain `is not None` check: a key the caller never sent must
+        leave the stored value alone (this is how a same-order qty-only edit, which does not
+        carry these keys, cannot wipe out a location/date/UoM/price another edit or the book
+        upload set), while a key sent as an explicit `null`/`""` clears it. `line_total` is
+        not in that list on purpose - it is what the source document charged, and rewriting
+        it from an edited price would replace the invoice with our own arithmetic.
 
         Returns one `(line, old_qty_ordered, old_required_date)` per MATCHED existing line -
         its state as it was before this method touched it - for `_propagate_planning_change`
@@ -747,6 +840,17 @@ class SalesOrderService:
                 self._parse_date(ln.required_date, "required_date") if ln.required_date else None
             ) if "required_date" in fields_set else None
             uom = (ln.uom or None) if "uom" in fields_set else None
+            # Money follows the identical rule, which is why it is read the same way: a
+            # qty-only edit never sends these keys and must not blank a price the book
+            # imported, while an explicit `null` clears the figure. `line_total` is NOT
+            # editable here and is deliberately left alone - it is what the source document
+            # charged, and recomputing it from an edited price would overwrite the invoice
+            # with our arithmetic.
+            money = {
+                col: getattr(ln, col)
+                for col in ("unit_price", "discount")
+                if col in fields_set
+            }
             if target is not None:
                 matched_ids.add(target.id)
                 # Snapshotted BEFORE any of the mutations below - the only place this
@@ -762,6 +866,8 @@ class SalesOrderService:
                     target.required_date = required_date
                 if "uom" in fields_set:
                     target.uom = uom
+                for col, value in money.items():
+                    setattr(target, col, value)
             else:
                 self.db.add(SalesOrderLine(
                     sales_order_id=so.id,
@@ -774,6 +880,7 @@ class SalesOrderService:
                     warehouse_id=warehouse_id,
                     required_date=required_date,
                     uom=uom,
+                    **money,
                 ))
 
         removed = [l for l in existing_lines if l.id not in matched_ids]

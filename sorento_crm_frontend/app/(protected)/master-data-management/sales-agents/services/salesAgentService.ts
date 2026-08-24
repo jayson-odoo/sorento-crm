@@ -19,7 +19,11 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
-import type { MirrorAnnotationPayload, SalesAgent } from '../types/salesAgent.types';
+import type {
+  MirrorAnnotationPayload,
+  SalesAgent,
+  SalesAgentBulkAnnotatePayload,
+} from '../types/salesAgent.types';
 
 const BASE = '/api/v1/master-data/sales-agents';
 
@@ -43,6 +47,31 @@ export async function getSalesAgent(id: string): Promise<SalesAgent> {
   const response = await apiFetch(`${BASE}/${id}`);
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load sales agent'));
+  }
+  return response.json();
+}
+
+/**
+ * Set ONE annotation across a selection.
+ *
+ *   POST /api/v1/master-data/sales-agents/bulk-annotate
+ *     body: { sales_agent_ids, demand_class?, location_group? } -> { updated }
+ *     gated `master_data.sales_agents.edit`, the same permission as the single-row PATCH.
+ *
+ * Same key semantics as that PATCH: an omitted field is left alone, `null` clears it. One
+ * transaction on the backend, so a class the fulfilment policy cannot weigh - or an id that
+ * no longer resolves - leaves the whole selection untouched.
+ */
+export async function bulkAnnotateSalesAgents(
+  data: SalesAgentBulkAnnotatePayload,
+): Promise<{ updated: number }> {
+  const response = await apiFetch(`${BASE}/bulk-annotate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to update the selected agents'));
   }
   return response.json();
 }

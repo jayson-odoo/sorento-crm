@@ -3,10 +3,14 @@ import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
   annotateSalesAgent,
+  bulkAnnotateSalesAgents,
   getSalesAgent,
   getSalesAgents,
 } from '../services/salesAgentService';
-import type { MirrorAnnotationPayload } from '../types/salesAgent.types';
+import type {
+  MirrorAnnotationPayload,
+  SalesAgentBulkAnnotatePayload,
+} from '../types/salesAgent.types';
 
 export function useSalesAgents(params: DataGridApiFetchParams) {
   return useQuery({
@@ -38,6 +42,20 @@ export function useSalesAgent(id: string | null) {
     },
     enabled: !!id,
     retry: 1,
+  });
+}
+
+/** Set one annotation across a selection. Toasts the COUNT, because the whole point of the
+ *  action is that it touched more than the row the user is looking at. */
+export function useBulkAnnotateSalesAgents() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: SalesAgentBulkAnnotatePayload) => bulkAnnotateSalesAgents(data),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['sales-agents'] });
+      toast.success(`${res.updated} sales agent${res.updated === 1 ? '' : 's'} updated`);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to update the selected agents'),
   });
 }
 

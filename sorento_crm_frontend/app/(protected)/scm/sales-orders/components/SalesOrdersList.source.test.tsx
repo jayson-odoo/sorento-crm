@@ -234,31 +234,44 @@ describe('SalesOrdersList - a long wait list stays readable', () => {
   });
 });
 
-describe('SalesOrdersList - the pills are the system ones', () => {
+describe('SalesOrdersList - the pills follow the sales-agents master', () => {
   /**
-   * Status and priority used to be painted from two maps that lived in this file, in a
-   * `appearance="light"` style no other listing uses - so the same status was one colour here
-   * and another on Delivery Orders. They read off `@/lib/status-badge` now, like every other
-   * listing, and wear the plain solid Badge.
+   * The captain's reference for a pill is the sales-agents page: an ENUM (a class, a source,
+   * a priority) is a light filled chip, and a STATE (active/inactive, open/closed) is a ghost
+   * chip with a dot. This list had solid chips for both, so a status and a type read as the
+   * same kind of thing.
+   *
+   * The WORDS follow AutoCount, the system this book is exported from and the one the client
+   * reads all day: `open` is Outstanding, `closed` is Completed. The stored values are
+   * untouched - only the label is.
    */
   const badgeFor = (label: string) =>
     screen.getByText(label).closest('[data-slot="badge"]') as HTMLElement | null;
 
-  it('paints a cancelled order with the system-wide status colour', async () => {
-    stub([order({ status: 'cancelled' })]);
+  it('words an open order "Outstanding" and a closed one "Completed"', async () => {
+    stub([order({ status: 'open' }), order({ so_number: 'SO2', status: 'closed' })]);
     renderList();
 
-    await screen.findByText('Cancelled');
-    const badge = badgeFor('Cancelled');
+    await screen.findByText('Outstanding');
+    expect(screen.getByText('Completed')).toBeInTheDocument();
+    expect(screen.queryByText('Open')).not.toBeInTheDocument();
+    expect(screen.queryByText('Closed')).not.toBeInTheDocument();
+  });
+
+  it('paints a status as a ghost pill with a dot - a state, not an enum', async () => {
+    stub([order({ status: 'open' })]);
+    renderList();
+
+    await screen.findByText('Outstanding');
+    const badge = badgeFor('Outstanding');
     expect(badge).not.toBeNull();
-    expect(badge?.className).toContain('bg-destructive');
-    // `-soft` is the light-appearance palette this list used to fork onto.
-    expect(badge?.className).not.toContain('soft');
+    expect(badge?.className).toContain('bg-transparent');
+    expect(badge?.querySelector('[data-slot="badge-dot"]')).not.toBeNull();
   });
 
   it('paints the priority from the priority table: normal is neutral, urgent shouts', async () => {
     // The system status table calls 'normal' a success and 'low' destructive, which is
-    // stock-health semantics. Priority keeps its own variants on the same Badge component.
+    // stock-health semantics. Priority keeps its own variants, on a light filled chip.
     stub([order({ priority: 'normal' }), order({ so_number: 'SO2', priority: 'urgent' })]);
     renderList();
 
@@ -266,11 +279,11 @@ describe('SalesOrdersList - the pills are the system ones', () => {
     const normal = badgeFor('Normal');
     expect(normal).not.toBeNull();
     expect(normal?.className).toContain('bg-secondary');
-    expect(normal?.className).not.toContain('soft');
 
     const urgent = badgeFor('Urgent');
     expect(urgent).not.toBeNull();
-    expect(urgent?.className).toContain('bg-destructive');
+    // The light palette, the same one the sales-agents master's enum pills wear.
+    expect(urgent?.className).toContain('soft');
   });
 });
 

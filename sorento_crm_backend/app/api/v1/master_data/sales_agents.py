@@ -19,7 +19,12 @@ from typing import Optional
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.models.sales_agent import SalesAgent
-from app.schemas.autocount_mirror import MirrorAnnotationUpdate, SalesAgentResponse
+from app.schemas.autocount_mirror import (
+    BulkAnnotateResult,
+    MirrorAnnotationUpdate,
+    SalesAgentBulkAnnotate,
+    SalesAgentResponse,
+)
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.autocount_mirror_service import MirrorReadService
 from app.services.error_handler import handle_internal_error
@@ -47,6 +52,40 @@ async def list_sales_agents(
             page=page, limit=limit, query=query, sort=sort, dir=dir,
         )
     except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/bulk-annotate", response_model=BulkAnnotateResult)
+async def bulk_annotate_sales_agents(
+    payload: SalesAgentBulkAnnotate,
+    current_user: dict = Depends(require_permission("master_data.sales_agents.edit")),
+    db: Session = Depends(get_db),
+):
+    """Set one annotation across a selection.
+
+    Declared before `/{sales_agent_id}` so `bulk-annotate` never parses as an id, and gated
+    on the SAME permission as the single-row PATCH: reclassifying 38 agents at once is the
+    same write, not a bigger one, and a role that may not do it once may not do it in bulk.
+
+    One transaction: `sales_agent_service.annotate_many` flushes, and the commit is here, so
+    a class the fulfilment policy cannot weigh (or an id that no longer resolves) leaves the
+    whole selection untouched rather than classifying half of it.
+    """
+    try:
+        fields = payload.model_fields_set
+        updated = sales_agent_service.annotate_many(
+            db, payload.sales_agent_ids,
+            demand_class=payload.demand_class,
+            write_demand_class="demand_class" in fields,
+            location_group=payload.location_group,
+            write_location_group="location_group" in fields,
+        )
+        db.commit()
+        return {"updated": updated}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
         raise handle_internal_error(str(e))
 
 

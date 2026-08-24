@@ -394,6 +394,17 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
             "party_name": _clean(rec.get(label_field)) or None,
             "unit_cost": _to_float(rec.get("unit_cost")),
             "unit_price": _to_float(rec.get("unit_price")),
+            # The REST of the money line, and the unit the quantity is stated in. All three
+            # have resolved through the alias table for a long time (`UOM` since migration
+            # 311, `DISCOUNT` / `TOTAL (INC)` since 357) and this dict was built by hand and
+            # simply did not list them - so they were read off the sheet, recognised, and
+            # thrown away. Nothing reported it either: a resolved header never appears in
+            # the unrecognised-column warning, which is what made the loss silent.
+            # Absent stays absent, for the same reason as the cost above: a 0 discount
+            # claims a discount of nothing was given, and a 0 total claims free goods.
+            "discount": _to_float(rec.get("discount")),
+            "total_inc": _to_float(rec.get("total_inc")),
+            "uom": _clean(rec.get("uom")) or None,
             "currency": _clean(rec.get("currency")) or None,
             "order_date": _to_date(rec.get(order_date_field)),
             "order_type": _clean(rec.get("order_type")) or None,

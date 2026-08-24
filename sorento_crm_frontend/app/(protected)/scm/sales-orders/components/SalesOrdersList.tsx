@@ -12,7 +12,7 @@ import {
 } from '@tanstack/react-table';
 import { useQueryClient } from '@tanstack/react-query';
 import { Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -28,8 +28,14 @@ import { Switch } from '@/components/ui/switch';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { formatStatusLabel, getStatusBadgeVariant, type StatusBadgeVariant } from '@/lib/status-badge';
+import { formatStatusLabel } from '@/lib/status-badge';
 import { demandClassBadge } from '../../lib/demandClass';
+import {
+  SALES_ORDER_STATUS_FILTER_OPTIONS,
+  salesOrderPriorityVariant,
+  salesOrderStatusLabel,
+  salesOrderStatusVariant,
+} from '../../lib/salesOrderStatus';
 import { useCustomerOptions } from '../../hooks/useScmOptions';
 import { useRouter } from 'next/navigation';
 import { useCreateSalesOrder, useDeleteSalesOrder, useSalesOrders } from '../../hooks/useSalesOrders';
@@ -42,14 +48,6 @@ import { SalesOrderFormModal } from './SalesOrderFormModal';
 // it, so the same dialog (never forked) is reused here too.
 import { OutstandingUploadDialog } from '../../reorder/components/OutstandingUploadDialog';
 import { runHistoryKey, todayRunKey } from '../../reorder/hooks/useReorderRun';
-
-const STATUS_FILTER_OPTIONS = [
-  { value: '', label: 'All statuses' },
-  { value: 'open', label: 'Open' },
-  { value: 'partially_delivered', label: 'Partially delivered' },
-  { value: 'fulfilled', label: 'Fulfilled' },
-  { value: 'cancelled', label: 'Cancelled' },
-];
 
 /** Who wrote the order. `Order inquiry` is separate from `Sales order upload` because an
  *  order Joey's sheet created is one CS has never seen, and it decides who may edit it. */
@@ -94,17 +92,6 @@ const PRIORITY_FILTER_OPTIONS = [
   { value: 'normal', label: 'Normal' },
   { value: 'low', label: 'Low' },
 ];
-
-// The system status table maps 'normal' to success and 'low' to destructive, which is right
-// for stock health but backwards for an order priority. Priority keeps its own variant table
-// and only unknown values fall through to the system one.
-const PRIORITY_VARIANTS: Record<string, StatusBadgeVariant> = {
-  urgent: 'destructive',
-  high: 'warning',
-  medium: 'info',
-  normal: 'secondary',
-  low: 'secondary',
-};
 
 export default function SalesOrdersList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
@@ -297,9 +284,11 @@ export default function SalesOrdersList() {
           const showLabel = label && label !== cls.label;
           return (
             <div className="flex flex-col gap-0.5">
-              {/* The same Badge every other listing in the system uses for a pill - the class
-                  keeps its own colour, but not a second styling language for it. */}
-              <Badge variant={cls.variant}>{cls.label}</Badge>
+              {/* The pill shape the sales-agents master uses, which is the page the captain
+                  pointed at as the reference: `appearance="light" size="md"` for an enum. */}
+              <Badge variant={cls.variant} appearance="light" size="md">
+                {cls.label}
+              </Badge>
               {showLabel ? (
                 <span className="truncate text-2xs text-muted-foreground" title={label}>
                   {label}
@@ -316,10 +305,9 @@ export default function SalesOrdersList() {
         header: ({ column }) => <DataGridColumnHeader title="Priority" column={column} />,
         cell: ({ row }) => (
           <Badge
-            variant={
-              PRIORITY_VARIANTS[(row.original.priority ?? '').toLowerCase()] ??
-              getStatusBadgeVariant(row.original.priority)
-            }
+            variant={salesOrderPriorityVariant(row.original.priority)}
+            appearance="light"
+            size="md"
           >
             {formatStatusLabel(row.original.priority)}
           </Badge>
@@ -330,9 +318,13 @@ export default function SalesOrdersList() {
       {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        // A STATE, not an enum, so it wears the dot rather than a filled chip - the same
+        // shape the sales-agents master's Active/Inactive column uses. Worded the way
+        // AutoCount words it: `open` is Outstanding, `closed` is Completed.
         cell: ({ row }) => (
-          <Badge variant={getStatusBadgeVariant(row.original.status)}>
-            {formatStatusLabel(row.original.status)}
+          <Badge variant={salesOrderStatusVariant(row.original.status)} appearance="ghost">
+            <BadgeDot />
+            {salesOrderStatusLabel(row.original.status)}
           </Badge>
         ),
         size: 160,
@@ -402,7 +394,11 @@ export default function SalesOrdersList() {
         accessorKey: 'source',
         header: ({ column }) => <DataGridColumnHeader title="Source" column={column} />,
         cell: ({ row }) => (
-          <Badge variant={row.original.source === 'inquiry' ? 'primary' : 'secondary'} appearance="light">
+          <Badge
+            variant={row.original.source === 'inquiry' ? 'primary' : 'secondary'}
+            appearance="light"
+            size="md"
+          >
             {SOURCE_LABELS[row.original.source ?? 'manual'] ?? 'Manual'}
           </Badge>
         ),
@@ -529,8 +525,10 @@ export default function SalesOrdersList() {
                 content: (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between gap-3 rounded-md border p-2.5">
+                      {/* The same words the detail page's Totals card and the lines grid's
+                          own column use. "Still owed" was a third phrasing of one figure. */}
                       <Label htmlFor="so-outstanding-only" className="cursor-pointer">
-                        Still owed
+                        Outstanding qty
                       </Label>
                       <Switch
                         id="so-outstanding-only"
@@ -599,7 +597,7 @@ export default function SalesOrdersList() {
                         id="so-status"
                         value={statusFilter}
                         onChange={setStatusFilter}
-                        options={STATUS_FILTER_OPTIONS}
+                        options={SALES_ORDER_STATUS_FILTER_OPTIONS}
                         placeholder="All statuses"
                       />
                     </div>

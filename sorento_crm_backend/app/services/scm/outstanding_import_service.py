@@ -143,7 +143,11 @@ class _Binding:
     # so the diff saw a document with no lines and inserted them all again, doubling on-order.
     write_status: str
     live_statuses: tuple[str, ...]
-    # Line columns fed from the file's money columns, when it has any.
+    # Line columns the file RESTATES on every upload, as (line column, extras key). Named
+    # for the money it started with, and it carries the non-money columns of the same shape
+    # too (the PO currency, the SO per-line UoM): what the pairs share is the rule, not the
+    # datatype - a value the file states is written on insert and refreshed on update, and a
+    # value it omits leaves the column alone rather than blanking what we already hold.
     money_cols: tuple[tuple[str, str], ...] = ()
     # Header columns fed from the file, per document. Same (column, extras key) shape.
     header_cols: tuple[tuple[str, str], ...] = ()
@@ -208,7 +212,18 @@ _BINDINGS: dict[str, _Binding] = {
         # whose whole job is "who ordered it and at what price", quoted a blank on every real
         # row. Same shape and same rule as the PO side's cost: an absent price stays NULL
         # rather than becoming a 0 that reads as goods given away.
-        money_cols=(("unit_price", "unit_price"),),
+        # `discount` and `total_inc` are the rest of the same money line, added the day the
+        # detail page started printing them: a unit price beside a quantity is not what the
+        # customer was charged. `uom` rides the same mechanism although it is not money at
+        # all - the PO side already carries `currency` here for exactly that reason - because
+        # what this tuple actually declares is "a line column the file restates and a
+        # re-upload must refresh", and the per-line UoM override is one.
+        money_cols=(
+            ("unit_price", "unit_price"),
+            ("discount", "discount"),
+            ("line_total", "total_inc"),
+            ("uom", "uom"),
+        ),
         # OPTIONAL in the file and FILL-only on the header: no export carries an order type
         # today, so this is the column that lets a differently-worded export classify its own
         # documents the day it does, without a release. A value already on the header wins,

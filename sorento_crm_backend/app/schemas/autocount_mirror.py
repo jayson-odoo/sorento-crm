@@ -83,3 +83,30 @@ class SalesAgentResponse(_MirrorBase):
     person_label: Optional[str] = None
     demand_class: Optional[str] = None
     location_group: Optional[str] = None
+
+
+class SalesAgentBulkAnnotate(BaseModel):
+    """POST body for setting ONE annotation across a selection of sales agents.
+
+    Sales-agent-only, so it lives beside `SalesAgentResponse` rather than on the shared
+    `MirrorAnnotationUpdate`: the other mirror entities have no `demand_class` to set and
+    no reason to gain a bulk write they do not use.
+
+    Same `extra="forbid"` and same `model_fields_set` semantics as the single-row PATCH -
+    an omitted field is left alone, an explicit `null` clears it - so the bulk action is
+    that PATCH applied N times rather than a second opinion about what an annotation is.
+    Deliberately NOT `person_label`: a label names ONE human, and applying one across a
+    selection is the write nobody means to make.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    sales_agent_ids: list[str] = Field(..., min_length=1)
+    #: Validated by `sales_agent_service`, not here - see `MirrorAnnotationUpdate`.
+    demand_class: Optional[str] = None
+    location_group: Optional[str] = Field(None, max_length=16)
+
+
+class BulkAnnotateResult(BaseModel):
+    """How many rows the bulk write touched, so the toast can say a number."""
+
+    updated: int

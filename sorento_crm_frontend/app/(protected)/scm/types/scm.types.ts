@@ -268,6 +268,13 @@ export interface SalesOrderLine {
   /** Stamped by create-DO-from-SO (soft link, no hard FK). */
   qty_delivered: number;
   uom: string;
+  /** The line's money, as decimal STRINGS - the backend sends `Decimal` and Pydantic
+   *  serialises it as a string, which is what keeps RM 985.00 from arriving as
+   *  984.9999999. `null` when nobody priced the line, which is not the same as 0.
+   *  `line_total` is what the source document charged; the other two are its parts. */
+  unit_price?: string | null;
+  discount?: string | null;
+  line_total?: string | null;
   /** Where this line ships from. Per line: one order can land in two locations. */
   warehouse_code?: string;
   /** `open` or `closed`. A closed line is not a commitment however much it still shows. */
@@ -300,6 +307,9 @@ export interface SalesOrder {
   total_qty: number;
   /** Undelivered qty = committed demand contributed to the dashboard. */
   committed_qty: number;
+  /** What the order is worth, summed from its lines. A decimal STRING for the same reason
+   *  the line figures are; `null` when not one line carries money, which is not 0. */
+  total_amount?: string | null;
   /** What the order says, and how much of it is still open. */
   line_count?: number;
   open_line_count?: number;
@@ -330,9 +340,20 @@ export interface LinkedPurchaseOrder {
 }
 
 export interface SalesOrderFormData {
-  order_type: string;
+  /**
+   * The ERP document type. The CREATE modal still sends it; the detail page's edit does
+   * not - it edits the planning class under its own name (`demand_class` below), because
+   * that is what the screen renders and `order_type` is NULL on 96% of the book. An
+   * omitted key leaves the stored value alone.
+   */
+  order_type?: string;
+  /** The planning class the detail page shows and now writes: `project`, `retail`, or
+   *  `''`/`null` meaning "unclassified - leave the stored classification alone". */
+  demand_class?: string | null;
   customer_code: string;
   priority: SalesOrderPriority;
+  /** When the order was raised. ISO `yyyy-mm-dd`; omitted leaves it alone. */
+  order_date?: string | null;
   requested_delivery_date?: string | null;
   /**
    * `undefined` leaves the stored agent alone (the field was never sent); `null` or `''`
@@ -363,6 +384,11 @@ export interface SalesOrderFormData {
     /** ISO `yyyy-mm-dd`. Same omitted/clear/set semantics as `warehouse_code`. Shown on
      *  the detail page as "Delivery date". */
     required_date?: string | null;
+    /** What the customer pays, and what came off it. Decimal STRINGS (never floats - see
+     *  `SalesOrderLine`), with the same omitted/clear/set semantics as `uom`. The line
+     *  TOTAL is deliberately not writable: it is what the source document charged. */
+    unit_price?: string | null;
+    discount?: string | null;
   }[];
 }
 

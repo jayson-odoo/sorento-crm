@@ -1,6 +1,5 @@
 import { AlertCircle, AlertTriangle, CheckCircle } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { fmtInt } from '../../lib/format';
 
 /**
@@ -10,6 +9,11 @@ import { fmtInt } from '../../lib/format';
  * the shape behind it: green when there is nothing to fix, red for errors that BLOCK, amber
  * for warnings that do not. The SCM uploads were the odd ones out - they showed a diff and
  * left the operator to work out whether it was safe to apply.
+ *
+ * The line between the two is what the reader trusts. RED means the FILE cannot be used;
+ * AMBER means it can, and some rows will not be part of it. A skipped row reported in red
+ * says "this upload failed" about a file that imports 4,346 of its 4,349 rows perfectly,
+ * and a panel that cries wolf is a panel nobody reads.
  *
  * Warnings render whether or not the file is valid, which is the whole point of the split: a
  * perfectly loadable file can still be about to skip 2,000 lines, and the operator has to see
@@ -36,6 +40,9 @@ export function UploadTestVerdict({ result }: { result: UploadTestResult }) {
     // For the channels whose backend does not split create from update: how many of the rows
     // read would actually land. "500 rows read" alone never said how many of them survive.
     num(s.would_apply) && `Would import: ${num(s.would_apply)}`,
+    // What the import would leave out. Its own figure, because "read 4,349, importing 4,346"
+    // makes the reader do the subtraction and then doubt the answer.
+    num(s.skipped_rows) && `Skipped: ${num(s.skipped_rows)}`,
     num(s.error_count) && `Errors: ${num(s.error_count)}`,
   ].filter(Boolean);
 
@@ -57,13 +64,19 @@ export function UploadTestVerdict({ result }: { result: UploadTestResult }) {
           <div className="min-w-0 flex-1 space-y-1">
             <AlertTitle>Errors ({result.errors.length})</AlertTitle>
             <AlertDescription className="p-0">
-              <ScrollArea className="max-h-[220px] w-full rounded border p-2 text-sm">
+              {/* A plain scrolling div, not Radix `ScrollArea`: that component renders its
+                  own viewport INSIDE this element, and the viewport does not inherit the
+                  `max-h`, so the list grew to whatever height it liked and 2,000 rows pushed
+                  the dialog's buttons off the screen. */}
+              <div className="max-h-[220px] w-full overflow-y-auto rounded border p-2 text-sm">
                 <ul className="list-inside list-disc space-y-0.5 pr-2">
-                  {result.errors.map((e) => (
-                    <li key={e}>{e}</li>
+                  {result.errors.map((e, i) => (
+                    // Index-keyed: the message is not unique (the same missing column can be
+                    // reported twice) and duplicate keys collide.
+                    <li key={`${i}-${e}`}>{e}</li>
                   ))}
                 </ul>
-              </ScrollArea>
+              </div>
             </AlertDescription>
           </div>
         </Alert>
@@ -74,13 +87,15 @@ export function UploadTestVerdict({ result }: { result: UploadTestResult }) {
           <AlertTriangle className="h-4 w-4 text-amber-600" />
           <AlertTitle>Warnings ({result.warnings.length})</AlertTitle>
           <AlertDescription className="p-0">
-            <ScrollArea className="max-h-[180px] w-full rounded border p-2 text-sm">
+            {/* Same clamp, same reason as the error list above - and this one is the longer
+                of the two now that a skipped row is a warning. */}
+            <div className="max-h-[220px] w-full overflow-y-auto rounded border p-2 text-sm">
               <ul className="list-inside list-disc space-y-0.5 pr-2">
-                {result.warnings.map((w) => (
-                  <li key={w}>{w}</li>
+                {result.warnings.map((w, i) => (
+                  <li key={`${i}-${w}`}>{w}</li>
                 ))}
               </ul>
-            </ScrollArea>
+            </div>
           </AlertDescription>
         </Alert>
       ) : null}

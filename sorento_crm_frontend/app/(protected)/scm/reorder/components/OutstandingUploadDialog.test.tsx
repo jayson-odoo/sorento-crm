@@ -376,7 +376,10 @@ describe('OutstandingUploadDialog - the Test verdict', () => {
     expect(confirmButton()).toBeEnabled();
   });
 
-  it('counts the rows that will NOT import and names each one', async () => {
+  it('counts the rows the import would SKIP and names each one, as a warning', async () => {
+    // A row the import merely leaves out does not make the file unusable, so it is amber,
+    // not red. Reported in red, a file that imports 498 of its 500 rows perfectly read as
+    // "this upload failed", and the panel that cries wolf is the panel nobody reads.
     previewOutstandingImport.mockResolvedValue(
       preview({
         row_problems: [{ row_number: 1087, reason: 'missing item_code', value: 'SO349557' }],
@@ -393,15 +396,38 @@ describe('OutstandingUploadDialog - the Test verdict', () => {
     renderDialog();
     await chooseFile();
 
-    expect(await screen.findByText(/Errors \(2\)/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Warnings \(2\)/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Errors \(/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Row 1087: missing item_code \(SO349557\)/)).toBeInTheDocument();
     expect(
       screen.getByText(/Row 2: stock_location: no warehouse with this code \(WH-ZZ\)/),
     ).toBeInTheDocument();
-    // 500 read, 2 of them unusable.
+    // 500 read, 2 of them left out - and the file still says "No errors".
     expect(verdict()).toHaveTextContent('Would import: 498');
-    // A bad row does not make a usable file unusable - the rest still import.
+    expect(verdict()).toHaveTextContent('Skipped: 2');
+    expect(screen.getByText(/No errors/i)).toBeInTheDocument();
     expect(confirmButton()).toBeEnabled();
+  });
+
+  it('scrolls a long warning list instead of pushing the buttons off the dialog', async () => {
+    // Radix `ScrollArea` renders its own viewport inside the element the `max-h` is on, and
+    // that viewport does not inherit it - so the list grew to whatever height it liked.
+    previewOutstandingImport.mockResolvedValue(
+      preview({
+        row_problems: Array.from({ length: 40 }, (_, i) => ({
+          row_number: i + 1,
+          reason: 'missing item_code',
+          value: '',
+        })),
+      }),
+    );
+    renderDialog();
+    await chooseFile();
+
+    const list = (await screen.findByText(/Row 1: missing item_code/)).closest('ul');
+    const box = list?.parentElement;
+    expect(box?.className).toContain('max-h-[220px]');
+    expect(box?.className).toContain('overflow-y-auto');
   });
 
   it('keeps the things that cost the file nothing as warnings, not failures', async () => {
@@ -468,7 +494,10 @@ describe('OutstandingUploadDialog - the Test verdict', () => {
 // time, so the mapping is pinned directly: it is the one piece of logic in this file.
 
 describe('verdictFromPreview', () => {
-  it('is valid only when nothing is wrong at all', () => {
+  it('is invalid only when the FILE cannot be used', () => {
+    // The line the whole panel turns on: an error means the file is unusable (a header with
+    // no required column), and nothing else qualifies. A row the import skips is a warning -
+    // it costs that row, not the upload.
     expect(verdictFromPreview(preview()).valid).toBe(true);
     expect(
       verdictFromPreview(preview({ unmapped_headers: ['Salesman'] })).valid,
@@ -477,7 +506,38 @@ describe('verdictFromPreview', () => {
       verdictFromPreview(
         preview({ row_problems: [{ row_number: 4, reason: 'no quantity', value: '' }] }),
       ).valid,
+    ).toBe(true);
+    expect(
+      verdictFromPreview(preview({ ok: false, missing_columns: ['qty_outstanding'] })).valid,
     ).toBe(false);
+  });
+
+  it('reports a skipped row as a warning, and counts it apart from the file-level notes', () => {
+    const result = verdictFromPreview(
+      preview({
+        row_problems: [{ row_number: 4, reason: 'no quantity', value: '' }],
+        resolution_issues: [
+          { row_number: 9, field: 'item_code', value: 'ZZZ', reason: 'no product' },
+        ],
+        unmapped_headers: ['Salesman'],
+      }),
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.warnings).toEqual([
+      'Row 4: no quantity',
+      'Row 9: item_code: no product (ZZZ)',
+      'Column not recognised: Salesman',
+    ]);
+    // `skipped_rows` counts ROWS. The unrecognised column is a warning and skips nothing,
+    // so folding it into the same figure would overstate what the import leaves out.
+    expect(result.summary).toMatchObject({
+      total_rows: 500,
+      would_apply: 498,
+      skipped_rows: 2,
+      warning_count: 3,
+      error_count: 0,
+    });
   });
 
   it('reads a header that is missing required columns as an error per column', () => {

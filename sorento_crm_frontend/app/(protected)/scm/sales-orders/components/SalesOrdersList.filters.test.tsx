@@ -168,7 +168,7 @@ async function openFilters() {
     screen.getByRole('button', { name: /^Filters/ }),
     { ctrlKey: false, button: 0 },
   );
-  await screen.findByText('Still owed');
+  await screen.findByText('Outstanding qty');
 }
 
 beforeEach(() => {
@@ -240,14 +240,14 @@ describe('SalesOrdersList - dynamic filters', () => {
     });
   });
 
-  it('sends "still owed" only when it is on', async () => {
+  it('sends "outstanding qty" only when it is on', async () => {
     stub();
     renderList();
     await openFilters();
 
     expect(lastQuery()).toMatchObject({ outstanding: false });
 
-    fireEvent.click(screen.getByRole('switch', { name: /still owed/i }));
+    fireEvent.click(screen.getByRole('switch', { name: /outstanding qty/i }));
 
     await waitFor(() => {
       expect(lastQuery()).toMatchObject({ outstanding: true });
@@ -284,6 +284,25 @@ describe('SalesOrdersList - dynamic filters', () => {
     });
   });
 
+  it('words the status filter the way the column does - Outstanding, Completed', async () => {
+    // AutoCount's own words, and the ones the client reads all day. A filter offering "Open"
+    // over a column of "Outstanding" is two names for one thing on one screen. The value
+    // sent is untouched.
+    stub();
+    renderList();
+    await openFilters();
+
+    fireEvent.click(screen.getByRole('combobox', { name: /status/i }));
+    expect(await screen.findByRole('option', { name: 'Outstanding' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Completed' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Open' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('option', { name: 'Outstanding' }));
+    await waitFor(() => {
+      expect(lastQuery()).toMatchObject({ status: 'open' });
+    });
+  });
+
   it('counts every active filter, so the badge does not undercount', async () => {
     stub();
     renderList();
@@ -292,7 +311,7 @@ describe('SalesOrdersList - dynamic filters', () => {
     // The date-range picker sets BOTH ends in one act - two of the eight filters this badge
     // sums - plus the switch, so the count is 3, not 1.
     fireEvent.click(screen.getByLabelText('Ordered'));
-    fireEvent.click(screen.getByRole('switch', { name: /still owed/i }));
+    fireEvent.click(screen.getByRole('switch', { name: /outstanding qty/i }));
 
     expect(await screen.findByText('3')).toBeInTheDocument();
   });
@@ -303,7 +322,7 @@ describe('SalesOrdersList - dynamic filters', () => {
     await openFilters();
 
     fireEvent.click(screen.getByLabelText('Ordered'));
-    fireEvent.click(screen.getByRole('switch', { name: /still owed/i }));
+    fireEvent.click(screen.getByRole('switch', { name: /outstanding qty/i }));
     fireEvent.click(screen.getByRole('combobox', { name: /type/i }));
     fireEvent.click(await screen.findByRole('option', { name: 'Project' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Clear filters' }));

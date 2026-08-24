@@ -85,15 +85,20 @@ function countOf(counts: OutstandingCounts, kind: OutstandingChangeKind): number
  * fact the verdict needs, and a second `validate_only` round trip would read the same 80,000-row
  * workbook twice to say the same thing.
  *
- * ERRORS are the rows that will not import - a header missing a required column (nothing can
- * import at all), a row the reader could not turn into a line, a row naming a product or
- * warehouse we do not hold. WARNINGS are the things that cost the file nothing: a column we
- * ignored, an agent code that cannot classify an order yet. `valid` is false as soon as there
- * is one error, because the shared verdict shows the error list only when it is.
+ * ERRORS are what makes the FILE unusable: a header missing a required column, so nothing in
+ * it can import at all. Nothing else qualifies.
+ *
+ * WARNINGS are the rows the import merely SKIPS, plus the things that cost the file nothing.
+ * A row with no item code, or one naming a warehouse we do not hold, does not stop the other
+ * 4,346 rows landing - reporting it in red said "this upload failed" about a file that
+ * imports perfectly, and the operator's only honest reaction was to stop reading the panel.
+ * The count is still there, and it is the number that decides whether to fix the file first.
  */
 export function verdictFromPreview(preview: OutstandingPreview): UploadTestResult {
-  const errors = [
-    ...preview.missing_columns.map((column) => `Missing required column: ${column}`),
+  const errors = preview.missing_columns.map(
+    (column) => `Missing required column: ${column}`,
+  );
+  const skipped = [
     ...preview.row_problems.map(
       (p) => `Row ${p.row_number}: ${p.reason}${p.value ? ` (${p.value})` : ''}`,
     ),
@@ -102,6 +107,7 @@ export function verdictFromPreview(preview: OutstandingPreview): UploadTestResul
     ),
   ];
   const warnings = [
+    ...skipped,
     ...(preview.unmapped_agents ?? []).map((agent) => `Agent ${agent.code}: ${agent.reason}`),
     ...preview.unmapped_headers.map((header) => `Column not recognised: ${header}`),
   ];
@@ -113,6 +119,11 @@ export function verdictFromPreview(preview: OutstandingPreview): UploadTestResul
     summary: {
       total_rows: preview.total_rows,
       would_apply: preview.ok ? Math.max(preview.total_rows - failedRows, 0) : 0,
+      // What the import would LEAVE OUT, named as its own figure. Read off the rows
+      // themselves rather than off `warnings.length`, which also counts the file-level
+      // notes (an unrecognised column skips no row at all).
+      skipped_rows: failedRows,
+      warning_count: warnings.length,
       error_count: errors.length,
     },
   };

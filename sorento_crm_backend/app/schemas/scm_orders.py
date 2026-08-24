@@ -7,6 +7,7 @@ human codes/names. PO is read-only at M1 (create/confirm/receive land in M4).
 """
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -21,6 +22,13 @@ class SalesOrderLine(BaseModel):
     qty_ordered: float
     qty_delivered: float
     uom: str
+    #: What the customer pays for this line, and what the sales book states about it.
+    #: `Decimal`, never `float`: money read back through a float is how RM 985.00 becomes
+    #: 984.9999999. All three are `None` when the file said nothing - a 0 discount claims a
+    #: discount of nothing was given, and a 0 total claims the line was free.
+    unit_price: Optional[Decimal] = None
+    discount: Optional[Decimal] = None
+    line_total: Optional[Decimal] = None
     #: Where this line ships from. Per line: one order can land in two locations.
     warehouse_code: str = ""
     #: `open` or `closed`. A closed line is not a commitment however much it still shows.
@@ -51,6 +59,11 @@ class SalesOrder(BaseModel):
     sales_agent_label: Optional[str] = None
     total_qty: float
     committed_qty: float
+    #: What the order is WORTH, summed from its own lines: each line's stated `line_total`
+    #: where it has one, otherwise `unit_price * qty_ordered - discount`. `None` when not one
+    #: line carries money, which is not the same as 0 - an order nobody priced is not an
+    #: order worth nothing, and 15,000 of the absorbed rows are exactly that.
+    total_amount: Optional[Decimal] = None
     #: What the order says, and how much of it is still open. Both, because a total that
     #: silently means "outstanding" reads as an empty order once everything has shipped.
     line_count: int = 0
@@ -108,6 +121,12 @@ class SalesOrderLineInput(BaseModel):
     #: left that way here, so this edits the column the FE already displays under that
     #: label. ISO `yyyy-mm-dd`; same `model_fields_set` semantics as `uom` / `warehouse_code`.
     required_date: Optional[str] = None
+    #: What the customer pays, and what came off it. Same `model_fields_set` semantics as
+    #: `uom` above: a qty-only edit that never sends these keys must not wipe a price the
+    #: book imported, while an explicit `null` clears the figure. `Decimal`, so a price the
+    #: browser sent as `88.5` is stored as 88.50 rather than a float's near-miss.
+    unit_price: Optional[Decimal] = None
+    discount: Optional[Decimal] = None
 
 
 class SalesOrderFormData(BaseModel):
@@ -121,9 +140,23 @@ class SalesOrderFormData(BaseModel):
 
 
 class SalesOrderUpdate(BaseModel):
+    #: The ERP document type. Kept for anything that still sends it (n8n, the older form):
+    #: it is written as given AND, when it says something the vocabulary recognises, it
+    #: rewrites `demand_class` from it. The detail screen no longer uses it - see below.
     order_type: Optional[str] = None
+    #: The planning class, under its own name. The detail page RENDERS this column
+    #: (project / retail / Unclassified) and used to EDIT `order_type`, which is NULL on
+    #: 96% of this book - so the value shown and the value written were different columns
+    #: and the round trip could not be honest. Blank (omitted, `null` or `""`) leaves the
+    #: stored classification alone rather than clearing it: "nobody said" is not a class,
+    #: and a header edit must not un-rank an order as a side effect. A word outside the
+    #: closed vocabulary is a 400 naming the words the fulfilment policy can weigh.
+    demand_class: Optional[str] = None
     customer_code: Optional[str] = None
     priority: Optional[str] = None
+    #: When the order was raised. Correctable because the absorbed book got it from a
+    #: spreadsheet and the demand trend reads 24 months of this column. ISO `yyyy-mm-dd`.
+    order_date: Optional[str] = None
     requested_delivery_date: Optional[str] = None
     #: Optional[str], but read via `model_fields_set` in the service rather than a plain
     #: `is not None` check: a field the caller never sent must leave the stored agent alone,
