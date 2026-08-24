@@ -22,12 +22,17 @@ from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.product_set import (
+    ApplyProductSetProposalsRequest,
+    ApplyProductSetProposalsResponse,
     ProductSetCreate,
     ProductSetDetailResponse,
+    ProductSetProposalBatchResponse,
+    ProductSetProposalsResponse,
     ProductSetResponse,
     ProductSetUpdate,
 )
 from app.services.error_handler import handle_internal_error
+from app.services.product_set_proposal_service import ProductSetProposalService
 from app.services.product_set_service import ProductSetService
 from app.services.uuid_path_param import validate_uuid_path
 
@@ -89,6 +94,63 @@ def list_product_sets(
         }
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+# --------------------------------------------------------------- proposals
+#
+# DECLARED BEFORE `/{product_set_id}`, and it has to stay that way: FastAPI
+# matches in declaration order, so a UUID path param declared first swallows
+# `/proposals` whole and the review screen gets "Product set not found" instead
+# of its batch. This repo has already shipped exactly that bug on the SLA
+# escalate routes.
+#
+# Same router, so the module guard and the permission scheme already apply, and
+# the permissions are the set's own: proposing and applying are authoring.
+
+
+@router.get("/proposals", response_model=ProductSetProposalsResponse)
+def get_product_set_proposals(
+    current_user: dict = Depends(
+        require_permission_with_api_key("master_data.product_sets.view")
+    ),
+    db: Session = Depends(get_db),
+):
+    """The open batch, or null when no pass has run.
+
+    Null is not the same as a pass that found nothing, and the review screen says
+    two different things about the two.
+    """
+    return {"batch": ProductSetProposalService(db).current()}
+
+
+@router.post("/proposals", response_model=ProductSetProposalBatchResponse)
+def run_product_set_proposals(
+    current_user: dict = Depends(
+        require_permission_with_api_key("master_data.product_sets.edit")
+    ),
+    db: Session = Depends(get_db),
+):
+    """Derive candidates from the catalogue and REPLACE the company's open batch.
+
+    Writes nothing to `product_sets`. Synchronous, deliberately: this is a pure
+    derivation over code shape with no model call and no file to read, so a job
+    queue would only add a status to poll.
+    """
+    return ProductSetProposalService(db).run(created_by=current_user.get("id"))
+
+
+@router.post("/proposals/apply", response_model=ApplyProductSetProposalsResponse)
+def apply_product_set_proposals(
+    payload: ApplyProductSetProposalsRequest,
+    current_user: dict = Depends(
+        require_permission_with_api_key("master_data.product_sets.edit")
+    ),
+    db: Session = Depends(get_db),
+):
+    """Create a set per ticked proposal. Ids only; a refusal is named, not raised."""
+    return ProductSetProposalService(db).apply(
+        payload.proposal_ids, applied_by=current_user.get("id")
+    )
 
 
 @router.get("/{product_set_id}", response_model=ProductSetDetailResponse)

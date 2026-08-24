@@ -9,7 +9,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Layers, Plus, Search, Trash2, X } from 'lucide-react';
+import { Layers, Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -215,8 +215,10 @@ export default function ProductSetsList() {
               <Button onClick={() => setCreating(true)}>
                 <Plus className="size-4" /> Add set
               </Button>
-              <Button variant="outline" disabled title="Arrives with the seeding slice">
-                Propose from catalogue
+              <Button variant="outline" asChild>
+                <Link href="/master-data-management/product-sets/proposals">
+                  <Sparkles className="size-4" /> Propose from catalogue
+                </Link>
               </Button>
             </div>
           </div>
@@ -260,9 +262,16 @@ export default function ProductSetsList() {
                 onRefresh={() => void refetch()}
                 isRefreshing={isFetching && !isLoading}
                 primaryAction={
-                  <Button onClick={() => setCreating(true)}>
-                    <Plus className="size-4" /> Add set
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button variant="outline" asChild>
+                      <Link href="/master-data-management/product-sets/proposals">
+                        <Sparkles className="size-4" /> Propose
+                      </Link>
+                    </Button>
+                    <Button onClick={() => setCreating(true)}>
+                      <Plus className="size-4" /> Add set
+                    </Button>
+                  </div>
                 }
               />
             </CardHeader>

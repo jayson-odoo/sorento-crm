@@ -5,10 +5,20 @@
 > Governs: `PRINCIPLES.md` + `documentation/reference/ADR-PRODUCT-STANDARDS.md`.
 
 **Slug:** `product-sets` · **Domain:** master-data
-**Status:** APPROVED - captain sign-off 2026-08-23 via Lavish review, verdict "Approved, start S0".
-All five flagged calls confirmed: rename `product_set_service.py` in the same PR; S2 ships as its own
-PR; S3 ships inert pending n8n confirmation; `linked_via_set_id` added; "Product Set" is the term and
-goes into `documentation/CONTEXT.md`.
+**Status:** IMPLEMENTED - all six slices S0 to S5 are built, tested and browser-verified as of
+2026-08-24, and migration `414_product_set_grant_sweep` mirrors the `master_data.products.*` grants
+onto `master_data.product_sets.*`, which closes DoD item 3 (before it, the four permissions existed
+and no role held them, so every non-admin was locked out of a finished feature). What remains is
+outside the code: `sorento-crm-n8n-60` must hold the `product_set` contract in writing and confirm
+before S3 deploys, S2 still owes the promotion-payload evidence run its own-PR carve-out was for,
+and the seeding backfill has not been applied - and note that the proposal pass offers materially
+more than the UAC's sizing, 98 candidates for Sorento alone against 47 families and roughly 94 rows
+across both companies, after the discontinued-member and accessory-token fixes; that is a number to
+confirm against the catalogue before the backfill runs, not a defect.
+Sign-off history: APPROVED - captain sign-off 2026-08-23 via Lavish review, verdict "Approved, start
+S0". All five flagged calls confirmed: rename `product_set_service.py` in the same PR; S2 ships as
+its own PR; S3 ships inert pending n8n confirmation; `linked_via_set_id` added; "Product Set" is the
+term and goes into `documentation/CONTEXT.md`.
 
 ## Shape
 

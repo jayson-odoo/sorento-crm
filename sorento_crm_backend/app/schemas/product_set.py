@@ -104,3 +104,82 @@ class ProductSetUpdate(BaseModel):
     is_active: Optional[bool] = None
     list_price_override: Optional[Decimal] = None
     members: Optional[list[ProductSetMemberPayload]] = None
+
+
+# ------------------------------------------------------------ seeding (group H)
+#
+# Contract mirror: `sorento_crm_frontend/app/(protected)/master-data-management/
+# product-sets/types/productSetProposal.types.ts`. Field for field - a value the
+# service computed perfectly but never declared here is dropped on the way out
+# and reads on screen as "the backend did not send it".
+
+
+class ProductSetProposalMemberResponse(BaseModel):
+    """One SKU the pass believes belongs in the set.
+
+    Addressed by CODE. No UUID reaches the screen, and the price and description
+    are hydrated live from `products` rather than read back off a snapshot the
+    pass stored - a stored price goes stale and becomes a second source of truth.
+    """
+
+    product_code: str
+    description: Optional[str] = None
+    list_price: Optional[Decimal] = None
+    quantity: Decimal = Decimal("1")
+    contributes_to_price: bool = False
+    sort_order: int = 0
+    is_discontinued: bool = False
+
+
+class ProductSetProposalResponse(BaseModel):
+    id: str
+    #: The prefix and number the members share, e.g. `SRTWC8608`. Two candidates
+    #: in one family are the same assembly in different trap variants, so the
+    #: review screen groups them.
+    family_key: str
+    set_code: str
+    name: str
+    members: list[ProductSetProposalMemberResponse] = Field(default_factory=list)
+    #: Sum over the ticked members. Null, NEVER 0.00, when nothing is ticked.
+    computed_price: Optional[Decimal] = None
+
+
+class ProductSetProposalBatchResponse(BaseModel):
+    id: str
+    company_name: Optional[str] = None
+    created_at: datetime
+    created_by_name: Optional[str] = None
+    #: Derived from the rows on read, not stored. A stored count that disagrees
+    #: with the list under it sends people to debug the list.
+    family_count: int = 0
+    proposal_count: int = 0
+    proposals: list[ProductSetProposalResponse] = Field(default_factory=list)
+
+
+class ProductSetProposalsResponse(BaseModel):
+    """Null means no pass has run yet, which is not the same as a pass that found
+    nothing. The review screen says two different things about the two."""
+
+    batch: Optional[ProductSetProposalBatchResponse] = None
+
+
+class ApplyProductSetProposalsRequest(BaseModel):
+    #: IDS ONLY. The set code, the name and the members come off the stored
+    #: proposal, so the screen cannot write a set the pass did not derive.
+    proposal_ids: list[str] = Field(default_factory=list)
+
+
+class AppliedProductSetProposal(BaseModel):
+    proposal_id: str
+    set_code: str
+
+
+class RefusedProductSetProposal(AppliedProductSetProposal):
+    #: A sentence, not a code. The reviewer ticked it and has to learn why it did
+    #: not land, on the toast, without opening a log.
+    reason: str
+
+
+class ApplyProductSetProposalsResponse(BaseModel):
+    applied: list[AppliedProductSetProposal] = Field(default_factory=list)
+    refused: list[RefusedProductSetProposal] = Field(default_factory=list)

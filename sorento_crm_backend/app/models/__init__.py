@@ -6,6 +6,7 @@ from app.models.user import User, UserRole, UserRoleAssignment, UserPermission, 
 from app.models.auth import VerificationToken
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
 from app.models.product_set import ProductSet, ProductSetMember
+from app.models.product_set_proposal import ProductSetProposalBatch, ProductSetProposal
 from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, ProductSpecException, ProductSpecVerification, ProductSpecFlyerBatch, ProductSpecFlyerProposal
 from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine, SalesOrder, SalesOrderLine
 from app.models.sales_agent import SalesAgent
@@ -175,6 +176,8 @@ __all__ = [
     "Product",
     "ProductSet",
     "ProductSetMember",
+    "ProductSetProposalBatch",
+    "ProductSetProposal",
     "ProductCategory",
     "Brand",
     "UnitOfMeasure",
