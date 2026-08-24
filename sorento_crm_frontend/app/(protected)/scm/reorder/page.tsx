@@ -14,6 +14,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
+import RequireAccess from '@/app/components/common/RequireAccess';
 import { ReorderPlanningView } from './components/ReorderPlanningView';
 
 export const metadata: Metadata = {
@@ -32,7 +33,7 @@ export default async function ReorderPlanningPage({
   const autoOpenRun = run === '1';
 
   return (
-    <>
+    <RequireAccess permission="scm.reorder.run">
       <Container width="fluid">
         <Toolbar>
           <ToolbarHeading>
@@ -60,6 +61,6 @@ export default async function ReorderPlanningPage({
       <Container width="fluid">
         <ReorderPlanningView autoOpenRun={autoOpenRun} />
       </Container>
-    </>
+    </RequireAccess>
   );
 }

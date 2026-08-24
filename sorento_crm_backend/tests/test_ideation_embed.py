@@ -207,9 +207,17 @@ def api_client(monkeypatch):
 
     from app.dependencies import get_current_user, get_db
     from app.main import app
+    from app.services.user_service import UserPermissionService
 
     app.dependency_overrides[get_db] = lambda: None
     app.dependency_overrides[get_current_user] = lambda: dict(_USER)
+    # The route is gated on ideation.board.view via require_permission; grant it
+    # so the existing service-level tests pass through the permission layer.
+    monkeypatch.setattr(
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: True,
+    )
     try:
         yield TestClient(app), monkeypatch
     finally:

@@ -2889,6 +2889,87 @@ class ProductAttachmentService:
         self._stamp_certificate_validity([product_attachment])
         return product_attachment
     
+    def _certificate_of_attachment(self, attachment_id):
+        """``(certificate, is_current_revision)`` for a file that is a filed revision."""
+        if not attachment_id:
+            return None, False
+        from app.services.certificate_service import CertificateService
+
+        return CertificateService(self.db).find_by_revision_attachment(str(attachment_id))
+
+    def _certificate_link_target(self, attachment_id, data):
+        """Link through COVERAGE when the file is a filed certificate revision.
+
+        ``product_attachments`` rows for such a file are a projection of
+        ``certificate_products`` x the current revision, and
+        ``reconcile_certificate`` hard-deletes every row the coverage does not
+        name. A row written straight into the table therefore survives only
+        until the next external re-submit or coverage edit - the manual link
+        vanished with no trace. Authoring coverage instead makes it durable.
+
+        Returns the resulting projection row, or ``None`` for an ordinary file,
+        which leaves the plain path below completely untouched.
+        """
+        from sqlalchemy.orm import joinedload
+
+        certificate, is_current = self._certificate_of_attachment(attachment_id)
+        if certificate is None:
+            return None
+        if not is_current:
+            # A superseded revision serves nothing by design (REV-3): the stale
+            # sweep removes its rows whatever the coverage says, so accepting the
+            # link would only promise something the next reconcile breaks.
+            raise AppException(
+                status_code=400,
+                message=(
+                    "This file is a superseded revision of certificate "
+                    f"{certificate.scheme} {certificate.certificate_number}. "
+                    "Link the current revision instead."
+                ),
+                code="certificate_revision_superseded",
+            )
+
+        from app.services.certificate_service import (
+            CERTIFICATE_SOURCE_MANUAL,
+            CertificateService,
+        )
+
+        CertificateService(self.db).add_coverage(
+            str(certificate.id),
+            [str(data.product_id)],
+            source=CERTIFICATE_SOURCE_MANUAL,
+            created_by=getattr(data, "created_by", None),
+        )
+        row = (
+            self.db.query(ProductAttachment)
+            .filter(
+                ProductAttachment.product_id == data.product_id,
+                ProductAttachment.attachment_id == data.attachment_id,
+            )
+            .first()
+        )
+        if row is None:
+            raise AppException(
+                status_code=500,
+                message="Certificate coverage was recorded but its product link is missing.",
+                code="certificate_projection_missing",
+            )
+        # Coverage decides that the row EXISTS; the caller still owns the
+        # presentation fields the projection does not manage.
+        if data.sort_order is not None:
+            row.sort_order = data.sort_order
+        self._apply_brochure_choice(row, data.model_dump(exclude_unset=True).get("is_primary"))
+        self.db.commit()
+        return (
+            self.db.query(ProductAttachment)
+            .options(
+                joinedload(ProductAttachment.product),
+                joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type),
+            )
+            .filter(ProductAttachment.id == row.id)
+            .first()
+        )
+
     def create_product_attachment(self, product_attachment_data: ProductAttachmentCreate, created_by: Optional[str] = None):
         """Create or refresh a product attachment relationship.
 
@@ -2900,6 +2981,12 @@ class ProductAttachmentService:
         echo it back to the caller.
         """
         from sqlalchemy.orm import joinedload
+
+        cert_row = self._certificate_link_target(
+            product_attachment_data.attachment_id, product_attachment_data
+        )
+        if cert_row is not None:
+            return cert_row
 
         existing = self.db.query(ProductAttachment).filter(
             ProductAttachment.product_id == product_attachment_data.product_id,
@@ -3015,8 +3102,23 @@ class ProductAttachmentService:
         ).filter(ProductAttachment.id == product_attachment.id).first()
     
     def delete_product_attachment(self, product_attachment_id: str):
-        """Delete a product attachment relationship."""
+        """Delete a product attachment relationship.
+
+        For a cert-bearing file the row is a PROJECTION, so deleting it alone
+        leaves the coverage that produced it - and the next ``reconcile`` puts
+        the row straight back. Uncover instead and let the projection follow.
+        """
         product_attachment = self.get_product_attachment(product_attachment_id)
+        attachment_id = str(product_attachment.attachment_id)
+        product_id = str(product_attachment.product_id)
+        certificate, _is_current = self._certificate_of_attachment(attachment_id)
+        if certificate is not None:
+            from app.services.certificate_service import CertificateService
+
+            CertificateService(self.db).remove_coverage(
+                str(certificate.id), [product_id]
+            )
+            return {"message": "Product attachment deleted successfully"}
         self.db.delete(product_attachment)
         self.db.commit()
         return {"message": "Product attachment deleted successfully"}

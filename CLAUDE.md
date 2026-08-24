@@ -255,6 +255,14 @@ spawn a build "for handoff" on your own initiative.
 - Auth on dev: the dev server must share the backend `JWT_SECRET` via `.env.local`
   (`NEXTAUTH_SECRET`) or NextAuth login flaps on :3000. Fix the env, don't build around it.
 - If HMR wedges: `rm -rf sorento_crm_frontend/.next`, restart `npm run dev`, hard-refresh.
+- **A finished lane gives its `.next` back.** A build cache reaches 2-3G per
+  worktree and never shrinks, so idle lanes cost tens of gigabytes (they reached
+  44G across 23 worktrees on 2026-08-24). It is regenerable, so it must not
+  outlive the work. When a PR merges or a lane is abandoned, run
+  `./scripts/worktree-gc.sh --apply` from the primary checkout (add `--merged` to
+  also drop clean worktrees already in `origin/main`, `--deep` for `node_modules`
+  and `venv`), then `git worktree prune`. The script skips any worktree running
+  `next dev` and never kills a process. This is `/feature` Step 11.
 - **Never `npm run build` while a `next start` serves that same `.next`** - the build replaces chunk
   files under the running server, which keeps its old manifests, so pages come back half-rendered.
   The tell looks like a code defect elsewhere: `tests/test_dealer_kit_pdf_render.py` failed 5 of 7
