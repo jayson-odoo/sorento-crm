@@ -2,14 +2,17 @@
  * SalesOrderDetail - the demand-side twin of `PurchaseOrderDetail`.
  *
  * Two things this file is here to hold. The first is the CRUD standard: every section is
- * rendered on every state, with an explicit empty message, so a panel that is missing means
- * something rather than reading as "not loaded yet".
+ * rendered, with an explicit empty message, so a panel that is missing means something rather
+ * than reading as "not loaded yet". The record is TABBED now (General / Lines / Delivery, the
+ * same shape as the user detail page), so "rendered" means "reachable on its tab" - which is
+ * why almost every assertion below opens the tab it is about first.
  *
  * The second is specific to this screen. 11,006 of the sales orders in the system were
  * absorbed from a six-year AutoCount export and are closed history; the rest are live
- * commitments the plan is computed from. A screen that showed a delivered 2020 order and an
- * open one the same way would be actively misleading, so "committed" and its reason are
- * asserted for both.
+ * commitments the plan is computed from. What the header used to carry - a "Committed demand"
+ * / "Not committed (...)" line beside the status - is gone at the captain's request: the
+ * status, the Source field and the Delivery tab already say all three of those things, and it
+ * was a fourth restatement in the one place with least room for it.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -150,6 +153,16 @@ function renderDetail() {
   );
 }
 
+/**
+ * Open one of the record's tabs. Every section still exists; this is where it lives.
+ *
+ * `mouseDown`, not `click`: Radix's tab trigger selects on mouse-down (a plain `click` event
+ * in jsdom leaves the tab strip exactly where it was, which reads as a section that vanished).
+ */
+function openTab(name: 'General' | 'Lines' | 'Delivery') {
+  fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0, ctrlKey: false });
+}
+
 beforeEach(() => {
   cleanup();
   useSalesOrder.mockReset();
@@ -183,10 +196,40 @@ describe('SalesOrderDetail - states', () => {
     expect(screen.getByText('300-R009')).toBeInTheDocument();
     for (const label of [
       'Customer', 'Customer code', 'Order type', 'Market segment', 'Order date',
-      'Requested delivery', 'Priority', 'Locations', 'Total qty', 'Lines', 'Source',
+      'Requested delivery', 'Priority', 'Total qty', 'Source',
     ]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
+  });
+
+  it('carries one tab per concern of the order, General first', () => {
+    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    renderDetail();
+
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual([
+      'General',
+      'Lines',
+      'Delivery',
+    ]);
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
+  });
+
+  it('does not restate the order LOCATIONS on the header - a location belongs to a line', () => {
+    // One order routinely ships from two warehouses, so "BRW-BB, KL-01" on the header said
+    // less than the Lines tab, which says which line goes where.
+    useSalesOrder.mockReturnValue({
+      data: so({ stock_locations: ['BRW-BB', 'KL-01'] }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    const summary = screen.getByRole('region', { name: 'Order summary' });
+    expect(within(summary).queryByText('Locations')).not.toBeInTheDocument();
+    expect(within(summary).queryByText('BRW-BB, KL-01')).not.toBeInTheDocument();
   });
 
   it('shows each line\'s Location, falling back to "-" only for a line the API sent none for', () => {
@@ -214,6 +257,7 @@ describe('SalesOrderDetail - states', () => {
       isError: false,
     });
     renderDetail();
+    openTab('Lines');
 
     const openRow = screen.getByText('SKU-OPEN').closest('tr');
     const closedRow = screen.getByText('SKU-CLOSED').closest('tr');
@@ -227,7 +271,8 @@ describe('SalesOrderDetail - states', () => {
 
   it('renders every section even when the record is bare', () => {
     // The CRUD standard, asserted on the emptiest record the API can return: a section that
-    // disappears on missing data reads as a page that failed to load.
+    // disappears on missing data reads as a page that failed to load. Tabbed now, so each one
+    // is opened rather than expected to be on screen at once.
     useSalesOrder.mockReturnValue({
       data: so({ lines: [], total_qty: 0, committed_qty: 0, line_count: 0, open_line_count: 0 }),
       isLoading: false,
@@ -235,23 +280,33 @@ describe('SalesOrderDetail - states', () => {
     });
     renderDetail();
 
-    expect(screen.getByText('Order lines')).toBeInTheDocument();
-    expect(screen.getByText('This sales order has no lines.')).toBeInTheDocument();
-    expect(screen.getByText('Delivery')).toBeInTheDocument();
-    expect(screen.getByText(/Nothing delivered yet/)).toBeInTheDocument();
     expect(screen.getByText('Note')).toBeInTheDocument();
     expect(screen.getByText(/No note\./)).toBeInTheDocument();
+
+    openTab('Lines');
+    expect(screen.getByText('Order lines')).toBeInTheDocument();
+    expect(screen.getByText('This sales order has no lines.')).toBeInTheDocument();
+
+    openTab('Delivery');
+    expect(screen.getByText(/Nothing delivered yet/)).toBeInTheDocument();
   });
 });
 
-describe('SalesOrderDetail - committed or not, and why', () => {
-  it('reads as committed demand while quantity is still owed', () => {
+describe('SalesOrderDetail - the header says what the order IS, once', () => {
+  it('states the status as a standard pill and nothing about "committed demand"', () => {
+    // The indicator beside the status is gone: the status, the Source field and the Delivery
+    // tab each already answer "is this still owed", and a fourth phrasing of it was the
+    // captain's complaint about this header.
     useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
     renderDetail();
-    expect(screen.getByText('Committed demand')).toBeInTheDocument();
+
+    const badge = screen.getByText('Open').closest('[data-slot="badge"]');
+    expect(badge).not.toBeNull();
+    expect(screen.queryByText('Committed demand')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Not committed/)).not.toBeInTheDocument();
   });
 
-  it('says absorbed history rather than delivered on a closed imported order', () => {
+  it('still says an absorbed order is absorbed - on the Source field, where it belongs', () => {
     // The distinction that matters on this database: 11,006 of these orders were read off a
     // 2020-2026 spreadsheet. Calling one "delivered" claims a delivery this system recorded,
     // when it only ever read one.
@@ -274,19 +329,22 @@ describe('SalesOrderDetail - committed or not, and why', () => {
     });
     renderDetail();
 
-    expect(screen.getByText('Not committed (absorbed history)')).toBeInTheDocument();
     expect(screen.getByText('Absorbed history')).toBeInTheDocument();
-    expect(screen.queryByText('Committed demand')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Not committed/)).not.toBeInTheDocument();
   });
 
-  it('says cancelled rather than "nothing outstanding" on a cancelled order', () => {
+  it('paints a cancelled order with the system-wide status colour', () => {
     useSalesOrder.mockReturnValue({
       data: so({ status: 'cancelled', committed_qty: 0, open_line_count: 0 }),
       isLoading: false,
       isError: false,
     });
     renderDetail();
-    expect(screen.getByText('Not committed (cancelled)')).toBeInTheDocument();
+
+    const badge = screen.getByText('Cancelled').closest('[data-slot="badge"]');
+    expect(badge?.className).toContain('bg-destructive');
+    // `-soft` is the light-appearance palette this screen used to fork onto.
+    expect(badge?.className).not.toContain('soft');
   });
 
   it('hides "Still owed" when it would just repeat the total', () => {
@@ -318,6 +376,7 @@ describe('SalesOrderDetail - delivery panel', () => {
       isError: false,
     });
     renderDetail();
+    openTab('Delivery');
     expect(screen.getByText(/200 of 320 delivered/)).toBeInTheDocument();
     expect(screen.getByText(/120 still owed across 2 lines/)).toBeInTheDocument();
   });
@@ -329,6 +388,7 @@ describe('SalesOrderDetail - delivery panel', () => {
       isError: false,
     });
     renderDetail();
+    openTab('Delivery');
     expect(screen.getByText('delivered in full')).toBeInTheDocument();
   });
 });
@@ -375,6 +435,7 @@ describe('SalesOrderDetail - sorting the lines', () => {
 
   it('orders by quantity, ascending then descending, when the header is clicked', () => {
     renderDetail();
+    openTab('Lines');
     expect(skuOrder()).toEqual(['SKU-B', 'SKU-C', 'SKU-A']);
 
     // 45 < 320 < 1200 - a numeric order, not the alphabetical one a formatted string gives.
@@ -387,6 +448,7 @@ describe('SalesOrderDetail - sorting the lines', () => {
 
   it('orders by what has been delivered', () => {
     renderDetail();
+    openTab('Lines');
     fireEvent.click(screen.getByRole('button', { name: 'Qty delivered' }));
     expect(skuOrder()).toEqual(['SKU-C', 'SKU-B', 'SKU-A']);
   });
@@ -395,6 +457,7 @@ describe('SalesOrderDetail - sorting the lines', () => {
     // The computed column: 20, 45, 100 owed. Its order differs from every other column's,
     // so this fails if the header sorts on anything but the number in the cell.
     renderDetail();
+    openTab('Lines');
     fireEvent.click(screen.getByRole('button', { name: 'Still owed' }));
     expect(skuOrder()).toEqual(['SKU-B', 'SKU-C', 'SKU-A']);
 
@@ -406,8 +469,86 @@ describe('SalesOrderDetail - sorting the lines', () => {
     // Printed as 04 Jul / 15 Aug / 01 Sep, so a sort on the displayed text would read
     // 01, 04, 15 and put September first.
     renderDetail();
+    openTab('Lines');
     fireEvent.click(screen.getByRole('button', { name: 'Delivery date' }));
     expect(skuOrder()).toEqual(['SKU-C', 'SKU-A', 'SKU-B']);
+  });
+});
+
+describe('SalesOrderDetail - finding one product on a long order', () => {
+  /**
+   * A contract order runs to a couple of hundred lines and the question asked of it is almost
+   * always "is this item on here, and how many": scrolling for it is the whole cost. The
+   * search is over the lines already loaded - the order is the unit, so there is no request
+   * and no paging to work across.
+   */
+  const LINES: SalesOrderLine[] = [
+    {
+      id: 'l-basin', sku: 'CW-BASIN-450', product_name: 'Ceramic Wash Basin 450mm',
+      qty_ordered: 320, qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB',
+      line_status: 'open', required_date: '2026-08-30',
+    },
+    {
+      id: 'l-tap', sku: 'TAP-CHR-12', product_name: 'Chrome pillar tap',
+      qty_ordered: 45, qty_delivered: 0, uom: 'PCS', warehouse_code: 'KL-01',
+      line_status: 'open', required_date: '2026-09-04',
+    },
+  ];
+
+  beforeEach(() => {
+    useSalesOrder.mockReturnValue({
+      data: so({ lines: LINES, line_count: 2, open_line_count: 2 }),
+      isLoading: false,
+      isError: false,
+    });
+  });
+
+  it('filters the lines by product code', () => {
+    renderDetail();
+    openTab('Lines');
+
+    fireEvent.change(screen.getByLabelText('Search lines'), { target: { value: 'tap-chr' } });
+
+    expect(screen.getByText('TAP-CHR-12')).toBeInTheDocument();
+    expect(screen.queryByText('CW-BASIN-450')).not.toBeInTheDocument();
+  });
+
+  it('filters by the description too - the code is not always what is remembered', () => {
+    renderDetail();
+    openTab('Lines');
+
+    fireEvent.change(screen.getByLabelText('Search lines'), { target: { value: 'basin' } });
+
+    expect(screen.getByText('CW-BASIN-450')).toBeInTheDocument();
+    expect(screen.queryByText('TAP-CHR-12')).not.toBeInTheDocument();
+  });
+
+  it('says the search found nothing, rather than claiming the order has no lines', () => {
+    renderDetail();
+    openTab('Lines');
+
+    fireEvent.change(screen.getByLabelText('Search lines'), { target: { value: 'zzz' } });
+
+    expect(screen.getByText(/No line on this order matches that product/i)).toBeInTheDocument();
+    expect(screen.queryByText('This sales order has no lines.')).not.toBeInTheDocument();
+  });
+
+  it('restores every line when the search is cleared', () => {
+    renderDetail();
+    openTab('Lines');
+
+    fireEvent.change(screen.getByLabelText('Search lines'), { target: { value: 'basin' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Clear line search' }));
+
+    expect(screen.getByText('CW-BASIN-450')).toBeInTheDocument();
+    expect(screen.getByText('TAP-CHR-12')).toBeInTheDocument();
+  });
+
+  it('offers the standard Columns control, so the chosen columns survive the visit', () => {
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.getByRole('button', { name: /Columns/ })).toBeInTheDocument();
   });
 });
 
@@ -474,9 +615,13 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
     renderDetail();
 
+    // Field labels only. A pill is a VALUE and happens to be a `span.text-xs` too, so it is
+    // excluded by its slot rather than by being kept a different size than every other pill.
     const labelOrder = () =>
       Array.from(
-        screen.getByRole('region', { name: 'Order summary' }).querySelectorAll('label, span.text-xs'),
+        screen
+          .getByRole('region', { name: 'Order summary' })
+          .querySelectorAll('label, span.text-xs:not([data-slot="badge"])'),
       ).map((el) => el.textContent);
 
     const before = labelOrder();
@@ -570,6 +715,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     renderDetail();
 
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
     const qtyInputs = screen.getAllByDisplayValue('320');
     fireEvent.change(qtyInputs[0], { target: { value: '400' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -593,6 +739,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     renderDetail();
 
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
     const locationCombo = screen.getByRole('combobox', { name: 'Location on CW-BASIN-450' });
     // Code-first, same as the read view's Location cell (`BRW-BB` above) - a code review
     // nit found this select's option label was the bare warehouse NAME, so the same value
@@ -609,6 +756,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     renderDetail();
 
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
 
     fireEvent.click(screen.getByRole('combobox', { name: 'Location on CW-BASIN-450' }));
     fireEvent.click(await screen.findByRole('option', { name: 'BRW-IB - Brickworks Iskandar' }));
@@ -642,6 +790,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     renderDetail();
 
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
     // The options load async (`getSalesOrderUoms`) - the trigger shows the placeholder
     // until they resolve and the value's label can be matched. Re-queried each poll
     // (not a captured reference) since the resolved options swap this node out.
@@ -662,6 +811,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     renderDetail();
 
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
     await waitFor(() =>
       expect(screen.getByRole('combobox', { name: 'UoM on CW-BASIN-450' })).toHaveTextContent(
         'Pieces',

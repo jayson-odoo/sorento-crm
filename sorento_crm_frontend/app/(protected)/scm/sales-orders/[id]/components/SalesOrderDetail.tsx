@@ -7,21 +7,42 @@ import {
   ColumnDef,
   SortingState,
   getCoreRowModel,
+  getFilteredRowModel,
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { ArrowLeft, CheckCircle2, LoaderCircleIcon, SquarePen, Truck } from 'lucide-react';
+import {
+  ArrowLeft,
+  Columns3,
+  FileText,
+  ListOrdered,
+  LoaderCircleIcon,
+  Search,
+  SquarePen,
+  Truck,
+  X,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardHeader, CardHeading, CardTable, CardTitle } from '@/components/ui/card';
+import {
+  Card,
+  CardHeader,
+  CardHeading,
+  CardTable,
+  CardTitle,
+  CardToolbar,
+} from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
+import { formatStatusLabel, getStatusBadgeVariant } from '@/lib/status-badge';
 import { useSearchParams } from 'next/navigation';
 import { useSalesOrder, useUpdateSalesOrder } from '../../../hooks/useSalesOrders';
 import {
@@ -49,8 +70,13 @@ import type { SalesOrder, SalesOrderLine, SalesOrderPriority } from '../../../ty
  * so the goods-receipt panel becomes a delivery panel - never because they were written on
  * different days.
  *
+ * THE RECORD IS TABBED, the same shape as the user detail page: the page header (number,
+ * status, actions, prev/next) sits above a `variant="line"` tab strip, and each concern of the
+ * order owns one tab - General (the summary and the note), Lines, Delivery. Every section is
+ * still rendered with its own empty state; a tab is where it lives, not a condition on it.
+ *
  * VIEW AND EDIT ARE THE SAME SCREEN (A5). Editing swaps a read-only value for an input IN
- * PLACE - the same fields, in the same order, in the same grid. Header: Order type, Customer,
+ * PLACE - the same fields, in the same order, in the same grid, in the same tab. Header: Order type, Customer,
  * Priority, Requested delivery, Agent. Lines: SKU, Qty ordered, Location, Delivery date and
  * UoM. Everything else on the summary (Customer code, Market segment, Source, Lines, Total
  * qty, Still owed, Locations) has no edit counterpart and stays exactly where it always was.
@@ -71,28 +97,17 @@ import type { SalesOrder, SalesOrderLine, SalesOrderPriority } from '../../../ty
  * value the order loaded with, so an untouched line reads back exactly as it was.
  */
 
-type BadgeDef = { variant: 'secondary' | 'primary' | 'warning' | 'success'; label: string };
-
 function titleCase(v: string): string {
   return v.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
-
-const STATUS_BADGE: Record<string, BadgeDef> = {
-  open: { variant: 'primary', label: 'Open' },
-  partially_delivered: { variant: 'warning', label: 'Partially delivered' },
-  delivered: { variant: 'success', label: 'Delivered' },
-  closed: { variant: 'secondary', label: 'Closed' },
-  cancelled: { variant: 'secondary', label: 'Cancelled' },
-};
-
-const statusBadge = (s: string): BadgeDef =>
-  STATUS_BADGE[s] ?? { variant: 'secondary', label: titleCase(s) };
 
 /** Where the order came from. `history` is its own answer because "Manual" would claim
  *  somebody keyed a 2020 order by hand. Mirrors the purchase-order side's `import`. */
 const SOURCE_LABELS: Record<string, string> = {
   inquiry: 'Order inquiry sheet',
-  upload: 'Outstanding upload',
+  // The same words the list uses for the same row - the upload carries the whole book, not
+  // only what is still owed.
+  upload: 'Sales order upload',
   history: 'Absorbed history',
   manual: 'Manual',
 };
@@ -111,11 +126,15 @@ const PRIORITY_OPTIONS = [
   { value: 'urgent', label: 'Urgent' },
 ];
 
-/** Is this order still owed to the customer? The counterpart of the PO screen's "On order".
- *  Derived from the OPEN line count rather than the status alone, because an order can sit
- *  in an open status with every line closed. */
-const countsAsCommitted = (so: SalesOrder) =>
-  (so.open_line_count ?? 0) > 0 && so.committed_qty > 0;
+/** Does this line answer the product search above the grid? Code and description, because
+ *  a planner looking for one item on a 200-line order knows one or the other, not both. */
+function lineMatches(line: SalesOrderLine, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return (
+    line.sku.toLowerCase().includes(q) || (line.product_name ?? '').toLowerCase().includes(q)
+  );
+}
 
 function Field({
   label,
@@ -286,9 +305,11 @@ export function SalesOrderDetail({ id }: { id: string }) {
   }, [wantsEdit, data]);
 
   const lines = useMemo<SalesOrderLine[]>(() => data?.lines ?? [], [data]);
-  // Sorted here rather than by the API: the lines come embedded in the order read, so there
-  // is no second request to spend and no page boundary to sort across.
+  // Sorted and searched here rather than by the API: the lines come embedded in the order
+  // read, so there is no second request to spend and no page boundary to work across.
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [lineSearch, setLineSearch] = useState('');
+  const [tab, setTab] = useState('general');
 
   // The Product dropdown is server-paged (top 100 by code), so a line whose SKU sorts past
   // page one - routine on a large catalogue - is not among `productOptions.data` and the
@@ -525,11 +546,8 @@ export function SalesOrderDetail({ id }: { id: string }) {
         accessorKey: 'line_status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
-          <Badge
-            variant={row.original.line_status === 'closed' ? 'secondary' : 'primary'}
-            appearance="light"
-          >
-            {titleCase(row.original.line_status ?? 'open')}
+          <Badge variant={getStatusBadgeVariant(row.original.line_status ?? 'open')}>
+            {formatStatusLabel(row.original.line_status ?? 'open')}
           </Badge>
         ),
         size: 110,
@@ -543,13 +561,21 @@ export function SalesOrderDetail({ id }: { id: string }) {
     columns,
     data: lines,
     getRowId: (row) => row.id,
-    state: { sorting },
+    state: { sorting, globalFilter: lineSearch },
     onSortingChange: setSorting,
+    onGlobalFilterChange: setLineSearch,
+    // The whole ROW answers the search, so every column is allowed to carry it and the
+    // matcher below decides. Left to the default, only string columns qualify, which made
+    // the filter depend on which columns happen to hold strings.
+    getColumnCanGlobalFilter: () => true,
+    globalFilterFn: (row, _columnId, value) => lineMatches(row.original, String(value ?? '')),
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
+  const visibleLineCount = table.getFilteredRowModel().rows.length;
 
   // Back and prev/next live on the RIGHT of the record header, next to each other, the way
   // the purchase-order and users screens do it.
@@ -588,8 +614,6 @@ export function SalesOrderDetail({ id }: { id: string }) {
   }
 
   const so = data;
-  const s = statusBadge(so.status);
-  const committed = countsAsCommitted(so);
   const lineCount = so.line_count ?? lines.length;
 
   const handleSave = async () => {
@@ -639,31 +663,16 @@ export function SalesOrderDetail({ id }: { id: string }) {
 
   return (
     <div className="space-y-4">
-      {/* Summary - always rendered. */}
+      {/* The record header - what the order IS, and what can be done to it. Above the tabs,
+          because it belongs to the whole record rather than to any one of its concerns. */}
       <Card>
         <CardHeader className="block py-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex min-w-0 flex-wrap items-center gap-3">
               <CardTitle className="text-lg">{so.so_number}</CardTitle>
-              <Badge variant={s.variant} appearance="light">
-                {s.label}
+              <Badge variant={getStatusBadgeVariant(so.status)}>
+                {formatStatusLabel(so.status)}
               </Badge>
-              {committed ? (
-                <span className="inline-flex items-center gap-1 text-xs font-medium text-scm-incoming">
-                  <CheckCircle2 className="size-3.5" /> Committed demand
-                </span>
-              ) : (
-                // Why it is not committed, which is not always "delivered": an absorbed 2020
-                // order is closed history, and calling it delivered claims a delivery this
-                // system recorded when it only ever read one off a spreadsheet.
-                <span className="text-xs text-muted-foreground">
-                  {so.source === 'history'
-                    ? 'Not committed (absorbed history)'
-                    : so.status === 'cancelled'
-                      ? 'Not committed (cancelled)'
-                      : 'Not committed (nothing outstanding)'}
-                </span>
-              )}
             </div>
             {/* In an edit session the header states ONE intent: Save or Cancel. Nav and the
                 way out act on the order as it is STORED, and offering them over a screen
@@ -686,7 +695,9 @@ export function SalesOrderDetail({ id }: { id: string }) {
             ) : (
               <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <SalesOrderNavigation salesOrderId={id} />
-                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => beginEdit(so)}>
+                {/* The main action on this page, so it wears the main colour - the same
+                    filled primary button an Add is on every list. */}
+                <Button variant="primary" size="sm" className="gap-1.5" onClick={() => beginEdit(so)}>
                   <SquarePen className="size-4" />
                   Edit
                 </Button>
@@ -717,214 +728,286 @@ export function SalesOrderDetail({ id }: { id: string }) {
             </div>
           ) : null}
         </CardHeader>
-        {/* Named as a region so a reader (and a test) can tell the summary's "Still owed"
-            from the lines grid's column of the same name. They share the phrase on purpose:
-            it is the same quantity, once for the order and once per line. */}
-        <section
-          aria-label="Order summary"
-          className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-3 lg:grid-cols-4"
-        >
-          <Field label="Customer" htmlFor={isEditing ? 'so-edit-customer' : undefined}>
-            {isEditing ? (
-              <SearchableSelect
-                id="so-edit-customer"
-                value={customerCode}
-                onChange={setCustomerCode}
-                options={customerOptions.data ?? []}
-                placeholder="Select customer"
-                size="sm"
-              />
-            ) : (
-              so.customer_name || '-'
-            )}
-          </Field>
-          <Field label="Customer code">{so.customer_code || '-'}</Field>
-          {/* Primary value is the planning class (`demand_class`) - what the classification
-              agents actually resolved - not `order_type_label`, the ERP document type that
-              is blank on almost every row in this book. The document type still rides along
-              as a hint when the order carries one and it says something the class does not
-              already say. Editing is unchanged: it still sets `order_type`, which is what
-              derives `demand_class` on save (see `sales_order_service.update`). */}
-          <Field label="Order type" htmlFor={isEditing ? 'so-edit-order-type' : undefined}>
-            {isEditing ? (
-              <SearchableSelect
-                id="so-edit-order-type"
-                value={orderType}
-                onChange={setOrderType}
-                options={orderTypeOptions.data ?? []}
-                placeholder="Select type"
-                size="sm"
-              />
-            ) : (
-              (() => {
-                const cls = demandClassBadge(so.demand_class);
-                const hint = so.order_type_label;
-                const showHint = hint && hint !== cls.label;
-                return (
-                  <span className="inline-flex flex-wrap items-center gap-1.5">
-                    <Badge variant={cls.variant} appearance="light" size="sm">
-                      {cls.label}
-                    </Badge>
-                    {showHint ? (
-                      // `text-2xs`, not `text-xs` - the view/edit parity test walks
-                      // `span.text-xs` as the Field label selector, and this hint is a
-                      // VALUE, not a label.
-                      <span className="text-2xs font-normal text-muted-foreground">{hint}</span>
+      </Card>
+
+      {/* One tab per concern of the order, the same shape as the user detail page. The tab
+          set is the SAME in view and in edit - editing swaps a value for an input inside the
+          tab it already lived in. */}
+      <Tabs value={tab} onValueChange={setTab} className="w-full">
+        <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
+          <TabsTrigger value="general">
+            <FileText />
+            <span>General</span>
+          </TabsTrigger>
+          <TabsTrigger value="lines">
+            <ListOrdered />
+            <span>Lines</span>
+          </TabsTrigger>
+          <TabsTrigger value="delivery">
+            <Truck />
+            <span>Delivery</span>
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="general" className="mt-0 space-y-4 focus-visible:outline-none">
+          <Card>
+            {/* Named as a region so a reader (and a test) can tell the summary's "Still owed"
+                from the lines grid's column of the same name. They share the phrase on purpose:
+                it is the same quantity, once for the order and once per line. */}
+            <section
+              aria-label="Order summary"
+              className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-3 lg:grid-cols-4"
+            >
+              <Field label="Customer" htmlFor={isEditing ? 'so-edit-customer' : undefined}>
+                {isEditing ? (
+                  <SearchableSelect
+                    id="so-edit-customer"
+                    value={customerCode}
+                    onChange={setCustomerCode}
+                    options={customerOptions.data ?? []}
+                    placeholder="Select customer"
+                    size="sm"
+                  />
+                ) : (
+                  so.customer_name || '-'
+                )}
+              </Field>
+              <Field label="Customer code">{so.customer_code || '-'}</Field>
+              {/* Primary value is the planning class (`demand_class`) - what the classification
+                  agents actually resolved - not `order_type_label`, the ERP document type that
+                  is blank on almost every row in this book. The document type still rides along
+                  as a hint when the order carries one and it says something the class does not
+                  already say. Editing is unchanged: it still sets `order_type`, which is what
+                  derives `demand_class` on save (see `sales_order_service.update`). */}
+              <Field label="Order type" htmlFor={isEditing ? 'so-edit-order-type' : undefined}>
+                {isEditing ? (
+                  <SearchableSelect
+                    id="so-edit-order-type"
+                    value={orderType}
+                    onChange={setOrderType}
+                    options={orderTypeOptions.data ?? []}
+                    placeholder="Select type"
+                    size="sm"
+                  />
+                ) : (
+                  (() => {
+                    const cls = demandClassBadge(so.demand_class);
+                    const hint = so.order_type_label;
+                    const showHint = hint && hint !== cls.label;
+                    return (
+                      <span className="inline-flex flex-wrap items-center gap-1.5">
+                        <Badge variant={cls.variant}>{cls.label}</Badge>
+                        {showHint ? (
+                          // `text-2xs`, not `text-xs` - the view/edit parity test walks
+                          // `span.text-xs` as the Field label selector, and this hint is a
+                          // VALUE, not a label.
+                          <span className="text-2xs font-normal text-muted-foreground">
+                            {hint}
+                          </span>
+                        ) : null}
+                      </span>
+                    );
+                  })()
+                )}
+              </Field>
+              <Field label="Market segment">{so.market_segment || '-'}</Field>
+              {/* Who sold it - the sales_agents master, resolved by the backend. Read as the
+                  code with the person it has been annotated to, when known; edited as a
+                  clearable select, since not every order names an agent. */}
+              <Field label="Agent" htmlFor={isEditing ? 'so-edit-agent' : undefined}>
+                {isEditing ? (
+                  <SearchableSelect
+                    id="so-edit-agent"
+                    value={agentId}
+                    onChange={setAgentId}
+                    options={agentOptions.options}
+                    placeholder="No agent"
+                    clearable
+                    size="sm"
+                  />
+                ) : so.sales_agent_code ? (
+                  <span title={so.sales_agent_label ?? undefined}>
+                    {so.sales_agent_code}
+                    {so.sales_agent_label ? (
+                      <span className="ms-1 font-normal text-muted-foreground">
+                        · {so.sales_agent_label}
+                      </span>
                     ) : null}
                   </span>
-                );
-              })()
-            )}
-          </Field>
-          <Field label="Market segment">{so.market_segment || '-'}</Field>
-          {/* Who sold it - the sales_agents master, resolved by the backend. Read as the
-              code with the person it has been annotated to, when known; edited as a
-              clearable select, since not every order names an agent. */}
-          <Field label="Agent" htmlFor={isEditing ? 'so-edit-agent' : undefined}>
-            {isEditing ? (
-              <SearchableSelect
-                id="so-edit-agent"
-                value={agentId}
-                onChange={setAgentId}
-                options={agentOptions.options}
-                placeholder="No agent"
-                clearable
-                size="sm"
-              />
-            ) : so.sales_agent_code ? (
-              <span title={so.sales_agent_label ?? undefined}>
-                {so.sales_agent_code}
-                {so.sales_agent_label ? (
-                  <span className="ms-1 font-normal text-muted-foreground">
-                    · {so.sales_agent_label}
-                  </span>
-                ) : null}
-              </span>
-            ) : (
-              '-'
-            )}
-          </Field>
-          <Field label="Order date">{fmtDate(so.order_date)}</Field>
-          <Field
-            label="Requested delivery"
-            htmlFor={isEditing ? 'so-edit-requested-date' : undefined}
-          >
-            {isEditing ? (
-              <Input
-                id="so-edit-requested-date"
-                type="date"
-                value={requestedDate}
-                onChange={(e) => setRequestedDate(e.target.value)}
-                className="h-8"
-              />
-            ) : so.requested_delivery_date ? (
-              fmtDate(so.requested_delivery_date)
-            ) : (
-              '-'
-            )}
-          </Field>
-          <Field label="Priority" htmlFor={isEditing ? 'so-edit-priority' : undefined}>
-            {isEditing ? (
-              <SearchableSelect
-                id="so-edit-priority"
-                value={priority}
-                onChange={(v) => setPriority((v || 'normal') as SalesOrderPriority)}
-                options={PRIORITY_OPTIONS}
-                placeholder="Select priority"
-                size="sm"
-              />
-            ) : (
-              PRIORITY_LABELS[so.priority] ?? titleCase(so.priority)
-            )}
-          </Field>
-          <Field label="Locations">
-            {so.stock_locations?.length ? so.stock_locations.join(', ') : '-'}
-          </Field>
-          <Field label="Total qty">{fmtInt(so.total_qty)}</Field>
-          <Field label="Lines">{fmtInt(lineCount)}</Field>
-          {/* What is still owed, shown only when it differs from what the order says - on a
-              wholly open order the two are equal and a second identical figure is noise,
-              while on a part-delivered or absorbed order the gap IS the answer. */}
-          {so.committed_qty !== so.total_qty ? (
-            <Field label="Still owed">{fmtInt(so.committed_qty)}</Field>
-          ) : null}
-          <Field label="Source">{SOURCE_LABELS[so.source ?? 'manual'] ?? 'Manual'}</Field>
-        </section>
-      </Card>
+                ) : (
+                  '-'
+                )}
+              </Field>
+              <Field label="Order date">{fmtDate(so.order_date)}</Field>
+              <Field
+                label="Requested delivery"
+                htmlFor={isEditing ? 'so-edit-requested-date' : undefined}
+              >
+                {isEditing ? (
+                  <Input
+                    id="so-edit-requested-date"
+                    type="date"
+                    value={requestedDate}
+                    onChange={(e) => setRequestedDate(e.target.value)}
+                    className="h-8"
+                  />
+                ) : so.requested_delivery_date ? (
+                  fmtDate(so.requested_delivery_date)
+                ) : (
+                  '-'
+                )}
+              </Field>
+              <Field label="Priority" htmlFor={isEditing ? 'so-edit-priority' : undefined}>
+                {isEditing ? (
+                  <SearchableSelect
+                    id="so-edit-priority"
+                    value={priority}
+                    onChange={(v) => setPriority((v || 'normal') as SalesOrderPriority)}
+                    options={PRIORITY_OPTIONS}
+                    placeholder="Select priority"
+                    size="sm"
+                  />
+                ) : (
+                  PRIORITY_LABELS[so.priority] ?? titleCase(so.priority)
+                )}
+              </Field>
+              {/* No Locations field. A location belongs to a LINE - one order routinely ships
+                  from two - and the Lines tab carries it per row, where it says which line it
+                  is talking about. */}
+              <Field label="Total qty">{fmtInt(so.total_qty)}</Field>
+              <Field label="Lines">{fmtInt(lineCount)}</Field>
+              {/* What is still owed, shown only when it differs from what the order says - on a
+                  wholly open order the two are equal and a second identical figure is noise,
+                  while on a part-delivered or absorbed order the gap IS the answer. */}
+              {so.committed_qty !== so.total_qty ? (
+                <Field label="Still owed">{fmtInt(so.committed_qty)}</Field>
+              ) : null}
+              <Field label="Source">{SOURCE_LABELS[so.source ?? 'manual'] ?? 'Manual'}</Field>
+            </section>
+          </Card>
 
-      {/* Lines - always rendered, explicit empty state. */}
-      <DataGrid
-        table={table}
-        recordCount={lines.length}
-        isLoading={false}
-        tableLayout={{ width: 'fixed', columnsResizable: true }}
-        emptyMessage="This sales order has no lines."
-        listingKey=""
-      >
-        <Card>
-          <CardHeader>
-            <CardHeading>
-              <CardTitle>Order lines</CardTitle>
-            </CardHeading>
-          </CardHeader>
-          <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
-          </CardTable>
-        </Card>
-      </DataGrid>
-
-      {/* Delivery - always rendered, empty state when nothing has shipped. The counterpart
-          of the purchase-order screen's goods receipt. */}
-      <Card>
-        <CardHeader>
-          <CardHeading>
-            <CardTitle>Delivery</CardTitle>
-          </CardHeading>
-        </CardHeader>
-        <div className="p-4">
-          {so.total_qty > 0 && so.committed_qty === 0 ? (
-            <div className="flex items-center gap-2 text-sm">
-              <Truck className="size-4 text-scm-incoming" />
-              <span className="font-medium">{fmtInt(so.total_qty)}</span>
-              <span className="text-muted-foreground">delivered in full</span>
+          {/* Note - always rendered, because a blank panel says "there is no note" where a
+              missing panel says nothing at all. */}
+          <Card>
+            <CardHeader>
+              <CardHeading>
+                <CardTitle>Note</CardTitle>
+              </CardHeading>
+            </CardHeader>
+            <div className="p-4">
+              {so.internal_note ? (
+                <p className="text-sm">{so.internal_note}</p>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No note. Absorbed and imported orders keep the customer name and code here
+                  when the customer could not be matched.
+                </p>
+              )}
             </div>
-          ) : so.committed_qty > 0 && so.committed_qty < so.total_qty ? (
-            <p className="text-sm text-muted-foreground">
-              {fmtInt(so.total_qty - so.committed_qty)} of {fmtInt(so.total_qty)} delivered.{' '}
-              {fmtInt(so.committed_qty)} still owed across {fmtInt(so.open_line_count ?? 0)}{' '}
-              {(so.open_line_count ?? 0) === 1 ? 'line' : 'lines'}.
-            </p>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Nothing delivered yet. Create a delivery order from the sales orders list to
-              record what shipped.
-            </p>
-          )}
-        </div>
-      </Card>
+          </Card>
+        </TabsContent>
 
-      {/* Note - always rendered, because a blank panel says "there is no note" where a
-          missing panel says nothing at all. */}
-      <Card>
-        <CardHeader>
-          <CardHeading>
-            <CardTitle>Note</CardTitle>
-          </CardHeading>
-        </CardHeader>
-        <div className="p-4">
-          {so.internal_note ? (
-            <p className="text-sm">{so.internal_note}</p>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              No note. Absorbed and imported orders keep the customer name and code here when
-              the customer could not be matched.
-            </p>
-          )}
-        </div>
-      </Card>
+        <TabsContent value="lines" className="mt-0 focus-visible:outline-none">
+          {/* Lines - always rendered, explicit empty state. */}
+          <DataGrid
+            table={table}
+            recordCount={visibleLineCount}
+            isLoading={false}
+            tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+            emptyMessage={
+              lineSearch.trim()
+                ? 'No line on this order matches that product.'
+                : 'This sales order has no lines.'
+            }
+            // A real key, not the empty "do not persist" one: a 200-line order is read with
+            // the same few columns every time, and the choice has to survive the visit. Keyed
+            // off the permission slug plus a stable id, never the record's own path.
+            listingKey="scm.dashboard.view::sales-order-lines"
+          >
+            <Card>
+              <CardHeader className="flex-wrap gap-3">
+                <CardHeading>
+                  <CardTitle>Order lines</CardTitle>
+                </CardHeading>
+                <CardToolbar className="flex-wrap">
+                  {/* The order is the unit here, so the search is over the lines already
+                      loaded - no request, no paging, and it answers "is this item on this
+                      order" on a 200-line contract. */}
+                  <div className="relative">
+                    <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      aria-label="Search lines"
+                      placeholder="Search product..."
+                      value={lineSearch}
+                      onChange={(e) => setLineSearch(e.target.value)}
+                      className="w-56 ps-9"
+                    />
+                    {lineSearch ? (
+                      <Button
+                        mode="icon"
+                        variant="dim"
+                        className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
+                        aria-label="Clear line search"
+                        onClick={() => setLineSearch('')}
+                      >
+                        <X />
+                      </Button>
+                    ) : null}
+                  </div>
+                  <DataGridColumnVisibility
+                    table={table}
+                    trigger={
+                      <Button variant="outline" size="sm" className="gap-1.5">
+                        <Columns3 className="size-4" />
+                        Columns
+                      </Button>
+                    }
+                  />
+                </CardToolbar>
+              </CardHeader>
+              <CardTable>
+                <ScrollArea>
+                  <DataGridTable />
+                  <ScrollBar orientation="horizontal" />
+                </ScrollArea>
+              </CardTable>
+            </Card>
+          </DataGrid>
+        </TabsContent>
+
+        <TabsContent value="delivery" className="mt-0 focus-visible:outline-none">
+          {/* Delivery - always rendered, empty state when nothing has shipped. The counterpart
+              of the purchase-order screen's goods receipt. */}
+          <Card>
+            <CardHeader>
+              <CardHeading>
+                <CardTitle>Delivery</CardTitle>
+              </CardHeading>
+            </CardHeader>
+            <div className="p-4">
+              {so.total_qty > 0 && so.committed_qty === 0 ? (
+                <div className="flex items-center gap-2 text-sm">
+                  <Truck className="size-4 text-scm-incoming" />
+                  <span className="font-medium">{fmtInt(so.total_qty)}</span>
+                  <span className="text-muted-foreground">delivered in full</span>
+                </div>
+              ) : so.committed_qty > 0 && so.committed_qty < so.total_qty ? (
+                <p className="text-sm text-muted-foreground">
+                  {fmtInt(so.total_qty - so.committed_qty)} of {fmtInt(so.total_qty)} delivered.{' '}
+                  {fmtInt(so.committed_qty)} still owed across {fmtInt(so.open_line_count ?? 0)}{' '}
+                  {(so.open_line_count ?? 0) === 1 ? 'line' : 'lines'}.
+                </p>
+              ) : (
+                // No CTA to a Create DO button any more: the list no longer carries one, and
+                // pointing at a control that is not there is worse than saying nothing.
+                <p className="text-sm text-muted-foreground">
+                  Nothing delivered yet. Deliveries recorded against this order show here.
+                </p>
+              )}
+            </div>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

@@ -15,15 +15,11 @@ import { useSalesOrders } from '../../hooks/useSalesOrders';
  * chose, which is worse than having no pager: reviewing 11,000 absorbed orders one by one is
  * exactly the case this exists for.
  *
- * **It steps across page boundaries.** The counter says "1 / 11,626", and a pager that could
- * only reach the 25 rows the list happened to have loaded made that counter a lie: the reader
- * is told there are 11,626 records and then cannot get to the 26th. So the window is the
- * current page plus one row either side of it, taken from the neighbouring pages, and
- * stepping onto one of those rows rewrites `page` in the URL so the next step continues from
- * there rather than snapping back.
- *
- * Two extra pages of 25 rows is the cost, on a query react-query has usually cached already
- * because the list itself asked for the same page a moment ago.
+ * **The walk is the CURRENT PAGE, and it stops at both ends.** It used to borrow a row from
+ * each neighbouring page and count "1 / 13,856" against the whole result set, which read as a
+ * promise to walk 13,856 records one chevron at a time. The page is the set the reader chose
+ * to look at, so the counter says where they are within it and the chevron greys out at its
+ * edge rather than quietly rewriting `page` underneath them.
  */
 export default function SalesOrderNavigation({
   salesOrderId,
@@ -53,50 +49,12 @@ export default function SalesOrderNavigation({
   }, [searchParams]);
 
   const { data } = useSalesOrders(listParams);
-  const isFirstPage = listParams.pageIndex === 0;
-  const previousPage = useSalesOrders({
-    ...listParams,
-    pageIndex: Math.max(listParams.pageIndex - 1, 0),
-  });
-  const nextPage = useSalesOrders({ ...listParams, pageIndex: listParams.pageIndex + 1 });
 
-  const total = data?.pagination.total ?? 0;
-  const pageRows = useMemo(() => data?.data ?? [], [data]);
+  const items = useMemo(() => (data?.data ?? []).map((so) => ({ id: so.id })), [data]);
 
-  /**
-   * The current page, with one borrowed row at each end so a step off either edge has
-   * somewhere to go. The borrowed rows carry the page they came from, which is what keeps the
-   * URL honest as the user walks past a boundary.
-   */
-  const window = useMemo(() => {
-    const rows: { id: string; page: number }[] = pageRows.map((so) => ({
-      id: so.id,
-      page: listParams.pageIndex,
-    }));
-    if (!isFirstPage) {
-      const before = previousPage.data?.data ?? [];
-      const last = before[before.length - 1];
-      if (last) rows.unshift({ id: last.id, page: listParams.pageIndex - 1 });
-    }
-    const after = nextPage.data?.data ?? [];
-    if (after[0]) rows.push({ id: after[0].id, page: listParams.pageIndex + 1 });
-    return rows;
-  }, [pageRows, previousPage.data, nextPage.data, listParams.pageIndex, isFirstPage]);
-
-  const items = useMemo(() => window.map((r) => ({ id: r.id })), [window]);
-
-  // The offset counts from the first row of the current page, adjusted for a borrowed row in
-  // front of it, so the counter reads the record's position in the WHOLE list.
-  const borrowedBefore = window.length && window[0].page < listParams.pageIndex ? 1 : 0;
-  const pageItemOffset = listParams.pageIndex * listParams.pageSize - borrowedBefore;
-
+  // The list query rides along, unchanged - `page` included, because the walk never leaves it.
   const handleSelect = (id: string) => {
-    const params = new URLSearchParams(searchParams.toString());
-    const target = window.find((r) => r.id === id);
-    // Rewrite the page as the user crosses a boundary. Without this the next step would be
-    // computed against the page they came FROM and walk backwards into it.
-    if (target) params.set('page', String(target.page + 1));
-    const qs = params.toString();
+    const qs = searchParams.toString();
     router.push(`/scm/sales-orders/${id}${qs ? `?${qs}` : ''}`);
   };
 
@@ -107,8 +65,9 @@ export default function SalesOrderNavigation({
       basePath="/scm/sales-orders"
       currentId={salesOrderId}
       items={items}
-      totalCount={total}
-      pageItemOffset={Math.max(pageItemOffset, 0)}
+      // No wrap: the last row on the page is the last row, and a chevron that jumps back to
+      // the top of the page without saying so reads as a broken step, not as a feature.
+      circular={false}
       onSelect={handleSelect}
       ariaLabel="sales order"
       className={className}

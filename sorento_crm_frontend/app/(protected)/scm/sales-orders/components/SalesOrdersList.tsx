@@ -11,17 +11,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { useQueryClient } from '@tanstack/react-query';
-import {
-  FileText,
-  LoaderCircleIcon,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Search,
-  Trash2,
-  Upload,
-  X,
-} from 'lucide-react';
+import { Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -34,71 +24,24 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Switch } from '@/components/ui/switch';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { formatStatusLabel, getStatusBadgeVariant, type StatusBadgeVariant } from '@/lib/status-badge';
 import { demandClassBadge } from '../../lib/demandClass';
 import { useCustomerOptions } from '../../hooks/useScmOptions';
 import { useRouter } from 'next/navigation';
-import {
-  useCreateDoFromSalesOrder,
-  useCreateSalesOrder,
-  useDeleteSalesOrder,
-  useSalesOrders,
-} from '../../hooks/useSalesOrders';
+import { useCreateSalesOrder, useDeleteSalesOrder, useSalesOrders } from '../../hooks/useSalesOrders';
 import { useSalesAgentOptions } from '../hooks/useSalesAgentOptions';
 import { fmtDate, fmtInt } from '../../lib/format';
-import type {
-  SalesOrder,
-  SalesOrderFormData,
-  SalesOrderPriority,
-  SalesOrderStatus,
-} from '../../types/scm.types';
+import type { SalesOrder, SalesOrderFormData } from '../../types/scm.types';
 import { SalesOrderFormModal } from './SalesOrderFormModal';
 // The order book upload lives on Reorder planning - the whole plan is computed from it, so
 // it is a planning action there. This list is the other place someone reasonably looks for
 // it, so the same dialog (never forked) is reused here too.
 import { OutstandingUploadDialog } from '../../reorder/components/OutstandingUploadDialog';
 import { runHistoryKey, todayRunKey } from '../../reorder/hooks/useReorderRun';
-
-type BadgeVariant = 'destructive' | 'warning' | 'secondary' | 'outline' | 'primary' | 'success';
-type BadgeDef = { variant: BadgeVariant; label: string };
-
-/** Title-case an unknown enum value so any BE-supplied string still reads well. */
-function titleCase(v: string): string {
-  return v.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-const PRIORITY_BADGE: Partial<Record<SalesOrderPriority, BadgeDef>> = {
-  urgent: { variant: 'destructive', label: 'Urgent' },
-  high: { variant: 'warning', label: 'High' },
-  medium: { variant: 'secondary', label: 'Medium' },
-  normal: { variant: 'secondary', label: 'Normal' },
-  low: { variant: 'outline', label: 'Low' },
-};
-
-const STATUS_BADGE: Partial<Record<SalesOrderStatus, BadgeDef>> = {
-  open: { variant: 'primary', label: 'Open' },
-  partially_delivered: { variant: 'warning', label: 'Partially delivered' },
-  fulfilled: { variant: 'success', label: 'Fulfilled' },
-  cancelled: { variant: 'secondary', label: 'Cancelled' },
-};
-
-const priorityBadge = (p: string): BadgeDef =>
-  PRIORITY_BADGE[p as SalesOrderPriority] ?? { variant: 'secondary', label: titleCase(p) };
-const statusBadge = (s: string): BadgeDef =>
-  STATUS_BADGE[s as SalesOrderStatus] ?? { variant: 'secondary', label: titleCase(s) };
 
 const STATUS_FILTER_OPTIONS = [
   { value: '', label: 'All statuses' },
@@ -108,12 +51,12 @@ const STATUS_FILTER_OPTIONS = [
   { value: 'cancelled', label: 'Cancelled' },
 ];
 
-/** Who wrote the order. `Order inquiry` is separate from `Outstanding upload` because an
+/** Who wrote the order. `Order inquiry` is separate from `Sales order upload` because an
  *  order Joey's sheet created is one CS has never seen, and it decides who may edit it. */
 const SOURCE_FILTER_OPTIONS = [
   { value: '', label: 'All sources' },
   { value: 'inquiry', label: 'Order inquiry' },
-  { value: 'upload', label: 'Outstanding upload' },
+  { value: 'upload', label: 'Sales order upload' },
   { value: 'history', label: 'Absorbed history' },
   { value: 'manual', label: 'Manual' },
 ];
@@ -123,7 +66,10 @@ const WAITING_ON_LIMIT = 2;
 
 const SOURCE_LABELS: Record<string, string> = {
   inquiry: 'Order inquiry',
-  upload: 'Outstanding upload',
+  // Named after the channel as the toolbar now names it: that upload carries the whole book,
+  // outstanding orders and completed ones alike, so calling the source "Outstanding upload"
+  // described a scope the file never had.
+  upload: 'Sales order upload',
   // 11,006 of the orders in the book were absorbed from a six-year AutoCount export. Calling
   // one "Manual" claims somebody keyed a 2020 order by hand, and it is the same word the
   // detail page uses so the two screens cannot disagree about the same row.
@@ -149,6 +95,17 @@ const PRIORITY_FILTER_OPTIONS = [
   { value: 'low', label: 'Low' },
 ];
 
+// The system status table maps 'normal' to success and 'low' to destructive, which is right
+// for stock health but backwards for an order priority. Priority keeps its own variant table
+// and only unknown values fall through to the system one.
+const PRIORITY_VARIANTS: Record<string, StatusBadgeVariant> = {
+  urgent: 'destructive',
+  high: 'warning',
+  medium: 'info',
+  normal: 'secondary',
+  low: 'secondary',
+};
+
 export default function SalesOrdersList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -170,11 +127,10 @@ export default function SalesOrdersList() {
   const [agentFilter, setAgentFilter] = useState('');
   const [outstandingOnly, setOutstandingOnly] = useState(false);
 
-  // Create-only: editing moved to the detail page in place (A5), the same shape as the
-  // project sales order screen - see `editHref`.
+  // Create-only: editing happens on the detail page in place (A5), the same shape as the
+  // project sales order screen, and the row click is the way there.
   const [formOpen, setFormOpen] = useState(false);
   const [deleting, setDeleting] = useState<SalesOrder | null>(null);
-  const [creatingDo, setCreatingDo] = useState<SalesOrder | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
 
   const queryClient = useQueryClient();
@@ -201,7 +157,6 @@ export default function SalesOrdersList() {
 
   const createMut = useCreateSalesOrder();
   const deleteMut = useDeleteSalesOrder();
-  const createDoMut = useCreateDoFromSalesOrder();
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
@@ -257,11 +212,6 @@ export default function SalesOrdersList() {
 
   const detailHref = (so: SalesOrder) =>
     `/scm/sales-orders/${so.id}${detailSearch ? `?${detailSearch}` : ''}`;
-  // Opens the detail page straight into its edit session (A5) - the list's query rides
-  // along the same way `detailHref` carries it, so Cancel or a back navigation lands the
-  // pager on the page the user was actually reading.
-  const editHref = (so: SalesOrder) =>
-    `/scm/sales-orders/${so.id}?${detailSearch ? `${detailSearch}&edit=1` : 'edit=1'}`;
 
   const handleSubmit = async (formData: SalesOrderFormData) => {
     await createMut.mutateAsync(formData);
@@ -347,9 +297,9 @@ export default function SalesOrdersList() {
           const showLabel = label && label !== cls.label;
           return (
             <div className="flex flex-col gap-0.5">
-              <Badge variant={cls.variant} appearance="light" size="sm">
-                {cls.label}
-              </Badge>
+              {/* The same Badge every other listing in the system uses for a pill - the class
+                  keeps its own colour, but not a second styling language for it. */}
+              <Badge variant={cls.variant}>{cls.label}</Badge>
               {showLabel ? (
                 <span className="truncate text-2xs text-muted-foreground" title={label}>
                   {label}
@@ -364,20 +314,27 @@ export default function SalesOrdersList() {
       {
         accessorKey: 'priority',
         header: ({ column }) => <DataGridColumnHeader title="Priority" column={column} />,
-        cell: ({ row }) => {
-          const p = priorityBadge(row.original.priority);
-          return <Badge variant={p.variant}>{p.label}</Badge>;
-        },
+        cell: ({ row }) => (
+          <Badge
+            variant={
+              PRIORITY_VARIANTS[(row.original.priority ?? '').toLowerCase()] ??
+              getStatusBadgeVariant(row.original.priority)
+            }
+          >
+            {formatStatusLabel(row.original.priority)}
+          </Badge>
+        ),
         size: 110,
         meta: { headerTitle: 'Priority' },
       },
       {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
-        cell: ({ row }) => {
-          const s = statusBadge(row.original.status);
-          return <Badge variant={s.variant} appearance="light">{s.label}</Badge>;
-        },
+        cell: ({ row }) => (
+          <Badge variant={getStatusBadgeVariant(row.original.status)}>
+            {formatStatusLabel(row.original.status)}
+          </Badge>
+        ),
         size: 160,
         meta: { headerTitle: 'Status' },
       },
@@ -408,24 +365,9 @@ export default function SalesOrdersList() {
         size: 150,
         meta: { headerTitle: 'Requested delivery' },
       },
-      {
-        accessorKey: 'stock_locations',
-        header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
-        cell: ({ row }) => {
-          // Plural, because one order can land in two and showing the first would be a
-          // quiet lie about where the stock is going.
-          const codes = row.original.stock_locations ?? [];
-          if (!codes.length) return <span className="text-muted-foreground">-</span>;
-          return (
-            <span className="truncate" title={codes.join(', ')}>
-              {codes.join(', ')}
-            </span>
-          );
-        },
-        size: 130,
-        enableSorting: false,
-        meta: { headerTitle: 'Location' },
-      },
+      // No Location column here. A location is a property of a LINE - one order routinely
+      // lands in two - so it lives on the detail page's lines grid, where it belongs to the
+      // row it describes rather than being flattened into a list on the header.
       {
         accessorKey: 'linked_purchase_orders',
         header: ({ column }) => <DataGridColumnHeader title="Waiting on" column={column} />,
@@ -471,56 +413,27 @@ export default function SalesOrdersList() {
       {
         id: 'actions',
         header: '',
-        cell: ({ row }) => {
-          const canCreateDo = row.original.committed_qty > 0 && row.original.status !== 'cancelled';
-          return (
-            <div className="flex items-center justify-end gap-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 gap-1 px-2 text-xs"
-                disabled={!canCreateDo}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setCreatingDo(row.original);
-                }}
-                title={canCreateDo ? 'Create delivery order' : 'Nothing left to deliver'}
-              >
-                <FileText className="size-4" />
-                Create DO
-              </Button>
-              <Button
-                mode="icon"
-                variant="ghost"
-                size="sm"
-                className="h-8 w-8"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  // Edit lives on the detail page now, in place - the same shape as the
-                  // project sales order screen. The modal stays for CREATE only.
-                  router.push(editHref(row.original));
-                }}
-                aria-label="Edit"
-              >
-                <Pencil className="size-4" />
-              </Button>
-              <Button
-                mode="icon"
-                variant="ghost"
-                size="sm"
-                className="h-8 w-8 text-destructive"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setDeleting(row.original);
-                }}
-                aria-label="Delete"
-              >
-                <Trash2 className="size-4" />
-              </Button>
-            </div>
-          );
-        },
-        size: 200,
+        // Delete only. Editing is the detail page's job - the row already opens it, and a
+        // pencil beside a clickable row is a second door to the same screen. Creating a
+        // delivery order is a delivery decision, not a list one.
+        cell: ({ row }) => (
+          <div className="flex items-center justify-end gap-1">
+            <Button
+              mode="icon"
+              variant="ghost"
+              size="sm"
+              className="h-8 w-8 text-destructive"
+              onClick={(e) => {
+                e.stopPropagation();
+                setDeleting(row.original);
+              }}
+              aria-label="Delete"
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          </div>
+        ),
+        size: 70,
         enableHiding: false,
         enableSorting: false,
       },
@@ -617,7 +530,7 @@ export default function SalesOrdersList() {
                   <div className="space-y-4">
                     <div className="flex items-center justify-between gap-3 rounded-md border p-2.5">
                       <Label htmlFor="so-outstanding-only" className="cursor-pointer">
-                        Still outstanding
+                        Still owed
                       </Label>
                       <Switch
                         id="so-outstanding-only"
@@ -751,8 +664,10 @@ export default function SalesOrdersList() {
                   onClick: () => void refetch(),
                 },
                 {
-                  key: 'upload-outstanding',
-                  label: 'Upload outstanding sales orders',
+                  key: 'upload-sales-orders',
+                  // The file carries the whole book - orders still owed and orders already
+                  // completed - so naming the action "outstanding" claimed a scope it never had.
+                  label: 'Upload sales orders',
                   icon: Upload,
                   onClick: () => setUploadOpen(true),
                 },
@@ -810,37 +725,6 @@ export default function SalesOrdersList() {
         successMessage="Sales order deleted"
         onSuccess={() => setDeleting(null)}
       />
-
-      <AlertDialog open={!!creatingDo} onOpenChange={(o) => !o && setCreatingDo(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Create delivery order</AlertDialogTitle>
-            <AlertDialogDescription>
-              Create a delivery order from{' '}
-              <span className="font-medium">{creatingDo?.so_number}</span>? Its committed quantity
-              will be marked delivered and drop out of the dashboard&apos;s committed demand.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={createDoMut.isPending}
-              onClick={async (e) => {
-                e.preventDefault();
-                if (creatingDo) {
-                  await createDoMut.mutateAsync(creatingDo.id);
-                  setCreatingDo(null);
-                }
-              }}
-            >
-              {createDoMut.isPending ? (
-                <LoaderCircleIcon className="me-2 size-4 animate-spin" />
-              ) : null}
-              Create DO
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </>
   );
 }

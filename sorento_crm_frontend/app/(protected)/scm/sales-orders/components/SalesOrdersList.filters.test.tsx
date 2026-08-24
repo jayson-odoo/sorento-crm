@@ -168,7 +168,7 @@ async function openFilters() {
     screen.getByRole('button', { name: /^Filters/ }),
     { ctrlKey: false, button: 0 },
   );
-  await screen.findByText('Still outstanding');
+  await screen.findByText('Still owed');
 }
 
 beforeEach(() => {
@@ -240,14 +240,14 @@ describe('SalesOrdersList - dynamic filters', () => {
     });
   });
 
-  it('sends "still outstanding" only when it is on', async () => {
+  it('sends "still owed" only when it is on', async () => {
     stub();
     renderList();
     await openFilters();
 
     expect(lastQuery()).toMatchObject({ outstanding: false });
 
-    fireEvent.click(screen.getByRole('switch', { name: /still outstanding/i }));
+    fireEvent.click(screen.getByRole('switch', { name: /still owed/i }));
 
     await waitFor(() => {
       expect(lastQuery()).toMatchObject({ outstanding: true });
@@ -292,7 +292,7 @@ describe('SalesOrdersList - dynamic filters', () => {
     // The date-range picker sets BOTH ends in one act - two of the eight filters this badge
     // sums - plus the switch, so the count is 3, not 1.
     fireEvent.click(screen.getByLabelText('Ordered'));
-    fireEvent.click(screen.getByRole('switch', { name: /still outstanding/i }));
+    fireEvent.click(screen.getByRole('switch', { name: /still owed/i }));
 
     expect(await screen.findByText('3')).toBeInTheDocument();
   });
@@ -303,7 +303,7 @@ describe('SalesOrdersList - dynamic filters', () => {
     await openFilters();
 
     fireEvent.click(screen.getByLabelText('Ordered'));
-    fireEvent.click(screen.getByRole('switch', { name: /still outstanding/i }));
+    fireEvent.click(screen.getByRole('switch', { name: /still owed/i }));
     fireEvent.click(screen.getByRole('combobox', { name: /type/i }));
     fireEvent.click(await screen.findByRole('option', { name: 'Project' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Clear filters' }));

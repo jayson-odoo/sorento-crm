@@ -33,6 +33,9 @@ export function UploadTestVerdict({ result }: { result: UploadTestResult }) {
     num(s.total_rows) && `Rows: ${num(s.total_rows)}`,
     num(s.would_create) && `Would create: ${num(s.would_create)}`,
     num(s.would_update) && `Would update: ${num(s.would_update)}`,
+    // For the channels whose backend does not split create from update: how many of the rows
+    // read would actually land. "500 rows read" alone never said how many of them survive.
+    num(s.would_apply) && `Would import: ${num(s.would_apply)}`,
     num(s.error_count) && `Errors: ${num(s.error_count)}`,
   ].filter(Boolean);
 

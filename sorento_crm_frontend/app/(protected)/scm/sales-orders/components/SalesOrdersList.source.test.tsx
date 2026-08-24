@@ -132,11 +132,13 @@ describe('SalesOrdersList - where an order came from', () => {
   });
 
   it('labels an order CS uploaded differently', async () => {
-    // The distinction IS the feature: it decides whose figures win.
+    // The distinction IS the feature: it decides whose figures win. Named after the upload
+    // as the toolbar names it - "Sales order upload", never "Outstanding upload": the file
+    // carries the whole book, completed orders included.
     stub([order({ source: 'upload' })]);
     renderList();
 
-    expect(await screen.findByText('Outstanding upload')).toBeInTheDocument();
+    expect(await screen.findByText('Sales order upload')).toBeInTheDocument();
   });
 
   it('defaults to Manual when the backend says nothing', async () => {
@@ -147,14 +149,45 @@ describe('SalesOrdersList - where an order came from', () => {
   });
 });
 
-describe('SalesOrdersList - location and linkage', () => {
-  it('shows where the order lands', async () => {
+describe('SalesOrdersList - location is a line-level fact, not a header one', () => {
+  it('does not carry a Location column at all', async () => {
+    // One order routinely lands in two warehouses, so a header cell showing "BRW-IB, KL-01"
+    // says less than the lines grid on the detail page, which says WHICH line goes where.
     stub([order()]);
     renderList();
 
-    expect(await screen.findByText('BRW-IB')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('SO900001')).toBeInTheDocument());
+    expect(screen.queryByText('BRW-IB')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Location' })).toBeNull();
+  });
+});
+
+describe('SalesOrdersList - the row actions', () => {
+  it('offers delete only - the row itself is the way into the order', async () => {
+    // Create DO and the pencil both went: the whole row already opens the detail page, where
+    // editing happens in place, and raising a delivery is a delivery decision rather than a
+    // list one.
+    stub([order()]);
+    renderList();
+
+    await waitFor(() => expect(screen.getByText('SO900001')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Create DO/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
   });
 
+  it('confirms before deleting, rather than deleting on the click', async () => {
+    stub([order()]);
+    renderList();
+
+    await waitFor(() => expect(screen.getByText('SO900001')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    expect(await screen.findByText(/This action cannot be undone/i)).toBeInTheDocument();
+  });
+});
+
+describe('SalesOrdersList - linkage', () => {
   it('shows only the purchase orders still being waited on', async () => {
     // "Which of my orders is stuck behind a PO we have not received" is the question, and
     // listing the matched ones alongside would bury the answer.
@@ -198,6 +231,46 @@ describe('SalesOrdersList - a long wait list stays readable', () => {
     expect(await screen.findByText(/PO-000, PO-001/)).toBeInTheDocument();
     expect(screen.getByText('+21 more')).toBeInTheDocument();
     expect(screen.queryByText(/PO-022/)).toBeNull();
+  });
+});
+
+describe('SalesOrdersList - the pills are the system ones', () => {
+  /**
+   * Status and priority used to be painted from two maps that lived in this file, in a
+   * `appearance="light"` style no other listing uses - so the same status was one colour here
+   * and another on Delivery Orders. They read off `@/lib/status-badge` now, like every other
+   * listing, and wear the plain solid Badge.
+   */
+  const badgeFor = (label: string) =>
+    screen.getByText(label).closest('[data-slot="badge"]') as HTMLElement | null;
+
+  it('paints a cancelled order with the system-wide status colour', async () => {
+    stub([order({ status: 'cancelled' })]);
+    renderList();
+
+    await screen.findByText('Cancelled');
+    const badge = badgeFor('Cancelled');
+    expect(badge).not.toBeNull();
+    expect(badge?.className).toContain('bg-destructive');
+    // `-soft` is the light-appearance palette this list used to fork onto.
+    expect(badge?.className).not.toContain('soft');
+  });
+
+  it('paints the priority from the priority table: normal is neutral, urgent shouts', async () => {
+    // The system status table calls 'normal' a success and 'low' destructive, which is
+    // stock-health semantics. Priority keeps its own variants on the same Badge component.
+    stub([order({ priority: 'normal' }), order({ so_number: 'SO2', priority: 'urgent' })]);
+    renderList();
+
+    await screen.findByText('Normal');
+    const normal = badgeFor('Normal');
+    expect(normal).not.toBeNull();
+    expect(normal?.className).toContain('bg-secondary');
+    expect(normal?.className).not.toContain('soft');
+
+    const urgent = badgeFor('Urgent');
+    expect(urgent).not.toBeNull();
+    expect(urgent?.className).toContain('bg-destructive');
   });
 });
 

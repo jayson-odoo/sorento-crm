@@ -1,7 +1,6 @@
 'use client';
 
 import { LoaderCircle, TestTube } from 'lucide-react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -16,61 +15,55 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { FileDropzone } from '@/components/common/FileDropzone';
-import { ImportFeedbackSections } from '@/components/common/ImportFeedbackSections';
 import { useImportJobDrawer } from '@/components/upload-activity/useImportJobDrawer';
 import type { ImportQueuedResult } from '@/components/upload-activity/importQueue';
-import { formatDateInMalaysia } from '@/lib/helpers';
 import { MAX_SIZE_MB, useTwoStepUpload } from '../hooks/useTwoStepUpload';
 import {
   applyOutstandingImport,
   previewOutstandingImport,
-  type OutstandingAgentNotice,
   type OutstandingChangeKind,
   type OutstandingCounts,
   type OutstandingImportKind,
-  type OutstandingPlanningChangeBatch,
   type OutstandingPreview,
-  type OutstandingResolutionIssue,
-  type OutstandingRowProblem,
-  type OutstandingSampleRow,
 } from '../services/outstandingImportService';
-import { CountTile } from './UploadCountTile';
-import { fmtInt } from '../../lib/format';
 import { UploadReadingIndicator } from './UploadReadingIndicator';
+import { UploadTestVerdict, type UploadTestResult } from './UploadTestVerdict';
 
 /**
- * SCM - the upload channel for the open order book, until AutoCount is integrated.
+ * SCM - the upload channel for the order book, until AutoCount is integrated.
  *
  * Test, then upload - the same three presses as the GRN, SPO and customer importers.
- * Choosing a file runs nothing; Test reads it and shows the diff; Confirm queues the write
- * as an import job and hands the watching to the upload drawer. The whole reorder plan is
- * computed from this data, so a wrong file quietly imported is a week of unpicking.
+ * Choosing a file runs nothing; Test reads it and reports; Confirm queues the write as an
+ * import job and hands the watching to the upload drawer. The whole reorder plan is computed
+ * from this data, so a wrong file quietly imported is a week of unpicking.
  *
- * The diff shows a count for every change kind INCLUDING `unchanged` (a diff that
- * shows only changes is indistinguishable from one that silently failed to read the
- * file), sample rows as evidence, the documents the file covers, and every row it
- * could not read or match. None of those problems blocks a file that is otherwise
- * usable - only a header missing required columns does.
+ * WHAT TEST SAYS is the standard verdict every other importer in this system shows: how many
+ * rows were read, how many would import, what would fail, what is only a warning. It used to
+ * be a bespoke diff report - count tiles per change kind, sample rows, scope chips, per-kind
+ * problem sections - and the captain's verdict on it was that nobody reads it: "if i click
+ * test i just need to know how many succeed, how many fail, how many warning, like the SPO /
+ * product list / delivery order / GRN uploads". The diff is still computed by the preview
+ * endpoint (it is what decides whether the file changes anything at all); it is just no longer
+ * printed row by row.
  *
- * What the upload DID is not shown here any more: the write happens on the worker, so the
- * counts do not exist when this dialog closes. They land on the job page, which is where
- * every other importer in this system reports its outcome.
+ * What the upload DID is not shown here: the write happens on the worker, so the counts do not
+ * exist when this dialog closes. They land on the job page, which is where every other
+ * importer in this system reports its outcome.
  */
 
 const TITLES: Record<OutstandingImportKind, string> = {
-  'sales-orders': 'Upload outstanding sales orders',
+  // Not "outstanding": the file carries the whole book, orders still owed and orders already
+  // completed alike, and naming the action after half of it is what made the captain ask
+  // which half he was meant to export.
+  'sales-orders': 'Upload sales orders',
   'purchase-orders': 'Upload outstanding purchase orders',
 };
 
-/** Ordered so the diff always reads the same way, and `unchanged` is always last. */
-const CHANGE_LABELS: ReadonlyArray<readonly [OutstandingChangeKind, string]> = [
-  ['added', 'Added'],
-  ['qty_changed', 'Quantity changed'],
-  ['date_moved', 'Date moved'],
-  ['date_and_qty_changed', 'Date and quantity changed'],
-  ['closed', 'Closed'],
-  ['unchanged', 'Unchanged'],
-] as const;
+/** The dropzone's accessible name, worded the same way its title is. */
+const DROPZONE_LABELS: Record<OutstandingImportKind, string> = {
+  'sales-orders': 'Sales orders file',
+  'purchase-orders': 'Outstanding purchase orders file',
+};
 
 /** Everything except `unchanged` - what makes a file worth applying. */
 const ACTIONABLE_KINDS: OutstandingChangeKind[] = [
@@ -81,163 +74,48 @@ const ACTIONABLE_KINDS: OutstandingChangeKind[] = [
   'closed',
 ];
 
-/** How many scope documents to name before collapsing the rest into a tail count. */
-const SCOPE_CHIP_LIMIT = 12;
-
 function countOf(counts: OutstandingCounts, kind: OutstandingChangeKind): number {
   return counts[kind] ?? 0;
 }
 
-function num(value: number | null): string {
-  return fmtInt(value);
-}
-
-function date(value: string | null): string {
-  return value ? formatDateInMalaysia(value) : '-';
-}
-
-/** "+14 days" / "-7 days" - the sign is the whole point, so it is never dropped. */
-function moved(days: number | null): string {
-  if (days == null) return '-';
-  const unit = Math.abs(days) === 1 ? 'day' : 'days';
-  return `${days > 0 ? '+' : ''}${days} ${unit}`;
-}
-
-function plural(n: number, one: string, many: string): string {
-  return n === 1 ? one : many;
-}
-
-// ── pieces ──────────────────────────────────────────────────────────────────
-
-function SampleTable({ rows }: { rows: OutstandingSampleRow[] }) {
-  return (
-    <div className="overflow-x-auto rounded-lg border border-border">
-      <table className="w-full min-w-[46rem] text-2xs">
-        <thead className="bg-muted/50 text-muted-foreground">
-          <tr>
-            <th className="px-2 py-1.5 text-start font-medium">Document</th>
-            <th className="px-2 py-1.5 text-start font-medium">Item</th>
-            <th className="px-2 py-1.5 text-start font-medium">Location</th>
-            <th className="px-2 py-1.5 text-end font-medium">Qty before</th>
-            <th className="px-2 py-1.5 text-end font-medium">Qty after</th>
-            <th className="px-2 py-1.5 text-start font-medium">Date before</th>
-            <th className="px-2 py-1.5 text-start font-medium">Date after</th>
-            <th className="px-2 py-1.5 text-start font-medium">Moved</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, index) => (
-            <tr
-              key={`${row.doc_number}-${row.item_code}-${row.location}-${index}`}
-              className="border-t border-border align-top"
-            >
-              <td className="px-2 py-1.5">
-                <div className="font-medium">{row.doc_number}</div>
-                {row.label ? (
-                  <div
-                    className="max-w-[10rem] truncate text-muted-foreground"
-                    title={row.label}
-                  >
-                    {row.label}
-                  </div>
-                ) : null}
-              </td>
-              <td className="px-2 py-1.5 font-medium">{row.item_code}</td>
-              <td className="px-2 py-1.5">{row.location || '-'}</td>
-              <td className="px-2 py-1.5 text-end tabular-nums">{num(row.qty_before)}</td>
-              <td className="px-2 py-1.5 text-end tabular-nums">{num(row.qty_after)}</td>
-              <td className="px-2 py-1.5 tabular-nums">{date(row.date_before)}</td>
-              <td className="px-2 py-1.5 tabular-nums">{date(row.date_after)}</td>
-              <td className="px-2 py-1.5 tabular-nums">{moved(row.days_moved)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 /**
- * `The book moved N planned lines on M orders` (PLAN-so-book-diff-replanning.md AC-R01, journey
- * step 1). Shown only when the diff touched a line that is already planned - most uploads never
- * carry one, and a card that renders nothing for `null` says nothing rather than "0 changes".
+ * The preview, read as the standard `{valid, errors, warnings, summary}` verdict.
+ *
+ * Derived in the browser rather than asked for: this channel's preview already carries every
+ * fact the verdict needs, and a second `validate_only` round trip would read the same 80,000-row
+ * workbook twice to say the same thing.
+ *
+ * ERRORS are the rows that will not import - a header missing a required column (nothing can
+ * import at all), a row the reader could not turn into a line, a row naming a product or
+ * warehouse we do not hold. WARNINGS are the things that cost the file nothing: a column we
+ * ignored, an agent code that cannot classify an order yet. `valid` is false as soon as there
+ * is one error, because the shared verdict shows the error list only when it is.
  */
-function PlanningChangeBatchCard({ batch }: { batch: OutstandingPlanningChangeBatch }) {
-  return (
-    <section
-      aria-label="Planning changes"
-      className="flex flex-col gap-2 rounded-lg border border-border bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between"
-    >
-      <p className="text-sm font-medium">
-        {`The book moved ${fmtInt(batch.line_count)} planned line${
-          batch.line_count === 1 ? '' : 's'
-        } on ${fmtInt(batch.order_count)} order${batch.order_count === 1 ? '' : 's'}`}
-      </p>
-      <Button asChild variant="outline" size="sm">
-        <Link href={`/project-sales/planning-changes/${batch.id}`}>Review</Link>
-      </Button>
-    </section>
-  );
-}
-
-function ProblemSections({
-  unmappedHeaders,
-  rowProblems,
-  resolutionIssues,
-  unmappedAgents,
-}: {
-  unmappedHeaders: string[];
-  rowProblems: OutstandingRowProblem[];
-  resolutionIssues: OutstandingResolutionIssue[];
-  unmappedAgents: OutstandingAgentNotice[];
-}) {
-  /**
-   * An adapter onto the shared rendering, not a panel of its own: the GRN, SPO and customer
-   * import dialogs show the same four kinds of thing and had four different-looking ways of
-   * showing them.
-   *
-   * `skippedCount` is deliberately NOT passed. This channel's row problems are a mixture -
-   * a row the reader could not use IS dropped, but "this document states no order type" is
-   * a document that imported perfectly well - so a heading claiming N rows skipped would be
-   * wrong for half the list. The count that IS a skip count lives on the job.
-   */
-  return (
-    <ImportFeedbackSections
-      unrecognisedColumns={unmappedHeaders}
-      rejectedRows={rowProblems.map((problem) => ({
-        row: problem.row_number || null,
-        reason: problem.reason,
-        value: problem.value || null,
-      }))}
-      notices={[
-        {
-          key: 'resolution',
-          title: 'Rows we could not match',
-          items: resolutionIssues.map((issue, index) => ({
-            key: `${issue.row_number}-${issue.field}-${issue.value}-${index}`,
-            lead: `Row ${issue.row_number}`,
-            code: issue.value,
-            text: `${issue.field}: ${issue.reason}`,
-          })),
-        },
-        {
-          key: 'agents',
-          // Worded as the backend words it, and kept OUT of the rejected rows: nothing was
-          // skipped and no row failed, so listing these among the failures would make a
-          // clean file read as a broken one.
-          title: 'Agents with no demand class',
-          // No hint line under it: the title says what the list is and each row carries the
-          // backend's own reason, so a sentence explaining the consequence is teaching text
-          // in a report screen.
-          items: unmappedAgents.map((agent) => ({
-            key: agent.code,
-            code: agent.code,
-            text: agent.reason,
-          })),
-        },
-      ]}
-    />
-  );
+export function verdictFromPreview(preview: OutstandingPreview): UploadTestResult {
+  const errors = [
+    ...preview.missing_columns.map((column) => `Missing required column: ${column}`),
+    ...preview.row_problems.map(
+      (p) => `Row ${p.row_number}: ${p.reason}${p.value ? ` (${p.value})` : ''}`,
+    ),
+    ...preview.resolution_issues.map(
+      (i) => `Row ${i.row_number}: ${i.field}: ${i.reason}${i.value ? ` (${i.value})` : ''}`,
+    ),
+  ];
+  const warnings = [
+    ...(preview.unmapped_agents ?? []).map((agent) => `Agent ${agent.code}: ${agent.reason}`),
+    ...preview.unmapped_headers.map((header) => `Column not recognised: ${header}`),
+  ];
+  const failedRows = preview.row_problems.length + preview.resolution_issues.length;
+  return {
+    valid: preview.ok && errors.length === 0,
+    errors,
+    warnings,
+    summary: {
+      total_rows: preview.total_rows,
+      would_apply: preview.ok ? Math.max(preview.total_rows - failedRows, 0) : 0,
+      error_count: errors.length,
+    },
+  };
 }
 
 // ── dialog ──────────────────────────────────────────────────────────────────
@@ -288,16 +166,9 @@ export function OutstandingUploadDialog({
    */
   const canConfirm = upload.canConfirm && (!preview || hasChanges);
 
-  const sampleGroups = preview
-    ? CHANGE_LABELS.map(([key, label]) => ({
-        key,
-        label,
-        rows: preview.samples[key] ?? [],
-        total: countOf(preview.counts, key),
-      })).filter((group) => group.rows.length > 0)
-    : [];
-
-  const scopeCount = preview?.scope_documents.length ?? 0;
+  // One press, one answer: the preview IS the test read, so the verdict is derived from it
+  // rather than costing the operator a second one.
+  const verdict = preview ? verdictFromPreview(preview) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -324,95 +195,19 @@ export function OutstandingUploadDialog({
             accept={upload.accept}
             maxSizeMb={MAX_SIZE_MB}
             disabled={previewing || applying}
-            aria-label="Outstanding orders file"
+            aria-label={DROPZONE_LABELS[kind]}
           />
 
           <UploadReadingIndicator reading={previewing} />
 
-          {preview && !preview.ok ? (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
-              <p className="text-sm font-medium">This file is missing required columns.</p>
-              <div className="mt-1.5 flex flex-wrap gap-1">
-                {preview.missing_columns.map((column) => (
-                  <span
-                    key={column}
-                    className="rounded bg-muted px-1.5 py-0.5 text-2xs font-mono"
-                  >
-                    {column}
-                  </span>
-                ))}
-              </div>
-              <p className="mt-1.5 text-2xs text-muted-foreground">
-                Add them to the export, then upload it again.
-              </p>
-            </div>
-          ) : null}
+          {verdict ? <UploadTestVerdict result={verdict} /> : null}
 
-          {preview && preview.ok ? (
-            <div className="space-y-4">
-              <div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-                  {CHANGE_LABELS.map(([key, label]) => (
-                    <CountTile key={key} label={label} value={countOf(preview.counts, key)} />
-                  ))}
-                </div>
-                <p className="mt-1.5 text-2xs text-muted-foreground">
-                  {fmtInt(preview.total_rows)} rows read
-                  {file ? ` from ${file.name}` : ''}.
-                </p>
-                {!hasChanges ? (
-                  <p className="mt-1.5 text-sm font-medium">
-                    Nothing would change - every line already matches what we hold.
-                  </p>
-                ) : null}
-              </div>
-
-              <section aria-label="Scope" className="rounded-lg border border-border p-3">
-                <h4 className="text-xs font-semibold">
-                  Covers {fmtInt(scopeCount)}{' '}
-                  {plural(scopeCount, 'document', 'documents')}
-                </h4>
-                <div className="mt-1.5 flex flex-wrap gap-1">
-                  {preview.scope_documents.slice(0, SCOPE_CHIP_LIMIT).map((doc) => (
-                    <span
-                      key={doc}
-                      className="rounded bg-muted px-1.5 py-0.5 text-2xs font-medium"
-                    >
-                      {doc}
-                    </span>
-                  ))}
-                  {scopeCount > SCOPE_CHIP_LIMIT ? (
-                    <span className="px-1.5 py-0.5 text-2xs text-muted-foreground">
-                      +{fmtInt(scopeCount - SCOPE_CHIP_LIMIT)} more
-                    </span>
-                  ) : null}
-                </div>
-                <p className="mt-1.5 text-2xs text-muted-foreground">
-                  Orders not in this file are untouched.
-                </p>
-              </section>
-
-              {preview.planning_change_batch && (
-                <PlanningChangeBatchCard batch={preview.planning_change_batch} />
-              )}
-
-              {sampleGroups.map((group) => (
-                <div key={group.key} className="space-y-1.5">
-                  <h4 className="text-xs font-semibold">
-                    {group.label} (showing {group.rows.length} of{' '}
-                    {fmtInt(Math.max(group.total, group.rows.length))})
-                  </h4>
-                  <SampleTable rows={group.rows} />
-                </div>
-              ))}
-
-              <ProblemSections
-                unmappedHeaders={preview.unmapped_headers}
-                rowProblems={preview.row_problems}
-                resolutionIssues={preview.resolution_issues}
-                unmappedAgents={preview.unmapped_agents ?? []}
-              />
-            </div>
+          {/* The one thing the verdict cannot say, and the reason Confirm is disabled: the
+              file reads perfectly and asks for nothing. */}
+          {preview && preview.ok && !hasChanges ? (
+            <p className="text-sm font-medium">
+              Nothing would change - every line already matches what we hold.
+            </p>
           ) : null}
         </DialogBody>
 
