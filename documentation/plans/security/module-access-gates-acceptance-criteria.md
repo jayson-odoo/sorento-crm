@@ -11,15 +11,16 @@ Plan: `PLAN-module-access-gates.md`. Each criterion names how it is proven.
   Project Demand leaves whose slug is `projects.projects.view` hidden; Planning hidden except
   nothing (all Planning leaves need `scm.reorder.run` or `scm.policy.manage`). (vitest)
 - A3. A section heading never renders without at least one visible group under it. (vitest)
-- A4. Superadmin sees all seven headings in order: OVERVIEW, SALES, SUPPLY CHAIN, CATALOGUE,
-  CUSTOMER SERVICE, WORKSPACE, ADMINISTRATION, upper-case. (agent-browser)
+- A4. Superadmin sees all six headings in order: OVERVIEW, SALES, SUPPLY CHAIN, CATALOGUE,
+  OPERATIONS, ADMINISTRATION, upper-case. (agent-browser)
 - A5. Fulfilment Planning, Plans, Order Inquiries, Planning changes, Forecast & Reports appear
   under Supply Chain > Project Demand and nowhere under Project Sales. Their hrefs are unchanged.
   (vitest on `MENU_SIDEBAR`, replaces the existing "Planning changes" assertion)
 - A6. Every leaf path present in `MENU_SIDEBAR` before this change is present after it, with the
   same `permission` / `permissionsAny` / `superadminOnly` value. (vitest snapshot of the flattened
   `{path, permission}` set, diffed against a committed fixture of the pre-change set)
-- A7. Quick Access renders directly above the ADMINISTRATION heading. (agent-browser)
+- A7. Quick Access renders between the OVERVIEW section and the SALES heading (top of
+  sidebar, after Dashboards and Ideas). (agent-browser)
 - A8. Universal search and the breadcrumb still resolve a nested leaf (e.g. Room Designer, Lookup
   Sets) to its title. (agent-browser)
 

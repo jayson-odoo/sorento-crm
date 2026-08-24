@@ -561,7 +561,7 @@ PERMISSION_REGISTRY.extend([
 ])
 
 
-# Dealer Kit — these six were previously created ONLY by migration 309's data seed.
+# Dealer Kit - these six were previously created ONLY by migration 309's data seed.
 # Any database built via create_all + sync_permissions (CI, `scripts/bootstrap_env`)
 # never executes that seed, so the slugs did not exist and every Dealer Kit route
 # answered 403. Declaring them here is what makes them real on a fresh database;
