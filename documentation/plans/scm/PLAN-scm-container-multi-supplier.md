@@ -48,17 +48,17 @@ Concretely:
   own (`NULLS NOT DISTINCT`, PG 15+; local 17, CI pg16, prod 15). Replaces
   `uk_inbound_shipment_lines_shipment_product`.
 - **Replace rule in `InboundShipmentService.create_shipment` (update-in-place branch):**
-  - the effective supplier of an incoming line is `line.supplier_id or payload.supplier_id`;
-  - if the payload states a supplier anywhere (header or any line), an existing line is deleted
+ - the effective supplier of an incoming line is `line.supplier_id or payload.supplier_id`;
+ - if the payload states a supplier anywhere (header or any line), an existing line is deleted
     before insert when EITHER its `supplier_id` is in the set of incoming effective suppliers, OR
     it has no supplier at all and its `product_id` is among the incoming lines' products. The
     second arm is what stops n8n's unattributed read of a container and the factory's later Excel
     upload of the same goods standing as two rows and doubling the quantity. An unattributed line
     for a product the upload says nothing about is a different item nobody has claimed, and stays;
-  - if the payload states NO supplier at all (n8n PDF path, legacy callers) the behaviour is
+ - if the payload states NO supplier at all (n8n PDF path, legacy callers) the behaviour is
     unchanged: every line is replaced. An upload that does not say whose it is speaks for the whole
     container, as it always did.
-  - Merge-by-product within one payload becomes merge-by-(product, supplier).
+ - Merge-by-product within one payload becomes merge-by-(product, supplier).
 - Header `supplier_id`: TOTAL, and re-derived after every write that touches the lines
   (`create_shipment` both branches, `update_shipment` when it replaces lines). No lines at all ->
   whatever the payload stated (which may be nothing); exactly one distinct non-null supplier across
@@ -95,7 +95,7 @@ Backend only.
    `uk_inbound_shipment_lines_shipment_product`; `CREATE UNIQUE INDEX
    uk_inbound_shipment_lines_ship_prod_sup ON inbound_shipment_lines (shipment_id, product_id,
    supplier_id) NULLS NOT DISTINCT`. Downgrade reverses (merge dupes by product first, as 055 did)
-   - minus 055's allocation-reassignment step: `spo_allocations.inbound_shipment_lines_id` was
+ - minus 055's allocation-reassignment step: `spo_allocations.inbound_shipment_lines_id` was
    dropped by migration 126, so a merged-away line orphans nothing.
 2. `app/models/procurement.py::InboundShipmentLine`: the three columns, `supplier` relationship,
    `__table_args__` swaps the UniqueConstraint for
@@ -124,16 +124,16 @@ Backend only.
    `summary_order_service`'s last incoming cost) it reads
    `coalesce(line.supplier_id, header.supplier_id)` for the same reason.
 8. Tests (pytest, `blank_session`, seed everything, marker prefixes):
-   - **`tests/test_packing_list_multi_supplier.py`** - THE test: two `create_shipment` calls for one
+ - **`tests/test_packing_list_multi_supplier.py`** - THE test: two `create_shipment` calls for one
      container, supplier A then supplier B, each with its own product; assert both suppliers' lines
      survive, header supplier NULL (mixed). Then re-upload A with a changed qty; assert A's line
      updated, B's untouched. Then a payload with no supplier at all replaces everything (legacy).
      Plus one test through `packing_list_service.apply` with two in-memory workbooks (openpyxl,
      using the migration-311 aliases `产品型号`/`数量`/`箱数`/`货柜号`) for the same container as two
      suppliers.
-   - existing `test_packing_list_container_match.py`, `test_packing_list_duplicate_detection.py`,
+ - existing `test_packing_list_container_match.py`, `test_packing_list_duplicate_detection.py`,
      `test_packing_list_neighbours.py` still pass.
-   - `tests/test_alembic_revision_ids.py`; `alembic heads` prints exactly one head; migration
+ - `tests/test_alembic_revision_ids.py`; `alembic heads` prints exactly one head; migration
      upgrade+downgrade against an empty scratch DB.
 
 ## Part 2 - the consolidated Sorento packing list

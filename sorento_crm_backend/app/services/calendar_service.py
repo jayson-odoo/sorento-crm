@@ -26,8 +26,8 @@ WEEKDAY_LABELS: Tuple[str, ...] = (
 
 def weekday_ranges_from_flags(flags: List[bool]) -> List[Tuple[str, str]]:
     """
-    Split Mon–Sun booleans into contiguous ranges.
-    Example: Mon–Tue and Thu–Fri if Wednesday is off →
+    Split Mon - Sun booleans into contiguous ranges.
+    Example: Mon - Tue and Thu - Fri if Wednesday is off →
     [("Monday", "Tuesday"), ("Thursday", "Friday")].
     """
     if len(flags) != 7:
@@ -110,13 +110,13 @@ class CalendarService:
             if start is not None and end is not None:
                 return (start, end)
         except SQLAlchemyError:
-            logger.warning("Work calendar config unavailable; defaulting working hours 09:00–17:00.")
+            logger.warning("Work calendar config unavailable; defaulting working hours 09:00 - 17:00.")
         return (time(9, 0, 0), time(17, 0, 0))
 
     def get_working_day_ranges(self) -> list[dict[str, str]]:
         """
         Contiguous working weekday ranges for the default work calendar.
-        Each item has start_weekday and end_weekday (English names, e.g. Monday–Friday).
+        Each item has start_weekday and end_weekday (English names, e.g. Monday - Friday).
         """
         try:
             config = self.get_or_create_work_calendar()
@@ -134,7 +134,7 @@ class CalendarService:
                 for a, b in weekday_ranges_from_flags(flags)
             ]
         except SQLAlchemyError:
-            logger.warning("Work calendar config unavailable; defaulting Mon–Fri.")
+            logger.warning("Work calendar config unavailable; defaulting Mon - Fri.")
             return [
                 {"start_weekday": "Monday", "end_weekday": "Friday"},
             ]
@@ -297,7 +297,7 @@ class CalendarService:
         there hands the responder a deadline they never had the full window for.
         Returns ``start_value`` unchanged when it already falls inside a working
         window (business weekday, not a public holiday, and within
-        ``[work_day_start_time, work_day_end_time)`` in ``tz`` — the interval is
+        ``[work_day_start_time, work_day_end_time)`` in ``tz`` - the interval is
         half-open, so exactly the close time rolls to the next day). Otherwise
         returns the next business day's open, or the same day's open when the
         start is merely before it.
@@ -419,7 +419,7 @@ class CalendarService:
             return (start_utc + timedelta(hours=float(hours))).astimezone(timezone.utc).replace(tzinfo=None)
         if out_local is None:
             return None
-        # add_business_days returns a naive datetime (same wall-clock, tz dropped) —
+        # add_business_days returns a naive datetime (same wall-clock, tz dropped) - 
         # re-attach the local tz before converting back to UTC.
         if out_local.tzinfo is None:
             out_local = out_local.replace(tzinfo=tz)
@@ -459,7 +459,7 @@ class CalendarService:
     ) -> Optional[datetime]:
         """Add ``hours`` *working* hours to ``start_value`` and return naive UTC.
 
-        The clock advances only inside configured working windows — a working
+        The clock advances only inside configured working windows - a working
         weekday (``get_working_weekdays``), not a public holiday, and between
         ``work_day_start_time`` and ``work_day_end_time`` in ``tz``. Nights,
         weekends and holidays are skipped. If ``start_value`` falls outside a

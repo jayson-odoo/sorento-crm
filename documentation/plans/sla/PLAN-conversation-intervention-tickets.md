@@ -1,4 +1,4 @@
-# PLAN — Conversation Intervention Tickets
+# PLAN - Conversation Intervention Tickets
 
 Status: Phases 1-3 DONE (PR #137 open); defect batch D1-D6 in flight; Phase 4 (parity + liveness) PLANNED 2026-08-14, awaiting user review. S4.9 backend gaps 1-4 CLOSED 2026-08-15 (contract below); FE follow-up (consume them) + gaps 5-6 still open. S4.10 (captain hands-on round 3, 2026-08-16) BUILT - six items, as-built below.
 UAC: conversation-intervention-tickets-acceptance-criteria.md (sections J/K/L/M + B3/B4 added 2026-08-14)
@@ -62,7 +62,7 @@ UAC: conversation-intervention-tickets-acceptance-criteria.md (sections J/K/L/M 
 
 ## Phases (three-phase loop)
 
-### Phase 1 — FE prototype (mock data, no backend changes)
+### Phase 1 - FE prototype (mock data, no backend changes)
 
 - S1.1 Extend `MyPendingSLAWidget` mocks: intervention tickets in all states (fresh,
   near-breach, escalated, responded-awaiting-resolve), incl. two tickets for one contact.
@@ -79,7 +79,7 @@ UAC: conversation-intervention-tickets-acceptance-criteria.md (sections J/K/L/M 
 - Gate: prototype rendered via lavish for user review; proceed autonomously unless
   feedback arrives.
 
-### Phase 2 — BE wiring + tests (TDD)
+### Phase 2 - BE wiring + tests (TDD)
 
 - S2.1 Migration: add `source_message_id` (Text, nullable), backfill from `message_id`;
   drop the migration-180 contact-singleton index; add partial unique index on
@@ -108,7 +108,7 @@ UAC: conversation-intervention-tickets-acceptance-criteria.md (sections J/K/L/M 
   round-trip; real media fixtures).
 - Gate: all suites green; browser-verified against prod build before handoff.
 
-### Phase 3 — Review + n8n cutover
+### Phase 3 - Review + n8n cutover
 
 - S3.1 `/code-review` + `/codex-review` (cross-model) on the branch; fix findings.
 - S3.2 n8n coordination (peer session via SendMessage): always-create on both branches,
@@ -146,7 +146,7 @@ UAC: conversation-intervention-tickets-acceptance-criteria.md (sections J/K/L/M 
   and resolved" auto-message (currently kept, gated).
   resolved_by pollution check: clean (zero non-UUID / orphan values on dev DB).
 
-## Phase 4 — Omnichannel parity + liveness (planned 2026-08-14, dogfooding feedback)
+## Phase 4 - Omnichannel parity + liveness (planned 2026-08-14, dogfooding feedback)
 
 Grounded on three read-only investigations (send-path diagnosis, n8n trigger trace with
 live execution payloads, Respond API v2 capability inventory). Defect batch D1-D6
@@ -198,13 +198,13 @@ against this).**
   Types: `message`, `ticket_created`, `ticket_updated`.
 - Payload, exactly five keys, no content ever:
   `{"type","contact_id","user_id","entity_id","ts"}`.
-  - `contact_id` = the **Respond.io contact id** (`respond_contacts.respond_io_id`),
+ - `contact_id` = the **Respond.io contact id** (`respond_contacts.respond_io_id`),
     NOT the internal `respond_contacts.id` UUID. DEVIATION from the bullet above,
     deliberate: the chat ingest receives that id verbatim (so nothing is resolved on
     the hot path) and the drawer already holds it as `respond_io_id` from
     `GET .../{tracking_id}/ticket`, so the FE has the key it must pass in `?contacts=`
     without a new field and without a UUID in a query string.
-  - `user_id` = `users.id` whose worklist changed. `entity_id` = the tracking id for
+ - `user_id` = `users.id` whose worklist changed. `entity_id` = the tracking id for
     ticket events, null for `message`. `ts` = UTC ISO-8601 with `Z` (transport clock,
     not a domain datetime).
 - Filtering is server-side: a client receives events where `user_id` is its own OR
@@ -394,18 +394,18 @@ the n8n peer builds the receiving lane from THIS text.**
   }
   ```
 
-  - `event_id` is the idempotency key (hardening 1): identical across retries of the
+ - `event_id` is the idempotency key (hardening 1): identical across retries of the
     same resolve. The n8n lane must be safe to receive it twice.
-  - `closedBySource` is a closed enum (`"crm" | "user" | "api"`); the CRM only ever
+ - `closedBySource` is a closed enum (`"crm" | "user" | "api"`); the CRM only ever
     emits `"crm"`. The Respond-trigger lane's gate fails CLOSED on unknown values
     (hardening 2).
-  - `resolved_by.respond_user_id` is `null` when the CRM user has no Respond mapping,
+ - `resolved_by.respond_user_id` is `null` when the CRM user has no Respond mapping,
     or when the mapping was filled with a CRM `users.id` UUID (never leaked as a
     Respond user id). `display_name` is ALWAYS a readable string for the
     contact-facing message: resolver name -> team name -> `"Customer Service"`
     (hardening 3). `team_name` is snapshotted BEFORE the resolve blanks
     `agent_id` / `team_set_code`.
-  - `resolved_at` is aware UTC ISO-8601 with `Z` (transport clock, not a domain naive
+ - `resolved_at` is aware UTC ISO-8601 with `Z` (transport clock, not a domain naive
     datetime).
 - **Outbox**: every attempt writes an `integration_log` with
   `integration_channel = "n8n_crm_close_convo"`, `business_table =
@@ -617,10 +617,10 @@ whatever the row gave you; unresolvable -> 404. Every read that a 403 could gate
 403 (the permission is a real gate, not an existence secret); an unknown contact is 404.
 
 1. `GET /conversations?tab=&q=&cursor=&limit=`
-   - `tab`: `mine` | `mentioned` | `unassigned` | `all` (default `all`); unknown -> 400.
-   - `q`: contact name or phone fragment, ILIKE, `%`/`_`/`\` literal.
-   - `limit`: default 30, max 100 (over -> 422). `cursor`: opaque, from `next_cursor`.
-   - Response:
+ - `tab`: `mine` | `mentioned` | `unassigned` | `all` (default `all`); unknown -> 400.
+ - `q`: contact name or phone fragment, ILIKE, `%`/`_`/`\` literal.
+ - `limit`: default 30, max 100 (over -> 422). `cursor`: opaque, from `next_cursor`.
+ - Response:
      ```json
      {
        "items": [{
@@ -643,13 +643,13 @@ whatever the row gave you; unresolvable -> 404. Every read that a 403 could gate
        "query": ""
      }
      ```
-   - `last_message_*` can be null on the ticket tabs (a contact with an open ticket but
+ - `last_message_*` can be null on the ticket tabs (a contact with an open ticket but
      no stored message). Ordering: `mentioned` is newest-NOTE first, the rest are
      newest-MESSAGE first. Paginate by passing `next_cursor` back verbatim; stop when
      it is null.
 2. `GET /conversations/{contact_ref}/page?before=&after=&around=&limit=`
-   - At most ONE of before/after/around (two -> 422). `limit` 1..200, default 50.
-   - Response is BYTE-IDENTICAL to
+ - At most ONE of before/after/around (two -> 422). `limit` 1..200, default 50.
+ - Response is BYTE-IDENTICAL to
      `GET /conversation-sla-tracking/{tracking_id}/conversation/page` (same service
      core), so `useConversationThread` works unchanged with contact-keyed loaders.
 3. `GET /conversations/{contact_ref}/search?q=&limit=` - identical to the ticket-keyed

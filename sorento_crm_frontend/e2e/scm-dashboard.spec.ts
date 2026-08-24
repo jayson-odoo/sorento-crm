@@ -1,8 +1,8 @@
 /**
- * SCM M1 (CP2b) e2e — FE → BE → DB round-trip against the real `scm` API.
+ * SCM M1 (CP2b) e2e - FE → BE → DB round-trip against the real `scm` API.
  *
  * Run against a running stack (FE :3000 + BE :8000 with the `scm` module enabled
- * for the tenant + the M0/M1 seed applied — `scripts/seed_scm_demo.py`):
+ * for the tenant + the M0/M1 seed applied - `scripts/seed_scm_demo.py`):
  *
  *   PORTAL_E2E_BASE_URL=http://localhost:3000 \
  *   SCM_E2E_EMAIL=admin@example.com \

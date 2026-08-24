@@ -10,7 +10,7 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    # Opaque staff session token — the FE stores it in the NextAuth cookie and
+    # Opaque staff session token - the FE stores it in the NextAuth cookie and
     # sends it as `Authorization: Bearer <token>` to every /api/v1/* call.
     token: str
     id: str

@@ -1,7 +1,7 @@
 """Sync RBAC permissions for complaint approve/reject actions.
 
 Adds ``complaint_management.complaints.approve`` and ``.reject`` to
-``user_permissions`` via the central ``sync_permissions`` helper. Idempotent —
+``user_permissions`` via the central ``sync_permissions`` helper. Idempotent - 
 safe to re-run; existing slugs are left alone.
 
 Revision ID: 171_seed_complaint_decision_rbac

@@ -86,7 +86,7 @@ def list_published_definitions_for_submission(
     db: Session = Depends(get_db),
     _user: dict = Depends(require_any_permission_with_api_key(list(_RUNTIME_DEF_PERMS))),
 ):
-    """Published workflow forms only — for sidebar menus and users who can submit but cannot list all definitions."""
+    """Published workflow forms only - for sidebar menus and users who can submit but cannot list all definitions."""
     svc = WorkflowFormsService(db)
     rows = svc.list_published_definitions_for_submission()
     return ListResponse(

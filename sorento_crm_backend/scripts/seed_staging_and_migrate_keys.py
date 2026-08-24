@@ -3,7 +3,7 @@
 
 Local rows point `file_path` at prod (`cdn-sorento.com/{flat_key}`); the objects live in the
 PROD R2 bucket, which staging doesn't have. This helper, for each flat-keyed r2 row:
-  1. READS the object from the prod bucket (`sorento-crm`) — read-only, no prod mutation.
+  1. READS the object from the prod bucket (`sorento-crm`) - read-only, no prod mutation.
   2. WRITES it to the staging bucket (whatever .env's R2_BUCKET_NAME is) at the NEW uuid key
      `{entity_type}/{attachment_id}/{filename}`.
   3. Repoints `file_path` to the staging CDN (`cdn_base_url`).

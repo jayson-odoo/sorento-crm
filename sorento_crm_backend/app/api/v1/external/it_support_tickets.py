@@ -1,7 +1,7 @@
 """External MCP/n8n endpoint for IT-support ticket intake.
 
 Auth: X-API-Key header (``get_external_api_user``). The MCP tool
-``crm_it_support_ticket_create`` POSTs JSON here. Two-call protocol — see
+``crm_it_support_ticket_create`` POSTs JSON here. Two-call protocol - see
 ``app.services.ticket_intake_service``."""
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session

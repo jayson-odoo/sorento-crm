@@ -52,7 +52,7 @@ def _company_by_id(db: Session, company_id: str) -> Optional[Company]:
 
     The uuid is validated in Python BEFORE the query on purpose: handing Postgres a
     non-uuid string raises, and a raised error aborts the caller's whole transaction
-    - so a typo in an n8n field would take out the request rather than falling
+  - so a typo in an n8n field would take out the request rather than falling
     through to the next resolution step.
     """
     wanted = (company_id or "").strip()

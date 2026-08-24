@@ -1,11 +1,11 @@
-# PLAN — Searchable Dropdown Standard
+# PLAN - Searchable Dropdown Standard
 
 > UAC: [`searchable-dropdown-standard-acceptance-criteria.md`](./searchable-dropdown-standard-acceptance-criteria.md) (contract; grill-locked).
 > Governs: `PRINCIPLES.md` > `ADR-PRODUCT-STANDARDS.md`. FE-only.
 
 **Status:** PHASE 1 DONE, PR open on `feat/searchable-dropdown-standard` (branched off `main`).
 Component upgraded + ESLint ban + allowlist (133→131) + reference migrations
-(`LookupSetFormDialog`, `BindingAddDialog` — 4 dropdowns). Browser-verified on a prod build via
+(`LookupSetFormDialog`, `BindingAddDialog` - 4 dropdowns). Browser-verified on a prod build via
 the sidebar: search filters, selection commits, dependent dropdown unlocks, 0 console errors.
 Against main baseline: lint errors 318→318 (this rule contributes 0; +7 intentional `warn`-level
 native-`<select>` advisories), `tsc` clean in all touched files, no new vitest failures.
@@ -14,7 +14,7 @@ Phase 2 (staged domain migrations + tests) starts with **master-data-management 
 
 Carve-out note: this work originally sat uncommitted on the stale `fix/pr-rejected-by-uuid`
 branch (92 commits behind). Re-applied cleanly onto `main`; `useLookupSets.ts` was deliberately
-NOT carried over — the stale copy would have reverted `useSetBindingDefaultValue`, added to main
+NOT carried over - the stale copy would have reverted `useSetBindingDefaultValue`, added to main
 in the interim.
 
 ### Corrections to this plan, learned in Phase 1
@@ -32,10 +32,10 @@ in the interim.
   all-tokens substring.
 - **The in-dialog risk was clipping, not the focus trap.** `PopoverContent` does not portal, and
   `dialog-content` is `overflow-y-auto`, so a popover that flips to `side="top"` is laid out at
-  correct coordinates but never painted — the search box silently disappears.
+  correct coordinates but never painted - the search box silently disappears.
   `getBoundingClientRect` reports it as on-screen, so only a screenshot catches it. Fixed via a
   new `PopoverPortal` used by the two standard components only. **Phase 2 migrates ~25 more
-  in-dialog dropdowns — screenshot each, don't trust DOM assertions.**
+  in-dialog dropdowns - screenshot each, don't trust DOM assertions.**
 - **A green lint proves nothing about coverage.** `BindingAddDialog` sat unmigrated on an
   already-"done" page because it was grandfathered in the allowlist. Per-PR completion check must
   be `grep` over the whole domain folder, not the lint result.
@@ -100,22 +100,22 @@ Adopt Radix `SelectTrigger`'s exact classes so migration = zero visual diff. Fro
 - size: `sm h-7 px-2.5 text-xs`, `md h-8.5 px-3 text-[0.8125rem]`, `lg h-10 px-4 text-sm`.
 - Current `SearchableSelect` uses hand-styled `h-10` → **replace** with these variants + `size` prop. Extract to a shared `selectTriggerVariants` so both `ui/select` (until deleted) and the standard share one source; verify with before/after Playwright screenshot.
 
-## Enforcement (D5 / AC12–13)
+## Enforcement (D5 / AC12 - 13)
 
-1. ESLint `no-restricted-imports`: ban `@/components/ui/select`; ban raw `<select>` (`no-restricted-syntax` on `JSXOpeningElement[name.name='select']`); ban `CommandInput` import outside `components/common/*` + `components/ui/*`. Message → "Use SearchableSelect/SearchableMultiSelect — see ADR-PRODUCT-STANDARDS.md".
+1. ESLint `no-restricted-imports`: ban `@/components/ui/select`; ban raw `<select>` (`no-restricted-syntax` on `JSXOpeningElement[name.name='select']`); ban `CommandInput` import outside `components/common/*` + `components/ui/*`. Message → "Use SearchableSelect/SearchableMultiSelect - see ADR-PRODUCT-STANDARDS.md".
 2. **Shrinking allowlist** (`overrides` block or a tracked ignore list) grandfathering all 110 + 8 bespoke on day 1; each migration PR deletes its entries.
 3. `PRINCIPLES.md` hard-fail rule + `ADR-PRODUCT-STANDARDS.md` doctrine + `CLAUDE.md` FE-layering note.
 4. Allowlist → 0 → **delete `components/ui/select.tsx`** + 8 bespoke files.
 
 ## Phases
 
-### Phase 1 — Component + reference migration (one PR)
+### Phase 1 - Component + reference migration (one PR)
 - Upgrade `SearchableSelect` + `SearchableMultiSelect`: async mode, `selectedOption`, `clearable`, `group`, `size`, pixel-match trigger, remove re-click-deselect.
 - Land ESLint ban + full allowlist (all 110 + 8 grandfathered) + doctrine docs.
 - Migrate **one reference form** (e.g. a master-data create modal) off Radix Select → screenshot before/after (AC5).
 - No test yet beyond smoke (contract may shift on review). Browser-verify via sidebar.
 
-### Phase 2 — Staged domain migrations + tests
+### Phase 2 - Staged domain migrations + tests
 One PR per domain cluster (procurement, master-data, user-management, sla, complaints, forms, marketing, inventory, system…). Each:
 - Transform Radix Select JSX-children → `options[]` (static default per D7). Switch to async only where list large + endpoint exists.
 - Migrate that domain's bespoke comboboxes; delete them.
@@ -124,15 +124,15 @@ One PR per domain cluster (procurement, master-data, user-management, sla, compl
 - Browser-verify each migrated form via sidebar.
 - Final PR: allowlist empty → delete `ui/select.tsx` → grep-clean assert (AC13).
 
-### Phase 3 — Code review
+### Phase 3 - Code review
 `/code-review` on the accumulated diff. Confirm: zero visual diff sampled, tests present, allowlist empty, doctrine docs in, out-of-scope `AsyncCombobox` untouched (AC15).
 
 ## Risks / notes
 
 - **JSX→props transform is not pure syntactic** (grouped items, icon items, custom-rendered `SelectItem`). Hand-review each; staged PRs keep this reviewable.
-- **Async label survival** is the subtle correctness trap — every async caller must pass `selectedOption` or the trigger goes blank on load (AC4). Enforce in review.
-- **Popover-in-dialog focus trap** — verify Command-in-Popover-in-Dialog keyboard works (AC10/11); shadcn pattern supports it.
-- Don't balloon into backend search-endpoint work (D7) — static client-filter is the default; async is opt-in.
+- **Async label survival** is the subtle correctness trap - every async caller must pass `selectedOption` or the trigger goes blank on load (AC4). Enforce in review.
+- **Popover-in-dialog focus trap** - verify Command-in-Popover-in-Dialog keyboard works (AC10/11); shadcn pattern supports it.
+- Don't balloon into backend search-endpoint work (D7) - static client-filter is the default; async is opt-in.
 
 ## Migration tracking
 

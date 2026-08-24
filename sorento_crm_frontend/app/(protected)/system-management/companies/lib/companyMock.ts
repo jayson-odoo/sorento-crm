@@ -1,8 +1,8 @@
 /**
  * ============================================================================
- * Companies + access management — DETERMINISTIC MOCK BACKING STORE (Phase 1)
+ * Companies + access management - DETERMINISTIC MOCK BACKING STORE (Phase 1)
  * ============================================================================
- * PROTOTYPE DATA. No network, no `Math.random`, no `Date` — every value is a
+ * PROTOTYPE DATA. No network, no `Math.random`, no `Date` - every value is a
  * hand-authored constant so the UI renders identically on every load. The CRUD
  * mutates in-memory arrays/maps so add / edit / delete / assign feel real within
  * a session; a page reload resets to this seed.
@@ -42,7 +42,7 @@ let companies: Company[] = [
 // ── Access maps (prototype user_companies + respond_contact_companies) ───────
 
 // Assigned users are stored denormalized (id/name/email) so the "remove" list
-// renders without a second lookup — the real API returns the same shape.
+// renders without a second lookup - the real API returns the same shape.
 const companyUsers: Record<string, CompanyUser[]> = {
   'co-sorento': [],
   'co-mocha': [],
@@ -154,7 +154,7 @@ export function mockListCompanyContacts(companyId: string): CompanyContact[] {
     .map((c) => ({ ...c }));
 }
 
-/** Contacts not yet tagged to this company — the "add contact" picker source. */
+/** Contacts not yet tagged to this company - the "add contact" picker source. */
 export function mockAvailableContacts(companyId: string): CompanyContact[] {
   const assigned = new Set(companyContactIds[companyId] ?? []);
   return MOCK_CONTACTS.filter((c) => !assigned.has(c.id)).map((c) => ({ ...c }));

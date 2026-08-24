@@ -3,9 +3,9 @@
  * `useRecordNeighbours` hook.
  *
  * Verifies the wrapper:
- *  - calls the generic hook with the canonical FORM_NEIGHBOURS_PATH,
- *  - forwards the current form id verbatim,
- *  - serializes the list query (search/sort) AND the resource-specific
+ * - calls the generic hook with the canonical FORM_NEIGHBOURS_PATH,
+ * - forwards the current form id verbatim,
+ * - serializes the list query (search/sort) AND the resource-specific
  *    filters (language/status/form_type) via `buildDataGridParams`, dropping
  *    empty/undefined values, so list and neighbours can't drift.
  *

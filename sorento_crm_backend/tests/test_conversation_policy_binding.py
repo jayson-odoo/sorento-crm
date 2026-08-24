@@ -373,7 +373,7 @@ def test_schema_empty_team_set_code_raises():
 def test_sub_hour_tier_response_hours_read_as_half_float(db):
     """A WAREHOUSE_FAST tier with response_hours=0.5 is stored/read as 0.5, not
     rounded. (_working_due rounds sub-day to 0 working days, so the 30-min due_at
-    is only attainable via the calendar fallback — the float fidelity is what the
+    is only attainable via the calendar fallback - the float fidelity is what the
     backend guarantees here.)"""
     pid = _policy(db, code="WAREHOUSE_FAST", tiers=[(1, Decimal("0.5"), Decimal("1.0"))])
     svc = ConversationSLATrackingService(db)

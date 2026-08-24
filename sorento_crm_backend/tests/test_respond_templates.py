@@ -281,7 +281,7 @@ def test_window_falls_back_to_chat_history_on_api_error(db):
     from app.services import respond_messaging_service as svc
 
     # chat_histories.contact_id holds the Respond.io id, NOT the internal
-    # respond_contacts UUID — every one of the 1,519 production rows is numeric
+    # respond_contacts UUID - every one of the 1,519 production rows is numeric
     # and joins on respond_io_id. Seeding a UUID here made the fallback lookup
     # miss, so this test used to assert the pre-fix behaviour (window always
     # CLOSED on API error) rather than the fix.
@@ -619,7 +619,7 @@ def test_url_button_detection_and_base():
     btn = svc.url_button_of(_BUTTON_COMPONENTS)
     assert btn is not None
     assert svc.button_url_base(btn) == "https://fe-sorento.foundryx.my/"
-    # Static button (no {{n}}) is ignored — nothing to fill.
+    # Static button (no {{n}}) is ignored - nothing to fill.
     static = [{"type": "buttons", "buttons": [{"type": "url", "url": "https://x/"}]}]
     assert svc.url_button_of(static) is None
 
@@ -699,7 +699,7 @@ def test_in_window_complaint_button_template_renders_structured_body(db, workspa
     """D1 (2026-06-23): for the complaint use_case, in-window renders the SAME
     structured template body as out-of-window (cross-window uniformity), then
     appends the link inline (free text has no button). Other button use-cases
-    still send raw free text — see the next test."""
+    still send raw free text - see the next test."""
     from app.services import respond_messaging_service as svc
     from app.services import respond_template_service as tsvc
 

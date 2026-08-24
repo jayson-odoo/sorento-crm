@@ -109,10 +109,10 @@ class SlaTakeoverService:
         }
         if viewer_id is not None:
             # Viewer-relative affordances. Cancel is the INITIATOR's action, Reject is
-            # the CONTESTED assignee's — never both for the same person:
-            #   - the initiator only Cancels (rejecting your own takeover is nonsense),
-            #   - the contested assignee only Rejects,
-            #   - a pure admin bystander (neither) may do either.
+            # the CONTESTED assignee's - never both for the same person:
+            # - the initiator only Cancels (rejecting your own takeover is nonsense),
+            # - the contested assignee only Rejects,
+            # - a pure admin bystander (neither) may do either.
             is_initiator = str(req.initiator_id) == str(viewer_id)
             is_contested = (
                 req.contested_assignee_id is not None
@@ -155,7 +155,7 @@ class SlaTakeoverService:
         }
 
     def latest_for_tracking(self, tracking_id: str) -> Optional[SlaTakeoverRequest]:
-        """Most recent request for a tracking (pending or terminal) — for the banner's
+        """Most recent request for a tracking (pending or terminal) - for the banner's
         terminal-state display (AC-LINK-4)."""
         return (
             self.db.query(SlaTakeoverRequest)
@@ -311,14 +311,14 @@ class SlaTakeoverService:
     # ----- active void (owner terminal actions) ------------------------------
     def void_for_tracking(self, tracking_id: str, reason: str) -> None:
         """Best-effort: void any pending takeover on this tracking (owner resolved /
-        reassigned / escalated). Never raises — the owner action already committed."""
+        reassigned / escalated). Never raises - the owner action already committed."""
         try:
             req = self.get_pending_for_tracking(tracking_id)
             if req is None:
                 return
             self._finalize(req, TAKEOVER_VOIDED, None, reason)
             self._notify_void(req, reason)
-        except Exception as e:  # noqa: BLE001 — post-commit side effect
+        except Exception as e:  # noqa: BLE001 - post-commit side effect
             self.db.rollback()
             logger.warning("void_for_tracking(%s) failed: %s", tracking_id, e)
 
@@ -367,7 +367,7 @@ class SlaTakeoverService:
             self._finalize(req, TAKEOVER_VOIDED, None, "reassigned")
             self._notify_void(req, "reassigned")
             return False
-        # (3) initiator still eligible — reuse the synchronous takeover (re-derives
+        # (3) initiator still eligible - reuse the synchronous takeover (re-derives
         # tier/team/agent at commit, flips assignee, RR cursor, event log, Respond push,
         # AND notifies new+old). Ineligible -> takeover raises not-found -> void.
         try:
@@ -470,7 +470,7 @@ class SlaTakeoverService:
             from app.services.form_sla_service import build_sla_whatsapp_data
 
             owner = self._user_name(req.contested_assignee_id)
-            body = f"{owner} kept the task — your takeover was rejected."
+            body = f"{owner} kept the task - your takeover was rejected."
             wa = build_sla_whatsapp_data(
                 self.db, self._load_tracking(req), str(req.initiator_id), body,
                 use_case="sla_takeover_cancelled",

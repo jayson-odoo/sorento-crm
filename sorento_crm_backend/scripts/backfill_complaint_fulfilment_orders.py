@@ -13,7 +13,7 @@ For every order with a non-empty Remarks CS it runs the same centralized helper 
 import/PUT use (`ComplaintFulfilmentService.reconcile_links_and_status`, dry_run=False):
 creates the gated links (only `processed_by_cs`/`fulfilled` complaints link), sets
 `fulfilled` where every non-cancelled linked DO is already delivered, and STAMPS
-`delivery_notified_at = now()` on already-delivered links — but DISCARDS the returned
+`delivery_notified_at = now()` on already-delivered links - but DISCARDS the returned
 notify payloads, so NO historical delivery message is ever sent (stamp-without-send).
 
 Idempotent: links carry a unique (complaint_id, order_id) constraint and the helper is
@@ -58,7 +58,7 @@ def main() -> int:
 
         # Every order with a non-empty Remarks CS. old_remarks=None forces each into the
         # reconcile (the helper diffs desired-vs-existing links, so already-linked rows
-        # are no-ops — the empty old_remarks does not re-create them).
+        # are no-ops - the empty old_remarks does not re-create them).
         order_ids = [
             str(r[0])
             for r in db.query(Order.id)
@@ -92,7 +92,7 @@ def main() -> int:
         )
 
         print("")
-        print("Backfill summary" + (" (DRY RUN — no writes)" if args.dry_run else ""))
+        print("Backfill summary" + (" (DRY RUN - no writes)" if args.dry_run else ""))
         print(f"  orders scanned          : {total_orders}")
         print(f"  link rows before        : {links_before}")
         if not args.dry_run:
@@ -100,7 +100,7 @@ def main() -> int:
         print(f"  deliveries stamped-no-send: {suppressed_notifies}")
         print(f"  warnings (not-linked etc): {len(all_warnings)}")
         for w in all_warnings[:20]:
-            print(f"    - {w}")
+            print(f"  - {w}")
         if len(all_warnings) > 20:
             print(f"    ... and {len(all_warnings) - 20} more")
         if args.dry_run:

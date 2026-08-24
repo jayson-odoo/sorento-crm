@@ -1,6 +1,6 @@
-"""SCM M5 Part B — market advisory endpoints (signals viz + research run + topic CRUD).
+"""SCM M5 Part B - market advisory endpoints (signals viz + research run + topic CRUD).
 
-Advisory-only (M5-D4): nothing here writes a quantity/ROP/SS/rank — signals are
+Advisory-only (M5-D4): nothing here writes a quantity/ROP/SS/rank - signals are
 cached web-search output. Reads are dashboard views (``scm.dashboard.view``);
 firing a research run is a planning action (``scm.reorder.run``); topic config is
 an admin surface (``scm.policy.manage``). Topic list is a plain view. Paths mirror
@@ -65,7 +65,7 @@ def market_search_adhoc(
     db: Session = Depends(get_db),
     _user: dict = Depends(_RUN),
 ):
-    """Ad-hoc market web search fired from the planning flow — caches signals that
+    """Ad-hoc market web search fired from the planning flow - caches signals that
     then drive the existing per-rec advisory + feed the plan-chat (M6-B, soft)."""
     return svc.search_adhoc(
         db, body.query, body.category_ref, body.currency, (_user or {}).get("id")
@@ -81,7 +81,7 @@ def market_proposal(
     db: Session = Depends(get_db),
     _user: dict = Depends(_RUN),
 ):
-    """M8-E11 — map a market signal to a per-line qty-uplift PROPOSAL on the run's
+    """M8-E11 - map a market signal to a per-line qty-uplift PROPOSAL on the run's
     matching buy recs. Writes NOTHING to any recommendation column and never re-runs
     the engine (M8-E7); the user confirms each line via /recommendations/{id}/adjust."""
     reorder_run_service.assert_run_visible(db, run_id)

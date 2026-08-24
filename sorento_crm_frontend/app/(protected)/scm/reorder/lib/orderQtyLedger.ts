@@ -6,8 +6,8 @@
  * a line's buy is made of. This file adds only the two pieces the ledger itself introduces
  * on top of that state:
  *
- *   - which cover parts are "on" right now, and what is left to buy once they are toggled;
- *   - the optional forecast add-on, and replaying the ALREADY-agreed MOQ/order-multiple
+ * - which cover parts are "on" right now, and what is left to buy once they are toggled;
+ * - the optional forecast add-on, and replaying the ALREADY-agreed MOQ/order-multiple
  *     rounding formula (`reorder_engine.round_order_qty`) against whatever that live number
  *     comes out to.
  *
@@ -36,14 +36,14 @@ import { trendAdvice, type TrajectoryEntry } from './trajectory';
  * Two edges an earlier version of this function got wrong by adding safety the backend
  * does not have:
  *
- *   - the MOQ floor applies whenever MOQ is SET (`moq is not None`), never gated on
+ * - the MOQ floor applies whenever MOQ is SET (`moq is not None`), never gated on
  *     `moq > 0` - a `moq` of 0 is a real (if odd) config value, and the backend floors
  *     against it exactly the same as any other. `qty` is never clamped to zero first
  *     either: a `qty` of 0 with a positive MOQ configured floors UP to that MOQ on the
  *     backend, it does not short-circuit to 0 ("nothing to buy" is the CALLER's job to
  *     recognise before this ever runs, exactly as `reorder_engine.order_qty` does - see
  *     its own `if recommended <= 0: return 0.0, 0.0` guard BEFORE calling this).
- *   - the order-multiple condition is unchanged (`orderMultiple != null && orderMultiple
+ * - the order-multiple condition is unchanged (`orderMultiple != null && orderMultiple
  *     > 0`), matching Python's `order_multiple and order_multiple > 0` (falsy on 0/None).
  */
 export function roundOrderQty(

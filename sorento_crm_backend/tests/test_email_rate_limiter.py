@@ -1,7 +1,7 @@
-"""Tests for the email rate limiter — global / per-recipient / per-event override.
+"""Tests for the email rate limiter - global / per-recipient / per-event override.
 
 DB fallback path is used so we don't need a Redis instance. The fallback counts
-`email_outbox` rows with `status=sent` inside the window — same semantics as the Redis
+`email_outbox` rows with `status=sent` inside the window - same semantics as the Redis
 sliding window when Redis is unavailable.
 """
 from unittest.mock import MagicMock, patch

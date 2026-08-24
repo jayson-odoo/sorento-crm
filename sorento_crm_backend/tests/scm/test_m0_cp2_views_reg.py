@@ -1,4 +1,4 @@
-"""SCM M0 CP2 — views + module registration tests (Postgres-backed).
+"""SCM M0 CP2 - views + module registration tests (Postgres-backed).
 
 Covers the CP2 slice of the M0 UAC:
 - AC-M0.8  net_position_v reconciles (on_hand + on_order − committed).
@@ -235,7 +235,7 @@ def test_scm_catalog_row_present_but_dormant(conn):
     assert cat.is_core is False
     # Dormant = registered but NOT enabled by default. M0's migration must not
     # auto-enable it; enablement is per-tenant opt-in (a tenant CAN enable it in
-    # dev/demo — so we assert an ARBITRARY tenant that never opted in has no row,
+    # dev/demo - so we assert an ARBITRARY tenant that never opted in has no row,
     # rather than "no enabled row anywhere", which a legitimate dev-enable breaks).
     enabled = conn.execute(text(
         "select count(*) from tenant_modules "

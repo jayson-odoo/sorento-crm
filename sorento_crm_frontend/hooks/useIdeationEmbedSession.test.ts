@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Mock the real feature service the hook now calls (Slice D — off the Phase-1 stub).
+// Mock the real feature service the hook now calls (Slice D - off the Phase-1 stub).
 const getIdeationEmbedSession = vi.fn();
 vi.mock('@/services/ideationService', () => ({
   getIdeationEmbedSession: (...args: unknown[]) => getIdeationEmbedSession(...args),

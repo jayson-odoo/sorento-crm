@@ -17,7 +17,7 @@ import type { AttachmentType } from '../../attachment-types/types/attachmentType
 /**
  * Prev/next neighbours of an attachment within the active filtered+sorted list set.
  * Serializes the list query (search/sort + folder/linkage/type/uploader/date filters)
- * with `buildDataGridParams` — the same serialization the list page uses — so the
+ * with `buildDataGridParams` - the same serialization the list page uses - so the
  * backend honours filters identically. `page`/`limit` are sent but ignored by the
  * neighbours endpoint.
  */
@@ -180,7 +180,7 @@ export function useBulkMoveAttachments() {
       bulkMoveAttachments(attachmentIds, directoryId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
-      // Unified Drive listing key (see useUpdateAttachment) — refresh after a
+      // Unified Drive listing key (see useUpdateAttachment) - refresh after a
       // multi-select drag-move so all moved rows leave the source folder.
       queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       queryClient.invalidateQueries({ queryKey: ['attachment-directories-tree'] });

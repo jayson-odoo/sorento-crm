@@ -1,4 +1,4 @@
-"""Spec Registry API — the vocabulary both the CRM ranker and the n8n parser read.
+"""Spec Registry API - the vocabulary both the CRM ranker and the n8n parser read.
 
 One vocabulary, two consumers, so this endpoint is the thing that stops them drifting:
 if the parser emits `wall_mounted` while the ranker looks for `wall_hung`, every query
@@ -7,7 +7,7 @@ quietly scores worse and nothing logs an error.
 Writes exist, and they are shaped by that guarantee rather than around it:
 
   * a `seed` row is repaired on every deploy, so editing its vocabulary would be undone.
-    Staff extend it instead — `user_synonyms` is merged in at read time, additive only,
+    Staff extend it instead - `user_synonyms` is merged in at read time, additive only,
     so a word added here can never remove one the parser depends on.
   * a `user` row has no seed to drift from and is left alone entirely.
   * calibration (`rank_weight`, `is_active`, the match window) has always been
@@ -181,7 +181,7 @@ class SpecKeyUpdate(BaseModel):
 
     Deliberately narrow. `spec_key`, `data_type` and `unit` are absent because changing
     them on a key that already has derived values against it would silently invalidate
-    every stored spec — that is a migration, not an edit.
+    every stored spec - that is a migration, not an edit.
     """
 
     label: Optional[str] = Field(default=None, min_length=1, max_length=150)
@@ -355,7 +355,7 @@ def _validate_rules(
     """Reject a rule the engine could not run, at the point someone types it.
 
     A bad regex is skipped silently at derivation time so one typo cannot stop the
-    catalog deriving — which is right at 3am and wrong here, where the person is
+    catalog deriving - which is right at 3am and wrong here, where the person is
     looking at the field and can fix it.
     """
     cleaned: list[dict] = []
@@ -438,7 +438,7 @@ async def get_spec_coverage(
 
     The registry's own `measured_coverage` is a figure recorded when the key was
     written, so it is a note about the past. Where the two disagree the screen should
-    show this one — `bowl_count` says 106 and the catalogue holds 148.
+    show this one - `bowl_count` says 106 and the catalogue holds 148.
     """
     from sqlalchemy import func, text as sql_text
 

@@ -27,7 +27,7 @@ export const ERROR_CODE_FRIENDLY: Record<string, string> = {
   VIRUS_DETECTED: 'File rejected by virus scan',
   FILE_TOO_LARGE: 'File exceeds size limit',
   DUPLICATE_PACKING_LIST:
-    'Duplicate packing list — this container was already received',
+    'Duplicate packing list - this container was already received',
 };
 
 function pluralise(word: string, count: number): string {
@@ -101,7 +101,7 @@ export function summariseSession(session: UploadActivitySession): string {
 }
 
 /**
- * One-line summary for an import_job session (Excel/data import — row counts
+ * One-line summary for an import_job session (Excel/data import - row counts
  * instead of file statuses).
  */
 export function summariseImportJob(session: UploadActivitySession): string {

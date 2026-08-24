@@ -14,6 +14,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
+import RequireAccess from '@/app/components/common/RequireAccess';
 import LoadingPlanView from './components/LoadingPlanView';
 
 export const metadata: Metadata = {
@@ -23,7 +24,7 @@ export const metadata: Metadata = {
 
 export default function LoadingPlanPage() {
   return (
-    <>
+    <RequireAccess permission="scm.reorder.run">
       <Container>
         <Toolbar>
           <ToolbarHeading>
@@ -51,6 +52,6 @@ export default function LoadingPlanPage() {
       <Container>
         <LoadingPlanView />
       </Container>
-    </>
+    </RequireAccess>
   );
 }

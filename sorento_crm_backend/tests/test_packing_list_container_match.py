@@ -1,4 +1,4 @@
-"""InboundShipmentService.create_shipment — container-number upsert matching.
+"""InboundShipmentService.create_shipment - container-number upsert matching.
 
 The external packing-list API (n8n) creates inbound shipments. Container number
 is the shipment's secondary identifier: when no shipment_number matches, an
@@ -105,7 +105,7 @@ def test_container_match_updates_not_fully_received_in_place(db):
     )
     db.commit()
 
-    # No shipment_number on either payload — match must fall through to container.
+    # No shipment_number on either payload - match must fall through to container.
     second = _create(
         db,
         p,
@@ -131,7 +131,7 @@ def test_fully_received_container_does_not_match_creates_new(db):
     """A received container is free to carry a NEW shipment.
 
     The new shipment must differ on the identity triple (container, ETA,
-    shipment_date) — an identical triple means the same packing list was
+    shipment_date) - an identical triple means the same packing list was
     uploaded twice and is rejected instead. See
     tests/test_packing_list_duplicate_detection.py.
     """

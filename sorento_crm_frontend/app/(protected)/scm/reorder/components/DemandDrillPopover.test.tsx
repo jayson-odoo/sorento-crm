@@ -3,12 +3,12 @@
  *
  * The three things this component exists to guarantee:
  *
- *  - The aggregate is a FIGURE plus an information icon. The contributing lines
+ * - The aggregate is a FIGURE plus an information icon. The contributing lines
  *    are not on the row and are not fetched until the icon is opened, because
  *    preventing information fatigue is a requirement, not a preference.
- *  - Project demand decomposes into project, SO number, quantity and required
+ * - Project demand decomposes into project, SO number, quantity and required
  *    date (AC-C2.3).
- *  - Retail outstanding decomposes into dealer, SO number, quantity and DAYS
+ * - Retail outstanding decomposes into dealer, SO number, quantity and DAYS
  *    OUTSTANDING, worst-first (AC-C2.4). The 2-unit line that has waited 214 days
  *    renders ABOVE the 96-unit line raised in May, which is the entire reason the
  *    column exists.

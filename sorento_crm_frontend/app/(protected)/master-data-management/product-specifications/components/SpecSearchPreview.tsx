@@ -130,7 +130,7 @@ export default function SpecSearchPreview() {
               </div>
             ) : (
               <span className="text-sm text-muted-foreground">
-                No specification recognised — the results below come from the wording
+                No specification recognised - the results below come from the wording
                 alone.
               </span>
             )}
@@ -197,7 +197,7 @@ export default function SpecSearchPreview() {
                   {result.unmet
                     .map((u) => `${String(u.value).replace(/_/g, ' ')}`)
                     .join(' or ')}
-                  . These are the closest the catalogue has — the chatbot says so rather
+                  . These are the closest the catalogue has - the chatbot says so rather
                   than substituting quietly.
                 </AlertTitle>
               </Alert>
@@ -207,7 +207,7 @@ export default function SpecSearchPreview() {
             </div>
             {result.candidates.map((candidate, index) => (
               // Straight to that product's Specifications tab. The summary below is only
-              // what the ranker MATCHED on — every other derived value, and the text each
+              // what the ranker MATCHED on - every other derived value, and the text each
               // was read from, is one click away.
               <Link
                 key={candidate.product_id}

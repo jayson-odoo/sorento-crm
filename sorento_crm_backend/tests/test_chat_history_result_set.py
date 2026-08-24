@@ -498,7 +498,7 @@ def test_a_re_posted_message_id_no_longer_duplicates_the_row(client, db):
 def test_referenced_state_projection_withholds_internal_keys(client, db):
     """Contract boundary: exactly four keys, whatever else `after` carries.
 
-    Without this, a future `after` key starts leaking silently — and two of the
+    Without this, a future `after` key starts leaking silently - and two of the
     withheld keys are safety properties (`selection_context` -> wrong-member assign,
     `access_levels` -> stale re-grant), not tidiness.
     """
@@ -558,7 +558,7 @@ def test_referenced_state_tolerates_non_dict_entities(client, db):
 
 def test_referenced_state_resolves_when_quoting_own_incoming_message(client, db):
     """Quoting your OWN earlier message: the anchor row is the incoming row itself,
-    whose turn_id resolves to its own turn — the semantically right answer."""
+    whose turn_id resolves to its own turn - the semantically right answer."""
     _seed_contact(db)
     client.post(
         "/api/v1/external/chat-history/messages",
@@ -616,7 +616,7 @@ def test_ingest_with_non_timestamp_message_id_leaves_respond_ts_null(client, db)
 def test_ingested_turn_yields_latency_in_the_admin_grid(client, db):
     """The whole chain: two ingests, one turn_id, a latency the grid can render.
 
-    This is the failure the fix targets — turn_id was pairing correctly but every
+    This is the failure the fix targets - turn_id was pairing correctly but every
     respond_ts was NULL, so the Latency column showed a dash on every row.
     """
     from app.services.chat_history_query import list_messages_page
@@ -641,5 +641,5 @@ def test_ingested_turn_yields_latency_in_the_admin_grid(client, db):
     outgoing = [r for r in rows if r.type == "outgoing"]
     assert len(outgoing) == 1
     assert outgoing[0].latency_seconds == pytest.approx(43.363985, abs=1e-5)
-    # Latency belongs to the reply only — the inbound row must stay blank.
+    # Latency belongs to the reply only - the inbound row must stay blank.
     assert all(r.latency_seconds is None for r in rows if r.type == "incoming")

@@ -1,4 +1,4 @@
-"""SCM M0 CP4 — golden-set regression anchor.
+"""SCM M0 CP4 - golden-set regression anchor.
 
 Pins the seeded demo's net_position + valuation for a representative dozen SKUs
 (one per pattern: fast / multi-warehouse / stockout / dead / lumpy / open-PO).
@@ -57,7 +57,7 @@ def test_golden_set_has_all_patterns(conn):
     # both a healthy fast mover and a stockout must be present
     nets = {g["product_code"]: g["net_position"] for g in GOLDEN}
     assert any(v and v > 100 for v in nets.values()), "need a healthy high-net SKU"
-    # a stockout/deficit SKU: net <= 0 (net < 0 = stockout WITH committed demand — the reorder signal)
+    # a stockout/deficit SKU: net <= 0 (net < 0 = stockout WITH committed demand - the reorder signal)
     assert any(v is not None and v <= 0 for v in nets.values()), "need a stockout/deficit SKU"
     assert any(v is not None and v < 0 for v in nets.values()), "need a stockout-with-committed (negative net) SKU"
 

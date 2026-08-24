@@ -1,23 +1,23 @@
-# PLAN — SCM M5: Semantic Layer + Market Advisory
+# PLAN - SCM M5: Semantic Layer + Market Advisory
 
 **Slug:** `scm-m5-semantic-market` · **Milestone:** M5 · **UAC:** `scm-m5-semantic-market-acceptance-criteria.md`
-**Umbrella:** `PLAN-scm-reorder-copilot.md` · **Depends:** M0–M4 · **Status:** BUILT (Part A + Part B
-committed; live web search key-gated fast-follow) — commits `f439454c5` (Part A) + `7e272e113` (Part B)
+**Umbrella:** `PLAN-scm-reorder-copilot.md` · **Depends:** M0 - M4 · **Status:** BUILT (Part A + Part B
+committed; live web search key-gated fast-follow) - commits `f439454c5` (Part A) + `7e272e113` (Part B)
 **Type:** BE (bounded LLM flow + web-search research job) + advisory/explanation/viz UI
 **⚠ Read the `claude-api` skill before building the Anthropic web-search integration.**
 
 ## Build status (2026-07-17, autonomous three-phase per part)
-- **Part A — explainer (DONE, live-verified):** `explainer_service` (explanation lazy-cached +
+- **Part A - explainer (DONE, live-verified):** `explainer_service` (explanation lazy-cached +
   bounded Q&A; exact refusal; deterministic no-LLM degrade), prompt key
   `scm_recommendation_explainer`, endpoints `/explanation` `/ask` `/advisory`. FE = AI-summary card +
   Ask transcript in the explanation dialog. LLM-boundary clean (only writes `explanation`). pytest 16
   + vitest. Verified against the real OpenAI LLM.
-- **Part B — market research + advisory (DONE except live search):** migration 280 (topic/signal/run),
+- **Part B - market research + advisory (DONE except live search):** migration 280 (topic/signal/run),
   `market_research_service` (topic CRUD, `list_signals`, `run_research`), advisory in
   `explainer_service.market_advisory` (matches a stored signal by category id-or-code + currency,
   condenses via the explainer flow, caches to `market_advisory`), prompt key `scm_market_advisory`,
   Market Signals page (viz + Run research + topic CRUD) + sidebar entry. pytest 19 + vitest 32.
-- **KEY-GATED FAST-FOLLOW — the live Anthropic web search.** This env has no `ANTHROPIC_API_KEY` (only
+- **KEY-GATED FAST-FOLLOW - the live Anthropic web search.** This env has no `ANTHROPIC_API_KEY` (only
   OpenAI) and web search is Anthropic-only, so `_web_search_topic` cannot run/verify here. It is
   implemented + isolated + key-guarded: no key → a persisted `status='failed'` run with error
   "Anthropic web-search not configured (set ANTHROPIC_API_KEY)", never a crash. To enable: set
@@ -28,7 +28,7 @@ committed; live web search key-gated fast-follow) — commits `f439454c5` (Part 
 
 ## Goal
 The "wow": plain-language explanation + scoped Q&A per recommendation, and market/economic advisory
-from backend web search — all advisory-only, LLM never touches a number.
+from backend web search - all advisory-only, LLM never touches a number.
 
 ## 1. Schema
 - **`reorder_recommendation`** (from M3/M4) + `explanation`, `market_advisory` (cached prose).
@@ -36,16 +36,16 @@ from backend web search — all advisory-only, LLM never touches a number.
 - **`scm.market_signal`**: topic_id, category_ref, currency, value, trend, summary, source_url, captured_at.
 - **`scm.market_research_run`**: started/finished/status/counts/error (observability, like `scm_analytics_run`).
 
-## 2. SCM explainer flow (bounded — NOT the agent flow)
+## 2. SCM explainer flow (bounded - NOT the agent flow)
 `app/services/scm/explainer_service.py`:
-- `explain_recommendation(rec)` — structured frozen numbers → `llm_provider.chat` with prompt key `scm_recommendation_explainer` (registry) → one sentence; cache to `recommendation.explanation`. Lazy on first view.
-- `answer_question(rec, question)` — bounded context = that rec's numbers only; prompt instructs "never compute; if the number isn't given, say you can't." No tools, no agent loop.
-- `market_advisory(rec)` — pull matching `market_signal` (category+currency) → condense to one advisory sentence; cache to `recommendation.market_advisory`.
+- `explain_recommendation(rec)` - structured frozen numbers → `llm_provider.chat` with prompt key `scm_recommendation_explainer` (registry) → one sentence; cache to `recommendation.explanation`. Lazy on first view.
+- `answer_question(rec, question)` - bounded context = that rec's numbers only; prompt instructs "never compute; if the number isn't given, say you can't." No tools, no agent loop.
+- `market_advisory(rec)` - pull matching `market_signal` (category+currency) → condense to one advisory sentence; cache to `recommendation.market_advisory`.
 - All via `llm_provider` (OpenAI/Anthropic), traced through `ai_trace`, governed by prompt registry (immutable versions + movable labels). Configurable as a new flow type (prompt/model/on-off). No numeric write anywhere (boundary test).
 
 ## 3. Market research job (Anthropic web search)
 `app/services/scm/market_research_service.py`:
-- `run_research(scope)` — iterate active `market_research_topic`; for each, call `llm_provider` (Anthropic) with the **web-search server tool** + the topic's `search_prompt`; **schema-forced extraction** → `market_signal` {value, trend, summary, source_url}. Write `market_research_run` log.
+- `run_research(scope)` - iterate active `market_research_topic`; for each, call `llm_provider` (Anthropic) with the **web-search server tool** + the topic's `search_prompt`; **schema-forced extraction** → `market_signal` {value, trend, summary, source_url}. Write `market_research_run` log.
 - Triggers: `scheduled_task` `scm_market_research` (cadence per topic) + manual `POST /scm/market-research/run`. **Cache signals; never search per recommendation.**
 - Cost-aware: batch topics; log per-run search count/duration.
 
@@ -66,7 +66,7 @@ from backend web search — all advisory-only, LLM never touches a number.
 - **playwright:** AC-M5.10.
 
 ## 7. Risks
-- **Web-search infra = newest/riskiest.** Provision + validate the Anthropic web-search tool early (read `claude-api`). If it stalls → ship M0–M4 + explanation, defer market research to fast-follow; deterministic deal-closer doesn't depend on it.
-- **No-overfit** — explainer/advisory examples pin format, not numbers; Q&A tested with paraphrases.
-- **Source quality** — web-search results vary; store `source_url` for traceability; mark low-confidence signals; advisory is suggestive, never authoritative.
-- **Cost** — cache signals, cadence-limited + manual; never per-rec search; log search counts.
+- **Web-search infra = newest/riskiest.** Provision + validate the Anthropic web-search tool early (read `claude-api`). If it stalls → ship M0 - M4 + explanation, defer market research to fast-follow; deterministic deal-closer doesn't depend on it.
+- **No-overfit** - explainer/advisory examples pin format, not numbers; Q&A tested with paraphrases.
+- **Source quality** - web-search results vary; store `source_url` for traceability; mark low-confidence signals; advisory is suggestive, never authoritative.
+- **Cost** - cache signals, cadence-limited + manual; never per-rec search; log search counts.

@@ -36,7 +36,7 @@ This:
    permissions are needed.
 4. Re-applies `scm.committed_v` from `app/services/scm/demand.py`'s `COMMITTED_V_SQL` and
    verifies the fix took (`bootstrap_env.create_views()` only replays migrations
-   274/311/327/337, which leaves `committed_v` missing the 340/346 project-demand rule  - 
+   274/311/327/337, which leaves `committed_v` missing the 340/346 project-demand rule - 
    this is a known gap in `bootstrap_env.py` itself, not something specific to this harness).
 
 Re-running `init` against an already-bootstrapped database is safe (idempotent).

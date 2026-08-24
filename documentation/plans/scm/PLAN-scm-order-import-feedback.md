@@ -409,13 +409,13 @@ Deliberately MINIMAL - a list and an edit of the two annotation columns, not a C
    `master-data-management/sales-agents` (list + `[id]` detail), whose backend is
    `app/api/v1/master_data/sales_agents.py` with a `PATCH /{id}/annotation`. Three things must
    not be lost when the two chains meet:
-   - `MirrorAnnotationUpdate` allows `internal_note` and `follow_up` ONLY (`extra="forbid"`),
+ - `MirrorAnnotationUpdate` allows `internal_note` and `follow_up` ONLY (`extra="forbid"`),
      so `person_label` and `demand_class` must be added to it or the merged page silently
      cannot write them;
-   - `SalesAgentResponse` does not declare them either, and FastAPI's `response_model` drops
+ - `SalesAgentResponse` does not declare them either, and FastAPI's `response_model` drops
      any field a schema does not declare, so the values would read as absent on a page that
      is in fact holding them;
-   - `_MirrorBase.source` is `Literal["autocount", "manual"]` while S1's `source` column
+ - `_MirrorBase.source` is `Literal["autocount", "manual"]` while S1's `source` column
      carries `manual` or `import`. An import-created agent would fail response validation on
      that page. Widen the literal (or map it) as part of the merge.
    Preferred shape: extend that existing page rather than build a second one, and if S6 ships

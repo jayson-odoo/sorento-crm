@@ -5,7 +5,7 @@ counts EVERY request in a bucket and rejects once the count exceeds a limit
 within the window. Use it to cap abuse-prone unauthenticated endpoints
 (signup, password-reset, portal OTP) per client IP.
 
-Fail-open by design: if Redis is unavailable the request is ALLOWED — an infra
+Fail-open by design: if Redis is unavailable the request is ALLOWED - an infra
 outage must never take down signup/login. See PLAN-fix-security-cluster Sub-plan A.
 """
 from __future__ import annotations
@@ -58,7 +58,7 @@ def hit(bucket: str, ident: Optional[str], *, limit: int, window_seconds: int) -
         count, ttl = pipe.execute()
         count = int(count)
         if count == 1 or (isinstance(ttl, int) and ttl < 0):
-            # First request in the window (or no TTL set) — start the clock.
+            # First request in the window (or no TTL set) - start the clock.
             r.expire(key, window_seconds)
             ttl = window_seconds
         if count > limit:

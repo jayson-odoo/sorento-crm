@@ -1,4 +1,4 @@
-"""TCK-2026-000031 — user<->RespondContact link + phone uniqueness.
+"""TCK-2026-000031 - user<->RespondContact link + phone uniqueness.
 
 Covers AC-31-F1 (resolve), F2 (auto-link + cache + order), F3 (normalised match),
 F4 (duplicate phone rejected), F5 (backfill idempotent).

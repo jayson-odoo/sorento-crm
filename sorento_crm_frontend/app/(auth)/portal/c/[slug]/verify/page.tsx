@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Slug-based verify page — identity comes from the stable slug, no token
+ * Slug-based verify page - identity comes from the stable slug, no token
  * needed. This is what makes the bookmarked URL work on a brand-new device.
  */
 

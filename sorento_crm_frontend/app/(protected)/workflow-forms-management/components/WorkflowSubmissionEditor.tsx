@@ -461,7 +461,7 @@ export function WorkflowSubmissionDetail({ submissionId }: { submissionId: strin
                     {log.created_at ? new Date(log.created_at).toLocaleString() : ''}
                   </span>{' '}
                   {log.from_state_code ?? '?'} → {log.to_state_code}
-                  {log.remark ? ` — ${log.remark}` : ''}
+                  {log.remark ? ` - ${log.remark}` : ''}
                 </li>
               ))}
             </ul>

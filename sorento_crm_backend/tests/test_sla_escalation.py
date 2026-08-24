@@ -166,7 +166,7 @@ def test_create_tracking_agent_code_with_explicit_assignee_skips_round_robin():
     service = ConversationSLATrackingService(mock_db)
     # The backend now resolves the policy from (agent, team_set); with no binding
     # it falls back to the n8n-supplied policy_id (D8). Stub the resolver to None so
-    # it doesn't consume the mocked query sequence — the fallback uses payload policy.
+    # it doesn't consume the mocked query sequence - the fallback uses payload policy.
     with patch.object(
         service,
         "get_escalation_assignee_for_tier",

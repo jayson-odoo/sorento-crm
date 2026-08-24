@@ -303,7 +303,7 @@ export function ListQueryExportDialog({
                 102_order_line_nested_export
               </code>{' '}
               (<code className="rounded bg-background/80 px-1 py-0.5 text-xs font-mono">alembic upgrade head</code>
-              ), then refresh. Until then you only see the legacy &quot;Line — product&quot; / &quot;Line —
+              ), then refresh. Until then you only see the legacy &quot;Line - product&quot; / &quot;Line - 
               warehouse&quot; id fields.
             </p>
           </div>

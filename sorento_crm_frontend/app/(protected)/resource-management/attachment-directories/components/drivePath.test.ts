@@ -1,5 +1,5 @@
 /**
- * buildBreadcrumb — the Drive breadcrumb trail (UAC A2).
+ * buildBreadcrumb - the Drive breadcrumb trail (UAC A2).
  */
 import { describe, it, expect } from 'vitest';
 import { buildBreadcrumb } from './drivePath';

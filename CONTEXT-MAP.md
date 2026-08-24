@@ -11,7 +11,7 @@ covering the area you're working in; read both when a change crosses them.
 Architecture decisions for both live in `documentation/adr/`.
 
 Terms are meant to be non-overlapping. If the same term appears in both with
-different meanings, that's a defect — fix it rather than picking a winner.
+different meanings, that's a defect - fix it rather than picking a winner.
 
 The split is historical, not designed: `documentation/CONTEXT.md` came out of the
 Project Sales work, `CONTEXT.md` out of the Dealer Sales Kit work. Collapsing them

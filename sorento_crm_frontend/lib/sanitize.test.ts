@@ -1,5 +1,5 @@
 /**
- * E-2 — sanitizeHtml must strip XSS vectors from untrusted HTML while keeping
+ * E-2 - sanitizeHtml must strip XSS vectors from untrusted HTML while keeping
  * ordinary formatting, before it reaches dangerouslySetInnerHTML.
  */
 import { describe, it, expect } from 'vitest';

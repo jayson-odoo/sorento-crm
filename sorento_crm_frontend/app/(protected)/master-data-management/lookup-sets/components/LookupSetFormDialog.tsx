@@ -55,7 +55,7 @@ export default function LookupSetFormDialog({
     const elig = (eligibility ?? []).find((e) => e.table_name === tableName && e.column_name === columnName);
     if (!elig) return;
     if (!setKey) setSetKey(slugify(`${tableName}_${columnName}`));
-    if (!name) setName(`${elig.table_label} — ${elig.column_label}`);
+    if (!name) setName(`${elig.table_label} - ${elig.column_label}`);
   }, [tableName, columnName, eligibility, isEdit, setKey, name]);
 
   async function submit() {
@@ -106,7 +106,7 @@ export default function LookupSetFormDialog({
               </div>
               <div className="flex items-center gap-2">
                 <Switch checked={skipBinding} onCheckedChange={setSkipBinding} />
-                <Label>Skip — create unbound set</Label>
+                <Label>Skip - create unbound set</Label>
               </div>
             </>
           )}

@@ -60,7 +60,7 @@ describe('ComplaintFulfilmentOrdersSection', () => {
     expect(link).toHaveAttribute('href', '/order-management/orders/o-1');
     expect(screen.getByText('Picked Up / In Transit')).toBeInTheDocument();
     // delivery date rendered (not the em-dash placeholder)
-    expect(screen.queryByText('—')).not.toBeInTheDocument();
+    expect(screen.queryByText('-')).not.toBeInTheDocument();
     // no UUID shown anywhere
     expect(screen.queryByText(/o-1/)).not.toBeInTheDocument();
   });
@@ -71,7 +71,7 @@ describe('ComplaintFulfilmentOrdersSection', () => {
       isLoading: false,
     });
     render(<ComplaintFulfilmentOrdersSection complaintId="c-1" />);
-    expect(screen.getByText('—')).toBeInTheDocument();
+    expect(screen.getByText('-')).toBeInTheDocument();
   });
 
   it('items popover lists product code x qty', async () => {

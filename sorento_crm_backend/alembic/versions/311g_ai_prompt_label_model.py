@@ -7,7 +7,7 @@ them onto one model means every agent is tuned for the hardest of them or none.
 
 The label row is already "this agent, in this environment, runs this version", so it
 is where "…on this model" belongs. NULL means "whatever the global config says", which
-is what every existing row means today — so this migration changes no behaviour until
+is what every existing row means today - so this migration changes no behaviour until
 someone sets a value. `staging` can therefore point at a different model to `production`
 and be compared before switching.
 

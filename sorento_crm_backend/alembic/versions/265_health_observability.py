@@ -2,7 +2,7 @@
 
 Two additive, nullable/defaulted changes (WS system-health-observability):
 
-1. ``audit_logs.contact_id`` (nullable, indexed) — attributes portal/public-link
+1. ``audit_logs.contact_id`` (nullable, indexed) - attributes portal/public-link
    writes to the acting contact (respond_contacts.id). NULL for staff writes and
    for the `system` automation principal. Display resolves contact_id -> contact
    name BEFORE the user_id -> staff / "System" fallback.

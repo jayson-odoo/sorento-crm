@@ -1,4 +1,4 @@
-"""Slice 6 of AutoCount Group A — wiring the dependencies onto the resolver.
+"""Slice 6 of AutoCount Group A - wiring the dependencies onto the resolver.
 
 This is the change that touches live authentication. Per decision A6 there is
 no env fallback to catch a mistake, so the behaviour is pinned at the dependency

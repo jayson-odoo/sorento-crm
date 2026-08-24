@@ -14,7 +14,7 @@ grill-me (FE + BE)  →  UAC file (FIRST)  →  PLAN  →  Phase 1 (FE mock)
 
 ### 0. Grill → UAC → plan
 
-- **Grill first.** Run `grill-me` on the design — frontend AND backend — until the full decision
+- **Grill first.** Run `grill-me` on the design - frontend AND backend - until the full decision
   tree is resolved. Then **grill the plan itself** before writing code (don't implement straight
   from decisions).
 - **UAC written FIRST**, before the plan: `documentation/plans/<domain>/<slug>-acceptance-criteria.md`.
@@ -23,32 +23,32 @@ grill-me (FE + BE)  →  UAC file (FIRST)  →  PLAN  →  Phase 1 (FE mock)
 - **Then the plan** (`PLAN-<slug>.md`) as the design that fulfils the UAC, with a live `Status:`
   line and a decision log. Deferrals → a row in `documentation/backlogs/backlog.md`.
 
-### Phase 1 — Frontend prototype (mock)
+### Phase 1 - Frontend prototype (mock)
 
 UI → hook → service → **mock**. Tune every state (loading / empty / error / partial / success)
 with no backend running. Verify in a real browser via agent-browser (headless,
-`npx -y agent-browser@0.27.0`) — **navigate by clicking the
+`npx -y agent-browser@0.27.0`) - **navigate by clicking the
 sidebar from `/`, never a deep URL** (deep-URL nav hides menu-gating bugs). Document the expected
 API contract at the top of the service file or in the plan. NO backend code, NO tests yet (shape
-may still shift after prototype review). Reuse shared components — a new variant is a prop on the
+may still shift after prototype review). Reuse shared components - a new variant is a prop on the
 shared component, never a parallel one-off.
 
-### Phase 2 — Backend wiring + tests
+### Phase 2 - Backend wiring + tests
 
 Build BE (models → migration → schema → service → route) to match the Phase-1 contract exactly.
-Then swap the mock for the real `api-client` call — a one-line change at the service boundary.
+Then swap the mock for the real `api-client` call - a one-line change at the service boundary.
 **Tests land here, never deferred:**
 
-- **vitest** — every new component's states + every new query/mutation hook.
-- **pytest** — every new route (happy path + auth denial + validation error) + service-level logic.
-- **Playwright E2E** — one spec per user flow, **real clicks**, exercising FE→BE→DB; assert the
+- **vitest** - every new component's states + every new query/mutation hook.
+- **pytest** - every new route (happy path + auth denial + validation error) + service-level logic.
+- **Playwright E2E** - one spec per user flow, **real clicks**, exercising FE→BE→DB; assert the
   right `/api/v1/*` call fired. AI/file/portal flows use **real
   committed fixtures** in `e2e/fixtures/`, not stubbed mocks.
 
 Re-verify live against the running stack (3000 / 8000 / worker). Write the **test report**
 (`<slug>-test-report.md`) keyed back to the UAC ids: PASS / FAIL / DEFERRED per id.
 
-### Phase 3 — Code review
+### Phase 3 - Code review
 
 `/code-review` (or `ultra` for big diffs) → address via `--fix` / `/simplify` → open the PR.
 Reviewer runs `documentation/PR-CHECKLIST.md` + the DoD gate + hard-fail rules.
@@ -67,18 +67,18 @@ Building a slice with a subagent team held quality far better than solo. The Sor
 
 - **Audit first.** An `Explore` agent producing a per-AC gap matrix (backend exists? FE exists /
   mock / missing?) before any coder runs surfaces the mock / backfill / permission gaps early.
-- **Every subagent brief MUST embed** the DoD gate + hard-fail rules from `PRINCIPLES.md` — a
+- **Every subagent brief MUST embed** the DoD gate + hard-fail rules from `PRINCIPLES.md` - a
   subagent starts with zero project memory; the brief is its only guardrail.
 - **Sequential coders on a shared branch** when tasks touch overlapping files (parallel same-tree
   edits race). Worktree isolation only when tasks are file-disjoint.
 - **Tester verifies from the USER's perspective** (real clicks, real data, fresh build) and writes
-  the AC-id-keyed report — not just green pytest. The reviewer re-checks the DoD gate, not only
+  the AC-id-keyed report - not just green pytest. The reviewer re-checks the DoD gate, not only
   correctness.
 
 ## Why this order
 
-- **Prototype first** stops building a backend for a UI the user rejects — UX disagreements surface
+- **Prototype first** stops building a backend for a UI the user rejects - UX disagreements surface
   against a clickable mock, not a deployed feature.
-- **Tests in Phase 2, not Phase 3** — once the contract is locked, wiring is the right time to pin
+- **Tests in Phase 2, not Phase 3** - once the contract is locked, wiring is the right time to pin
   it; tests added after review are rushed.
-- **Review last** — reviewing a mocked FE in isolation says nothing about end-to-end data flow.
+- **Review last** - reviewing a mocked FE in isolation says nothing about end-to-end data flow.

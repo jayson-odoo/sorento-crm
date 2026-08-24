@@ -13,7 +13,7 @@
  *   4. Opening the file's detail modal shows an Integration tab next to
  *      Attachment Details and an Integration status chip in the header.
  *
- * Required env vars (test skipped otherwise — see
+ * Required env vars (test skipped otherwise - see
  * feedback_playwright_via_sidebar memory: always sidebar-navigate, never
  * deep-link):
  *   PORTAL_E2E_BASE_URL=http://localhost:3000   (default in playwright.config)

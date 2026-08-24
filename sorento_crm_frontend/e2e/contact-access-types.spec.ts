@@ -7,7 +7,7 @@
  *   2. The contacts list cell renders one badge per assigned type.
  *   3. Hitting `GET /api/v1/marketing/promotions?contact_id=<respond_io_id>&space_id=<space>`
  *      with that contact's identity returns only promotions whose `access_levels`
- *      overlaps the freshly-saved codes — i.e. the same JSONB ?| overlap the MCP
+ *      overlaps the freshly-saved codes - i.e. the same JSONB ?| overlap the MCP
  *      promotion tools rely on.
  *
  * Required env (skipped otherwise so it doesn't block local dev):
@@ -113,7 +113,7 @@ test('admin assigns access types to a contact; MCP-equivalent endpoint reflects 
   await expect(row).toContainText(new RegExp(CODE_B!, 'i'));
 
   // 5. Cross-check via the FE proxy that the same identity now sees a non-empty
-  //    set of promotions. We don't hard-code which promotions overlap — only
+  //    set of promotions. We don't hard-code which promotions overlap - only
   //    assert the response is well-formed and the contact context is respected
   //    (the backend would otherwise 5xx if the JSONB ?| cast regressed).
   const promosResp = await page.request.get(

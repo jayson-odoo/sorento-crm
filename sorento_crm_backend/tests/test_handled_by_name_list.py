@@ -6,9 +6,9 @@ tracker per row and resolve its `handled_by_id` -> user display name into a
 `handled_by_name` field (separate from `assigned_to_name`).
 
 Covers:
-  - Complaint list: `handled_by_name` = the holder's display name when the
+ - Complaint list: `handled_by_name` = the holder's display name when the
     tracker has `handled_by_id`, and None when unheld.
-  - Purchase-request list (analogous): `_attach_sla_assignees` sets
+ - Purchase-request list (analogous): `_attach_sla_assignees` sets
     `handled_by_name` from the tracker.
 
 Run: venv/bin/pytest tests/test_handled_by_name_list.py -q

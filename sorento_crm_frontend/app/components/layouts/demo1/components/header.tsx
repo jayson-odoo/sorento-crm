@@ -103,7 +103,7 @@ export function Header() {
           </div>
         </div>
 
-        {/* Header center intentionally empty — each page renders its own title +
+        {/* Header center intentionally empty - each page renders its own title +
             breadcrumb below the header, so a second header breadcrumb was redundant
             and confusing (removed 2026-06-30). ms-auto keeps utilities right-aligned. */}
 
@@ -136,7 +136,7 @@ export function Header() {
                 />
               )}
               {/* Secondary icons (uploads / downloads / apps) declutter the mobile
-                  header — they're still reachable from the sidebar / menus. */}
+                  header - they're still reachable from the sidebar / menus. */}
               {!mobileMode && <UploadActivityIcon />}
               {!mobileMode && <MyDownloadsIcon />}
               <CompanySwitcher />

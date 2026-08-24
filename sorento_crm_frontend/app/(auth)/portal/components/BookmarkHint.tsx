@@ -2,11 +2,11 @@
 
 /**
  * One-time dismissible hint shown on the first verified visit to the stable
- * slug URL — nudges the user to keep their personal portal link.
+ * slug URL - nudges the user to keep their personal portal link.
  *
  * Browsers do not allow JS to write to the bookmark bar (security), so the
  * closest one-tap equivalents are offered instead:
- * - native share sheet on mobile (navigator.share) — covers "Add to Home
+ * - native share sheet on mobile (navigator.share) - covers "Add to Home
  *   Screen" / "send to myself" flows, which is how WhatsApp-first users
  *   actually keep links;
  * - copy-to-clipboard everywhere else;
@@ -51,7 +51,7 @@ export function BookmarkHint() {
     try {
       await navigator.clipboard.writeText(stableUrl());
       setCopied(true);
-      toast.success('Portal link copied — save it anywhere.');
+      toast.success('Portal link copied - save it anywhere.');
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
       toast.error('Could not copy. Long-press the address bar to copy the link.');
@@ -62,7 +62,7 @@ export function BookmarkHint() {
     try {
       await navigator.share({ title: 'My Sorento portal', url: stableUrl() });
     } catch {
-      // user cancelled the sheet — not an error
+      // user cancelled the sheet - not an error
     }
   };
 
@@ -74,7 +74,7 @@ export function BookmarkHint() {
       <div className="flex items-start gap-2">
         <Bookmark className="h-4 w-4 mt-0.5 shrink-0 text-primary" aria-hidden />
         <p className="text-xs text-foreground/80 flex-1">
-          This page is your personal portal link — keep it to come back any time
+          This page is your personal portal link - keep it to come back any time
           without asking for a new link.
           <span className="hidden sm:inline">
             {' '}

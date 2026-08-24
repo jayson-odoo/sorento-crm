@@ -3,7 +3,7 @@ import DOMPurify from 'isomorphic-dompurify';
 /**
  * Sanitize an untrusted HTML string before feeding it to
  * `dangerouslySetInnerHTML`. Use for ANY HTML that originated from a user or an
- * external system (chat messages, ticket/notes/email bodies) — see
+ * external system (chat messages, ticket/notes/email bodies) - see
  * PLAN-fix-security-cluster Sub-plan E-2. Strips scripts, event handlers, and
  * other XSS vectors while keeping ordinary formatting.
  *

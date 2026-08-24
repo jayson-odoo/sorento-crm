@@ -47,8 +47,8 @@ def create_form(
             )
         # Multi-company isolation (Group G): pin the scope to the attachment's
         # company so any company-scoped rows created downstream auto-stamp it.
-        # Form itself is a shared (cross-company) entity — matched by unique code,
-        # never company-scoped — so a NULL-company (shared form) attachment leaves
+        # Form itself is a shared (cross-company) entity - matched by unique code,
+        # never company-scoped - so a NULL-company (shared form) attachment leaves
         # the scope untouched (AC-G3) and this is a defensive no-op for the Form.
         scope_to_attachment_company(db, att)
     # Default external-created forms to active so they show up in the FE list
@@ -69,7 +69,7 @@ def create_form(
         db.refresh(existing)
         if attachment_id:
             try:
-                code = (existing.code or "").strip() or "—"
+                code = (existing.code or "").strip() or "-"
                 name = (existing.name or "").strip() or code
                 summary_plain = (
                     f'Form "{name}" ({code}) was recorded in Sorento CRM.'
@@ -106,7 +106,7 @@ def create_form(
         form = service.create_form(form_data, created_by)
         if attachment_id:
             try:
-                code = (form.code or "").strip() or "—"
+                code = (form.code or "").strip() or "-"
                 name = (form.name or "").strip() or code
                 summary_plain = (
                     f'Form "{name}" ({code}) was created in Sorento CRM '

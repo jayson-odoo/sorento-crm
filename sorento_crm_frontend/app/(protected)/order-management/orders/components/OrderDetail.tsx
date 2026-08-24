@@ -90,7 +90,7 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
             )}
           </div>
           <p className="text-sm text-muted-foreground">
-            {order.debtor_name || order.debtor_code || '—'} • Delivery order date: {order.order_date ? formatDate(new Date(order.order_date)) : '-'}
+            {order.debtor_name || order.debtor_code || '-'} • Delivery order date: {order.order_date ? formatDate(new Date(order.order_date)) : '-'}
           </p>
         </div>
         <div className="flex gap-2">

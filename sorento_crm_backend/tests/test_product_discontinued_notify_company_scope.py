@@ -7,9 +7,9 @@ together with Sorento's, behind one deep link - aimed at staff who do not handle
 catalogue.
 
 Two properties matter and they pull in opposite directions:
-  - a company that was never opted in must be left COMPLETELY alone, including its
+ - a company that was never opted in must be left COMPLETELY alone, including its
     `discontinued_notified_at` (stamping it would silence its real first report later)
-  - a company that IS opted in must get its own batch, never a shared one
+ - a company that IS opted in must get its own batch, never a shared one
 """
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Form-banner person links — shared wa.me phone resolver (UAC group PR).
+"""Form-banner person links - shared wa.me phone resolver (UAC group PR).
 
 Covers PR-1..PR-6 in documentation/plans/forms/form-banner-person-links-acceptance-criteria.md:
 - resolve a users.id -> RespondContact.phone_number bare digits (PR-1)

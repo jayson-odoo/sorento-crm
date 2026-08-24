@@ -124,7 +124,7 @@ export default function CategoryTree({ categories, searchQuery = '', level = 0, 
                 </td>
                 <td className="px-3 py-2 text-muted-foreground truncate">{category.category_code}</td>
                 <td className="px-3 py-2 text-muted-foreground truncate" title={category.description ?? undefined}>
-                  {category.description ?? '—'}
+                  {category.description ?? '-'}
                 </td>
                 <td className="px-3 py-2">
                   <Badge

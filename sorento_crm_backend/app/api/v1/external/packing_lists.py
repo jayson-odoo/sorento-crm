@@ -39,14 +39,14 @@ def stamp_duplicate_integration_log(
 
     Every user-facing surface (upload-activity drawer, attachment integration
     panel) reads the ``error_code`` / ``error_message`` COLUMNS. n8n's error
-    branch only posts ``{status, response_payload}``, leaving both NULL — so the
+    branch only posts ``{status, response_payload}``, leaving both NULL - so the
     drawer would show a bare "Integration failed" while the real reason sat
     unread inside response_payload. Stamping the columns here puts the
     explanation where the UI already looks.
 
     Safe against n8n's follow-up callback: IntegrationLogService updates with
     ``model_dump(exclude_unset=True)``, so the status POST cannot clobber these.
-    Deliberately does NOT set ``status`` — that stays n8n's to report.
+    Deliberately does NOT set ``status`` - that stays n8n's to report.
     """
     log = (
         db.query(IntegrationLog)
@@ -58,7 +58,7 @@ def stamp_duplicate_integration_log(
         .first()
     )
     if log is None:
-        # Direct API call with no n8n leg — nothing to stamp.
+        # Direct API call with no n8n leg - nothing to stamp.
         return
     log.error_code = error_code
     log.error_message = error_message
@@ -184,7 +184,7 @@ def create_packing_list(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.message)
 
     try:
-        sn = (payload.packing_list.shipment_number or "").strip() or "—"
+        sn = (payload.packing_list.shipment_number or "").strip() or "-"
         aid = payload.packing_list.attachment_id
         summary_plain = (
             f'Packing list / inbound shipment "{sn}" was created in Sorento CRM via the external integration API '

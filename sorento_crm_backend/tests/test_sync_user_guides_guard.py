@@ -1,8 +1,8 @@
-"""Item 4c (PLAN-post-security-batch) — Outline publish safeguard.
+"""Item 4c (PLAN-post-security-batch) - Outline publish safeguard.
 
 `commercial` (and any HELD folder) MUST NEVER be published. The sync script
 enforces this with a HARD assertion that RAISES if a held folder ever leaks
-into the publish allowlist (`PARENT_TITLES`) — discipline / a passive skip is
+into the publish allowlist (`PARENT_TITLES`) - discipline / a passive skip is
 not enough (UAC4.5).
 
 The script lives at repo-root `scripts/sync_user_guides_outline.py`; it is

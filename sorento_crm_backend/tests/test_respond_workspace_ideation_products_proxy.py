@@ -1,6 +1,6 @@
 """Sorento proxy for the shared-service ideation-product catalog.
 
-``GET /api/v1/system/respond-workspaces/ideation-products`` degrades gracefully —
+``GET /api/v1/system/respond-workspaces/ideation-products`` degrades gracefully - 
 ALWAYS returns ``{products, error}`` (never 500). Covers:
 
 - live-preview override path (``base_url`` + ``api_key`` query args win);

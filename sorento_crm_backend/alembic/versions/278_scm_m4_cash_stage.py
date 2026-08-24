@@ -1,16 +1,16 @@
-"""SCM M4 Slice A — cash stage: reorder_run.budget_amount + seed cash_ranking_policy.
+"""SCM M4 Slice A - cash stage: reorder_run.budget_amount + seed cash_ranking_policy.
 
 The M0 schema (mig 273) already created ``scm.cash_ranking_policy`` (weights) and
 ``scm.reorder_recommendation`` already carries ``rank_score`` / ``rank`` /
 ``funding_status`` / ``cash_impact`` / ``unit_cost`` (mig 273). This migration adds
-the ONE missing piece for the cash stage — the chosen budget persisted on the run —
+the ONE missing piece for the cash stage - the chosen budget persisted on the run - 
 and seeds the single active ``cash_ranking_policy`` row (idempotent) with the M4-D1
 defaults (urgency + margin dominant): urgency .40 / margin .30 / abc .15 /
 priority .10 / committed .05 (Σ = 1.00).
 
 Both steps are idempotent: ``budget_amount`` is only added when absent, and the
 policy seed only inserts when NO active row exists (mirrors
-``reorder_engine.ensure_reorder_policy_defaults`` — never clobbers hand-edited
+``reorder_engine.ensure_reorder_policy_defaults`` - never clobbers hand-edited
 values on re-run or an already-seeded tenant).
 
 Revision ID: 278_scm_m4_cash_stage
@@ -38,7 +38,7 @@ def _has_column(bind, schema: str, table: str, column: str) -> bool:
 def upgrade() -> None:
     bind = op.get_bind()
 
-    # 1) budget_amount on reorder_run — the budget the "Apply budget" action persists
+    # 1) budget_amount on reorder_run - the budget the "Apply budget" action persists
     #    so a shared run shows one funded set. Additive, nullable, no backfill.
     if not _has_column(bind, "scm", "reorder_run", "budget_amount"):
         op.add_column(

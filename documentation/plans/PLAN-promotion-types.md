@@ -1,6 +1,6 @@
-# PLAN — Maintainable promotion types with per-type expired-promo behaviour
+# PLAN - Maintainable promotion types with per-type expired-promo behaviour
 
-**Status:** built and fully verified — pytest + vitest + MCP suites green, live MCP and
+**Status:** built and fully verified - pytest + vitest + MCP suites green, live MCP and
 resolve checks green (rerun post-reboot 2026-08-15), and browser verification of the
 admin screens complete on a prod build (see the UAC verification log). Awaiting review.
 
@@ -20,7 +20,7 @@ is in this document, not in the components.
 
 ## 1. What exists today (and why it fails)
 
-- `promotions` has no name, no kind, no linkage — `description` holds the uploaded PDF's
+- `promotions` has no name, no kind, no linkage - `description` holds the uploaded PDF's
   filename (`app/models/marketing.py:26-67`).
 - "Live" is defined once, in `app/services/promotion_window.py` (`is_live` + `live_clause`).
   `_promotion_is_expired` (`marketing_service.py:73`) is its negation and stamps `is_expired`.
@@ -30,7 +30,7 @@ is in this document, not in the components.
   (`app/api/v1/system/references.py:546`) returns every promotion containing the product,
   active and expired mixed, with `display.is_active` read straight off the raw column.
 - Failure (SRTWC286): the A3 flyer is live, so the active gate answers with the flyer and the
-  just-ended WC promo — the thing actually asked about — is filtered out silently.
+  just-ended WC promo - the thing actually asked about - is filtered out silently.
 
 Root cause: one global active/expired rule for populations that have different commercial
 rules after the end date.
@@ -60,7 +60,7 @@ rules after the end date.
 ### `promotions` additions
 
 - `promotion_type_id` UUID FK → `promotion_types.id` `ON DELETE SET NULL`, nullable, indexed.
-- `promotion_type_source` String(10) nullable — `auto` | `manual`.
+- `promotion_type_source` String(10) nullable - `auto` | `manual`.
 
 ### Migration
 
@@ -94,7 +94,7 @@ classify_promotion_type(db, *, description, filename=None) -> PromotionType | No
 - No marker match → the `is_default` type. No types at all → `None`.
 - Markers are read from the DB (UAC C6), cached per-request only.
 
-### `app/services/promotion_serving.py` (new — the one definition, per Q3 precedent)
+### `app/services/promotion_serving.py` (new - the one definition, per Q3 precedent)
 
 ```
 servable_promotion_ids(db, candidate_ids, today) -> ServingVerdict
@@ -114,7 +114,7 @@ Algorithm over the candidate set (the promotions the caller's filters already na
 7. Order the remainder `end_date DESC, created_at DESC`; take the top row, plus any exact
    `end_date` tie, capped at 2 per type; mark them `expired_but_usable`.
 
-Rows with no `end_date` are, by definition of `is_live`, live — so they never reach step 3.
+Rows with no `end_date` are, by definition of `is_live`, live - so they never reach step 3.
 
 The helper is import-free of `marketing_service` / `references` so both can use it without a
 cycle (same discipline as `promotion_window`).
@@ -123,7 +123,7 @@ cycle (same discipline as `promotion_window`).
 
 - New query param `serving_policy: bool = False`.
 - When true: skip the active gate and the inactive fallback; collect candidate ids from the
-  filtered query (capped at 500 rows, logged when the cap bites — no silent truncation), run
+  filtered query (capped at 500 rows, logged when the cap bites - no silent truncation), run
   the helper, filter to `served_ids`, then paginate. Payload gains
   `serving_policy_applied: true`; `fallback_used` stays `false`.
 - Response rows gain `promotion_type_id`, `promotion_type_code`, `promotion_type_name`,
@@ -137,14 +137,14 @@ servable **parent** promotion id set from the same helper and filter on it.
 
 `_build_promotions_for_products` runs the helper over the promotions it found (after the
 access-level intersection) and drops non-served rows. `display` gains `start_date`, `end_date`,
-`is_expired` (live definition — fixes today's raw `is_active` read), `promotion_type_code`,
+`is_expired` (live definition - fixes today's raw `is_active` read), `promotion_type_code`,
 `promotion_type_name`, `expired_but_usable`. Existing keys unchanged: the n8n gate only reads
 `{uuid, entity_type, canonical_code}`, so the wire contract survives.
 
 ### `/api/v1/external/promotions/` (C1-C5)
 
 After the promotion row is built, stamp `promotion_type_id` from the classifier with
-`promotion_type_source = "auto"` — except on the update-in-place path when the existing row is
+`promotion_type_source = "auto"` - except on the update-in-place path when the existing row is
 `manual`, which is left alone (C5). The create response echoes the type code + source.
 
 ### `promotion_types` CRUD
@@ -158,7 +158,7 @@ mirroring `campaign_types.py` (list / get / create / update / delete). Mounted i
 
 Phase 1 is a mock-data prototype of both screens; Phase 2 wires them to the real API.
 
-- **`/marketing-management/promotion-types`** — `page.tsx` + `components/PromotionTypesList.tsx`
+- **`/marketing-management/promotion-types`** - `page.tsx` + `components/PromotionTypesList.tsx`
   (shared DataGrid, `tableLayout: { width: 'fixed', columnsResizable: true }`,
   `columnResizeMode: 'onChange'`, explicit `size`, truncate + title),
   `PromotionTypeFormModal.tsx`, `ConfirmDeleteDialog`, `services/promotionTypeService.ts`
@@ -166,35 +166,35 @@ Phase 1 is a mock-data prototype of both screens; Phase 2 wires them to the real
   `hooks/usePromotionTypes.ts` (shared `useCreateMutation` / `useUpdateMutation` /
   `useDeleteMutation`).
 - **Menu**: a "Promotion Types" entry under Marketing Management → Promotions in
-  `config/menu.config.tsx` (both nav blocks — the file carries two copies).
+  `config/menu.config.tsx` (both nav blocks - the file carries two copies).
 - **Promotions list**: a Type column rendering `promotion_type_name` (never the id).
 - **Promotion form / detail**: a clearable `SearchableSelect` for the type, in the same
   position on both views (view-and-edit-are-the-same-layout rule), with the
-  "Unclassified — treated as Standard" empty state on the detail.
+  "Unclassified - treated as Standard" empty state on the detail.
 
 ## 5. MCP (E2)
 
 - `crm_marketing_promotions_list`: pin `serving_policy=true` via `TOOL_DEFAULT_QUERY_PARAMS`
-  (the `crm_resource_attachments_catalogue` hard-pin precedent) — deliberately NOT in
+  (the `crm_resource_attachments_catalogue` hard-pin precedent) - deliberately NOT in
   `query_params`, so the agent cannot switch the policy off. Same pin for
   `crm_marketing_promotion_products_list` and `crm_marketing_promotion_attachments_list`.
 - Descriptions updated: when `expired_but_usable` is true, say the promotion **has expired but
   still applies** (and give the end date); when a row is merely `is_expired`, the existing
   "found but expired" wording stands.
-- **Restart the MCP process** after the catalog change — FastMCP registers tools at startup
+- **Restart the MCP process** after the catalog change - FastMCP registers tools at startup
   (CLAUDE.md gotcha).
 
 ## 6. Tests
 
 **pytest** (`sorento_crm_backend/tests/`, Postgres only, every test seeds its own chain with a
-marker prefix — never `LIMIT 1` off an existing table):
+marker prefix - never `LIMIT 1` off an existing table):
 
-- `test_promotion_classifier.py` — C1-C6.
-- `test_promotion_serving_policy.py` — S1-S6 against the helper.
-- `test_promotions_serving_policy_endpoint.py` — E1, N1.
-- `test_references_promotion_serving.py` — E3, plus E4 (both surfaces agree on one fixture).
-- `test_promotion_types_crud.py` — T1, T5, T6.
-- `test_external_promotion_type_classification.py` — C1, C5.
+- `test_promotion_classifier.py` - C1-C6.
+- `test_promotion_serving_policy.py` - S1-S6 against the helper.
+- `test_promotions_serving_policy_endpoint.py` - E1, N1.
+- `test_references_promotion_serving.py` - E3, plus E4 (both surfaces agree on one fixture).
+- `test_promotion_types_crud.py` - T1, T5, T6.
+- `test_external_promotion_type_classification.py` - C1, C5.
 
 **vitest** (`sorento_crm_frontend/`): `PromotionTypesList` (loading / empty / error / data),
 `PromotionTypeFormModal` (validation, submit, delete confirmation copy), the promotions list
@@ -205,7 +205,7 @@ DataGrid rows mount.
 query for all three tools.
 
 **Live check (E5, mandatory):** backend :8000 + MCP :8765 against the local prod-copy DB, with
-this feature's own seeded promotions (never touching other rows) — one MCP call proving an
+this feature's own seeded promotions (never touching other rows) - one MCP call proving an
 expired-but-usable row is served with `expired_but_usable: true`, one proving an expired
 `special` is not. Transcript into the UAC verification log.
 
@@ -222,9 +222,9 @@ expired-but-usable row is served with `expired_but_usable: true`, one proving an
 
 - **Migration graph drift** - follow the authoritative Alembic pre-merge guard in
   `PRINCIPLES.md`.
-- **Candidate-set cap** — the serving policy is a Python post-pass; bounded at 500 candidate
+- **Candidate-set cap** - the serving policy is a Python post-pass; bounded at 500 candidate
   rows with a log line when it bites, never a silent truncation.
-- **Marker collisions** — resolved conservatively by `match_priority` (special first), and
+- **Marker collisions** - resolved conservatively by `match_priority` (special first), and
   fixable as data.
-- **Shared prod-copy DB** — only this feature's own seeded rows are written; the migration is
+- **Shared prod-copy DB** - only this feature's own seeded rows are written; the migration is
   the only schema change applied.

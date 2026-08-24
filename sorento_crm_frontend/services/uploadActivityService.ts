@@ -1,5 +1,5 @@
 /**
- * uploadActivityService — Phase 1 stub + Phase 2 API contract.
+ * uploadActivityService - Phase 1 stub + Phase 2 API contract.
  *
  * ─── Phase 2 backend contract (binding) ────────────────────────────
  *
@@ -69,7 +69,7 @@ export interface UploadActivityQuery {
 const BASE = '/api/v1/resource-management/upload-activity';
 
 /**
- * Phase 2 implementation. Phase 1 callers should NOT use this — they
+ * Phase 2 implementation. Phase 1 callers should NOT use this - they
  * read mocks directly through `useUploadActivity`.
  */
 export async function fetchUploadActivity(

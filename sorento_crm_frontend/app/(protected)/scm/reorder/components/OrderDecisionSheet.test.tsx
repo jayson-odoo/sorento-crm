@@ -3,17 +3,17 @@
  *
  * The cases that are the reason the slice exists:
  *
- *  - AC-C2.7: a chosen quantity ABOVE the shortfall is NOT a warning state. 600
+ * - AC-C2.7: a chosen quantity ABOVE the shortfall is NOT a warning state. 600
  *    against a shortfall of 278 must state what it means (covered, spare and
  *    where it lands, months of cover, cash, volume) with no alert, no
  *    destructive styling and no blocked save.
- *  - The consequence panel NAMES a missing input rather than printing 0. Months
+ * - The consequence panel NAMES a missing input rather than printing 0. Months
  *    of cover needs a demand statistic and volume needs recorded dimensions, and
  *    most products have neither.
- *  - AC-C2.5: a supplier that has never delivered this item says so, even when
+ * - AC-C2.5: a supplier that has never delivered this item says so, even when
  *    it quotes the lowest cost.
- *  - AC-C2.6: a years-old last PO date is flagged stale.
- *  - AC-C2.8: the engine's suggestion stays visible beside the chosen quantity.
+ * - AC-C2.6: a years-old last PO date is flagged stale.
+ * - AC-C2.8: the engine's suggestion stays visible beside the chosen quantity.
  *
  * The real fixtures from `lib/summaryOrderMockStore` are used rather than
  * hand-typed numbers, so a fixture drifting from the ACs fails here too.

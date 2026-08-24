@@ -1,4 +1,4 @@
-# 1.3-Purchasing — Upload SPO allocations (direct Excel)
+# 1.3-Purchasing - Upload SPO allocations (direct Excel)
 
 Use this flow to bulk-import **SPO allocations** from an Excel file. SPO allocations link products and warehouse destinations to a supplier packing list so that incoming stock can be matched against the right SPO.
 
@@ -24,7 +24,7 @@ The filename (without extension) is used as the **SPO number**. Each row in the 
 | **Loading Date** | Yes | Date of loading. Text after the first space in this cell is interpreted as the **shipping container number**. |
 | **Transfer From** / **SPO Number** / **From Doc No.** / **From Document No.** | Optional | Used to override the SPO number per row, or to link a row to a specific source document. |
 
-Rows are grouped by `(SPO number, product, warehouse)` — duplicate rows for the same combination are summed into a single allocation.
+Rows are grouped by `(SPO number, product, warehouse)` - duplicate rows for the same combination are summed into a single allocation.
 
 Importing also links any previously uploaded GRN lines that stated this SPO number but had no allocation to match at the time - GRN and SPO files can arrive in either order.
 
@@ -39,5 +39,5 @@ Once a job is queued, the **SPO Allocations** page shows a **Latest SPO import**
 
 ## See also
 
-* [Upload packing list](upload-packing-list.md) — the first step is to upload packing list first
-* [Upload product master](upload-product-master.md) — products must exist before SPO allocations can be created
+* [Upload packing list](upload-packing-list.md) - the first step is to upload packing list first
+* [Upload product master](upload-product-master.md) - products must exist before SPO allocations can be created

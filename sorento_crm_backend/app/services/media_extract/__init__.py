@@ -3,11 +3,11 @@
 A sibling package to `ai_extract`, deliberately not an edit to it, so the live
 portal extract route is untouched by anything here (PLAN section 4.2).
 
-* `prompts.py`   - the extraction system prompt, verbatim from PLAN Appendix A
-* `schema.py`    - the strict output contract and its tolerant parse
-* `service.py`   - `MediaExtractService`, the composer for both lanes
+* `prompts.py` - the extraction system prompt, verbatim from PLAN Appendix A
+* `schema.py`  - the strict output contract and its tolerant parse
+* `service.py` - `MediaExtractService`, the composer for both lanes
 * `transcribe.py`- voice, with the configurable language strategy
-* `wording.py`   - every customer-facing string
+* `wording.py` - every customer-facing string
 
 `service` is deliberately NOT imported here. It imports `media_access_service`
 for `resolve_media_settings`, and `media_access_service` imports `wording` from

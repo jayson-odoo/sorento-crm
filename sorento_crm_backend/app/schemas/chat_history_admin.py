@@ -1,7 +1,7 @@
 """Admin-facing chat history schemas.
 
 `contact_id` is the Respond.io id and is included only so the UI can filter and
-deep-link by it — never for display. `contact_display` is what gets rendered.
+deep-link by it - never for display. `contact_display` is what gets rendered.
 """
 from datetime import datetime
 from typing import Optional
@@ -28,7 +28,7 @@ class ChatMessageRowResponse(BaseModel):
     latency_seconds: Optional[float] = None
     webhook_lag_seconds: Optional[float] = None
     # Per-turn conversation state transition, populated on INCOMING rows only and only
-    # on the thread (transcript) path — the diagnosis surface. Opaque by design:
+    # on the thread (transcript) path - the diagnosis surface. Opaque by design:
     # {v, before, parser_raw, parser_applied, after}. NULL on the grid list and on
     # every outgoing row. The FE derives the entities-lost/gained + cause-flags summary
     # from this (mirroring the v_turn_state_transition view) and offers the raw document

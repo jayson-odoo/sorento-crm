@@ -48,7 +48,7 @@ def session():
 
 
 # ===========================================================================
-# Model — two new nullable columns
+# Model - two new nullable columns
 # ===========================================================================
 def test_workspace_model_has_ideation_config_columns():
     cols = RespondWorkspace.__table__.columns
@@ -59,7 +59,7 @@ def test_workspace_model_has_ideation_config_columns():
 
 
 # ===========================================================================
-# Migration — idempotent + chains onto the committed feature head (273)
+# Migration - idempotent + chains onto the committed feature head (273)
 # ===========================================================================
 def _config_migration() -> Path:
     matches = list(_MIGRATIONS.glob("*ideation_workspace_config*.py"))
@@ -90,7 +90,7 @@ def test_alembic_has_single_head():
 
 
 # ===========================================================================
-# Service — encrypt round-trip + masked output + decrypt helper
+# Service - encrypt round-trip + masked output + decrypt helper
 # ===========================================================================
 def test_create_encrypts_and_masks_ideation_key(session):
     svc = RespondWorkspaceService(session)
@@ -170,7 +170,7 @@ def test_decrypt_ideation_api_key_helper(session):
 
 
 # ===========================================================================
-# Config resolution — DB over .env, per-field fallback, fail-closed
+# Config resolution - DB over .env, per-field fallback, fail-closed
 # ===========================================================================
 def test_resolve_config_prefers_db_over_settings(session, monkeypatch):
     svc = RespondWorkspaceService(session)
@@ -184,7 +184,7 @@ def test_resolve_config_prefers_db_over_settings(session, monkeypatch):
             ideation_intake_api_key="db-key-333333",
         )
     )
-    # settings hold different (legacy .env) values — DB must win
+    # settings hold different (legacy .env) values - DB must win
     monkeypatch.setattr(turn_svc.settings, "ideation_shared_service_url", "https://env.example.com")
     monkeypatch.setattr(turn_svc.settings, "ideation_intake_api_key", "env-key")
 

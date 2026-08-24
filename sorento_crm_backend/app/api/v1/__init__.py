@@ -152,7 +152,7 @@ api_router.include_router(
     tags=["integrations"],
     dependencies=[Depends(require_module_enabled_with_api_key("base"))],
 )
-# Ideas iframe embed-session mint (SSO, §5.3) — JWT logged-in user only (the
+# Ideas iframe embed-session mint (SSO, §5.3) - JWT logged-in user only (the
 # endpoint's get_current_user dependency enforces auth); never X-API-Key/n8n.
 api_router.include_router(
     integrations.ideation_embed.router,
@@ -201,7 +201,7 @@ api_router.include_router(
 )
 api_router.include_router(lookup.router, prefix="/lookup", tags=["lookup"])
 
-# Activities & Notes — generic per-entity panel (consumed by tickets et al.).
+# Activities & Notes - generic per-entity panel (consumed by tickets et al.).
 api_router.include_router(
     activities.router,
     prefix="/activities",
@@ -209,7 +209,7 @@ api_router.include_router(
     dependencies=[Depends(require_module_enabled_with_api_key("activities"))],
 )
 
-# Tickets — Jira-style internal ticketing.
+# Tickets - Jira-style internal ticketing.
 api_router.include_router(
     tickets.router,
     prefix="/tickets-management",
@@ -217,7 +217,7 @@ api_router.include_router(
     dependencies=[Depends(require_module_enabled_with_api_key("tickets"))],
 )
 
-# Supply Chain & Inventory Optimisation (SCM) — reorder dashboard, SO/PO surfaces.
+# Supply Chain & Inventory Optimisation (SCM) - reorder dashboard, SO/PO surfaces.
 api_router.include_router(
     scm.router,
     prefix="/scm",
@@ -225,7 +225,7 @@ api_router.include_router(
     dependencies=[Depends(require_module_enabled_with_api_key("scm"))],
 )
 
-# Dealer Sales Kit — catalogue page builder, collections, brochure export.
+# Dealer Sales Kit - catalogue page builder, collections, brochure export.
 api_router.include_router(
     dealer_kit.router,
     prefix="/dealer-kit",

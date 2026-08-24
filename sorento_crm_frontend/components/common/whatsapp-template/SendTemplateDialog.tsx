@@ -50,7 +50,7 @@ interface SendTemplateDialogProps {
 }
 
 /**
- * Manual WhatsApp template send — mimics Respond.io's flow:
+ * Manual WhatsApp template send - mimics Respond.io's flow:
  * pick an approved template → fill its positional params → live preview → send.
  */
 export default function SendTemplateDialog({
@@ -79,7 +79,7 @@ export default function SendTemplateDialog({
     // Separator-insensitive search: template names use snake_case
     // (conversation_follow_up) but users type spaces. Normalize underscores /
     // hyphens / runs of whitespace to single spaces, then require every typed
-    // token to appear — word order doesn't matter. Also match the fully-collapsed
+    // token to appear - word order doesn't matter. Also match the fully-collapsed
     // form so "conversationfollowup" (no separators) still hits.
     const norm = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, ' ').trim();
     const q = norm(search);
@@ -149,7 +149,7 @@ export default function SendTemplateDialog({
     // `modal` is required: this dialog stacks ON TOP of the chat Sheet (itself a
     // modal Radix dialog whose react-remove-scroll lock blocks wheel/touch
     // everywhere except its own subtree). A non-modal dialog here is a portaled
-    // sibling outside that lock — its inner scroll region scrolls programmatically
+    // sibling outside that lock - its inner scroll region scrolls programmatically
     // but eats every wheel/touch event. modal makes THIS dialog own the topmost
     // lock so its content becomes the scroll-allowed shard.
     <Dialog open={open} onOpenChange={resetAndClose} modal>

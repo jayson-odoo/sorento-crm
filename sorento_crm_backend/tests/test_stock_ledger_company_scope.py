@@ -1,9 +1,9 @@
-"""C1 regression — StockLedger bulk insert must NOT leak to the DB-default company.
+"""C1 regression - StockLedger bulk insert must NOT leak to the DB-default company.
 
 ``InventoryService.bulk_import_stock`` writes its stock-ledger rows via
 ``bulk_insert_mappings``, which BYPASSES the ``before_insert`` auto-stamp. Without
 an explicit stamp those rows fall to migration 306's DB DEFAULT (Sorento), so a
-Mocha-scoped stock import would silently write Mocha's ledger under Sorento — a
+Mocha-scoped stock import would silently write Mocha's ledger under Sorento - a
 cross-company leak that the sqlite unit suite cannot catch (no DB default).
 
 This test drives the real service path under a throwaway Mocha scope on the live
@@ -123,7 +123,7 @@ def test_bulk_import_stock_ledger_stamps_active_company(db, mocha):
         result = StockService(db).bulk_import_stock(stock_rows, user_id=None)
 
     # The import must have produced exactly one ledger row for our Mocha product,
-    # stamped with Mocha — NOT the Sorento DB default.
+    # stamped with Mocha - NOT the Sorento DB default.
     rows = db.execute(
         text(
             "SELECT sl.company_id, sl.transaction_type "

@@ -24,9 +24,9 @@ That is the single decision this journey exists to capture.
 
 1. Reviewer opens the complaint at `responded`. Header shows `Approve` and `Reject`.
 2. They pick the outcome that matches what actually happened:
-   - **`Approve`** - a replacement is needed. Customer service takes it from here.
-   - **`Reject`** - the issue is not product-related. Reason required.
-   - **`Settled on site`** (gear menu) - the technician fixed it. Nothing more to do.
+ - **`Approve`** - a replacement is needed. Customer service takes it from here.
+ - **`Reject`** - the issue is not product-related. Reason required.
+ - **`Settled on site`** (gear menu) - the technician fixed it. Nothing more to do.
 3. For `Settled on site`: a confirm dialog states the consequence in the adapter's own
    words ("No replacement will be arranged and customer service will not be assigned"),
    offers an optional note, and asks them to confirm.

@@ -1,11 +1,11 @@
-"""SCM M4 Slice A — cash stage: ranking maths, greedy funding, run persistence + endpoints.
+"""SCM M4 Slice A - cash stage: ranking maths, greedy funding, run persistence + endpoints.
 
 Split in two:
 
-  * PURE maths (no DB) — ``cash_ranking`` graceful-degrade rank_score (AC-M4.1) +
+  * PURE maths (no DB) - ``cash_ranking`` graceful-degrade rank_score (AC-M4.1) +
     greedy skip-overflow funding allocation (AC-M4.2/4.4 + M4-D16). Every golden
     expected number is hand-authored here, derived INDEPENDENTLY of the engine.
-  * DB-backed — the run's cash stage freezes rank_score/rank on the buy recs
+  * DB-backed - the run's cash stage freezes rank_score/rank on the buy recs
     (AC-M4.1), the recommendations endpoint returns LIVE funding for a budget
     without persisting, and PUT /budget persists funding_status + the budget so a
     second read reflects it (AC-M4.3). Plus auth.
@@ -32,11 +32,11 @@ W = {"urgency": 0.40, "margin": 0.30, "abc": 0.15, "priority": 0.10, "committed"
 
 
 # ===========================================================================
-# PURE — rank_score graceful degrade (AC-M4.1 core)
+# PURE - rank_score graceful degrade (AC-M4.1 core)
 # ===========================================================================
 
 def test_rank_score_graceful_degrade_drops_absent_factor():
-    """A rec missing margin ranks by the REMAINING factors — the absent weight leaves
+    """A rec missing margin ranks by the REMAINING factors - the absent weight leaves
     BOTH the numerator and denominator (dropped, never zeroed). Hand-derived:
       with margin (v=0.4):    (.4·.8 + .3·.4 + .15·1.0) / (.4+.3+.15) = .59/.85 = 0.694118
       margin DROPPED:         (.4·.8 + .15·1.0)         / (.4+.15)    = .47/.55 = 0.854545
@@ -77,7 +77,7 @@ def test_build_factors_drops_margin_when_uncosted():
 
 
 def test_weight_swap_reorders_recommendations():
-    """Swapping the urgency vs margin weight FLIPS the order of two recs — no code
+    """Swapping the urgency vs margin weight FLIPS the order of two recs - no code
     change, config-driven (AC-M4.1). P is urgency-heavy, Q is margin-heavy.
       urgency-dominant (.7/.3): P=.7·.9+.3·.2=.69 > Q=.7·.3+.3·.9=.48
       margin-dominant  (.3/.7): P=.3·.9+.7·.2=.41 < Q=.3·.3+.7·.9=.72"""
@@ -112,7 +112,7 @@ def test_stockout_urgency_is_max():
 
 
 # ===========================================================================
-# PURE — greedy funding allocation (AC-M4.2 / 4.4 / M4-D16)
+# PURE - greedy funding allocation (AC-M4.2 / 4.4 / M4-D16)
 # ===========================================================================
 
 def _buys(*specs) -> list[cr.Buy]:
@@ -136,7 +136,7 @@ def test_greedy_skip_overflow_continues():
 
 def test_uncosted_is_needs_cost_regardless_of_budget():
     """An uncosted buy (cash_impact None) is ALWAYS needs_cost and never draws from the
-    budget — even a huge budget doesn't fund it (M4-D16)."""
+    budget - even a huge budget doesn't fund it (M4-D16)."""
     result = cr.allocate_funding(
         _buys(("a", 1, 5000), ("b", 2, None)), budget=100000)
     assert result.status_by_id == {"a": "funded", "b": "needs_cost"}
@@ -162,7 +162,7 @@ def test_budget_ge_total_all_costed_funded():
 
 
 # ===========================================================================
-# controlled DB fixture builders (all inside the savepoint) — mirror test_m3_run
+# controlled DB fixture builders (all inside the savepoint) - mirror test_m3_run
 # ===========================================================================
 
 def _mk_product(db, code, list_price=100, cost_price=60):
@@ -244,7 +244,7 @@ def _seed_two_buys(db):
 
 
 # ===========================================================================
-# DB — run cash stage freezes rank_score + rank (AC-M4.1)
+# DB - run cash stage freezes rank_score + rank (AC-M4.1)
 # ===========================================================================
 
 def test_run_cash_stage_persists_rank_score_and_rank(scm_app):
@@ -271,12 +271,12 @@ def test_run_cash_stage_persists_rank_score_and_rank(scm_app):
 
 
 # ===========================================================================
-# DB — endpoint: live funding at view-time, no persistence (AC-M4.2/4.3)
+# DB - endpoint: live funding at view-time, no persistence (AC-M4.2/4.3)
 # ===========================================================================
 
 def test_get_recommendations_budget_is_live_and_non_mutating(scm_app):
     """GET ?budget=X returns live funding_status on buy rows WITHOUT persisting: a huge
-    budget funds all, budget 0 defers all — and the stored funding_status stays null."""
+    budget funds all, budget 0 defers all - and the stored funding_status stays null."""
     app, db = _client(scm_app, "purchasing")
     _, a, b = _seed_two_buys(db)
     created = svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
@@ -301,7 +301,7 @@ def test_get_recommendations_budget_is_live_and_non_mutating(scm_app):
         assert all(r["funding_status"] == "deferred"
                    for r in zero.json()["data"] if r["type"] == "buy")
 
-    # the live view-time allocation never persisted — DB funding_status still null
+    # the live view-time allocation never persisted - DB funding_status still null
     stored = db.execute(text(
         "SELECT funding_status FROM scm.reorder_recommendation "
         "WHERE run_id = :id AND rec_type = 'buy'"
@@ -310,7 +310,7 @@ def test_get_recommendations_budget_is_live_and_non_mutating(scm_app):
 
 
 # ===========================================================================
-# DB — PUT /budget persists funding + budget; a later GET reflects it (AC-M4.3)
+# DB - PUT /budget persists funding + budget; a later GET reflects it (AC-M4.3)
 # ===========================================================================
 
 def test_put_budget_persists_and_is_reflected(scm_app):
@@ -352,11 +352,11 @@ def test_put_budget_denied_without_reorder_run_permission(scm_app):
 
 
 # ===========================================================================
-# M7 — market-research priority factor (opt-in, bounded, qty-neutral)
+# M7 - market-research priority factor (opt-in, bounded, qty-neutral)
 # ===========================================================================
 
 def test_market_value_symmetric_and_scaled():
-    """AC-M7.2 — up→1.0, flat→0.5, down→0.0; unknown/None→absent; strength scales."""
+    """AC-M7.2 - up→1.0, flat→0.5, down→0.0; unknown/None→absent; strength scales."""
     assert cr.market_value("up") == 1.0
     assert cr.market_value("flat") == 0.5
     assert cr.market_value("down") == 0.0
@@ -371,7 +371,7 @@ def test_market_value_symmetric_and_scaled():
 
 
 def test_market_factor_raises_up_over_down_and_drops_when_absent():
-    """AC-M7.3/7.4 — up-trend ranks above down-trend; with no signal the market factor
+    """AC-M7.3/7.4 - up-trend ranks above down-trend; with no signal the market factor
     is dropped so the score is byte-identical to pre-M7 (a run without market signals)."""
     base = dict(days_of_cover=6, net_position=50, list_price=100, unit_cost=60, abc_class="A")
     up = cr.rank_score(cr.build_factors(cr.DEFAULT_WEIGHTS, **base,
@@ -392,7 +392,7 @@ def test_market_factor_raises_up_over_down_and_drops_when_absent():
 
 
 def test_run_include_market_shifts_rank_not_qty(scm_app):
-    """AC-M7.7/7.8 — an up-trend signal on a buy's category raises its rank_score (and
+    """AC-M7.7/7.8 - an up-trend signal on a buy's category raises its rank_score (and
     freezes the signal for explainability) while leaving the order quantity untouched;
     a run WITHOUT the flag carries no market factor at all."""
     _, db, _, _ = scm_app
@@ -446,7 +446,7 @@ def test_run_include_market_shifts_rank_not_qty(scm_app):
 
 
 def test_create_run_endpoint_accepts_include_market(scm_app):
-    """AC-M7.9 — the create-run endpoint accepts the include_market flag and persists it."""
+    """AC-M7.9 - the create-run endpoint accepts the include_market flag and persists it."""
     app, db = _client(scm_app, "purchasing")
     _seed_two_buys(db)
     db.commit()

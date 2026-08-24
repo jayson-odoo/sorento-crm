@@ -24,7 +24,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Seeds every registered PROMPT_KEY missing a v1/production row — which now
+    # Seeds every registered PROMPT_KEY missing a v1/production row - which now
     # includes ``semantic_parser``. Existing keys are untouched.
     seed_prompt_registry(op.get_bind())
 

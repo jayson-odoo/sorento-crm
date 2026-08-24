@@ -1,4 +1,4 @@
-# PLAN — Quotation as a DOCUMENT (multi-scope, cover letter, issue snapshot)
+# PLAN - Quotation as a DOCUMENT (multi-scope, cover letter, issue snapshot)
 
 > **Table names in this document predate the schema move.** On 2026-08-15 the projects
 > module's 47 tables moved into a dedicated `projects` Postgres schema and the 34 that
@@ -30,14 +30,14 @@ document that carries SEVERAL scopes.
 
 Two ways to get there, and the cheap-looking one is wrong:
 
-**Rejected — move scopes under the version.** Add `scope_id` to lines, make the version the
+**Rejected - move scopes under the version.** Add `scope_id` to lines, make the version the
 document revision, and scopes children of it. This breaks the one thing the current model got
 right: **outcome is per scope and is not a property of a revision.** Winning the townhouse is
 not a fact about R2. It also invalidates every FK that points at a version (`project_purchase_
 orders.quotation_version_id`, `project_samples.quotation_version_id`, task links, the amendment
 and divergence flows), for no gain.
 
-**Chosen — add a document layer above, keep the scope's chain intact.**
+**Chosen - add a document layer above, keep the scope's chain intact.**
 
 ```
 project_quotation_documents        (NEW)  header, recipient snapshot, cover letter, terms
@@ -68,28 +68,28 @@ are frozen onto the issue for the same reason lines are snapshotted onto a versi
 
 ## Schema
 
-**`project_quotation_documents`** — `id`, `project_id` FK, `document_no` (series),
+**`project_quotation_documents`** - `id`, `project_id` FK, `document_no` (series),
 `your_ref`, `doc_date`, `recipient_party_id` FK, `recipient_name_snapshot`,
 `recipient_address_snapshot`, `recipient_phone_snapshot`, `attn_name`, `subject_title`,
 `cover_letter_html`, `terms_html`, `signatory_name`, `signatory_phone`, `created_by`,
 timestamps, `CompanyScopedMixin`.
 
-**`project_quotations`** (existing) — add `document_id` FK NOT NULL (after backfill),
+**`project_quotations`** (existing) - add `document_id` FK NOT NULL (after backfill),
 `sort_order`. `scope_label`, `outcome`, `loss_reason`, `decided_at`, `series_id` all stay.
 
-**`project_quotation_lines`** (existing) — add `item_label` VARCHAR(8), `brand_snapshot`
+**`project_quotation_lines`** (existing) - add `item_label` VARCHAR(8), `brand_snapshot`
 VARCHAR(100), `technical_spec` TEXT, `complete_set` VARCHAR(100), `is_rate_only` BOOL NOT NULL
 DEFAULT false, `band_label` VARCHAR(150) NULL (a line that STARTS a band carries the label;
 no second table, so a band cannot orphan itself from its lines).
 
-**`project_quotation_issues`** — `id`, `document_id` FK, `issue_no` INT, `our_ref_text`,
+**`project_quotation_issues`** - `id`, `document_id` FK, `issue_no` INT, `our_ref_text`,
 `issued_at`, `issued_by`, `cover_letter_rendered`, `terms_rendered`, `grand_total`,
 `pdf_attachment_id`, `xlsx_attachment_id`. Unique `(document_id, issue_no)`.
 
-**`project_quotation_issue_scopes`** — `issue_id` FK, `quotation_id` FK, `version_id` FK,
+**`project_quotation_issue_scopes`** - `issue_id` FK, `quotation_id` FK, `version_id` FK,
 `sort_order`, `scope_total`. Unique `(issue_id, quotation_id)`.
 
-**`quotation_signatures`** — `id`, `owner_kind` (`user` | `customer`), `user_id` FK NULL,
+**`quotation_signatures`** - `id`, `owner_kind` (`user` | `customer`), `user_id` FK NULL,
 `image_attachment_id` FK (the rendered PNG - drawn, typed or initials all end as one image),
 `mode` (`draw` | `type` | `initials`), `signed_at`, `ip_address`, `user_agent`, `gps_lat`,
 `gps_lng`. A user's reusable signature is the row with `owner_kind='user'` and no issue binding;
@@ -99,7 +99,7 @@ applying it to an issue COPIES it, so re-drawing later cannot alter a signed doc
 `customer_signature_id` FK NULL, `accepted_at` NULL, `signed_pdf_attachment_id` NULL,
 `sign_token` (the tokenised counter-sign link) and `sign_token_expires_at`.
 
-**`quotation_templates`** — `id`, `kind` (`cover_letter` | `terms`), `name`, `body_html`,
+**`quotation_templates`** - `id`, `kind` (`cover_letter` | `terms`), `name`, `body_html`,
 `is_active`, `CompanyScopedMixin`. One active per `(company, kind)`, enforced by a partial
 unique index - the `system_settings` lesson: a singleton nothing enforces becomes two rows and
 then reads are non-deterministic.
@@ -130,7 +130,7 @@ recomputation in a serializer, no arithmetic in the FE.
 S1 and S2 are the ones that answer images 40-41 on screen. S6 is what makes the record match what
 the customer holds; S7 is what makes acceptance a fact rather than an email thread.
 
-### Scope note — the counter-sign flow
+### Scope note - the counter-sign flow
 
 The client's reference is the ecohub handover screen (drawn signature, `SIGNED AT` / `IP ADDRESS`
 / `GPS LOCATION` beside it). S7 does NOT need a new portal: contact-facing tokenised pages already
@@ -159,7 +159,7 @@ when the PO never arrives.
 - **S5's "saved to the user, reused with one click"** is not built. The pad captures a signature
   every time; it is not yet stored against the user for re-use.
 
-### Scope note — the template designer
+### Scope note - the template designer
 
 The client pointed at `dreamz_ems .../settings/templates`. That is a drag-and-drop block
 editor: palette (heading / text / image / table / repeater / QR), canvas, settings panel, PDF
@@ -176,13 +176,13 @@ way.
 
 ## Test plan (Phase 2 is test-first)
 
-- **pytest** — backfill migration leaves totals unchanged on the real dev copy; issue freeze is
+- **pytest** - backfill migration leaves totals unchanged on the real dev copy; issue freeze is
   idempotent; rate-only excluded from all three totals; per-scope outcome still derives the
   project outcome; a leak test per new table; PO / sample binding unaffected.
-- **vitest** — header prefill renders from project + party; scope tabs add / reorder; footer
+- **vitest** - header prefill renders from project + party; scope tabs add / reorder; footer
   total per tab and grand total across tabs; rate-only renders "rate only" and does not move the
   total; template edit does not mutate an existing document.
-- **playwright** — sidebar → project → Quotations → new document → add two scopes → price both
+- **playwright** - sidebar → project → Quotations → new document → add two scopes → price both
   → issue → PDF downloads and re-download after a template edit returns the ORIGINAL text.
 
 ## Grill findings (self-grill, step 4)
@@ -230,7 +230,7 @@ and (c) leaves the counter shared anyway.
 
 1. **`document_id` NOT NULL** needs the backfill in the same migration; a two-step deploy would
    leave a window where a create fails. Backfill, then set NOT NULL, in one revision.
-2. **Alembic head** — this branch is already at 326. Chain onto the committed head and verify a
+2. **Alembic head** - this branch is already at 326. Chain onto the committed head and verify a
    single head before deploy (the dual-head lesson).
 3. **A signature is a legal-ish artifact.** The image and its metadata are snapshotted onto the
    issue, never referenced live from the user's reusable signature - otherwise re-drawing a

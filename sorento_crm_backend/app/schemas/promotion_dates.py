@@ -14,8 +14,8 @@ def normalize_promotion_start_end(v: Any) -> date:
     """
     Store promotion boundaries as DATE (calendar day).
 
-    - YYYY-MM-DD strings: stored as that calendar day (as-is).
-    - Datetime / ISO strings: civil calendar date in Malaysia (same behaviour as before for
+  - YYYY-MM-DD strings: stored as that calendar day (as-is).
+  - Datetime / ISO strings: civil calendar date in Malaysia (same behaviour as before for
       interpreting naive UTC instants from legacy data).
     """
     if isinstance(v, date) and not isinstance(v, datetime):

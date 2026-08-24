@@ -1,5 +1,5 @@
 /**
- * Form submission + SLA lifecycle end-to-end via CONTACT IMPERSONATION —
+ * Form submission + SLA lifecycle end-to-end via CONTACT IMPERSONATION - 
  * post-schema-migration verification (migrations 298/299/300).
  *
  * An admin impersonates a portal contact, submits a form through the real portal UI
@@ -37,7 +37,7 @@ async function login(page: Page) {
 /**
  * Sidebar nav: expand `group` (accordion trigger contains a link child, so a plain
  * click can race navigation) then click `link`. Retries the expand until the link
- * shows — the accordion state is nondeterministic across runs.
+ * shows - the accordion state is nondeterministic across runs.
  */
 async function navSidebar(page: Page, group: RegExp, link: RegExp, urlRe: RegExp) {
   await page.goto('/');

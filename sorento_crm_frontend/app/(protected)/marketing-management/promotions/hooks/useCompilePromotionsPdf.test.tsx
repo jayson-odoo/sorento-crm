@@ -1,5 +1,5 @@
 /**
- * Tests for useCompilePromotionsPdf — the Compile-PDF bulk-action mutation.
+ * Tests for useCompilePromotionsPdf - the Compile-PDF bulk-action mutation.
  *
  * Verifies it POSTs the selected ids (order preserved), invalidates the
  * ['my-downloads'] cache + toasts on success, and toasts on error.

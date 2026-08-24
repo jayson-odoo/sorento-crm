@@ -7,7 +7,7 @@ that case, rows like (300-D093, "Deluxe Home Centre Sdn Bhd (A/C I)") were
 silently skipped because a different name already owned the 300-D093 code.
 
 This migration re-runs the pair-based seed + pair-based FK re-point against
-the current orders table. Idempotent — every statement gates on missing /
+the current orders table. Idempotent - every statement gates on missing /
 mismatched state so re-runs converge.
 
 Revision ID: 221_resync_customer_pairs
@@ -91,6 +91,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Non-reversible — we cannot tell which rows were seeded here vs created
+    # Non-reversible - we cannot tell which rows were seeded here vs created
     # via normal application flow.
     pass

@@ -165,7 +165,7 @@ def _lookup_options_for_complaint_field(service: ComplaintService, column: str) 
         "strict": True,
         "options": options,
         "instruction": (
-            "Strict dropdown. Submit ONLY one of the listed `value` strings exactly — do not invent or paraphrase. "
+            "Strict dropdown. Submit ONLY one of the listed `value` strings exactly - do not invent or paraphrase. "
             "Map the user's free text to a value via the per-option `keywords` (case-insensitive). "
             "If no keyword matches, ask the user to pick from the listed `label`s. "
             "Submitting an unlisted value will fail validation (HTTP 422 invalid_lookup_value)."
@@ -314,7 +314,7 @@ async def get_complaint_analytics(
             "Which timestamp the date window + month grouping apply to: "
             "complaint_date (when raised) or resolved_at (when resolved). "
             "For 'complaints resolved in <period>' pass date_field=resolved_at with "
-            "date_from/date_to — resolved rows have resolved_at set, so no status filter is needed."
+            "date_from/date_to - resolved rows have resolved_at set, so no status filter is needed."
         ),
     ),
     date_from: Optional[str] = Query(
@@ -688,7 +688,7 @@ def _raise_do_lookup_guidance(
         detail["field_guidance_usage"] = (
             "If the user is asking what values they can input for a specific complaint field "
             "(e.g. 'what options for complaint_type', 'what can I put for customer_type'), answer from "
-            "field_guidance directly — do NOT insist on DO lookup or block the question. "
+            "field_guidance directly - do NOT insist on DO lookup or block the question. "
             "Only proceed to DO lookup when the user actually wants to file the complaint."
         )
     if provided_filters:
@@ -698,7 +698,7 @@ def _raise_do_lookup_guidance(
         detail["candidate_count"] = len(candidate_delivery_orders)
         detail["resubmit_hint"] = (
             "Pick one (or more) delivery_order_number(s) from candidate_delivery_orders and resubmit "
-            "this tool with delivery_order_numbers set to the chosen DO(s). Do NOT call any other tool — "
+            "this tool with delivery_order_numbers set to the chosen DO(s). Do NOT call any other tool - "
             "this submit tool already searched for you."
         )
     elif provided_filters:
@@ -990,7 +990,7 @@ def _raise_needs_more_fields_guidance(
         detail["field_guidance"] = field_guidance
         detail["field_guidance_usage"] = (
             "For each missing field consult field_guidance[<field>]. If a `lookup` block is present (strict=true), "
-            "you MUST submit one of the exact `value` strings from `lookup.options` — map the user's free text to "
+            "you MUST submit one of the exact `value` strings from `lookup.options` - map the user's free text to "
             "a value via per-option `keywords`. Unlisted values are rejected. If a field has no `lookup` block, it "
             "is free-text; use `recommended_values` / `observed_examples` as soft hints only."
         )
@@ -1032,8 +1032,8 @@ async def create_complaint(
 ):
     """Create a new complaint with attachments.
     Accepts either:
-    - Standard ComplaintCreate (complaint_date, salesperson, delivery_order_number, ...), or
-    - Integration payload (date_of_complaint, sales_person, delivery_order_numbers, defect_discovered_when, ...), single object or [{ ... }].
+  - Standard ComplaintCreate (complaint_date, salesperson, delivery_order_number, ...), or
+  - Integration payload (date_of_complaint, sales_person, delivery_order_numbers, defect_discovered_when, ...), single object or [{ ... }].
     """
     try:
         is_integration_payload = False

@@ -2,10 +2,10 @@
  * Tests for the CustomerNavigation wrapper (record-navigation, IDs mode).
  *
  * The wrapper:
- *  - reconstructs the list query from the detail URL via parseDetailSearch,
- *  - feeds it to useCustomerNeighbours (thin wrapper over useRecordNeighbours),
- *  - renders RecordNavigation in IDs mode (prevId/nextId/index/total/isLoading),
- *  - preserves the active list query in the URL when stepping to a neighbour.
+ * - reconstructs the list query from the detail URL via parseDetailSearch,
+ * - feeds it to useCustomerNeighbours (thin wrapper over useRecordNeighbours),
+ * - renders RecordNavigation in IDs mode (prevId/nextId/index/total/isLoading),
+ * - preserves the active list query in the URL when stepping to a neighbour.
  *
  * useCustomerNeighbours is mocked so we assert the wrapping/threading, not the
  * network layer (that is covered by the backend pytest + the shared hook test).

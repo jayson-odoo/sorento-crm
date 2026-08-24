@@ -1,4 +1,4 @@
-# Commercial — Work the pipeline (Kanban boards)
+# Commercial - Work the pipeline (Kanban boards)
 
 The **Pipeline** area gives you Kanban (drag-between-columns) and dashboard views of the commercial hierarchy so you can see where every lead, tender, quotation and task sits by stage. Use it to triage and move work, instead of reading the flat list pages.
 
@@ -14,14 +14,14 @@ Open the [**Commercial → Pipeline**](/commercial-management/pipeline) group in
 | Master quotations board | `/commercial-management/pipeline/master-quotations` | Quotations by quotation stage. |
 | Tasks board | `/commercial-management/pipeline/tasks` | Pipeline tasks by status. |
 
-The **Leads** and **Quotations** list pages also have a built-in **List / board** toggle that shows the same Kanban without leaving the list page — see [Leads](leads-and-stages.md) and [Quotations](create-quotation.md).
+The **Leads** and **Quotations** list pages also have a built-in **List / board** toggle that shows the same Kanban without leaving the list page - see [Leads](leads-and-stages.md) and [Quotations](create-quotation.md).
 
 ## Scope filter
 
 Boards carry a scope filter so you can narrow to your own work:
 
-* **All records** — everything you can see.
-* **Assigned to me** — only items you own.
+* **All records** - everything you can see.
+* **Assigned to me** - only items you own.
 
 ## Move an item between stages
 
@@ -29,7 +29,7 @@ Each column is a workflow stage (configured under [**Commercial → Process Conf
 
 ## What's captured
 
-Moving a card updates the underlying record's stage (lead stage, quotation stage, tender pipeline stage, or task status) and timestamps. Boards are a view over the same data as the list pages — there's no separate "pipeline" record.
+Moving a card updates the underlying record's stage (lead stage, quotation stage, tender pipeline stage, or task status) and timestamps. Boards are a view over the same data as the list pages - there's no separate "pipeline" record.
 
 ## How you'll be notified
 

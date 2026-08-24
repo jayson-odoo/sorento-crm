@@ -31,9 +31,9 @@ import { fmtInt } from '../../lib/format';
  * Two things this dialog has to be loud about, because both are destructive in a way the
  * other SCM uploads are not:
  *
- *  - it REPLACES what we hold for this supplier, so the count of rows it would replace is on
+ * - it REPLACES what we hold for this supplier, so the count of rows it would replace is on
  *    screen before Confirm rather than in the result afterwards;
- *  - the supplier is chosen OUTSIDE the dialog and shown inside it, because a stock list
+ * - the supplier is chosen OUTSIDE the dialog and shown inside it, because a stock list
  *    applied to the wrong supplier deletes one snapshot and invents another.
  */
 export function StockListUploadDialog({

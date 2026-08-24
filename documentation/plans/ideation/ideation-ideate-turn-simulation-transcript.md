@@ -1,4 +1,4 @@
-# Ideation `ideate` turn — end-to-end SORENTO simulation transcript
+# Ideation `ideate` turn - end-to-end SORENTO simulation transcript
 
 Drives `POST /api/v1/external/ideation/turn` via FastAPI TestClient across a multi-turn WhatsApp conversation. The endpoint, request/response schemas, and `handle_turn` session_vars merge logic are REAL; the brain extractor and `create_idea` are stubbed (no live LLM / shared-service).
 
@@ -10,7 +10,7 @@ Drives `POST /api/v1/external/ideation/turn` via FastAPI TestClient across a mul
 ## T1 incomplete -> collecting (pointer set)
 - Contact: `rio-alice-001`
 
-**USER (WhatsApp):** I've got an idea — the system should remind me before a quotation expires
+**USER (WhatsApp):** I've got an idea - the system should remind me before a quotation expires
 
 **Brain extraction {fields, remove, confirm}:** `{"fields": {"what": "remind me before a quotation expires"}, "remove": [], "confirm": false}`
 
@@ -70,7 +70,7 @@ Drives `POST /api/v1/external/ideation/turn` via FastAPI TestClient across a mul
 
     [PASS] HTTP 200 (got 200)
 **Relayed status:** `review`
-**Relayed reply_text:** Here's what I have — What: remind before a quotation expires | Who: sales team | Module: Order Management | Impact: saves chasing expired quotes. Reply 'confirm' to submit, or tell me what to change.
+**Relayed reply_text:** Here's what I have - What: remind before a quotation expires | Who: sales team | Module: Order Management | Impact: saves chasing expired quotes. Reply 'confirm' to submit, or tell me what to change.
 **Relayed link:** (none)
 **session_vars.ideation:** `{"draft_id": "d-100", "status": "review", "missing": [], "updated_at": "2026-07-19T00:56:59.746744+00:00"}`
 **Full session_vars keys:** `["ideation", "referenced_result_set"]`
@@ -194,13 +194,13 @@ Drives `POST /api/v1/external/ideation/turn` via FastAPI TestClient across a mul
 ## T8 (Bob) one-shot complete FIRST turn -> still REVIEW (not complete)
 - Contact: `rio-bob-002`
 
-**USER (WhatsApp):** Idea: in Inventory, warehouse ops should get a low-stock alert — it prevents stockouts.
+**USER (WhatsApp):** Idea: in Inventory, warehouse ops should get a low-stock alert - it prevents stockouts.
 
 **Brain extraction {fields, remove, confirm}:** `{"fields": {"what": "low-stock alert", "who": "warehouse ops", "module": "Inventory", "impact": "prevents stockouts"}, "remove": [], "confirm": false}`
 
     [PASS] HTTP 200 (got 200)
 **Relayed status:** `review`
-**Relayed reply_text:** Everything's here — What/Who/Module/Impact all set. Reply 'confirm' to submit.
+**Relayed reply_text:** Everything's here - What/Who/Module/Impact all set. Reply 'confirm' to submit.
 **Relayed link:** (none)
 **session_vars.ideation:** `{"draft_id": "d-200", "status": "review", "missing": [], "updated_at": "2026-07-19T00:56:59.754752+00:00"}`
 **Full session_vars keys:** `["ideation", "referenced_result_set"]`

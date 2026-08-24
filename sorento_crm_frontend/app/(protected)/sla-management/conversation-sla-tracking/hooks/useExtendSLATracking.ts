@@ -10,11 +10,11 @@ import {
  *
  * On success invalidates every surface that shows the row's due date so the new
  * deadline appears immediately without a manual refresh (UAC-19):
- *  - the pending-tasks widget (`my-pending-sla`, `team-pending-sla`)
- *  - the SLA tracking list / detail (`conversation-sla-tracking*`)
- *  - the in-form active-tracker query on PR / stock-inquiry / complaint details
+ * - the pending-tasks widget (`my-pending-sla`, `team-pending-sla`)
+ * - the SLA tracking list / detail (`conversation-sla-tracking*`)
+ * - the in-form active-tracker query on PR / stock-inquiry / complaint details
  *    (`form-sla-trackers`)
- *  - the tracker event log (`conversation-sla-event-logs`) — the extend writes one.
+ * - the tracker event log (`conversation-sla-event-logs`) - the extend writes one.
  */
 export function useExtendSLATracking() {
   const queryClient = useQueryClient();

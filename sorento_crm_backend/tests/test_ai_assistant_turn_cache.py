@@ -1,13 +1,13 @@
-"""Item 3b — turn-scoped, strictly-keyed tool/guide result cache.
+"""Item 3b - turn-scoped, strictly-keyed tool/guide result cache.
 
 Two layers of test:
 
-  * **Key / behavior unit tests** on ``_TurnToolCache`` directly — dedup within a
+  * **Key / behavior unit tests** on ``_TurnToolCache`` directly - dedup within a
     turn (UAC3b.1), cross-user / conversation / turn isolation (UAC3b.2 SECURITY),
     and turn-scoping (UAC3b.3). These are pure, deterministic, network-free.
-  * **Agent-loop wiring test** — proves ``_run_agent_loop`` routes its live MCP
+  * **Agent-loop wiring test** - proves ``_run_agent_loop`` routes its live MCP
     calls through the cache, so two identical tool calls in one turn issue only
-    ONE live invocation (UAC3b.1 / UAC3b.4) — asserted via a call counter on a
+    ONE live invocation (UAC3b.1 / UAC3b.4) - asserted via a call counter on a
     fake MCP client.
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ from tests._pg_fixture import blank_session
 
 
 # ===========================================================================
-# _TurnToolCache unit tests — key discipline + dedup + isolation
+# _TurnToolCache unit tests - key discipline + dedup + isolation
 # ===========================================================================
 
 
@@ -44,7 +44,7 @@ def _cache(user="u-A", conv="c-1", turn="t-1") -> _TurnToolCache:
     return _TurnToolCache(user_id=user, conversation_id=conv, turn_id=turn)
 
 
-# --- UAC3b.1 — same tool + identical args twice in a turn → ONE live call ----
+# --- UAC3b.1 - same tool + identical args twice in a turn → ONE live call ----
 def test_identical_call_within_turn_is_cached():
     cache = _cache()
     loader = _Loader("STOCK=42")
@@ -85,7 +85,7 @@ def test_different_tool_same_args_are_separate_calls():
     assert loader.calls == 2
 
 
-# --- UAC3b.2 (SECURITY) — cross-user / conversation / turn isolation ---------
+# --- UAC3b.2 (SECURITY) - cross-user / conversation / turn isolation ---------
 def test_different_user_never_shares_cache_entry():
     """User B must NEVER receive user A's cached result. Distinct user_id =>
     distinct key => structural miss."""
@@ -126,7 +126,7 @@ def test_key_is_stable_for_same_identity_and_args():
     assert c.key("crm_stock", args) == c.key("crm_stock", dict(reversed(list(args.items()))))
 
 
-# --- UAC3b.3 — turn-scoped: a fresh cache starts empty -----------------------
+# --- UAC3b.3 - turn-scoped: a fresh cache starts empty -----------------------
 def test_new_turn_cache_starts_empty():
     cache = _cache(turn="turn-A")
     loader_a = _Loader("first-turn")
@@ -143,7 +143,7 @@ def test_new_turn_cache_starts_empty():
 
 
 # ===========================================================================
-# Agent-loop wiring — live MCP calls are deduplicated through the turn cache
+# Agent-loop wiring - live MCP calls are deduplicated through the turn cache
 # ===========================================================================
 
 

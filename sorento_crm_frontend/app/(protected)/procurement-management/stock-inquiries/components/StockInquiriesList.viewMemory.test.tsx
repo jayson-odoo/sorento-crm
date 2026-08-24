@@ -4,12 +4,12 @@
  * The whole listing renders with the REAL `useListingViewPreferences`; only the
  * preferences transport and the data hook are stubbed. This pins the pieces the unit
  * tests cannot see together:
- *   - the data query is held until the stored view resolves and then fires ONCE,
+ * - the data query is held until the stored view resolves and then fires ONCE,
  *     already sorted and filtered (AC-B3);
- *   - a restored filter is stated as a chip above the grid and its Clear drops the
+ * - a restored filter is stated as a chip above the grid and its Clear drops the
  *     filter, refetches unfiltered and writes an explicit null (AC-C1 / AC-C2);
- *   - a blob from an older `filtersVersion` is discarded while the sort is kept (AC-B4);
- *   - page number and search text are never in the write (AC-D1 / AC-D2).
+ * - a blob from an older `filtersVersion` is discarded while the sort is kept (AC-B4);
+ * - page number and search text are never in the write (AC-D1 / AC-D2).
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';

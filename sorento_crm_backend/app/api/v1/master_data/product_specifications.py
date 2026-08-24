@@ -179,8 +179,8 @@ async def get_product_specification(
     """Everything derived for one product, plus WHY when nothing was.
 
     Opened from the product record itself, so it must answer the question actually
-    being asked there — "is this product findable by description, and if not what is
-    stopping it" — rather than only rendering whatever rows happen to exist. A product
+    being asked there - "is this product findable by description, and if not what is
+    stopping it" - rather than only rendering whatever rows happen to exist. A product
     outside the enabled classes returns an empty spec and a reason, never a blank.
     """
     try:
@@ -210,7 +210,7 @@ async def get_product_specification(
 
         diagnosis = explain_code(category.category_code if category else None)
         # "Eligible" only describes the category. A product whose class IS enabled but
-        # which still has no row means the derivation job has not covered it yet — a
+        # which still has no row means the derivation job has not covered it yet - a
         # different problem with a different fix, so it gets its own reason.
         if spec is None and diagnosis["reason"] == "eligible":
             diagnosis = {**diagnosis, "reason": "not_yet_derived"}
@@ -623,7 +623,7 @@ def preview_spec_search(
             "candidates": result["candidates"],
             "floor_missed": result["floor_missed"],
             # What was asked for that nothing offered can satisfy, so the screen can say
-            # "no Cabana one — here are Sorento" rather than substituting in silence.
+            # "no Cabana one - here are Sorento" rather than substituting in silence.
             "unmet": result["unmet"],
             "top_score": result["top_score"],
             "floor": payload.floor if payload.floor is not None else RELEVANCE_FLOOR,

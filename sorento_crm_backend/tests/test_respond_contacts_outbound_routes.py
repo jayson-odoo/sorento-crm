@@ -5,13 +5,13 @@ not delivered: nobody can see WHO is silenced without shelling into a box. These
 routes back System Management -> Respond.io Contacts.
 
 What is pinned here:
-  - the list carries whole-table counts, so the page can say "X can be messaged,
+ - the list carries whole-table counts, so the page can say "X can be messaged,
     Y are silenced" without a second request;
-  - a read needs `system.respond_workspaces.view`; every WRITE needs `.edit`, so
+ - a read needs `system.respond_workspaces.view`; every WRITE needs `.edit`, so
     a read-only admin cannot silence a customer;
-  - the kill switch (`all: true`) and the selection path are the SAME endpoint,
+ - the kill switch (`all: true`) and the selection path are the SAME endpoint,
     and asking for both at once is a 422, never a guess;
-  - every write delegates to `respond_outbound_service`, so the route can never
+ - every write delegates to `respond_outbound_service`, so the route can never
     drift from what the CLI does.
 
 Run: pytest tests/test_respond_contacts_outbound_routes.py -q

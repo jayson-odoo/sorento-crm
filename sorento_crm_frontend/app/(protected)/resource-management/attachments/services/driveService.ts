@@ -3,14 +3,14 @@ import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { AttachmentResponse } from '../types/attachment.types';
 
 /**
- * driveService — the Unified Drive listing for Resource Management → Files.
+ * driveService - the Unified Drive listing for Resource Management → Files.
  *
- * Backend contract (LIVE — see docs/plans/PLAN-unified-drive-files.md, D11):
+ * Backend contract (LIVE - see docs/plans/PLAN-unified-drive-files.md, D11):
  *   GET /api/v1/resource-management/attachments/drive
  *     query:
  *       directory_id   omit = drive root; else the folder to list
  *       recursive      bool; auto-forced true by the backend when `query` is non-empty
- *       query          search term — matches file names AND folder names
+ *       query          search term - matches file names AND folder names
  *       sort           name (default, interleaves folders+files)
  *                      | type | size | modified | uploaded_by | attachment_type | created_at
  *                        (non-name sorts push folders to the end)

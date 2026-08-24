@@ -9,7 +9,7 @@ const MAX_INLINE_BADGES = 2;
 /**
  * Single-line access-levels cell. Renders up to {@link MAX_INLINE_BADGES} badges
  * on one row, then a compact "+N" chip that opens a Popover listing ALL levels.
- * Keeps the row height fixed — badges never wrap (see review item A). Folders
+ * Keeps the row height fixed - badges never wrap (see review item A). Folders
  * have no access levels and render nothing (the column passes `levels: []`).
  */
 export default function AccessLevelsCell({

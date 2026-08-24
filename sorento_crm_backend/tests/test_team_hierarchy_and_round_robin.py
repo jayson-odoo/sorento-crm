@@ -115,7 +115,7 @@ def test_list_teams_includes_member_preview(db):
 
 def test_team_responses_validate_no_relationship_collision(db):
     """Regression: TeamResponse.members must not coerce the ORM Team.members
-    relationship (List[TeamMember], no `name`) — that 500'd create/update/get."""
+    relationship (List[TeamMember], no `name`) - that 500'd create/update/get."""
     from app.schemas.user import TeamResponse
 
     svc = TeamService(db)

@@ -2,9 +2,9 @@
 
 Registers the configurable ``scheduled_tasks`` row that the scheduler heartbeat
 drives on the worker/scheduler process (gated behind ``ENABLE_SCHEDULER``). The
-handler ``_handler_scm_analytics`` runs ``analytics_service.run_analytics`` — a
+handler ``_handler_scm_analytics`` runs ``analytics_service.run_analytics`` - a
 full-catalog recompute of demand rate, ABC/XYZ classification and supplier
-performance — and writes one ``scm.scm_analytics_run`` log row per run.
+performance - and writes one ``scm.scm_analytics_run`` log row per run.
 
 Cadence is configurable: this seeds the nightly default (``days`` / 1). The
 interval, enablement and an optional ``metadata`` ``{scope, config}`` can be

@@ -22,7 +22,7 @@ describe('RejectionReasonBanner', () => {
   });
 });
 
-describe('RejectionReasonBanner — PersonLink integration (REJ-5 / REJ-6)', () => {
+describe('RejectionReasonBanner - PersonLink integration (REJ-5 / REJ-6)', () => {
   it('rejectedByName + phone → "Rejected by" with a wa.me anchor around the name + the WHEN', () => {
     const { container } = render(
       <RejectionReasonBanner
@@ -55,7 +55,7 @@ describe('RejectionReasonBanner — PersonLink integration (REJ-5 / REJ-6)', () 
     expect(container).toHaveTextContent(formatDateTimeInMalaysia(RAW_AT));
   });
 
-  it('no rejectedByName → falls back to plain "Rejected — {reason}" (no "Rejected by")', () => {
+  it('no rejectedByName → falls back to plain "Rejected - {reason}" (no "Rejected by")', () => {
     const { container } = render(
       <RejectionReasonBanner reason="Missing supporting documents" />,
     );

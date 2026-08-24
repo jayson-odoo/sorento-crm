@@ -21,8 +21,8 @@ describe('campaign status casing (Bug A5)', () => {
   });
 
   it('returns a dash for empty/nullish', () => {
-    expect(campaignStatusLabel(null)).toBe('—');
-    expect(campaignStatusLabel('')).toBe('—');
+    expect(campaignStatusLabel(null)).toBe('-');
+    expect(campaignStatusLabel('')).toBe('-');
   });
 
   it('passes through an unknown value unchanged', () => {

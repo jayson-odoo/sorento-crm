@@ -1,7 +1,7 @@
 """Every WhatsApp notification send writes a respond_io outbox log.
 
 Local testing runs with intentionally-wrong Respond creds, so a 401'd send MUST
-still produce an integration_log row (not just flip the delivery to failed) —
+still produce an integration_log row (not just flip the delivery to failed) - 
 same as the complaint / OTP / SLA-escalation paths via `_send_and_log`.
 """
 from types import SimpleNamespace

@@ -2,7 +2,7 @@ import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 
 /**
- * Complaint ↔ Delivery Order auto-fulfilment — FE service contract.
+ * Complaint ↔ Delivery Order auto-fulfilment - FE service contract.
  * See docs/plans/PLAN-complaint-do-auto-fulfilment.md.
  *
  * The "Fulfilment Delivery Orders" section is served by
@@ -15,7 +15,7 @@ import { extractApiError } from '@/lib/api-client';
  *   200: FulfilmentOrder[]  (ordered newest-linked first; [] when none linked)
  *
  *   FulfilmentOrder = {
- *     order_id: string;              // UUID — used ONLY for the row href, never displayed
+ *     order_id: string;              // UUID - used ONLY for the row href, never displayed
  *     order_number: string;          // human DO number, e.g. "REPPS2605-0012" (displayed)
  *     status: string;                // DO status CODE: new|pending|approved|processing|
  *                                    //   shipped|delivered|cancelled|completed

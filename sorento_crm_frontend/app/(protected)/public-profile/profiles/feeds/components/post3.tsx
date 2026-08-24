@@ -44,7 +44,7 @@ const Post3 = () => {
         You also need to be able to accept that not every post is going to get
         your motor running. Some posts will feel like a chore, but if you have
         editorial control over what you write about, then choose topics you’d
-        want to read – even if they relate to niche industries.
+        want to read - even if they relate to niche industries.
       </p>
       <div className="p-7.5 pb-5">
         <iframe

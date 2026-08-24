@@ -1,6 +1,6 @@
 """System-level MCP tool catalog read endpoints.
 
-Pure catalog listing — tools carry no agent ownership (see
+Pure catalog listing - tools carry no agent ownership (see
 ``app.services.mcp_access_service`` for why that model was removed).
 """
 from __future__ import annotations

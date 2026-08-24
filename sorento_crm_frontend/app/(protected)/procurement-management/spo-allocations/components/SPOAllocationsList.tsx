@@ -239,7 +239,7 @@ export default function SPOAllocationsList() {
           <DataGridColumnHeader title="SPO Number" column={column} />
         ),
         cell: ({ row }) => (
-          <span className="font-medium text-sm">{row.original.spo_number ?? '—'}</span>
+          <span className="font-medium text-sm">{row.original.spo_number ?? '-'}</span>
         ),
         size: 140,
         meta: { headerTitle: 'SPO Number' },
@@ -249,11 +249,11 @@ export default function SPOAllocationsList() {
         header: 'Product',
         cell: ({ row }) => {
           const p = row.original.product;
-          if (!p) return '—';
+          if (!p) return '-';
           return (
             <span className="text-sm">
               {p.product_code}
-              {p.product_name && p.product_name !== p.product_code ? ` — ${p.product_name}` : ''}
+              {p.product_name && p.product_name !== p.product_code ? ` - ${p.product_name}` : ''}
             </span>
           );
         },
@@ -264,14 +264,14 @@ export default function SPOAllocationsList() {
         id: 'location',
         header: 'Location',
         cell: ({ row }) =>
-          row.original.warehouse?.warehouse_code ?? row.original.warehouse?.warehouse_name ?? '—',
+          row.original.warehouse?.warehouse_code ?? row.original.warehouse?.warehouse_name ?? '-',
         size: 100,
         meta: { headerTitle: 'Location' },
       },
       {
         id: 'shipped',
         header: 'Shipped',
-        cell: () => '—',
+        cell: () => '-',
         size: 70,
         meta: { headerTitle: 'Shipped' },
       },
@@ -298,7 +298,7 @@ export default function SPOAllocationsList() {
         header: 'Packing List',
         cell: ({ row }) => {
           const ship = row.original.inbound_shipment;
-          if (!ship) return '—';
+          if (!ship) return '-';
           return (
             <Link
               href={`/procurement-management/packing-lists/${ship.id}`}
@@ -326,7 +326,7 @@ export default function SPOAllocationsList() {
             {row.original.receipt_status
               ?.split('_')
               .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-              .join(' ') ?? '—'}
+              .join(' ') ?? '-'}
           </Badge>
         ),
         size: 110,
@@ -645,7 +645,7 @@ export default function SPOAllocationsList() {
                                       const productLabel = first.product?.product_code ?? '-';
                                       const productName = first.product?.product_name;
                                       const fullLabel = productName && productName !== productLabel
-                                        ? `${productLabel} — ${productName}`
+                                        ? `${productLabel} - ${productName}`
                                         : productLabel;
                                       return allocations.map((allocation, idx) => (
                                         <tr
@@ -700,7 +700,7 @@ export default function SPOAllocationsList() {
                                             </span>
                                           </Link>
                                         ) : (
-                                          '—'
+                                          '-'
                                         )}
                                       </td>
                                       <td className="p-1.5">

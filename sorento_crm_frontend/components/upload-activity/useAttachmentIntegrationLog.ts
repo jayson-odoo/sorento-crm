@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * useAttachmentIntegrationLog — read the latest integration_log row for an
+ * useAttachmentIntegrationLog - read the latest integration_log row for an
  * attachment and shape it into a UploadActivityFile for IntegrationPanel /
  * IntegrationStatusChip reuse.
  *

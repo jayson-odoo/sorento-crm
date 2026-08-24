@@ -1,8 +1,8 @@
 /**
- * AI Assistant Prompt Registry (M1) end-to-end — FE→BE→DB round-trip.
+ * AI Assistant Prompt Registry (M1) end-to-end - FE→BE→DB round-trip.
  *
  * UAC F1-F4/F8: an admin edits a prompt, saves a new immutable version, and
- * publishes it (moves the `production` label) — all without a redeploy. Asserts
+ * publishes it (moves the `production` label) - all without a redeploy. Asserts
  * the FE hit the real backend routes:
  *   GET  /api/v1/system/ai-assistant/prompts
  *   GET  /api/v1/system/ai-assistant/prompts/{name}/versions
@@ -50,7 +50,7 @@ test.describe('AI prompt registry', () => {
     await page.getByTestId('prompt-link-reformulator').click();
     await expect(page.getByRole('heading', { name: 'reformulator' })).toBeVisible({ timeout: 20_000 });
 
-    // Edit the template — keep the required {{current_date}} var so save is not
+    // Edit the template - keep the required {{current_date}} var so save is not
     // hard-blocked. Append a detectable marker line.
     const editor = page.getByTestId('prompt-editor');
     await expect(editor).toBeVisible();

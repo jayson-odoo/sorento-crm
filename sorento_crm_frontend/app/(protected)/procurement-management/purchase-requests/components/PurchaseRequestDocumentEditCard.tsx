@@ -184,7 +184,7 @@ export function PurchaseRequestDocumentEditCard({
             <DocField label="Submitted date">
               {/* Auto-stamped on submit; read-only. */}
               <p className="font-medium py-2">
-                {request.submitted_at ? formatDate(new Date(request.submitted_at)) : '—'}
+                {request.submitted_at ? formatDate(new Date(request.submitted_at)) : '-'}
               </p>
             </DocField>
 

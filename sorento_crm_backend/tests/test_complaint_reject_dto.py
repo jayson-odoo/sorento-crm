@@ -1,4 +1,4 @@
-"""Form-banner person links — Complaint rejection DTO (UAC REJ-2 / PR-4).
+"""Form-banner person links - Complaint rejection DTO (UAC REJ-2 / PR-4).
 
 Complaint.rejected_by holds a respond_user_id (NOT a users.id). The detail DTO
 exposes rejected_by_name (resolved via respond_user_id) + rejected_by_wa_phone

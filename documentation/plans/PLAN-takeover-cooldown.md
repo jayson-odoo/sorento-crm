@@ -1,4 +1,4 @@
-# PLAN — Takeover cooldown (pending-intent + veto window)
+# PLAN - Takeover cooldown (pending-intent + veto window)
 
 **Status:** Grilled + designed 2026-06-23. Not started. Three-phase: FE prototype → BE wiring+tests → review.
 
@@ -6,7 +6,7 @@
 
 Takeover today is **instant + irreversible**: a peer clicks Takeover on a Team Task and it's
 reassigned the moment they confirm. Problem: the original assignee might be *actively working it*
-right now — the grab yanks it out from under them with no recourse.
+right now - the grab yanks it out from under them with no recourse.
 
 This feature inserts a **configurable cooldown** (default 60s, global) between the click and the
 actual reassignment, turning takeover into a **pending intent the current owner can veto**:
@@ -14,7 +14,7 @@ actual reassignment, turning takeover into a **pending intent the current owner 
 1. Peer (initiator) clicks Takeover → confirm. A **pending takeover request** is created
    (`commit_at = now + cooldown`). **Nothing about the assignment changes yet** (model A).
 2. Original assignee is notified (in-app always; email/WhatsApp gated by their **assignment**
-   channel toggles) — "X wants to take over CMP-0010, reject by <time>", with a deep link.
+   channel toggles) - "X wants to take over CMP-0010, reject by <time>", with a deep link.
 3. During the window BOTH parties can stop it: initiator **Cancel**, owner **Reject**. The owner
    doing any terminal action (resolve / reassign-away / escalate-out) is an **implicit veto**.
 4. If unchallenged at `commit_at`, the **scheduler sweep** commits the takeover (today's exact
@@ -23,24 +23,24 @@ actual reassignment, turning takeover into a **pending intent the current owner 
 Value: protects the person actually doing the work; makes contested ownership explicit and
 auditable; keeps the customer's SLA clock untouched (cooldown never pauses escalation).
 
-## Decisions (grilled — all confirmed)
+## Decisions (grilled - all confirmed)
 
 | # | Decision |
 |---|----------|
-| Q1 | **Model A — pending intent.** Assignee stays the original throughout cooldown. Initiator's click is an intent, not a transfer. Zero assignment change until commit. SLA clocks/escalation keep pointing at the real owner. |
+| Q1 | **Model A - pending intent.** Assignee stays the original throughout cooldown. Initiator's click is an intent, not a transfer. Zero assignment change until commit. SLA clocks/escalation keep pointing at the real owner. |
 | Q2 | **Owner terminal action = implicit veto.** Resolve, reassign-away, or escalate-out by the owner during cooldown voids the pending takeover + notifies initiator. |
 | Q3 | **One pending takeover per task, FCFS lock.** A second peer's Takeover button is disabled ("pending · <initiator> · m:ss") until the first resolves. |
-| Q4 | **Soft lock on human mutations** (third-party Reassign blocked while pending). **Auto-escalation always wins** — SLA breach mid-cooldown escalates and voids the pending takeover; never freeze the SLA machinery. |
+| Q4 | **Soft lock on human mutations** (third-party Reassign blocked while pending). **Auto-escalation always wins** - SLA breach mid-cooldown escalates and voids the pending takeover; never freeze the SLA machinery. |
 | Q5 | **Scheduler sweep commits** (reuses heartbeat + `scheduled_tasks` registry). DB `commit_at` is truth; UI bar is cosmetic. Commit lands within one tick (~10s) of deadline. **Seeded via data migration** so it exists on live deploy (idempotent, like `product_discontinued_check`). |
 | Q6 | **Global setting** `takeover_cooldown_seconds` on `system_settings`, default **60**, **`0` = instant** (today's behavior; clean kill-switch). Stored in seconds. Edited on General settings tab. Per-team deferred. |
 | Q7 | **New table `sla_takeover_requests`** (full intent lifecycle + audit). Partial-unique on pending mirrors migration-180 singleton pattern. Applies to **both** conversation and form SLA rows. |
 | Q8 | **Gate on assignment toggles** (`notify_{email,whatsapp}_on_assignment`); in-app always. Matrix below. |
 | Q9 | Reject deep link → **`/?takeover=<tracking_id>`** (query param survives `callbackUrl` deep-link-after-login; hash would not). Lands on the home **My Pending** widget. |
 | Q10 | **Pin-fetch banner**, not compute-and-jump. Param present → fetch that one tracking row by id → render pinned flashing banner at top of widget with Reject, above the paginated list. Bulletproof vs pagination/sort/search. |
-| Q11 | Bar driven by server **`commit_at`**, animated locally, re-synced on refetch. At zero → "**Finalizing…**" + poll until sweep commits (≤10s gap accepted). Light `refetchInterval` (~5–10s) only while a pending takeover is on screen. |
+| Q11 | Bar driven by server **`commit_at`**, animated locally, re-synced on refetch. At zero → "**Finalizing…**" + poll until sweep commits (≤10s gap accepted). Light `refetchInterval` (~5 - 10s) only while a pending takeover is on screen. |
 | Q12 | `POST /{tracking_id}/takeover` **becomes initiate** (creates pending, returns `{request_id, commit_at}`; **cooldown 0 → commit inline**). New: `POST /takeover-requests/{request_id}/cancel`, `/reject`. **No public commit endpoint** (sweep + inline-0 only). |
 | Q13 | **Cancel** = initiator + admin. **Reject** = contested assignee + admin. **Snapshot `contested_assignee_id`** on the request. **Unassigned task → instant commit** (no owner to protect, same path as cooldown 0). |
-| Q14 | **Defense in depth (C):** owner-actions actively void (status→`voided`, notify initiator now) AND the sweep **re-validates at commit** — (1) not resolved, (2) `assigned_to_id` still == `contested_assignee_id`, (3) initiator still eligible — and **re-derives initiator tier/team/agent at commit time**. Any fail → `voided`, notify, don't flip. |
+| Q14 | **Defense in depth (C):** owner-actions actively void (status→`voided`, notify initiator now) AND the sweep **re-validates at commit** - (1) not resolved, (2) `assigned_to_id` still == `contested_assignee_id`, (3) initiator still eligible - and **re-derives initiator tier/team/agent at commit time**. Any fail → `voided`, notify, don't flip. |
 | Q15 | Original's own My Pending row shows inline "**Being taken over · m:ss · Reject**" (organic discovery) in addition to the guided banner. **All terminal request rows retained** for audit; partial-unique only blocks a second *pending*. |
 
 ## Notification matrix (Q8)
@@ -84,25 +84,25 @@ resolved_at           timestamp nullable
 
 1. `sla_takeover_requests` table + partial-unique(pending) + `(status, commit_at)` index.
 2. `system_settings.takeover_cooldown_seconds` (default 60, server_default '60').
-3. **Data migration**: seed `scheduled_tasks` row `takeover_request_commit` (interval ~10–15s),
+3. **Data migration**: seed `scheduled_tasks` row `takeover_request_commit` (interval ~10 - 15s),
    idempotent INSERT-if-absent (mirror `c1d2e3f4a5b6_seed_product_discontinued_task.py`).
 
 ## Backend
 
 - **`SlaTakeoverService`** (or methods on `SLATrackingService`):
-  - `initiate(tracking_id, initiator_id, team_id)` → if cooldown==0 OR task unassigned →
+ - `initiate(tracking_id, initiator_id, team_id)` → if cooldown==0 OR task unassigned →
     commit inline (existing `takeover()` body), return committed tracking. Else create pending
     request, fire start-notification, return request. Validates: can-act, not resolved, no existing
-    pending (FCFS 409/idempotent — decide: **409** with the existing request so UI shows the bar).
-  - `cancel(request_id, actor_id)` — initiator/admin; status→cancelled; notify original (in-app).
-  - `reject(request_id, actor_id)` — contested-assignee/admin; status→rejected; notify initiator.
-  - `commit_due()` — sweep handler: for each pending past `commit_at`, re-validate (Q14), then run
+    pending (FCFS 409/idempotent - decide: **409** with the existing request so UI shows the bar).
+ - `cancel(request_id, actor_id)` - initiator/admin; status→cancelled; notify original (in-app).
+ - `reject(request_id, actor_id)` - contested-assignee/admin; status→rejected; notify initiator.
+ - `commit_due()` - sweep handler: for each pending past `commit_at`, re-validate (Q14), then run
     the **existing takeover reassignment logic** (re-derive tier/team/agent at commit, flip
     assignee, advance RR cursor, event log, Respond push) and notify both; else `voided` + notify.
-  - `void_for_tracking(tracking_id, reason)` — called by resolve/reassign/escalate paths to
+ - `void_for_tracking(tracking_id, reason)` - called by resolve/reassign/escalate paths to
     actively void any pending request (best-effort, post-commit side-effect rules).
 - **Hook void into** `reassign()`, the resolve path, and the escalation path
-  (`_escalate_tracker` / scheduler escalation) — active voiding (Q14).
+  (`_escalate_tracker` / scheduler escalation) - active voiding (Q14).
 - **Scheduler:** `register_handler("takeover_request_commit", _handler_takeover_commit)` in
   `task_scheduler.py`; handler calls `commit_due()`.
 - **Notifications:** reuse `create_with_channel_preferences` with `email_pref_attr=
@@ -120,15 +120,15 @@ resolved_at           timestamp nullable
 - **Settings (General tab):** number input "Takeover cooldown (seconds)", 0 = instant. Wire through
   `system_settings` general settings form + its API proxy.
 - **My Team widget / team-pending page (initiator + observers):**
-  - Pending row: depleting bar (server `commit_at`) + **Cancel** (initiator only); Reassign hidden.
-  - Observer row (other members): "Takeover pending · <initiator> · m:ss", buttons disabled.
+ - Pending row: depleting bar (server `commit_at`) + **Cancel** (initiator only); Reassign hidden.
+ - Observer row (other members): "Takeover pending · <initiator> · m:ss", buttons disabled.
 - **My Pending widget (original):**
-  - `?takeover=<tracking_id>` → pin-fetch that row → flashing banner at top with bar + **Reject**;
+ - `?takeover=<tracking_id>` → pin-fetch that row → flashing banner at top with bar + **Reject**;
     clear param after action/dismiss; banner shows terminal state if already resolved.
-  - Inline "Being taken over · m:ss · Reject" on the contested row even without the link (organic).
+ - Inline "Being taken over · m:ss · Reject" on the contested row even without the link (organic).
 - **Countdown component:** shared, `commit_at`-driven, local animation, "Finalizing…" at zero.
-- **Polling:** react-query `refetchInterval` ~5–10s while any pending takeover visible; off otherwise.
-- Hooks: `useInitiateTakeover` (already `useTakeover` — change return to request), `useCancelTakeover`,
+- **Polling:** react-query `refetchInterval` ~5 - 10s while any pending takeover visible; off otherwise.
+- Hooks: `useInitiateTakeover` (already `useTakeover` - change return to request), `useCancelTakeover`,
   `useRejectTakeover`, `useTakeoverRow(trackingId)` (pin-fetch).
 
 ## Tests
@@ -157,12 +157,12 @@ My Pending. Assert `/takeover`, `/cancel`, `/reject` network calls. cooldown=0 p
 
 ## Open implementation notes
 
-- Reuse the **existing `takeover()` reassignment body** verbatim for the commit step — don't fork the
+- Reuse the **existing `takeover()` reassignment body** verbatim for the commit step - don't fork the
   tier/RR/event-log/Respond logic; extract it into a `_commit_takeover(tracking, initiator, team_id)`
   helper called by both the inline-0 path and the sweep.
 - FCFS conflict: return **409 with the existing pending request payload** so the UI just renders the
   running bar instead of erroring.
-- `commit_at` is frozen at create — changing the global setting mid-flight does NOT move in-flight
+- `commit_at` is frozen at create - changing the global setting mid-flight does NOT move in-flight
   deadlines (correct).
 - Top-tier task goes overdue mid-cooldown (no escalation possible) → no void; overdue doesn't change
   owner, takeover commits normally at T.

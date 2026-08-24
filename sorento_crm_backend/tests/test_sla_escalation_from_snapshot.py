@@ -1,4 +1,4 @@
-"""Form-banner person links — escalated-FROM snapshot on the event log (UAC ESC-1/ESC-2).
+"""Form-banner person links - escalated-FROM snapshot on the event log (UAC ESC-1/ESC-2).
 
 Both escalation write paths overwrite ``assigned_to_id`` before logging, so the
 escalation event log must snapshot the PRIOR owner into the new

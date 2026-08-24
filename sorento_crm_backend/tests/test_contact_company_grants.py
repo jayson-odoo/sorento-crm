@@ -2,10 +2,10 @@
 
 Covers the respond-contact half of the company grant management that mirrors the
 user-side ``set_user_companies`` / ``list_user_companies``:
-  - set_contact_companies([Sorento, Mocha]) creates two respond_contact_companies rows.
-  - replacing with [Mocha] leaves exactly one (delete-all-then-reinsert).
-  - list_contact_companies returns the granted companies ordered by name.
-  - unknown company ids are skipped; duplicates are collapsed.
+ - set_contact_companies([Sorento, Mocha]) creates two respond_contact_companies rows.
+ - replacing with [Mocha] leaves exactly one (delete-all-then-reinsert).
+ - list_contact_companies returns the granted companies ordered by name.
+ - unknown company ids are skipped; duplicates are collapsed.
 
 Runs against an in-memory sqlite bind (CLAUDE.md "sqlite pytest fixtures" gotcha):
 pg ``UUID(as_uuid=False)`` works as-is; JSONB columns are swapped to JSON.

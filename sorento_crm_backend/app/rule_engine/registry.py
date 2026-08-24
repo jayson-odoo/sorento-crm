@@ -1,4 +1,4 @@
-"""Fact registry (sprint-2/02 D7) — whitelist + schema inference, NEVER
+"""Fact registry (sprint-2/02 D7) - whitelist + schema inference, NEVER
 auto-expose a model's schema (would leak credentials).
 
 A fact source (``promotion``) is a named bundle of ``FactDef`` rows.
@@ -28,7 +28,7 @@ from app.lazy_registry import lazy_once as _lazy_once  # noqa: E402  (single sha
 @dataclass(frozen=True)
 class FactDef:
     """One whitelisted fact. ``resolver(obj, db)`` produces the runtime value
-    from the source object (None-safe — missing/None fails closed, D5)."""
+    from the source object (None-safe - missing/None fails closed, D5)."""
 
     key: str
     label: str
@@ -48,7 +48,7 @@ _REGISTRY: Dict[str, FactSource] = {}
 
 
 def register_fact_source(name: str, label: str, facts: Sequence[FactDef]) -> None:
-    """Idempotent — modules re-register on every bootstrap."""
+    """Idempotent - modules re-register on every bootstrap."""
     _REGISTRY[name] = FactSource(name=name, label=label, facts=tuple(facts))
 
 
@@ -77,9 +77,9 @@ def resolve_facts(
 ) -> Dict[str, Any]:
     """Flat fact dict for the evaluator: ``{source_name: source_object}`` →
     ``{fact_key: value}``. A None object or a raising resolver yields None
-    (fail-closed downstream, D5) — stale rules never explode at runtime.
+    (fail-closed downstream, D5) - stale rules never explode at runtime.
 
-    ``only_keys`` (code-review perf fix): resolve just these fact keys —
+    ``only_keys`` (code-review perf fix): resolve just these fact keys - 
     computed facts (e.g. a COUNT query) aren't paid for rules that never read
     them. None = resolve everything."""
     ensure_core()
@@ -96,7 +96,7 @@ def resolve_facts(
                 continue
             try:
                 values[fact.key] = fact.resolver(obj, db)
-            except Exception:  # noqa: BLE001 — D5: no runtime errors from stale rules
+            except Exception:  # noqa: BLE001 - D5: no runtime errors from stale rules
                 values[fact.key] = None
     return values
 
@@ -114,7 +114,7 @@ def _title(snake: str) -> str:
 
 
 def _column_fact_type(column) -> FactType:
-    # TypeDecorators (UTCDateTime) hide the real type behind `.impl` — unwrap
+    # TypeDecorators (UTCDateTime) hide the real type behind `.impl` - unwrap
     # before matching.
     col_type = getattr(column.type, "impl", column.type)
     if isinstance(col_type, Boolean):
@@ -158,7 +158,7 @@ def infer_facts(
         )
         # Relative-to-now day-count facts (sprint-4/03 Slice 6): every date field
         # also exposes "Days since"/"Days until <field>" as NUMBER facts computed
-        # against the clock — so time windows are authored with the existing
+        # against the clock - so time windows are authored with the existing
         # >/≥/</≤ operators.
         if col_type == "date":
             label = patch.get("label", _title(attr))
@@ -371,5 +371,5 @@ def _register_certificate() -> None:
     )
 
 
-# Call before any registry read — core registers exactly once.
+# Call before any registry read - core registers exactly once.
 ensure_core = _lazy_once(_register_core)

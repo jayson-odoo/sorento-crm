@@ -2,10 +2,10 @@
  * Planning changes - the batch page (`PLAN-so-book-diff-replanning.md`, journey step 1-3).
  *
  * What is pinned:
- *  - every order section renders, including one whose rows are all "Not decided" (AC-R03);
- *  - a row states the change, what is held today, the facts, the verb and the reason;
- *  - switching a row's decision calls the stub PUT;
- *  - Apply opens a confirm dialog, then the result states render (applied / failed reason /
+ * - every order section renders, including one whose rows are all "Not decided" (AC-R03);
+ * - a row states the change, what is held today, the facts, the verb and the reason;
+ * - switching a row's decision calls the stub PUT;
+ * - Apply opens a confirm dialog, then the result states render (applied / failed reason /
  *    superseded, disabled).
  */
 import React from 'react';

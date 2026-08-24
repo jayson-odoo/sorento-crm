@@ -264,7 +264,7 @@ export function AddSpecificationDialog({
                     return (
                       <span className="text-muted-foreground">
                         <span className="font-medium text-foreground">{known.key.label}</span>{' '}
-                        already exists — use it
+                        already exists - use it
                       </span>
                     );
                   }

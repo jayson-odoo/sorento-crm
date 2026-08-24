@@ -1,12 +1,12 @@
-"""Form handling-lock ("I'm handling this") — claim / take-over / release + CTA guard.
+"""Form handling-lock ("I'm handling this") - claim / take-over / release + CTA guard.
 
-Once a FORM SLA tracker escalates (``escalated_at`` is set — NOT ``current_tier > 1``,
+Once a FORM SLA tracker escalates (``escalated_at`` is set - NOT ``current_tier > 1``,
 since a config may START above tier 1, e.g. project_sales begins at tier 2) and the
 per-form flag is on,
 every state-changing business CTA (approve/reject/process/close/submit/reopen) is
 disabled for everyone until an eligible team-chain member claims the lock
 (``ConversationSLATracking.handled_by_id``). The lock is mutually exclusive and
-SEPARATE from ``assigned_to_id`` — claiming never reassigns and never de-escalates.
+SEPARATE from ``assigned_to_id`` - claiming never reassigns and never de-escalates.
 
 Scope: FORM SLA rows only (``source_entity_type in FORM_SLA_TYPES``). n8n
 conversation-SLA rows sharing the table are never touched.
@@ -48,14 +48,14 @@ def is_handling_lock_enabled(db: Session, source_entity_type: Optional[str]) -> 
     """Whether the handling lock is enabled for ``source_entity_type``.
 
     Reads the singleton ``system_settings.handling_lock_enabled_types`` (CSV). The
-    singleton is DB-enforced (migration 253), so ``.first()`` is deterministic —
+    singleton is DB-enforced (migration 253), so ``.first()`` is deterministic - 
     mirrors every other SystemSetting reader.
     """
     if not source_entity_type:
         return False
     try:
         row = db.query(SystemSetting).first()
-    except Exception:  # noqa: BLE001 — partial schema / bad session.
+    except Exception:  # noqa: BLE001 - partial schema / bad session.
         # Treat a settings-read blip as "lock disabled" (returns False → the CTA
         # guard allows the action): an added restriction must not hard-block every
         # locked CTA on a transient DB error. This is deliberately fail-OPEN.
@@ -73,7 +73,7 @@ def is_handling_lock_enabled(db: Session, source_entity_type: Optional[str]) -> 
 # --------------------------------------------------------------------------- #
 def eligible_user_ids(db: Session, tracker: ConversationSLATracking) -> set[str]:
     """User ids in the tracker's escalation team-chain (agent + team_set_code, tiers
-    1..current_tier). Membership defines who may claim/take-over — the same chain the
+    1..current_tier). Membership defines who may claim/take-over - the same chain the
     escalation round-robin draws from."""
     agent_id = str(tracker.agent_id) if tracker.agent_id is not None else None
     if not agent_id:
@@ -111,7 +111,7 @@ def _is_escalated(tracker: ConversationSLATracking) -> bool:
 
     NOT ``current_tier > 1``: some configs start above tier 1 (project_sales begins at
     tier 2 with no tier 1 team), so a fresh, never-escalated tracker can sit at tier 2.
-    ``escalated_at`` is set ONLY on a real escalation and never on initial assignment —
+    ``escalated_at`` is set ONLY on a real escalation and never on initial assignment - 
     the same signal the SLA-escalation banner keys on (``escalation_reason``).
     """
     return getattr(tracker, "escalated_at", None) is not None
@@ -163,7 +163,7 @@ def assert_can_act_on_form(
     """Handling-lock gate for a state-changing business CTA. Allows the action when:
     flag off for the type, OR no active form tracker, OR tracker not escalated. Once
     escalated + flag on, only the lock holder (or an admin/superadmin on an UNCLAIMED
-    tracker) may act — everyone else gets a 403.
+    tracker) may act - everyone else gets a 403.
     """
     tracker = _active_form_tracker(db, source_entity_id, source_entity_type)
     if tracker is None:
@@ -209,7 +209,7 @@ class HandlingLockService:
                 status_code=404, message="SLA tracking not found.", code="NOT_FOUND"
             )
         if str(tracker.source_entity_type or "") not in FORM_SLA_TYPES:
-            # Scope boundary — never operate on a conversation-SLA row.
+            # Scope boundary - never operate on a conversation-SLA row.
             raise AppException(
                 status_code=422,
                 message="This tracking row is not a form SLA stage.",
@@ -345,14 +345,14 @@ class HandlingLockService:
                         whatsapp_pref_attr="notify_whatsapp_on_handling",
                         email_pref_attr="notify_email_on_handling",
                     )
-                except Exception as e:  # noqa: BLE001 — one bad recipient must not block others
+                except Exception as e:  # noqa: BLE001 - one bad recipient must not block others
                     logger.warning(
                         "Handling notify failed for tracker %s -> user %s: %s",
                         tracker.id,
                         uid,
                         e,
                     )
-        except Exception as e:  # noqa: BLE001 — post-commit side effect is best-effort
+        except Exception as e:  # noqa: BLE001 - post-commit side effect is best-effort
             logger.warning(
                 "Handling notify fan-out failed for tracker %s: %s", tracker.id, e
             )
@@ -418,12 +418,12 @@ class HandlingLockService:
             # Take-over requires an existing holder; an unclaimed tracker is a claim.
             raise AppException(
                 status_code=409,
-                message="This form is not currently being handled. Refresh — you may claim it instead.",
+                message="This form is not currently being handled. Refresh - you may claim it instead.",
                 code="CONFLICT",
             )
         now = _utc_naive_now()
         # Optimistic take-over: only succeeds while the current holder still matches the
-        # client's expected value (409 on mismatch — no double take-over).
+        # client's expected value (409 on mismatch - no double take-over).
         res = self.db.execute(
             update(ConversationSLATracking)
             .where(
@@ -439,7 +439,7 @@ class HandlingLockService:
             raise AppException(
                 status_code=409,
                 message=(
-                    f"Handling has changed — it is now held by {holder}. Refresh and retry."
+                    f"Handling has changed - it is now held by {holder}. Refresh and retry."
                 ),
                 code="CONFLICT",
             )

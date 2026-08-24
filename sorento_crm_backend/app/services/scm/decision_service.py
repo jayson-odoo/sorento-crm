@@ -1,12 +1,12 @@
-"""SCM M4 Slice B — human decision layer (Accept / Adjust / Reject) + the draft
+"""SCM M4 Slice B - human decision layer (Accept / Adjust / Reject) + the draft
 PO the decisions consolidate into at CONFIRM time.
 
 Decisions are STAGED, not immediately materialised: Accept / Adjust / Reject only
 set the recommendation's ``status`` (proposed → accepted | adjusted | dismissed)
-and, for adjust/reject, append a ``scm.recommendation_override`` row (M4-D7 — a
+and, for adjust/reject, append a ``scm.recommendation_override`` row (M4-D7 - a
 second adjust adds a second row, never rewrites the first). NO purchase order is
 created until the human explicitly runs **Confirm decisions** (``confirm_decisions``)
-— that is the point where accepted + adjusted recs are consolidated into ONE draft
+ - that is the point where accepted + adjusted recs are consolidated into ONE draft
 ``purchase_order`` per supplier (status ``draft_recommendation``, one line per SKU).
 This gives the planner an editable overview before any PO exists.
 
@@ -17,9 +17,9 @@ canonical ``PO-{year}/{month}-####`` number.
 
 The rec → draft-PO-line link is carried on the line's ``source_ref`` (= rec id) so
 the decision state (and its PO number) survives a confirm renumber without a schema
-change. ``confirm_decisions`` is idempotent — re-running it reconciles every line
+change. ``confirm_decisions`` is idempotent - re-running it reconciles every line
 to the rec's CURRENT decision (re-adjusted qty updated, rejected rec's line pulled).
-No UUIDs surface — suppliers/POs resolve to codes/numbers.
+No UUIDs surface - suppliers/POs resolve to codes/numbers.
 
 **Both plan grains reach a draft PO here now** (captain, 21 Aug - reverses the
 original doctrine that a product-grain run never drafted an internal
@@ -104,12 +104,12 @@ def _assert_not_legacy(db: Session, run_id: str) -> None:
 
 
 def _get_buy_rec(db: Session, rec_id: str) -> ReorderRecommendation:
-    """Accept / Adjust / Reject stay buy-only, on purpose — they materialise DIRECTLY
+    """Accept / Adjust / Reject stay buy-only, on purpose - they materialise DIRECTLY
     into a draft PO line the moment they are decided, and a covered/needs_level row has
     no supplier commitment yet to raise a line against. `record_plan_row_decision`
     below is the RELAXED path (S16, captain 21 Aug): it records the decision on any
     decidable row and only reaches a PO at Confirm decisions, so it never needed this
-    restriction — see `_get_decidable_rec`."""
+    restriction - see `_get_decidable_rec`."""
     rec = (
         db.query(ReorderRecommendation)
         .filter(ReorderRecommendation.id == rec_id)
@@ -164,7 +164,7 @@ def _resolve_choice(
     )
     supplier_id = _supplier_id_for_code(db, override_supplier_code)
     if chosen is None:
-        # unknown to the frozen set — recompute cost/lead off product_suppliers
+        # unknown to the frozen set - recompute cost/lead off product_suppliers
         chosen = _product_supplier_choice(db, rec.product_id, supplier_id) or {}
     switched = override_supplier_code != proposed.get("supplier_code")
     return {
@@ -212,7 +212,7 @@ def _product_supplier_choice(
 def _draft_po_for_supplier(
     db: Session, supplier_id: Optional[str], currency: Optional[str]
 ) -> PurchaseOrder:
-    """The open draft PO for a supplier, created on first accept (consolidation —
+    """The open draft PO for a supplier, created on first accept (consolidation - 
     M4-D4). One draft per supplier; a null supplier gets a single 'unassigned' draft."""
     q = db.query(PurchaseOrder).filter(
         PurchaseOrder.status == DRAFT_STATUS,
@@ -344,7 +344,7 @@ def _upsert_line(
 
 
 def _staged_result(supplier_name: Optional[str]) -> dict:
-    """A decision is STAGED, not materialised — no PO exists yet (created only at
+    """A decision is STAGED, not materialised - no PO exists yet (created only at
     Confirm decisions). The chosen supplier name drives the toast."""
     return {
         "draft_po_number": None,
@@ -364,7 +364,7 @@ def _line_inputs(
             db.query(RecommendationOverride)
             .filter(RecommendationOverride.recommendation_id == rec.id)
             # overridden_at is stamped explicitly (µs precision) so it's a
-            # deterministic "latest" — created_at's DB default can tie within a txn.
+            # deterministic "latest" - created_at's DB default can tie within a txn.
             .order_by(RecommendationOverride.overridden_at.desc())
             .first()
         )
@@ -380,7 +380,7 @@ def _line_inputs(
             )
         choice = _resolve_choice(db, rec, None)
         return choice["supplier_id"], qty, choice["unit_cost"], choice["lead_time_days"], choice["supplier_name"]
-    # accepted — proposed supplier, rounded qty as-is
+    # accepted - proposed supplier, rounded qty as-is
     choice = _resolve_choice(db, rec, None)
     return (
         choice["supplier_id"],
@@ -396,7 +396,7 @@ def _line_inputs(
 # ---------------------------------------------------------------------------
 
 def accept_recommendation(db: Session, rec_id: str, actor: Optional[str]) -> dict:
-    """Stage an Accept (M4-D4) — sets status only, NO PO. The draft PO is created
+    """Stage an Accept (M4-D4) - sets status only, NO PO. The draft PO is created
     later at Confirm decisions, so the planner keeps an editable overview first."""
     rec = _get_buy_rec(db, rec_id)
     _assert_location_grain(db, str(rec.run_id))
@@ -414,7 +414,7 @@ def adjust_recommendation(
     reason_text: str,
     actor: Optional[str],
 ) -> dict:
-    """Stage an Adjust (M4-D7) — writes an APPEND-ONLY override row (qty + optional
+    """Stage an Adjust (M4-D7) - writes an APPEND-ONLY override row (qty + optional
     supplier switch) and sets status; NO PO. Confirm decisions consolidates the
     latest override into the draft PO line."""
     rec = _get_buy_rec(db, rec_id)
@@ -477,7 +477,7 @@ def reject_recommendation(
 
 
 def bulk_accept(db: Session, run_id: str, ids: list[str], actor: Optional[str]) -> dict:
-    """Bulk Accept funded recs (M4-D9) — STAGES each as accepted; no PO yet
+    """Bulk Accept funded recs (M4-D9) - STAGES each as accepted; no PO yet
     (materialised at Confirm decisions). ``po_count`` stays 0 for the staged step."""
     _assert_location_grain(db, run_id)
     recs = _run_recs(db, run_id, ids)
@@ -516,7 +516,7 @@ def _confirm_location_grain(
     """The LOCATION-grain half of ``confirm_decisions`` (M4-D4).
 
     Idempotent reconciler: for every decided rec (optionally narrowed to ``ids``)
-    — accepted/adjusted → upsert its line into the supplier's draft PO (latest
+  - accepted/adjusted → upsert its line into the supplier's draft PO (latest
     override qty/supplier honoured); dismissed → pull its line back out. Re-running
     after a re-adjust just updates the line. Returns how many decisions were
     confirmed and how many distinct draft POs were touched.
@@ -579,7 +579,7 @@ def _confirm_location_grain(
         # Clear any stale line first, same as the legacy loop above.
         _remove_rec_line(db, rec.id)
         if buy_qty <= 0:
-            continue  # use_stock / use_po / skip / an all-non-buy mixture — nothing to draft
+            continue  # use_stock / use_po / skip / an all-non-buy mixture - nothing to draft
         choice = _resolve_choice(db, rec, None)
         po = _draft_po_for_supplier(db, choice["supplier_id"], rec.currency)
         _upsert_line(
@@ -689,7 +689,7 @@ def _confirm_product_grain(
        location-grain plan-row loop above: use_stock / use_po / skip portions never do.
     2. **The Summary Order Report's Set-quantity sheet** (``OrderSummaryRow.
        chosen_qty`` / ``chosen_supplier_id``, ``summary_order_service.record_decision``)
-       - the FALLBACK, read only for a product the grid has no decision for. This
+     - the FALLBACK, read only for a product the grid has no decision for. This
        mirrors S16's own doctrine that a row decision is authoritative over the older
        mechanism it supersedes (see ``confirm_decisions``' docstring on
        ``PlanRowDecision`` vs. legacy rec status) - here it is the grid decision that
@@ -842,12 +842,12 @@ def _confirm_product_grain(
 
 
 def reset_run_decisions(db: Session, run_id: str, actor: Optional[str]) -> dict:
-    """DEMO / ADMIN reset — return a run to its freshly-generated state so the
+    """DEMO / ADMIN reset - return a run to its freshly-generated state so the
     accept / reject / adjust / confirm flow can be demonstrated again from scratch.
 
     For every buy rec on the run: pull its line out of any DRAFT PO (emptied drafts are
     deleted with it), drop its append-only override rows, and reset its status back to
-    'proposed'. Only DRAFT (``draft_recommendation``) POs are touched — a confirmed
+    'proposed'. Only DRAFT (``draft_recommendation``) POs are touched - a confirmed
     (active) PO is a real order and is never rolled back. Idempotent: running it on an
     already-clean run is a no-op. Returns what was cleared for the toast.
 
@@ -972,7 +972,7 @@ def list_decisions(db: Session, run_id: str) -> list[dict]:
 
 
 def _po_for_rec(db: Session, rec_id: str) -> Optional[PurchaseOrder]:
-    """The (draft or now-active) PO a rec's line lives in — resolved via the line's
+    """The (draft or now-active) PO a rec's line lives in - resolved via the line's
     ``source_ref`` (= rec id), which survives a confirm renumber."""
     line = (
         db.query(PurchaseOrderLine)
@@ -1036,23 +1036,23 @@ def decide_covered(db: Session, rec_id: str, choice: str,
 
 
 # ===========================================================================
-# S16 — the row decision: buy / use stock / use PO / skip, or a mixture
+# S16 - the row decision: buy / use stock / use PO / skip, or a mixture
 # (captain, 21 Aug, 3rd time requested: "I want the decision made here").
 #
 # use_stock records the buyer's INTENTION only. It never writes a stock hold/reserve -
 # that would collide with the project-sales ladder's own reservations against the same
 # stock. The buy portion of a decision is the only part that ever reaches a PO, and only
-# at Confirm decisions (`confirm_decisions`, above) — recording a decision here never
+# at Confirm decisions (`confirm_decisions`, above) - recording a decision here never
 # drafts anything by itself, same staged-not-materialised doctrine as Accept/Adjust.
 # ===========================================================================
 
-#: Every value the `kind` field may carry. `mixture` is the captain's 4th option — more
-#: than one of buy/stock/po at once — distinct from picking exactly one of the first
+#: Every value the `kind` field may carry. `mixture` is the captain's 4th option - more
+#: than one of buy/stock/po at once - distinct from picking exactly one of the first
 #: three; `skip` is deliberately doing nothing this round.
 _PLAN_ROW_KINDS = {"buy", "use_stock", "use_po", "skip", "mixture"}
 
 #: Every rec_type this decision may be recorded on. Wider than `_get_buy_rec`'s buy-only
-#: gate on purpose (S16 gap #2) — a needs_level or covered row the buyer overrides with
+#: gate on purpose (S16 gap #2) - a needs_level or covered row the buyer overrides with
 #: use_stock/use_po/skip is a real decision. `exception` is excluded: it never reaches
 #: the results grid (`usePlanLines` fetches buy/covered/needs_level/disposition only)
 #: and carries no qty a decision could size against.
@@ -1118,7 +1118,7 @@ def _validate_plan_row_decision(
     if kind in single and n_positive > 1:
         raise AppException(
             status_code=422,
-            message=f"A {kind} decision cannot also carry another part's quantity — use mixture.",
+            message=f"A {kind} decision cannot also carry another part's quantity - use mixture.",
         )
 
 
@@ -1135,9 +1135,9 @@ def record_plan_row_decision(
 ) -> dict:
     """Record (replacing, if one already exists) the buyer's decision on ONE row.
 
-    Staged only — this never touches a purchase order. The buy portion reaches a draft
+    Staged only - this never touches a purchase order. The buy portion reaches a draft
     PO line only once ``confirm_decisions`` runs, same doctrine as Accept/Adjust. Does
-    NOT touch ``rec.status`` — that column stays the legacy accept/adjust/reject/covered
+    NOT touch ``rec.status`` - that column stays the legacy accept/adjust/reject/covered
     vocabulary for whatever screen still reads it; this is a parallel, row-scoped record
     that ``confirm_decisions`` treats as authoritative for a rec the moment it exists
     (see that function's docstring)."""
@@ -1197,7 +1197,7 @@ def clear_plan_row_decision(db: Session, rec_id: str, actor: Optional[str]) -> d
 
 def list_plan_row_decisions(db: Session, run_id: str) -> dict:
     """Every persisted row decision on a run, across every decidable rec_type, plus the
-    counts the results-grid header ("N of Total made") counts against — computed off
+    counts the results-grid header ("N of Total made") counts against - computed off
     what is actually persisted, never off a client's own session state."""
     total = (
         db.query(ReorderRecommendation)

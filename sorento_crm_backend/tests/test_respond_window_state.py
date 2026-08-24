@@ -2,7 +2,7 @@
 
 Bug: incoming Respond.io messages carry an empty ``status: []`` array (delivery
 status is only tracked for outgoing). The old code read ``status[0].timestamp``
-and so dropped every inbound message — the window looked permanently closed even
+and so dropped every inbound message - the window looked permanently closed even
 right after the contact replied. Incoming messages encode their time in
 ``messageId`` (epoch MICROSECONDS); ``_message_timestamp`` now falls back to it.
 """

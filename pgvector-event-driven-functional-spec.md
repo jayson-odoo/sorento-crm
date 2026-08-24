@@ -146,15 +146,15 @@ Every embedding source should be converted into a canonical document representat
 
 Recommended canonical fields:
 
-- `source_type` — e.g. `product`, `promotion`, `attachment`, `form`, `schema_doc`
-- `source_id` — source primary key or stable business key
-- `source_key` — optional human-readable identifier such as product code or promo code
-- `title` — short human-readable label
-- `body_text` — normalized text used for embedding
-- `metadata` — JSONB with searchable context
+- `source_type` - e.g. `product`, `promotion`, `attachment`, `form`, `schema_doc`
+- `source_id` - source primary key or stable business key
+- `source_key` - optional human-readable identifier such as product code or promo code
+- `title` - short human-readable label
+- `body_text` - normalized text used for embedding
+- `metadata` - JSONB with searchable context
 - `source_updated_at`
 - `source_hash`
-- `visibility_scope` — e.g. customer, dealer, internal
+- `visibility_scope` - e.g. customer, dealer, internal
 - `tenant_id` or `space_id` if multitenancy applies
 
 ### Suggested tables

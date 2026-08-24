@@ -26,7 +26,7 @@ const itemLabel = (p: ProductOption) =>
 
 /**
  * Server-searched, paginated product picker. Now a thin wrapper over the standard
- * SearchableSelect's async + paginated mode — the debounce, stale-response dropping and
+ * SearchableSelect's async + paginated mode - the debounce, stale-response dropping and
  * page accumulation it used to hand-roll all live in the component.
  */
 export function ProductComboboxSearchable({

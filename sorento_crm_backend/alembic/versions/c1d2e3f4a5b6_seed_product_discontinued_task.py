@@ -1,7 +1,7 @@
 """seed the product_discontinued_check scheduled task (idempotent)
 
 The cron row that drives the product-discontinued batch notification is runtime
-data, not schema — so it never reached prod (the seed script is manual). This
+data, not schema - so it never reached prod (the seed script is manual). This
 data migration inserts it if absent, so every environment gets it automatically
 on `alembic upgrade head` (run by start.sh on deploy). Safe to re-run: guarded by
 NOT EXISTS on the unique key.

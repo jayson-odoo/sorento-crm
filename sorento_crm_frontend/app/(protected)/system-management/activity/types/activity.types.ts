@@ -6,7 +6,7 @@
  * `trace_id` (a single user action that changed multiple rows), resolves
  * entity IDs to human labels, and renders change diffs in plain language.
  *
- * PHASE-1 PROTOTYPE — shapes may still shift after sign-off. See
+ * PHASE-1 PROTOTYPE - shapes may still shift after sign-off. See
  * `services/activityService.ts` for the proposed real API contract.
  */
 
@@ -31,7 +31,7 @@ export type ActivityAction = 'created' | 'updated' | 'deleted' | 'imported';
 /** A single field-level change within an activity item. */
 export interface ActivityChange {
   field: string; // human label, e.g. "Status"
-  from?: string | null; // previous value, human-readable ("—" when absent)
+  from?: string | null; // previous value, human-readable ("-" when absent)
   to?: string | null; // new value, human-readable
 }
 
@@ -81,7 +81,7 @@ export interface ActivityActorOption {
 /** Response envelope the timeline expects from the backend. */
 export interface ActivityFeedResponse {
   items: ActivityItem[];
-  /** Distinct actors seen in the (unfiltered) window — powers the user filter. */
+  /** Distinct actors seen in the (unfiltered) window - powers the user filter. */
   actors: ActivityActorOption[];
   pagination: {
     page: number;

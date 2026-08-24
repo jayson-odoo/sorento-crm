@@ -8,7 +8,7 @@ export type AuditLogListParams = DataGridApiFetchParams & {
   entity_id?: string;
   user_id?: string;
   action?: string;
-  /** ISO datetime lower bound (inclusive) on changed_at — drives tile drill-down. */
+  /** ISO datetime lower bound (inclusive) on changed_at - drives tile drill-down. */
   changed_from?: string;
   /** ISO datetime upper bound (inclusive) on changed_at. */
   changed_to?: string;
@@ -21,7 +21,7 @@ export type AuditLogListParams = DataGridApiFetchParams & {
  * Supported query params: entity_type, entity_id, user_id, action, changed_from,
  * changed_to (ISO datetime), page (1-based), limit.
  * (sort/dir/query are emitted by buildDataGridParams for the standard listing shape
- * but are ignored server-side — the backend orders by changed_at desc.)
+ * but are ignored server-side - the backend orders by changed_at desc.)
  */
 export async function getAuditLogs(
   params: AuditLogListParams,

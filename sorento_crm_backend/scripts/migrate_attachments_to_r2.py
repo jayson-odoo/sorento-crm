@@ -182,7 +182,7 @@ def migrate_avatars(
             cf_domain = (os.getenv("CLOUDFRONT_DOMAIN") or "").strip().lower().rstrip("/")
             host = (urlparse(avatar_url).hostname or "").lower() if avatar_url.startswith("http") else ""
             if cf_domain and host and host != cf_domain:
-                # External avatar (e.g. lh3.googleusercontent.com) — flip provider
+                # External avatar (e.g. lh3.googleusercontent.com) - flip provider
                 # so the avatar resolver passes it through without trying to sign.
                 if not dry_run:
                     user.avatar_storage_provider = PROVIDER_R2

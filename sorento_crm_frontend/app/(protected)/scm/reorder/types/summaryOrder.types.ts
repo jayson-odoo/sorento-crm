@@ -8,15 +8,15 @@
  *
  * Three rules are baked into the shapes below, all of them hard:
  *
- *   - **No ids.** Everything is addressed by human code (`product_code`,
+ * - **No ids.** Everything is addressed by human code (`product_code`,
  *     `supplier_code`, SO numbers, pool codes). `run_id` is the single exception
  *     and it is opaque: it identifies which week's report is being read (AC-C2.9)
  *     and is never rendered.
- *   - **Ordered and incoming stay separate** (AC-C2.2, revised 6 Aug 2026). Only
+ * - **Ordered and incoming stay separate** (AC-C2.2, revised 6 Aug 2026). Only
  *     `qty_in_transit` - the SPO allocation - drives the net position. A purchase
  *     order is an order placed, which the supplier may have shipped nothing
  *     against, so `qty_on_order` is displayed and never counted.
- *   - **A missing input is named, never zeroed.** Months of cover and container
+ * - **A missing input is named, never zeroed.** Months of cover and container
  *     volume are nullable because the data genuinely is not there for most
  *     products (cover derivable for 62% of them, volume for 16%). A volume of 0
  *     reads as "no space needed" and a cover of 0 reads as "already out of
@@ -25,13 +25,13 @@
  * Stage 2 (front planning) adds three things to the same shapes, and adds no row
  * identity: the product row is still exactly one row per product (AC-E03).
  *
- *   - **Channel is analysis inside the row, never row identity.** Project, Retail
+ * - **Channel is analysis inside the row, never row identity.** Project, Retail
  *     and Unclassified are separate DEMAND readings; stock, incoming SPO, PO supply
  *     and the reorder level stay single shared facts counted once (AC-F07).
- *   - **The run's stamped grain travels with the report.** `decision_grain` says
+ * - **The run's stamped grain travels with the report.** `decision_grain` says
  *     which grain owns the decision, and it is a property of the run rather than a
  *     control offered to the buyer (AC-F01).
- *   - **Precision is frozen, not live.** `uom_decimal_places` is the product's base
+ * - **Precision is frozen, not live.** `uom_decimal_places` is the product's base
  *     UOM divisibility as it was when the run was calculated, and it is what both
  *     the quantity field and the location split obey (AC-F12).
  */

@@ -9,15 +9,15 @@ Company is a property of the LOCATION, and most SCM rows name one, so those are 
 the joined `warehouses` rather than carrying a copy of the fact (a second copy is free to
 disagree with the first). This migration stamps the rows that are NOT facts about a location:
 
-  * `reorder_run`             - a company's plan. Also the only way the RQ worker can recover a
+  * `reorder_run`           - a company's plan. Also the only way the RQ worker can recover a
                                 scope: the work-horse receives a run id and nothing else, and an
                                 UNSET scope FAILS CLOSED, so a worker relying on ambient scope
                                 would silently produce zero recommendations.
-  * `reorder_recommendation`  - `warehouse_id` is NULL on a network-scope run, so the company
+  * `reorder_recommendation` - `warehouse_id` is NULL on a network-scope run, so the company
                                 cannot be derived at all.
-  * `order_summary_row`       - one row per product NETWORK wide; no location to derive from.
+  * `order_summary_row`     - one row per product NETWORK wide; no location to derive from.
   * `recommendation_override` - a person's decision, not a position.
-  * `purchasing_budget`       - a company's cash.
+  * `purchasing_budget`     - a company's cash.
   * `scm_analytics_run`, `market_research_run` - runs, same argument as `reorder_run`.
 
 Deliberately NOT stamped, and each for a reason:

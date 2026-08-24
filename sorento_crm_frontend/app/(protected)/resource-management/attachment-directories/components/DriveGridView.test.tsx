@@ -1,5 +1,5 @@
 /**
- * DriveGridView — unified folders+files cards (UAC A4, A6/A7, F1, G2).
+ * DriveGridView - unified folders+files cards (UAC A4, A6/A7, F1, G2).
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

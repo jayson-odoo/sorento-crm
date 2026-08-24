@@ -200,7 +200,7 @@ export function DeliveryScheduleColumnCards({
                                 <span className="text-muted-foreground line-through">
                                   {phase.delivery_date
                                     ? formatDateInMalaysia(phase.delivery_date)
-                                    : '—'}
+                                    : '-'}
                                 </span>
                                 {' '}
                                 <span className="font-medium">

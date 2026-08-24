@@ -164,7 +164,7 @@ def demand_qty():
     """The quantity to plan for, as a SQLAlchemy expression over `sales_order_lines`."""
     return func.greatest(
         func.coalesce(SalesOrderLine.qty_required, SalesOrderLine.qty_ordered)
-        - func.coalesce(SalesOrderLine.qty_delivered, 0),
+      - func.coalesce(SalesOrderLine.qty_delivered, 0),
         0,
     )
 
@@ -253,18 +253,18 @@ legs AS (
            sol.warehouse_id,
            CASE WHEN so.demand_class = 'project'
                 THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-                              - COALESCE(sol.qty_delivered, 0), 0)
+                            - COALESCE(sol.qty_delivered, 0), 0)
                 ELSE 0 END AS project_qty,
            -- The sheet leg is project-class demand, never firm Buy: no CS decision points
            -- at it, so it is netted like any other commitment (S13b).
            0 AS project_confirmed_qty,
            CASE WHEN so.demand_class IS NOT NULL AND so.demand_class <> 'project'
                 THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-                              - COALESCE(sol.qty_delivered, 0), 0)
+                            - COALESCE(sol.qty_delivered, 0), 0)
                 ELSE 0 END AS retail_qty,
            CASE WHEN so.demand_class IS NULL
                 THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-                              - COALESCE(sol.qty_delivered, 0), 0)
+                            - COALESCE(sol.qty_delivered, 0), 0)
                 ELSE 0 END AS unclassified_qty
     FROM sales_order_lines sol
     JOIN sales_orders so ON so.id = sol.sales_order_id
@@ -272,7 +272,7 @@ legs AS (
       AND sol.line_status = 'open'
       AND sol.purchasing_status <> 'covered'
       AND GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-                   - COALESCE(sol.qty_delivered, 0), 0) > 0
+                 - COALESCE(sol.qty_delivered, 0), 0) > 0
       -- S13b: project demand comes from the Order Inquiry; the book supplies the rest.
       -- Front planning narrows the sheet leg further: once CS has confirmed a LINE, its
       -- confirmed Buy residual below is the only Project reading of that line. Its
@@ -353,16 +353,16 @@ legs AS (
            sol.warehouse_id,
            CASE WHEN so.demand_class = 'project'
                 THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-                              - COALESCE(sol.qty_delivered, 0), 0)
+                            - COALESCE(sol.qty_delivered, 0), 0)
                 ELSE 0 END AS project_qty,
            0 AS project_confirmed_qty,
            CASE WHEN so.demand_class IS NOT NULL AND so.demand_class <> 'project'
                 THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-                              - COALESCE(sol.qty_delivered, 0), 0)
+                            - COALESCE(sol.qty_delivered, 0), 0)
                 ELSE 0 END AS retail_qty,
            CASE WHEN so.demand_class IS NULL
                 THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-                              - COALESCE(sol.qty_delivered, 0), 0)
+                            - COALESCE(sol.qty_delivered, 0), 0)
                 ELSE 0 END AS unclassified_qty
     FROM sales_order_lines sol
     JOIN sales_orders so ON so.id = sol.sales_order_id
@@ -370,7 +370,7 @@ legs AS (
       AND sol.line_status = 'open'
       AND sol.purchasing_status <> 'covered'
       AND GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-                   - COALESCE(sol.qty_delivered, 0), 0) > 0
+                 - COALESCE(sol.qty_delivered, 0), 0) > 0
       AND (so.demand_class IS DISTINCT FROM 'project'
            OR (so.demand_origin = 'scm_order_inquiry'
                AND NOT EXISTS (SELECT 1 FROM decided dd

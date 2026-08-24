@@ -2,7 +2,7 @@
 
 Adds a nullable, indexed ``company_id`` to three tables that back staff-only
 admin listings so those listings can be scoped to the active company. These
-tables are DELIBERATELY NOT ``CompanyScopedMixin`` owned tables — their other
+tables are DELIBERATELY NOT ``CompanyScopedMixin`` owned tables - their other
 consumers (portal / public / workflow / embedding reads of forms; the import
 worker's log writes; the global audit flush listener) must keep working under
 ANY company scope, so we never globally auto-filter them. Only each staff
@@ -23,7 +23,7 @@ branch (301->307_import_job_rows) were two open heads; this revision descends
 from both so ``alembic heads`` collapses back to one.
 
 Idempotent raw SQL (``ADD COLUMN IF NOT EXISTS`` / ``CREATE INDEX IF NOT
-EXISTS``) — safe to re-run.
+EXISTS``) - safe to re-run.
 
 Revision ID: 307_admin_listing_company
 Revises: 306_company_id_default, 307_import_job_rows

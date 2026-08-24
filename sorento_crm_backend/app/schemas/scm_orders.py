@@ -1,7 +1,7 @@
 """SCM M1 sales-order + purchase-order schemas.
 
 Mirror the FE contract in ``services/salesOrderService.ts`` /
-``purchaseOrderService.ts`` + ``types/scm.types.ts``. No UUIDs surface — SO by
+``purchaseOrderService.ts`` + ``types/scm.types.ts``. No UUIDs surface - SO by
 so_number, PO by po_number; customer / product / supplier / warehouse resolved to
 human codes/names. PO is read-only at M1 (create/confirm/receive land in M4).
 """
@@ -192,7 +192,7 @@ class PurchaseOrder(BaseModel):
     open_line_count: int = 0
     lines: List[PurchaseOrderLine]
     created_at: str
-    # M4 Slice B — draft→confirm→GR flow
+    # M4 Slice B - draft→confirm→GR flow
     is_on_order: bool = False
     source: str = "manual"           # recommendation | import | manual
     gr_reference: Optional[str] = None

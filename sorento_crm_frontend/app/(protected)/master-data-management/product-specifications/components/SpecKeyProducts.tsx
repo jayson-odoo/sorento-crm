@@ -25,7 +25,7 @@ const SOURCE_LABEL: Record<string, string> = {
  * Every product carrying one specification, and the words each value was read from.
  *
  * A count is not reviewable. "Seen in 106" says something happened without saying to
- * what, and the only way to know a rule did what you meant is to look at the rows — a
+ * what, and the only way to know a rule did what you meant is to look at the rows - a
  * drainer board on 74 bathtubs is invisible in a number and obvious the moment the
  * classes are tallied.
  */
@@ -189,13 +189,13 @@ export default function SpecKeyProducts({
                     {String(row.value)}
                   </td>
                   <td className="py-2 pr-4 whitespace-nowrap text-muted-foreground">
-                    {row.class ?? '—'}
+                    {row.class ?? '-'}
                   </td>
                   <td className="py-2 pr-4 whitespace-nowrap text-muted-foreground">
-                    {SOURCE_LABEL[String(row.source)] ?? row.source ?? '—'}
+                    {SOURCE_LABEL[String(row.source)] ?? row.source ?? '-'}
                   </td>
                   <td className="py-2 pr-4 whitespace-nowrap font-mono text-xs text-muted-foreground">
-                    {row.evidence ?? '—'}
+                    {row.evidence ?? '-'}
                   </td>
                   <td className="py-2 text-xs text-muted-foreground">{row.description}</td>
                 </tr>
@@ -214,7 +214,7 @@ export default function SpecKeyProducts({
                 Previous
               </Button>
               <span>
-                {offset + 1}–{Math.min(offset + PAGE, data.total)} of{' '}
+                {offset + 1} - {Math.min(offset + PAGE, data.total)} of{' '}
                 {data.total.toLocaleString()}
               </span>
               <Button

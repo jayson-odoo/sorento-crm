@@ -285,11 +285,11 @@ class ContactService:
         return {"message": "Contact companies updated successfully"}
 
     def delete_contact(self, contact_id: str) -> None:
-        """Delete a respond contact and all contact–agent linkages. Related contact_agent_access rows are deleted; conversation_sla_tracking.respond_contact_id is SET NULL."""
+        """Delete a respond contact and all contact - agent linkages. Related contact_agent_access rows are deleted; conversation_sla_tracking.respond_contact_id is SET NULL."""
         from app.models.access import ContactAgentAccess
 
         contact = self.get_contact(contact_id)
-        # Delete contact–agent access linkages first so the contact can be removed
+        # Delete contact - agent access linkages first so the contact can be removed
         self.db.query(ContactAgentAccess).filter(
             ContactAgentAccess.respond_contact_id == contact_id
         ).delete(synchronize_session=False)

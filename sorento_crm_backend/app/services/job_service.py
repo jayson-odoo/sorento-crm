@@ -27,7 +27,7 @@ def active_company_id_from_scope(db: Session) -> Optional[str]:
     onto the ImportJob (the worker later re-establishes exactly that company so
     its owned writes auto-stamp + isolate). None (all-companies / system) and
     UNSET / empty / multi-company all snapshot NULL (the worker then runs
-    system-scoped, ``set_company_scope(None)``) — logged for traceability.
+    system-scoped, ``set_company_scope(None)``) - logged for traceability.
     """
     try:
         from app.models.base import get_company_scope
@@ -95,7 +95,7 @@ class JobService:
         ``company_id`` snapshots the request's active company so the worker can
         re-establish scope for owned writes (multi-company isolation). When not
         passed explicitly it is derived from the request session's company scope
-        (``active_company_id_from_scope``) — so the snapshot is captured even for
+        (``active_company_id_from_scope``) - so the snapshot is captured even for
         callers that don't thread it through.
         """
         if company_id is None:
@@ -118,14 +118,14 @@ class JobService:
 
         The dedicated worker container runs a blocking RQ Worker on the imports
         queue and picks the job up the moment it is enqueued, so the worker can
-        already be running — or even finished — by the time this commits. Two
+        already be running - or even finished - by the time this commits. Two
         guards:
-        - Callers should pass job_id=str(job.job_id) to enqueue_job so the RQ
+      - Callers should pass job_id=str(job.job_id) to enqueue_job so the RQ
           id equals the DB job_id from creation; rewriting it here is then a
           no-op. (Historically the temp uuid was swapped for the RQ id, which
-          made the worker's complete_job/update_job_progress — keyed on the
-          job_id it resolved at start — silently miss the row.)
-        - Only promote PENDING → QUEUED; never clobber a status the worker
+          made the worker's complete_job/update_job_progress - keyed on the
+          job_id it resolved at start - silently miss the row.)
+      - Only promote PENDING → QUEUED; never clobber a status the worker
           already advanced (started/finished/failed).
         """
         self.db.refresh(job)

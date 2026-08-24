@@ -5,9 +5,9 @@
  * Three states pinned here, and the third is deliberately not a value of the
  * first two:
  *
- *  - `product`  - the Product decision surface is open; Location reads a lock.
- *  - `location` - the reverse.
- *  - LEGACY     - identified by a NULL `front_planning_contract_version`, not by
+ * - `product` - the Product decision surface is open; Location reads a lock.
+ * - `location` - the reverse.
+ * - LEGACY   - identified by a NULL `front_planning_contract_version`, not by
  *    a missing grain alone (a legacy run also carries no `decision_grain`, but
  *    the contract version is the field that decides it). Read-only in both
  *    grains, and never backfilled.

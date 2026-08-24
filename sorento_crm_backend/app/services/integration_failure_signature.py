@@ -6,7 +6,7 @@ group them: it embeds record ids, retry timestamps and payload echoes, so one
 recurring fault shows up as N distinct one-off errors and the pattern is lost.
 
 `normalize` masks the tokens that demonstrably vary between instances of the same
-fault — uuids, digit runs, ISO timestamps — and nothing else. Words are never
+fault - uuids, digit runs, ISO timestamps - and nothing else. Words are never
 touched: over-normalising is the worse error, because it merges two real faults
 into one line and the rarer one disappears entirely.
 
@@ -82,13 +82,13 @@ def normalize(message: Optional[str]) -> str:
 def _display(message: Optional[str]) -> str:
     """Trim a message to the part that identifies the fault.
 
-    Only known-boilerplate suffixes are removed — never leading content, which
+    Only known-boilerplate suffixes are removed - never leading content, which
     is where the actual error lives.
     """
     original = (message or "").strip()
     trimmed = _HTTPX_BOILERPLATE.sub("", original).strip()
     # If the marker sat at position 0 the trim would blank the row entirely.
-    # An ugly message beats an empty one — keep the original.
+    # An ugly message beats an empty one - keep the original.
     return (trimmed or original)[:MAX_SAMPLE_CHARS]
 
 
@@ -99,7 +99,7 @@ def _filter_terms(message: Optional[str]) -> list[str]:
     fed to a SQL LIKE and must appear verbatim in every row of the group.
 
     Returns them all rather than just the longest because the longest is not
-    necessarily the distinguishing one — see `filter_terms` on the dataclass.
+    necessarily the distinguishing one - see `filter_terms` on the dataclass.
     Empty when nothing stable survives; an empty filter is honest, whereas a
     fragment that over-matches would report a count the group does not have.
     """
@@ -118,7 +118,7 @@ def top_failures(
 ) -> list[FailureSignature]:
     """Aggregate pre-grouped rows into the worst `limit` distinct faults.
 
-    Each row supplies `status_code`, `error_message` and `count` — the shape the
+    Each row supplies `status_code`, `error_message` and `count` - the shape the
     health query already groups by, so this adds no extra database work.
     """
     buckets: dict[tuple[Optional[int], str], FailureSignature] = {}

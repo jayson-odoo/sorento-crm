@@ -34,7 +34,7 @@ scenarios/
   n8n/         hit cloned n8n LOADTEST workflows
   backend/     FastAPI: auth, list-query, write paths, portal, external API
   frontend/    Next.js prod: SSR pages (http) + signin flow (browser mode)
-  ai/          LLM endpoints — bounded spike only
+  ai/          LLM endpoints - bounded spike only
 profiles/    smoke / load / stress / spike / soak
 ci/run.sh    one entrypoint: ./run.sh <profile> <scenario>
 results/     summary JSON output (gitignored)
@@ -71,8 +71,8 @@ Profiles use `ramping-arrival-rate` so RPS stays stable regardless of latency.
 
 ## Authoring rules
 
-1. Every scenario imports thresholds from `lib/thresholds.js` — never inline.
-2. Every scenario reads its base URL from `lib/env.js` — never hardcode.
+1. Every scenario imports thresholds from `lib/thresholds.js` - never inline.
+2. Every scenario reads its base URL from `lib/env.js` - never hardcode.
 3. JWT acquisition lives in `lib/auth.js`; one login per VU init, cached.
 4. Synthetic data uses `LOADTEST-` prefix in any free-text field so a nightly job can purge.
 5. Results emitted via `--summary-export` and (optionally) InfluxDB.

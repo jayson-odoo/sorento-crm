@@ -3,10 +3,10 @@
  *
  * Verifies the hook contract from
  * docs/plans/PLAN-record-navigation-standardization.md §7:
- *  - builds the query string from listParams (object OR URLSearchParams)
- *  - strips `id` from listParams (current id set explicitly)
- *  - disabled when no currentId (no fetch)
- *  - maps the snake_case backend response to camelCase result fields
+ * - builds the query string from listParams (object OR URLSearchParams)
+ * - strips `id` from listParams (current id set explicitly)
+ * - disabled when no currentId (no fetch)
+ * - maps the snake_case backend response to camelCase result fields
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';

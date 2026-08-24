@@ -1,5 +1,5 @@
 /**
- * PromotionsList — the Type column.
+ * PromotionsList - the Type column.
  *
  * A promotion's type decides whether it still applies after its end date, so the
  * list has to show it (by NAME, never the id) and has to say something useful for
@@ -90,7 +90,7 @@ beforeEach(() => {
   Element.prototype.hasPointerCapture = vi.fn();
 });
 
-describe('PromotionsList — Type column', () => {
+describe('PromotionsList - Type column', () => {
   it('renders the type NAME, never the id', async () => {
     render();
 

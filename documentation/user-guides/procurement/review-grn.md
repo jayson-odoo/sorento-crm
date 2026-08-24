@@ -1,6 +1,6 @@
-# Procurement — Review and approve a GRN
+# Procurement - Review and approve a GRN
 
-A Goods Receipt Note (GRN) records what was physically received against an SPO. Use this guide to find a GRN, review its lines, change its status (Draft → Approved / Rejected), and create or delete one by hand. For **bulk uploading** GRNs from Excel, see [Upload a GRN](../warehouse/upload-grn.md) instead — this guide covers the in-app review flow.
+A Goods Receipt Note (GRN) records what was physically received against an SPO. Use this guide to find a GRN, review its lines, change its status (Draft → Approved / Rejected), and create or delete one by hand. For **bulk uploading** GRNs from Excel, see [Upload a GRN](../warehouse/upload-grn.md) instead - this guide covers the in-app review flow.
 
 ## Where
 
@@ -8,7 +8,7 @@ A Goods Receipt Note (GRN) records what was physically received against an SPO. 
 
 ## Review a GRN
 
-On the detail page you'll see the GRN header (GRN number, SPO number, picking date, **Picking Status**) and the **Picking Lines** section — one row per received line with its SPO allocation, product, **Expected** vs **Picked** quantity, any discrepancy, condition, batch, and location. A line whose stated SPO has no allocation yet shows the stated number with an **Unmatched** badge instead of a link; it links automatically once that SPO's allocations are uploaded. Review the lines and quantities before changing status.
+On the detail page you'll see the GRN header (GRN number, SPO number, picking date, **Picking Status**) and the **Picking Lines** section - one row per received line with its SPO allocation, product, **Expected** vs **Picked** quantity, any discrepancy, condition, batch, and location. A line whose stated SPO has no allocation yet shows the stated number with an **Unmatched** badge instead of a link; it links automatically once that SPO's allocations are uploaded. Review the lines and quantities before changing status.
 
 ## Change the status
 
@@ -38,6 +38,6 @@ A GRN stores: GRN (picking) number, SPO number, picking date, picking status (Dr
 
 ## See also
 
-* [Procurement — Data analysis for the AI assistant](data-analysis.md)
+* [Procurement - Data analysis for the AI assistant](data-analysis.md)
 * [Upload a GRN (header + lines)](../warehouse/upload-grn.md)
 * [Upload an SPO](../purchasing/upload-spo.md) (GRNs receive against SPO allocations)

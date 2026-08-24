@@ -94,15 +94,15 @@
  *        text, files[] (repeated)
  *    Response 200: SendTicketMessageResult
  *    Semantics the backend owns:
- *      - in-window  -> raw text; out-of-window -> the existing `*_chat` template
+ *    - in-window  -> raw text; out-of-window -> the existing `*_chat` template
  *        smart-send (same `send_text_or_template` path as the unified composer)
- *      - attachments are uploaded through CRM storage and delivered to Respond by
+ *    - attachments are uploaded through CRM storage and delivered to Respond by
  *        URL (CMYK JPEG converted to RGB)
- *      - the send is stamped with THIS tracking id: it sets
+ *    - the send is stamped with THIS tracking id: it sets
  *        is_responded / responded_at / responded_by / response_time on this ticket
  *        only; sibling tickets for the same contact are untouched
- *      - an `integration_log` outbox row is written on success AND failure
- *      - a multi-file send is NEVER all-or-nothing and never 502s on one file:
+ *    - an `integration_log` outbox row is written on success AND failure
+ *    - a multi-file send is NEVER all-or-nothing and never 502s on one file:
  *        the caption ships first, attachments go sequentially and stop at the
  *        first failure, and the call returns 200 with
  *        `attachments: { delivered: string[], failed: {filename, error} | null }`.
@@ -111,8 +111,8 @@
  *    R1 (resolved 2026-08-12): Respond.io supports text / attachment
  *    (image, video, audio, file) / quick_reply / whatsapp_template. There is NO
  *    sticker type and NO reply-to/context parameter, so:
- *      - the composer has no sticker affordance at all
- *      - there is no outbound "reply to" at all. The ">"-prefix emulation was
+ *    - the composer has no sticker affordance at all
+ *    - there is no outbound "reply to" at all. The ">"-prefix emulation was
  *        removed on 2026-08-16: it read like a real quote and was not one.
  *        The route still ACCEPTS optional `reply_to_message_id` /
  *        `reply_to_excerpt` (audit-only), and the FE no longer sends them.

@@ -1,4 +1,4 @@
-"""Assistant routing eval harness — regression baseline (PLAN-post-security-batch Item 3d).
+"""Assistant routing eval harness - regression baseline (PLAN-post-security-batch Item 3d).
 
 Takes the example NL questions already authored in the module
 ``docs/user-guides/<module>/data-analysis.md`` guides and reports, per question,
@@ -8,7 +8,7 @@ re-categorisation, RAG tuning) can be diffed against a committed snapshot.
 
 Two routing modes:
 
-* ``lexical`` (DEFAULT) — a deterministic, DB-free, LLM-free approximation of the
+* ``lexical`` (DEFAULT) - a deterministic, DB-free, LLM-free approximation of the
   assistant's RAG tool-search. It scores each question against the SAME capability
   corpus the real RAG indexes (``build_capability_documents``: tool name, category,
   intent, description, aliases, typical user questions, envelope phrases) using a
@@ -23,7 +23,7 @@ Two routing modes:
   categories; it is a regression *tripwire on the catalog/category mapping*, not a
   byte-for-byte replica of embedding similarity. Use ``--live`` for the real path.
 
-* ``live`` (``--live``) — routes each question through the REAL assistant RAG path
+* ``live`` (``--live``) - routes each question through the REAL assistant RAG path
   (``AIAssistantChatService._rag_select_tools``): embeds the query via the configured
   OpenAI key (from ``.env``) and searches the pgvector tool index. Requires a
   reachable DB with seeded tool embeddings + an embeddings key. If unavailable the
@@ -111,7 +111,7 @@ def parse_questions_from_file(path: Path, module: str) -> list[Question]:
             in_block = False
             continue
         if not _LIST_ITEM_RE.match(raw):
-            # Continuation / explanation line under a numbered item — skip so we
+            # Continuation / explanation line under a numbered item - skip so we
             # only capture the question itself, not quoted snippets in the answer.
             continue
         m = _QUOTED_RE.search(raw)
@@ -136,7 +136,7 @@ def load_questions(guides_dir: Path) -> list[Question]:
 
 
 # ---------------------------------------------------------------------------
-# Lexical router (default) — TF-IDF overlap over the capability corpus
+# Lexical router (default) - TF-IDF overlap over the capability corpus
 # ---------------------------------------------------------------------------
 
 _STOPWORDS = {
@@ -205,7 +205,7 @@ class LexicalRouter:
 
 
 # ---------------------------------------------------------------------------
-# Live router (--live) — real assistant RAG path
+# Live router (--live) - real assistant RAG path
 # ---------------------------------------------------------------------------
 
 def _tool_category_map() -> dict[str, str]:
@@ -372,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.live:
         try:
             results = route_live(questions, args.top_k)
-        except Exception as exc:  # noqa: BLE001 — surface the limitation clearly
+        except Exception as exc:  # noqa: BLE001 - surface the limitation clearly
             print(
                 "LIVE routing unavailable (needs a reachable DB with seeded tool "
                 f"embeddings + an embeddings API key): {exc}",

@@ -1,4 +1,4 @@
-# PLAN — Centralized Total Project Value validation (portal == system)
+# PLAN - Centralized Total Project Value validation (portal == system)
 
 **Status:** Implementing
 **Owner:** jayson
@@ -8,7 +8,7 @@
 1. **Edit form doesn't preload the value.** The internal edit/create "Total Project
    Value" input binds to `total_project_value_text` (descriptive column), but the
    value lives in `total_project_value` (numeric). A record with `1234` shows blank
-   on edit. Not dev-server slowness — a field-binding bug.
+   on edit. Not dev-server slowness - a field-binding bug.
 2. **Inconsistent validation.** Portal submit rejects non-numeric + too-large
    (Numeric(15,2) overflow). Internal create/update guards too-large but used to
    route non-numeric → text. No single source of truth.
@@ -26,15 +26,15 @@ never populate it.
 - else → `Decimal`
 
 ## Backend wiring
-- `portal_service._apply_payload` — replace inline coerce+range block with the validator.
-- `procurement_service` create (~4541) + update (~4695) — `total_project_value = validate_project_value(...)`; create sets `_text=None`; update leaves existing `_text` untouched (don't clobber legacy).
+- `portal_service._apply_payload` - replace inline coerce+range block with the validator.
+- `procurement_service` create (~4541) + update (~4695) - `total_project_value = validate_project_value(...)`; create sets `_text=None`; update leaves existing `_text` untouched (don't clobber legacy).
 
 ## Frontend
-- `purchase-request-schema.ts` — `total_project_value` gets a numeric+range schema (separate from line `quantitySchema`).
-- `PurchaseRequestForm.tsx` + `PurchaseRequestDocumentEditCard.tsx` — bind the visible input to `total_project_value` (number input, preloads); stop rendering/sending `_text`.
-- Portal `SubmissionForm.tsx` — TPV field becomes a number input.
+- `purchase-request-schema.ts` - `total_project_value` gets a numeric+range schema (separate from line `quantitySchema`).
+- `PurchaseRequestForm.tsx` + `PurchaseRequestDocumentEditCard.tsx` - bind the visible input to `total_project_value` (number input, preloads); stop rendering/sending `_text`.
+- Portal `SubmissionForm.tsx` - TPV field becomes a number input.
 
 ## Tests
-- pytest: `tests/test_project_value_validator.py` — numeric, non-numeric, too-large, empty, negative, Decimal/int/float/str inputs.
+- pytest: `tests/test_project_value_validator.py` - numeric, non-numeric, too-large, empty, negative, Decimal/int/float/str inputs.
 - pytest: portal submit + procurement create/update reject non-numeric and too-large.
 - vitest: `PurchaseRequestForm` preloads `total_project_value` into the input.

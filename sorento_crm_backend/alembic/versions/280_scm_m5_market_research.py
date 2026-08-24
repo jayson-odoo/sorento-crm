@@ -1,16 +1,16 @@
-"""SCM M5 Part B — market research topics, cached signals, run observability.
+"""SCM M5 Part B - market research topics, cached signals, run observability.
 
 Adds three ``scm.*`` tables backing the advisory-only market layer (the M0 schema
 migration 273 created the reorder brain; these were deferred to M5):
 
-  * ``scm.market_research_topic`` — user-configured web-search topics (label,
+  * ``scm.market_research_topic`` - user-configured web-search topics (label,
     optional category_ref/currency match keys, free-form search_prompt, cadence).
-  * ``scm.market_signal`` — cached web-search output (value/trend/summary/source_url),
+  * ``scm.market_signal`` - cached web-search output (value/trend/summary/source_url),
     ``topic_id`` FK → market_research_topic ON DELETE CASCADE.
-  * ``scm.market_research_run`` — one row per research run (running → completed |
+  * ``scm.market_research_run`` - one row per research run (running → completed |
     failed + topic_count/signal_count/error_text), mirroring ``scm.scm_analytics_run``.
 
-``reorder_recommendation.market_advisory`` already exists (M5 prose columns) — NOT
+``reorder_recommendation.market_advisory`` already exists (M5 prose columns) - NOT
 re-added here. Advisory-only: no numeric column feeds the deterministic engine.
 
 **Idempotent by design.** On some environments these tables were created out of

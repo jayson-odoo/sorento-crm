@@ -1,14 +1,14 @@
-"""Item 5 (PLAN-post-security-batch) — assistant must NOT leak the Outline URL.
+"""Item 5 (PLAN-post-security-batch) - assistant must NOT leak the Outline URL.
 
 Outline (``doc.foundryx.my``) is an INTERNAL Foundryx asset. The assistant may
 cite in-app routes / ``?guide_target`` deep links / inline steps, but never the
 Outline URL. These are PURE-function tests (no LLM, no DB) covering the two
 belt-and-suspenders layers:
 
-  * ``_redact_guide_tool_output`` — strips the Outline ``url`` field from the
+  * ``_redact_guide_tool_output`` - strips the Outline ``url`` field from the
     ``user_guides_read`` JSON BEFORE it reaches the model (UAC5.3), while
     preserving the in-app links in the markdown body (UAC5.2).
-  * ``_strip_outline_urls`` — final-answer post-filter removing bare Outline
+  * ``_strip_outline_urls`` - final-answer post-filter removing bare Outline
     URLs and markdown links to Outline, leaving readable text + in-app routes
     (UAC5.1 / UAC5.2).
 
@@ -87,7 +87,7 @@ def test_redact_guide_tool_output_removes_url_field():
     )
     cleaned = svc._redact_guide_tool_output(raw)
     payload = json.loads(cleaned)
-    # UAC5.3 — model never sees the Outline URL.
+    # UAC5.3 - model never sees the Outline URL.
     assert "url" not in payload
     assert "doc.foundryx.my" not in cleaned
     # url_id (internal anchor, not a clickable URL) is retained.

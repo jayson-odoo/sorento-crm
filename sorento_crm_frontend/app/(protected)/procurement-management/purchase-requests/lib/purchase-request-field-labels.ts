@@ -1,6 +1,6 @@
 import { withRevisionSuffix } from '@/lib/document-number';
 
-/** Title-case entity label for a request_type — the single source of truth so
+/** Title-case entity label for a request_type - the single source of truth so
  *  sponsorship forms never surface "Purchase Request" to the user, and vice
  *  versa. Replaces the per-component REQUEST_TYPE_LABELS copies. */
 export function requestTypeLabel(requestType: string | null | undefined): string {

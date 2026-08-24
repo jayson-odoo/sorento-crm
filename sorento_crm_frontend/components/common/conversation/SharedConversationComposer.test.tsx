@@ -194,7 +194,7 @@ describe('SharedConversationComposer', () => {
     expect(notice).toBeInTheDocument();
     const link = screen.getByRole('link', { name: /configure a chat reply template/i });
     expect(link).toHaveAttribute('href', '/integration-management/whatsapp-templates');
-    // Shown upfront — no send was attempted.
+    // Shown upfront - no send was attempted.
     expect(sendConversationMessage).not.toHaveBeenCalled();
   });
 

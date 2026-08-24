@@ -1,14 +1,14 @@
-"""DEMO helper — simulate actionable Stock-allocation rows on a reorder run.
+"""DEMO helper - simulate actionable Stock-allocation rows on a reorder run.
 
 On the current dataset every disposition the engine produces is a "hold" (overstock
 just above the cover ceiling, no action), so the Stock-allocation view is always empty
 of call-to-actions. This script flips a handful of existing hold disposition rows on the
-latest completed run to the two ACTIONABLE dispositions the UI renders — Discontinue
-(dead stock) and Promote/reallocate — purely so the view can be demonstrated populated.
+latest completed run to the two ACTIONABLE dispositions the UI renders - Discontinue
+(dead stock) and Promote/reallocate - purely so the view can be demonstrated populated.
 
 It is idempotent and reversible: it only rewrites the frozen ``inputs.disposition_action``
 (+ a human ``triggered_reason`` label) on a few rows; re-running the real plan regenerates
-honest dispositions. Nothing else is touched — no stock, no orders.
+honest dispositions. Nothing else is touched - no stock, no orders.
 
 Usage (from sorento_crm_backend/, with the venv active):
     python scripts/simulate_stock_allocation.py                 # latest completed run

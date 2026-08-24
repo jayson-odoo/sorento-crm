@@ -45,18 +45,18 @@ def _seed_types(db):
 @pytest.mark.parametrize(
     "filename, expected",
     [
-        # C1 / C2 — the five markers as they actually appear in production names.
+        # C1 / C2 - the five markers as they actually appear in production names.
         ("SORENTO SPECIAL PROMO_22052026 DEALER.pdf", "special"),
         ("SORENTO PP PROMO COMBINE_08072026 (OFFICE).pdf", "pp"),
         ("SORENTO FOCUS ITEM JULY 2026.pdf", "focus_item"),
         ("_SORENTO A3 FLYER 2025-2026_compressed", "a3_flyer"),
         ("CABANA SHELF PROMO 31032026 (DEALER USE)", "standard"),
-        # C3 — word boundaries, not substrings.
+        # C3 - word boundaries, not substrings.
         ("SUPPLY PROMO 2026.pdf", "standard"),
         ("SPECIALIST TOOLS PROMO.pdf", "standard"),
         # Separators are token boundaries, so a marker glued to punctuation still counts.
         ("@ CABANA PP-PROMO (OFFICE)_08072026.pdf", "pp"),
-        # C4 — two markers resolve to the most conservative type.
+        # C4 - two markers resolve to the most conservative type.
         ("SORENTO PP SPECIAL PROMO 2026.pdf", "special"),
         ("A3 FLYER SPECIAL EDITION.pdf", "special"),
     ],

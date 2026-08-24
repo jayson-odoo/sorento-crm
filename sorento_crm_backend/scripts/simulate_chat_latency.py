@@ -1,7 +1,7 @@
 """Simulate WhatsApp round-trip scenarios and show what the watchdog reports.
 
 Verification aid for UAC OBS-S4-05..S4-18. Synthesizes turns directly into
-`chat_histories` inside a transaction that is always rolled back — the DB is untouched.
+`chat_histories` inside a transaction that is always rolled back - the DB is untouched.
 
     venv/bin/python scripts/simulate_chat_latency.py
 
@@ -56,7 +56,7 @@ def _scenario_degraded(db, now, n=40):
 
 
 def _scenario_one_stalled(db, now):
-    """40 healthy turns plus a single 90s turn — p99 barely moves, ceiling must catch it."""
+    """40 healthy turns plus a single 90s turn - p99 barely moves, ceiling must catch it."""
     _scenario_healthy(db, now)
     t = now - timedelta(minutes=2)
     _msg(db, type="incoming", turn_id="stall", respond_ts=t)
@@ -69,21 +69,21 @@ def _scenario_no_reply(db, now):
 
 
 def _scenario_webhook_lag(db, now):
-    """Reply was fast, but the inbound webhook arrived 40s late — visible as lag."""
+    """Reply was fast, but the inbound webhook arrived 40s late - visible as lag."""
     t = now - timedelta(minutes=3)
     _msg(db, type="incoming", turn_id="lag", respond_ts=t, ingest_at=t + timedelta(seconds=40))
     _msg(db, type="outgoing", turn_id="lag", respond_ts=t + timedelta(seconds=44))
 
 
 def _scenario_proactive_only(db, now):
-    """A campaign blast with no incoming — must not enter the SLA at all."""
+    """A campaign blast with no incoming - must not enter the SLA at all."""
     for i in range(20):
         _msg(db, type="outgoing", turn_id=None, respond_ts=now - timedelta(minutes=i + 1))
 
 
 SCENARIOS = [
-    ("healthy — 40 turns @ 3s", _scenario_healthy),
-    ("degraded — 40 turns @ 25s", _scenario_degraded),
+    ("healthy - 40 turns @ 3s", _scenario_healthy),
+    ("degraded - 40 turns @ 25s", _scenario_degraded),
     ("one stalled turn among 40 healthy", _scenario_one_stalled),
     ("incoming with no reply (12m)", _scenario_no_reply),
     ("webhook arrived 40s late", _scenario_webhook_lag),
@@ -113,7 +113,7 @@ def main() -> int:
             stats = latency.compute_latency_stats(db, since=since)
             is_bad, detail = _eval_chat_latency(db, now, settings)
 
-            p99 = f"{stats.p99:.1f}s" if stats.p99 is not None else "—"
+            p99 = f"{stats.p99:.1f}s" if stats.p99 is not None else "-"
             print(f"{label:38} turns={stats.count:<3} p99={p99:<8} "
                   f"{'ALERT' if is_bad else 'ok'}")
             if detail:

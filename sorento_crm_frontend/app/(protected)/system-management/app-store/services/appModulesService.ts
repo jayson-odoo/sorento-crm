@@ -10,7 +10,7 @@ export interface TenantModuleState {
   display_name: string;
   description: string;
   dependencies: string[];
-  /** Tenant has a tenant_modules row (omit on older API — treated as true). */
+  /** Tenant has a tenant_modules row (omit on older API - treated as true). */
   installed?: boolean;
   enabled: boolean;
 }

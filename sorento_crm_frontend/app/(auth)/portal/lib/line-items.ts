@@ -40,9 +40,9 @@ export function computeLineTotal(quantity?: string, unitPrice?: string): string 
 }
 
 /** Trim + normalize raw line rows into the payload shape sent to the backend.
- *  - Persists the computed total when the Total box is empty (the box only ever
+ * - Persists the computed total when the Total box is empty (the box only ever
  *    showed it as a display fallback).
- *  - Keeps any line with content: identifier, quantity, remark, OR pricing
+ * - Keeps any line with content: identifier, quantity, remark, OR pricing
  *    (a priced line with no item code / qty must still survive). */
 export function cleanLineItems(products: RawProductLine[]): CleanedProductLine[] {
   return products

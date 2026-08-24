@@ -1,4 +1,4 @@
-"""Order master-ref upsert helpers — the logic the import path now reuses.
+"""Order master-ref upsert helpers - the logic the import path now reuses.
 
 `import_excel_tracking` populates `customer_id` / `transporter_id` by routing each
 mapped row through `_sync_order_master_refs`, exactly like `create_order` /
@@ -49,7 +49,7 @@ def test_customer_upsert_is_idempotent(db):
 
 
 def test_same_code_distinct_names_get_separate_rows(db):
-    """One Sage code can carry multiple debtor names — each pair is its own row."""
+    """One Sage code can carry multiple debtor names - each pair is its own row."""
     svc = _svc(db)
     a = svc._upsert_customer_from_debtor("Deluxe Home Center (KTN)", "300-D093")
     b = svc._upsert_customer_from_debtor("Deluxe Home Center AC (I)", "300-D093")

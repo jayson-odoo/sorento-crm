@@ -1,7 +1,7 @@
 """Manual conversation-SLA escalate endpoint guard logic.
 
 Calls the route coroutine directly with a patched ConversationSLATrackingService
-(mirrors the mock style of test_sla_escalation.py — no DB/TestClient). Covers the
+(mirrors the mock style of test_sla_escalation.py - no DB/TestClient). Covers the
 guards that run before assignee resolution + the happy-path delegation.
 """
 from __future__ import annotations

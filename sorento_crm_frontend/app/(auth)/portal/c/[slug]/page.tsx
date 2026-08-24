@@ -1,12 +1,12 @@
 'use client';
 
 /**
- * Stable per-contact portal URL — `/portal/c/{slug}`.
+ * Stable per-contact portal URL - `/portal/c/{slug}`.
  *
  * The slug is an identity hint, not a credential: with a live device token
  * for this contact the landing renders straight away; otherwise the user
  * verifies via OTP. When the device holds a token for a DIFFERENT contact
- * (shared device), the slug in the address bar wins — the stored session is
+ * (shared device), the slug in the address bar wins - the stored session is
  * dropped and this contact verifies fresh.
  */
 

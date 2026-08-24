@@ -30,25 +30,25 @@ This project addresses these gaps end-to-end. Success will be measured by: (a) *
 
 # **Introduction**
 
-Sorento Sdn. Bhd. operates across two distinct business segments — Project Sales and Retail — both of which generate substantial volumes of internal coordination work that today sits outside any system. Phase 1 brought enquiries, complaints (project segment) and stock processes under AI orchestration. This project widens the scope to capture the activities that bookend the sale: **project pursuit and quotation on the front end, and warranty, complaint resolution and customer feedback on the back end.**
+Sorento Sdn. Bhd. operates across two distinct business segments - Project Sales and Retail - both of which generate substantial volumes of internal coordination work that today sits outside any system. Phase 1 brought enquiries, complaints (project segment) and stock processes under AI orchestration. This project widens the scope to capture the activities that bookend the sale: **project pursuit and quotation on the front end, and warranty, complaint resolution and customer feedback on the back end.**
 
-This project is intentionally designed as an extension of the Phase 1 platform — **same channels (primarily WhatsApp), same system, same Single-Source-of-Truth (SSoT) data approach, and same SLA / escalation discipline.** New AI agents are introduced, but they sit alongside the Phase 1 agents and share the same backbone.
+This project is intentionally designed as an extension of the Phase 1 platform - **same channels (primarily WhatsApp), same system, same Single-Source-of-Truth (SSoT) data approach, and same SLA / escalation discipline.** New AI agents are introduced, but they sit alongside the Phase 1 agents and share the same backbone.
 
 # **Objective**
 
 **The objectives of this project are:**
 
-* **Project Visibility:** Establish a single, authoritative project register in which **100% of new project enquiries are captured** with project number, assigned salesperson, and a complete history of every salesperson who tried to register the same project — enabling management to make informed assignment decisions.
+* **Project Visibility:** Establish a single, authoritative project register in which **100% of new project enquiries are captured** with project number, assigned salesperson, and a complete history of every salesperson who tried to register the same project - enabling management to make informed assignment decisions.
 
-* **Quotation Speed & Pricing Governance:** Generate **80% of standard project quotations within 5 minutes of request**, with full pricing tolerance enforcement — quotes within tolerance go directly to the customer, quotes outside tolerance route automatically to CK for approval.
+* **Quotation Speed & Pricing Governance:** Generate **80% of standard project quotations within 5 minutes of request**, with full pricing tolerance enforcement - quotes within tolerance go directly to the customer, quotes outside tolerance route automatically to CK for approval.
 
 * **SMC Engagement:** Maintain **consistent and timely engagement with Sorento Member Club (SMC)** members through structured broadcasts and an AI Engagement Agent, with a target of **at least one meaningful touchpoint per month** and measurable conversion to enquiries / quotations.
 
 * **Complaint Submission:** Provide friction-free complaint submission through both WhatsApp (photo \+ AI extraction), targeting **80% of the complaints to be submitted within 5 minutes of request**
 
-* **Complaint SLA Compliance:** Achieve **100% adherence to defined response and resolution SLAs** through automated reminders, escalations and proactive scheduling — every complaint is acknowledged, scheduled, completed with proof, and surveyed.
+* **Complaint SLA Compliance:** Achieve **100% adherence to defined response and resolution SLAs** through automated reminders, escalations and proactive scheduling - every complaint is acknowledged, scheduled, completed with proof, and surveyed.
 
-* **Performance Visibility:** Equip management with a **self-service warranty & after-sales dashboard** showing **response time, resolution time, customer satisfaction scores and PIC performance** — enabling data-driven KPI setting and continuous improvement.
+* **Performance Visibility:** Equip management with a **self-service warranty & after-sales dashboard** showing **response time, resolution time, customer satisfaction scores and PIC performance** - enabling data-driven KPI setting and continuous improvement.
 
 # **List of Requirements**
 
@@ -65,15 +65,15 @@ This project is intentionally designed as an extension of the Phase 1 platform �
 | **9** | Complaint Scheduling | Jayden | Customer Service | **Schedule a service timeslot** with the customer by **coordinating against technician capacity, availability and proximity** to the customer s location. Once confirmed, **update customer, dealer, office and salesperson**.  | Optimise technician deployment; reduce scheduling friction; minimise travel time and idle slots. | Smart Scheduling Agent \+ Technician Roster \+ Calendar / Capacity data | **Smart Scheduling Agent proposes 2-3 viable slots within 2 minutes** of request. Confirmed slot pushed to all stakeholders. **No double-booking** of technicians.  |
 | **10** | Complaint Resolution Proof | Jayden | Customer Service / Technical | After completion of work, the technician **provides updates and proof of completion (photos, videos)** which **mark the complaint as completed**.  | Validate work completion objectively; archive evidence for warranty audit and customer queries. | Work Completion Tracker (extending Complaint Management Agent) | **Photo / video evidence required before a complaint can be moved to RESOLVED**. **Resolution time captured for KPI reporting**.  |
 | **11** | Customer Feedback | Jayden | Customer Service | After complaint completion, **send a customer satisfaction survey** to **capture feedback**.  | Capture voice-of-customer; identify systemic issues; feed continuous improvement. | Customer Survey Agent | **Survey sent automatically within 1 working day after RESOLVED status**. **Responses logged against the complaint record**. **Aggregated CSAT score visible in management dashboard**.  |
-| **12** | Warranty Policy Q\&A | Jayden | Customer Service | Customers and dealers **ask the AI about warranty policy** for a specific product or product category. **AI must answer based on a single source of truth** — currently the warranty policy on Sorento s website.  | Eliminate inconsistent warranty answers; reduce dealer / CS workload on policy questions. | Warranty Q\&A Agent \+ Warranty Policy SSoT (synced from Sorento website) | **Warranty queries answered in under 1 minute**. **100% of answers grounded in the current SSoT** (no hallucinated policy clauses). Policy **updates on the website are reflected within 24 hours**.  |
-| **13** | Management Reporting | Jayden | Management | **Reporting on complaints** showing **response time, resolution time, breach incidents, and PIC-level performance** — used to **set KPIs and manage performance**.  | Enable data-driven KPI setting and performance management for Customer Service. | Complaint Reporting Dashboard | **Dashboard shows response & resolution times by week / month, by PIC, by product category**. **Configurable KPI targets with breach alerts**. **Exportable to Excel / PDF**.  |
-| **14** | Forms & Workflow Management | Li Hua | Marketing / Retail Sales | Provide a **flexible form designer** that allows authorized marketing to **design forms** — fields, sections, line items — **define states and transitions**, and **configure notification recipients** for each state  | Digitalise marketing form, allow creation of new forms, revision of existing forms without engaging FoundryX for development | Form Designer \+ Workflow Engine \+ Notification Engine (foundational platform capability) | **Authorised users can create a form with multiple sections, fields and line items**; **define at least 4 workflow states with transitions**; **assign notification recipients per state** (by role or specific user); **publish the form**; the form is then **usable by end users via portal**  |
+| **12** | Warranty Policy Q\&A | Jayden | Customer Service | Customers and dealers **ask the AI about warranty policy** for a specific product or product category. **AI must answer based on a single source of truth** - currently the warranty policy on Sorento s website.  | Eliminate inconsistent warranty answers; reduce dealer / CS workload on policy questions. | Warranty Q\&A Agent \+ Warranty Policy SSoT (synced from Sorento website) | **Warranty queries answered in under 1 minute**. **100% of answers grounded in the current SSoT** (no hallucinated policy clauses). Policy **updates on the website are reflected within 24 hours**.  |
+| **13** | Management Reporting | Jayden | Management | **Reporting on complaints** showing **response time, resolution time, breach incidents, and PIC-level performance** - used to **set KPIs and manage performance**.  | Enable data-driven KPI setting and performance management for Customer Service. | Complaint Reporting Dashboard | **Dashboard shows response & resolution times by week / month, by PIC, by product category**. **Configurable KPI targets with breach alerts**. **Exportable to Excel / PDF**.  |
+| **14** | Forms & Workflow Management | Li Hua | Marketing / Retail Sales | Provide a **flexible form designer** that allows authorized marketing to **design forms** - fields, sections, line items - **define states and transitions**, and **configure notification recipients** for each state  | Digitalise marketing form, allow creation of new forms, revision of existing forms without engaging FoundryX for development | Form Designer \+ Workflow Engine \+ Notification Engine (foundational platform capability) | **Authorised users can create a form with multiple sections, fields and line items**; **define at least 4 workflow states with transitions**; **assign notification recipients per state** (by role or specific user); **publish the form**; the form is then **usable by end users via portal**  |
 | **15** | Marketing Automation (B2C communication) | Li Hua | Marketing | **Respond.io** customer-engagement **flow**: greeting \+ main menu routing to **Product Enquiry, Project Enquiry, Store Locations, After-Sales and Sales & Promotions**. | Standardise the customer experience; capture and route leads | Respond.io Flow | **Greeting** \+ **5- option menu** delivered on entry; **product enquiry** **returns** a valid (non-hallucinated) **Sorento product URL** or a graceful retry; **store lookup** returns the **correct dealer by state/area**; **unresolved/angry contacts** **handed off** to a **human** |
 | **16** | Order Change Notice (OCN) | Baser | Project Sales  | **Submission of forms to project sales admin then passed to customer service** for further processing. Same pattern as **Phase 1 Purchase Request / Sponsorship Form**.  | Standardise form submission process just like purchase request & sponsorship form in Phase 1 | OCN Form (configured on the Forms Management platform from \#14) \+ AI Routing | **OCN form captures PO number, change type, change details and justification**; **routed to the appropriate approver** per change type; once approved, **flow to customer service**; **all changes logged with full audit trail**.  |
 | **17** | Purchase Exchange / Return | Baser | Project Sales  | **Submission of forms to project sales admin then passed to customer service** for further processing. Same pattern as **Phase 1 Purchase Request / Sponsorship Form**.  | Standardise form submission process just like purchase request & sponsorship form in Phase 1 | Exchange / Return Form (configured on the Forms Management platform from \#14) \+ AI Routing | **Form captures SO number, items being exchanged or returned, reason, and photos as proof**; **routed to project sales manager for approval**; once approved, **customer service process next**; **all transactions logged**.  |
-| **18** | HR Forms Digitalization | Peggy | HR | Digitalise HR forms — c**laim, leave, stationery order** with approval, routing and notifications. **Employee Handbook** answered by an AI Q\&A agent grounded in the handbook SSoT. | Replace paper/PDF HR processes; give staff self-service via WhatsApp & portal; reduce HR admin load. | Form Designer \+ Handbook Q\&A Agent | **Claim/leave/ stationery forms** published with **approval workflow** and **notifications**; **handbook questions** answered from SSoT with ambiguous cases routed to HR. |
+| **18** | HR Forms Digitalization | Peggy | HR | Digitalise HR forms - c**laim, leave, stationery order** with approval, routing and notifications. **Employee Handbook** answered by an AI Q\&A agent grounded in the handbook SSoT. | Replace paper/PDF HR processes; give staff self-service via WhatsApp & portal; reduce HR admin load. | Form Designer \+ Handbook Q\&A Agent | **Claim/leave/ stationery forms** published with **approval workflow** and **notifications**; **handbook questions** answered from SSoT with ambiguous cases routed to HR. |
 | **19** | Autocount Integration | CK / Jayden | All | Direct **integration** with **AutoCount** as a system of record, **replacing** the **manual** **daily Excel exports** used in **Phase 1**. Read-only sync of **Product, Stock, Sales Order, Debtor, Delivery Order, GRN and Packing List / SPO, Purchase Order, Supplier Master with lead time data** into the platform data store | Single source of truth for inventory, pricing and order data; eliminate manual extracts and staleness. | AutoCount Integration Layer | **Core entities synced** on a defined cadence (and on events where available); enquiries reflect AutoCount within the agreed freshness window; no write-back to AutoCount in This project  |
-| **20** | Dealer Management | Jayden | Retail Sales | A **fundamental dealer profile** (keyed to the AutoCount debtor) holding assigned salesperson, brand access, status and promotion eligibility. The **dealer's eligible promotions** — set per dealer by the assigned salesperson based on relationship/experience — gate what the AI offers. **Sales and performance analytics by dealer and by product** support strategy. Onboarding and training remain manual; only the structure is built, designed for future extension. | Improve sales/performance analytics by dealer and product | Dealer Management | Each **dealer** has a record keyed to AutoCount with salesperson, brand access, status and eligibility; AI answers dealer promotion eligibility from the record; **sales-by-dealer and sales-by-product analytics** available; onboarding/training out of scope but the dealer structure supports future credit, tiering and multibrand extensions without rework. |
+| **20** | Dealer Management | Jayden | Retail Sales | A **fundamental dealer profile** (keyed to the AutoCount debtor) holding assigned salesperson, brand access, status and promotion eligibility. The **dealer's eligible promotions** - set per dealer by the assigned salesperson based on relationship/experience - gate what the AI offers. **Sales and performance analytics by dealer and by product** support strategy. Onboarding and training remain manual; only the structure is built, designed for future extension. | Improve sales/performance analytics by dealer and product | Dealer Management | Each **dealer** has a record keyed to AutoCount with salesperson, brand access, status and eligibility; AI answers dealer promotion eligibility from the record; **sales-by-dealer and sales-by-product analytics** available; onboarding/training out of scope but the dealer structure supports future credit, tiering and multibrand extensions without rework. |
 | **21** | Customer Relationship Management | CK / Jayden | All | Single source of truth for AI’s knowledge \- product, stock, promotion, files, packing list, SPO, GRN, delivery orders, tock | Full-fledge CRM to consolidate client data into a single platform. | Master data maintenance | (Delivered in Phase 1\) |
 | **22** | Customer Relationship Management | Jayden | Purchasing / Marketing | Centralized file management system to replace Google Drive, to centralize the management of company’s documentation | Full-fledge CRM to consolidate client data into a single platform. | Resource management | (Delivered in Phase 1\) |
 | **23** | SLA Management | CK / Jayden | All | Manage response time and  resolution time; dashboard  visualization of response &  resolution performance. | Real-time visibility of case resolution performance | SLA tracking | (Delivered in Phase 1\) |
@@ -81,17 +81,17 @@ This project is intentionally designed as an extension of the Phase 1 platform �
 | **25** | Dealer Management | Jayden | Retail Sales | Promotion expiry reminder, automated promotion deactivation, storing every promotions, enquiries about promotion | Logging every promotion, activities etc. | Promotion management | (Delivered in Phase 1\) |
 | **26** | Purchase Request, Sponsorship Form, Stock Inquiry | CK | Project Sales | Full digitalization of purchase request, sponsorship form, stock inquiry through system, with every process tracked and updated to salesperson in real time | Full-fledge CRM to consolidate client data into a single platform. | Form submission | (Delivered in Phase 1\) |
 | **27** | Supply Chain / Inventory Optimisation | Mr Loo | Purchasing | **AI co-pilot that replaces AutoCount's naive min/max reorder logic** with cash-aware, judgment-augmented inventory planning. Computes demand forecast, **net stock position** (on-hand \+ on-order − committed), reorder point, safety stock and days-of-cover per SKU / colour variant, and **proposes what to order and when under an explicit purchasing-cash constraint**. Mr Loo’s tacit factors (colour, trend, incoming projects, lead-time feel) are **captured as structured overrides**. System proposes; human disposes. | **Externalise Mr Loo’s ordering logic** so it is auditable and transferable; **keep optimum stock while protecting cashflow**; eliminate manual low-stock monitoring and multi-month forecasting. | Supply Chain Copilot (Quantitative Core \+ Cash-Constrained Planning View \+ Override Capture \+ LLM explanation layer) \+ expanded AutoCount sync (\#19) | **Net position computed correctly incl. open POs**. Reorder suggestions **reproduce Mr Loo’s decisions on stable items within agreed tolerance**. Cash-constrained view **allocates a purchasing budget across SKUs by urgency / margin**. **Dead / slow stock surfaced as trapped cash** at colour-variant level. **Every override is captured**. **No LLM decided on order quantities without human approval**. |
-| **28** | Idea Management | Management | All / Management | **WhatsApp AI assistant captures ideas** at the moment they occur. AI extracts and structures each idea into an **Idea Repository — deliberately separate from operational tickets and forms**. Ideas are triaged, bundled into an **agenda pack for a recurring management brainstorm** (configurable biweekly / monthly cadence), and every reviewed idea receives a recorded outcome (adopted → CR / requirement, parked, rejected) with an owner. | Capture institutional ideas that today evaporate in chat threads; give management a structured recurring forum with a prepared agenda; create a traceable path from idea → decision → change. | Idea Intake Agent (WhatsApp) \+ Idea Repository \+ Brainstorm Pack Generator | **Idea submitted via WhatsApp in under 1 minute** without leaving the chat. AI extracts title, category, problem and proposed benefit and **confirms with the submitter** before saving. **Every idea has a status and an owner**. **Agenda pack auto-generated** per cadence. **Outcome recorded against every idea reviewed**. |
-| **29** | Meeting Productivity | Management | All | An **AI agent invited to Sorento meetings** (Google Meet / Zoom / Teams) that records, transcribes and produces **structured notes — summary, decisions, and action items with named owners**. Output is **filed into Resource Management** (Phase 1\) against the correct folder with access control. Action items are pushed to owners via WhatsApp and may be raised as tickets or ideas (\#28). **Notes are draft-for-confirmation, never authoritative until a human confirms.** | Eliminate manual minute-taking; make decisions and action items retrievable and auditable; feed the idea repository and ticket flow. | Meeting Agent \+ automatic speech recognition (ASR) / transcription \+ Resource Management (Phase 1\) \+ Notification Engine | **Agent joins on calendar invite**; **participant consent announced on join**. **Draft notes produced within 30 minutes of meeting end**. **Decisions and action items extracted with named owners**. **Human confirmation required** before action items become commitments. **Output stored in Resource Management** with access control. |
-| **30** | SLA Management | CK | All | When a case is **assigned or an SLA escalates**, the AI **proposes the next action to the assignee** — grounded in similar resolved cases, the Warranty Policy SSoT, product data and the Employee Handbook. The suggestion appears in the notification and on the case record. **The assignee accepts, edits or ignores it. The AI never auto-executes.** | Reduce time-to-first-action; make institutional knowledge available to junior staff at the moment of need; improve the quality of SLA compliance, not just its speed. | SLA Suggestion Agent (semantic layer over Phase 1 SLA Tracking \#23 / SLA Assignment \#24) | **Suggestion delivered with the assignment / escalation notification within 1 minute**. **Every suggestion cites its grounding source** (no invented policy). **Assignee action — accept / edit / ignore — is logged**. **No action executed without human confirmation**. |
-| **31** | Management Reporting | CK | Project Sales | **Block-form dashboard of salesperson performance** across **daily, weekly, monthly and quarterly** periods. Metrics: **new customers established, projects registered, quotations issued, POs received, and order value**. **Colour bands flag over-achievers and under-performers** against configurable targets. Drill-through from any block to the underlying records. | Replace anecdotal performance discussion with data; enable KPI setting and performance management for Project Sales. | Sales Leaderboard — configured on the Analytics & Dashboard Platform (\#34); reads Project Master (\#1), Quotation (\#3), AutoCount SO / Debtor (\#19) | **Metrics per salesperson per period** (day / week / month / quarter). **Colour bands configurable**. **Drill-through to underlying records**. **Period-on-period comparison**. **Row-level security enforced** — visibility scope per role agreed before build. Exportable. |
-| **32** | Order & Delivery Status | CK / Baser | Project Sales / Customer Service | **Automatic, scheduled status updates to project customers and dealers** on outstanding orders — order confirmed, stock allocated, **expected delivery date**, revisions to that date with reasons, delivery completed. Customers and dealers can also **self-serve on WhatsApp** ('status of PO X?'), answered from **AutoCount SO / DO plus incoming-PO ETA (\#19)**. Where a salesperson does not respond within SLA, the enquiry **escalates automatically**. | Eliminate the customer chase-cycle; remove dependence on a salesperson answering a phone; protect Sorento's reputation with project customers. | Order Status Agent \+ AutoCount SO / DO / PO (\#19) \+ SCM incoming-PO ETA (\#27) \+ SLA escalation (\#24) | **Every open project order carries a system-held expected delivery date**. **Status changes push to the customer contact within 1 minute**. **Customer WhatsApp status enquiry answered in under 1 minute** from SO / DO / PO data. **Unanswered enquiries escalate to the manager per SLA**. **'TBA' replaced by a dated commitment or an explicit, dated reason**. |
+| **28** | Idea Management | Management | All / Management | **WhatsApp AI assistant captures ideas** at the moment they occur. AI extracts and structures each idea into an **Idea Repository - deliberately separate from operational tickets and forms**. Ideas are triaged, bundled into an **agenda pack for a recurring management brainstorm** (configurable biweekly / monthly cadence), and every reviewed idea receives a recorded outcome (adopted → CR / requirement, parked, rejected) with an owner. | Capture institutional ideas that today evaporate in chat threads; give management a structured recurring forum with a prepared agenda; create a traceable path from idea → decision → change. | Idea Intake Agent (WhatsApp) \+ Idea Repository \+ Brainstorm Pack Generator | **Idea submitted via WhatsApp in under 1 minute** without leaving the chat. AI extracts title, category, problem and proposed benefit and **confirms with the submitter** before saving. **Every idea has a status and an owner**. **Agenda pack auto-generated** per cadence. **Outcome recorded against every idea reviewed**. |
+| **29** | Meeting Productivity | Management | All | An **AI agent invited to Sorento meetings** (Google Meet / Zoom / Teams) that records, transcribes and produces **structured notes - summary, decisions, and action items with named owners**. Output is **filed into Resource Management** (Phase 1\) against the correct folder with access control. Action items are pushed to owners via WhatsApp and may be raised as tickets or ideas (\#28). **Notes are draft-for-confirmation, never authoritative until a human confirms.** | Eliminate manual minute-taking; make decisions and action items retrievable and auditable; feed the idea repository and ticket flow. | Meeting Agent \+ automatic speech recognition (ASR) / transcription \+ Resource Management (Phase 1\) \+ Notification Engine | **Agent joins on calendar invite**; **participant consent announced on join**. **Draft notes produced within 30 minutes of meeting end**. **Decisions and action items extracted with named owners**. **Human confirmation required** before action items become commitments. **Output stored in Resource Management** with access control. |
+| **30** | SLA Management | CK | All | When a case is **assigned or an SLA escalates**, the AI **proposes the next action to the assignee** - grounded in similar resolved cases, the Warranty Policy SSoT, product data and the Employee Handbook. The suggestion appears in the notification and on the case record. **The assignee accepts, edits or ignores it. The AI never auto-executes.** | Reduce time-to-first-action; make institutional knowledge available to junior staff at the moment of need; improve the quality of SLA compliance, not just its speed. | SLA Suggestion Agent (semantic layer over Phase 1 SLA Tracking \#23 / SLA Assignment \#24) | **Suggestion delivered with the assignment / escalation notification within 1 minute**. **Every suggestion cites its grounding source** (no invented policy). **Assignee action - accept / edit / ignore - is logged**. **No action executed without human confirmation**. |
+| **31** | Management Reporting | CK | Project Sales | **Block-form dashboard of salesperson performance** across **daily, weekly, monthly and quarterly** periods. Metrics: **new customers established, projects registered, quotations issued, POs received, and order value**. **Colour bands flag over-achievers and under-performers** against configurable targets. Drill-through from any block to the underlying records. | Replace anecdotal performance discussion with data; enable KPI setting and performance management for Project Sales. | Sales Leaderboard - configured on the Analytics & Dashboard Platform (\#34); reads Project Master (\#1), Quotation (\#3), AutoCount SO / Debtor (\#19) | **Metrics per salesperson per period** (day / week / month / quarter). **Colour bands configurable**. **Drill-through to underlying records**. **Period-on-period comparison**. **Row-level security enforced** - visibility scope per role agreed before build. Exportable. |
+| **32** | Order & Delivery Status | CK / Baser | Project Sales / Customer Service | **Automatic, scheduled status updates to project customers and dealers** on outstanding orders - order confirmed, stock allocated, **expected delivery date**, revisions to that date with reasons, delivery completed. Customers and dealers can also **self-serve on WhatsApp** ('status of PO X?'), answered from **AutoCount SO / DO plus incoming-PO ETA (\#19)**. Where a salesperson does not respond within SLA, the enquiry **escalates automatically**. | Eliminate the customer chase-cycle; remove dependence on a salesperson answering a phone; protect Sorento's reputation with project customers. | Order Status Agent \+ AutoCount SO / DO / PO (\#19) \+ SCM incoming-PO ETA (\#27) \+ SLA escalation (\#24) | **Every open project order carries a system-held expected delivery date**. **Status changes push to the customer contact within 1 minute**. **Customer WhatsApp status enquiry answered in under 1 minute** from SO / DO / PO data. **Unanswered enquiries escalate to the manager per SLA**. **'TBA' replaced by a dated commitment or an explicit, dated reason**. |
 
 # **Solution Detail by Requirement**
 
-## **Cluster A — Project Management (Requirements \#1 and \#2)**
+## **Cluster A - Project Management (Requirements \#1 and \#2)**
 
-### **Requirement \#1 — Project Registration**
+### **Requirement \#1 - Project Registration**
 
 The salesperson sends a WhatsApp message to the AI “I want to register a project”. AI returns a link. The salesperson clicks on the link, adds a new project, and **uses “AI Extract” to upload project details**. 
 
@@ -107,7 +107,7 @@ The AI extracts the project title, developer name and location from the message.
 
 * If the project is new, the AI **generates a unique Project Number**, assigns the requesting salesperson as the PIC, **saves the record to the Project Master**, and **notifies Project Sales Admin**.
 
-* If the project is already registered, the AI replies to the salesperson with the original PIC s name, and **quietly logs the salesperson s name** into the Activity Log against that project. Management can then look at any project and see the full list of salespeople who have shown interest, and decide — based on activity, relationship, or fairness — whether to reassign the project.
+* If the project is already registered, the AI replies to the salesperson with the original PIC s name, and **quietly logs the salesperson s name** into the Activity Log against that project. Management can then look at any project and see the full list of salespeople who have shown interest, and decide - based on activity, relationship, or fairness - whether to reassign the project.
 
 ![][image4]
 
@@ -115,23 +115,23 @@ The AI extracts the project title, developer name and location from the message.
 
 ![][image5]
 
-*Figure 2 — Project Registration Flow*
+*Figure 2 - Project Registration Flow*
 
-### **Requirement \#2 — Proactive Project Update Reminders**
+### **Requirement \#2 - Proactive Project Update Reminders**
 
 Active projects in the Project Sales pipeline can sit for weeks without movement. Today there is no system push; updates only happen when a salesperson volunteers them or when CK asks. In this project, the system **pushes a polite reminder** to the assigned salesperson on a **configurable cadence** (e.g. **every 14 calendar days** from last update, then sends a reminder).
 
 The message in the reminder is configurable. For example, the management can ask several questions in the reminder: current status, expected close date, blockers, and whether anything is needed from management. The salesperson's free-text reply is **stored as the latest update on the project’s Activity Log**, and the reminder timer is **reset**.
 
-## **Cluster B — Quotation (Requirement \#3)**
+## **Cluster B - Quotation (Requirement \#3)**
 
-### **Requirement \#3 — AI-Generated Quotation with Pricing Tolerance**
+### **Requirement \#3 - AI-Generated Quotation with Pricing Tolerance**
 
 Quotation is the single most labour-intensive task in the project sales workflow today. The salesperson opens an Excel template, types item codes one at a time, types prices manually (often referencing memos), inserts photos one at a time, and attaches Ikram certs. A typical 5-line quotation takes 20-30 minutes; mistakes are common; pricing discipline is loose because there is no system check.
 
 This project turns manual quotation into a systematic approach. The salesperson directly generates the quotation in the system for the project, the line items and quantities, and the proposed selling price per item. The system **fetches the preset selling price from the Product Master** and compares the proposal:
 
-* If every line is within tolerance (e.g. ±5% of the preset price), the system **auto-approves the quotation** — ready to forward to the customer. **The whole process takes under 5 minutes**.
+* If every line is within tolerance (e.g. ±5% of the preset price), the system **auto-approves the quotation** - ready to forward to the customer. **The whole process takes under 5 minutes**.
 
 * If any line is outside tolerance, the AI does NOT proceed. Instead, the **system emails CK** with the project name, the salesperson, the items in question, the preset price, the proposed price, and the salesperson's justification. **CK approves or rejects directly from the email**. Only after approval does the system allow approval of the quotation.
 
@@ -145,51 +145,51 @@ This project turns manual quotation into a systematic approach. The salesperson 
 
 ![][image8]
 
-*Figure 3 — Quotation Flow with Pricing Tolerance Control*
+*Figure 3 - Quotation Flow with Pricing Tolerance Control*
 
-## **Cluster C — SMC Broadcasting & Engagement (Requirement \#4)**
+## **Cluster C - SMC Broadcasting & Engagement (Requirement \#4)**
 
-### **Requirement \#4 — SMC Broadcasting and Sales Engagement**
+### **Requirement \#4 - SMC Broadcasting and Sales Engagement**
 
-Sorento Member Club members are partners that Sorento needs to keep close — they sell, they refer, they are advocates. Today, communication with them is reactive and ad-hoc; promotions reach SMC members through general WhatsApp groups (or worse, not at all).
+Sorento Member Club members are partners that Sorento needs to keep close - they sell, they refer, they are advocates. Today, communication with them is reactive and ad-hoc; promotions reach SMC members through general WhatsApp groups (or worse, not at all).
 
 This project introduces an SMC Engagement Agent. Management can **trigger a new AI agent with personalized instruction**, prompt, then **upload new product information, promotions**, technical updates and other relevant materials into the AI agent (alternatively, management can easily **link the AI agent with existing data** in the system like product, promotion). 
 
 ![][image9]
 
-*Figure 3 — Initialise AI Agent*
+*Figure 3 - Initialise AI Agent*
 
-They can then choose the SMC segment to receive each broadcast — by region, tier, product line — and trigger the broadcast. Each SMC member receives a **personalized WhatsApp message** and the AI agent kicks in to **interact with the SMC member to send reminder, provide information**.
+They can then choose the SMC segment to receive each broadcast - by region, tier, product line - and trigger the broadcast. Each SMC member receives a **personalized WhatsApp message** and the AI agent kicks in to **interact with the SMC member to send reminder, provide information**.
 
-Where this differs from a generic broadcast tool is what happens after delivery. If an SMC member replies — asking about price, asking for promotion details, asking for a quotation — the **AI Agent answers immediately, drawing from the system data**. If a sales opportunity is detected (e.g. the SMC member asks for a quote), the **conversation is handed off to the salesperson** to follow up.
+Where this differs from a generic broadcast tool is what happens after delivery. If an SMC member replies - asking about price, asking for promotion details, asking for a quotation - the **AI Agent answers immediately, drawing from the system data**. If a sales opportunity is detected (e.g. the SMC member asks for a quote), the **conversation is handed off to the salesperson** to follow up.
 
 If the SMC member does not reply, the agent **schedules a polite follow-up after a configurable number of days**, ensuring no member is forgotten.
 
 ![][image10]
 
-*Figure 4 — SMC Broadcasting and Engagement Flow*
+*Figure 4 - SMC Broadcasting and Engagement Flow*
 
-## **Cluster D — Warranty & After-Sales System (Requirements \#5 to \#13)**
+## **Cluster D - Warranty & After-Sales System (Requirements \#5 to \#13)**
 
 Requirements \#5 to \#13 collectively form a complete warranty and after-sales system. Rather than describing each requirement in complete isolation, this subsection groups them by the customer journey they support: warranty registration (\#5, \#6), policy enquiry (\#12), complaint lodging and management (\#7, \#8), service scheduling (\#9), work completion (\#10), customer feedback (\#11), and management reporting (\#13).
 
-### **Requirements \#5 — Warranty Registration**
+### **Requirements \#5 - Warranty Registration**
 
-Warranty registration today is treated as **optional** — and most end users skip it because the friction is too high. This project keeps registration optional but removes the friction so that those who do choose to register find it almost effortless. The added value of warranty registration to Sorento is to have the sales data from the dealership indirectly that can be useful information in management decisions. We understand that Sorento does not need this now but we will put this in as an optional step of the process flow so it is there when Sorento needs it
+Warranty registration today is treated as **optional** - and most end users skip it because the friction is too high. This project keeps registration optional but removes the friction so that those who do choose to register find it almost effortless. The added value of warranty registration to Sorento is to have the sales data from the dealership indirectly that can be useful information in management decisions. We understand that Sorento does not need this now but we will put this in as an optional step of the process flow so it is there when Sorento needs it
 
-* WhatsApp (Requirement \#6): A user — end user, dealer or salesman — sends a photo of the receipt to Sorento s warranty AI. The AI **uses OCR and vision extraction** to pull out name, phone, address, defect description and invoice details. The AI **confirms the extracted data with the user** before saving (a  Did I get this right?  prompt). Once confirmed, the **registration is saved** and the **dealer's assigned salesperson is notified** — addressing Jayden s specific note that every dealer has a salesperson handling them.
+* WhatsApp (Requirement \#6): A user - end user, dealer or salesman - sends a photo of the receipt to Sorento s warranty AI. The AI **uses OCR and vision extraction** to pull out name, phone, address, defect description and invoice details. The AI **confirms the extracted data with the user** before saving (a  Did I get this right?  prompt). Once confirmed, the **registration is saved** and the **dealer's assigned salesperson is notified** - addressing Jayden s specific note that every dealer has a salesperson handling them.
 
 * Please note that at This project, the warranty registration is not mandatory to activate the warranty. Customers are still eligible for the warranty claim if they are not registered as the system will auto activate based on their purchase date.
 
 ![][image11]
 
-*Figure 5 — Warranty Registration Flow*
+*Figure 5 - Warranty Registration Flow*
 
 ![][image2]
 
-*Figure 5 — Warranty Registration will have similar ‘AI Extract’ with Phase 1 to Upload Receipts*
+*Figure 5 - Warranty Registration will have similar ‘AI Extract’ with Phase 1 to Upload Receipts*
 
-### **Requirement \#12 — Warranty Policy Q\&A**
+### **Requirement \#12 - Warranty Policy Q\&A**
 
 Customers and dealers regularly ask 'is product X covered for Y years?' or 'does the warranty cover commercial use?'
 
@@ -197,13 +197,13 @@ System will provide a page to configure warranty policy as below:
 
 ![][image12]
 
-*Figure 5 — Sorento’s Warranty Policy*
+*Figure 5 - Sorento’s Warranty Policy*
 
-The **AI ingests the warranty policy from the system as Single Source of Truth** and **answers questions directly**. The agent is restricted to answering only from the policy text — it does not invent clauses. When the policy is updated, the agent's knowledge is refreshed so customers always get the current answer.
+The **AI ingests the warranty policy from the system as Single Source of Truth** and **answers questions directly**. The agent is restricted to answering only from the policy text - it does not invent clauses. When the policy is updated, the agent's knowledge is refreshed so customers always get the current answer.
 
-Importantly, this agent is read-only against the policy. If a customer's situation is ambiguous or falls outside the documented policy, the agent does not guess — it **routes the question to Customer Service**, exactly like Phase 1\.
+Importantly, this agent is read-only against the policy. If a customer's situation is ambiguous or falls outside the documented policy, the agent does not guess - it **routes the question to Customer Service**, exactly like Phase 1\.
 
-### **Requirements \#7, \#8, \#9, \#10, \#11 — Complaint Lifecycle End-to-End**
+### **Requirements \#7, \#8, \#9, \#10, \#11 - Complaint Lifecycle End-to-End**
 
 These five requirements cover the lifecycle of a single complaint, from the moment it is lodged to the moment customer feedback is captured. They are best understood as a single connected flow:
 
@@ -213,21 +213,21 @@ These five requirements cover the lifecycle of a single complaint, from the mome
 
 ![][image2]
 
-*Figure 5 — Complaint Submission will have AI Extract feature*
+*Figure 5 - Complaint Submission will have AI Extract feature*
 
 ![][image13]
 
-*Figure 5 — Requester can upload screenshots, videos*
+*Figure 5 - Requester can upload screenshots, videos*
 
 ![][image14]
 
-*Figure 5 — Requester must upload receipt / invoice as proof of purchase. Warranty starts from invoice date*
+*Figure 5 - Requester must upload receipt / invoice as proof of purchase. Warranty starts from invoice date*
 
-* Notification (Req \#7): the moment the complaint is created, the system **pushes a notification to all relevant parties** — the customer (acknowledgement), the dealer, the office team, and the assigned salesperson.
+* Notification (Req \#7): the moment the complaint is created, the system **pushes a notification to all relevant parties** - the customer (acknowledgement), the dealer, the office team, and the assigned salesperson.
 
 ![][image15]
 
-*Figure 5 — Example notification from the system. Salesperson, dealer, customer and office person will all get notified*
+*Figure 5 - Example notification from the system. Salesperson, dealer, customer and office person will all get notified*
 
 * SLA Management (Req \#8): the **SLA timer starts at creation** (Status \= New). Customer Service decides the next action (approve / reject). If approved, customer service decides the solution (repair, replace whole unit, replace spare part etc.). Once the complaint is approved / rejected, a **notification is sent to all parties** (salesperson, dealer, customer). The system **sends reminders before each deadline** (e.g. **3 days**); **breaches trigger escalation to the manager**.
 
@@ -239,9 +239,9 @@ These five requirements cover the lifecycle of a single complaint, from the mome
 
 ![][image16]
 
-*Figure 6 — End-to-End Complaint Management Flow (Reqs \#7 to \#11)*
+*Figure 6 - End-to-End Complaint Management Flow (Reqs \#7 to \#11)*
 
-### **Requirement \#13 — Management Reporting**
+### **Requirement \#13 - Management Reporting**
 
 Every complaint touched by the system above generates structured data: when it was created, when it was first responded to, when it was scheduled, when it was resolved, and how the customer rated the experience. The **Complaint Reporting Dashboard surfaces this data** in three views:
 
@@ -253,83 +253,83 @@ Every complaint touched by the system above generates structured data: when it w
 
 The **dashboard is exportable to Excel and PDF**. **Configurable KPI targets** (e.g. response within **2 working days**, resolution within **14 working days**).
 
-## **Cluster E — flexible Form Designer with a built-in Workflow Engine and Notification Engine (Requirement \#14)**
+## **Cluster E - flexible Form Designer with a built-in Workflow Engine and Notification Engine (Requirement \#14)**
 
-### **Requirement \#14 — Configurable Forms & Workflows**
+### **Requirement \#14 - Configurable Forms & Workflows**
 
 Phase 1 stores marketing forms as PDF and returns to the salesperson when they ask for it. The form submission, approval process still remains outside of the system and is based on PDF.
 
 This project therefore introduces a flexible Form Designer with a built-in Workflow Engine and Notification Engine. Marketing users can:
 
-* **Design the form layout** — sections, fields (text, number, date, dropdown, file upload, signature, etc.), and repeatable line items (e.g. multiple order line items in a single form).
+* **Design the form layout** - sections, fields (text, number, date, dropdown, file upload, signature, etc.), and repeatable line items (e.g. multiple order line items in a single form).
 
 ![][image17]
 
-*Figure 5 — Form designer*
+*Figure 5 - Form designer*
 
-* **Define the workflow states** the form moves through — for example: Draft → Pending Approval → Approved → In Progress → Completed. The **number of states and the transitions between them are configurable**, not fixed.
+* **Define the workflow states** the form moves through - for example: Draft → Pending Approval → Approved → In Progress → Completed. The **number of states and the transitions between them are configurable**, not fixed.
 
 ![][image18]
 
-*Figure 5 — State & Notification Definition*
+*Figure 5 - State & Notification Definition*
 
-* **Configure who is notified at each state transition** — by role (e.g.  all marketing managers ), by specific user
+* **Configure who is notified at each state transition** - by role (e.g.  all marketing managers ), by specific user
 
-* **Publish the form** — it then becomes **immediately available to end users** through both WhatsApp (the AI replies with a submission link) and the portal.
+* **Publish the form** - it then becomes **immediately available to end users** through both WhatsApp (the AI replies with a submission link) and the portal.
 
 ![][image19]
 
-*Figure 5 — Publish of Forms, Support Versioning*
+*Figure 5 - Publish of Forms, Support Versioning*
 
-***This means that future business processes — beyond This project — can be added by Sorento's own users rather than by Foundryx.** This significantly lowers the long-term cost of evolving the platform.*
+***This means that future business processes - beyond This project - can be added by Sorento's own users rather than by Foundryx.** This significantly lowers the long-term cost of evolving the platform.*
 
 ![][image20]
 
-*Figure 14 — Form Designer & Workflow Configuration Flow*
+*Figure 14 - Form Designer & Workflow Configuration Flow*
 
-## **Cluster F — Marketing Automation / CRM Front-Door (Requirement \#15)** 
+## **Cluster F - Marketing Automation / CRM Front-Door (Requirement \#15)** 
 
 Today, inbound interest from the website and social media lands in WhatsApp without a consistent entry point; product and store questions are answered manually and inconsistently. Requirement \#15 formalises the customer-facing front-door already prototyped in Respond.io: a warm greeting followed by a structured main menu, with each option routed to the right handler. 
 
 ### **Main menu and routing** 
 
-On entry the AI sends a greeting and a five-option menu — Product Enquiry, Project Enquiry, Store Locations, After-Sales Support, and Sales & Promotions. Selection deterministically routes the contact to the relevant handler. At any point an unresolved query, an explicit request for a human, or signs of frustration hand the conversation to Customer Service, exactly as in Phase 1\. 
+On entry the AI sends a greeting and a five-option menu - Product Enquiry, Project Enquiry, Store Locations, After-Sales Support, and Sales & Promotions. Selection deterministically routes the contact to the relevant handler. At any point an unresolved query, an explicit request for a human, or signs of frustration hand the conversation to Customer Service, exactly as in Phase 1\. 
 
 ![][image21]  
-*Figure 15a — Marketing Automation: greeting, main menu and routing* 
+*Figure 15a - Marketing Automation: greeting, main menu and routing* 
 
 ### **Product Enquiry**
 
-When a contact chooses Product Enquiry and supplies a product name or model, the AI resolves it against a Marketing-maintained product URL and replies with the exact Sorento product-detail link. If no confident match is found, the AI asks the contact to resubmit or returns them to the main menu — it never fabricates a URL. This grounding is the key control: returning a guessed link would send customers to dead pages and erode trust.   
+When a contact chooses Product Enquiry and supplies a product name or model, the AI resolves it against a Marketing-maintained product URL and replies with the exact Sorento product-detail link. If no confident match is found, the AI asks the contact to resubmit or returns them to the main menu - it never fabricates a URL. This grounding is the key control: returning a guessed link would send customers to dead pages and erode trust.   
 ![][image22]  
 ![][image23]  
-*Figure 15b — Product Enquiry: resolve to product link, with graceful retry* 
+*Figure 15b - Product Enquiry: resolve to product link, with graceful retry* 
 
 ### **Store Locations and other options** 
 
 Store Locations asks for the contact's state and area and returns the nearest dealer from the Sorento store directory (the same data behind the website contact directory). Project Enquiry, After Sales and Sales & Promotions will be built progressively after product & store enquiry has been established  
 ![][image24]  
-*Figure 15c — Store Enquiry: resolve to nearest dealer address* 
+*Figure 15c - Store Enquiry: resolve to nearest dealer address* 
 
-## **Cluster G — Order Change & Purchase Request / Return Management (Requirements \#16 and \#17)**
+## **Cluster G - Order Change & Purchase Request / Return Management (Requirements \#16 and \#17)**
 
 Requirements \#16 and \#17 follow the same pattern Sorento is already familiar with from Phase 1 (Purchase Request, Sponsorship Form): WhatsApp initiation → AI link reply → portal form → AI Extract for attachments → approval → customer service process.
 
-### **Requirement \#16, \#17 — Order Change Notice (OCN), Purchase Exchange / Return**
+### **Requirement \#16, \#17 - Order Change Notice (OCN), Purchase Exchange / Return**
 
 On top of purchase request & sponsorship form, this project introduces an OCN, Purchase Exchange / Return form:
 
 * The salesperson or Customer Service **initiates a form submission by messaging the AI**:  I need to change order X . The **AI replies with a submission link**.
 
-* The user fills the form on the portal — upload any photo or document attachments (e.g. revised customer PO).
+* The user fills the form on the portal - upload any photo or document attachments (e.g. revised customer PO).
 
 ![][image25]
 
-*Figure 5 — Sample OCN from Sorento*
+*Figure 5 - Sample OCN from Sorento*
 
 *![][image26]*
 
-*Figure 5 — Sample Purchase Exchange / Return from Sorento*
+*Figure 5 - Sample Purchase Exchange / Return from Sorento*
 
 * The **form is routed to the project sales admin for processing**, before **sending to project sales manager for approval**
 
@@ -337,21 +337,21 @@ On top of purchase request & sponsorship form, this project introduces an OCN, P
 
 ![][image27]
 
-*Figure 5 — OCN, Purchase Exchange / Return Flow (same as Purchase Request, Sponsorship Form in Phase 1\)*
+*Figure 5 - OCN, Purchase Exchange / Return Flow (same as Purchase Request, Sponsorship Form in Phase 1\)*
 
-## **Cluster H — HR Forms Digitalization (Requirement \#18)** 
+## **Cluster H - HR Forms Digitalization (Requirement \#18)** 
 
-HR processes — expense claims, leave applications and stationery orders — are currently paper- or PDF-based, with manual routing for approval. Requirement \#18 digitalises these on the Form Designer and Workflow Engine delivered in Requirement \#14, so no new platform capability is needed — each HR form is simply a configured form with its own fields, states and notification recipients. 
+HR processes - expense claims, leave applications and stationery orders - are currently paper- or PDF-based, with manual routing for approval. Requirement \#18 digitalises these on the Form Designer and Workflow Engine delivered in Requirement \#14, so no new platform capability is needed - each HR form is simply a configured form with its own fields, states and notification recipients. 
 
 ### **Form submission and approval** 
 
-An employee messages the AI (for example, to apply for leave or submit a claim); the AI replies with a submission link. The employee completes the form on the portal (AI Extract is available for attachments such as receipts). The workflow routes the submission through its configured states — typically Submitted → Pending Approval → Approved — notifying the manager and HR/Finance at the appropriate transitions, with a full audit trail. 
+An employee messages the AI (for example, to apply for leave or submit a claim); the AI replies with a submission link. The employee completes the form on the portal (AI Extract is available for attachments such as receipts). The workflow routes the submission through its configured states - typically Submitted → Pending Approval → Approved - notifying the manager and HR/Finance at the appropriate transitions, with a full audit trail. 
 
 ### **Employee Handbook Q\&A** 
 
-Employee handbook questions (leave entitlement, claim policy, working hours) are answered by an AI Q\&A agent grounded in the handbook as a single source of truth — the same read-only, no hallucination pattern used for Warranty Policy Q\&A (\#12). Ambiguous or out-of-policy questions are routed to HR rather than guessed. Each of the forms (claim, leave, stationery order) is configured rather than coded, so HR can adjust fields and approvers over time without engaging FoundryX. 
+Employee handbook questions (leave entitlement, claim policy, working hours) are answered by an AI Q\&A agent grounded in the handbook as a single source of truth - the same read-only, no hallucination pattern used for Warranty Policy Q\&A (\#12). Ambiguous or out-of-policy questions are routed to HR rather than guessed. Each of the forms (claim, leave, stationery order) is configured rather than coded, so HR can adjust fields and approvers over time without engaging FoundryX. 
 
-## **Cluster I — AutoCount Integration (Requirement \#19)** 
+## **Cluster I - AutoCount Integration (Requirement \#19)** 
 
 In Phase 1, AutoCount data reached the platform indirectly: the Warehouse Admin exported stock, GRN, DO to Excel daily, while product / packing lists / SPO were uploaded by purchasing. This is manual, slow and prone to staleness. Requirement \#19 replaces those extracts with a direct, read-only integration so that AutoCount remains the system of record while the platform always reflects current data. The synced entities are Product, Stock, Sales Order, Delivery Order, GRN and Packing List / SPO, purchase order, supplier master with lead time data. The platform reads from its own copy; it does not write back to AutoCount in this project, keeping AutoCount authoritative and the integration low-risk. 
 
@@ -366,39 +366,39 @@ What it powers
 5. Delivery status: delivery-order data supports order/delivery status enquiries.  
 6. Supply change management & inventory optimization
 
-## **Cluster J — Dealer Management (Requirement \#20)** 
+## **Cluster J - Dealer Management (Requirement \#20)** 
 
-Sorento sells through a dealer channel, dealer information lives in Autocount and analytics are done through massaging the sales data. The client does not need heavy dealer management: onboarding and training stay manual (done physically, salesperson to dealer). What this project delivers is the structure — a dealer entity — plus the two concrete needs the business has now: promotion-eligibility gating and dealer/product sales analytics. 
+Sorento sells through a dealer channel, dealer information lives in Autocount and analytics are done through massaging the sales data. The client does not need heavy dealer management: onboarding and training stay manual (done physically, salesperson to dealer). What this project delivers is the structure - a dealer entity - plus the two concrete needs the business has now: promotion-eligibility gating and dealer/product sales analytics. 
 
 ### **Dealer Entity**
 
-Each dealer becomes a structured record keyed to the AutoCount debtor (reusing the \#19 integration as the source of truth), holding the assigned salesperson, brand access (Sorento, Mocha, Cabana, and others), a status field, and the dealer's promotion eligibility. This single record becomes the anchor that future capabilities — credit management, tiering and rebate, multi-brand access automation, dealer-lifecycle automation — can hang off without rework. The status field is deliberately a simple lifecycle marker now (e.g. Active / Dormant), shaped so it can later gate eligibility and WhatsApp group access automatically, as the access controls already do in Phase 1\. 
+Each dealer becomes a structured record keyed to the AutoCount debtor (reusing the \#19 integration as the source of truth), holding the assigned salesperson, brand access (Sorento, Mocha, Cabana, and others), a status field, and the dealer's promotion eligibility. This single record becomes the anchor that future capabilities - credit management, tiering and rebate, multi-brand access automation, dealer-lifecycle automation - can hang off without rework. The status field is deliberately a simple lifecycle marker now (e.g. Active / Dormant), shaped so it can later gate eligibility and WhatsApp group access automatically, as the access controls already do in Phase 1\. 
 
 ### **Promotion-eligibility Gating** 
 
-Promotion eligibility is captured on the dealer record and set per dealer by the assigned salesperson, reflecting the relationship and the salesperson's experience. When a dealer or salesperson asks what promotions a dealer qualifies for, the AI answers from this record — grounded, consistent, and no longer dependent on which experienced person happens to be asked.
+Promotion eligibility is captured on the dealer record and set per dealer by the assigned salesperson, reflecting the relationship and the salesperson's experience. When a dealer or salesperson asks what promotions a dealer qualifies for, the AI answers from this record - grounded, consistent, and no longer dependent on which experienced person happens to be asked.
 
 ### **Sales and performance analytics** 
 
-Because the dealer entity is joined to AutoCount sales and invoice data, management gets analytics by dealer and by product — sales trends, product mix per dealer, and relative dealer performance — to inform where to invest, which dealers to develop, and which products to push. This feature aims to reduce the time taken to clean, massage data to do reporting.
+Because the dealer entity is joined to AutoCount sales and invoice data, management gets analytics by dealer and by product - sales trends, product mix per dealer, and relative dealer performance - to inform where to invest, which dealers to develop, and which products to push. This feature aims to reduce the time taken to clean, massage data to do reporting.
 
-## **Cluster K — Customer Relationship Management (Delivered in Phase 1\)**
+## **Cluster K - Customer Relationship Management (Delivered in Phase 1\)**
 
 The CRM consolidates client and operational data into a single backend platform, serving as the single source of truth for the AI's knowledge. Two components anchor this cluster.
 
 ### **Master Data Maintenance**
 
-Master Data Maintenance is the web-based system used to maintain all the reference data the AI relies on — products, stock, promotions, files, packing lists, SPO, GRN, delivery orders and stock. Rather than answers being drawn from scattered spreadsheets and chat threads, every AI response is grounded in one authoritative source. Where the source data arrives as raw files, users can upload them and have the AI extract the contents, reducing manual data-entry effort. This component is the data foundation on which the enquiry, stock, quotation and after-sales capabilities all depend.
+Master Data Maintenance is the web-based system used to maintain all the reference data the AI relies on - products, stock, promotions, files, packing lists, SPO, GRN, delivery orders and stock. Rather than answers being drawn from scattered spreadsheets and chat threads, every AI response is grounded in one authoritative source. Where the source data arrives as raw files, users can upload them and have the AI extract the contents, reducing manual data-entry effort. This component is the data foundation on which the enquiry, stock, quotation and after-sales capabilities all depend.
 
 ![][image28]
 
 ### **Resource Management**
 
-Resource Management is a centralized, Google Drive-like file repository that replaces ad-hoc Google Drive usage and centralizes the company's documentation. It provides a familiar folder structure together with trash management and recovery, and acts as the controlled document store the AI can read from. Centralising files this way keeps the AI's document knowledge consistent and makes document governance — versioning, access and clean-up — a managed activity rather than an informal one.
+Resource Management is a centralized, Google Drive-like file repository that replaces ad-hoc Google Drive usage and centralizes the company's documentation. It provides a familiar folder structure together with trash management and recovery, and acts as the controlled document store the AI can read from. Centralising files this way keeps the AI's document knowledge consistent and makes document governance - versioning, access and clean-up - a managed activity rather than an informal one.
 
 ![][image29]
 
-## **Cluster L — SLA Management (Delivered in Phase 1\)**
+## **Cluster L - SLA Management (Delivered in Phase 1\)**
 
 SLA Management gives the team real-time visibility and control over how quickly enquiries and cases are responded to and resolved, and ensures work reaches the right person without delay.
 
@@ -414,7 +414,7 @@ SLA Assignment directs incoming contact enquiries and form processing to the res
 
 ![][image31]
 
-## **Cluster M — Dealer Management: Promotion Management (Delivered in Phase 1\)**
+## **Cluster M - Dealer Management: Promotion Management (Delivered in Phase 1\)**
 
 Supporting the Dealer Management requirement, the Promotion Management capability logs and governs promotions so that promotion information stays accurate and current.
 
@@ -424,7 +424,7 @@ Promotion Management stores every promotion, issues promotion-expiry reminders, 
 
 ![][image32]
 
-## **Cluster N — Purchase Request, Sponsorship Form & Stock Inquiry (Delivered in Phase 1\)**
+## **Cluster N - Purchase Request, Sponsorship Form & Stock Inquiry (Delivered in Phase 1\)**
 
 This cluster brings the core project-sales forms into the system, replacing the previous PDF / Excel / Google Forms approach.
 
@@ -434,19 +434,19 @@ Form Submission is the full digitalization of purchase request, sponsorship form
 
 ![][image33]
 
-## **Cluster O — Supply Chain / Inventory Optimisation (Requirement \#27)**
+## **Cluster O - Supply Chain / Inventory Optimisation (Requirement \#27)**
 
-Sorento is a trading company; keeping optimum stock is the core of the business. Today that judgement lives in Mr Loo’s head — weighing colour, market trend, demand, forecast, lead time and, above all, cashflow. AutoCount's built-in reorder quantity is a static min/max level: it models none of these, and following it mechanically is harmful to cashflow. This requirement does not surface AutoCount's reorder logic — **it replaces it** with a decision-support copilot.
+Sorento is a trading company; keeping optimum stock is the core of the business. Today that judgement lives in Mr Loo’s head - weighing colour, market trend, demand, forecast, lead time and, above all, cashflow. AutoCount's built-in reorder quantity is a static min/max level: it models none of these, and following it mechanically is harmful to cashflow. This requirement does not surface AutoCount's reorder logic - **it replaces it** with a decision-support copilot.
 
-### **Requirement \#27 — AI-Assisted Inventory Optimisation**
+### **Requirement \#27 - AI-Assisted Inventory Optimisation**
 
 The intent is a **copilot, not autopilot**. The system does three things: it removes the grunt work of data-gathering, calculation and monitoring; it concentrates Mr Loo’s judgement only on the SKUs that actually need it; and it makes his ordering logic **auditable and transferable**, de-risking the business against a single point of failure. Capturing that decision logic is itself a strategic data asset, consistent with the B2B2C data direction management is pursuing.
 
 **Three-layer control.** The design deliberately separates three concerns so the AI is never asked to do arithmetic it will get wrong:
 
-* **Quantitative core** — demand forecast, safety stock, reorder point, days-of-cover, ABC/XYZ classification, cash-tied-up. Computed in deterministic code. **The LLM never decides order quantities, it suggests.**  
-* **Judgment layer (human, augmented)** — Mr Loo’s tacit knowledge. The system proposes; the human accepts or adjusts; overrides are captured as structured inputs.  
-* **Semantic layer (LLM)** — explains a recommendation, captures Mr Loo’s reasoning in natural language, drafts the PO text. This is where the LLM adds value.
+* **Quantitative core** - demand forecast, safety stock, reorder point, days-of-cover, ABC/XYZ classification, cash-tied-up. Computed in deterministic code. **The LLM never decides order quantities, it suggests.**  
+* **Judgment layer (human, augmented)** - Mr Loo’s tacit knowledge. The system proposes; the human accepts or adjusts; overrides are captured as structured inputs.  
+* **Semantic layer (LLM)** - explains a recommendation, captures Mr Loo’s reasoning in natural language, drafts the PO text. This is where the LLM adds value.
 
 The headline trade-off is **cash, not stockouts**: service level vs. cash tied up vs. dead-stock risk. For a trading company cash is the binding constraint, so it leads to the design.
 
@@ -454,22 +454,22 @@ The headline trade-off is **cash, not stockouts**: service level vs. cash tied u
 
 ![][image34]
 
-1. **Low Stock Alert** — consumption history, plus forward signals from registered projects, and dealer texture (\#20).  
-2. **Assess position** — net available \= on-hand \+ incoming (open POs) − reserved (SO).  
-3. **Model supply** — per-supplier, per-SKU actual lead time and its variability (from PO-issue vs GRN-receipt dates), MOQ, unit cost and currency, market trend, holiday season.  
-4. **Suggest under cash constraint** — given a purchasing budget, recommend purchase for different SKUs by urgency and margin; flag slow moving stock.  
+1. **Low Stock Alert** - consumption history, plus forward signals from registered projects, and dealer texture (\#20).  
+2. **Assess position** - net available \= on-hand \+ incoming (open POs) − reserved (SO).  
+3. **Model supply** - per-supplier, per-SKU actual lead time and its variability (from PO-issue vs GRN-receipt dates), MOQ, unit cost and currency, market trend, holiday season.  
+4. **Suggest under cash constraint** - given a purchasing budget, recommend purchase for different SKUs by urgency and margin; flag slow moving stock.  
 5. **Human’s final decision** \- purchasing decides to accept / reject suggestion with reasons, each decision is updated to the model to improve future suggestions  
-6. **Place PO in Autocount** — raise the PO in AutoCount, and track promised vs actual delivery to feed supplier reliability back into the model.
+6. **Place PO in Autocount** - raise the PO in AutoCount, and track promised vs actual delivery to feed supplier reliability back into the model.
 
-**Data dependency — expanded AutoCount scope.** SCM cannot be built on the current \#19 sync. Purchase Order (header \+ lines), a Supplier Master and lead-time data must be added. Open POs are stock-in-transit; without them, even the *current* stock position cannot be computed correctly.
+**Data dependency - expanded AutoCount scope.** SCM cannot be built on the current \#19 sync. Purchase Order (header \+ lines), a Supplier Master and lead-time data must be added. Open POs are stock-in-transit; without them, even the *current* stock position cannot be computed correctly.
 
 ### **Phased delivery (crawl → walk → run):**
 
-* **Visibility** — a dashboard mirroring what Mr Loo computes in his head: stock, days-of-cover, consumption, incoming POs, lead time, market trend, dead stock. No recommendations yet — high value, near-zero risk, and it validates the data foundation.  
-* **Recommendation** — statistical reorder suggestions, the purchasing department accepts or adjusts; overrides captured.  
-* **Augmentation** — learn from overrides, layer in trend signals; eventually semi-automate only the stable, predictable items while judgment items stay human.
+* **Visibility** - a dashboard mirroring what Mr Loo computes in his head: stock, days-of-cover, consumption, incoming POs, lead time, market trend, dead stock. No recommendations yet - high value, near-zero risk, and it validates the data foundation.  
+* **Recommendation** - statistical reorder suggestions, the purchasing department accepts or adjusts; overrides captured.  
+* **Augmentation** - learn from overrides, layer in trend signals; eventually semi-automate only the stable, predictable items while judgment items stay human.
 
-## **Cluster P — Sales Performance Dashboard & Leaderboard (Requirement \#31)**
+## **Cluster P - Sales Performance Dashboard & Leaderboard (Requirement \#31)**
 
 A **block-form view of salesperson performance across daily, weekly, monthly and quarterly periods**, covering new customers established, projects registered, quotations issued, POs received and order value, with **colour showing who is under-performing and who is over-achieving**. Delivered as a configured dashboard on the Analytics Platform (\#34) rather than as bespoke code.
 
@@ -477,41 +477,41 @@ A **block-form view of salesperson performance across daily, weekly, monthly and
 
 ![][image36]
 
-## **Cluster Q — Proactive Order & Delivery Status Communication (Requirement \#33)**
+## **Cluster Q - Proactive Order & Delivery Status Communication (Requirement \#33)**
 
 ![][image37]
 
-**Problem Statement:** Delayed feedback to customer about outstanding order**. The root cause is: there is no systematic outbound status update, so the only way a customer can learn anything is to chase a human.** Fixing the outbound update removes most of the inbound chasing — including most of the unanswered calls.
+**Problem Statement:** Delayed feedback to customer about outstanding order**. The root cause is: there is no systematic outbound status update, so the only way a customer can learn anything is to chase a human.** Fixing the outbound update removes most of the inbound chasing - including most of the unanswered calls.
 
-Look at the EWT table's Sorento status column: **'TBA — waiting factory advice & update again'**, repeated on nearly every line. That is not a communication failure. It is the **absence of incoming-PO ETA data surfacing as a communication failure**. Sorento cannot tell EWT when goods will arrive because Sorento does not itself hold a reliable expected date from the factory.
+Look at the EWT table's Sorento status column: **'TBA - waiting factory advice & update again'**, repeated on nearly every line. That is not a communication failure. It is the **absence of incoming-PO ETA data surfacing as a communication failure**. Sorento cannot tell EWT when goods will arrive because Sorento does not itself hold a reliable expected date from the factory.
 
-**This is exactly the data the \#19 expansion adds for \#27** — Open Purchase Orders, supplier promised dates, and measured lead time. Once that data exists, the same spine answers two different questions: **'when do we reorder?' (\#27) and 'when can we deliver to EWT?' (\#33).** The \#19 PO expansion therefore pays for itself twice, which materially strengthens the case for it.
+**This is exactly the data the \#19 expansion adds for \#27** - Open Purchase Orders, supplier promised dates, and measured lead time. Once that data exists, the same spine answers two different questions: **'when do we reorder?' (\#27) and 'when can we deliver to EWT?' (\#33).** The \#19 PO expansion therefore pays for itself twice, which materially strengthens the case for it.
 
-## **Cluster R — Idea Repository & Management Brainstorm (Requirement \#28)**
+## **Cluster R - Idea Repository & Management Brainstorm (Requirement \#28)**
 
 Ideas surface constantly in conversation and WhatsApp threads, and are lost just as constantly; the same idea is re-raised months later with no record that it was ever considered. This requirement gives staff a **one-minute WhatsApp path to capture an idea at the moment it occurs**, and gives management a **structured, recurring forum with a prepared agenda** rather than an open-ended discussion.
 
 **![][image38]**
 
-## **Cluster S — AI Meeting Assistant (Requirement \#29)**
+## **Cluster S - AI Meeting Assistant (Requirement \#29)**
 
-An AI agent is invited to Sorento meetings, records and transcribes them, and produces structured notes — summary, decisions, and action items with named owners — filed into Resource Management (delivered in Phase 1\) with access control. Action items are pushed to owners via WhatsApp and can be raised as tickets or ideas (\#28). No new document store is introduced; this reuses the Phase 1 repository.
+An AI agent is invited to Sorento meetings, records and transcribes them, and produces structured notes - summary, decisions, and action items with named owners - filed into Resource Management (delivered in Phase 1\) with access control. Action items are pushed to owners via WhatsApp and can be raised as tickets or ideas (\#28). No new document store is introduced; this reuses the Phase 1 repository.
 
 ![][image39]
 
 **The honest risk, with direct evidence**
 
-**Sorento meetings code-switch between English, Malay, Mandarin and Cantonese, often mid-sentence, and off-the-shelf speech recognition degrades sharply under those conditions.** This is not a hypothetical. The Gemini-generated notes from the 7 July 2026 meeting — a meeting in this very programme — render large portions as 'Foreign speech', reduce whole sections to disconnected fragments, and produce a Decisions section containing statements that do not withstand comparison against the transcript.
+**Sorento meetings code-switch between English, Malay, Mandarin and Cantonese, often mid-sentence, and off-the-shelf speech recognition degrades sharply under those conditions.** This is not a hypothetical. The Gemini-generated notes from the 7 July 2026 meeting - a meeting in this very programme - render large portions as 'Foreign speech', reduce whole sections to disconnected fragments, and produce a Decisions section containing statements that do not withstand comparison against the transcript.
 
 **Wrong notes filed as a record are worse than no notes**, because they carry the authority of a system while being unreliable. The design consequence is firm: **notes are DRAFT-for-confirmation and never authoritative until a named human confirms them**; action items require owner acknowledgement before becoming commitments; and the recording is always retained alongside the notes so the source remains checkable. ASR selection must be benchmarked against a real recorded Sorento meeting before the tool is committed.
 
 Recording also carries a PDPA obligation: consent must be announced and captured on join, and meetings involving external parties (dealers, suppliers, customers) default to off.
 
-## **Cluster T — AI Suggested Actions on SLA Assignment & Escalation (Requirement \#30)**
+## **Cluster T - AI Suggested Actions on SLA Assignment & Escalation (Requirement \#30)**
 
 Today an assignee receives a notification and nothing else. Experienced staff know what to do; junior staff stall or escalate. This requirement attaches a **grounded suggested next action** to every assignment and escalation notification, drawn from similar resolved cases, the Warranty Policy SSoT (\#12), product data, and the Employee Handbook (\#18).
 
-**Every suggestion cites its grounding source, and the AI never invents policy**. The assignee accepts, edits, or ignores the suggestion, and that choice is logged — which over time becomes a record of where the suggestions are useful and where they are not.
+**Every suggestion cites its grounding source, and the AI never invents policy**. The assignee accepts, edits, or ignores the suggestion, and that choice is logged - which over time becomes a record of where the suggestions are useful and where they are not.
 
 **The AI never auto-executes.** It suggests; the humans act. This is the same co-pilot-not-autopilot stance that governs \#27.
 
@@ -523,13 +523,13 @@ This section contrasts the current (As-Is) and future (To-Be) processes for each
 
 | AS-IS (Current Process) | TO-BE (Future Process) |
 | ----- | ----- |
-| **1\.** Salesperson WhatsApps Project Sales Admin (Rayza) with project title, developer, location. **2\.** Rayza checks her records manually to see if the project is already registered. **3\.** If new, Rayza creates a project number and replies to the salesperson. **4\.** If already registered, Rayza replies that the project is taken — no record kept of who else asked. **5\.** No central register; no visibility to management on competing interests. | **1\. Salesperson WhatsApps the AI with project details.** **2\. AI extracts details and queries Project Master automatically.** **3\. AI generates project numbers, assigns salesperson, and notifies Rayza.** **4\. AI logs requesting salesperson into Activity Log if already registered.** **5\. Management reassigns projects based on full Activity Log visibility.**  |
+| **1\.** Salesperson WhatsApps Project Sales Admin (Rayza) with project title, developer, location. **2\.** Rayza checks her records manually to see if the project is already registered. **3\.** If new, Rayza creates a project number and replies to the salesperson. **4\.** If already registered, Rayza replies that the project is taken - no record kept of who else asked. **5\.** No central register; no visibility to management on competing interests. | **1\. Salesperson WhatsApps the AI with project details.** **2\. AI extracts details and queries Project Master automatically.** **3\. AI generates project numbers, assigns salesperson, and notifies Rayza.** **4\. AI logs requesting salesperson into Activity Log if already registered.** **5\. Management reassigns projects based on full Activity Log visibility.**  |
 
 ### **Project Update Reminder (Req \#2)**
 
 | AS-IS (Current Process) | TO-BE (Future Process) |
 | ----- | ----- |
-| **1\.** No system push — updates only happen when CK or management asks. **2\.** Salespersons forget to update; pipeline visibility is stale. **3\.** Information is scattered across WhatsApp, email and verbal updates. | **1\. System sends configurable reminders every X days to the salesperson.** **2\. Reply automatically saved as an update on Project Master.** **3\. Stale projects flagged on Management Dashboard for action.**  |
+| **1\.** No system push - updates only happen when CK or management asks. **2\.** Salespersons forget to update; pipeline visibility is stale. **3\.** Information is scattered across WhatsApp, email and verbal updates. | **1\. System sends configurable reminders every X days to the salesperson.** **2\. Reply automatically saved as an update on Project Master.** **3\. Stale projects flagged on Management Dashboard for action.**  |
 
 ### **Project Quotation (Req \#3)**
 
@@ -547,7 +547,7 @@ This section contrasts the current (As-Is) and future (To-Be) processes for each
 
 | AS-IS (Current Process) | TO-BE (Future Process) |
 | ----- | ----- |
-| **1\.** Sorento's website has a basic warranty page; registration is largely informal. **2\.** Most end users skip registration — friction is too high. **3\.** Retail vs project warranty rules are applied manually if at all. | **1\. The user sends a photo of the receipt to the portal.** **2\. AI uses OCR and vision extraction to pull data.** **3\. AI confirms extracted data with the user.** **4\. Record saved to Register; salesperson notified automatically.**  |
+| **1\.** Sorento's website has a basic warranty page; registration is largely informal. **2\.** Most end users skip registration - friction is too high. **3\.** Retail vs project warranty rules are applied manually if at all. | **1\. The user sends a photo of the receipt to the portal.** **2\. AI uses OCR and vision extraction to pull data.** **3\. AI confirms extracted data with the user.** **4\. Record saved to Register; salesperson notified automatically.**  |
 
 ### **Complaint Submission (Req \#6)**
 
@@ -645,13 +645,13 @@ This section contrasts the current (As-Is) and future (To-Be) processes for each
 
 | AS-IS (Current Process) | TO-BE (Future Process) |
 | :---- | :---- |
-| 1\. Reorder decisions live entirely in Mr Loo’s head.  2\. Low-stock monitored manually; forecasting drags past three months.  3\. AutoCount's naive min/max is unusable — following it harms cashflow.  4\. Unmet demand during stockouts is invisible; growing items quietly under-ordered.  5\. Logic is undocumented and tied to one person. | 1\. System computes net position, forecast, reorder point and days-of-cover per SKU / colour. 2\. Cash-constrained view proposes what to order and when within budget.  3\. Purchasing reviews and overrides; every override captured as structured data.  4\. Ordering logic becomes auditable and transferable. |
+| 1\. Reorder decisions live entirely in Mr Loo’s head.  2\. Low-stock monitored manually; forecasting drags past three months.  3\. AutoCount's naive min/max is unusable - following it harms cashflow.  4\. Unmet demand during stockouts is invisible; growing items quietly under-ordered.  5\. Logic is undocumented and tied to one person. | 1\. System computes net position, forecast, reorder point and days-of-cover per SKU / colour. 2\. Cash-constrained view proposes what to order and when within budget.  3\. Purchasing reviews and overrides; every override captured as structured data.  4\. Ordering logic becomes auditable and transferable. |
 
 ## **Idea Management (Req \#28)**
 
 | AS-IS (Current Process) | TO-BE (Future Process) |
 | :---- | :---- |
-| **1\.** Ideas surface verbally or in WhatsApp threads and are lost.  **2\.** No repository — the same idea is re-raised months later.  **3\.** Management brainstorms have no prepared agenda.  **4\.** No traceability from idea to decision. | **1\. Staff submit ideas to the AI on WhatsApp in under a minute.**  **2\. AI structures and files each idea to the Idea Repository.**  **3\. Agenda pack auto-generated per cadence.**  **4\. Every reviewed idea gets a recorded outcome and owner.** |
+| **1\.** Ideas surface verbally or in WhatsApp threads and are lost.  **2\.** No repository - the same idea is re-raised months later.  **3\.** Management brainstorms have no prepared agenda.  **4\.** No traceability from idea to decision. | **1\. Staff submit ideas to the AI on WhatsApp in under a minute.**  **2\. AI structures and files each idea to the Idea Repository.**  **3\. Agenda pack auto-generated per cadence.**  **4\. Every reviewed idea gets a recorded outcome and owner.** |
 
 ## **Meeting Productivity (Req \#29)**
 
@@ -675,15 +675,15 @@ This section contrasts the current (As-Is) and future (To-Be) processes for each
 
 | AS-IS (Current Process) | TO-BE (Future Process) |
 | :---- | :---- |
-| **1\.** Customers phone the salesperson; calls go unanswered.  **2\.** Project customers email chasing delivery schedules (e.g. the EWT May 2026 Delivery Advice list).  **3\.** Sorento's status column reads 'TBA — waiting factory advice'.  **4\.** No system-held expected delivery date. | **1\. Status changes push automatically to customer, dealer and salesperson.**  **2\. Customers self-serve status on WhatsApp, answered from SO / DO / PO data.**  **3\. Expected delivery date held in the system and revised with reasons.**  **4\. Unanswered enquiries escalate per SLA.** |
+| **1\.** Customers phone the salesperson; calls go unanswered.  **2\.** Project customers email chasing delivery schedules (e.g. the EWT May 2026 Delivery Advice list).  **3\.** Sorento's status column reads 'TBA - waiting factory advice'.  **4\.** No system-held expected delivery date. | **1\. Status changes push automatically to customer, dealer and salesperson.**  **2\. Customers self-serve status on WhatsApp, answered from SO / DO / PO data.**  **3\. Expected delivery date held in the system and revised with reasons.**  **4\. Unanswered enquiries escalate per SLA.** |
 
 # **Project Implementation Timeline**
 
-The full-fledged implementation is delivered through a progressive, module-by-module go-live rather than a single big-bang cut-over. The Phase 2 project runs approximately **13 calendar months**, from kick-off in **mid-April 2026** to the final module's go-live in **mid-May 2027**; four Phase 2 capabilities — CRM master-data and resource management, SLA tracking and assignment, promotion management, and forms-submission digitalization — were brought forward and already delivered during Phase 1 (January–February 2026). The schedule remains intentionally conservative — incorporating buffers at BRD sign-off, between sprints, and after each UAT round — to absorb the natural slippage seen in Phase 1 (notably during BRD review and UAT), reduce weekend / holiday rush work, and protect team morale.
+The full-fledged implementation is delivered through a progressive, module-by-module go-live rather than a single big-bang cut-over. The Phase 2 project runs approximately **13 calendar months**, from kick-off in **mid-April 2026** to the final module's go-live in **mid-May 2027**; four Phase 2 capabilities - CRM master-data and resource management, SLA tracking and assignment, promotion management, and forms-submission digitalization - were brought forward and already delivered during Phase 1 (January - February 2026). The schedule remains intentionally conservative - incorporating buffers at BRD sign-off, between sprints, and after each UAT round - to absorb the natural slippage seen in Phase 1 (notably during BRD review and UAT), reduce weekend / holiday rush work, and protect team morale.
 
-The development work is broken into **12 sprints**, each developed and taken live independently. Every sprint runs its own full cycle — development, internal testing, two UAT rounds, and go-live — and the sprints are staggered so a new module enters development while the previous one is still in testing. Because each module goes live on completion, Sorento starts operating finished capabilities from the **first go-live in mid Sept 2026**, validating and benefiting from a subset of the system well before the full programme is complete.
+The development work is broken into **12 sprints**, each developed and taken live independently. Every sprint runs its own full cycle - development, internal testing, two UAT rounds, and go-live - and the sprints are staggered so a new module enters development while the previous one is still in testing. Because each module goes live on completion, Sorento starts operating finished capabilities from the **first go-live in mid Sept 2026**, validating and benefiting from a subset of the system well before the full programme is complete.
 
-**Sequencing rationale.** The two foundational sprints are ordered ahead of all customer-facing modules. **Sprint 1 delivers the AutoCount integration** — the single source of truth for product, stock, sales order, delivery order, GRN, purchase order and supplier data — because every downstream module reads from it. **Sprint 2 delivers Supply Chain Management & Inventory Optimisation in full**, reflecting its status as the highest-priority business requirement.
+**Sequencing rationale.** The two foundational sprints are ordered ahead of all customer-facing modules. **Sprint 1 delivers the AutoCount integration** - the single source of truth for product, stock, sales order, delivery order, GRN, purchase order and supplier data - because every downstream module reads from it. **Sprint 2 delivers Supply Chain Management & Inventory Optimisation in full**, reflecting its status as the highest-priority business requirement.
 
 ## **Detailed Schedule**
 
@@ -711,76 +711,76 @@ The development work is broken into **12 sprints**, each developed and taken liv
 | 4th BRD Review & Sign-off | Sorento / Foundryx | Onsite | 27 Jul 2026 | 14 Aug 2026 | 3 weeks | Not Yet Started |
 | Autocount integration study (with Autocount SI) | Foundryx / Autocount | Onsite \+ Online | 27 Jul 2026 | 31 Jul 2026 | 1 week | Not Yet Started |
 | **DEVELOPMENT \+ INTERNAL TESTING \+ USER TESTING \+ GO LIVE (PROGRESSIVE GO LIVE BY MODULE)** |  |  |  |  |  |  |
-| Sprint 1 — AutoCount Integration | Foundryx | Online | 27 Jul 2026 | 14 Aug 2026 | 3 weeks | Not Yet Started |
+| Sprint 1 - AutoCount Integration | Foundryx | Online | 27 Jul 2026 | 14 Aug 2026 | 3 weeks | Not Yet Started |
 | Sprint 1 \- Internal Testing | Foundryx | Online | 17 Aug 2026 | 28 Aug 2026 | 2 weeks | Not Yet Started |
 | Sprint 1 \- UAT Round 1 \+ Defect Fix | Sorento / Foundryx | Onsite \+ Online | 31 Aug 2026 | 4 Sep 2026 | 1 week | Not Yet Started |
 | Sprint 1 \- UAT Round 2 \+ Sign-off | Sorento / Foundryx | Online | 7 Sep 2026 | 11 Sep 2026 | 1 week | Not Yet Started |
 | Sprint 1 \- Go live | Sorento / Foundryx | Online | 14 Sep 2026 | 14 Sep 2026 | 1 day | Not Yet Started |
 |  |  |  |  |  |  |  |
-| Sprint 2 — Supply Chain Management / Inventory Optimization | Foundryx | Online | 31 Aug 2026 | 18 Sep 2026 | 3 weeks | Not Yet Started |
+| Sprint 2 - Supply Chain Management / Inventory Optimization | Foundryx | Online | 31 Aug 2026 | 18 Sep 2026 | 3 weeks | Not Yet Started |
 | Sprint 2 \- Internal Testing | Foundryx | Online | 21 Sep 2026 | 2 Oct 2026 | 1 week | Not Yet Started |
 | Sprint 2 \- UAT Round 1 \+ Defect Fix | Sorento / Foundryx | Onsite \+ Online | 5 Oct 2026 | 9 Oct 2026 | 1 week | Not Yet Started |
 | Sprint 2 \- UAT Round 2 \+ Sign-off | Sorento / Foundryx | Online | 12 Oct 2026 | 16 Oct 2026 | 1 week | Not Yet Started |
 | Sprint 2 \- Go live | Sorento / Foundryx | Online | 19 Oct 2026 | 19 Oct 2026 | 1 day | Not Yet Started |
 |  |  |  |  |  |  |  |
-| Sprint 3 — Project Registration & Management | Foundryx | Online | 5 Oct 2026 | 16 Oct 2026 | 2 weeks | Not Yet Started |
+| Sprint 3 - Project Registration & Management | Foundryx | Online | 5 Oct 2026 | 16 Oct 2026 | 2 weeks | Not Yet Started |
 | Sprint 3 \- Internal Testing | Foundryx | Online | 19 Oct 2026 | 23 Oct 2026 | 1 week | Not Yet Started |
 | Sprint 3 \- UAT Round 1 \+ Defect Fix | Sorento / Foundryx | Onsite \+ Online | 26 Oct 2026 | 30 Oct 2026 | 1 week | Not Yet Started |
 | Sprint 3 \- UAT Round 2 \+ Sign-off | Sorento / Foundryx | Online | 2 Nov 2026 | 6 Nov 2026 | 1 week | Not Yet Started |
 | Sprint 3 \- Go live | Sorento / Foundryx | Online | 9 Nov 2026 | 9 Nov 2026 | 1 day | Not Yet Started |
 |  |  |  |  |  |  |  |
-| Sprint 4 — Warranty Registration \+ Complaint Mgmt \+ SLA \+ Notifications | Foundryx | Online | 26 Oct 2026 | 6 Nov 2026 | 2 weeks | Not Yet Started |
+| Sprint 4 - Warranty Registration \+ Complaint Mgmt \+ SLA \+ Notifications | Foundryx | Online | 26 Oct 2026 | 6 Nov 2026 | 2 weeks | Not Yet Started |
 | Sprint 4 \- Internal Testing | Foundryx | Online | 9 Nov 2026 | 13 Nov 2026 | 1 week | Not Yet Started |
 | Sprint 4 \- UAT Round 1 \+ Defect Fix | Sorento / Foundryx | Onsite \+ Online | 16 Nov 2026 | 20 Nov 2026 | 1 week | Not Yet Started |
 | Sprint 4 \- UAT Round 2 \+ Sign-off | Sorento / Foundryx | Online | 23 Nov 2026 | 27 Nov 2026 | 1 week | Not Yet Started |
 | Sprint 4 \- Go live | Sorento / Foundryx | Online | 30 Nov 2026 | 30 Nov 2026 | 1 day | Not Yet Started |
 |  |  |  |  |  |  |  |
-| Sprint 5 — AI Suggested Actions \+ Idea Repository | Foundryx | Online | 16 Nov 2026 | 27 Nov 2026 | 2 weeks | Not Yet Started |
+| Sprint 5 - AI Suggested Actions \+ Idea Repository | Foundryx | Online | 16 Nov 2026 | 27 Nov 2026 | 2 weeks | Not Yet Started |
 | Sprint 5 \- Internal Testing | Foundryx | Online | 30 Nov 2026 | 4 Dec 2026 | 1 week | Not Yet Started |
 | Sprint 5 \- UAT Round 1 \+ Defect Fix | Sorento / Foundryx | Onsite \+ Online | 7 Dec 2026 | 11 Dec 2026 | 1 week | Not Yet Started |
 | Sprint 5 \- UAT Round 2 \+ Sign-off | Sorento / Foundryx | Online | 14 Dec 2026 | 18 Dec 2026 | 1 week | Not Yet Started |
 | Sprint 5 \- Go live | Sorento / Foundryx | Online | 21 Dec 2026 | 21 Dec 2026 | 1 day | Not Yet Started |
 |  |  |  |  |  |  |  |
-| Sprint 6 — Sales Performance Dashboard & Leaderboard | Foundryx | Online | 7 Dec 2026 | 18 Dec 2026 | 2 weeks | Not Yet Started |
+| Sprint 6 - Sales Performance Dashboard & Leaderboard | Foundryx | Online | 7 Dec 2026 | 18 Dec 2026 | 2 weeks | Not Yet Started |
 | Sprint 6 \- Internal Testing | Foundryx | Online | 21 Dec 2026 | 25 Dec 2026 | 1 week | Not Yet Started |
 | Blackout Period from 23 Dec 2026 \- 2 Jan 2027 due to Christmas & New Year |  |  |  |  |  |  |
 | Sprint 6 \- UAT Round 1 \+ Defect Fix | Sorento / Foundryx | Onsite \+ Online | 4 Jan 2027 | 8 Jan 2027 | 1 week | Not Yet Started |
 | Sprint 6 \- UAT Round 2 \+ Sign-off | Sorento / Foundryx | Online | 11 Jan 2027 | 15 Jan 2027 | 1 week | Not Yet Started |
 | Sprint 6 \- Go live | Sorento / Foundryx | Online | 18 Jan 2027 | 18 Jan 2027 | 1 day | Not Yet Started |
 |  |  |  |  |  |  |  |
-| Sprint 7 — Quotation Generator \+ SMC Broadcasting | Foundryx | Online | 4 Jan 2027 | 15 Jan 2027 | 2 weeks | Not Yet Started |
+| Sprint 7 - Quotation Generator \+ SMC Broadcasting | Foundryx | Online | 4 Jan 2027 | 15 Jan 2027 | 2 weeks | Not Yet Started |
 | Sprint 7 \- Internal Testing | Foundryx | Online | 18 Jan 2027 | 22 Jan 2027 | 1 week | Not Yet Started |
 | Sprint 7 \- UAT Round 1 \+ Defect Fix | Sorento / Foundryx | Onsite \+ Online | 25 Jan 2027 | 29 Jan 2027 | 1 week | Not Yet Started |
 | Blackout Period from 1 Feb 2027 \- 12 Feb 2027 due to Chinese New Year |  |  |  |  |  |  |
 | Sprint 7 \- UAT Round 2 \+ Sign-off | Sorento / Foundryx | Online | 15 Feb 2027 | 19 Feb 2027 | 1 week | Not Yet Started |
 | Sprint 7 \- Go live | Sorento / Foundryx | Online | 22 Feb 2027 | 22 Feb 2027 | 1 day | Not Yet Started |
 |  |  |  |  |  |  |  |
-| Sprint 8 — Order & Delivery Status Update | Foundryx | Online | 25 Jan 2027 | 5 Feb 2027 | 2 weeks | Not Yet Started |
+| Sprint 8 - Order & Delivery Status Update | Foundryx | Online | 25 Jan 2027 | 5 Feb 2027 | 2 weeks | Not Yet Started |
 | Sprint 8 \- Internal Testing | Foundryx | Online | 8 Feb 2027 | 12 Feb 2027 | 1 week | Not Yet Started |
 | Sprint 8 \- UAT Round 1 \+ Defect Fix | Sorento / Foundryx | Onsite \+ Online | 15 Feb 2027 | 19 Feb 2027 | 1 week | Not Yet Started |
 | Sprint 8 \- UAT Round 2 \+ Sign-off | Sorento / Foundryx | Online | 22 Feb 2027 | 26 Feb 2027 | 1 week | Not Yet Started |
 | Sprint 8 \- Go live | Sorento / Foundryx | Online | 1 Mar 2027 | 1 Mar 2027 | 1 day | Not Yet Started |
 |  |  |  |  |  |  |  |
-| Sprint 9 — Forms Management \+ Marketing Automation | Foundryx | Online | 15 Feb 2027 | 26 Feb 2027 | 2 weeks | Not Yet Started |
+| Sprint 9 - Forms Management \+ Marketing Automation | Foundryx | Online | 15 Feb 2027 | 26 Feb 2027 | 2 weeks | Not Yet Started |
 | Sprint 9 \- Internal Testing | Foundryx | Online | 1 Mar 2027 | 5 Mar 2027 | 1 week | Not Yet Started |
 | Blackout Period from 8 Mar 2027 \- 19 Mar 2027 due to Hari Raya |  |  |  |  |  |  |
 | Sprint 9 \- UAT Round 1 \+ Defect Fix | Sorento / Foundryx | Onsite \+ Online | 22 Mar 2027 | 26 Mar 2027 | 1 week | Not Yet Started |
 | Sprint 9 \- UAT Round 2 \+ Sign-off | Sorento / Foundryx | Online | 29 Mar 2027 | 2 Apr 2027 | 1 week | Not Yet Started |
 | Sprint 9 \- Go live | Sorento / Foundryx | Online | 5 Apr 2027 | 5 Apr 2027 | 1 day | Not Yet Started |
 |  |  |  |  |  |  |  |
-| Sprint 10 — OCN \+ Purchase Exchange / Return | Foundryx | Online | 22 Mar 2027 | 26 Mar 2027 | 1 week | Not Yet Started |
+| Sprint 10 - OCN \+ Purchase Exchange / Return | Foundryx | Online | 22 Mar 2027 | 26 Mar 2027 | 1 week | Not Yet Started |
 | Sprint 10 \- Internal Testing | Foundryx | Online | 29 Mar 2027 | 2 Apr 2027 | 1 week | Not Yet Started |
 | Sprint 10 \- UAT Round 1 \+ Defect Fix | Sorento / Foundryx | Onsite \+ Online | 5 Apr 2027 | 9 Apr 2027 | 1 week | Not Yet Started |
 | Sprint 10 \- UAT Round 2 \+ Sign-off | Sorento / Foundryx | Online | 12 Apr 2027 | 16 Apr 2027 | 1 week | Not Yet Started |
 | Sprint 10 \- Go live | Sorento / Foundryx | Online | 19 Apr 2027 | 19 Apr 2027 | 1 day | Not Yet Started |
 |  |  |  |  |  |  |  |
-| Sprint 11 — HR Forms Digitalization | Foundryx | Online | 5 Apr 2027 | 9 Apr 2027 | 1 week | Not Yet Started |
+| Sprint 11 - HR Forms Digitalization | Foundryx | Online | 5 Apr 2027 | 9 Apr 2027 | 1 week | Not Yet Started |
 | Sprint 11 \- Internal Testing | Foundryx | Online | 12 Apr 2027 | 16 Apr 2027 | 1 week | Not Yet Started |
 | Sprint 11 \- UAT Round 1 \+ Defect Fix | Sorento / Foundryx | Onsite \+ Online | 19 Apr 2027 | 23 Apr 2027 | 1 week | Not Yet Started |
 | Sprint 11 \- UAT Round 2 \+ Sign-off | Sorento / Foundryx | Online | 26 Apr 2027 | 30 Apr 2027 | 1 week | Not Yet Started |
 | Sprint 11 \- Go live | Sorento / Foundryx | Online | 3 May 2027 | 3 May 2027 | 1 day | Not Yet Started |
 |  |  |  |  |  |  |  |
-| Sprint 12 — Dealer Management | Foundryx | Online | 19 Apr 2027 | 30 Apr 2027 | 2 weeks | Not Yet Started |
+| Sprint 12 - Dealer Management | Foundryx | Online | 19 Apr 2027 | 30 Apr 2027 | 2 weeks | Not Yet Started |
 | Sprint 12 \- Internal Testing | Foundryx | Online | 3 May 2027 | 7 May 2027 | 1 week | Not Yet Started |
 | Sprint 12 \- UAT Round 1 \+ Defect Fix | Sorento / Foundryx | Onsite \+ Online | 10 May 2027 | 14 May 2027 | 1 week | Not Yet Started |
 | Sprint 12 \- UAT Round 2 \+ Sign-off | Sorento / Foundryx | Online | 17 May 2027 | 21 May 2027 | 1 week | Not Yet Started |
@@ -789,19 +789,19 @@ The development work is broken into **12 sprints**, each developed and taken liv
 
 ## **Timeline Assumptions and Buffers**
 
-* **BRD sign-off and scope expansion:** Phase 1 experienced multiple revision cycles before sign-off, and two subsequent scope expansions — marketing / HR / AutoCount / dealer management, then Supply Chain — led to further drafting and review rounds. The three-week review-and-sign-off buffer accommodates these cycles without compressing development. The fourth BRD review runs **in parallel with Sprint 1**, since Sprint 1 has no dependency on the requirements gathered in the final round; only Requirement \#27 must be signed off before Sprint 2 begins.
+* **BRD sign-off and scope expansion:** Phase 1 experienced multiple revision cycles before sign-off, and two subsequent scope expansions - marketing / HR / AutoCount / dealer management, then Supply Chain - led to further drafting and review rounds. The three-week review-and-sign-off buffer accommodates these cycles without compressing development. The fourth BRD review runs **in parallel with Sprint 1**, since Sprint 1 has no dependency on the requirements gathered in the final round; only Requirement \#27 must be signed off before Sprint 2 begins.
 
 * **Progressive go-live by module:** each module is taken live on its own rather than in a single cut-over, delivering value earlier and containing risk to one module at a time.
 
-* **Sprint sequencing and overlap:** sprints are ordered by dependency and business priority and deliberately overlap — a new sprint enters development the week after the previous sprint enters user testing — to compress the overall schedule. **Foundryx development capacity is continuous; Sorento's UAT capacity is the binding constraint**, so UAT rounds are staggered rather than concurrent.
+* **Sprint sequencing and overlap:** sprints are ordered by dependency and business priority and deliberately overlap - a new sprint enters development the week after the previous sprint enters user testing - to compress the overall schedule. **Foundryx development capacity is continuous; Sorento's UAT capacity is the binding constraint**, so UAT rounds are staggered rather than concurrent.
 
 * **Foundation-first ordering:** AutoCount integration (Sprint 1\) and Supply Chain (Sprint 2\) precede all customer-facing modules. Every later module reads AutoCount data, and Supply Chain is the highest business priority.
 
-* **Two UAT rounds per module:** each sprint runs Round 1 to surface issues and Round 2 to validate fixes and obtain sign-off before that module goes live — replacing the single end-of-project trial run from the earlier plan.
+* **Two UAT rounds per module:** each sprint runs Round 1 to surface issues and Round 2 to validate fixes and obtain sign-off before that module goes live - replacing the single end-of-project trial run from the earlier plan.
 
 * **Public holidays:** the schedule is built on Monday starts and Friday ends. Malaysian public holidays are tracked separately and checked against every sprint window. **Sprint dates falling on gazetted holidays are adjusted before commitment**; moving holidays (Chinese New Year, Hari Raya, Deepavali) are verified against the gazetted list rather than estimated.
 
-* **Data-maturity dependency (Supply Chain):** the forecasting and reorder logic in Requirement \#27 depends on historical depth in AutoCount and on forward-captured unmet-demand signals. **Where historical depth is insufficient at go-live, the Supply Chain module operates in advisory mode** — recommendations are shown alongside the underlying data for Mr Loo to accept or override — until sufficient signal has accumulated.
+* **Data-maturity dependency (Supply Chain):** the forecasting and reorder logic in Requirement \#27 depends on historical depth in AutoCount and on forward-captured unmet-demand signals. **Where historical depth is insufficient at go-live, the Supply Chain module operates in advisory mode** - recommendations are shown alongside the underlying data for Mr Loo to accept or override - until sufficient signal has accumulated.
 
 # **Risk Register**
 
@@ -810,14 +810,14 @@ This risk register identifies the principal risks to the successful delivery of 
 | DESCRIPTION | ROOT CAUSE | PROB. | IMPACT | RISK SCORE | MITIGATION STRATEGY | CONTINGENCY PLAN | OWNER |
 | ----- | ----- | :---: | :---: | :---: | ----- | ----- | ----- |
 | Out-of-tolerance quotations cause friction between salespeople and CK; salespeople resist using the system quotation and revert to manual Excel quotes. | Pricing tolerance perceived as too tight; approval turnaround from CK perceived as slow; control feels like surveillance. | **High**  | **High**  | **Critical**  | **1\) Calibrate tolerance per product category. 2\) One-click approve/reject mechanism. 3\) Set clear SLA on CK approval.** **2\) Approval emails include a one-click approve/reject mechanism so CK can respond from his phone in seconds.**  3\) Set clear SLA on CK approval (e.g. 4 working hours).  | **Temporarily widen tolerance during the first month; review breach data weekly.**  | CK / Project sales manager |
-| AI extraction from receipt photos in WhatsApp warranty registration produces wrong data (name, phone, invoice number) leading to invalid warranty records. | Wide variation in receipt formats across dealers; poor photo quality; handwritten content; partial obstruction. | **High**  | Medium | **High**  | **1\) AI confirms extracted fields. 2\) Confidence threshold per field. 3\) Build  corrections  feedback loop.** 2\) Confidence threshold per field — low-confidence fields trigger a re-prompt.  3\) Build a 'corrections' feedback loop so the model improves on real samples over time. | **Manual validation against photos during the first few complaints.**  | Foundryx / Customer Service |
+| AI extraction from receipt photos in WhatsApp warranty registration produces wrong data (name, phone, invoice number) leading to invalid warranty records. | Wide variation in receipt formats across dealers; poor photo quality; handwritten content; partial obstruction. | **High**  | Medium | **High**  | **1\) AI confirms extracted fields. 2\) Confidence threshold per field. 3\) Build  corrections  feedback loop.** 2\) Confidence threshold per field - low-confidence fields trigger a re-prompt.  3\) Build a 'corrections' feedback loop so the model improves on real samples over time. | **Manual validation against photos during the first few complaints.**  | Foundryx / Customer Service |
 | SMC members feel spammed by AI broadcasts and disengage; opt-out rates rise; key SMC relationships damaged. | Over-aggressive broadcast frequency; lack of segmentation; AI engagement feels impersonal. | **High**  | High | **High**  | **1\) Always offer a salesperson handoff option. 2\) Track engagement and opt-out signals.** 2\) Track engagement and opt-out signals; flag declining members for human outreach. | **Pause broadcasts; revert to manual outreach.**  | Project sales manager / Marketing |
-| The Customer Service team is overwhelmed during go-live — the system surfaces complaints, SLA reminders, and notifications faster than they can act on them, making things temporarily worse. | Years of suppressed / informal complaint volume becomes visible all at once when the system is enabled. | **High**  | Medium | **High**  | **1\) Initial SLA targets set realistically. 2\) Phased go live by region.** 2\) Phased go live by region / by selected dealers first | **Extend hypercare; adjust SLA targets temporarily.**  | Customer Service |
+| The Customer Service team is overwhelmed during go-live - the system surfaces complaints, SLA reminders, and notifications faster than they can act on them, making things temporarily worse. | Years of suppressed / informal complaint volume becomes visible all at once when the system is enabled. | **High**  | Medium | **High**  | **1\) Initial SLA targets set realistically. 2\) Phased go live by region.** 2\) Phased go live by region / by selected dealers first | **Extend hypercare; adjust SLA targets temporarily.**  | Customer Service |
 | Salespeople resist proactive update reminders, perceiving them as intrusive or surveillance; updates become superficial / one-word replies. | Cultural shift; lack of perceived value to the salesperson personally. | Medium | Medium | **Medium**  | **1\) Use a different phone number for management. 2\) Simple reply structure.** 2\) Make the reply structure simple (one-tap options for common statuses). | **Reduce reminder frequency.**  | CK / Project sales manager |
 | Technicians do not consistently upload photo / video proof of completion, blocking complaints from moving to RESOLVED and inflating resolution times. | Habit; field connectivity issues; lack of clear training on the new workflow. | **High**  | Medium | **High**  | **1\) Hands-on field training. 2\) Simple upload function. 3\) Make proof upload a prerequisite.** 2\) Simple upload function (no app install required).  3\) Make proof upload a payment / KPI prerequisite for technicians. | **CS uploads on technicians  behalf.**  | Customer Service |
-| Supply Chain reorder recommendations are built before sufficient demand history exists. Forecasts systematically under-order growing items; Mr Loo sees wrong numbers at first contact, loses confidence, and reverts permanently to manual judgement. | Sprint 2 development begins two weeks before the AutoCount integration goes live. Unmet-demand signal only accrues forward from Sprint 1 go-live, so at Sprint 2 UAT there is under one month of captured signal. | **High** | **High** | **Critical** | 1\) Ship unmet-demand instrumentation inside Sprint 1, not Sprint 2\.  2\) Backfill demand history from AutoCount stock movements (GRN-in / DO-out) to reconstruct stock-position-over-time and identify stockout windows.  3\) Launch in advisory mode — recommendations shown next to the underlying data, never auto-executed.  4\) Validate recommendations against Mr Loo’s last 12 months of actual orders before go-live. | Operate the Visibility dashboard alone (stock, days-of-cover, cash-tied-up, dead stock, incoming POs) and defer the recommendation engine to a follow-on sprint once ≥4 months of signal has accumulated. | Foundryx / CEO |
-| AutoCount does not hold a clean PO-issue date, or does not link PO lines to GRN lines. Actual lead time and lead-time variability cannot be computed, and the reorder point calculation fails silently. | Some AutoCount deployments post GRNs loosely against POs rather than line-to-line. Supplier master may not carry lead time or MOQ. | **High** | **High** | **Critical** | 1\) AutoCount integration study (20–24 Jul, with the AutoCount SI) resolves this before Sprint 2 scope is locked.  2\) Confirm PO header / line, supplier master, MOQ and unit cost are all extractable.  3\) Treat this as a hard gate on Sprint 2\. | Fall back to supplier-declared lead times entered manually on the supplier record, with variability estimated rather than measured; flag affected SKUs as low-confidence in the dashboard. | Foundryx / Purchasing |
-| The founder overrides nearly every recommendation. The system becomes a reporting tool rather than a decision co-pilot, and the tacit ordering knowledge it was built to capture is never externalised. | Recommendations do not reflect factors the founder weighs (colour, market trend, known incoming projects, relationship-driven timing). Trust is not yet established. | **High** | **High** | **Critical** | 1\) Design as co-pilot, not autopilot — the system proposes, the human disposes.  2\) Capture every override as structured data with its reason, so overrides become the training signal rather than a failure.  3\) Concentrate the founder's attention only on SKUs that need judgement; auto-clear the stable, predictable items.  4\) Explain every recommendation ("why this quantity?") rather than presenting a bare number. | Reduce scope to the Visibility dashboard; re-run requirements with the founder on the specific factors the model is missing. | CEO / Foundryx |
+| Supply Chain reorder recommendations are built before sufficient demand history exists. Forecasts systematically under-order growing items; Mr Loo sees wrong numbers at first contact, loses confidence, and reverts permanently to manual judgement. | Sprint 2 development begins two weeks before the AutoCount integration goes live. Unmet-demand signal only accrues forward from Sprint 1 go-live, so at Sprint 2 UAT there is under one month of captured signal. | **High** | **High** | **Critical** | 1\) Ship unmet-demand instrumentation inside Sprint 1, not Sprint 2\.  2\) Backfill demand history from AutoCount stock movements (GRN-in / DO-out) to reconstruct stock-position-over-time and identify stockout windows.  3\) Launch in advisory mode - recommendations shown next to the underlying data, never auto-executed.  4\) Validate recommendations against Mr Loo’s last 12 months of actual orders before go-live. | Operate the Visibility dashboard alone (stock, days-of-cover, cash-tied-up, dead stock, incoming POs) and defer the recommendation engine to a follow-on sprint once ≥4 months of signal has accumulated. | Foundryx / CEO |
+| AutoCount does not hold a clean PO-issue date, or does not link PO lines to GRN lines. Actual lead time and lead-time variability cannot be computed, and the reorder point calculation fails silently. | Some AutoCount deployments post GRNs loosely against POs rather than line-to-line. Supplier master may not carry lead time or MOQ. | **High** | **High** | **Critical** | 1\) AutoCount integration study (20 - 24 Jul, with the AutoCount SI) resolves this before Sprint 2 scope is locked.  2\) Confirm PO header / line, supplier master, MOQ and unit cost are all extractable.  3\) Treat this as a hard gate on Sprint 2\. | Fall back to supplier-declared lead times entered manually on the supplier record, with variability estimated rather than measured; flag affected SKUs as low-confidence in the dashboard. | Foundryx / Purchasing |
+| The founder overrides nearly every recommendation. The system becomes a reporting tool rather than a decision co-pilot, and the tacit ordering knowledge it was built to capture is never externalised. | Recommendations do not reflect factors the founder weighs (colour, market trend, known incoming projects, relationship-driven timing). Trust is not yet established. | **High** | **High** | **Critical** | 1\) Design as co-pilot, not autopilot - the system proposes, the human disposes.  2\) Capture every override as structured data with its reason, so overrides become the training signal rather than a failure.  3\) Concentrate the founder's attention only on SKUs that need judgement; auto-clear the stable, predictable items.  4\) Explain every recommendation ("why this quantity?") rather than presenting a bare number. | Reduce scope to the Visibility dashboard; re-run requirements with the founder on the specific factors the model is missing. | CEO / Foundryx |
 | Cash-constrained purchasing recommendations conflict with the actual cash position, because the purchasing budget is set outside the platform and is not visible to it. | Cash ceiling is a management decision held by the CEO / Finance, not a field in AutoCount. | Medium | **High** | **High** | 1\) Capture the monthly purchasing budget as an explicit, editable input on the planning view.  2\) Present the cash figure prominently on every recommendation set.  3\) Never present a recommendation without its total cash impact. | Present recommendations ranked by urgency and margin without a budget cap; let the founder draw the line manually. | CEO / Finance |
 | Sprint go-live or UAT dates fall on Malaysian public holidays, producing sprints with zero or near-zero working days and forcing weekend or rushed work. | The schedule is built on Monday starts; several go-live Mondays coincide with gazetted holidays. Moving holidays (CNY, Hari Raya, Deepavali) shift year to year. | **High** | Medium | **High** | 1\) Maintain a gazetted holiday list in the schedule and check every sprint window against it.  2\) Verify moving holidays against the official list rather than estimating.  3\) Adjust any go-live falling on a holiday before committing dates. | Shift the affected go-live to the next working day; extend hypercare by the lost days. | Foundryx / Project Manager |
 | Sorento's UAT capacity is exhausted. Nine overlapping sprints require business users in UAT almost continuously for six months, on top of their operational duties. | Sprints deliberately overlap to compress the schedule; the same Customer Service and Project Sales staff appear in multiple sprints' UAT. | Medium | **High** | **High** | 1\) Stagger UAT rounds so no two sprints test in the same week.  2\) Name UAT participants per sprint at BRD sign-off and confirm their availability.  3\) Cap UAT to five working days per round. | De-overlap the affected sprints; accept schedule extension rather than degraded testing. | Sorento / Project Manager |
@@ -828,7 +828,7 @@ This project of the Sorento AI Platform extends the proven Phase 1 foundation in
 
 ## **Key Deliverables**
 
-* **Single project register with full enquirer history — addressing those who tried to register this project  visibility CK requested.**
+* **Single project register with full enquirer history - addressing those who tried to register this project  visibility CK requested.**
 
 * **Proactive project update reminders, ensuring the Project Sales pipeline is always current.**
 

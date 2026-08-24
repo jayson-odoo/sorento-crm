@@ -1,5 +1,5 @@
 /**
- * PromotionTypeFormModal — create/edit of a promotion type.
+ * PromotionTypeFormModal - create/edit of a promotion type.
  *
  * The payload assertions matter more than the layout: `show_expired` off has to
  * clear both bounds, or a type that is never served after expiry still carries a

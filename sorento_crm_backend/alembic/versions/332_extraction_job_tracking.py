@@ -2,7 +2,7 @@
 
 Four nullable columns, two on each of the document version tables:
 
-* ``extraction_job_id``   - the RQ job that is reading this version.
+* ``extraction_job_id`` - the RQ job that is reading this version.
 * ``extraction_started_at`` - the moment the reader actually picked the document up.
 
 Both exist because of one thing measured on 2026-08-08: a customer PO sat on screen as

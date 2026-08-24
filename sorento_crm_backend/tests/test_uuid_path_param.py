@@ -1,4 +1,4 @@
-"""Bug A2 — non-UUID path ids must 404, not 500.
+"""Bug A2 - non-UUID path ids must 404, not 500.
 
 `validate_uuid_path` is the reusable guard called at the top of detail GET
 handlers so a malformed `{id}` returns a clean 404 instead of leaking a DB-cast

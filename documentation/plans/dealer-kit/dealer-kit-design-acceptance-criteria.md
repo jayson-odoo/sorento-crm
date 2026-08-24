@@ -1,4 +1,4 @@
-# UAC — Dealer Kit S4: Selection and the room designer
+# UAC - Dealer Kit S4: Selection and the room designer
 
 **Status:** drafted 2026-07-26, pre-code. Companion to
 `dealer-kit-builder-acceptance-criteria.md` (S1-S3, all approved).
@@ -53,7 +53,7 @@ knows, that is a defect.
 
 ---
 
-## Group S — Selection (the spine)
+## Group S - Selection (the spine)
 
 - **AC-S1** `[BE]` Given `dealer_kit.selection`, Then it carries a nullable `user_id` AND a
   nullable `contact_id`, exactly one of which is set, enforced by a CHECK constraint - a
@@ -72,7 +72,7 @@ knows, that is a defect.
 - **AC-S7** `[E2E]` Given a Selection, Then it can be reopened, renamed, and deleted with a
   confirmation naming what is lost.
 
-## Group R — The room
+## Group R - The room
 
 - **AC-R1** `[FE]` Given the designer opens with no room, Then the user can drag walls on a 2D
   grid and see live dimensions in millimetres.
@@ -85,7 +85,7 @@ knows, that is a defect.
   hand-drawing with the image behind the grid as a tracing guide - never a dead end.
 - **AC-R5** `[BE]` Given a room, Then its area is DERIVED from the polygon and never stored.
 
-## Group V — The 3D view
+## Group V - The 3D view
 
 - **AC-V1** `[FE]` Given a Selection and a room, Then every product renders as a box at its
   real `dimensions_length/width/height`, to scale with the room.
@@ -101,7 +101,7 @@ knows, that is a defect.
 - **AC-V6** `[FE]` Given a phone, Then the designer is usable at 375px - the plan view and the
   summary at minimum, even if 3D manipulation is coarse.
 
-## Group Q — The handoff
+## Group Q - The handoff
 
 - **AC-Q1** `[E2E]` Given a finished design, Then the summary lists every product with
   quantity and a price resolved for the viewer, plus the derived room area and a total.
@@ -112,14 +112,14 @@ knows, that is a defect.
 - **AC-Q4** `[BE]` Given a Quote from a design, Then it links back to the Selection and the
   room, so "what did they actually design" is answerable later.
 
-## Group D — Dependencies this slice must clear first
+## Group D - Dependencies this slice must clear first
 
 - **AC-D1** `[BE]` Given `respond_contacts` and `customers`, Then a link between them exists -
   the plan's dependency table names its absence as the thing blocking S4.
 - **AC-D2** `[BE]` Given the link, Then a contact reaching the designer resolves to a customer
   when one exists, and does not invent one when it does not.
 
-## Group T — Tests
+## Group T - Tests
 
 - **AC-T1** Room geometry (area, containment, wall snapping) has a golden set written BEFORE
   the implementation.

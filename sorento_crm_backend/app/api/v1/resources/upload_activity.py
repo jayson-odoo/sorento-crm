@@ -48,7 +48,7 @@ router = APIRouter()
 
 
 def _parse_response_payload(raw: Optional[str]) -> dict:
-    """integration_log.response_payload is TEXT — defensive JSON parse."""
+    """integration_log.response_payload is TEXT - defensive JSON parse."""
     if not raw:
         return {}
     try:
@@ -65,10 +65,10 @@ def _file_status_from_log(
     """Map integration_log.status + actual DB linkages to FE file status.
 
     Ground-truth precedence:
-      - If any real linkages exist in DB → "linked" regardless of log state.
+    - If any real linkages exist in DB → "linked" regardless of log state.
         Legacy n8n payloads frequently lack the v1 schema entirely; the row
         is still linked via product_attachments etc.
-      - else fall back to the log's status / v1 outcome.
+    - else fall back to the log's status / v1 outcome.
     """
     if linked:
         return "linked"
@@ -94,7 +94,7 @@ def _linked_entities_from_db(
     db: Session, attachment_id: str, *, log: Optional[IntegrationLog]
 ) -> List[LinkedEntity]:
     """
-    Build the linked entity list from the canonical link tables — not from
+    Build the linked entity list from the canonical link tables - not from
     response_payload. The integration_log payload schema is unreliable in
     the wild; product_attachments / promotion_attachments / forms /
     inbound_shipments are the source of truth.
@@ -184,7 +184,7 @@ def _error_message(log: Optional[IntegrationLog]) -> Optional[str]:
     """Error text for the drawer, falling back to the payload.
 
     n8n's error branch posts ``{"status": "failed", "response_payload":
-    {"error": "..."}}`` and never sets the ``error_message`` column — but every
+    {"error": "..."}}`` and never sets the ``error_message`` column - but every
     user-facing surface reads the column, so the reason ended up visible only on
     the raw-log page and the drawer showed a bare "Integration failed". Fall
     back to ``response_payload.error`` so any n8n failure carries its reason.
@@ -303,7 +303,7 @@ def get_upload_activity(
         .limit(limit * 50)  # over-fetch to allow grouping into <= `limit` sessions
         .all()
     )
-    # NOTE: no early-return on empty attachments — import_job sessions below
+    # NOTE: no early-return on empty attachments - import_job sessions below
     # must still surface for users whose only recent activity is data imports.
     attachment_ids = [str(a.id) for a in attachments]
 
@@ -331,7 +331,7 @@ def get_upload_activity(
     # ---- pull import_jobs touched by the user in the window ---------------
     # attachment_bulk_import jobs merge with their attachment batch (bulk_zip
     # session); every other job type (stock/GRN/DO/product/... Excel imports)
-    # becomes a standalone "import_job" session — the drawer replaces the
+    # becomes a standalone "import_job" session - the drawer replaces the
     # per-page LatestImportStatusPanel bar.
     import_jobs: List[ImportJob] = (
         db.query(ImportJob)
@@ -414,7 +414,7 @@ def get_upload_activity(
         agg = _aggregate([f])
         sessions.append(
             UploadActivitySession(
-                session_id=str(a.id),  # no batch — key on attachment_id
+                session_id=str(a.id),  # no batch - key on attachment_id
                 session_type="single",
                 title=a.original_filename,
                 started_at=a.created_at,
@@ -427,7 +427,7 @@ def get_upload_activity(
             )
         )
 
-    # import_job sessions (Excel/data imports — no attachment rows)
+    # import_job sessions (Excel/data imports - no attachment rows)
     for j in standalone_jobs:
         sessions.append(_import_job_session(j))
 

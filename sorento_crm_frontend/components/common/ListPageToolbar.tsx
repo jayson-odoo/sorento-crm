@@ -15,7 +15,7 @@ export interface ListPageToolbarProps {
   createButton: React.ReactNode;
   /**
    * Accepted for API compatibility but intentionally NOT applied to the search
-   * input — disabling the field on each query causes focus loss while typing.
+   * input - disabling the field on each query causes focus loss while typing.
    * Gate your create/columns buttons on their own loading state instead.
    */
   isLoading?: boolean;

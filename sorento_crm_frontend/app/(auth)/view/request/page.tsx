@@ -72,12 +72,12 @@ const APPROVAL_STATUS_LABELS: Record<string, string> = {
 };
 
 function approvalStatusLabel(value: string | null | undefined): string {
-  if (value == null || value === '') return '—';
+  if (value == null || value === '') return '-';
   return APPROVAL_STATUS_LABELS[value.toLowerCase()] ?? value;
 }
 
 function formatDateStr(value: string | null | undefined): string {
-  if (!value) return '—';
+  if (!value) return '-';
   try {
     const d = new Date(value);
     return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString(undefined, { dateStyle: 'medium' });
@@ -87,7 +87,7 @@ function formatDateStr(value: string | null | undefined): string {
 }
 
 function formatDateTimeStr(value: string | null | undefined): string {
-  if (!value) return '—';
+  if (!value) return '-';
   try {
     const d = new Date(value);
     return Number.isNaN(d.getTime()) ? value : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
@@ -281,12 +281,12 @@ function ViewRequestContent() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4 [&>div]:min-w-0 [&_p]:break-words">
               <div className="py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Purchase request number</p>
-                <p className="text-sm font-medium">{summary?.request_number ?? '—'}</p>
+                <p className="text-sm font-medium">{summary?.request_number ?? '-'}</p>
               </div>
               <div className="py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Submitted date</p>
                 <p className="text-sm font-medium">
-                  {summary?.submitted_at ? formatDateStr(summary.submitted_at) : '—'}
+                  {summary?.submitted_at ? formatDateStr(summary.submitted_at) : '-'}
                 </p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
@@ -295,19 +295,19 @@ function ViewRequestContent() {
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Customer Name</p>
-                <p className="text-sm font-medium break-words">{summary?.customer_name ?? '—'}</p>
+                <p className="text-sm font-medium break-words">{summary?.customer_name ?? '-'}</p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">PIC</p>
-                <p className="text-sm font-medium break-words">{summary?.pic ?? '—'}</p>
+                <p className="text-sm font-medium break-words">{summary?.pic ?? '-'}</p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Project Title</p>
-                <p className="text-sm font-medium break-words">{summary?.project_title ?? '—'}</p>
+                <p className="text-sm font-medium break-words">{summary?.project_title ?? '-'}</p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Purpose</p>
-                <p className="text-sm font-medium break-words">{summary?.purpose ?? '—'}</p>
+                <p className="text-sm font-medium break-words">{summary?.purpose ?? '-'}</p>
               </div>
               <div className="py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">
@@ -316,14 +316,14 @@ function ViewRequestContent() {
                 <p className="text-sm font-medium">
                   {summary?.expected_delivery_date
                     ? formatDateStr(summary.expected_delivery_date)
-                    : '—'}
+                    : '-'}
                 </p>
               </div>
               <div className="py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">
                   Expected date to receive PO
                 </p>
-                <p className="text-sm font-medium">{poDisplay ?? '—'}</p>
+                <p className="text-sm font-medium">{poDisplay ?? '-'}</p>
               </div>
             </div>
             {summary?.lines && summary.lines.length > 0 && (
@@ -343,9 +343,9 @@ function ViewRequestContent() {
                       {summary.lines.map((line, idx) => (
                         <TableRow key={idx}>
                           <TableCell>{idx + 1}</TableCell>
-                          <TableCell className="font-medium">{line.item_code ?? '—'}</TableCell>
-                          <TableCell>{line.quantity != null ? String(line.quantity) : '—'}</TableCell>
-                          <TableCell className="text-muted-foreground">{line.remark ?? '—'}</TableCell>
+                          <TableCell className="font-medium">{line.item_code ?? '-'}</TableCell>
+                          <TableCell>{line.quantity != null ? String(line.quantity) : '-'}</TableCell>
+                          <TableCell className="text-muted-foreground">{line.remark ?? '-'}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -376,12 +376,12 @@ function ViewRequestContent() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4 [&>div]:min-w-0 [&_p]:break-words">
               <div className="py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Sponsorship form number</p>
-                <p className="text-sm font-medium">{summary?.request_number ?? '—'}</p>
+                <p className="text-sm font-medium">{summary?.request_number ?? '-'}</p>
               </div>
               <div className="py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Submitted date</p>
                 <p className="text-sm font-medium">
-                  {summary?.submitted_at ? formatDateStr(summary.submitted_at) : '—'}
+                  {summary?.submitted_at ? formatDateStr(summary.submitted_at) : '-'}
                 </p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
@@ -390,21 +390,21 @@ function ViewRequestContent() {
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Customer Name</p>
-                <p className="text-sm font-medium break-words">{summary?.customer_name ?? '—'}</p>
+                <p className="text-sm font-medium break-words">{summary?.customer_name ?? '-'}</p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">PIC</p>
-                <p className="text-sm font-medium break-words">{summary?.pic ?? '—'}</p>
+                <p className="text-sm font-medium break-words">{summary?.pic ?? '-'}</p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Delivery Address</p>
                 <p className="text-sm font-medium whitespace-pre-wrap break-words">
-                  {summary?.delivery_address ?? '—'}
+                  {summary?.delivery_address ?? '-'}
                 </p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Project Title</p>
-                <p className="text-sm font-medium break-words">{summary?.project_title ?? '—'}</p>
+                <p className="text-sm font-medium break-words">{summary?.project_title ?? '-'}</p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Total Project Value</p>
@@ -413,19 +413,19 @@ function ViewRequestContent() {
                     ? summary.total_project_value_text
                     : summary?.total_project_value != null
                       ? String(summary.total_project_value)
-                      : '—'}
+                      : '-'}
                 </p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Sponsor Subject</p>
-                <p className="text-sm font-medium break-words">{summary?.sponsor_subject ?? '—'}</p>
+                <p className="text-sm font-medium break-words">{summary?.sponsor_subject ?? '-'}</p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Date of Delivery</p>
                 <p className="text-sm font-medium">
                   {summary?.expected_delivery_date
                     ? formatDateStr(summary.expected_delivery_date)
-                    : '—'}
+                    : '-'}
                 </p>
               </div>
             </div>
@@ -447,10 +447,10 @@ function ViewRequestContent() {
                       {summary.lines.map((line, idx) => (
                         <TableRow key={idx}>
                           <TableCell>{idx + 1}</TableCell>
-                          <TableCell className="font-medium">{line.item_code ?? '—'}</TableCell>
-                          <TableCell>{line.quantity != null ? String(line.quantity) : '—'}</TableCell>
-                          <TableCell className="text-right">{line.unit_price != null ? formatCurrency(line.unit_price) : '—'}</TableCell>
-                          <TableCell className="text-right">{line.total != null ? formatCurrency(line.total) : '—'}</TableCell>
+                          <TableCell className="font-medium">{line.item_code ?? '-'}</TableCell>
+                          <TableCell>{line.quantity != null ? String(line.quantity) : '-'}</TableCell>
+                          <TableCell className="text-right">{line.unit_price != null ? formatCurrency(line.unit_price) : '-'}</TableCell>
+                          <TableCell className="text-right">{line.total != null ? formatCurrency(line.total) : '-'}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

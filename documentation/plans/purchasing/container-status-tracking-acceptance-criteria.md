@@ -255,7 +255,7 @@ rather than one tool per document.
   `ContactAccessTypeService.resolve_contact_access_codes` and **intersects** them with the caller's
   requested `access_levels`. A caller that omits `access_levels`, or asks for codes the contact does
   not hold, receives only what the contact is entitled to.
-  - Today `access_levels` is a caller-supplied Query filter (`app/api/v1/resources/attachments.py:239`)
+ - Today `access_levels` is a caller-supplied Query filter (`app/api/v1/resources/attachments.py:239`)
     and `sub-get-results` passes a precomputed intersection, so **n8n is the enforcement**. This AC
     closes a pre-existing gap affecting every promotion, catalogue and stock-list file - not only
     container status.

@@ -28,10 +28,10 @@
  * everything to Sorento and creates no Mocha rows on purpose.
  *
  * KNOWN FLAKY, and worth knowing what it does and does not buy you:
- *   - It is timing-flaky. Observed 13s for the whole file on one run and a
+ * - It is timing-flaky. Observed 13s for the whole file on one run and a
  *     240s timeout on a single test the next, same code and stack. The sidebar
  *     expand loop and the two JWT re-mints per test are the slow parts.
- *   - It does NOT catch a backend company-scope regression. Deleting the company
+ * - It does NOT catch a backend company-scope regression. Deleting the company
  *     predicate from the listing query and re-running left it green, because the
  *     ORM scope filter still isolates the rows. Treat this as UX cover (the label,
  *     the empty state, the list staying company-agnostic), and pin backend

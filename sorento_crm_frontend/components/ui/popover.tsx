@@ -37,7 +37,7 @@ function PopoverContent({
  *
  * PopoverContent above deliberately does NOT portal (long-standing behaviour that existing
  * popovers rely on for stacking), but a popover nested inside a scrollable container is clipped
- * by that container's overflow the moment it flips to `side="top"` — the content is laid out at
+ * by that container's overflow the moment it flips to `side="top"` - the content is laid out at
  * the right coordinates yet never painted. Dialogs (`overflow-y-auto`) hit this constantly.
  * Wrap in this when the popover must escape its parent's overflow.
  */

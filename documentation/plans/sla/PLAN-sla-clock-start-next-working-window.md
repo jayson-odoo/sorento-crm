@@ -1,4 +1,4 @@
-# PLAN — SLA clock starts at the next working-window open
+# PLAN - SLA clock starts at the next working-window open
 
 Status: Phase 2 code complete, tests green (43 passed); awaiting live re-verification
 Date: 2026-07-20
@@ -12,7 +12,7 @@ Diagnosing stock inquiry `3c892c32-08d3-4855-ac10-8bd7552b06b0` (submitted Sat
 18/07 09:37, 72h tier) surfaced that an SLA clock starts at the raw event instant
 even when nobody is working. The user then simulated the case on
 `ce360d26-0dc6-44eb-beb3-bf053bc85033` with Monday flagged non-working and the
-window set to 08:00–23:00.
+window set to 08:00 - 23:00.
 
 **Observed:** submit Mon 20/07 22:48 MYT, 24h tier → `due_at` = Tue 21/07 23:00 MYT.
 **Wanted:** clock starts Tue 08:00 (next window open), +24h → due **Wed 22/07 08:00**.
@@ -25,7 +25,7 @@ not applicable and is explicitly skipped, recorded here per the methodology gate
 This branch already carries a first attempt:
 `_clamp_offhours_due_to_workday_end` (`app/services/form_sla_service.py:65-103`).
 For an off-hours submit it lifts the working-days due to that day's
-`work_day_end_time` — hence Tue 23:00 above.
+`work_day_end_time` - hence Tue 23:00 above.
 
 It is a **one-sided relaxation of the deadline**, not a correction of the start.
 The rule the user wants normalizes the *start* instead, which subsumes it.
@@ -60,7 +60,7 @@ def next_working_window_open(
 ```
 
 Reuses `get_working_weekdays`, `get_working_hours`, `get_public_holidays_between`,
-`_is_business_day` — the same helpers the existing `_StubCalendar` test harness
+`_is_business_day` - the same helpers the existing `_StubCalendar` test harness
 already stubs, so no new fixtures. Iteration bounded by the same guard style as
 `add_working_hours` (`calendar_service.py:428`) so a bad calendar can never hang
 the request path.
@@ -76,7 +76,7 @@ guard, before the `< 24.0` branch at line 319, so both branches receive a
 normalized start.
 
 The `< 24.0` branch delegates to `add_working_hours`, which already rolls a
-non-window start forward (`calendar_service.py:378-379`, implemented at 432-435) —
+non-window start forward (`calendar_service.py:378-379`, implemented at 432-435) - 
 normalizing first is a no-op there, which AC-6 (idempotence) pins.
 
 This single edit fixes `due_at` for every caller:
@@ -93,26 +93,26 @@ Remove `_clamp_offhours_due_to_workday_end` and its call inside
 
 ### 4. Normalize the stored clock start
 
-`due_at` alone is not enough — the UI counter reads `current_tier_started_at`.
+`due_at` alone is not enough - the UI counter reads `current_tier_started_at`.
 Normalize it at automatic clock starts only.
 
 **Form SLA** (`app/services/form_sla_service.py`):
 - Add `_working_clock_start_naive(db, dt)` beside `_working_due_naive`, same
-  defensive try/except shape — on failure return `dt` unchanged.
+  defensive try/except shape - on failure return `dt` unchanged.
 - `_start_for_config`: compute `clock_start` once; keep `initiated_at=now`
   (AC-14), set `current_tier_started_at=clock_start`, pass `clock_start` (not
   `now`) into both `_working_due_naive` calls.
-- `_escalate_tracker`: same — `escalated_at=now` stays true (AC-15);
+- `_escalate_tracker`: same - `escalated_at=now` stays true (AC-15);
   `current_tier_started_at` and both dues derive from `clock_start`.
 
-**Conversation SLA** (`app/services/sla_service.py`) — new `_working_clock_start`
+**Conversation SLA** (`app/services/sla_service.py`) - new `_working_clock_start`
 helper (aware UTC, matching that module), applied at the two genuine automatic
 clock starts:
 - create: `current_tier_started_at` when not caller-supplied
 - escalate: `current_tier_started_at`, with `escalated_at` keeping the true instant
 
 **Explicitly excluded, after reading the call sites:**
-- **Admin override** — an operator who types a `current_tier_started_at` has it
+- **Admin override** - an operator who types a `current_tier_started_at` has it
   stored verbatim (AC-17). Its `due_at` still flows through the normalized
   primitive, which is correct: the operator states when the clock started, not what
   the deadline should be.
@@ -122,22 +122,22 @@ clock starts:
 
 Satisfies AC-13..AC-17.
 
-## Phase 2 — TDD order (red → green → refactor)
+## Phase 2 - TDD order (red → green → refactor)
 
 Tests first, extending `tests/test_working_hours_sla.py` (stub-based, no DB, free
 of the global-listener interference that hits sqlite fixtures).
 
-1. **Red:** `next_working_window_open` — inside window unchanged, before open, at
+1. **Red:** `next_working_window_open` - inside window unchanged, before open, at
    close, after close, weekend, holiday, idempotence, degenerate config
    (AC-1..AC-8). Fails: method does not exist.
 2. **Green:** implement the primitive.
-3. **Red:** `add_working_days_from_hours` — off-hours start + 24h → next-next
+3. **Red:** `add_working_days_from_hours` - off-hours start + 24h → next-next
    working day at open; + 72h → three working days later at open; + 3h →
    working-hours clock unchanged; in-window starts byte-identical to today
-   (AC-9..AC-12). The stub window is 09:00–17:00, so stub expectations use 09:00
+   (AC-9..AC-12). The stub window is 09:00 - 17:00, so stub expectations use 09:00
    as open, not production's 08:00.
 4. **Green:** wire normalization in; delete the clamp.
-5. **Red:** service-level tests — tracker created off-hours stores a normalized
+5. **Red:** service-level tests - tracker created off-hours stores a normalized
    `current_tier_started_at` with a true `initiated_at` (AC-13/AC-14); an
    admin-supplied start is not normalized (AC-17).
 6. **Green:** the form-SLA edits + the conversation-SLA edits.
@@ -146,7 +146,7 @@ of the global-listener interference that hits sqlite fixtures).
 ## Verification against the live sim
 
 After deploy to the running `:8002` backend, submit a fresh stock inquiry with
-Monday non-working and the window 08:00–23:00. Expect `current_tier_started_at` =
+Monday non-working and the window 08:00 - 23:00. Expect `current_tier_started_at` =
 Tue 08:00 MYT and `due_at` = **Wed 08:00 MYT**, and the detail page at `:3002` to
 show the same.
 
@@ -154,7 +154,7 @@ show the same.
 
 - **Blast radius is every SLA due computed after deploy.** Weekday-inside-window
   starts are unaffected (AC-12 pins this), which is the overwhelming majority. Only
-  nights/weekends/holidays shift, and they shift **later**, never earlier — so no
+  nights/weekends/holidays shift, and they shift **later**, never earlier - so no
   tracker becomes retroactively overdue.
 - **Escalation cadence improves.** The 2-minute sweep escalates at breach time;
   with normalized starts, dues land on window-open boundaries, so escalations fire
@@ -168,13 +168,13 @@ Surfaced while diagnosing the same inquiry, tracked separately:
 1. `start_tier` is hardcoded to 1 (`form_sla_service.py:730` on main); a stage lands
    on a higher tier only because `resolve_team_with_tier_fallback`
    (`user_service.py:2074-2095`) skips tiers with no team. So `project_sales`
-   starting at tier 2 is emergent, not configured — add a tier-1 team to that team
+   starting at tier 2 is emergent, not configured - add a tier-1 team to that team
    set and every stock inquiry silently changes SLA. Candidate fix: an explicit
    `start_tier` column on `form_sla_configs`.
 2. `POST /api/v1/sla/integration/escalate` (`sla_tracking.py:814`) escalates
    unconditionally, with no overdue check, resolving the tracker by contact.
 3. `_start_for_config` raises when the policy has no row for the resolved start
-   tier, but `procurement_service.py:3604-3611` swallows the exception — a
+   tier, but `procurement_service.py:3604-3611` swallows the exception - a
    misconfigured stage silently gets no SLA at all.
 4. The `stock_inquiry`/`project_sales` config still points at policy **NORMAL**,
    not the **STOCK_INQUIRIES** policy (tier 2 = 72h) created for it.

@@ -158,12 +158,12 @@ def _score_expression(key: str):
 
     The strongest of three trigram measures:
 
-    - ``similarity`` -- symmetric, good at spelling drift ("Ph" vs "Phase").
-    - ``strict_word_similarity(key, stored)`` -- asymmetric, asks how well the typed
+  - ``similarity`` -- symmetric, good at spelling drift ("Ph" vs "Phase").
+  - ``strict_word_similarity(key, stored)`` -- asymmetric, asks how well the typed
       title is covered by the stored one. This is what catches a short title typed
       against a verbose incumbent, where plain similarity collapses to 0.31 purely
       because of the length difference.
-    - the same, reversed -- because whoever registers first decides which of the two
+  - the same, reversed -- because whoever registers first decides which of the two
       titles is the stored one, and the answer must not depend on typing order.
 
     ``GREATEST`` defeats the ``gin_trgm_ops`` index, so this is a sequential scan.

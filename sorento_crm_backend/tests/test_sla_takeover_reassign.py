@@ -191,7 +191,7 @@ def test_takeover_uses_takers_own_tier_in_agent_chain(notify, db):
     )
     db.commit()
 
-    # FE passes the queue (assignee's) team_id — but the result must follow MY tier.
+    # FE passes the queue (assignee's) team_id - but the result must follow MY tier.
     tracking = ConversationSLATrackingService(db).takeover(tid, me, queue_team)
 
     assert tracking.assigned_to_id == me
@@ -212,7 +212,7 @@ def test_takeover_uses_takers_own_tier_in_agent_chain(notify, db):
 
 # The Respond assignee push is now async: takeover/reassign ENQUEUE a
 # set_respond_conversation_assignee job on the respond_io queue (the actual Respond
-# call + outbox log run on the worker — see test_respond_conversation_tasks.py).
+# call + outbox log run on the worker - see test_respond_conversation_tasks.py).
 
 
 @patch("app.services.sla_service.ConversationSLATrackingService._notify_reassignment")

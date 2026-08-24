@@ -1,7 +1,7 @@
 """Understand what a customer asked for, using the same vocabulary the ranker scores.
 
 This is the *semantic* half of spec search. The ranker (`product_spec_search`) stays
-deterministic and explainable on purpose — every point it awards can be pointed at. What
+deterministic and explainable on purpose - every point it awards can be pointed at. What
 it could never do is understand language: it matched registry synonyms as literal
 substrings, so one dropped letter ("inteligent") resolved nothing, and any phrasing not
 already written into the synonym list was invisible.
@@ -12,13 +12,13 @@ typos and nothing else: it cannot know that "for my kitchen" means a kitchen sin
 qualifies a dimension. Those need a model that understands language, which is what this
 module adds.
 
-**The model never invents vocabulary.** It is handed the registry — the same rows the
-ranker weights and the n8n parser reads — and every key and value it returns is validated
+**The model never invents vocabulary.** It is handed the registry - the same rows the
+ranker weights and the n8n parser reads - and every key and value it returns is validated
 back against those rows. Anything unrecognised is dropped, not coerced. So the model
 decides *meaning*; the registry still decides *what exists*. That boundary is what keeps
 a hallucinated `mounting=levitating` out of a customer's shortlist.
 
-Degrades to the deterministic resolver on any failure — no key, no provider, bad JSON,
+Degrades to the deterministic resolver on any failure - no key, no provider, bad JSON,
 timeout. Search that got worse when the LLM had a bad day would be a worse product than
 search that never used one.
 
@@ -149,14 +149,14 @@ _OPEN_VOCABULARY_LIMIT = 60
 
 
 def open_vocabulary_values(db: Session, spec_key: str) -> list[str]:
-    """Distinct stored values for a key — simply what the catalog holds.
+    """Distinct stored values for a key - simply what the catalog holds.
 
     Read from the derived specs rather than from `product_categories` so it stays true
     for any open key, not only the two that happen to come from a category today.
 
     Deliberately NOT cached in the process. A DISTINCT over JSONB across 22,805 rows
     costs ~160ms per key, which is tempting to memoise, but a cache keyed on the spec
-    key alone is wrong the moment more than one database is involved — it would serve
+    key alone is wrong the moment more than one database is involved - it would serve
     one database's brands to another's queries, silently. Against the 1.5-2.5s model
     call this sits behind, the query is not the thing worth optimising, and a wrong
     vocabulary is not worth 300ms.
@@ -277,7 +277,7 @@ def _coerce(row, value: Any, open_values: list[str] | None = None) -> Any | None
 
     allowed = _offerable(merged_allowed_values(row) or list(open_values or []), excluded)
     if not allowed:
-        # Nothing to check against — the key is open and the catalog is empty for it.
+        # Nothing to check against - the key is open and the catalog is empty for it.
         return text
 
     # Enum slugs use underscores ("wall_hung") but catalog-sourced values keep their own
@@ -502,7 +502,7 @@ def understand_phrase(
     if not phrase:
         return Understanding()
 
-    # The deterministic reading first — it is free, and it is the floor.
+    # The deterministic reading first - it is free, and it is the floor.
     baseline, spans, haystack = resolve_terms_to_specs_with_spans(
         db, [phrase], registry_rows=registry_rows
     )

@@ -5,12 +5,12 @@ in ``mcp_tools``. Idempotently:
 
 1. Appends the tool name to ``AIAssistantConfig.enabled_tools`` so the
    in-app AI assistant RAG includes it in candidate selection. The in-app
-   chat does not use AccessAgent ownership — see ``ai_assistant_service:
+   chat does not use AccessAgent ownership - see ``ai_assistant_service:
    _rag_select_tools``, which filters candidates by this list.
 2. Inserts a default ``form_sla_configs`` row for ``ticket`` /
    ``it_support`` / ``it_admin`` using the first available SLA policy
    (preferring ``NORMAL`` by name) so the SLA timer starts the moment a
-   ticket is created — no admin intervention required.
+   ticket is created - no admin intervention required.
 
 All steps log + skip on missing prerequisites; the next startup retries.
 """

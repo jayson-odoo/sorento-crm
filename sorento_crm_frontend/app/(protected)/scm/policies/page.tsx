@@ -14,6 +14,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
+import RequireAccess from '@/app/components/common/RequireAccess';
 import { PolicyConfigView } from './components/PolicyConfigView';
 
 export const metadata: Metadata = {
@@ -23,7 +24,7 @@ export const metadata: Metadata = {
 
 export default function ScmPoliciesPage() {
   return (
-    <>
+    <RequireAccess permission="scm.policy.manage">
       <Container width="fluid">
         <Toolbar>
           <ToolbarHeading>
@@ -51,6 +52,6 @@ export default function ScmPoliciesPage() {
       <Container width="fluid">
         <PolicyConfigView />
       </Container>
-    </>
+    </RequireAccess>
   );
 }

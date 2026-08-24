@@ -1,12 +1,12 @@
 /**
  * SCM M4 Slice B - PurchaseOrdersList (AC-M4.6).
- *   - draft + active rows render (draft = "Not on order", active = "On order")
- *   - PO number is a hyperlink to the detail page (human number, no UUID)
- *   - select-all selects ALL rows (drafts + active); the Actions dropdown shows
+ * - draft + active rows render (draft = "Not on order", active = "On order")
+ * - PO number is a hyperlink to the detail page (human number, no UUID)
+ * - select-all selects ALL rows (drafts + active); the Actions dropdown shows
  *     "Confirm N drafts" scoped to the draft subset and is HIDDEN when the
  *     selection has no drafts
- *   - Create GR is a per-row action on active POs only
- *   - loading / empty / error states
+ * - Create GR is a per-row action on active POs only
+ * - loading / empty / error states
  *
  * Data + action hooks are mocked; the dropdown-menu module is stubbed inline so
  * the bulk Actions item is assertable without a Radix portal.

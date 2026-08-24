@@ -1,5 +1,5 @@
 /**
- * buildDriveBulkActions — the single "Action" dropdown gating (UAC F2/F3/F6).
+ * buildDriveBulkActions - the single "Action" dropdown gating (UAC F2/F3/F6).
  */
 import { describe, it, expect, vi } from 'vitest';
 import { buildDriveBulkActions, type DriveBulkActionHandlers } from './driveBulkActions';

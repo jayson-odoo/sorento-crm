@@ -132,7 +132,7 @@ class DownloadService:
     ) -> Dict[str, int]:
         """{source_entity_id: count} of the user's downloads for the given ids.
 
-        One grouped query for the whole page — avoids an N+1 count per row.
+        One grouped query for the whole page - avoids an N+1 count per row.
         """
         ids = [str(i) for i in source_entity_ids if i is not None]
         if not user_id or not ids:
@@ -190,8 +190,8 @@ def purge_expired_downloads(db, retention_days: int = 30, now=None) -> dict:
     """Delete download rows and their stored objects past the retention window.
 
     Nothing has ever purged `user_downloads`. With `complaint_pdf` as the only producer
-    that went unnoticed; adding a chat-history CSV export — the largest artifact the
-    system produces — makes it a real cost. Applies to every `kind`, not just the new one.
+    that went unnoticed; adding a chat-history CSV export - the largest artifact the
+    system produces - makes it a real cost. Applies to every `kind`, not just the new one.
 
     Storage deletion is best-effort per row: an object that is already gone, or a
     provider hiccup, must not block reclaiming the rest.

@@ -1,4 +1,4 @@
-# 2.3-Warehouse — Upload (bulk import) stock balances
+# 2.3-Warehouse - Upload (bulk import) stock balances
 
 Use this flow to bulk-create or update warehouse stock balances from an Excel file. One row per **(product, warehouse)** pair. Quantities are upserted: if a row exists for that pair it is updated, otherwise it is created. A ledger entry of type `BULK_IMPORT` is written for every change.
 
@@ -8,16 +8,16 @@ Open [**Inventory Management → Stock**](/inventory-management/stock). The page
 
 Toolbar (top right):
 
-* **[Export](/inventory-management/stock#guide_target=inventory-management.stock.export-button)** — download the current stock balances as `stock_balance_export.xlsx`. Use this as your starting template.
-* **[Import](/inventory-management/stock#guide_target=inventory-management.stock.import-button)** — opens the upload dialog.
-* **Filters** / **Columns** — DataGrid tools.
+* **[Export](/inventory-management/stock#guide_target=inventory-management.stock.export-button)** - download the current stock balances as `stock_balance_export.xlsx`. Use this as your starting template.
+* **[Import](/inventory-management/stock#guide_target=inventory-management.stock.import-button)** - opens the upload dialog.
+* **Filters** / **Columns** - DataGrid tools.
 
-## Step 1 — Export current balances as your template
+## Step 1 - Export current balances as your template
 
 1. Click **[Export](/inventory-management/stock#guide_target=inventory-management.stock.export-button)** to download `stock_balance_export.xlsx`.
 2. Open the file in Excel. The export contains every product × warehouse pair currently on the page, with the columns described below.
 
-## Step 2 — Edit the Excel
+## Step 2 - Edit the Excel
 
 ### Columns
 
@@ -35,16 +35,16 @@ Toolbar (top right):
 
 Rules of thumb:
 
-* Don't duplicate `(Product Code, Warehouse Code)` — the last duplicate wins on create.
+* Don't duplicate `(Product Code, Warehouse Code)` - the last duplicate wins on create.
 * You don't need to include every row from the export; rows you remove from the file are left untouched, not deleted.
 * Use **Reserved Quantity** explicitly. If only **Available** is given, the importer assumes `Reserved = 0`.
 
-## Step 3 — Import
+## Step 3 - Import
 
 1. Click **[Import](/inventory-management/stock#guide_target=inventory-management.stock.import-button)** in the toolbar.
 2. Drag in or browse to your stock Excel file.
 
-## Step 4 — Test before committing
+## Step 4 - Test before committing
 
 Click **[Test](/inventory-management/stock#guide_target=template-upload.test-button)** in the upload dialog. The system runs server-side validation (`validate_only=true`) and shows you:
 
@@ -52,9 +52,9 @@ Click **[Test](/inventory-management/stock#guide_target=template-upload.test-but
 * Per-row errors (e.g. "Row 5: Product not found (code 'SRT-XYZ')").
 * Per-row warnings (e.g. malformed numbers coerced to `0`).
 
-Resolve every error before continuing. Warnings are advisory — they won't block the upload.
+Resolve every error before continuing. Warnings are advisory - they won't block the upload.
 
-## Step 5 — Upload
+## Step 5 - Upload
 
 Click **[Upload](/inventory-management/stock#guide_target=template-upload.confirm-button)**. The import is queued as an async job (`stock_import`). The dialog closes and the toolbar surfaces a status panel.
 
@@ -66,7 +66,7 @@ Click **[Upload](/inventory-management/stock#guide_target=template-upload.confir
 ## How you'll be notified
 
 * **Immediately:** in-app toast confirming the job was queued.
-* **On completion:** in-app notification (bell icon, top right) and email — both link back to the import-job detail.
+* **On completion:** in-app notification (bell icon, top right) and email - both link back to the import-job detail.
 
 ## What changes in the database
 
@@ -79,10 +79,10 @@ The **Available** column is recomputed automatically (`Total - Reserved`).
 
 ## Permissions
 
-* `inventory.stock.export` — needed to run **Export**.
-* `inventory.stock.import` — needed to run **Import** and reach the upload dialog.
+* `inventory.stock.export` - needed to run **Export**.
+* `inventory.stock.import` - needed to run **Import** and reach the upload dialog.
 
 ## See also
 
-* [Warehouse — Upload GRN](upload-grn.md) — receive incoming stock against a supplier packing list (different flow; updates `incoming_stock`, not balances).
-* [Warehouse — Upload Delivery Orders](upload-delivery-orders.md)
+* [Warehouse - Upload GRN](upload-grn.md) - receive incoming stock against a supplier packing list (different flow; updates `incoming_stock`, not balances).
+* [Warehouse - Upload Delivery Orders](upload-delivery-orders.md)

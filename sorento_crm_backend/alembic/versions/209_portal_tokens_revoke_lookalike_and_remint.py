@@ -51,7 +51,7 @@ def upgrade() -> None:
         """
     )
 
-    # 2. Find contacts whose ONLY live tokens were just revoked — they have no
+    # 2. Find contacts whose ONLY live tokens were just revoked - they have no
     #    other unrevoked, unexpired token to fall back to. Re-mint one Crockford
     #    token per contact, preserving (contact_id, space_id) from the most
     #    recent revoked token so the portal scope stays correct.

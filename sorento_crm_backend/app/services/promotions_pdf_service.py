@@ -1,5 +1,5 @@
 """Compile the linked attachment flyers of one or more promotions into a single
-PDF (for printing — the printer does N-up).
+PDF (for printing - the printer does N-up).
 
 Decoupled from the request path: called by the RQ task ``generate_promotions_pdf``.
 Attachments are merged in the FE grid display order (the caller passes

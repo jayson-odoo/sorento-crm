@@ -2,12 +2,12 @@
 
 The chatbot routes user phrases like "kitchen sink promotion" into the MCP
 promotions tool's `query` arg. The word "promotion" is conversational
-context — the actual promotion in the DB is "Kitchen Sink Special". Searching
+context - the actual promotion in the DB is "Kitchen Sink Special". Searching
 "kitchen sink promotion" against `Promotion.name` ILIKE matches nothing.
 
 This normalizer keeps the per-domain stopword catalog in ONE place. Each
 list endpoint passes its own `domain_key`. Adding a new stopword (or a new
-domain) is a config edit here — no prompt change, no per-route diff.
+domain) is a config edit here - no prompt change, no per-route diff.
 """
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ def strip_domain_stopwords(query: Optional[str], domain_key: str) -> Optional[st
     kept = [t for t in tokens if t.lower().strip(_PUNCT_STRIP) not in stop]
     stripped = " ".join(kept).strip()
 
-    # Don't reduce the query to empty — that turns a search into list-all.
+    # Don't reduce the query to empty - that turns a search into list-all.
     if not stripped:
         return trimmed
     return stripped

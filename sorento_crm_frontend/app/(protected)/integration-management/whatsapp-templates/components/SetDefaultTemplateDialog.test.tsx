@@ -74,7 +74,7 @@ function renderDialog(current: TemplateDefault | null) {
   );
 }
 
-describe('SetDefaultTemplateDialog — dynamic URL button', () => {
+describe('SetDefaultTemplateDialog - dynamic URL button', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (listApprovedTemplates as any).mockResolvedValue([BUTTON_TEMPLATE, PLAIN_TEMPLATE]);
@@ -148,7 +148,7 @@ function renderChatDialog(current: TemplateDefault | null) {
   );
 }
 
-describe('SetDefaultTemplateDialog — chat message enforcement', () => {
+describe('SetDefaultTemplateDialog - chat message enforcement', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (listApprovedTemplates as any).mockResolvedValue([CHAT_TEMPLATE]);
@@ -173,7 +173,7 @@ describe('SetDefaultTemplateDialog — chat message enforcement', () => {
     await screen.findByText('Message from {{1}}: {{2}}');
 
     // Slot {{2}} currently shows "Sender name"; remap it to "Full update message".
-    // The slot picker is a SearchableSelect (Popover + cmdk) — it opens on click,
+    // The slot picker is a SearchableSelect (Popover + cmdk) - it opens on click,
     // then renders its options as role="option" in the popover content.
     const slot2 = screen
       .getAllByRole('combobox')

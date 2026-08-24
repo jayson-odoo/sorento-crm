@@ -1,6 +1,6 @@
-# 1.1-Purchasing — Upload the product master
+# 1.1-Purchasing - Upload the product master
 
-Use this flow to bulk-create or update products from an Excel file. This is **Pattern B** — a module-specific structured import — distinct from the generic file upload on **Files**.
+Use this flow to bulk-create or update products from an Excel file. This is **Pattern B** - a module-specific structured import - distinct from the generic file upload on **Files**.
 
 ## Steps
 
@@ -12,7 +12,7 @@ Use this flow to bulk-create or update products from an Excel file. This is **Pa
 
 | Column | Required | Notes |
 |----|----|----|
-| **Item Code** | Yes | Unique identifier — used as the lookup key for create vs update. |
+| **Item Code** | Yes | Unique identifier - used as the lookup key for create vs update. |
 | **Description** | Optional | Primary product description. |
 | **Desc 2** | Optional | Secondary description / sub-name. |
 | **Item Group** | Yes | Product group / category. Created automatically if it does not exist yet. |
@@ -47,7 +47,7 @@ The **Products** page shows a **Latest products import** panel above the table w
 ## What you cannot do here
 
 * This page does **not** upload product *attachments* (datasheets, manuals, photos). For those, see [Upload product attachments](upload-product-attachments.md).
-* Errors on individual rows do not abort the whole import — failed rows are reported in the import-job result.
+* Errors on individual rows do not abort the whole import - failed rows are reported in the import-job result.
 
 ## See also
 

@@ -30,7 +30,7 @@ import type { ConversationSLAEventLogsParams } from '../services/conversationSLA
 /**
  * Prev/next neighbours of a conversation SLA tracking row within the active
  * filtered+sorted list set. Serializes the list query (search/sort/policy/assignee)
- * with `buildDataGridParams` — the same serialization the list page uses — so the
+ * with `buildDataGridParams` - the same serialization the list page uses - so the
  * backend honours filters identically. `page`/`limit` are sent but ignored by the
  * neighbours endpoint; `scope` is fixed to conversation server-side.
  */

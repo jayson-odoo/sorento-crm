@@ -121,7 +121,7 @@ export default function BatchesList() {
           const status = row.original.status;
           return (
             <Badge variant={getStatusBadgeVariant(status)} appearance="ghost">
-              {status ? status.charAt(0).toUpperCase() + status.slice(1) : '—'}
+              {status ? status.charAt(0).toUpperCase() + status.slice(1) : '-'}
             </Badge>
           );
         },

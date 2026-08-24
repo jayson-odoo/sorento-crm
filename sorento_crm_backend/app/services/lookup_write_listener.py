@@ -24,7 +24,7 @@ def register_lookup_write_listeners() -> None:
         # On UPDATE, only validate columns that actually changed in this flush.
         # Re-validating unchanged columns would reject a row whose legacy value
         # predates its lookup binding (e.g. an old complaint's defects_discovered)
-        # on any unrelated update — blocking status changes etc. We only enforce
+        # on any unrelated update - blocking status changes etc. We only enforce
         # the binding on the value being written.
         _check(target, mapper, only_changed=True)
 

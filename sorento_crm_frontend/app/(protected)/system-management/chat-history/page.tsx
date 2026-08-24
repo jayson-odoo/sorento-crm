@@ -70,7 +70,7 @@ const DIRECTION_OPTIONS = [
 ];
 
 function LatencyCell({ seconds }: { seconds: number | null }) {
-  if (seconds == null) return <span className="text-muted-foreground">—</span>;
+  if (seconds == null) return <span className="text-muted-foreground"> - </span>;
   const variant = seconds > 30 ? 'destructive' : seconds > 10 ? 'warning' : 'success';
   return (
     <Badge variant={variant as never}>
@@ -80,7 +80,7 @@ function LatencyCell({ seconds }: { seconds: number | null }) {
 }
 
 export default function ChatHistoryPage() {
-  // Default to the last 24h — an unbounded scan of this table is never the intent.
+  // Default to the last 24h - an unbounded scan of this table is never the intent.
   const [dateFrom, setDateFrom] = useState(() => localInput(24));
   const [dateTo, setDateTo] = useState(() => localInput(0));
   const [direction, setDirection] = useState('');
@@ -180,7 +180,7 @@ export default function ChatHistoryPage() {
         enableSorting: false,
         header: ({ column }) => <DataGridColumnHeader title="Delivery" column={column} />,
         cell: ({ row }) => (
-          <span className="text-muted-foreground">{row.original.delivery_status ?? '—'}</span>
+          <span className="text-muted-foreground">{row.original.delivery_status ?? '-'}</span>
         ),
         size: 110,
       },
@@ -316,7 +316,7 @@ export default function ChatHistoryPage() {
                     {breachedOnly ? 'Breached only: on' : 'Breached only: off'}
                   </Button>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Turns whose reply took longer than the p99 target — shows both the
+                    Turns whose reply took longer than the p99 target - shows both the
                     incoming message and its reply.
                   </p>
                 </div>
@@ -370,7 +370,7 @@ export default function ChatHistoryPage() {
           standardToolbar={false}
           tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
           renderGroupHeader={renderGroupHeader}
-          emptyMessage="No messages in this range. Widen the date range or clear filters — chat history is written by the n8n WhatsApp flow."
+          emptyMessage="No messages in this range. Widen the date range or clear filters - chat history is written by the n8n WhatsApp flow."
         >
           <Card>
             <GridToolbar />

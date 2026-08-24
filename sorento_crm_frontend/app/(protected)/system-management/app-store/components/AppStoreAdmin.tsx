@@ -157,7 +157,7 @@ export default function AppStoreAdmin() {
         enableSorting: false,
         meta: { headerTitle: 'When', skeleton: <Skeleton className="h-4 w-32" /> },
         cell: ({ row }) => (
-          <span className="whitespace-nowrap text-xs">{row.original.created_at ?? '—'}</span>
+          <span className="whitespace-nowrap text-xs">{row.original.created_at ?? '-'}</span>
         ),
       },
       {
@@ -186,7 +186,7 @@ export default function AppStoreAdmin() {
         enableSorting: false,
         meta: { headerTitle: 'Actor', skeleton: <Skeleton className="h-4 w-28" /> },
         cell: ({ row }) => (
-          <span className="text-xs text-muted-foreground">{row.original.actor_user_id ?? '—'}</span>
+          <span className="text-xs text-muted-foreground">{row.original.actor_user_id ?? '-'}</span>
         ),
       },
     ],
@@ -537,7 +537,7 @@ function ModuleCard({
                       reject purge.
                       {!purgeSupported && purgeData && (
                         <span className="mt-1 block font-medium text-destructive">
-                          «{m.module_key}» does not have automated purge yet — uncheck or expect an
+                          «{m.module_key}» does not have automated purge yet - uncheck or expect an
                           error.
                         </span>
                       )}
@@ -614,7 +614,7 @@ function ModuleUploadButton({ onUploaded }: { onUploaded: () => void }) {
       }
       if (result.needs_frontend_rebuild) {
         toast.info(
-          'New frontend pages added — rebuild the frontend to make them visible.',
+          'New frontend pages added - rebuild the frontend to make them visible.',
           { duration: 10000 },
         );
       }

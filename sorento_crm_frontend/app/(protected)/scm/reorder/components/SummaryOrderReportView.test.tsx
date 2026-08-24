@@ -3,15 +3,15 @@
  *
  * What this screen has to get right, in this order:
  *
- *  - One row per product with every figure the printed sheet carries, plus the
+ * - One row per product with every figure the printed sheet carries, plus the
  *    two the pen version has no room for: the chosen quantity and the supplier
  *    (AC-C2.1).
- *  - Ordered and Incoming as SEPARATE columns (AC-C2.2). Only Incoming drives the
+ * - Ordered and Incoming as SEPARATE columns (AC-C2.2). Only Incoming drives the
  *    net position; Ordered is displayed so a shortfall does not read as
  *    unattended.
- *  - Nothing decomposed inline. Every aggregate is a figure with an information
+ * - Nothing decomposed inline. Every aggregate is a figure with an information
  *    icon (AC-C2.2a).
- *  - The engine's suggestion sits beside the chosen quantity (AC-C2.8), and a
+ * - The engine's suggestion sits beside the chosen quantity (AC-C2.8), and a
  *    chosen quantity above the shortfall is rendered as a plain figure, not an
  *    error.
  *

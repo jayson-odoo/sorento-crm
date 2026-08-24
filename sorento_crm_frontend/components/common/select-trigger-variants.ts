@@ -6,7 +6,7 @@ import { cva, type VariantProps } from 'class-variance-authority';
  * Single source of truth shared by the Radix `SelectTrigger` (`components/ui/select.tsx`,
  * pending removal) and the standard `SearchableSelect` / `SearchableMultiSelect`
  * (`components/common/`). Because both import THIS module, a migrated dropdown is
- * pixel-identical to the Radix Select it replaced — parity is structural, not copied.
+ * pixel-identical to the Radix Select it replaced - parity is structural, not copied.
  *
  * Doctrine: every dropdown-select must be searchable and use the standard component.
  * See `documentation/reference/ADR-PRODUCT-STANDARDS.md`.

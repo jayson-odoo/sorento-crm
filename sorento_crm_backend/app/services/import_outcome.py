@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 def _scope_session(session) -> None:
     """Mark the recorder's own session as unscoped, where company scoping exists.
 
-    ``import_job_rows`` is job-tracking infrastructure like ``import_jobs`` — never
+    ``import_job_rows`` is job-tracking infrastructure like ``import_jobs`` - never
     company-partitioned. This is a deliberately soft dependency: the multi-company
     layer is optional, and a missing module must not silently swallow every row
     write (the whole point of this recorder is that nothing disappears quietly).
@@ -44,7 +44,7 @@ def _scope_session(session) -> None:
     try:
         from app.services.company_scope import set_company_scope
     except ImportError:
-        return  # no company scoping in this deployment — nothing to do
+        return  # no company scoping in this deployment - nothing to do
     try:
         set_company_scope(session, None)
     except Exception:

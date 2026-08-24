@@ -7,17 +7,17 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
  * Gray / muted banner shown at the top of a form detail page when the form is
  * VOIDED, surfacing WHO voided it, WHEN (Malaysia time), and WHY. Mirrors the
  * placement of {@link RejectionReasonBanner} (top, under the header) but is
- * deliberately neutral gray — voiding is an administrative annulment, not an
+ * deliberately neutral gray - voiding is an administrative annulment, not an
  * error or rejection, so it must NOT read as destructive/red.
  *
- * Render only when the form is actually voided — the caller gates on
+ * Render only when the form is actually voided - the caller gates on
  * `status === 'voided'`. Renders nothing if `voided` is false.
  *
  * PersonLink (wa.me) is not present in this repo, so the actor renders as bold
  * plain text; swap to <PersonLink> when the form-banner-person-links feature lands.
  */
 export interface VoidBannerProps {
-  /** Whether the form is voided — caller passes `status === 'voided'`. */
+  /** Whether the form is voided - caller passes `status === 'voided'`. */
   voided: boolean;
   voidedByName?: string | null;
   voidedAt?: string | null;
@@ -51,7 +51,7 @@ export function VoidBanner({
           </>
         ) : null}
         {when ? <span> · {when}</span> : null}
-        {reason ? <span> — {reason}</span> : null}
+        {reason ? <span> - {reason}</span> : null}
       </p>
     </div>
   );

@@ -144,7 +144,7 @@ def test_spec_search_does_not_run_when_the_code_resolves(client):
 def test_partial_code_overlap_does_not_suppress_the_fallback(db, client):
     """SA-P1: this catalog writes description words INTO product codes
     (SRTWB7104-WALL HUNG), so an AND-mode turn like "wall hung basin" collects
-    partial code matches — the words "wall hung" literally appear in codes —
+    partial code matches - the words "wall hung" literally appear in codes - 
     and the zero-match gate then never fires, for exactly the phrase class the
     fallback exists to answer. "Partially matched a code" is not "the
     description was answered": the gate must also fire when no returned
@@ -195,7 +195,7 @@ def test_partial_code_overlap_does_not_suppress_the_fallback(db, client):
 def test_full_code_coverage_still_suppresses_the_fallback(db, client):
     """The counterweight: when a returned product row DOES cover every word, the
     description was answered by codes and spec search must stay out of the way.
-    Same catalog quirk as above — the words all appear in the code — but this
+    Same catalog quirk as above - the words all appear in the code - but this
     time the overlap is COMPLETE, which is the case max-coverage is right about.
     """
     spare = Product(
@@ -247,8 +247,8 @@ def test_a_floor_miss_returns_no_candidates(client):
 def test_a_described_product_arrives_as_an_ordinary_product_match(client):
     """`spec_candidates` alone was a dead end.
 
-    It is a different shape parked beside the result, so every existing consumer — the
-    n8n spine's resolve-entity, and get-results behind it — read `resolutions[].matches`,
+    It is a different shape parked beside the result, so every existing consumer - the
+    n8n spine's resolve-entity, and get-results behind it - read `resolutions[].matches`,
     found nothing, and treated the turn as unresolved. Describing a product well enough
     to find it only matters if the thing that asked can then use it.
     """

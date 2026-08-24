@@ -1,8 +1,8 @@
-"""SCM M4 Slice B — decision + PO-flow request/response schemas.
+"""SCM M4 Slice B - decision + PO-flow request/response schemas.
 
 Mirror the FE contract at the top of ``reorder/services/decisionService.ts`` /
 ``services/purchaseOrderService.ts`` + ``reorder/types/decisions.types.ts``. No
-UUIDs surface in display fields — suppliers by code, POs by number.
+UUIDs surface in display fields - suppliers by code, POs by number.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 
 class AcceptResult(BaseModel):
-    # Accept/Adjust are STAGED — no PO exists until Confirm decisions, so the PO
+    # Accept/Adjust are STAGED - no PO exists until Confirm decisions, so the PO
     # fields are null on the decision response and populated only via list_decisions
     # after a confirm.
     draft_po_number: Optional[str] = None
@@ -88,12 +88,12 @@ class CreateGrResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# S16 (captain 21 Aug) — the row decision: buy / use stock / use PO / skip, or a
+# S16 (captain 21 Aug) - the row decision: buy / use stock / use PO / skip, or a
 # mixture. Mirrors the FE model at `reorder/lib/planDecisions.ts` (PlanDecision).
 # ---------------------------------------------------------------------------
 
 class StockTakeIn(BaseModel):
-    location: str  # warehouse CODE — never a UUID from the UI
+    location: str  # warehouse CODE - never a UUID from the UI
     qty: float = Field(..., gt=0)
 
 
@@ -120,7 +120,7 @@ class PlanRowDecision(BaseModel):
     po_qty: Optional[float] = None
     po_refs: List[str] = Field(default_factory=list)
     reason_text: Optional[str] = None
-    # Staged like Accept/Adjust — populated only once Confirm decisions has drafted the
+    # Staged like Accept/Adjust - populated only once Confirm decisions has drafted the
     # buy portion into a PO.
     draft_po_number: Optional[str] = None
     draft_po_id: Optional[str] = None

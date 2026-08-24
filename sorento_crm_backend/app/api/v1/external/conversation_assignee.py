@@ -24,8 +24,8 @@ async def set_conversation_assignee(
     **Auth:** X-API-Key header (external API key).
 
     **Body:**
-    - contact_phone_number (or contact_phone): Contact phone number, e.g. "+60166753328"
-    - respond_user_id (or assignee_respond_user_id): Respond.io user id for the assignee, e.g. "1023495".
+  - contact_phone_number (or contact_phone): Contact phone number, e.g. "+60166753328"
+  - respond_user_id (or assignee_respond_user_id): Respond.io user id for the assignee, e.g. "1023495".
       Use empty string or omit to unassign.
 
     **Example (n8n):**

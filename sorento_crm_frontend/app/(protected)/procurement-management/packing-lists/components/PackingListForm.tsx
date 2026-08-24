@@ -103,7 +103,7 @@ export default function PackingListForm({
   // Server-side product search. Refetches whenever the combobox input changes
   // (debounced inside ProductCombobox). Backend product list endpoint already
   // filters by code / name / description via the `query` param, so any of the
-  // 10k+ products in the catalog is reachable — no more 500-row client slice.
+  // 10k+ products in the catalog is reachable - no more 500-row client slice.
   useEffect(() => {
     let cancelled = false;
     getProducts({
@@ -360,7 +360,7 @@ export default function PackingListForm({
           </CardContent>
         </Card>
 
-        {/* Clearance & Delivery — the contingency path.
+        {/* Clearance & Delivery - the contingency path.
             The workbook import normally fills these, but it is not the only way
             they arrive: before the first import, or when a liner revises an ETA
             between imports, someone types the date in here.

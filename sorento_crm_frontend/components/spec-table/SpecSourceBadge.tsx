@@ -72,7 +72,7 @@ export function SpecSourceBadge({
   const [open, setOpen] = useState(false);
 
   if (!source) {
-    return <span className={cn('text-xs text-muted-foreground', className)}>—</span>;
+    return <span className={cn('text-xs text-muted-foreground', className)}> - </span>;
   }
 
   const label = SOURCE_LABEL[source] ?? source;

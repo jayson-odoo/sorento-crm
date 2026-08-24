@@ -102,7 +102,7 @@ describe('PredicateBuilder', () => {
       { field: 'sales_type', operator: 'equals', value: 'project' },
     ];
     render(<PredicateBuilder predicates={predicates} fields={FIELDS} onChange={vi.fn()} />);
-    // Lookup value uses SearchableSelect — no free-text input.
+    // Lookup value uses SearchableSelect - no free-text input.
     expect(screen.queryByLabelText('Predicate value')).not.toBeInTheDocument();
     expect(screen.getByTestId('predicate-row')).toBeInTheDocument();
   });

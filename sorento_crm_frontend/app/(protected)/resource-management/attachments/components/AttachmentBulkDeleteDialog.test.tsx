@@ -1,5 +1,5 @@
 /**
- * AttachmentBulkDeleteDialog — mixed folder + file bulk delete (Fix 1).
+ * AttachmentBulkDeleteDialog - mixed folder + file bulk delete (Fix 1).
  *
  * The unified Drive selection can contain folders AND files. Selecting a folder
  * and choosing Action -> "Delete selected" must delete BOTH: files via the bulk

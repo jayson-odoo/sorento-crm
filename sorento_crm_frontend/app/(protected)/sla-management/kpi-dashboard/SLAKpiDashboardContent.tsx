@@ -38,7 +38,7 @@ import {
 } from './slaKpiService';
 
 // All three KPI aggregates are expensive (full conversation_sla_tracking scans),
-// so cache for 5 minutes — revisits/reloads inside the window hit the cache
+// so cache for 5 minutes - revisits/reloads inside the window hit the cache
 // instead of re-firing. Scope/window/filters are all in the query keys, so a
 // real input change still refetches.
 const KPI_STALE_MS = 5 * 60 * 1000;
@@ -70,15 +70,15 @@ function taskHref(t: KpiTaskRow): string {
   return `/sla-management/conversation-sla-tracking/${t.tracking_id}`;
 }
 
-const fmtPct = (v: number | null) => (v == null ? '—' : `${v}%`);
-const fmtHrs = (v: number | null) => (v == null ? '—' : `${v}h`);
-const fmtDate = (v: string | null) => (v ? formatDateTime(parseDateTimeAsUTC(v)) : '—');
+const fmtPct = (v: number | null) => (v == null ? '-' : `${v}%`);
+const fmtHrs = (v: number | null) => (v == null ? '-' : `${v}h`);
+const fmtDate = (v: string | null) => (v ? formatDateTime(parseDateTimeAsUTC(v)) : '-');
 
 // Escalation timestamp + a relative hint ("in 42m" / "overdue 3h") so a sysadmin
 // can eyeball how imminent the outgoing escalation is. null = resolved, nothing
 // left to escalate.
 function fmtEscalates(v: string | null): { text: string; overdue: boolean } {
-  if (!v) return { text: '—', overdue: false };
+  if (!v) return { text: '-', overdue: false };
   const due = parseDateTimeAsUTC(v).getTime();
   const diffMin = Math.round((due - Date.now()) / 60000);
   const overdue = diffMin < 0;
@@ -339,13 +339,13 @@ function TasksCard({ scope, filter, onClear, window }: { scope: KpiScope; filter
       {
         accessorKey: 'response_met',
         header: ({ column }) => <DataGridColumnHeader title="Resp met" column={column} />,
-        cell: ({ row }) => (row.original.response_met ? '✓' : '—'),
+        cell: ({ row }) => (row.original.response_met ? '✓' : '-'),
         size: 100,
       },
       {
         accessorKey: 'resolution_met',
         header: ({ column }) => <DataGridColumnHeader title="Reso met" column={column} />,
-        cell: ({ row }) => (row.original.resolution_met ? '✓' : '—'),
+        cell: ({ row }) => (row.original.resolution_met ? '✓' : '-'),
         size: 100,
       },
     ],
@@ -481,7 +481,7 @@ export function SLAKpiDashboardContent({ defaultWindowDays }: { defaultWindowDay
           />
         </div>
 
-        {/* Stage breakdown — MECE partition of the total (sums to Opened) */}
+        {/* Stage breakdown - MECE partition of the total (sums to Opened) */}
         {summaryQ.isLoading ? (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-28 w-full" />)}
@@ -500,7 +500,7 @@ export function SLAKpiDashboardContent({ defaultWindowDays }: { defaultWindowDay
           </div>
         ) : null}
 
-        {/* Timeliness drilldown — within due vs overdue, scoped to each subset */}
+        {/* Timeliness drilldown - within due vs overdue, scoped to each subset */}
         {s ? (
           <div className="space-y-2">
             <h2 className="text-sm font-medium text-muted-foreground">Timeliness drilldown (within due vs overdue)</h2>
@@ -529,7 +529,7 @@ export function SLAKpiDashboardContent({ defaultWindowDays }: { defaultWindowDay
           </div>
         ) : null}
 
-        {/* Open work at-risk — within live clock vs overdue-but-unfinished */}
+        {/* Open work at-risk - within live clock vs overdue-but-unfinished */}
         {s ? (
           <div className="space-y-2">
             <h2 className="text-sm font-medium text-muted-foreground">Open work at risk (within due vs overdue)</h2>
@@ -558,7 +558,7 @@ export function SLAKpiDashboardContent({ defaultWindowDays }: { defaultWindowDay
           </div>
         ) : null}
 
-      {/* Per-task drill-down — sits right under the cards; driven by card/segment clicks */}
+      {/* Per-task drill-down - sits right under the cards; driven by card/segment clicks */}
       <TasksCard scope={scope} filter={filter} onClear={clearFilter} window={window} />
 
       {/* Trend */}

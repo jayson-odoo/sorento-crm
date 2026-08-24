@@ -58,7 +58,7 @@ PARENT_TITLES = {
     "project-sales-manager": "5-Project Sales Manager",
     "project-sales-rep": "6-Project Sales Rep",
     "technical-team": "7-Technical Team",
-    # Module data guides — published once the module is ready. `commercial` is
+    # Module data guides - published once the module is ready. `commercial` is
     # deliberately ABSENT (held until the module is restored/enabled per the
     # audit decision log) and is enforced by HELD_FOLDERS below.
     "inventory": "8-Inventory",
@@ -69,7 +69,7 @@ PARENT_TITLES = {
 
 # Folders that are intentionally HELD back from Outline publishing. They MUST
 # NEVER appear in PARENT_TITLES (the publish allowlist). `_assert_no_held_folders`
-# RAISES if one ever does — a passive "skip unknown folder" is not enough to
+# RAISES if one ever does - a passive "skip unknown folder" is not enough to
 # stop an accidental leak, so we fail loudly instead of relying on discipline.
 HELD_FOLDERS = frozenset({"commercial"})
 
@@ -88,7 +88,7 @@ def _assert_no_held_folders() -> None:
             "REFUSING TO PUBLISH: held folder(s) "
             f"{leaked} are present in PARENT_TITLES (the publish allowlist). "
             "These modules are held until restored/enabled per the audit "
-            "decision log — remove them from PARENT_TITLES before syncing."
+            "decision log - remove them from PARENT_TITLES before syncing."
         )
 
 
@@ -271,19 +271,19 @@ def plan_push() -> tuple[list[str], list[str]]:
 def dry_run(args: argparse.Namespace) -> None:
     """Print the exact push plan without touching Outline (no network call)."""
     plan, skipped = plan_push()
-    print("DRY RUN — no Outline calls made. The following docs WOULD publish:\n")
+    print("DRY RUN - no Outline calls made. The following docs WOULD publish:\n")
     for line in plan:
         print(f"  {line}")
     print(f"\nTotal docs to create/update: {len(plan)}")
     if skipped:
-        print("\nSKIPPED (folder not in publish allowlist — will NOT publish):")
+        print("\nSKIPPED (folder not in publish allowlist - will NOT publish):")
         for s in skipped:
-            print(f"  - {s}")
+            print(f" - {s}")
     held_present = sorted(HELD_FOLDERS & {p.split('/')[0] for p in skipped})
     print(
         "\nHeld-folder check: "
         + (
-            f"OK — {sorted(HELD_FOLDERS)} held back (not published)."
+            f"OK - {sorted(HELD_FOLDERS)} held back (not published)."
             if not (HELD_FOLDERS & set(PARENT_TITLES))
             else "FAILED"
         )
@@ -293,7 +293,7 @@ def dry_run(args: argparse.Namespace) -> None:
 
 
 def push(args: argparse.Namespace) -> None:
-    # Hard safeguard FIRST — fail loudly before any network call if a held
+    # Hard safeguard FIRST - fail loudly before any network call if a held
     # folder (e.g. commercial) ever leaked into PARENT_TITLES.
     _assert_no_held_folders()
     base_url, token, collection_id = load_env()
@@ -396,7 +396,7 @@ def pull(args: argparse.Namespace) -> None:
     parent_ids_set = {state.get(f"{f}/__parent__") for f in PARENT_TITLES}
     written = 0
     for d in docs:
-        # Skip the parent folder docs — they don't correspond to repo files.
+        # Skip the parent folder docs - they don't correspond to repo files.
         if d["id"] in parent_ids_set:
             continue
         full = o.get_document(d["id"])
@@ -445,10 +445,10 @@ def status(args: argparse.Namespace) -> None:
     if missing_in_state:
         print("Missing from state (will be created on next push):")
         for p in missing_in_state:
-            print(f"  - {p}")
+            print(f" - {p}")
     print("Outline doc titles:")
     for d in sorted(docs, key=lambda x: (x.get("parentDocumentId") or "", x["title"])):
-        prefix = "  - " if not d.get("parentDocumentId") else "    - "
+        prefix = " - " if not d.get("parentDocumentId") else "  - "
         print(f"{prefix}{d['title']}  ({d['id']})")
 
 

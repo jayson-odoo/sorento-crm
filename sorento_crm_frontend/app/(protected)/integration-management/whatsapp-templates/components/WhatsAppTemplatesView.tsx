@@ -15,7 +15,7 @@ export default function WhatsAppTemplatesView() {
   const queryClient = useQueryClient();
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // PHASE 1 MOCK — workspace/channel card data comes from the templates sync
+  // PHASE 1 MOCK - workspace/channel card data comes from the templates sync
   // endpoints in Phase 2 (respond_workspaces + respond_channels).
   const workspace = {
     name: 'Sorento',

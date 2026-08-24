@@ -135,7 +135,7 @@ describe('resolveHandlingLockState', () => {
   });
 });
 
-describe('businessCtasEnabledForState — truth table', () => {
+describe('businessCtasEnabledForState - truth table', () => {
   const enabled: HandlingLockState[] = ['not_escalated', 'mine', 'admin_unclaimed'];
   const disabled: HandlingLockState[] = [
     'unclaimed',

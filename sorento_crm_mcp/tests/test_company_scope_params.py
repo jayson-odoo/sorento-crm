@@ -2,7 +2,7 @@
 
 Company-scoped tools MUST declare `contact_id` + `space_id` as forwardable params
 (query for GET tools, body for the POST lookup tool) so n8n can scope owned data
-to the calling contact's company/companies. Global tools MUST NOT — they return
+to the calling contact's company/companies. Global tools MUST NOT - they return
 data that is not company-owned.
 
 This is a catalog-level guard: a NEW scoped tool that forgets the two params (or a
@@ -17,7 +17,7 @@ import pytest
 from sorento_crm_mcp.catalog import CATALOG
 from sorento_crm_mcp.server import _compile_tool
 
-# AC-F7 — company-scoped owned-data tools that MUST forward contact_id + space_id.
+# AC-F7 - company-scoped owned-data tools that MUST forward contact_id + space_id.
 SCOPED_TOOLS: frozenset[str] = frozenset({
     "crm_master_products_list",
     "crm_master_brands_list",
@@ -48,7 +48,7 @@ SCOPED_TOOLS: frozenset[str] = frozenset({
     "crm_project_quotations_list",
 })
 
-# AC-F8 — global (non-owned-data) tools that MUST NOT gain the scope params.
+# AC-F8 - global (non-owned-data) tools that MUST NOT gain the scope params.
 GLOBAL_TOOLS: frozenset[str] = frozenset({
     "crm_complaints_list",
     "crm_complaint_analytics",

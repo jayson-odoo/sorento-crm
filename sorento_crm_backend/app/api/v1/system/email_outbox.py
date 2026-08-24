@@ -132,7 +132,7 @@ async def cancel_email_outbox(
 
 def _bulk_apply(db: Session, row_ids: list[str], action) -> BulkOutboxResult:
     """Apply a per-row action across a selection; a row that can't transition (or
-    errors) is counted as failed, never aborting the batch — partial success is
+    errors) is counted as failed, never aborting the batch - partial success is
     the expected outcome for a mixed selection."""
     seen: set[str] = set()
     failed: list[str] = []
@@ -146,7 +146,7 @@ def _bulk_apply(db: Session, row_ids: list[str], action) -> BulkOutboxResult:
                 succeeded += 1
             else:
                 failed.append(rid)
-        except Exception:  # noqa: BLE001 — one bad row must not sink the batch
+        except Exception:  # noqa: BLE001 - one bad row must not sink the batch
             failed.append(rid)
     return BulkOutboxResult(
         requested=len(seen), succeeded=succeeded, failed=len(failed), failed_ids=failed

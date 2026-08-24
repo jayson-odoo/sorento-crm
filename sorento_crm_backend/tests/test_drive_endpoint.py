@@ -1,7 +1,7 @@
 """Route-level (HTTP) tests for GET /api/v1/resource-management/attachments/drive.
 
 The service-level logic is covered by ``tests/test_drive_contents.py``; this file
-pins the ENDPOINT itself — route resolution (the /drive segment is NOT captured by
+pins the ENDPOINT itself - route resolution (the /drive segment is NOT captured by
 /{attachment_id}), the response-model contract (discriminated ``data[]`` + server
 ``pagination`` + ``recursive`` flag), serialization of ``directory_path`` onto file
 rows, and auth-denial.
@@ -9,7 +9,7 @@ rows, and auth-denial.
 Covers the endpoint side of:
   D1 (unified endpoint, discriminated rows, server sort + pagination),
   D2 (directory_path on file rows over the route serializer),
-  D5 (route resolution / no regression — /{attachment_id} still wins for a real id),
+  D5 (route resolution / no regression - /{attachment_id} still wins for a real id),
   A8 (root scope at the HTTP layer),
   RBAC (unauthenticated -> 401/403).
 
@@ -25,7 +25,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-# MUST be first app import — resolves circular-import in app.modules.runtime.guards
+# MUST be first app import - resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 
 from tests._pg_fixture import blank_session
@@ -119,7 +119,7 @@ _URL = "/api/v1/resource-management/attachments/drive"
 
 
 # --------------------------------------------------------------------------- #
-# D1 — endpoint contract: discriminated data[] + pagination + recursive flag
+# D1 - endpoint contract: discriminated data[] + pagination + recursive flag
 # --------------------------------------------------------------------------- #
 def test_drive_endpoint_root_contract(client):
     c, db = client
@@ -147,7 +147,7 @@ def test_drive_endpoint_root_contract(client):
 
 
 # --------------------------------------------------------------------------- #
-# D5 — route resolution: /drive?directory_id=... is the drive handler, a LIST —
+# D5 - route resolution: /drive?directory_id=... is the drive handler, a LIST - 
 # it is NOT swallowed by GET /{attachment_id}; and a real id still hits single-get.
 # --------------------------------------------------------------------------- #
 def test_drive_route_not_captured_by_attachment_id(client):
@@ -189,7 +189,7 @@ def test_single_attachment_get_route_distinct_from_drive(client):
 
 
 # --------------------------------------------------------------------------- #
-# D2 — directory_path serialized onto file rows by the route
+# D2 - directory_path serialized onto file rows by the route
 # --------------------------------------------------------------------------- #
 def test_drive_endpoint_file_rows_carry_directory_path(client):
     c, db = client
@@ -208,7 +208,7 @@ def test_drive_endpoint_file_rows_carry_directory_path(client):
 
 
 # --------------------------------------------------------------------------- #
-# RBAC — unauthenticated request is rejected
+# RBAC - unauthenticated request is rejected
 # --------------------------------------------------------------------------- #
 def test_drive_endpoint_requires_auth():
     """No dependency override -> real auth dep runs -> 401/403 without a token.

@@ -22,7 +22,7 @@ import { useSettings } from '../components/settings-context';
 
 const TIERS = [1, 2, 3] as const;
 
-// Per-form handling-lock ("I'm handling this") feature flag — one toggle per form type.
+// Per-form handling-lock ("I'm handling this") feature flag - one toggle per form type.
 const HANDLING_LOCK_FORMS = [
   { type: 'complaint', label: 'Complaint' },
   { type: 'stock_inquiry', label: 'Stock Inquiry' },
@@ -101,7 +101,7 @@ const ComplaintSettingsPage = () => {
       <CardContent className="space-y-5 py-5">
         <div className="space-y-1">
           <div className="text-md font-semibold">
-            Replacement DO delivered — notify team tiers
+            Replacement DO delivered - notify team tiers
           </div>
           <div className="text-muted-foreground text-2sm">
             When a replacement delivery order for a complaint is delivered, email
@@ -131,7 +131,7 @@ const ComplaintSettingsPage = () => {
               <RiErrorWarningFill />
             </AlertIcon>
             <AlertTitle>
-              No tier selected — no one will be notified when a replacement DO is
+              No tier selected - no one will be notified when a replacement DO is
               delivered.
             </AlertTitle>
           </Alert>

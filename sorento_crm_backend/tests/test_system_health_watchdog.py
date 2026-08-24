@@ -257,7 +257,7 @@ def test_scheduled_tasks_disabled_ignored(db):
 
 
 # --------------------------------------------------------------------------- #
-# run_health_watchdog — de-dup state machine                                  #
+# run_health_watchdog - de-dup state machine                                  #
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def notify_spy(monkeypatch):

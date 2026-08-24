@@ -36,7 +36,7 @@ async def list_rule_facts(
     ),
     db: Session = Depends(get_db),
 ):
-    """Facts for the requested sources — key, label, type, operators, options."""
+    """Facts for the requested sources - key, label, type, operators, options."""
     # Accept csv-in-one-param as well as repeated params.
     resolved: List[str] = []
     for raw in sources or []:

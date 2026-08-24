@@ -283,7 +283,7 @@ async def export_job_rows(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Stream the FILTERED row set as CSV — the whole set, not a page.
+    """Stream the FILTERED row set as CSV - the whole set, not a page.
 
     Keyset-paginated generator so a 200k-row job never materialises in memory.
     """

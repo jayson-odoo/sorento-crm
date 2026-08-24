@@ -42,7 +42,7 @@ function makeRequest(overrides: Partial<PurchaseRequest> = {}): PurchaseRequest 
         quantity: 2,
         unit_price: 60,
         total: 120,
-        remark: 'Ceramic waste — urgent',
+        remark: 'Ceramic waste - urgent',
       },
     ],
     ...overrides,
@@ -64,7 +64,7 @@ describe('exportSponsorshipFormToExcel', () => {
   it('writes each line-item remark into the last column', async () => {
     await exportSponsorshipFormToExcel(makeRequest());
     const row = captured.aoa!.find((r) => r[0] === 1);
-    expect(row?.[row.length - 1]).toBe('Ceramic waste — urgent');
+    expect(row?.[row.length - 1]).toBe('Ceramic waste - urgent');
   });
 
   it('keeps the Grand Total row aligned under Total (Remark cell blank)', async () => {
@@ -86,7 +86,7 @@ describe('exportSponsorshipFormToExcel', () => {
   });
 });
 
-describe('exportPurchaseRequestToExcel (unchanged — regression guard)', () => {
+describe('exportPurchaseRequestToExcel (unchanged - regression guard)', () => {
   beforeEach(() => {
     captured.aoa = null;
     captured.filename = null;

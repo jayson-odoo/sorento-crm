@@ -1,7 +1,7 @@
 /**
  * Date helpers for the Upload Activity drawer.
  *
- * The backend serialises datetimes with `datetime.utcnow()` — they're UTC but
+ * The backend serialises datetimes with `datetime.utcnow()` - they're UTC but
  * Pydantic v2 emits them without a tz suffix (`2026-06-02T10:05:48.123`). The
  * browser's `new Date()` then interprets the bare string as **local time**,
  * which shows "8 hr ago" for an upload that just happened in UTC+8.

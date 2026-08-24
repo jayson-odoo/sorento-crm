@@ -73,7 +73,7 @@ describe('translation.ERROR_CODE_FRIENDLY', () => {
 
   it('explains a duplicate packing list without exposing mechanism jargon', () => {
     // Backend rejects a packing list re-uploaded after its GRN completed. The
-    // headline has to read as a user-caused, user-fixable situation — not as an
+    // headline has to read as a user-caused, user-fixable situation - not as an
     // integration outage.
     const f = makeFile({
       status: 'failed',
@@ -82,7 +82,7 @@ describe('translation.ERROR_CODE_FRIENDLY', () => {
         'Container TEMU1234567 (shipment date 2026-06-01, ETA 2026-06-20) was already recorded on 2026-06-05 and is fully received.',
     });
     expect(summariseFile(f)).toBe(
-      'Duplicate packing list — this container was already received',
+      'Duplicate packing list - this container was already received',
     );
   });
 });
@@ -166,7 +166,7 @@ describe('summariseSession', () => {
   });
 });
 
-describe('summariseSession — import_job sessions', () => {
+describe('summariseSession - import_job sessions', () => {
   function makeJobSession(p: Partial<UploadActivitySession>): UploadActivitySession {
     return {
       ...makeSession([]),

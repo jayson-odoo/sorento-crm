@@ -673,7 +673,7 @@ def test_an_issued_document_refuses_deletion_and_a_draft_takes_its_scopes_with_i
     """Deleting an issued document deletes the record of what a customer is holding in their
     inbox, and the refusal has to be visible: a salesperson who believes it is gone will
     re-quote the same scope under a new number. A draft nobody has seen is the opposite case
-    - it deletes cleanly, and its scopes go with it, because a scope has no meaning without
+  - it deletes cleanly, and its scopes go with it, because a scope has no meaning without
     the document that carries it."""
     from app.models.projects import ProjectQuotation
 

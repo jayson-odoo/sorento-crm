@@ -1,4 +1,4 @@
-"""Meta-log removal — POST /api/v1/integrations/logs/{log_id}/status (WS1a).
+"""Meta-log removal - POST /api/v1/integrations/logs/{log_id}/status (WS1a).
 
 The callback endpoint updates the ORIGINAL log's status from the body (success
 AND failed) and must NOT write a secondary `integration_log_update` meta-log row

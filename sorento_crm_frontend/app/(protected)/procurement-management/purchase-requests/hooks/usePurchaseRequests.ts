@@ -31,8 +31,8 @@ import { requestTypeLabel, requestTypeLabelLower } from '../lib/purchase-request
 /**
  * Prev/next neighbours of a purchase request / sponsorship form within the active
  * filtered+sorted list set. Serializes the list query (search/sort/request_type/
- * approval_status/assigned_to) with `buildDataGridParams` — the same serialization
- * the list page uses — so the backend honours filters identically. `request_type`
+ * approval_status/assigned_to) with `buildDataGridParams` - the same serialization
+ * the list page uses - so the backend honours filters identically. `request_type`
  * is forwarded so PR navigation stays within PRs and SF within SFs. `page`/`limit`
  * are sent but ignored by the neighbours endpoint.
  */
@@ -226,7 +226,7 @@ export function usePurchaseRequestConversation(
 
 /**
  * Queue a printable PR / SF PDF. Rendering is async on the RQ worker, so success
- * only means "queued" — invalidate the downloads feeds so the drawer and the
+ * only means "queued" - invalidate the downloads feeds so the drawer and the
  * per-entity chip pick it up.
  *
  * `mutate('pr-1')` stays the current-form export. The object form carries the

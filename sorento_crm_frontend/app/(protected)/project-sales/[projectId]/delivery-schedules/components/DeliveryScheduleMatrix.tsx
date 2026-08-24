@@ -315,7 +315,7 @@ export function DeliveryScheduleMatrix({
                     {meta?.deliveryDateOverride && (
                       <p className="flex items-center gap-1 truncate px-2 pb-1 text-[10px] tabular-nums">
                         <span className="text-muted-foreground line-through">
-                          {phase.delivery_date ? formatDateInMalaysia(phase.delivery_date) : '—'}
+                          {phase.delivery_date ? formatDateInMalaysia(phase.delivery_date) : '-'}
                         </span>
                         <span className="font-medium">
                           {formatDateInMalaysia(meta.deliveryDateOverride)}

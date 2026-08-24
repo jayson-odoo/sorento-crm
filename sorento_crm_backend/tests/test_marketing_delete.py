@@ -1,8 +1,8 @@
-"""C1 — marketing DELETE was a no-op stub (returned success, deleted nothing).
+"""C1 - marketing DELETE was a no-op stub (returned success, deleted nothing).
 
 `delete_campaign` / `delete_campaign_type` now hard-delete per the ADR standard.
 Deleting a campaign type still referenced by a campaign is blocked with 409
-(the `marketing_campaigns.campaign_type_id` FK is NOT NULL — cascading would
+(the `marketing_campaigns.campaign_type_id` FK is NOT NULL - cascading would
 silently break those campaigns).
 """
 import uuid

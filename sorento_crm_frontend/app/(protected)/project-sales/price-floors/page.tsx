@@ -13,6 +13,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
+import RequireAccess from '@/app/components/common/RequireAccess';
 import { PriceFloorsListClient } from './components/PriceFloorsListClient';
 
 /**
@@ -26,7 +27,7 @@ export const metadata = { title: 'Price Floors' };
 
 export default function Page() {
   return (
-    <>
+    <RequireAccess permission="projects.types.view">
       <Container>
         <Toolbar>
           <ToolbarHeading>
@@ -54,6 +55,6 @@ export default function Page() {
       <Container>
         <PriceFloorsListClient />
       </Container>
-    </>
+    </RequireAccess>
   );
 }

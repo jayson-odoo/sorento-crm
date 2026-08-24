@@ -7,7 +7,7 @@ import { X } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
 
 const dialogContentVariants = cva(
-  // `overflow-y-auto` + a bounded `max-h` make EVERY modal scrollable — without
+  // `overflow-y-auto` + a bounded `max-h` make EVERY modal scrollable - without
   // it, tall content (long role lists, template pickers, multi-field forms)
   // overflows the viewport on mobile with no way to reach the submit button.
   'flex flex-col fixed outline-0 z-50 border border-border bg-background p-6 shadow-lg shadow-black/5 duration-200 overflow-y-auto data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg',
@@ -90,7 +90,7 @@ function DialogContent({
   // closed; only the underlying DialogPrimitive.Content DOM node toggles
   // with the open state. The grace window below ignores the trailing
   // pointer/focus event from a DropdownMenu / Popover / Select / ContextMenu
-  // item that just opened this dialog — those surfaces unmount during the
+  // item that just opened this dialog - those surfaces unmount during the
   // same click cycle and their last event would otherwise land outside the
   // freshly-opened dialog and instantly close it (`modal={false}` is
   // intentional so the AI assistant bubble outside the portal stays
@@ -125,7 +125,7 @@ function DialogContent({
     // Also ignore interactions that land inside ANOTHER dialog stacked above
     // this one. Nested dialogs are portaled as React siblings (not DOM/React
     // descendants), so non-modal Radix reads any click in the child dialog as
-    // "outside" the parent and would dismiss the parent — e.g. clicking Save in
+    // "outside" the parent and would dismiss the parent - e.g. clicking Save in
     // a child "Change attachment type" dialog closed the whole detail modal.
     // Closing a stacked dialog must be explicit, never a side effect of the one
     // beneath it.
@@ -140,7 +140,7 @@ function DialogContent({
       return;
     }
     // Same trailing-event problem when the closing surface was already
-    // unmounted by the time the event fires — target lands on body / html.
+    // unmounted by the time the event fires - target lands on body / html.
     // Suppress any outside interaction within a short grace window after
     // mount; this is well under the click-to-real-outside-click latency.
     if (mountedAtRef.current && performance.now() - mountedAtRef.current < 300) {

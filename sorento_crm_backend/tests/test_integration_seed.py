@@ -1,4 +1,4 @@
-"""Slice 5 of AutoCount Group A — seeding integrations, principals and roles.
+"""Slice 5 of AutoCount Group A - seeding integrations, principals and roles.
 
   AC-AC-09  the env key is seeded once so n8n and the MCP server keep working
   AC-AC-09a the MCP server gets its own integration

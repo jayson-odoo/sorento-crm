@@ -1,5 +1,5 @@
 /**
- * DriveRowActions — per-row right-click / long-press context-menu items that
+ * DriveRowActions - per-row right-click / long-press context-menu items that
  * replaced the actions column (review C). Verifies item presence + folder/file
  * and trash gating.
  */

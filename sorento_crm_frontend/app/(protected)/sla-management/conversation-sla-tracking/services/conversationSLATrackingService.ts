@@ -65,9 +65,9 @@ export type ConversationSLATrackingListParams = DataGridApiFetchParams & {
  *                 scope is fixed to conversation server-side (form SLA rows are excluded).
  *   Auth: same dependency + module guard as the list GET.
  *   200:  { total: number, index: number|null, prev_id: string|null, next_id: string|null }
- *         - index is 1-based; null when the record is not in the filtered set
+ *       - index is 1-based; null when the record is not in the filtered set
  *           (the backend then falls back to the unfiltered, default-sorted set).
- *         - prev_id/next_id wrap circularly; null only when total <= 1.
+ *       - prev_id/next_id wrap circularly; null only when total <= 1.
  */
 export const CONVERSATION_SLA_TRACKING_NEIGHBOURS_PATH =
   '/api/v1/sla-management/conversation-sla-tracking/neighbours';
@@ -127,9 +127,9 @@ export interface TakeoverInfo {
   contested_assignee_name: string | null;
   team_id: string | null;
   status: 'pending' | 'committed' | 'cancelled' | 'rejected' | 'voided';
-  /** Absolute ISO timestamp the takeover commits — drives the countdown locally. */
+  /** Absolute ISO timestamp the takeover commits - drives the countdown locally. */
   commit_at: string | null;
-  /** Total cooldown window in seconds — fixed bar denominator (survives remounts). */
+  /** Total cooldown window in seconds - fixed bar denominator (survives remounts). */
   window_seconds?: number | null;
   resolution_reason: string | null;
   /** Viewer-relative (server-computed): initiator/admin can cancel; owner/admin can reject. */
@@ -161,7 +161,7 @@ export interface MyPendingSLAItem {
    *  row's deadline badge so an extended resolution deadline shows instead of a stale
    *  response clock. Falls back to due_at when absent. */
   active_due_at?: string | null;
-  /** Which clock active_due_at represents — drives the primary badge label. */
+  /** Which clock active_due_at represents - drives the primary badge label. */
   due_kind?: 'respond' | 'resolve';
   /** When the response clock was satisfied (for the muted "Responded ✓" context line). */
   responded_at?: string | null;
@@ -220,7 +220,7 @@ export async function escalateConversationSLATracking(id: string, reason: string
 }
 
 // ---------------------------------------------------------------------------
-// Extend resolution deadline (assignee action) — see PLAN-sla-extend-deadline.md
+// Extend resolution deadline (assignee action) - see PLAN-sla-extend-deadline.md
 // ---------------------------------------------------------------------------
 
 /** Exactly one of `days` / `target_date` is supplied (mutually exclusive views
@@ -242,7 +242,7 @@ export interface ExtendSLAPreview {
 /**
  * Preview a resolution-deadline extension. The backend owns the holiday calendar
  * and work-calendar config, so the working-day math + soft-limit warnings come
- * from here — never recomputed on the client. No mutation.
+ * from here - never recomputed on the client. No mutation.
  */
 export async function getExtendPreview(
   id: string,
@@ -529,11 +529,11 @@ export async function getVisibleUsers(): Promise<VisibleUser[]> {
 export interface TakeoverInitiateResult {
   committed: boolean;
   request?: TakeoverInfo;
-  /** True when a takeover was already pending — `request` is the existing one (bar resumes). */
+  /** True when a takeover was already pending - `request` is the existing one (bar resumes). */
   already_pending?: boolean;
 }
 
-/** Initiate a takeover. 409 (already pending) is NOT an error — the existing request
+/** Initiate a takeover. 409 (already pending) is NOT an error - the existing request
  *  is returned so the UI shows the running countdown. */
 export async function takeoverSLATracking(
   id: string,

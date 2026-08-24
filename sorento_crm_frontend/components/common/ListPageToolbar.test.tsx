@@ -19,7 +19,7 @@ import { ListPageToolbar } from './ListPageToolbar';
 function Harness() {
   const [value, setValue] = React.useState('');
   const [resolved, setResolved] = React.useState('');
-  // With per-keystroke query keys this flips true on every change — the bug condition.
+  // With per-keystroke query keys this flips true on every change - the bug condition.
   const isLoading = value !== resolved;
 
   return (

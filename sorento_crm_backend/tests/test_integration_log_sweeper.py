@@ -82,7 +82,7 @@ def test_recent_sent_row_left_alone(db_session, monkeypatch):
 def test_timeout_minutes_env_override_is_respected(db_session, monkeypatch):
     """Custom env value moves the sweep window."""
     monkeypatch.setenv("N8N_CALLBACK_TIMEOUT_MINUTES", "60")
-    # processed_at 30 min ago — would be stale at default 10min, fresh at 60min.
+    # processed_at 30 min ago - would be stale at default 10min, fresh at 60min.
     log = _make_sent_log(
         db_session,
         processed_at=datetime.utcnow() - timedelta(minutes=30),

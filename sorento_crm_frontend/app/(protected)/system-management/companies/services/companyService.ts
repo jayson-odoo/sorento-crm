@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * Companies admin + access management — feature service
+ * Companies admin + access management - feature service
  * ============================================================================
  * Layering: hooks (useCompanies*) → THIS service → lib/api-client → backend.
  * No component fetches directly.
@@ -23,18 +23,18 @@
  *  PUT    /api/v1/system/companies/{id}  body CompanyFormData → Company
  *  DELETE /api/v1/system/companies/{id}                 → 204 (hard delete)
  *
- *  Access — user grants (prototypes user_companies):
+ *  Access - user grants (prototypes user_companies):
  *  GET    /api/v1/system/companies/{id}/users           → CompanyUser[]
  *  POST   /api/v1/system/companies/{id}/users   {user_id} → CompanyUser[]
  *  DELETE /api/v1/system/companies/{id}/users/{user_id}   → CompanyUser[]
  *
- *  Access — contact membership (prototypes respond_contact_companies):
+ *  Access - contact membership (prototypes respond_contact_companies):
  *  GET    /api/v1/system/companies/{id}/contacts        → CompanyContact[]
  *  GET    /api/v1/system/companies/{id}/contacts/available?query → CompanyContact[]
  *  POST   /api/v1/system/companies/{id}/contacts {contact_id} → CompanyContact[]
  *  DELETE /api/v1/system/companies/{id}/contacts/{contact_id}  → CompanyContact[]
  *
- *  Active-company context (any authenticated user — not superadmin-gated):
+ *  Active-company context (any authenticated user - not superadmin-gated):
  *  GET    /api/v1/system/companies/my-context
  *    → { companies: Company[], active_company_id: string|null, last_active_company_id: string|null }
  *  POST   /api/v1/system/companies/switch  {company_id}
@@ -67,7 +67,7 @@ import {
   mockUpdateCompany,
 } from '../lib/companyMock';
 
-/** Phase-1 flag — true = deterministic mock store, false = live backend. */
+/** Phase-1 flag - true = deterministic mock store, false = live backend. */
 export const USE_COMPANY_MOCKS = false;
 
 const BASE = '/api/v1/system/companies';

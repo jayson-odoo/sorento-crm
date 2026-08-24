@@ -1,5 +1,5 @@
 /**
- * Upload Activity drawer — shared types.
+ * Upload Activity drawer - shared types.
  *
  * These shapes mirror the Phase 2 backend contract defined in
  * `services/uploadActivityService.ts`. During Phase 1 (mocks only),

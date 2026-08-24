@@ -1,4 +1,4 @@
-# UAC — Configurable field-based CS routing (predicate engine)
+# UAC - Configurable field-based CS routing (predicate engine)
 
 **Status:** Draft (pre-code) · **Classification:** CORE · **Domain:** forms / procurement / sla
 **Plan:** `documentation/plans/forms/PLAN-form-cs-routing-conditions.md`
@@ -18,7 +18,7 @@ lookup system `app/models/lookup.py` (+ `LookupBinding` `:72`); sponsor_subject 
 
 ---
 
-## Group ST — `sales_type` field + lookup wiring
+## Group ST - `sales_type` field + lookup wiring
 
 - **ST-1 `[BE][T]`** GIVEN the migration runs, THEN `purchase_requests.sales_type VARCHAR(50)` exists
   (nullable at DB level); lookup set `procurement_sales_type` exists with active options `project`
@@ -27,7 +27,7 @@ lookup system `app/models/lookup.py` (+ `LookupBinding` `:72`); sponsor_subject 
 - **ST-2 `[BE]`** GIVEN a PR create request with `sales_type = 'project'`, WHEN it is submitted, THEN
   the row persists `sales_type='project'` (200/201).
 - **ST-3 `[BE]`** GIVEN a PR create request **omitting** `sales_type`, WHEN submitted, THEN it is
-  **rejected 422** (required at the PR form-schema level) — UNLESS the FE supplied the binding default
+  **rejected 422** (required at the PR form-schema level) - UNLESS the FE supplied the binding default
   (see ST-5). *(Required-ness is schema-level; the default makes it always satisfiable.)*
 - **ST-4 `[BE]`** GIVEN a PR create with `sales_type='banana'`, WHEN submitted, THEN **422
   `invalid_lookup_value`** via the lookup write listener (`lookup_write_listener.py`).
@@ -44,7 +44,7 @@ lookup system `app/models/lookup.py` (+ `LookupBinding` `:72`); sponsor_subject 
 - **ST-9 `[FE]`** GIVEN a PR list/detail, WHEN `sales_type` is displayed, THEN it shows the option
   **label** ("Project"/"Cash Sales") via `LookupBoundLabel`, never the raw code or a UUID.
 
-## Group DV — `lookup_bindings.default_value` (generic lookup feature)
+## Group DV - `lookup_bindings.default_value` (generic lookup feature)
 
 - **DV-1 `[BE][T]`** GIVEN the migration, THEN `lookup_bindings.default_value VARCHAR` (nullable)
   exists; setting it to a value that is NOT an active option of the bound set is **rejected**.
@@ -56,7 +56,7 @@ lookup system `app/models/lookup.py` (+ `LookupBinding` `:72`); sponsor_subject 
 - **DV-4 `[BE]`** GIVEN `GET /api/v1/lookup/by-binding?table=...&column=...`, WHEN it returns, THEN the
   payload includes `default_value` (so the FE can pre-select) without breaking existing consumers.
 
-## Group ME — predicate engine schema + matching (deterministic, test-FIRST)
+## Group ME - predicate engine schema + matching (deterministic, test-FIRST)
 
 - **ME-1 `[BE][T]`** GIVEN the migration, THEN `respond_contact_cs_routing.match_conditions JSONB NOT
   NULL DEFAULT '[]'` and `priority INT NOT NULL DEFAULT 0` exist; the old unique
@@ -77,7 +77,7 @@ lookup system `app/models/lookup.py` (+ `LookupBinding` `:72`); sponsor_subject 
 - **ME-8 `[T]`** predicates evaluate against the **form header row's own fields** only; a predicate
   naming a non-header/line-item field never matches (defensive) and is not offered in the UI.
 
-## Group RES — resolution ordering (pure admin priority, test-FIRST)
+## Group RES - resolution ordering (pure admin priority, test-FIRST)
 
 - **RES-1 `[T]`** GIVEN two matching rows with `priority` 1 and 2 (same contact+use_case), THEN the
   **priority-1** row wins (lower first), regardless of predicate count.
@@ -88,18 +88,18 @@ lookup system `app/models/lookup.py` (+ `LookupBinding` `:72`); sponsor_subject 
 - **RES-4 `[T]`** GIVEN no row matches (or no rows exist) for the form, THEN resolution falls to the
   existing **round-robin** `get_next_assignee`, cursor semantics unchanged.
 - **RES-5 `[T]` (REGRESSION, hard)** GIVEN existing routing rows migrated to `match_conditions=[]`,
-  THEN resolution is **byte-identical to today** — the contact-wide pin still wins over round-robin
+  THEN resolution is **byte-identical to today** - the contact-wide pin still wins over round-robin
   for PR/SF.
 - **RES-6 `[T]`** GIVEN a matched pin whose `cs_pic_user_id` is inactive OR not a tier-1 member of the
   resolved CS team, THEN it falls back to round-robin + `logger.warning`, never 500 (existing
   resilience preserved).
-- **RES-7 `[T]`** the engine applies to **all** use_cases — a complaint routing row with predicates
+- **RES-7 `[T]`** the engine applies to **all** use_cases - a complaint routing row with predicates
   resolves by the same algorithm (even though none is configured today).
 - **RES-8 `[BE]`** end-to-end: GIVEN contact C with rows `[{sales_type,equals,project}]→userA (prio 1)`
   and `[]→userB (prio 2)`, WHEN a PR from C with `sales_type=project` is **approved** and the CS stage
   spawns, THEN the tracker assignee is **userA**; a PR with `sales_type=cash_sales` → **userB**.
 
-## Group CFG — config UI (predicate builder + ordering)
+## Group CFG - config UI (predicate builder + ordering)
 
 - **CFG-1 `[FE]`** GIVEN the CS-routing admin surface for a contact, THEN routes render as an
   **ordered/draggable list**; drag reorders `priority`; a new row appends last.
@@ -116,7 +116,7 @@ lookup system `app/models/lookup.py` (+ `LookupBinding` `:72`); sponsor_subject 
 - **CFG-5 `[FE]`** dropdowns use `SearchableSelect`/`SearchableMultiSelect` (no raw `<select>`);
   destructive row-delete uses `ConfirmDeleteDialog` copy.
 
-## Group E2E — round-trip
+## Group E2E - round-trip
 
 - **E2E-1 `[E2E]`** Navigate via sidebar to the contact CS-routing config; add a
   `sales_type equals project → userA` route + a wildcard `→ userB`; save; assert the `/api/v1/*` PUT

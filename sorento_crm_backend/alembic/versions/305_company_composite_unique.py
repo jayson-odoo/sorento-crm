@@ -17,7 +17,7 @@ isolation *hard* at the DB:
 
    ``customers`` is the exception to "single-column": its natural key is the
    two-column expression unique ``(lower(btrim(customer_code)),
-   lower(btrim(customer_name)))`` — raw business strings NOT otherwise scoped by
+   lower(btrim(customer_name)))`` - raw business strings NOT otherwise scoped by
    an FK, so it is prepended with ``company_id`` too (this is the AutoCount
    masters case AC-J2 targets for debtors). All the OTHER multi-column owned
    uniques (stock (product,warehouse,zone), stock_batches (product,batch),
@@ -29,11 +29,11 @@ isolation *hard* at the DB:
    collision is impossible without adding company_id.
 
 2. **NOT NULL flip (PG only).** Every owned table EXCEPT ``attachments`` (which
-   stays nullable — a null company = shared form attachment) gets its
+   stays nullable - a null company = shared form attachment) gets its
    ``company_id`` re-backfilled to Sorento (idempotent, catches rows created
    during the build window) then ``SET NOT NULL``. The ORM
    ``CompanyScopedMixin.company_id`` stays ``nullable=True`` on purpose so the
-   sqlite ``create_all`` used by the test suite stays permissive — the runtime
+   sqlite ``create_all`` used by the test suite stays permissive - the runtime
    auto-stamp + scope filter already prevent null-company writes; PG holds the
    hard constraint. See the note in ``app/models/base.py``.
 

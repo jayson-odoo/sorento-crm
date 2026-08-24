@@ -509,7 +509,7 @@ def test_mixed_legs_from_different_sos_plus_retail_and_unclassified_do_not_doubl
     Buy read through a DIFFERENT order's Order Inquiry (order B), a retail line and an
     unclassified line, all landing at the SAME (product, warehouse). Every channel must
     keep its own figure and `committed` must still equal exactly the three channel columns
-    - the confirmed leg is a SUBSET of `project_committed`, never a fourth addend, so
+  - the confirmed leg is a SUBSET of `project_committed`, never a fourth addend, so
     summing all four would double count it.
     """
     _line(db, world, qty=18, demand_class="project", demand_origin="scm_order_inquiry")  # order A, sheet leg

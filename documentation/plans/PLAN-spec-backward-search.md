@@ -1,4 +1,4 @@
-# PLAN — spec backward search (shape B: spec FILTER ∩ domain predicate)
+# PLAN - spec backward search (shape B: spec FILTER ∩ domain predicate)
 
 **Status:** In progress (S1)
 **Branch:** `feat/spec-search-category-signal` (spec-search worktree)
@@ -48,8 +48,8 @@ rows gets zero owned rows (user decision 2026-08-11).
 
 | # | item | where |
 |---|------|-------|
-| 1 | `filter_specs()` — class-only membership clause, reusing `resolve_terms_to_specs` + `resolve_classes_for_term` | `app/services/product_spec_search.py` (beside the vocabulary) |
-| 2 | `product_set_service.py` — `REQUIRE_LEGS` registry (4 legs) + `resolve_product_set()` | `app/services/product_set_service.py` (new) |
+| 1 | `filter_specs()` - class-only membership clause, reusing `resolve_terms_to_specs` + `resolve_classes_for_term` | `app/services/product_spec_search.py` (beside the vocabulary) |
+| 2 | `product_set_service.py` - `REQUIRE_LEGS` registry (4 legs) + `resolve_product_set()` | `app/services/product_set_service.py` (new) |
 | 3 | `search_specs(product_ids=...)` whitelist param | `app/services/product_spec_search.py` |
 | 4 | `require` on `ResolveReferenceRequest` + veneer in resolve POST + `predicate` response block | `app/api/v1/system/references.py` (veneer only, zero SQL) |
 | 5 | pytest: per-leg, two-company cross-bleed per leg, variant-family counting, unrecognized terms, byte-identical-without-require | `tests/test_product_set_service.py`, `tests/test_resolve_predicate.py` |
@@ -59,11 +59,11 @@ rows gets zero owned rows (user decision 2026-08-11).
 | key | payload | predicate (EXISTS on `Product.id`) |
 |-----|---------|-------------------------------------|
 | `attachment_type` | customer's LABEL (e.g. "technical drawing") | resolve label case-insensitively against `AttachmentType.code` OR `type_name` (mirrors `_probe_attachment_type`); miss feeds `unrecognized_terms` and the require call qualifies nothing; hit: EXISTS `product_attachments` JOIN `attachments` ON `attachment_type_id` = resolved id |
-| `certificate` | `true` OR `{scheme, validity_state}` | bare: EXISTS `certificate_products` JOIN `certificates` (status='active'). Object: + `scheme` equality; `validity_state: "valid"` joins the current revision and requires `valid_until IS NULL OR valid_until >= today` (validity is derived, not stored — model docstring) |
+| `certificate` | `true` OR `{scheme, validity_state}` | bare: EXISTS `certificate_products` JOIN `certificates` (status='active'). Object: + `scheme` equality; `validity_state: "valid"` joins the current revision and requires `valid_until IS NULL OR valid_until >= today` (validity is derived, not stored - model docstring) |
 | `promotion` | `true` | EXISTS `promotion_products` JOIN `promotions` (is_active AND start_date null-or-past AND end_date null-or-future) |
 | `stock` | `true` | EXISTS `stock` with `quantity_on_hand > 0` (NOT the MCP `exclude_zero_system_adjustment` semantics) |
 
-Multiple keys AND. Unknown key = 422 (`AppException`) — a parser emitting an unknown key is a bug
+Multiple keys AND. Unknown key = 422 (`AppException`) - a parser emitting an unknown key is a bug
 to surface, not to ignore.
 
 ## Response

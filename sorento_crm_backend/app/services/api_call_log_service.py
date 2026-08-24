@@ -48,7 +48,7 @@ _SECRET_KEYS = frozenset(
 def redact_mapping(value: Any) -> Any:
     """Deep-copy `value`, replacing any secret-keyed entry with `REDACTED`.
 
-    Returns a new structure — the middleware redacts headers the live request is
+    Returns a new structure - the middleware redacts headers the live request is
     still using, so mutating in place would strip the caller's own credentials.
     """
     if isinstance(value, Mapping):
@@ -80,7 +80,7 @@ def sanitize_body(payload: Any) -> Optional[str]:
 
     A JSON body is parsed so secret KEYS can be stripped structurally; anything
     that is not JSON is stored as-is (bounded). Redaction has to happen before
-    truncation — truncating first can cut a secret in half and store the front of
+    truncation - truncating first can cut a secret in half and store the front of
     it, which is still a leak.
     """
     if payload is None:
@@ -140,7 +140,7 @@ def resolve_correlation_id(headers: Mapping[str, str]) -> Optional[str]:
 
 def classify_outcome(status_code: Optional[int]) -> str:
     """Bucket a status code. A missing status means the request died before
-    producing one — our fault, and it must not land in `success`."""
+    producing one - our fault, and it must not land in `success`."""
     if status_code is None:
         return "server_error"
     if status_code >= 500:
@@ -176,7 +176,7 @@ def prune_api_call_log(db, *, payload_retention_days: int, row_retention_days: i
     )
 
     # Guard on "not already NULL" so a re-run reports 0 rather than re-clearing
-    # the same rows forever — the task's own output would otherwise imply work
+    # the same rows forever - the task's own output would otherwise imply work
     # that is not happening.
     payloads_cleared = (
         db.query(ApiCallLog)
@@ -198,7 +198,7 @@ def prune_api_call_log(db, *, payload_retention_days: int, row_retention_days: i
 def write_call_log(db, **fields) -> None:
     """Persist one row. Never raises into the request path.
 
-    A telemetry write failing must not turn a working API call into a 500 — the
+    A telemetry write failing must not turn a working API call into a 500 - the
     row is evidence about the request, not part of it.
     """
     try:
@@ -248,7 +248,7 @@ def list_call_logs(
     """Offset page + total for the DataGrid.
 
     Offset rather than keyset because the grid needs a total and arbitrary page
-    jumps — the same trade-off taken for the chat-history listing.
+    jumps - the same trade-off taken for the chat-history listing.
     """
     from app.models.api_call_log import ApiCallLog
 

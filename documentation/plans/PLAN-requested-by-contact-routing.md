@@ -97,9 +97,9 @@ via the existing `respond_contact_market_segments` M2M. Fail closed: no flagged 
    returning `[{id, name}]` only. One query: join contact → M2M → segment where flag + active, union
    the `include_contact_id` row.
 5. **Endpoints:**
-   - portal, token-auth: `GET /api/v1/public/portal/requestor-options?token=&q=` (token resolves the
+ - portal, token-auth: `GET /api/v1/public/portal/requestor-options?token=&q=` (token resolves the
      submitter, passed as `include_contact_id`).
-   - internal, JWT: `GET /api/v1/master-data/respond-contacts/requestor-select?q=`.
+ - internal, JWT: `GET /api/v1/master-data/respond-contacts/requestor-select?q=`.
 6. **Portal write path** (`portal_service`): add the FK to `_editable_fields` for
    `purchase_request` / `sponsorship_form` / `stock_inquiry`; validate the id is in the eligible set
    (or is the submitter) and 422 otherwise; derive + stamp the text label from the chosen contact;

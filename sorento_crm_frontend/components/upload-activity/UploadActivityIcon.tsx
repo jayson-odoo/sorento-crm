@@ -3,7 +3,7 @@
 /**
  * Top-nav icon for Upload Activity. Mirrors NotificationsSheet badge
  * pattern but dispatches drawer open via UploadManager context rather
- * than wrapping a SheetTrigger — the drawer is mounted once at the
+ * than wrapping a SheetTrigger - the drawer is mounted once at the
  * layout level.
  *
  * Badge count = sessions in (uploading | processing) plus any

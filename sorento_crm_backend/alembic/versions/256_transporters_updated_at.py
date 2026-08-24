@@ -1,4 +1,4 @@
-"""transporters.updated_at — model declared it, migration 200 never created it.
+"""transporters.updated_at - model declared it, migration 200 never created it.
 
 Revision ID: 256_transporters_updated_at
 Revises: 255_attachment_thumbnail_path

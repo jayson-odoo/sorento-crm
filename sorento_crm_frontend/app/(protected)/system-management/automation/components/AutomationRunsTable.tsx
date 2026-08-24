@@ -75,7 +75,7 @@ export default function AutomationRunsTable({ automationId }: { automationId: st
       {
         accessorKey: 'duration_ms',
         header: ({ column }) => <DataGridColumnHeader title="Duration" column={column} />,
-        cell: ({ row }) => (row.original.duration_ms != null ? `${row.original.duration_ms} ms` : '—'),
+        cell: ({ row }) => (row.original.duration_ms != null ? `${row.original.duration_ms} ms` : '-'),
         size: 100,
       },
       {

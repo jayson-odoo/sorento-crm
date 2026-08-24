@@ -1,4 +1,4 @@
-# 1.2-Purchasing — Upload a packing list
+# 1.2-Purchasing - Upload a packing list
 
 Use this flow when a supplier sends you a packing-list Excel. The CRM stores the file and the reads it to create the **Packing List** record (with item lines).
 
@@ -21,7 +21,7 @@ The packing-list workflow:
 1. Parses the Excel (shipment date, ETA, BL number, container number, product lines, quantities).
 2. Creates a **Packing List** record (visible at **[Procurement → Packing Lists](/procurement-management/packing-lists)**).
 
-You don't need to do anything extra — the result appears on **[Procurement → Packing Lists](/procurement-management/packing-lists)** automatically once the workflow finishes.
+You don't need to do anything extra - the result appears on **[Procurement → Packing Lists](/procurement-management/packing-lists)** automatically once the workflow finishes.
 
 ## How you'll be notified
 
@@ -42,5 +42,5 @@ Every file in the archive is tagged with the type and processed individually.
 ## See also
 
 * [Shared upload flow](../_shared/upload-flow.md)
-* [Upload SPO](upload-spo.md) — fallback for direct SPO Excel imports
+* [Upload SPO](upload-spo.md) - fallback for direct SPO Excel imports
 * [Manage folders and Quick Access](manage-resource-folders.md)

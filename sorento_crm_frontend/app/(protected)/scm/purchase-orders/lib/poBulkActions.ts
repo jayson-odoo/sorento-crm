@@ -8,14 +8,14 @@ import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
  * Pure + unit-testable.
  *
  * Gating:
- *  - Confirm applies ONLY to DRAFT POs in the selection; it acts on that subset
+ * - Confirm applies ONLY to DRAFT POs in the selection; it acts on that subset
  *    (already-active POs in the selection are skipped). Confirming assigns the
  *    canonical PO-YYYY-#### number and makes the PO count as on-order.
- *  - Delete applies to the WHOLE selection regardless of status - draft or
+ * - Delete applies to the WHOLE selection regardless of status - draft or
  *    active, a purchase order the buyer selects is one they want gone. It
  *    surfaces whenever anything is selected, independently of Confirm.
- *  - create-GR stays a per-row action on an active PO (not a bulk action).
- *  - If nothing applies to the selection (nothing selected at all), NO action
+ * - create-GR stays a per-row action on an active PO (not a bulk action).
+ * - If nothing applies to the selection (nothing selected at all), NO action
  *    applies → returns `[]` so the Actions button does not render.
  */
 export interface PoBulkActionState {

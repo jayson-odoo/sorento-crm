@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-# MUST be first app import — resolves circular-import in app.modules.runtime.guards
+# MUST be first app import - resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 
 from tests._pg_fixture import blank_session
@@ -96,7 +96,7 @@ def test_options_then_resolve(client):
     assert body[0]["value"] == "north"
     assert "up north" in body[0]["keywords"]
 
-    # /resolve — keyword match
+    # /resolve - keyword match
     r = client.post(
         "/api/v1/lookup/resolve",
         json={"set_key": "region", "raw": "Up North"},
@@ -104,7 +104,7 @@ def test_options_then_resolve(client):
     assert r.status_code == 200, r.text
     assert r.json()["value"] == "north"
 
-    # /resolve — unresolvable input returns 404
+    # /resolve - unresolvable input returns 404
     r = client.post(
         "/api/v1/lookup/resolve",
         json={"set_key": "region", "raw": "moon"},

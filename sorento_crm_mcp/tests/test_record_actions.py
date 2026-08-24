@@ -4,7 +4,7 @@ crm_order_cancel / crm_purchase_request_approve / crm_purchase_request_reject).
 Each handler wraps an existing CRM endpoint. We register the tools onto a fake
 FastMCP, capture the handler callables, and drive them with a fake Context whose
 lifespan client records the exact (method, path, path_params, body) it was asked
-to send — proving the correct request is built from the tool args, that fixed
+to send - proving the correct request is built from the tool args, that fixed
 decision fields are injected, that a non-UUID id short-circuits without any HTTP
 call, and that backend errors propagate verbatim.
 """

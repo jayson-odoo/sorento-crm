@@ -1,4 +1,4 @@
-"""S2b — Escalate and Stuck force their context (AC-N4a).
+"""S2b - Escalate and Stuck force their context (AC-N4a).
 
 The rule exists because a task reading "Escalated" with nobody named, or "Stuck" with
 no reason, tells the next person nothing and is worse than leaving it In Progress: it

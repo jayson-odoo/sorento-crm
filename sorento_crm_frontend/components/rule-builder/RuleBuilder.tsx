@@ -1,18 +1,18 @@
 'use client';
 
 /**
- * RuleBuilder — reusable condition-tree builder over the whitelisted fact
+ * RuleBuilder - reusable condition-tree builder over the whitelisted fact
  * registry (`GET /rule-facts`). Facts grouped by source in a searchable
  * select, operators per fact type, literal⇄fact cross-compare on scalar ops,
  * AND/OR groups nesting to depth 5, stale-fact warning.
  *
  * The public component takes `sources` and fetches the facts itself. `value`
  * seeds the draft on mount; remount (key) to load another tree. Emits the
- * serialized RuleGroup on every edit — null when empty (= unconditional).
+ * serialized RuleGroup on every edit - null when empty (= unconditional).
  *
  * Ported from foundryx-shared-service, adapted to sorento's shared
  * SearchableSelect / SearchableMultiSelect (the repo's searchable-dropdown
- * standard — never `ui/select`).
+ * standard - never `ui/select`).
  */
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { AlertTriangle, ArrowLeftRight, Loader2, Plus, Trash2, Undo2 } from 'lucide-react';
@@ -99,7 +99,7 @@ interface DraftGroup {
 }
 type DraftRule = DraftCondition | DraftGroup;
 
-/** Which value widget an operator needs — value resets when the shape changes. */
+/** Which value widget an operator needs - value resets when the shape changes. */
 type ValueShape = 'none' | 'single' | 'pair' | 'multi';
 
 function shapeFor(operator: RuleOperator): ValueShape {
@@ -123,7 +123,7 @@ function emptyValue(shape: ValueShape): unknown {
   return '';
 }
 
-/** Operators offered for a fact — the type table, narrowed by the fact's own
+/** Operators offered for a fact - the type table, narrowed by the fact's own
  * `operators` whitelist when the backend supplied one. */
 function operatorsFor(fact: RuleFactItem | undefined): { value: RuleOperator; label: string }[] {
   const defs = RULE_OPERATORS[fact?.type ?? 'string'];
@@ -165,7 +165,7 @@ export interface RuleBuilderProps {
   sources: string[];
   /** Initial tree (null = unconditional). Remount to load a different one. */
   value: RuleGroup | null;
-  /** Fires on every edit with the serialized tree — null when empty. */
+  /** Fires on every edit with the serialized tree - null when empty. */
   onChange: (group: RuleGroup | null) => void;
   disabled?: boolean;
 }
@@ -266,7 +266,7 @@ function RuleBuilderInner({
         <div className="flex items-start gap-2 rounded-md border border-[var(--color-warning-soft,var(--color-yellow-200))] bg-[var(--color-warning-soft,var(--color-yellow-50))] p-2.5 text-xs text-[var(--color-warning-accent,var(--color-yellow-700))]">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
           <span>
-            Some conditions reference fields that no longer exist — fix or remove them before
+            Some conditions reference fields that no longer exist - fix or remove them before
             saving.
           </span>
         </div>
@@ -296,7 +296,7 @@ interface GroupEditorProps {
   nextKey: () => string;
   disabled: boolean;
   onChange: (group: DraftGroup) => void;
-  /** Removes THIS group from its parent — absent on the root. */
+  /** Removes THIS group from its parent - absent on the root. */
   onRemove?: () => void;
 }
 
@@ -350,7 +350,7 @@ function GroupEditor({
 
       {group.rules.length === 0 && depth === 0 && (
         <p className="text-xs text-muted-foreground">
-          No conditions — always matches{disabled ? '.' : ' (add one below).'}
+          No conditions - always matches{disabled ? '.' : ' (add one below).'}
         </p>
       )}
 
@@ -650,7 +650,7 @@ function ConditionValue({
         </div>
       );
     }
-    // Free-form multi (string in/not_in without options) — comma-separated.
+    // Free-form multi (string in/not_in without options) - comma-separated.
     return (
       <FreeFormMulti
         selected={selected}

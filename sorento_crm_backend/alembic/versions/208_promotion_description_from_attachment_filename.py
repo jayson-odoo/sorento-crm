@@ -10,7 +10,7 @@ Strips a trailing file extension (.pdf / .xlsx / .xls / .docx / .png / .jpg / .j
 from the filename before assignment so the description reads as a label, not a
 file path. Promotions with no linked attachment are left untouched.
 
-Idempotent — only writes where the derived value differs from the current
+Idempotent - only writes where the derived value differs from the current
 description (per `feedback_backfill_idempotent`).
 
 Revision ID: 208_promotion_description_from_attachment_filename
@@ -72,5 +72,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # Non-reversible: the prior descriptions are not preserved anywhere. Leave
-    # the populated descriptions in place — operators can re-author manually.
+    # the populated descriptions in place - operators can re-author manually.
     pass

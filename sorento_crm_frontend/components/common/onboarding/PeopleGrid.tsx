@@ -6,8 +6,8 @@
  *
  * `mode` decides what is *added*, never what moves:
  *
- * - `intake`   - the requester's columns only.
- * - `review`   - the same columns plus collision chips, the lane ledger, and
+ * - `intake` - the requester's columns only.
+ * - `review` - the same columns plus collision chips, the lane ledger, and
  *                per-row approve / reject.
  * - `readonly` - the same columns, nothing editable. This is what the requester
  *                sees after submitting, and it is the same grid rather than a

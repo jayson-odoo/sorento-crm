@@ -1,8 +1,8 @@
-"""SCM M2 — ABC/XYZ classification (AC-M2.5/2.6/2.7).
+"""SCM M2 - ABC/XYZ classification (AC-M2.5/2.6/2.7).
 
 ABC classes are blessed in ``fixtures/golden_m2.json`` (ranked over the full costed
 universe by trailing-12mo value); XYZ derives from the same demand CV as the demand
-golden. Config cut points drive the maths — changing them reclassifies with no code
+golden. Config cut points drive the maths - changing them reclassifies with no code
 change. Null-cost keys classify as unknown (NULL). Savepoint-rolled-back.
 """
 from __future__ import annotations
@@ -24,11 +24,11 @@ _AS_OF = date.fromisoformat(_GOLDEN["as_of"])
 
 
 # ---------------------------------------------------------------------------
-# ABC ranking — pure maths (B1: boundary-crossing item to higher class; rank-1 = A)
+# ABC ranking - pure maths (B1: boundary-crossing item to higher class; rank-1 = A)
 # ---------------------------------------------------------------------------
 
 def test_abc_classify_dominant_single_sku_is_A():
-    """B1: a rank-1 SKU that ALONE exceeds the 80% A cut is still A — the class is
+    """B1: a rank-1 SKU that ALONE exceeds the 80% A cut is still A - the class is
     decided on the cumulative share BEFORE the item is added (prev_cum=0 for rank-1)."""
     # one SKU = 85% of annual value, two small tails
     assert svc.abc_classify([85.0, 10.0, 5.0], 80, 95) == ["A", "B", "B"]
@@ -107,7 +107,7 @@ def test_abc_cut_points_are_configurable(scm_app):
     _, db, _, _ = scm_app
     # force a tiny A band so the top costed key alone can't be 'A' cumulatively
     import uuid as _uuid
-    # tiny cumulative cut points (5% A / 10% B, canonical 0..100 scale) — well above 1
+    # tiny cumulative cut points (5% A / 10% B, canonical 0..100 scale) - well above 1
     # so they are read literally, not as legacy fractions.
     db.execute(text("UPDATE scm.abc_xyz_policy SET is_active = false"))
     db.execute(text(
@@ -116,7 +116,7 @@ def test_abc_cut_points_are_configurable(scm_app):
         "VALUES (:id, 5, 10, 0.5, 1.0, true, 'test', 'cut', now(), now())"
     ), {"id": str(_uuid.uuid4())})
     db.flush()
-    g = _GOLDEN["demand"][1]  # B2155-NL-BLUE@BRW-IB — 'A' under default 80/95
+    g = _GOLDEN["demand"][1]  # B2155-NL-BLUE@BRW-IB - 'A' under default 80/95
     pid, wid = _pid(db, g["product_code"]), _wid(db, g["warehouse_code"])
     svc.run_analytics(db, scope={"product_ids": [_pid(db, x["product_code"]) for x in _GOLDEN["demand"]]},
                       config={"as_of": _AS_OF})

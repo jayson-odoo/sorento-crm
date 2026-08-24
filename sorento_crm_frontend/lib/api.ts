@@ -302,7 +302,7 @@ export async function apiFetch(
         // Keep this list explicit to avoid catching similarly named FastAPI routes.
         const nextJsOnlyPrefixes = [
           '/api/user-management/contact-access-agents',
-          // Next.js BFF: proxies GET to /users/me, POST profile, logs, etc. — not a FastAPI path
+          // Next.js BFF: proxies GET to /users/me, POST profile, logs, etc. - not a FastAPI path
           '/api/user-management/account',
         ];
         const isNextJsRoute =
@@ -480,7 +480,7 @@ export async function apiFetch(
                   };
                 }
               } else {
-                // No token available — fall back to cookie-based auth.
+                // No token available - fall back to cookie-based auth.
                 console.warn('No auth token available; falling back to cookies');
                 const isFormData = init?.body instanceof FormData;
                 const headers: Record<string, string> = {

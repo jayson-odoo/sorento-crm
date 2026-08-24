@@ -300,7 +300,7 @@ export default function TicketsList() {
                         />
                       </TableCell>
                       <TableCell className="font-mono text-xs">
-                        {t.ticket_number ?? '—'}
+                        {t.ticket_number ?? '-'}
                       </TableCell>
                       <TableCell className="max-w-[420px] truncate">{t.title}</TableCell>
                       <TableCell>
@@ -318,7 +318,7 @@ export default function TicketsList() {
                           : 'Manual'}
                       </TableCell>
                       <TableCell className={t.is_overdue_resolution ? 'text-destructive' : ''}>
-                        {t.due_date ?? '—'}
+                        {t.due_date ?? '-'}
                       </TableCell>
                       <TableCell>
                         {t.assigned_to_user?.display_name ?? <span className="text-muted-foreground">Unassigned</span>}

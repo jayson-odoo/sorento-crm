@@ -147,7 +147,7 @@ export default function WorkflowSubmissionsList({
         accessorKey: 'updated_at',
         header: ({ column }) => <DataGridColumnHeader title="Updated" column={column} />,
         cell: ({ row }) =>
-          row.original.updated_at ? new Date(row.original.updated_at).toLocaleString() : '—',
+          row.original.updated_at ? new Date(row.original.updated_at).toLocaleString() : '-',
         size: 180,
         meta: { headerTitle: 'Updated', skeleton: <Skeleton className="h-4 w-28" /> },
       },
@@ -279,7 +279,7 @@ export default function WorkflowSubmissionsList({
                           variant="outline"
                           size="icon"
                           className="relative shrink-0"
-                          title="Quick filter — state code"
+                          title="Quick filter - state code"
                           aria-label="Quick filters"
                         >
                           <SlidersHorizontal className="size-4" />

@@ -12,8 +12,8 @@ import type { AccessAgentFormData, ContactAgentAccessFormData } from '../types/a
 
 /**
  * Prev/next neighbours of an access agent within the active filtered+sorted list set.
- * Serializes the list query (search) with `buildDataGridParams` — the same
- * serialization the list page uses — so the backend honours filters identically.
+ * Serializes the list query (search) with `buildDataGridParams` - the same
+ * serialization the list page uses - so the backend honours filters identically.
  * `page`/`limit` are sent but ignored by the neighbours endpoint.
  */
 export function useAccessAgentNeighbours(
@@ -43,7 +43,7 @@ export function useAccessAgent(id: string | null) {
       return getAccessAgent(id);
     },
     enabled: !!id,
-    // After delete, a refetch would 404 — treat as empty data, not a thrown error (no error toast).
+    // After delete, a refetch would 404 - treat as empty data, not a thrown error (no error toast).
     retry: false,
   });
 }

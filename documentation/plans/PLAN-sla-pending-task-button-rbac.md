@@ -1,4 +1,4 @@
-# PLAN — RBAC-gate the My Pending / My Team task buttons
+# PLAN - RBAC-gate the My Pending / My Team task buttons
 
 **Status:** Draft → ready for implementation
 **Owner:** jayson
@@ -36,11 +36,11 @@ sla_management.conversation_sla_tracking.takeover
 ```
 
 **Seeding:** `sync_permissions(db)` runs at startup (`app/main.py:211`), idempotent
-— new slugs auto-create on next boot. **No Alembic migration needed** for the perm
+ -  new slugs auto-create on next boot. **No Alembic migration needed** for the perm
 rows. Roles get the slugs via the existing Roles UI; `superadmin`/`admin` bypass all
 checks (`require_permission` short-circuit).
 
-## Backend changes — `app/api/v1/sla/sla_tracking.py`
+## Backend changes - `app/api/v1/sla/sla_tracking.py`
 
 Pattern for routes that keep `current_user` (need the actor id) AND add a perm gate:
 add a second dependency param `_perm: dict = Depends(require_permission("<slug>"))`.
@@ -59,7 +59,7 @@ Both resolve through cached `get_current_user`.
    (route currently has no actor check at all). Keep `current_user=Depends(get_current_user)`.
 4. **takeover** route: add `_perm = Depends(require_permission("…takeover"))`.
    Cancel/reject takeover routes: gate under the same `…takeover` slug.
-5. **resolve** — do NOT touch `PUT /{id}` first (n8n integration uses it via API key).
+5. **resolve** - do NOT touch `PUT /{id}` first (n8n integration uses it via API key).
    Add a dedicated endpoint:
    ```python
    @router.post("/{tracking_id}/resolve", response_model=ConversationSLATrackingResponse)
@@ -86,10 +86,10 @@ Both resolve through cached `get_current_user`.
    principal is a real user (NOT the api-key/system principal) and the payload flips
    `is_resolved`, require the `…resolve` slug; api-key principal (n8n) bypasses.
    Coder to confirm how `get_current_user_or_api_key` marks the api-key principal
-   before implementing this guard — if non-trivial, ship the dedicated route only and
+   before implementing this guard - if non-trivial, ship the dedicated route only and
    note the residual PUT exposure.
 
-## Frontend changes — `MyPendingSLAWidget.tsx`
+## Frontend changes - `MyPendingSLAWidget.tsx`
 
 ```ts
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -110,9 +110,9 @@ const canTakeover = useHasPermission(`${SLUG}.takeover`);
 
 If a row's whole action cluster collapses to empty for a user, that's fine (read-only).
 
-## Tests (Phase 2 — land here, not deferred)
+## Tests (Phase 2 - land here, not deferred)
 
-- **pytest** (`tests/`): for each of the 5 routes — 200 with perm + valid actor;
+- **pytest** (`tests/`): for each of the 5 routes - 200 with perm + valid actor;
   403 without perm; 404/403 when acting on a tracking outside visible scope. Plus
   resolve: api-key PUT still works (n8n path unbroken).
 - **vitest**: `MyPendingSLAWidget` renders each button only when the matching

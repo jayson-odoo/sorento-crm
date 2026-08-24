@@ -46,7 +46,7 @@ COMMERCIAL_CORE_TABLES = (
 
 def upgrade() -> None:
     # Import the module so its tables are registered on Base.metadata.
-    import app.modules.commercial_core  # noqa: F401  - register models
+    import app.modules.commercial_core  # noqa: F401 - register models
     from app.database import Base
 
     bind = op.get_bind()

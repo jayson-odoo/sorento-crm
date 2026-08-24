@@ -86,7 +86,7 @@ def test_migrate_apply_copies_and_repoints_keeping_old(monkeypatch):
     new_key = f"direct_access/{a.id}/x.pdf"
     assert be.copied == [("direct_access/x.pdf", new_key)]
     assert a.file_path == f"https://cdn.test/{new_key}"
-    assert be.file_exists("direct_access/x.pdf")   # OLD kept — never deleted
+    assert be.file_exists("direct_access/x.pdf")   # OLD kept - never deleted
 
 
 def test_migrate_source_missing(monkeypatch):

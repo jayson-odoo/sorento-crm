@@ -1,9 +1,9 @@
 /**
- * WhatsApp Template service — Respond.io template sync, per-use-case defaults,
+ * WhatsApp Template service - Respond.io template sync, per-use-case defaults,
  * 24h-window state and template sending.
  *
  * =========================================================================
- * EXPECTED API CONTRACT (Phase 1 — locked for Phase 2 backend work)
+ * EXPECTED API CONTRACT (Phase 1 - locked for Phase 2 backend work)
  * See docs/plans/PLAN-whatsapp-template-fallback.md
  * =========================================================================
  *
@@ -16,15 +16,15 @@
  *   Errors: 502 when Respond.io API unreachable.
  *
  * GET /api/v1/integrations/respond/template-defaults
- *   200: TemplateDefault[]  (always 4 rows — one per use_case, template_id
+ *   200: TemplateDefault[]  (always 4 rows - one per use_case, template_id
  *        null when unset; is_valid=false when the referenced template was
  *        deleted on sync or is no longer `approved`)
  *
  * PUT /api/v1/integrations/respond/template-defaults/{use_case}
  *   Body: { template_id: string, param_mapping: Record<string, ParamVariable> }
- *   - param_mapping keys are the template's positional params ("1".."n");
+ * - param_mapping keys are the template's positional params ("1".."n");
  *     every param of the template MUST be mapped (422 otherwise).
- *   - template must have status=approved (422 otherwise).
+ * - template must have status=approved (422 otherwise).
  *   200: TemplateDefault
  *
  * DELETE /api/v1/integrations/respond/template-defaults/{use_case}
@@ -32,13 +32,13 @@
  *
  * Per-entity chat routes (keyed by use case in ENTITY_CHAT_BASE):
  *   GET  /{entity_base}/{id}/conversation/window-state
- *     - Backend scans Respond.io list_messages for the latest incoming
+ *   - Backend scans Respond.io list_messages for the latest incoming
  *       message; window treated as 23h (margin). Degrades to chat_history
  *       when the Respond API errors; no data at all => closed.
  *     200: WindowState
  *   POST /{entity_base}/{id}/conversation/template-message
  *     Body: { template_id: string, params: Record<string, string> }
- *     - params keys "1".."n" must cover the template's param_count (422).
+ *   - params keys "1".."n" must cover the template's param_count (422).
  *       Contact is resolved server-side from the entity (no contact_id needed).
  *     200: { ok: true, template_name, rendered_body }
  *     Errors: 422 template not approved / params missing; 502 send failed.
@@ -121,7 +121,7 @@ export interface WhatsAppTemplate {
   /** static prefix before the {{n}} in the button URL, e.g. https://fe-sorento.foundryx.my/ */
   button_url_base: string | null;
   button_text: string | null;
-  /** true for a WhatsApp Authentication COPY_CODE button — no link variable to map */
+  /** true for a WhatsApp Authentication COPY_CODE button - no link variable to map */
   button_is_copy_code?: boolean;
   channel_name: string;
   synced_at: string; // ISO UTC
@@ -139,7 +139,7 @@ export interface TemplateDefault {
   has_url_button?: boolean;
   button_url_base?: string | null;
   button_url_var?: ParamVariable | null;
-  /** true for a WhatsApp Authentication COPY_CODE button — no link variable to map */
+  /** true for a WhatsApp Authentication COPY_CODE button - no link variable to map */
   button_is_copy_code?: boolean;
 }
 
@@ -201,35 +201,35 @@ export const USE_CASES: {
   },
   {
     key: 'complaint_chat',
-    label: 'Complaint — Chat Reply',
+    label: 'Complaint - Chat Reply',
     description:
       'Free-text chat reply to the complainant when their 24h window is closed. Map a parameter to "Full update message" (the typed text) and, ideally, "Sender name".',
     group: 'chat',
   },
   {
     key: 'stock_inquiry_chat',
-    label: 'Stock Inquiry — Chat Reply',
+    label: 'Stock Inquiry - Chat Reply',
     description:
       'Free-text chat reply to the inquiring contact when their 24h window is closed. Map a parameter to "Full update message" and, ideally, "Sender name".',
     group: 'chat',
   },
   {
     key: 'purchase_request_chat',
-    label: 'Purchase Request — Chat Reply',
+    label: 'Purchase Request - Chat Reply',
     description:
       'Free-text chat reply to the requester when their 24h window is closed. Map a parameter to "Full update message" and, ideally, "Sender name".',
     group: 'chat',
   },
   {
     key: 'sponsorship_form_chat',
-    label: 'Sponsorship Form — Chat Reply',
+    label: 'Sponsorship Form - Chat Reply',
     description:
       'Free-text chat reply to the sponsorship applicant when their 24h window is closed. Map a parameter to "Full update message" and, ideally, "Sender name".',
     group: 'chat',
   },
   {
     key: 'conversation_chat',
-    label: 'Conversation SLA — Chat Reply',
+    label: 'Conversation SLA - Chat Reply',
     description:
       'Free-text chat reply to a Respond contact from the Conversation SLA panel when their 24h window is closed. Map a parameter to "Full update message" and, ideally, "Sender name". No view link.',
     group: 'chat',
@@ -244,7 +244,7 @@ export const USE_CASES: {
     key: 'sla_daily_summary',
     label: 'SLA Daily Summary',
     description:
-      'Daily SLA digest sent to staff on WhatsApp when their 24h window is closed. Bounded template — map params to the outstanding / escalated (24h) / resolved (24h) counts and the dashboard deep link (Portal URL).',
+      'Daily SLA digest sent to staff on WhatsApp when their 24h window is closed. Bounded template - map params to the outstanding / escalated (24h) / resolved (24h) counts and the dashboard deep link (Portal URL).',
   },
   {
     key: 'sla_assignment',
@@ -266,7 +266,7 @@ export const USE_CASES: {
   },
   {
     key: 'sla_takeover_pending',
-    label: 'SLA Takeover — Pending',
+    label: 'SLA Takeover - Pending',
     description:
       'Sent to a task’s current assignee when a teammate starts a takeover (cooldown window). Map params to "Contact name" (the assignee) and "Full update message" at minimum; add "Entity number" when the template carries it.',
   },
@@ -290,25 +290,25 @@ export const USE_CASES: {
   },
   {
     key: 'sla_takeover_cancelled',
-    label: 'SLA Takeover — Cancelled',
+    label: 'SLA Takeover - Cancelled',
     description:
       'Sent to the initiator when their takeover is rejected by the owner or voided (task resolved / reassigned / escalated). Map params to "Contact name" and "Full update message" at minimum.',
   },
   {
     key: 'sla_handling_claimed',
-    label: 'SLA Handling — Claimed',
+    label: 'SLA Handling - Claimed',
     description:
       'Sent to the assignee and other eligible team members when someone claims handling of an escalated form ("I\'m handling this"). Map params to "Contact name" (the recipient) and "Handler name" (who claimed) at minimum; add "Entity number" / "Full update message" when the template carries them.',
   },
   {
     key: 'sla_handling_taken_over',
-    label: 'SLA Handling — Taken Over',
+    label: 'SLA Handling - Taken Over',
     description:
       'Sent to the displaced holder when a teammate takes over handling of the form. Map params to "Contact name" (the displaced holder) and "Handler name" (who took over) at minimum; add "Entity number" / "Full update message".',
   },
   {
     key: 'sla_handling_released',
-    label: 'SLA Handling — Unclaimed',
+    label: 'SLA Handling - Unclaimed',
     description:
       'Sent to eligible team members when the current holder unclaims a form (open to handle again). Map params to "Contact name" (the recipient) and "Handler name" (who unclaimed) at minimum; add "Entity number" / "Full update message".',
   },
@@ -326,7 +326,7 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'entity_number', label: 'Entity number', description: 'e.g. CMP-2606-0012 / RMA-PS2605-0017' },
   { key: 'status', label: 'Status', description: 'New status of the record (approved, rejected…)' },
   { key: 'reason', label: 'Reason', description: 'Decision reason when present' },
-  { key: 'portal_url', label: 'Portal URL', description: 'Interactive portal link — contact can act / resubmit (complaint: /portal/c/…)' },
+  { key: 'portal_url', label: 'Portal URL', description: 'Interactive portal link - contact can act / resubmit (complaint: /portal/c/…)' },
   { key: 'view_url', label: 'View link', description: 'Read-only public view of the record (token link, /view/…)' },
   { key: 'message', label: 'Full update message', description: 'The composed update text, flattened to one line' },
   { key: 'otp_code', label: 'OTP code', description: 'The 6-digit portal login verification code' },
@@ -340,13 +340,13 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'respond_due_at', label: 'Respond by', description: 'SLA response deadline (KL wall time)' },
   { key: 'resolve_due_at', label: 'Resolve by', description: 'SLA resolution deadline (KL wall time)' },
   { key: 'handler_name', label: 'Handler name', description: 'Staff member who claimed / took over / unclaimed the form handling lock' },
-  { key: 'form_url', label: 'Form link', description: 'Opens the form record (or the Respond inbox for ticket/conversation) — same as clicking the task' },
+  { key: 'form_url', label: 'Form link', description: 'Opens the form record (or the Respond inbox for ticket/conversation) - same as clicking the task' },
   { key: 'customer', label: 'Customer name', description: 'Customer name on the record (complaint / purchase request)' },
   { key: 'project', label: 'Project name', description: 'Project name/title on the record (complaint / purchase request)' },
   { key: 'delivery_order', label: 'DO number', description: 'Delivery order number on the complaint' },
   { key: 'product_code', label: 'Product code', description: 'Product code on the stock inquiry' },
   { key: 'initiator', label: 'Initiator', description: 'SLA takeover: teammate who requested the takeover ("Requested by")' },
-  { key: 'update', label: 'Update', description: 'Lean action core — technical reply / "Approved" / "Rejected, reason: X" / "Processed by CS" / "Root cause is X" / "Resolution is X". No preamble or link.' },
+  { key: 'update', label: 'Update', description: 'Lean action core - technical reply / "Approved" / "Rejected, reason: X" / "Processed by CS" / "Root cause is X" / "Resolution is X". No preamble or link.' },
 ];
 
 
@@ -434,7 +434,7 @@ export async function getWindowState(
   return jsonOrThrow<WindowState>(res, 'Failed to check window state');
 }
 
-/** Approved templates for the send dialog — reuses the templates list endpoint. */
+/** Approved templates for the send dialog - reuses the templates list endpoint. */
 export async function listApprovedTemplates(): Promise<WhatsAppTemplate[]> {
   const res = await listTemplates({ page: 1, limit: 200, status: 'approved' });
   return res.data;
@@ -488,7 +488,7 @@ export interface ChatTemplatePreview {
 }
 
 /** Describe the form's *_chat template so the composer can render it inline with a
- * fill-in field for the message (out-of-window). DB-only on the backend — no send. */
+ * fill-in field for the message (out-of-window). DB-only on the backend - no send. */
 export async function getChatTemplatePreview(
   entityType: string,
   entityId: string,

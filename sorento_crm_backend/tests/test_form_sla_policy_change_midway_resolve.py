@@ -3,11 +3,11 @@ SLA policy is changed *after* the tracker was created.
 
 Bug: `_active_tracker` matched the live tracker on `policy_id == config.policy_id`.
 `policy_id` is a snapshot the tracker stored at create time, so editing the stage's
-policy afterward orphaned the live tracker — the resolve event (e.g.
+policy afterward orphaned the live tracker - the resolve event (e.g.
 `project_sales_approve`, fired when status goes pending_project_sales ->
 pending_purchasing) could no longer find it, and it stuck at Escalated.
 
-Fix: stage identity is (source_entity_type, team_set_code) — NOT policy_id. Drop the
+Fix: stage identity is (source_entity_type, team_set_code) - NOT policy_id. Drop the
 policy_id predicate so the running tracker resolves regardless of a later policy edit.
 
 Run: pytest tests/test_form_sla_policy_change_midway_resolve.py -v

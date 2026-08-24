@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     # stacks on one broker must not hear each other.
     conversation_events_channel: str = "sorento:conversation-events:v1"
 
-    # Request idempotency (duplicate-submit / network-slowness backstop) — see
+    # Request idempotency (duplicate-submit / network-slowness backstop) - see
     # documentation/plans/PLAN-uniform-idempotency.md. Scoped to an allowlist of action endpoints
     # in app/middleware/idempotency_middleware.py.
     idempotency_enabled: bool = True            # IDEMPOTENCY_ENABLED
@@ -103,7 +103,7 @@ class Settings(BaseSettings):
     idempotency_max_body: int = 262144          # skip dedupe for bodies larger than this (bytes)
 
     # Per-IP rate limits on unauthenticated/abuse-prone endpoints (fixed window,
-    # fail-open if Redis down) — see PLAN-fix-security-cluster Sub-plan A. All
+    # fail-open if Redis down) - see PLAN-fix-security-cluster Sub-plan A. All
     # env-overridable; set max<=0 to disable a given limiter.
     rate_limit_signup_max: int = 3              # signups per window per IP
     rate_limit_signup_window_seconds: int = 3600
@@ -112,7 +112,7 @@ class Settings(BaseSettings):
     rate_limit_portal_otp_max: int = 30        # portal OTP requests per window per IP
     rate_limit_portal_otp_window_seconds: int = 60
 
-    # Presigned-URL hardening (external API) — see PLAN-fix-security-cluster Sub-plan B.
+    # Presigned-URL hardening (external API) - see PLAN-fix-security-cluster Sub-plan B.
     # When True, /external/presigned-url only signs a file_path that resolves to a
     # real attachments row (blocks signing arbitrary/guessed keys). Escape hatch:
     # set PRESIGNED_REQUIRE_ATTACHMENT_ROW=false if a legit n8n flow presigns a key
@@ -133,7 +133,7 @@ class Settings(BaseSettings):
     embedding_model_version: str = "v1"
     embedding_dimensions: int = 1536
     openai_api_key: str | None = None
-    # SCM M5 market research — Anthropic web-search backend (key-gated; the run
+    # SCM M5 market research - Anthropic web-search backend (key-gated; the run
     # endpoint degrades to a 'failed' run row when unset, never crashes).
     anthropic_api_key: str | None = None
     # Google Gemini - env fallback for the DB-configured key (System > AI
@@ -172,7 +172,7 @@ class Settings(BaseSettings):
     ai_assistant_mcp_url: str = "http://localhost:8765/mcp"
     ai_assistant_mcp_timeout_seconds: int = 20
     ai_assistant_tool_call_limit: int = 3
-    # RAG: how many MCP tools to BIND to the agent per turn. Default 1 —
+    # RAG: how many MCP tools to BIND to the agent per turn. Default 1 - 
     # deterministic single-tool resolution (the parser already fixes intent+domain,
     # so the top-1 candidate is the tool; the runners-up are kept in the trace as
     # is_current=false for visibility but are not bound). Raise to expose more.
@@ -182,7 +182,7 @@ class Settings(BaseSettings):
     # Reformulator: include the last N history messages (user+assistant) as context.
     ai_assistant_reformulator_history_turns: int = 6
 
-    # Outline (user-guide knowledge base) base URL. INTERNAL Foundryx asset —
+    # Outline (user-guide knowledge base) base URL. INTERNAL Foundryx asset - 
     # its URL must never be surfaced to end users by the AI assistant. Used
     # here only to derive the host to STRIP from guide tool-results and from
     # the assistant's final answer (see ai_assistant_service redaction).
@@ -191,7 +191,7 @@ class Settings(BaseSettings):
     # Ideation pipeline (ideate intent + Ideas iframe host). All .env-driven and
     # DORMANT when blank: absent values make the feature inert without touching
     # existing routes. Secrets are masked in any echo. create_idea is called over
-    # HTTP (server-to-server httpx to ideation_shared_service_url) — NOT MCP; there
+    # HTTP (server-to-server httpx to ideation_shared_service_url) - NOT MCP; there
     # is deliberately no ideation_mcp_url (sorento_crm_mcp is read-only).
     ideation_shared_service_url: str | None = None   # IDEATION_SHARED_SERVICE_URL
     ideation_intake_api_key: str | None = None       # IDEATION_INTAKE_API_KEY (secret)

@@ -267,8 +267,8 @@ export default function FormSLATrackerDetail({
               tracking.policy_name ||
               tracking.policy?.code ||
               tracking.policy_code ||
-              '—'}{' '}
-            • Agent: {tracking.agent_code || '—'}
+              '-'}{' '}
+            • Agent: {tracking.agent_code || '-'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -385,7 +385,7 @@ export default function FormSLATrackerDetail({
                             tracking.assigned_user?.name ||
                             tracking.assigned_user?.email ||
                             tracking.assigned_to ||
-                            '—'}
+                            '-'}
                         </p>
                       </div>
                       <div>
@@ -445,11 +445,11 @@ export default function FormSLATrackerDetail({
                       )}
                       <div>
                         <p className="text-sm text-muted-foreground">Agent Code</p>
-                        <p className="font-medium">{tracking.agent_code || '—'}</p>
+                        <p className="font-medium">{tracking.agent_code || '-'}</p>
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Stage</p>
-                        <p className="font-medium">{tracking.team_set_code || '—'}</p>
+                        <p className="font-medium">{tracking.team_set_code || '-'}</p>
                       </div>
                     </div>
                   </CardContent>
@@ -476,8 +476,8 @@ export default function FormSLATrackerDetail({
                               ? formatDuration(
                                   Number(tracking.response_time) * 3600 * 1000,
                                 )
-                              : '—')
-                          : getTimeRemainingResponse() ?? '—'}
+                              : '-')
+                          : getTimeRemainingResponse() ?? '-'}
                       </span>
                       {responseOpen ? (
                         <ChevronDown className="size-4 text-muted-foreground" />
@@ -511,19 +511,19 @@ export default function FormSLATrackerDetail({
                             ? formatDateTime(
                                 parseDateTimeAsUTC(tracking.responded_at),
                               )
-                            : '—'}
+                            : '-'}
                         </p>
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">
                           Response Duration
                         </p>
-                        <p className="font-medium">{getResponseDuration() || '—'}</p>
+                        <p className="font-medium">{getResponseDuration() || '-'}</p>
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Responded By</p>
                         <p className="font-medium">
-                          {tracking.responded_by_user_name || '—'}
+                          {tracking.responded_by_user_name || '-'}
                         </p>
                       </div>
                       {tracking.average_response_time != null && (
@@ -565,8 +565,8 @@ export default function FormSLATrackerDetail({
                                     3600 *
                                     1000,
                                 )
-                              : '—')
-                          : getTimeRemainingResolution() ?? '—'}
+                              : '-')
+                          : getTimeRemainingResolution() ?? '-'}
                       </span>
                       {resolutionOpen ? (
                         <ChevronDown className="size-4 text-muted-foreground" />
@@ -598,7 +598,7 @@ export default function FormSLATrackerDetail({
                         <p className="font-medium">
                           {tracking.resolved_at
                             ? formatDateTime(parseDateTimeAsUTC(tracking.resolved_at))
-                            : '—'}
+                            : '-'}
                         </p>
                       </div>
                       <div>
@@ -606,7 +606,7 @@ export default function FormSLATrackerDetail({
                           Resolution Duration
                         </p>
                         <p className="font-medium">
-                          {getResolutionDuration() || '—'}
+                          {getResolutionDuration() || '-'}
                         </p>
                       </div>
                       <div>
@@ -614,7 +614,7 @@ export default function FormSLATrackerDetail({
                         <p className="font-medium">
                           {tracking.resolved_by_user_name ||
                             tracking.resolved_by ||
-                            '—'}
+                            '-'}
                         </p>
                       </div>
                       {tracking.average_resolution_time != null && (

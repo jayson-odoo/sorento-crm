@@ -1,4 +1,4 @@
-"""The `require` seam on POST /references/resolve — shape B over the wire.
+"""The `require` seam on POST /references/resolve - shape B over the wire.
 
 Three properties carry the contract:
 
@@ -6,7 +6,7 @@ Three properties carry the contract:
   2. present -> ONE nested `predicate` block (never top-level scalars, never keys
      inside `by_entity_type`) + qualifying products as ordinary matches with
      `match_tier="spec_search"`
-  3. an unknown key is a 422 — a parser emitting one is a bug to surface, not skip
+  3. an unknown key is a 422 - a parser emitting one is a bug to surface, not skip
 
 Contract: sorento_crm_n8n/n8n-workflows-init/plans/crm-ask-spec-backward-search.md.
 """
@@ -124,7 +124,7 @@ def test_require_returns_the_predicate_block_and_ordinary_matches(client):
         if m.get("match_tier") == "spec_search"
     ]
     assert [m["canonical_code"] for m in matches] == ["ZZTKS9001"]
-    # Every returned id already satisfies the predicate — the downstream MCP
+    # Every returned id already satisfies the predicate - the downstream MCP
     # call stays dumb. And the block is nested, never splashed on by_entity_type.
     assert "qualifying_total" not in payload
     assert "predicate" not in (payload.get("by_entity_type") or {})

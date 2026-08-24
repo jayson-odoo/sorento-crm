@@ -1,7 +1,7 @@
 """Per-attachment AI extract for master-data field tooltips.
 
 Distinct from the portal extract endpoint at
-``/api/v1/public/portal/ai-extract`` — this one is JWT-authenticated, takes an
+``/api/v1/public/portal/ai-extract`` - this one is JWT-authenticated, takes an
 existing ``attachment_id`` instead of multipart files, and runs the extract
 pipeline against that doc only, narrowed to the requested ``field_keys``.
 

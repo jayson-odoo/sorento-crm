@@ -3,10 +3,10 @@
 Used by:
  * The attachment upload + update endpoints (to validate the per-attachment
    ``target_field_keys`` template against the registry).
- * Every link API (external + manual) — calls :meth:`apply_template_to_row`
+ * Every link API (external + manual) - calls :meth:`apply_template_to_row`
    after a per-row link is inserted, so per-field links materialize
    automatically without n8n having to know what field keys exist.
- * The product list/detail endpoints — :meth:`get_field_attachments_for_rows`
+ * The product list/detail endpoints - :meth:`get_field_attachments_for_rows`
    batch-fetches the per-row map for the response payload.
  * The protected per-row "Manage field links" endpoint.
 """
@@ -152,7 +152,7 @@ class AttachmentFieldLinkService:
         """Idempotently sync the field-link rows for (entity, attachment).
 
         Inserts missing keys, deletes removed keys. Validates against the
-        registry — unknown keys raise 400.
+        registry - unknown keys raise 400.
         """
         et, eid = _normalize_entity(entity_type, entity_id)
         if not attachment_id:
@@ -207,7 +207,7 @@ class AttachmentFieldLinkService:
     ) -> list[str]:
         """Fan an attachment's upload-time template out to a freshly linked row.
 
-        ``override_keys`` (if not None) **replaces** the template — does not
+        ``override_keys`` (if not None) **replaces** the template - does not
         union. A caller that wants the union must pass it explicitly.
         Passing an empty list as override is a way to skip per-field link
         creation for this row.

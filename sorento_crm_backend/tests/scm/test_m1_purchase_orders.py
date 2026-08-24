@@ -1,4 +1,4 @@
-"""SCM M1 — purchase-order read-only list (Postgres-backed, rolled back)."""
+"""SCM M1 - purchase-order read-only list (Postgres-backed, rolled back)."""
 from __future__ import annotations
 
 import uuid
@@ -100,7 +100,7 @@ def test_status_filter(scm_app):
 
 
 def test_no_write_route_exists(scm_app):
-    # M1 PO surface is read-only — POST must not be routed (405).
+    # M1 PO surface is read-only - POST must not be routed (405).
     app, _ = _as(scm_app, "purchasing")
     with TestClient(app) as c:
         res = c.post("/api/v1/scm/purchase-orders", json={})

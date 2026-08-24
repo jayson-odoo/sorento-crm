@@ -1,4 +1,4 @@
-"""SCM M5 — semantic explainer endpoints (bounded prose + scoped Q&A + advisory).
+"""SCM M5 - semantic explainer endpoints (bounded prose + scoped Q&A + advisory).
 
 Read-oriented viewing aids gated on ``scm.dashboard.view``. Explanation lazily
 caches its prose on first view; Q&A is stateless. No MCP tool / agent loop and no

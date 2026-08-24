@@ -16,7 +16,7 @@ from app.schemas.common import MAX_PAGE_LIMIT
 
 API_V1 = Path(__file__).resolve().parent.parent / "app" / "api" / "v1"
 
-# `limit: int = Query(...)` — capture the full arg list so we can read `le=` and
+# `limit: int = Query(...)` - capture the full arg list so we can read `le=` and
 # skip non-grid caps (those carry a `description=`, e.g. dashboard "top N" sizes).
 _LIMIT_QUERY = re.compile(r"limit:\s*int\s*=\s*Query\((?P<args>[^)]*)\)", re.S)
 _LE = re.compile(r"\ble=(\d+)")
@@ -38,14 +38,14 @@ def test_no_listresponse_endpoint_caps_limit_below_max_page_limit():
     """Every DataGrid list endpoint must allow at least MAX_PAGE_LIMIT rows.
 
     Numeric `le=<n>` caps below 1000 on a `limit` param in a file that serves a
-    `ListResponse[...]` are the exact regression we fixed — they should read
+    `ListResponse[...]` are the exact regression we fixed - they should read
     `le=MAX_PAGE_LIMIT` instead.
     """
     offenders: list[str] = []
     for path, text in _list_response_files():
         for m in _LIMIT_QUERY.finditer(text):
             args = m.group("args")
-            # Skip non-grid caps — they carry an explicit description (e.g. the
+            # Skip non-grid caps - they carry an explicit description (e.g. the
             # stock dashboard "Cap on list sizes (top warehouses...)").
             if "description=" in args:
                 continue

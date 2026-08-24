@@ -1,4 +1,4 @@
-"""Form void — SLA tracker stop via config, no bespoke code (UAC SLA-1..SLA-3).
+"""Form void - SLA tracker stop via config, no bespoke code (UAC SLA-1..SLA-3).
 
 SLA-1: a void emits exactly one emit_form_event(..., 'voided') and the void
        service contains NO direct tracker-stop code (an active tracker is left
@@ -46,7 +46,7 @@ def _tracker_row(db, tid):
 
 
 # --------------------------------------------------------------------------- #
-# SLA-1 — exactly one 'voided' emit, and no direct tracker-stop code
+# SLA-1 - exactly one 'voided' emit, and no direct tracker-stop code
 # --------------------------------------------------------------------------- #
 def test_emits_voided_once_and_no_direct_stop(db):
     actor = H.new_user(db)
@@ -67,7 +67,7 @@ def test_emits_voided_once_and_no_direct_stop(db):
 
 
 # --------------------------------------------------------------------------- #
-# SLA-2 — config lists 'voided' -> active tracker is closed by the orchestrator
+# SLA-2 - config lists 'voided' -> active tracker is closed by the orchestrator
 # --------------------------------------------------------------------------- #
 def test_config_voided_closes_tracker(db):
     actor = H.new_user(db)
@@ -84,7 +84,7 @@ def test_config_voided_closes_tracker(db):
 
 
 # --------------------------------------------------------------------------- #
-# SLA-3 — config does NOT list 'voided' -> void still succeeds, tracker open
+# SLA-3 - config does NOT list 'voided' -> void still succeeds, tracker open
 # --------------------------------------------------------------------------- #
 def test_config_without_voided_still_voids(db):
     actor = H.new_user(db)

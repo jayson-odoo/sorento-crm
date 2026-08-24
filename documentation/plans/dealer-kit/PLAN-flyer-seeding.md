@@ -1,4 +1,4 @@
-# PLAN — Seed a Dealer Kit catalogue from the printed flyer (S7)
+# PLAN - Seed a Dealer Kit catalogue from the printed flyer (S7)
 
 **Status:** Grilled 2026-07-31. Decisions below are settled; S7.1 is built and green.
 S7.2 is built and green: `page.promotion_id` (migration 315), `resolve_prices` (ADR 0008),
@@ -98,80 +98,80 @@ cropping to the page box.
 
 ## Decisions
 
-**D1 — Structure-faithful, live bindings.** The doc stores bindings: heading blocks,
+**D1 - Structure-faithful, live bindings.** The doc stores bindings: heading blocks,
 collection blocks bound to product ids, artwork by asset id. Never a price, never a photo
 URL. Exact millimetre positions are the deliberate trade.
 
-**D2 — One page, thirty six sections.** A reader scrolls one catalogue, not 36 URLs.
+**D2 - One page, thirty six sections.** A reader scrolls one catalogue, not 36 URLs.
 Each flyer page becomes a section with `printMode: breakBefore`, so the PDF export still
 comes out as 36 pages. One page also means one publish, one label, one rollback.
 
-**D3 — A printed row is a pinned collection.** `scope='page'`, cards in
+**D3 - A printed row is a pinned collection.** `scope='page'`, cards in
 `pinned_product_ids`, print order in `manual_order`. Not a rule, and **not a promotion
 group**: only 193 of 347 printed rows sit wholly inside one promotion group, and "Faucet
 Series" alone is spread across 27 printed rows. The printed row is the layout unit; the
 promotion is a pricing binding, not a membership one.
 
-**D4 — Colourways stay flat, one tile per code.** 518 of 998 codes carry a colour-looking
+**D4 - Colourways stay flat, one tile per code.** 518 of 998 codes carry a colour-looking
 suffix but only 155 are linked by `variant_of_id`, and the Kit's collection and tile model
 has no variant concept. Collapsing some rows and not others would produce an inconsistent
 page, which is worse than a long one.
 
-**D5 — A brochure links to exactly ONE promotion, explicitly and optionally.**
+**D5 - A brochure links to exactly ONE promotion, explicitly and optionally.**
 Nullable `promotion_id` on `page`. Set by a human, never inferred, though the seed may
 SUGGEST it when a promotion's description matches the uploaded filename. No link means
 list prices only. An audience-split flyer is separate brochures, which is how Sorento
 already produces them: separate PDFs per audience.
 
-**D6 — Tile pricing falls back to the list price, and says nothing false.**
+**D6 - Tile pricing falls back to the list price, and says nothing false.**
 Linked promotion has a row for this product and this viewer's access level, and today is
 inside its dates, then the offer price. Otherwise the list price with no offer styling.
 An expired promotion is simply a promotion with no applicable rows. The seed reports the
 213 codes printed in the flyer but absent from the promotion, so marketing closes the gap
 deliberately.
 
-**D7 — The brochure photo is a flag a human sets, on two surfaces.**
+**D7 - The brochure photo is a flag a human sets, on two surfaces.**
 `product_attachments.is_primary`, reachable from a dedicated picker screen AND from the
 product's own attachments tab (user decision: both). One endpoint, two surfaces.
 
-**D8 — Unknown codes are reported, never guessed.** A code the master does not have is
+**D8 - Unknown codes are reported, never guessed.** A code the master does not have is
 left out of the collection and listed, with a trigram nearest match shown as a suggestion
 that only a click applies. Silently swapping `SRTKS7850` for `SRTKS7851` would be worse
 than a gap.
 
-**D9 — The seed writes nothing to the product master.** Dimensions become a review queue.
+**D9 - The seed writes nothing to the product master.** Dimensions become a review queue.
 
-**D10 — Re-seeding makes a new version, and new collections.** Same page,
+**D10 - Re-seeding makes a new version, and new collections.** Same page,
 `max(version)+1`, published label untouched, and always fresh page-scoped collections:
 reusing one would mutate what an older version renders, which is the one thing versioning
 exists to prevent.
 
 ## Slices, in dependency order
 
-**S7.0 — The brochure image flag.** `PATCH` on a product attachment to set it as the
+**S7.0 - The brochure image flag.** `PATCH` on a product attachment to set it as the
 brochure image (exactly one per product per company), a picker screen filterable by
 promotion so "everything in the A3 flyer" is one sitting, and the same control on the
 product attachments tab. Prerequisite for every tile that shows a photo, and for S8.
 
-**S7.1 — Extraction engine.** DONE. Pure: bytes in, a reading out. 25 tests against three
+**S7.1 - Extraction engine.** DONE. Pure: bytes in, a reading out. 25 tests against three
 pages cut from the real flyer.
 
-**S7.2 — Promotion link and promo price resolution.** `page.promotion_id`, and the
+**S7.2 - Promotion link and promo price resolution.** `page.promotion_id`, and the
 resolver the Kit does not have: today `product_facts` knows `list_price` and nothing else,
 so every tile would show LP. This is the slice that makes a seeded page tell the truth.
 
-**S7.3 — Match and report.** DONE. Codes to products in company scope, trigram suggestions
+**S7.3 - Match and report.** DONE. Codes to products in company scope, trigram suggestions
 for the 38 misses, the not-promoted list, the dimensions candidates. `POST /flyer-readings`,
 `GET /flyer-readings/{id}`, plus the list and a hard `DELETE`.
 
-**S7.4 — Review and seed.** The three-step screen, then `POST /flyer-readings/{id}/seed`
+**S7.4 - Review and seed.** The three-step screen, then `POST /flyer-readings/{id}/seed`
 building the doc through the existing `save_version`. Draft by construction: no label moves.
 
-**S7.5 — Artwork.** Extract, convert CMYK to RGB, crop bleeds to the page box, store as
+**S7.5 - Artwork.** Extract, convert CMYK to RGB, crop bleeds to the page box, store as
 `Asset`, and set it as the Section background with the heading as a text block over it.
 Needs `SectionStyle` to accept an asset id, which it does not today.
 
-**S7.6 — Dimensions review queue.** 425 candidates, applied only on an explicit click by
+**S7.6 - Dimensions review queue.** 425 candidates, applied only on an explicit click by
 someone with the master-data permission.
 
 ## Risks
