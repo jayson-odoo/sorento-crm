@@ -14,7 +14,7 @@ This supersedes two findings in `n8n-contract-product-set-entity.md`:
   **fixed**, command 5 below.
 
 **Later update, on top of PR #286 (`7a632df62`), also uncommitted at the time of writing:**
-command 1's response now also carries `product_id` on every member and a populated
+command 1's response now also carries `uuid` on every member and a populated
 `company_id`/`company_name` on the match - see the note directly above that response for what
 was and was not re-curled for this update.
 
@@ -64,10 +64,10 @@ curl -s -X POST http://localhost:8050/api/v1/system/references/resolve \
 ```
 
 **Update to this response, later in the same branch:** two more fields were added after this
-command was first captured - `product_id` on each member (Change 1) and a populated
+command was first captured - `uuid` on each member (Change 1) and a populated
 `company_id`/`company_name` on the match itself (Change 2, `product_set` registered in
 `_company_scoped_models`). `:8050` was not listening when this update was made (checked with
-`lsof -i :8050`, nothing bound), so the response below was NOT re-curled; the `product_id`
+`lsof -i :8050`, nothing bound), so the response below was NOT re-curled; the member `uuid`
 values are the real per-member product ids already proven live in commands 3/4/5 below
 (`SRTWCX8608-RL` = `0fb2507c-c6f3-47a1-ad10-296a3604aaea`, `SRTWCY8608` =
 `732adbfb-06cb-499f-8cd3-88bd16678655`, `SRTWC8608-SC` = `ed83a177-81c0-46e7-9989-d484e54b9c9d`),
@@ -75,7 +75,7 @@ and `company_id`/`company_name` are Sorento's, the same company every other comm
 document runs against. Re-curl this command against a live `:8050` (flag on) before relying on
 this exact byte shape.
 
-Response (flag ON, `product_id`/`company_id`/`company_name` reconstructed as described above -
+Response (flag ON, member `uuid`/`company_id`/`company_name` reconstructed as described above -
 everything else is the real capture):
 
 ```json
@@ -103,9 +103,9 @@ everything else is the real capture):
             "complete_sets": 1629,
             "limiting_member": "SRTWCX8608-RL",
             "members": [
-              {"product_code": "SRTWCX8608-RL", "description": "SORENTO CLOSE COUPLED PEDESTAL (S-TRAP 250MM) SRTWCX8608-RL", "quantity": 1.0, "available": 1629, "is_discontinued": false, "product_id": "0fb2507c-c6f3-47a1-ad10-296a3604aaea"},
-              {"product_code": "SRTWCY8608", "description": "SORENTO CLOSE-COUPLED CISTERN ONLY (S-TRAP).  SRTWCY8608", "quantity": 1.0, "available": 2051, "is_discontinued": false, "product_id": "732adbfb-06cb-499f-8cd3-88bd16678655"},
-              {"product_code": "SRTWC8608-SC", "description": "SORENTO SRTWC8608-SC SEAT COVER ONLY", "quantity": 1.0, "available": 2044, "is_discontinued": false, "product_id": "ed83a177-81c0-46e7-9989-d484e54b9c9d"}
+              {"product_code": "SRTWCX8608-RL", "description": "SORENTO CLOSE COUPLED PEDESTAL (S-TRAP 250MM) SRTWCX8608-RL", "quantity": 1.0, "available": 1629, "is_discontinued": false, "uuid": "0fb2507c-c6f3-47a1-ad10-296a3604aaea"},
+              {"product_code": "SRTWCY8608", "description": "SORENTO CLOSE-COUPLED CISTERN ONLY (S-TRAP).  SRTWCY8608", "quantity": 1.0, "available": 2051, "is_discontinued": false, "uuid": "732adbfb-06cb-499f-8cd3-88bd16678655"},
+              {"product_code": "SRTWC8608-SC", "description": "SORENTO SRTWC8608-SC SEAT COVER ONLY", "quantity": 1.0, "available": 2044, "is_discontinued": false, "uuid": "ed83a177-81c0-46e7-9989-d484e54b9c9d"}
             ]
           }
         }
@@ -119,7 +119,7 @@ everything else is the real capture):
 
 One entity, `entity_type: "product_set"`, its members inside `display.members` - never a fan-out
 of three top-level `product` matches. `allowed_entity_types: ["product"]` is exactly n8n's
-existing hint; nothing about the request changed except this fix. Every member's `product_id`
+existing hint; nothing about the request changed except this fix. Every member's `uuid`
 is what n8n fans out with - pass that list straight into the existing per-product MCP tools'
 `product_ids` param (`crm_inventory_stock_balance_list`, `crm_master_products_list`,
 `crm_marketing_promotion_products_list`, `crm_incoming_stock_by_product`); no new MCP tool

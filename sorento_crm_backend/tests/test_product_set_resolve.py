@@ -204,20 +204,20 @@ def test_ac_e2_every_member_carries_its_code_and_its_own_stock(db: Session, worl
     assert all(m["description"] for m in members)
 
 
-def test_every_member_carries_its_product_id(db: Session, world):
+def test_every_member_carries_its_uuid(db: Session, world):
     """n8n's fan-out needs the MEMBER'S uuid, not the set's - `matches[].uuid`
     already names the set. Asserted against the real seeded row, not merely
     "is not None"."""
     members = _probe(db, world["company"], world["set"].set_code)[0].display["members"]
 
     by_code = {m["product_code"]: m for m in members}
-    assert by_code[world["pedestal"].product_code]["product_id"] == world["pedestal"].id
-    assert by_code[world["cistern"].product_code]["product_id"] == world["cistern"].id
-    assert by_code[world["seat"].product_code]["product_id"] == world["seat"].id
+    assert by_code[world["pedestal"].product_code]["uuid"] == world["pedestal"].id
+    assert by_code[world["cistern"].product_code]["uuid"] == world["cistern"].id
+    assert by_code[world["seat"].product_code]["uuid"] == world["seat"].id
 
 
-def test_member_keys_are_the_frozen_five_plus_product_id(db: Session, world):
-    """Frozen-contract guard - `product_id` is ADDED, every existing key stays."""
+def test_member_keys_are_the_frozen_five_plus_uuid(db: Session, world):
+    """Frozen-contract guard - `uuid` is ADDED, every existing key stays."""
     members = _probe(db, world["company"], world["set"].set_code)[0].display["members"]
 
     for member in members:
@@ -227,7 +227,7 @@ def test_member_keys_are_the_frozen_five_plus_product_id(db: Session, world):
             "quantity",
             "available",
             "is_discontinued",
-            "product_id",
+            "uuid",
         }
 
 
@@ -333,7 +333,7 @@ def test_ac_e8_a_scoped_caller_gets_their_own_companys_set(db: Session, world):
     assert hits[0].uuid != world["set"].id
 
 
-def test_a_scoped_callers_member_product_ids_never_cross_companies(db: Session, world):
+def test_a_scoped_callers_member_uuids_never_cross_companies(db: Session, world):
     """Same-code twin, member-id direction: each company's caller gets its OWN
     members' product ids, never the other company's."""
     other_product = world["product"]("ZZT-OTHER-PED", "1.00", world["other"].id)
@@ -341,14 +341,14 @@ def test_a_scoped_callers_member_product_ids_never_cross_companies(db: Session, 
 
     hits = _probe(db, world["company"], world["set"].set_code)
     assert len(hits) == 1
-    member_ids = {m["product_id"] for m in hits[0].display["members"]}
+    member_ids = {m["uuid"] for m in hits[0].display["members"]}
     assert member_ids == {world["pedestal"].id, world["cistern"].id, world["seat"].id}
     assert other_product.id not in member_ids
 
     other_hits = _probe(db, world["other"], world["set"].set_code)
     assert len(other_hits) == 1
     assert other_hits[0].uuid == twin.id
-    other_member_ids = {m["product_id"] for m in other_hits[0].display["members"]}
+    other_member_ids = {m["uuid"] for m in other_hits[0].display["members"]}
     assert other_member_ids == {other_product.id}
 
 

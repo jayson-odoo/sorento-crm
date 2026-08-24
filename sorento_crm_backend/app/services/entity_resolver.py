@@ -920,7 +920,7 @@ def _probe_product_set(db: Session, tokens: list[str]) -> dict[str, list[Resolve
                     # This is what feeds them - no new tool needed. Machine payload,
                     # not UI, so the UUID rule does not apply (matches.uuid already
                     # carries one at the top level).
-                    "product_id": str(member.product_id),
+                    "uuid": str(member.product_id),
                 }
             )
             # A discontinued member supplies nothing: the set survives it, but it

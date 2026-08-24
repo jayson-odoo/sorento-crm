@@ -123,9 +123,9 @@ stock, none discontinued):
         "complete_sets": 1629,
         "limiting_member": "SRTWCX8608-RL",
         "members": [
-          {"product_code": "SRTWCX8608-RL", "description": "SORENTO CLOSE COUPLED PEDESTAL (S-TRAP 250MM) SRTWCX8608-RL", "quantity": 1.0, "available": 1629, "is_discontinued": false, "product_id": "0fb2507c-c6f3-47a1-ad10-296a3604aaea"},
-          {"product_code": "SRTWCY8608",    "description": "SORENTO CLOSE-COUPLED CISTERN ONLY (S-TRAP).  SRTWCY8608",    "quantity": 1.0, "available": 2051, "is_discontinued": false, "product_id": "732adbfb-06cb-499f-8cd3-88bd16678655"},
-          {"product_code": "SRTWC8608-SC",  "description": "SORENTO SRTWC8608-SC SEAT COVER ONLY",                         "quantity": 1.0, "available": 2044, "is_discontinued": false, "product_id": "ed83a177-81c0-46e7-9989-d484e54b9c9d"}
+          {"product_code": "SRTWCX8608-RL", "description": "SORENTO CLOSE COUPLED PEDESTAL (S-TRAP 250MM) SRTWCX8608-RL", "quantity": 1.0, "available": 1629, "is_discontinued": false, "uuid": "0fb2507c-c6f3-47a1-ad10-296a3604aaea"},
+          {"product_code": "SRTWCY8608",    "description": "SORENTO CLOSE-COUPLED CISTERN ONLY (S-TRAP).  SRTWCY8608",    "quantity": 1.0, "available": 2051, "is_discontinued": false, "uuid": "732adbfb-06cb-499f-8cd3-88bd16678655"},
+          {"product_code": "SRTWC8608-SC",  "description": "SORENTO SRTWC8608-SC SEAT COVER ONLY",                         "quantity": 1.0, "available": 2044, "is_discontinued": false, "uuid": "ed83a177-81c0-46e7-9989-d484e54b9c9d"}
         ]
       }
     },
@@ -142,7 +142,7 @@ stock, none discontinued):
 }
 ```
 
-(The `product_id`/`company_id`/`company_name` values above are the real ids for this set and its
+(The member `uuid`/`company_id`/`company_name` values above are the real ids for this set and its
 members, already proven live against `:8050` in Surface 3/4/5's evidence - they are not
 re-captured here from a fresh curl. See "NEW in this pass" below for how `:8050` stood at the
 time this section was last updated.)
@@ -157,9 +157,10 @@ set-vs-attachment is not. **n8n's renderer has to handle a `matches` array that 
 `product_set` with other types for one token, not assume `product_set` arrives alone.**
 
 **NEW in this pass, answering the standing fan-out question directly: every member object in
-`display.members` now carries `product_id` - that MEMBER's own product UUID (the top-level
-`uuid` on the match is the SET's id, not any member's). This is exactly what feeds n8n's
-fan-out: read `product_id` off each member and pass that list straight into the existing
+`display.members` now carries `uuid` - that MEMBER's own product UUID (the top-level
+`uuid` on the match is the SET's id, not any member's; the two are never the same value and
+must not be confused). This is exactly what feeds n8n's
+fan-out: read `uuid` off each member and pass that list straight into the existing
 per-product MCP tools' `product_ids` param - `crm_inventory_stock_balance_list`,
 `crm_master_products_list`, `crm_marketing_promotion_products_list`,
 `crm_incoming_stock_by_product` - all four already accept a list of product UUIDs there. No new
