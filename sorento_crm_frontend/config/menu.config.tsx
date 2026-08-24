@@ -793,6 +793,8 @@ export const MENU_SIDEBAR: MenuConfig = [
           },
           {
             title: 'Outgoing Mails',
+            path: '/system-management/outgoing-mails',
+            permission: 'system.outgoing_mails.view',
             children: [
               {
                 title: 'Email Outbox',
