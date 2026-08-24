@@ -1,3 +1,4 @@
+import RequireAccess from '@/app/components/common/RequireAccess';
 import { SeriesDetailClient } from './components/SeriesDetailClient';
 
 export const metadata = { title: 'Series' };
@@ -8,5 +9,9 @@ export default async function Page({
   params: Promise<{ seriesId: string }>;
 }) {
   const { seriesId } = await params;
-  return <SeriesDetailClient seriesId={seriesId} />;
+  return (
+    <RequireAccess permission="projects.types.view">
+      <SeriesDetailClient seriesId={seriesId} />
+    </RequireAccess>
+  );
 }

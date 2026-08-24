@@ -13,6 +13,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
+import RequireAccess from '@/app/components/common/RequireAccess';
 import { SeriesListClient } from './components/SeriesListClient';
 
 /**
@@ -28,7 +29,7 @@ export const metadata = { title: 'Series' };
 
 export default function Page() {
   return (
-    <>
+    <RequireAccess permission="projects.types.view">
       <Container>
         <Toolbar>
           <ToolbarHeading>
@@ -56,6 +57,6 @@ export default function Page() {
       <Container>
         <SeriesListClient />
       </Container>
-    </>
+    </RequireAccess>
   );
 }

@@ -551,6 +551,56 @@ PERMISSION_REGISTRY.extend([
 ])
 
 
+# Ideation (Ideas board embed, shared-service SSO)
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "ideation.board.view",
+        "name": "View the Ideas board",
+        "description": "View the Ideas board and open individual ideas.",
+    },
+])
+
+
+# Dealer Kit - these six were previously created ONLY by migration 309's data seed.
+# Any database built via create_all + sync_permissions (CI, `scripts/bootstrap_env`)
+# never executes that seed, so the slugs did not exist and every Dealer Kit route
+# answered 403. Declaring them here is what makes them real on a fresh database;
+# migration 309 stays as the path for databases that were already migrated.
+# `sync_permissions` skips slugs that exist, so the two paths cannot conflict.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "dealer_kit.page.view",
+        "name": "View catalogue pages",
+        "description": "View Dealer Kit catalogue pages and their versions.",
+    },
+    {
+        "slug": "dealer_kit.page.edit",
+        "name": "Edit catalogue pages",
+        "description": "Create and edit catalogue pages, and move the staging label.",
+    },
+    {
+        "slug": "dealer_kit.page.publish",
+        "name": "Publish catalogue pages",
+        "description": "Move the published label, including rolling back to an earlier version.",
+    },
+    {
+        "slug": "dealer_kit.library.manage",
+        "name": "Manage Dealer Kit library",
+        "description": "Manage assets, tile templates and reusable collections.",
+    },
+    {
+        "slug": "dealer_kit.brochure.create",
+        "name": "Create brochures",
+        "description": "Produce a brochure from an existing published page.",
+    },
+    {
+        "slug": "dealer_kit.edition.approve",
+        "name": "Approve catalogue editions",
+        "description": "Approve or reject a catalogue edition before it goes live.",
+    },
+])
+
+
 # SCM (supply chain) — these five were previously created ONLY by migration 274's data
 # seed. Any database built the way CI and `scripts/bootstrap_env` build one (create_all
 # from the ORM, seed reference data, stamp alembic at head) never executes that seed, so
