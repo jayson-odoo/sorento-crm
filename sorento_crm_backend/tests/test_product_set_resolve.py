@@ -354,3 +354,68 @@ def test_the_default_really_is_off_in_the_module(db: Session):
         assert fresh.PRODUCT_SET_RESOLVE_ENABLED is False
     finally:
         importlib.reload(entity_resolver)
+
+
+# ---------------------------------------------------- through the real dispatcher
+#
+# Every test above calls `entity_resolver._probe_product_set` directly, which
+# proves the probe is correct but not that anything actually REACHES it: the
+# `/references/resolve` route and every real caller go through
+# `resolve_references`, which dispatches Tier 1 via `_TIER1_PROBES` - a table
+# this probe is registered in but that no test here exercised. Wiring the table
+# entry wrong (wrong probe, wrong `produces` set, entry missing entirely) would
+# have shipped invisibly: every AC-E test above would still pass.
+
+
+def test_the_real_dispatcher_resolves_a_set_code_to_one_product_set_entity(
+    db: Session, world
+):
+    """`resolve_references` is what `/references/resolve` calls. Going through it
+    (rather than `_probe_product_set` directly) is what proves the `_TIER1_PROBES`
+    entry actually wires the probe in."""
+    with company_scope(db, frozenset({str(world["company"].id)})):
+        result = entity_resolver.resolve_references(
+            db,
+            [world["set"].set_code],
+            enable_prefix_fallback=False,
+            enable_embedding_fallback=False,
+        )
+
+    assert len(result.resolutions) == 1
+    resolution = result.resolutions[0]
+    assert resolution.resolved
+    assert len(resolution.matches) == 1
+
+    entity = resolution.matches[0]
+    assert entity.entity_type == "product_set"
+    assert entity.canonical_code == world["set"].set_code
+
+    member_codes = {m["product_code"] for m in entity.display["members"]}
+    assert member_codes == {
+        world["pedestal"].product_code,
+        world["cistern"].product_code,
+        world["seat"].product_code,
+    }
+    # D7 - a stock/identity answer carries no price, through the real dispatch
+    # path too, not only the direct probe call.
+    assert "price" not in entity.display
+    assert "1180" not in str(entity.display)
+
+
+def test_with_the_gate_off_the_real_dispatcher_does_not_resolve_it_as_a_set(
+    monkeypatch, db: Session, world
+):
+    """The companion direction: OFF must hold through the dispatcher too, not
+    only when the probe is called directly."""
+    monkeypatch.setattr(entity_resolver, "PRODUCT_SET_RESOLVE_ENABLED", False)
+    with company_scope(db, frozenset({str(world["company"].id)})):
+        result = entity_resolver.resolve_references(
+            db,
+            [world["set"].set_code],
+            enable_prefix_fallback=False,
+            enable_embedding_fallback=False,
+        )
+
+    assert len(result.resolutions) == 1
+    resolution = result.resolutions[0]
+    assert all(m.entity_type != "product_set" for m in resolution.matches)

@@ -24,7 +24,11 @@ from app.database import SessionLocal, engine
 from app.models.company import Company
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.product_set import ProductSet, ProductSetMember
-from app.services.company_scope import company_scope, register_company_scope_listeners
+from app.services.company_scope import (
+    DEFAULT_COMPANY_ID,
+    company_scope,
+    register_company_scope_listeners,
+)
 from app.services.error_handler import AppException
 from app.services.product_set_service import ProductSetService
 
@@ -298,6 +302,124 @@ def test_deleting_another_companys_set_is_a_404(db: Session, world):
         with pytest.raises(AppException) as excinfo:
             _service(db, world["other"]).delete(created.id)
     assert excinfo.value.status_code == 404
+
+
+# ---------------------------------------------------- the write path under `None`
+#
+# An `X-API-Key` caller with no `contact_id`/`space_id` resolves to `None` (all
+# companies) - the scope migration 414 grants `master_data.product_sets.add`/
+# `.edit`/`.delete` to `integration_n8n` and `integration_sorento_mcp` for.
+# `set_code` and `product_code` are both unique PER COMPANY only, so an
+# unscoped code lookup here would pick a company by physical row order rather
+# than refusing or resolving deterministically - 11k+ codes exist in both
+# companies. `pin_scope_to_companies` / `resolve_write_company_id` are what the
+# service now pins to before any such lookup runs.
+
+
+@pytest.fixture()
+def cross_company_world(db: Session, world):
+    """A product carrying the SAME code as one of `world`'s, but in `world["other"]`.
+
+    The shape that breaks an unscoped lookup: two rows, two companies, one code.
+    """
+    shared_code = _uid("shared")
+    incumbent = Product(
+        id=str(uuid.uuid4()),
+        product_code=shared_code,
+        product_name=_uid("shared"),
+        category_id=world["pedestal"].category_id,
+        base_uom_id=world["pedestal"].base_uom_id,
+        list_price=Decimal("42.00"),
+        company_id=DEFAULT_COMPANY_ID,
+    )
+    other = Product(
+        id=str(uuid.uuid4()),
+        product_code=shared_code,
+        product_name=_uid("shared"),
+        category_id=world["pedestal"].category_id,
+        base_uom_id=world["pedestal"].base_uom_id,
+        list_price=Decimal("9.00"),
+        company_id=world["other"].id,
+    )
+    db.add_all([incumbent, other])
+    db.flush()
+    return {"shared_code": shared_code, "incumbent_product": incumbent, "other_product": other}
+
+
+def test_create_under_none_scope_pins_to_the_incumbent_company(db: Session, cross_company_world):
+    """Regression: before the pin, `_replace_members`'s code lookup ran under the
+    RAW `None` scope and could resolve `shared_code` to either company's row by
+    row order. Pinned first, it resolves to the SAME company the new set's own
+    `company_id` is about to be auto-stamped into (the incumbent, DEFAULT_COMPANY_ID)."""
+    with company_scope(db, None):
+        created = ProductSetService(db).create(
+            {
+                "set_code": _uid("set"),
+                "name": "created under an all-companies caller",
+                "members": [
+                    {"product_code": cross_company_world["shared_code"], "quantity": 1,
+                     "contributes_to_price": True, "sort_order": 0},
+                ],
+            },
+            created_by=None,
+        )
+
+    assert created.company_id == DEFAULT_COMPANY_ID
+    assert [m.product_id for m in created.members] == [
+        cross_company_world["incumbent_product"].id
+    ]
+
+
+def test_update_under_none_scope_resolves_a_new_member_to_the_sets_own_company(
+    db: Session, world, cross_company_world
+):
+    """Regression: `_require` loads by id (unambiguous even under `None`), but the
+    OLD code let the follow-up member lookup run unscoped anyway, so a member
+    added on edit could land on the wrong company's product. Pinned to the SET's
+    own company (`world["other"]`), it must resolve to THAT company's row."""
+    with company_scope(db, frozenset({str(world["other"].id)})):
+        created = ProductSetService(db).create(
+            {"set_code": _uid("set"), "name": "other company's set", "members": []},
+            created_by=None,
+        )
+
+    with company_scope(db, None):
+        updated = ProductSetService(db).update(
+            created.id,
+            {"members": [
+                {"product_code": cross_company_world["shared_code"], "quantity": 1,
+                 "contributes_to_price": True, "sort_order": 0},
+            ]},
+            updated_by=None,
+        )
+
+    assert [m.product_id for m in updated.members] == [cross_company_world["other_product"].id]
+
+
+def test_a_per_company_duplicate_code_is_still_accepted_under_none_scope(
+    db: Session, world
+):
+    """Regression, the OTHER failure mode: the OLD `_reject_duplicate_code` ran
+    under the RAW `None` scope (no company predicate at all), so it saw EVERY
+    company's sets and would 409 a code that is only taken in a DIFFERENT
+    company than the one this write is about to land in. AC-C.2's guarantee -
+    a code is free per company - must hold for a `None`-scope caller too."""
+    with company_scope(db, frozenset({str(world["other"].id)})):
+        first = ProductSetService(db).create(
+            {"set_code": _uid("dup"), "name": "other company's set", "members": []},
+            created_by=None,
+        )
+
+    with company_scope(db, None):
+        # `None` pins to the incumbent (DEFAULT_COMPANY_ID) - a DIFFERENT
+        # company from `world["other"]` - so the same code must be free here.
+        twin = ProductSetService(db).create(
+            {"set_code": first.set_code, "name": "incumbent set, same code", "members": []},
+            created_by=None,
+        )
+
+    assert twin.company_id == DEFAULT_COMPANY_ID
+    assert twin.id != first.id
 
 
 # ------------------------------------------------------- the routes themselves

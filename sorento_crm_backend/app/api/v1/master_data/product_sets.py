@@ -39,15 +39,42 @@ from app.services.uuid_path_param import validate_uuid_path
 router = APIRouter()
 
 
-def _serialize(product_set) -> dict:
+def _company_name(db: Session, company_id: Optional[str]) -> Optional[str]:
+    """Resolved for the header, never a bare `company_id` on screen."""
+    if not company_id:
+        return None
+    from app.models.company import Company
+
+    row = db.query(Company).filter(Company.id == company_id).first()
+    return row.name if row else None
+
+
+def _user_name(db: Session, user_id: Optional[str]) -> Optional[str]:
+    """Who set the override. Never the raw id - no UUID reaches the screen."""
+    if not user_id:
+        return None
+    from app.models.user import User
+
+    row = db.query(User).filter(User.id == str(user_id)).first()
+    return (row.name or row.email) if row else None
+
+
+def _serialize(product_set, db: Session) -> dict:
     """Flatten the members' product fields, so no UUID reaches the screen."""
+    price = product_set.price.as_dict()
+    # Merged in here rather than in `SetPrice.as_dict()`: that method is a pure,
+    # session-free dataclass method with its own field-set test, and "who set
+    # it" needs a query. Additive only - nothing already declared moves.
+    price["override_set_by_name"] = _user_name(db, product_set.override_set_by)
+    price["override_set_at"] = product_set.override_set_at
     payload = {
         "id": product_set.id,
         "set_code": product_set.set_code,
         "name": product_set.name,
         "is_active": product_set.is_active,
         "company_id": product_set.company_id,
-        "price": product_set.price.as_dict(),
+        "company_name": _company_name(db, product_set.company_id),
+        "price": price,
         "member_count": product_set.member_count,
         "complete_sets": product_set.complete_sets,
         "limiting_member_code": product_set.limiting_member_code,
@@ -88,7 +115,7 @@ def list_product_sets(
     try:
         result = ProductSetService(db).list(page=page, limit=limit, query=query)
         return {
-            "data": [_serialize(row) for row in result.data],
+            "data": [_serialize(row, db) for row in result.data],
             "pagination": {"total": result.total, "page": result.page, "limit": result.limit},
             "empty": result.total == 0,
         }
@@ -162,7 +189,7 @@ def get_product_set(
     db: Session = Depends(get_db),
 ):
     validate_uuid_path(product_set_id, resource="Product Set")
-    return _serialize(ProductSetService(db).get(product_set_id))
+    return _serialize(ProductSetService(db).get(product_set_id), db)
 
 
 @router.post(
@@ -178,7 +205,7 @@ def create_product_set(
     created = ProductSetService(db).create(
         payload.model_dump(), created_by=current_user.get("id")
     )
-    return _serialize(created)
+    return _serialize(created, db)
 
 
 @router.put("/{product_set_id}", response_model=ProductSetDetailResponse)
@@ -198,7 +225,7 @@ def update_product_set(
         payload.model_dump(exclude_unset=True),
         updated_by=current_user.get("id"),
     )
-    return _serialize(updated)
+    return _serialize(updated, db)
 
 
 @router.delete("/{product_set_id}", status_code=status.HTTP_204_NO_CONTENT)

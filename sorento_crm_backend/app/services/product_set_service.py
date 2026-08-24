@@ -113,9 +113,12 @@ from typing import Any, Optional  # noqa: E402
 from sqlalchemy import func, or_  # noqa: E402
 from sqlalchemy.orm import Session, joinedload  # noqa: E402
 
+from app.models.base import set_company_scope  # noqa: E402
 from app.models.inventory import Stock  # noqa: E402
-from app.models.product import Product  # noqa: E402
+from app.models.marketing import PromotionProduct  # noqa: E402
+from app.models.product import Product, ProductAttachment  # noqa: E402
 from app.models.product_set import ProductSet, ProductSetMember  # noqa: E402
+from app.services.company_scope import get_company_scope, resolve_write_company_id  # noqa: E402
 from app.services.error_handler import AppException  # noqa: E402
 
 
@@ -187,6 +190,7 @@ class ProductSetService:
         set_code = (payload.get("set_code") or "").strip()
         if not set_code:
             raise AppException(status_code=422, message="A set code is required")
+        self._pin_scope_for_new_set()
         self._reject_duplicate_code(set_code, exclude_id=None)
 
         product_set = ProductSet(
@@ -205,6 +209,20 @@ class ProductSetService:
         self, product_set_id: str, payload: dict[str, Any], *, updated_by: Optional[str]
     ) -> ProductSet:
         product_set = self._require(product_set_id)
+        # Pin to the set's OWN company before any code-based lookup below. An
+        # X-API-Key caller with no contact/space params loaded this row under the
+        # `None` (all-companies) scope - `_require` matches by id, not by code,
+        # so that lookup is unambiguous - but `_reject_duplicate_code` and
+        # `_replace_members` both match by CODE, which is unique per company
+        # only, so without this pin they would search across both companies
+        # instead of the one this set actually belongs to.
+        #
+        # Deferred import: `app.api.v1.external.utils` sits behind
+        # `app.api.v1.__init__` -> `master_data` -> this module at package-load
+        # time, so importing it at module level here would be a circular import.
+        from app.api.v1.external.utils import pin_scope_to_companies
+
+        pin_scope_to_companies(self.db, [product_set.company_id], anchor="This product set")
 
         if "set_code" in payload:
             set_code = (payload["set_code"] or "").strip()
@@ -242,6 +260,27 @@ class ProductSetService:
 
     # ---------------------------------------------------------------- internals
 
+    def _pin_scope_for_new_set(self) -> None:
+        """Pin the session to ONE company before any code-based lookup runs.
+
+        `set_code` and `product_code` are unique PER COMPANY only
+        (`uq_product_sets_company_code`, `uq_products_company_product_code`), so
+        an X-API-Key caller with no contact/space params - the `None`
+        (all-companies) scope migration 414 grants
+        `master_data.product_sets.add`/`.edit` to - would otherwise let
+        `_reject_duplicate_code` and `_replace_members` search across both
+        companies and pick a row by physical order (11k+ codes exist in both).
+        `resolve_write_company_id` is the SAME decision `before_insert` makes
+        when it stamps the new set's own `company_id`, so pinning to it here
+        keeps the duplicate check and the member lookup consistent with the
+        company the set is about to be created in: a real single-company scope
+        passes through unchanged, `None` pins to the incumbent company (the
+        same fallback the stamp would use anyway), and an unset/ambiguous scope
+        still raises exactly as `before_insert` would.
+        """
+        company_id = resolve_write_company_id(get_company_scope(self.db))
+        set_company_scope(self.db, frozenset({company_id}))
+
     def _reject_duplicate_code(self, set_code: str, *, exclude_id: Optional[str]) -> None:
         q = self.db.query(ProductSet).filter(
             func.lower(ProductSet.set_code) == set_code.lower()
@@ -255,10 +294,17 @@ class ProductSetService:
             )
 
     def _replace_members(self, product_set: ProductSet, members: list[dict[str, Any]]) -> None:
+        # Read before the delete, so a product dropped by this replace can be
+        # told apart from one that stays (its row is deleted and re-created
+        # below either way, since membership is replaced wholesale - but the
+        # PRODUCT it names is what the fan-out cleanup below cares about).
+        previous_product_ids = {str(m.product_id) for m in product_set.members}
+
         for existing in list(product_set.members):
             self.db.delete(existing)
         self.db.flush()
 
+        kept_product_ids: set[str] = set()
         for index, raw in enumerate(members):
             code = (raw.get("product_code") or "").strip()
             if not code:
@@ -277,6 +323,7 @@ class ProductSetService:
                     status_code=422,
                     message=f"No product in this company carries the code {code}",
                 )
+            kept_product_ids.add(str(product.id))
             self.db.add(
                 ProductSetMember(
                     product_set_id=product_set.id,
@@ -287,6 +334,38 @@ class ProductSetService:
                 )
             )
         self.db.flush()
+
+        removed_product_ids = previous_product_ids - kept_product_ids
+        if removed_product_ids:
+            self._detach_set_fanout_links(product_set.id, removed_product_ids)
+
+    def _detach_set_fanout_links(self, product_set_id: str, product_ids: set[str]) -> None:
+        """Remove the attachment/promotion links THIS set's own fan-out created
+        for a product that just left it (D10).
+
+        `linked_via_set_id` is stamped ONLY when `_resolve_codes` expanded a set
+        code into its members (`app/api/v1/external/product_attachments.py`,
+        `app/api/v1/external/promotions.py`) - a NULL value means a person or an
+        exact product code made the link, and that is never touched here. A
+        cert-bearing attachment's `product_attachments` row is written solely by
+        `CertificateService` (COV-1), which never sets `linked_via_set_id`, so
+        those rows are naturally excluded by the same filter, no carve-out
+        needed. Matched on the pair (this set, this product) so a link fanned
+        out for a DIFFERENT member of the same set is left alone.
+
+        Deleting the WHOLE set is a different question, answered by the
+        `ON DELETE SET NULL` foreign key (migration 412): the documents a
+        deleted set once linked must survive it, only their provenance goes.
+        This method only runs for a member that leaves a set that still exists.
+        """
+        self.db.query(ProductAttachment).filter(
+            ProductAttachment.linked_via_set_id == product_set_id,
+            ProductAttachment.product_id.in_(list(product_ids)),
+        ).delete(synchronize_session=False)
+        self.db.query(PromotionProduct).filter(
+            PromotionProduct.linked_via_set_id == product_set_id,
+            PromotionProduct.product_id.in_(list(product_ids)),
+        ).delete(synchronize_session=False)
 
     def _available_for(self, product_ids: list[str]) -> dict[str, int]:
         """`{product_id: units across every warehouse}` in one query."""

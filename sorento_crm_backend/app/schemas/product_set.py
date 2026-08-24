@@ -30,6 +30,10 @@ class ProductSetPriceResponse(BaseModel):
     resolved: Optional[Decimal] = None
     is_overridden: bool = False
     reason: Optional[str] = None
+    #: Resolved from `override_set_by` (a user id) - never the raw id, no UUID
+    #: reaches the screen. Null when there is no override to attribute.
+    override_set_by_name: Optional[str] = None
+    override_set_at: Optional[datetime] = None
 
 
 class ProductSetMemberResponse(BaseModel):
@@ -57,6 +61,8 @@ class ProductSetResponse(BaseModel):
     name: str
     is_active: bool = True
     company_id: Optional[str] = None
+    #: Resolved for the header. Never the bare `company_id` on screen.
+    company_name: Optional[str] = None
     price: ProductSetPriceResponse
     member_count: int = 0
     complete_sets: Optional[int] = None

@@ -311,6 +311,7 @@ from app.models.product_set_proposal import (  # noqa: E402
     ProductSetProposal,
     ProductSetProposalBatch,
 )
+from app.models.base import set_company_scope  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.services.company_scope import (  # noqa: E402
     get_company_scope,
@@ -515,7 +516,8 @@ class ProductSetProposalService:
     # ---------------------------------------------------------------- internals
 
     def _require_one_company(self) -> str:
-        """The one company this pass is for, or a refusal.
+        """The one company this pass is for, or a refusal - and PIN the session
+        to it before returning.
 
         An `X-API-Key` principal carries no contact identity and resolves to the
         `None` scope, which means ALL companies - and every part of this pass
@@ -531,6 +533,13 @@ class ProductSetProposalService:
         the empty scope and takes that same refusal rather than a second one
         worded differently. It is the ONE case that function deliberately lets
         through, mapping it to the incumbent company (see its own note).
+
+        Pinning here (rather than only validating) matters for `apply()`: it
+        calls into `ProductSetService(self.db).create(...)`, whose own
+        duplicate-code check and member-code resolution both match by CODE, not
+        by id, so they need the SAME narrow, single-company scope this method
+        already had to resolve to pass at all - not a second, independent
+        resolution of it.
         """
         scope = get_company_scope(self.db)
         company_id = resolve_write_company_id(frozenset() if scope is None else scope)
@@ -545,6 +554,7 @@ class ProductSetProposalService:
                 ),
                 code="company_scope_required",
             )
+        set_company_scope(self.db, frozenset({company_id}))
         return company_id
 
     def _batch(self) -> Optional[ProductSetProposalBatch]:

@@ -10,6 +10,8 @@
 /** One real SKU inside a set. These are what a stock answer counts. */
 export interface ProductSetMember {
   id: string;
+  /** Used only to build the link back to the product's own page - never shown. */
+  product_id: string;
   /** Human-readable. No UUID reaches the UI. */
   product_code: string;
   product_name: string;

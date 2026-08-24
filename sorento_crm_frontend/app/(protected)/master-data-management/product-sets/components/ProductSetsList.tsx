@@ -288,11 +288,7 @@ export default function ProductSetsList() {
         </DataGrid>
       )}
 
-      <ProductSetFormModal
-        open={creating}
-        onOpenChange={setCreating}
-        productSet={null}
-      />
+      <ProductSetFormModal open={creating} onOpenChange={setCreating} />
 
       <ConfirmDeleteDialog
         open={deleting !== null}
