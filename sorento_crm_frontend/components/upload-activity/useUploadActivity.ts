@@ -15,7 +15,7 @@
  *   - new uploads from the dialog force an immediate refetch (Phase 2 wiring)
  */
 
-import { useMemo } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import {
@@ -23,6 +23,11 @@ import {
   type UploadActivityResponse,
 } from '@/services/uploadActivityService';
 
+import {
+  getDismissedServerSnapshot,
+  getDismissedSnapshot,
+  subscribeDismissed,
+} from './dismissedSessions';
 import { UPLOAD_ACTIVITY_QUERY_KEY } from './queryKeys';
 import type { UploadActivitySession } from './types';
 import { useUploadManager } from './UploadManagerContext';
@@ -33,18 +38,26 @@ export interface UploadActivityFeed {
   hasInFlight: boolean;
   refetch: () => void;
   isLoading: boolean;
+  /** Sessions the user has already seen — excluded from `badgeCount`. */
+  dismissed: ReadonlySet<string>;
 }
 
 const QUERY_KEY = UPLOAD_ACTIVITY_QUERY_KEY;
 
-function computeBadgeCount(sessions: UploadActivitySession[]): number {
+function computeBadgeCount(
+  sessions: UploadActivitySession[],
+  dismissed: ReadonlySet<string>,
+): number {
   let count = 0;
   for (const s of sessions) {
+    // In-flight always counts, and is never dismissable: it is a live state
+    // that resolves on its own, and if it resolves into a failure the session
+    // becomes `needs_action` and is counted again below.
     if (s.status === 'uploading' || s.status === 'processing') {
       count += 1;
       continue;
     }
-    if (s.needs_action) count += 1;
+    if (s.needs_action && !dismissed.has(s.session_id)) count += 1;
   }
   return count;
 }
@@ -82,6 +95,16 @@ export function useUploadActivity(): UploadActivityFeed {
     staleTime: 0,
   });
 
+  // Seen-set lives outside React (localStorage), so the badge has to subscribe
+  // to it rather than read it once — the drawer marks sessions seen on open and
+  // the badge must drop in the same commit.
+  const dismissedIds = useSyncExternalStore(
+    subscribeDismissed,
+    getDismissedSnapshot,
+    getDismissedServerSnapshot,
+  );
+  const dismissed = useMemo(() => new Set(dismissedIds), [dismissedIds]);
+
   const sessions = useMemo<UploadActivitySession[]>(() => {
     const beList = query.data?.sessions ?? [];
     const optimistic = Object.values(state.sessions);
@@ -97,12 +120,13 @@ export function useUploadActivity(): UploadActivityFeed {
 
   return {
     sessions,
-    badgeCount: computeBadgeCount(sessions),
+    badgeCount: computeBadgeCount(sessions, dismissed),
     hasInFlight: computeHasInFlight(sessions),
     refetch: () => {
       void query.refetch();
     },
     isLoading: query.isLoading,
+    dismissed,
   };
 }
 

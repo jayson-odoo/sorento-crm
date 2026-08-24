@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
+import { dismissSessions, pruneDismissed } from './dismissedSessions';
 import { EmptyState } from './EmptyState';
 import { UploadSessionRow } from './UploadSessionRow';
 import { useUploadActivity } from './useUploadActivity';
@@ -33,6 +34,19 @@ export function UploadActivityDrawer() {
   useEffect(() => {
     if (state.isDrawerOpen) refetch();
   }, [state.isDrawerOpen, refetch]);
+
+  // Opening the drawer IS the dismissal: the badge counts sessions that want
+  // attention, and the user has now given it. Only sessions that are
+  // `needs_action` right now are marked — an upload still in flight is not, so
+  // if it goes on to fail the badge comes back rather than being pre-silenced.
+  // Pruning in the same pass keeps the stored list to what the feed still shows.
+  useEffect(() => {
+    if (!state.isDrawerOpen || sessions.length === 0) return;
+    pruneDismissed(sessions.map((s) => s.session_id));
+    dismissSessions(
+      sessions.filter((s) => s.needs_action).map((s) => s.session_id),
+    );
+  }, [state.isDrawerOpen, sessions]);
 
   return (
     <Sheet open={state.isDrawerOpen} onOpenChange={(o) => setDrawerOpen(o)}>
