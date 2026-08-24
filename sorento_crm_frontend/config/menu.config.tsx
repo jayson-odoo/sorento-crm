@@ -606,7 +606,7 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
   {
-    title: 'Files',
+    title: 'Resources',
     icon: Folder,
     moduleKey: 'resources',
     children: [
