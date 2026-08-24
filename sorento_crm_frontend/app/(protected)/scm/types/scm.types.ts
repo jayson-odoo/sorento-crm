@@ -426,6 +426,26 @@ export interface PurchaseOrderLine {
   uom: string;
   /** The line's own destination - location is a line fact, never a header one. */
   warehouse_code?: string | null;
+  /** `open` or anything else. A line that has left the book is not a commitment however
+   *  much quantity it still shows. */
+  line_status?: string;
+  /** When this line's goods are due. Per line, for the same reason as the location. */
+  expected_date?: string | null;
+  /**
+   * What we pay for this line, and what came off it. Decimal STRINGS, never floats: the
+   * backend sends `Decimal`, Pydantic serialises it as a string, and a float sum of 200
+   * line totals drifts by a cent that then reads as a data problem.
+   *
+   * `unit_price` is the `purchase_order_lines.unit_cost` column under the name the sales
+   * screen uses for the same fact, so the two grids one click apart do not label one figure
+   * two ways. All three are null when the source document priced nothing - a 0 discount
+   * claims a discount of nothing was given, and a 0 total claims free goods.
+   */
+  unit_price?: string | null;
+  discount?: string | null;
+  line_total?: string | null;
+  /** The currency the figures above are IN. Blank predates the book having more than one. */
+  currency?: string | null;
 }
 
 export interface PurchaseOrder {
@@ -459,4 +479,42 @@ export interface PurchaseOrder {
   source?: 'recommendation' | 'import' | 'crm' | 'manual';
   /** Goods-receipt reference once a GR has been created from this PO (M4-D6). */
   gr_reference?: string | null;
+  /** What the order is WORTH, summed on the backend from the same line figures the Lines
+   *  tab prints: each line's stated total where it has one, otherwise price x qty less
+   *  discount. `null` when not one line carries money, which is not the same as 0. */
+  total_amount?: string | null;
+  /** The currency the order is written in. Blank means ringgit. */
+  currency?: string | null;
+}
+
+/**
+ * What the detail page's Edit session writes. Mirrors `SalesOrderFormData`'s own
+ * omitted/clear/set rules, which the backend reads through `model_fields_set`.
+ */
+export interface PurchaseOrderUpdateData {
+  /** When the order was raised (`purchase_orders.issue_date`). ISO `yyyy-mm-dd`. */
+  order_date?: string | null;
+  /** When the goods are expected. ISO `yyyy-mm-dd`. */
+  expected_date?: string | null;
+  /** The supplier CODE, never the UUID. */
+  supplier_code?: string | null;
+  /**
+   * Omitted entirely on a header-only edit, so the backend does not re-upsert every line
+   * for nothing. A KEY left off a sent line leaves that line's stored value alone; an
+   * explicit `null` clears it.
+   */
+  lines?: {
+    /** The existing line's id, so the backend matches by id rather than falling back to
+     *  SKU - which is what keeps `qty_received` and any goods-receipt link attached. */
+    id?: string;
+    sku: string;
+    qty_ordered: number;
+    uom?: string | null;
+    warehouse_code?: string | null;
+    expected_date?: string | null;
+    /** Decimal STRINGS. The line TOTAL is deliberately not writable: it is what the
+     *  supplier's document charged. */
+    unit_price?: string | null;
+    discount?: string | null;
+  }[];
 }

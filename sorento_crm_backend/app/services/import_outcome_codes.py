@@ -60,6 +60,11 @@ LINE_WITHDRAWN = "line_withdrawn"
 #: and this item's cell was blank. Same family as LINE_CLOSED: the row WAS written, and
 #: "9,000 products updated" would bury the 642 that lost a number somebody may want back.
 REORDER_LEVEL_CLEARED = "reorder_level_cleared"
+#: A product whose unit of measure the upload moved to the configured default, because the
+#: file states no unit for it. Same family again: the whole point of re-importing the stock
+#: list is usually to correct exactly these rows, and "9,000 products updated" would bury
+#: them. The message names the unit the product left and the one it landed on.
+UOM_DEFAULTED = "uom_defaulted"
 
 # --- deliberate skips -----------------------------------------------------
 DUPLICATE_LINE = "duplicate_line"
@@ -138,6 +143,7 @@ LABELS: dict[str, str] = {
     LINE_CLOSED: "Closed: no longer on the uploaded book",
     LINE_WITHDRAWN: "Withdrawn: this sheet no longer lists it",
     REORDER_LEVEL_CLEARED: "Reorder level cleared: blank in the file",
+    UOM_DEFAULTED: "Unit of measure set from the default",
     DUPLICATE_LINE: "Identical line already exists on this order",
     DUPLICATE_IN_FILE: "The same row appears earlier in this file",
     ALREADY_EXISTS: "Already exists",

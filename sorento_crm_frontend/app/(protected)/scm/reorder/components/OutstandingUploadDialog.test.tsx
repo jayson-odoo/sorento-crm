@@ -318,11 +318,11 @@ describe('OutstandingUploadDialog - test, then upload', () => {
   it('sends the purchase-orders kind when opened for the purchase order book', async () => {
     renderDialog({ kind: 'purchase-orders' });
     expect(
-      screen.getByRole('heading', { name: /Upload outstanding purchase orders/i }),
+      screen.getByRole('heading', { name: /Upload purchase orders/i }),
     ).toBeInTheDocument();
 
     fireEvent.change(
-      screen.getByLabelText('Outstanding purchase orders file') as HTMLInputElement,
+      screen.getByLabelText('Purchase orders file') as HTMLInputElement,
       { target: { files: [xlsx('outstanding-po.xlsx')] } },
     );
     fireEvent.click(testButton());

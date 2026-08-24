@@ -1224,14 +1224,13 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 {so.total_amount ? formatMyrExact(so.total_amount) : '-'}
               </Field>
               <Field label="Total qty">{fmtInt(so.total_qty)}</Field>
+              {/* ALWAYS shown, even when it equals the total. It used to appear only when
+                  the two differed, on the grounds that a repeated figure is noise - but a
+                  field that comes and goes is worse: on a wholly open order the reader has
+                  to work out from its ABSENCE that nothing has shipped, and a section that
+                  hides on some records teaches nobody where anything lives. */}
+              <Field label="Outstanding qty">{fmtInt(so.committed_qty)}</Field>
               <Field label="Lines">{fmtInt(lineCount)}</Field>
-              {/* What is still outstanding, shown only when it differs from what the order
-                  says - on a wholly open order the two are equal and a second identical
-                  figure is noise, while on a part-delivered or absorbed order the gap IS the
-                  answer. */}
-              {so.committed_qty !== so.total_qty ? (
-                <Field label="Outstanding qty">{fmtInt(so.committed_qty)}</Field>
-              ) : null}
             </section>
           </Card>
 

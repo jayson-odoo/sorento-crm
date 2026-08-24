@@ -57,13 +57,19 @@ export function salesOrderPriorityVariant(value: string | null | undefined): Sta
   return SALES_ORDER_PRIORITY_VARIANTS[key] ?? getStatusBadgeVariant(value ?? '');
 }
 
-/** The status filter's options, worded the same way the column is - a filter reading
- *  "Open" over a column of "Outstanding" is two names for one thing on one screen. */
+/**
+ * The status filter's options, worded the same way the column is - a filter reading "Open"
+ * over a column of "Outstanding" is two names for one thing on one screen.
+ *
+ * TWO statuses, because two is all this book holds: `open` (2,854) and `closed` (11,006).
+ * The list used to offer Partially delivered, Fulfilled and Cancelled as well - three
+ * choices that match nothing, so picking one empties the screen and the user is left
+ * wondering which of their other filters did it. The three words still RENDER (see the
+ * label table above) for any row that acquires them through `create_do_from_so`; they are
+ * simply not offered as a filter until they exist.
+ */
 export const SALES_ORDER_STATUS_FILTER_OPTIONS = [
   { value: '', label: 'All statuses' },
   { value: 'open', label: SALES_ORDER_STATUS_LABEL.open },
   { value: 'closed', label: SALES_ORDER_STATUS_LABEL.closed },
-  { value: 'partially_delivered', label: 'Partially delivered' },
-  { value: 'fulfilled', label: 'Fulfilled' },
-  { value: 'cancelled', label: 'Cancelled' },
 ];

@@ -62,6 +62,17 @@ def _seed_po(db) -> str:
     return marker
 
 
+def _po_id(db, number: str) -> str:
+    """The stable id of a PO this test seeded, by its own number. Never a borrowed
+    `LIMIT 1` row - the routes take an id and the tests must not care what else is in the
+    database."""
+    from app.models.procurement import PurchaseOrder
+
+    return str(
+        db.query(PurchaseOrder.id).filter(PurchaseOrder.po_number == number).scalar()
+    )
+
+
 def test_list_shape_and_lines(scm_app):
     app, db = _as(scm_app, "purchasing")
     number = _seed_po(db)
@@ -99,12 +110,37 @@ def test_status_filter(scm_app):
         assert po["status"] == "active"
 
 
-def test_no_write_route_exists(scm_app):
-    # M1 PO surface is read-only - POST must not be routed (405).
+def test_the_collection_itself_is_not_creatable(scm_app):
+    """A purchase order is DRAFTED from an accepted recommendation or arrives through the
+    book upload; there is no "add a purchase order" form, so POST on the collection is not
+    routed. The order can be corrected once it exists - see the PUT below - which is a
+    different thing from being able to invent one here."""
     app, _ = _as(scm_app, "purchasing")
     with TestClient(app) as c:
         res = c.post("/api/v1/scm/purchase-orders", json={})
     assert res.status_code == 405, res.text
+
+
+def test_the_write_routes_that_do_exist_are_routed(scm_app):
+    """The surface is no longer read-only, so this pins what IS there rather than asserting
+    an absence that stopped being true: a PUT that corrects one order, and the three
+    supply-state actions. `405` would mean the route vanished; anything else means it is
+    routed and answered on its own terms."""
+    app, db = _as(scm_app, "purchasing")
+    number = _seed_po(db)
+    po_id = _po_id(db, number)
+
+    with TestClient(app) as c:
+        put = c.put(f"/api/v1/scm/purchase-orders/{po_id}", json={"order_date": "2026-05-04"})
+        confirm = c.post("/api/v1/scm/purchase-orders/bulk-confirm", json={"ids": []})
+        delete = c.post("/api/v1/scm/purchase-orders/bulk-delete", json={"ids": []})
+
+    assert put.status_code == 200, put.text
+    assert put.json()["order_date"] == "2026-05-04"
+    assert confirm.status_code == 200, confirm.text
+    # An empty selection is refused by the service, not by the router: the point here is
+    # only that the route exists.
+    assert delete.status_code != 405, delete.text
 
 
 def test_rbac_denial(scm_app):
@@ -112,6 +148,31 @@ def test_rbac_denial(scm_app):
     with TestClient(app) as c:
         res = c.get("/api/v1/scm/purchase-orders")
     assert res.status_code == 403, res.text
+
+
+def test_every_write_route_needs_the_planning_permission(scm_app):
+    """Read and write are gated separately: `scm.dashboard.view` opens the list, and every
+    route that moves supply state needs `scm.reorder.run`. A principal with neither gets
+    403 on all of them rather than on the read alone."""
+    app, db = _as(scm_app, "purchasing")
+    number = _seed_po(db)
+    po_id = _po_id(db, number)
+    # Re-authenticate as a principal with no role at all, keeping the seeded order.
+    _as(scm_app, None)
+
+    with TestClient(app) as c:
+        assert c.put(
+            f"/api/v1/scm/purchase-orders/{po_id}", json={"order_date": "2026-05-04"}
+        ).status_code == 403
+        assert c.post(
+            "/api/v1/scm/purchase-orders/bulk-confirm", json={"ids": [po_id]}
+        ).status_code == 403
+        assert c.post(
+            "/api/v1/scm/purchase-orders/bulk-delete", json={"ids": [po_id]}
+        ).status_code == 403
+        assert c.post(
+            f"/api/v1/scm/purchase-orders/{po_id}/create-gr"
+        ).status_code == 403
 
 
 # ------------------------------------------------------- outstanding filter (20 Aug)

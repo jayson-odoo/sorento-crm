@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import date
+from datetime import date, datetime
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Optional
 
-from sqlalchemy import func, text
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session, joinedload
 
+from app.models.inventory import Warehouse
 from app.models.procurement import (
     PickingHeader,
     PickingLine,
@@ -68,6 +70,49 @@ def _source_label(source_system: Optional[str]) -> str:
 
 def _is_open_line(line) -> bool:
     return (line.line_status or "") == _OPEN_LINE_STATUS
+
+
+_MONEY_PLACES = Decimal("0.01")
+
+
+def _money(value) -> Optional[Decimal]:
+    """`value` as a Decimal, or None when it is not a number at all."""
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _line_amount(ln: PurchaseOrderLine) -> Optional[Decimal]:
+    """What this line is worth, or None when nobody priced it.
+
+    The supplier's own stated total wins when the book carries one - it is what we were
+    actually charged, tax and rounding included, and recomputing it from the parts would
+    quietly disagree with the invoice. Failing that, the arithmetic the parts support.
+    `None` rather than 0, for the reason `unit_cost` is nullable: a zero is a price OF zero.
+
+    The identical rule the sales book's `_line_amount` follows, so the two screens cannot
+    total the same shape of document two different ways.
+    """
+    stated = _money(ln.line_total)
+    if stated is not None:
+        return stated
+    cost = _money(ln.unit_cost)
+    if cost is None:
+        return None
+    qty = _money(ln.qty_ordered) or Decimal(0)
+    discount = _money(ln.discount) or Decimal(0)
+    return cost * qty - discount
+
+
+def _order_amount(lines: list[PurchaseOrderLine]) -> Optional[Decimal]:
+    """The order's own total, or None when not one of its lines carries money."""
+    amounts = [a for a in (_line_amount(ln) for ln in lines) if a is not None]
+    if not amounts:
+        return None
+    return sum(amounts, Decimal(0)).quantize(_MONEY_PLACES, rounding=ROUND_HALF_UP)
 
 
 class PurchaseOrderService:
@@ -120,10 +165,27 @@ class PurchaseOrderService:
                 "qty_ordered": float(ln.qty_ordered or 0),
                 "qty_received": float(ln.qty_received or 0),
                 "line_status": ln.line_status,
-                "uom": ln.product.base_uom.uom_code if (ln.product and ln.product.base_uom) else "",
+                # The line's own override when the book stated one; otherwise the product's
+                # base unit, exactly as the sales book does it. A purchase order written in
+                # cartons must not read in pieces.
+                "uom": ln.uom or (
+                    ln.product.base_uom.uom_code
+                    if (ln.product and ln.product.base_uom) else ""
+                ),
+                # The money, as stored. Not folded into one figure here: the detail page
+                # shows all three columns, and a screen that could only print a total would
+                # not answer "at what price". `unit_price` is the `unit_cost` COLUMN under
+                # the name the sales screen uses for the same fact - see the schema.
+                "unit_price": ln.unit_cost,
+                "discount": ln.discount,
+                "line_total": ln.line_total,
+                "currency": ln.currency or po.currency,
                 # Location is a LINE fact (captain, 20 Aug) - the header field is gone
                 # from the detail page, so each line states its own destination.
                 "warehouse_code": ln.warehouse.warehouse_code if ln.warehouse else None,
+                "expected_date": (
+                    ln.expected_date.isoformat() if ln.expected_date else None
+                ),
             })
         return {
             "id": po.id,
@@ -141,6 +203,14 @@ class PurchaseOrderService:
             "line_count": len(po.lines),
             "open_qty": open_qty,
             "open_line_count": open_lines,
+            # What the order is worth, summed from the SAME line figures the Lines tab
+            # prints, so the header total and the column under it cannot disagree.
+            "total_amount": _order_amount(list(po.lines)),
+            # The currency the order is written IN. The header's own, or the first line
+            # that names one - the import states it per row and older orders carry none.
+            "currency": po.currency or next(
+                (ln.currency for ln in po.lines if ln.currency), None
+            ),
             "lines": lines,
             "created_at": po.created_at.isoformat() if po.created_at else "",
             "is_on_order": self._is_on_order(po),
@@ -290,6 +360,256 @@ class PurchaseOrderService:
             return None
         gr_refs = self._gr_refs_for([po.id])
         return self.serialize(po, gr_refs.get(po.id))
+
+    def list_supplier_options(
+        self, query: Optional[str], limit: int, offset: int
+    ) -> list[dict]:
+        """Suppliers for the detail page's Supplier select, searched on the SERVER.
+
+        Two columns, not the ORM row: the procurement master's own `/suppliers/select`
+        returns whole supplier records (credit terms included) and takes no `limit`/`offset`
+        at all, so a paged picker could not page it. Ordered by code so two pages neither
+        repeat nor skip a row - without an ORDER BY, `offset` walks an arbitrary order.
+        """
+        q = self.db.query(Supplier.supplier_code, Supplier.supplier_name).filter(
+            Supplier.is_active.is_(True)
+        )
+        if query and query.strip():
+            needle = f"%{query.strip()}%"
+            q = q.filter(
+                or_(
+                    Supplier.supplier_code.ilike(needle),
+                    Supplier.supplier_name.ilike(needle),
+                )
+            )
+        rows = q.order_by(Supplier.supplier_code).offset(offset).limit(limit).all()
+        return [
+            {"supplier_code": code, "supplier_name": name or code} for code, name in rows
+        ]
+
+    # -- writes --------------------------------------------------------------
+
+    def _get_or_404(self, po_id: str) -> PurchaseOrder:
+        po = self._base_query().filter(PurchaseOrder.id == po_id).first()
+        if po is None:
+            raise AppException(status_code=404, message="Purchase order not found.")
+        return po
+
+    def _parse_date(self, value: str, field: str) -> date:
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            raise AppException(
+                status_code=400, message=f"{field} must be a date as yyyy-mm-dd."
+            )
+
+    def _supplier(self, code: str) -> Supplier:
+        supplier = (
+            self.db.query(Supplier).filter(Supplier.supplier_code == code).first()
+        )
+        if supplier is None:
+            raise AppException(status_code=404, message=f"No supplier with code {code}.")
+        return supplier
+
+    def _product(self, sku: str) -> Product:
+        product = self.db.query(Product).filter(Product.product_code == sku).first()
+        if product is None:
+            raise AppException(status_code=404, message=f"No product with code {sku}.")
+        return product
+
+    def _warehouse(self, code: str) -> Warehouse:
+        warehouse = (
+            self.db.query(Warehouse).filter(Warehouse.warehouse_code == code).first()
+        )
+        if warehouse is None:
+            raise AppException(status_code=404, message=f"No location with code {code}.")
+        return warehouse
+
+    def update(self, po_id: str, data) -> dict:
+        """Correct a purchase order in place, header and lines.
+
+        The supply-side twin of `SalesOrderService.update`, and it follows the identical
+        rules, because the two screens are one click apart and a planner must not have to
+        learn two behaviours for one gesture:
+
+        * `model_fields_set`, not `is not None` - an omitted key leaves the stored value
+          alone, one sent as an explicit `null` CLEARS it. Both arrive as `None` on the
+          Pydantic model, and only the second means "unset this";
+        * `lines` sent at all upserts the WHOLE array, matching by `id` first and SKU
+          otherwise, so a matched line keeps its id, its `qty_received` and its
+          `source_system`;
+        * a counterparty, product or location code that resolves to nothing is a 404, never
+          a silent unlink.
+        """
+        po = self._get_or_404(po_id)
+
+        if "supplier_code" in data.model_fields_set:
+            po.supplier_id = (
+                self._supplier(data.supplier_code).id if data.supplier_code else None
+            )
+        if "order_date" in data.model_fields_set:
+            po.issue_date = (
+                self._parse_date(data.order_date, "order_date") if data.order_date else None
+            )
+        if "expected_date" in data.model_fields_set:
+            po.expected_date = (
+                self._parse_date(data.expected_date, "expected_date")
+                if data.expected_date else None
+            )
+        if data.lines is not None:
+            self._upsert_lines(po, data.lines)
+        self.db.commit()
+        # Re-read rather than serialize the in-memory instance: the commit expired it, and
+        # a line the upsert added has no product/warehouse loaded on it yet. `_get_or_404`
+        # rather than `get_one`, which answers `None` for a missing order - by here the
+        # order provably exists, so a `dict | None` return would be a lie the caller has to
+        # unpack.
+        po = self._get_or_404(po_id)
+        gr_refs = self._gr_refs_for([po.id])
+        return self.serialize(po, gr_refs.get(po.id))
+
+    def _upsert_lines(self, po: PurchaseOrder, incoming: list) -> None:
+        """Reconcile ``po.lines`` against the payload IN PLACE, never delete + recreate.
+
+        A delete-and-reinsert resets `qty_received` to 0, forces `source_system` back to
+        nothing on every line, and mints new line ids - which severs every goods receipt
+        (`picking_lines.po_line_id`), every SO<->PO claim and every placed order-inquiry row
+        pointing at the old id (all `ondelete="SET NULL"`), silently dropping a received
+        order's receipt trail on an ordinary quantity edit. Instead: match each payload line
+        to an existing row, update only what the payload actually says, and leave
+        `qty_received`, `source_system`, `line_status` and the id untouched.
+
+        Matched by `id` when the payload carries one (this screen does); otherwise by SKU,
+        first-unmatched-row-wins when a SKU repeats within the order. A payload line that
+        matches nothing existing is a new line. An existing line that nothing in the payload
+        claims is REMOVED - unless goods have already been received against it, or a sales
+        order still claims it through an `OrderLinkClaim`, in which case the whole update is
+        refused with a 409 rather than erasing a receipt or orphaning that claim.
+
+        `warehouse_code` / `expected_date` / `uom` / `unit_price` / `discount` are applied via
+        `model_fields_set`, not a plain `is not None` check, exactly as the sales side does.
+        `line_total` is not in that list on purpose - it is what the supplier's document
+        charged, and rewriting it from an edited cost would replace the invoice with our own
+        arithmetic.
+        """
+        existing_lines = list(po.lines)
+        matched_ids: set[str] = set()
+
+        for ln in incoming:
+            ln_id = getattr(ln, "id", None)
+            target = None
+            if ln_id and ln_id not in matched_ids:
+                target = next((l for l in existing_lines if l.id == ln_id), None)
+            if target is None:
+                sku_norm = ln.sku.strip().lower()
+                target = next(
+                    (
+                        l for l in existing_lines
+                        if l.id not in matched_ids
+                        and l.product is not None
+                        and l.product.product_code.lower() == sku_norm
+                    ),
+                    None,
+                )
+            prod = self._product(ln.sku)
+            fields_set = ln.model_fields_set
+            warehouse_id = (
+                self._warehouse(ln.warehouse_code).id if ln.warehouse_code else None
+            ) if "warehouse_code" in fields_set else None
+            expected_date = (
+                self._parse_date(ln.expected_date, "expected_date")
+                if ln.expected_date else None
+            ) if "expected_date" in fields_set else None
+            uom = (ln.uom or None) if "uom" in fields_set else None
+            # `unit_price` on the wire is the `unit_cost` column - the two screens speak one
+            # word for one fact, and the storage keeps the name the plan's costing reads.
+            money = {}
+            if "unit_price" in fields_set:
+                money["unit_cost"] = ln.unit_price
+            if "discount" in fields_set:
+                money["discount"] = ln.discount
+
+            if target is not None:
+                matched_ids.add(target.id)
+                target.product_id = prod.id
+                target.qty_ordered = ln.qty_ordered
+                if "warehouse_code" in fields_set:
+                    target.warehouse_id = warehouse_id
+                if "expected_date" in fields_set:
+                    target.expected_date = expected_date
+                if "uom" in fields_set:
+                    target.uom = uom
+                for col, value in money.items():
+                    setattr(target, col, value)
+            else:
+                self.db.add(PurchaseOrderLine(
+                    id=str(uuid.uuid4()),
+                    purchase_order_id=po.id,
+                    product_id=prod.id,
+                    qty_ordered=ln.qty_ordered,
+                    qty_received=0,
+                    line_status="open",
+                    warehouse_id=warehouse_id,
+                    expected_date=expected_date,
+                    uom=uom,
+                    currency=po.currency,
+                    **money,
+                ))
+
+        removed = [l for l in existing_lines if l.id not in matched_ids]
+        if not removed:
+            return
+
+        # Received goods first, and off the rows already in memory: a line that has taken
+        # delivery is a receipt, and dropping it erases the observation
+        # `scm.receipt_lead_v` measures this supplier's lead time from. A wrong lead time is
+        # worse than none, because it is trusted.
+        received = next((l for l in removed if float(l.qty_received or 0) > 0), None)
+        if received is not None:
+            raise AppException(
+                status_code=409,
+                message=(
+                    "Cannot remove a line that has already received goods "
+                    f"({received.product.product_code if received.product else 'unknown item'})."
+                ),
+                code="PO_LINE_RECEIVED",
+            )
+
+        removed_ids = [l.id for l in removed]
+        picking = (
+            self.db.query(PickingLine.id)
+            .filter(PickingLine.po_line_id.in_(removed_ids))
+            .first()
+        )
+        if picking:
+            raise AppException(
+                status_code=409,
+                message="Cannot remove a line a goods receipt was recorded against.",
+                code="PO_LINE_HAS_RECEIPT",
+            )
+
+        # Local import: the SO<->PO claim lives in the module schema and this is the one
+        # read in this service that reaches for it, so keeping it here rather than at module
+        # level keeps that visible to whoever reads this method.
+        from app.models.scm import OrderLinkClaim
+
+        claim = (
+            self.db.query(OrderLinkClaim)
+            .filter(OrderLinkClaim.po_line_id.in_(removed_ids))
+            .first()
+        )
+        if claim:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"Cannot remove a line sales order {claim.so_number} is waiting on "
+                    f"(purchase order {claim.po_number})."
+                ),
+                code="PO_LINE_LINKED_TO_CLAIM",
+            )
+
+        for l in removed:
+            self.db.delete(l)
 
     # -- M4 Slice B writes ---------------------------------------------------
 

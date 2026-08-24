@@ -114,6 +114,39 @@ export async function searchCustomerOptions(
 }
 
 /**
+ * Suppliers, SEARCHED ON THE SERVER, one page at a time.
+ *
+ * `getSupplierOptions` above derives its list from the SCM dashboard's supplier AGGREGATE -
+ * a per-supplier health computation - purely to read a code and a name off it, which is a
+ * lot of work for a dropdown. This asks the purchase-order router for the two columns it
+ * actually needs (`GET /scm/purchase-orders/suppliers`), gated on the SAME `scm.dashboard.view`
+ * this screen already holds, so a purchasing role does not 403 on a supplier select the way
+ * it would against the procurement master's own route.
+ *
+ * The label carries the CODE as well as the name, because the read view of the field it
+ * feeds shows the code beside the name and a select that showed only one of the two would
+ * relabel the value the moment it was opened.
+ */
+export async function searchSupplierOptions(
+  query: string,
+  pageIndex = 0,
+): Promise<Option[]> {
+  const search = new URLSearchParams({
+    limit: String(SELECT_PAGE_SIZE),
+    offset: String(pageIndex * SELECT_PAGE_SIZE),
+  });
+  if (query.trim()) search.set('query', query.trim());
+  const res = await apiFetch(`/api/v1/scm/purchase-orders/suppliers?${search.toString()}`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load suppliers'));
+  const rows = (await res.json()) as { supplier_code: string; supplier_name: string }[];
+  return rows.map((s) => ({
+    value: s.supplier_code,
+    label: s.supplier_name ? `${s.supplier_code} · ${s.supplier_name}` : s.supplier_code,
+    searchText: `${s.supplier_code} ${s.supplier_name ?? ''}`,
+  }));
+}
+
+/**
  * Products, SEARCHED ON THE SERVER, one page at a time.
  *
  * `getProductOptions` below asks for no `query` and no `limit`, so the endpoint's own

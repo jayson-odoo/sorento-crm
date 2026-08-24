@@ -52,17 +52,17 @@ import { UploadTestVerdict, type UploadTestResult } from './UploadTestVerdict';
  */
 
 const TITLES: Record<OutstandingImportKind, string> = {
-  // Not "outstanding": the file carries the whole book, orders still owed and orders already
-  // completed alike, and naming the action after half of it is what made the captain ask
-  // which half he was meant to export.
+  // Not "outstanding", on either side: the file carries the whole book, orders still owed
+  // and orders already completed alike, and naming the action after half of it is what made
+  // the captain ask which half he was meant to export.
   'sales-orders': 'Upload sales orders',
-  'purchase-orders': 'Upload outstanding purchase orders',
+  'purchase-orders': 'Upload purchase orders',
 };
 
 /** The dropzone's accessible name, worded the same way its title is. */
 const DROPZONE_LABELS: Record<OutstandingImportKind, string> = {
   'sales-orders': 'Sales orders file',
-  'purchase-orders': 'Outstanding purchase orders file',
+  'purchase-orders': 'Purchase orders file',
 };
 
 /** Everything except `unchanged` - what makes a file worth applying. */

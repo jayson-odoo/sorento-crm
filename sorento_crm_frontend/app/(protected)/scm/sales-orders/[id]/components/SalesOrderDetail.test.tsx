@@ -436,15 +436,17 @@ describe('SalesOrderDetail - the header says what the order IS, once', () => {
     expect(badge?.className).toContain('text-destructive');
   });
 
-  it('hides "Outstanding qty" when it would just repeat the total', () => {
-    // A wholly open order has committed == total, and a second identical figure beside the
-    // first is noise. On a part-delivered one the gap is the answer, so it appears.
+  it('shows "Outstanding qty" ALWAYS, even when it repeats the total', () => {
+    // It used to appear only when it differed from the total, on the grounds that a repeated
+    // figure is noise. A field that comes and goes is worse: on a wholly open order the
+    // reader has to work out from its ABSENCE that nothing has shipped, and a section that
+    // hides on some records teaches nobody where anything lives.
     // Scoped to the Totals card, because the lines grid carries a column of the same name -
     // deliberately, since it is the same quantity once per order and once per line.
     useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
     const { unmount } = renderDetail();
     const summary = () => screen.getByRole('region', { name: 'Totals' });
-    expect(within(summary()).queryByText('Outstanding qty')).not.toBeInTheDocument();
+    expect(within(summary()).getByText('Outstanding qty')).toBeInTheDocument();
     unmount();
 
     useSalesOrder.mockReturnValue({
@@ -454,6 +456,7 @@ describe('SalesOrderDetail - the header says what the order IS, once', () => {
     });
     renderDetail();
     expect(within(summary()).getByText('Outstanding qty')).toBeInTheDocument();
+    expect(within(summary()).getByText('120')).toBeInTheDocument();
   });
 });
 

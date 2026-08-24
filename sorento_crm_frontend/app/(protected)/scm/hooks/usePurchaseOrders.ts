@@ -1,6 +1,12 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import type { SortingState } from '@tanstack/react-table';
-import { getPurchaseOrder, getPurchaseOrders } from '../services/purchaseOrderService';
+import {
+  getPurchaseOrder,
+  getPurchaseOrders,
+  updatePurchaseOrder,
+} from '../services/purchaseOrderService';
+import type { PurchaseOrderUpdateData } from '../types/scm.types';
 
 interface UsePurchaseOrdersParams {
   pageIndex: number;
@@ -45,5 +51,26 @@ export function usePurchaseOrder(id: string | null) {
     staleTime: 5_000,
     refetchOnWindowFocus: false,
     retry: 1,
+  });
+}
+
+/**
+ * Correct a purchase order from its detail page. The twin of `useUpdateSalesOrder`.
+ *
+ * `net-position` is invalidated alongside the list because an edited quantity or a removed
+ * line changes what is on order, and the planning screens read that the moment they are
+ * opened next.
+ */
+export function useUpdatePurchaseOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: PurchaseOrderUpdateData }) =>
+      updatePurchaseOrder(id, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['scm', 'purchase-orders'] });
+      qc.invalidateQueries({ queryKey: ['scm', 'net-position'] });
+      toast.success('Purchase order updated');
+    },
+    onError: (e: Error) => toast.error(e.message || 'Failed to update purchase order'),
   });
 }

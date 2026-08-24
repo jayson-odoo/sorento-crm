@@ -256,7 +256,21 @@ _BINDINGS: dict[str, _Binding] = {
         live_statuses=("active", "received", "partial", "closed"),
         # (line column, extras key). Cost is what the cash co-pilot ranks on, so an absent
         # cost stays absent rather than becoming a zero that reads as free goods.
-        money_cols=(("unit_cost", "unit_cost"), ("currency", "currency")),
+        # `discount` and `total_inc` are the REST of the same money line, added the day the
+        # purchase-order detail page started printing them: a unit cost beside a quantity is
+        # not what the supplier charged. `uom` rides the same mechanism although it is not
+        # money at all - `currency` already does, for exactly that reason - because what this
+        # tuple actually declares is "a line column the file restates and a re-upload must
+        # refresh", and the per-line UoM override is one. Same four, in the same order, as
+        # the sales book above: the two feeds must not diverge on which of the columns their
+        # shared reader carries they choose to keep.
+        money_cols=(
+            ("unit_cost", "unit_cost"),
+            ("discount", "discount"),
+            ("line_total", "total_inc"),
+            ("uom", "uom"),
+            ("currency", "currency"),
+        ),
         # `scm.receipt_lead_v` measures lead days from `po.issue_date`, so an order imported
         # without it contributes nothing to the measured supplier lead time.
         header_cols=(("issue_date", "order_date"), ("currency", "currency")),

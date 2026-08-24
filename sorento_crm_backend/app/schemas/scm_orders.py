@@ -196,7 +196,7 @@ class SalesAgentOption(BaseModel):
     location_group: Optional[str] = None
 
 
-# --- purchase orders (read-only at M1) --------------------------------------
+# --- purchase orders --------------------------------------------------------
 
 class PurchaseOrderLine(BaseModel):
     id: str
@@ -204,7 +204,30 @@ class PurchaseOrderLine(BaseModel):
     product_name: str
     qty_ordered: float
     qty_received: float
+    #: The line's own override when the book stated one, otherwise the product's base unit.
     uom: str
+    #: What we pay for this line, and what the supplier's document states about it.
+    #: `Decimal`, never `float`: money read back through a float is how RM 985.00 becomes
+    #: 984.9999999. All three are `None` when the file said nothing - a 0 discount claims a
+    #: discount of nothing was given, and a 0 total claims the goods were free.
+    #:
+    #: `unit_price` is the `unit_cost` COLUMN under the name the sales-order screen uses for
+    #: the same fact. The two grids are one click apart in the same menu, and two names for
+    #: one figure is how two screens start disagreeing about the same number.
+    unit_price: Optional[Decimal] = None
+    discount: Optional[Decimal] = None
+    line_total: Optional[Decimal] = None
+    #: The currency the three figures above are in. The book is mostly USD.
+    currency: Optional[str] = None
+    #: Where this line lands. Per line: one order routinely arrives into two locations.
+    #: The serializer has emitted this since the header Warehouse field was dropped, and
+    #: `response_model` silently discarded it for want of this declaration.
+    warehouse_code: Optional[str] = None
+    #: `open` or otherwise. A line that has left the order book is not incoming supply
+    #: however much quantity it still shows. Emitted by the serializer, likewise dropped.
+    line_status: str = "open"
+    #: When this line's goods are due. Per line, for the same reason as the location.
+    expected_date: Optional[str] = None
 
 
 class PurchaseOrder(BaseModel):
@@ -223,12 +246,73 @@ class PurchaseOrder(BaseModel):
     #: says. Zero on a fully-received or historical order, which is the point.
     open_qty: float = 0.0
     open_line_count: int = 0
+    #: What the order is WORTH, summed from its own lines: each line's stated `line_total`
+    #: where it has one, otherwise `unit_cost * qty_ordered - discount`. `None` when not one
+    #: line carries money, which is not the same as 0 - an order nobody priced is not an
+    #: order worth nothing. The same rule the sales book's own `total_amount` follows.
+    total_amount: Optional[Decimal] = None
+    #: The currency the order is written in, from the header or, failing that, its first
+    #: priced line. Blank on rows predating the book having more than one.
+    currency: Optional[str] = None
     lines: List[PurchaseOrderLine]
     created_at: str
     # M4 Slice B - draft→confirm→GR flow
     is_on_order: bool = False
     source: str = "manual"           # recommendation | import | manual
     gr_reference: Optional[str] = None
+
+
+class PurchaseOrderLineInput(BaseModel):
+    #: The existing line's id, when the caller has one. Optional - a brand-new line has
+    #: none yet. When present, `update` matches on it FIRST rather than falling back to SKU,
+    #: so an edited line keeps its id (and therefore its `qty_received`, its `source_system`
+    #: and any goods receipt pointing at it) instead of being read as "delete this one,
+    #: insert a new one".
+    id: Optional[str] = None
+    sku: str
+    qty_ordered: float = Field(..., gt=0)
+    #: Optional[str], read via `model_fields_set` (not `is not None`) in `_upsert_lines` -
+    #: an omitted key leaves the line's stored override alone (falling back to the product's
+    #: base UOM on read), while an explicit `null`/`""` clears the override.
+    uom: Optional[str] = Field(None, max_length=100)
+    #: Which warehouse this line lands in, by CODE - never the UUID, matching `sku` /
+    #: `supplier_code` elsewhere on this schema. Same `model_fields_set` semantics as `uom`.
+    #: An unknown code is a 404.
+    warehouse_code: Optional[str] = None
+    #: When this line's goods are due. ISO `yyyy-mm-dd`; same semantics again.
+    expected_date: Optional[str] = None
+    #: What we pay, and what came off it. Same `model_fields_set` semantics as `uom` above:
+    #: a qty-only edit that never sends these keys must not wipe a cost the book imported,
+    #: while an explicit `null` clears the figure. `unit_price` writes the `unit_cost`
+    #: column - see `PurchaseOrderLine`. `line_total` is deliberately NOT writable: it is
+    #: what the supplier's document charged.
+    unit_price: Optional[Decimal] = None
+    discount: Optional[Decimal] = None
+
+
+class PurchaseOrderUpdate(BaseModel):
+    #: When the order was raised (`purchase_orders.issue_date`), under the name the screen
+    #: shows. Correctable because the imported book got it from a spreadsheet and
+    #: `scm.receipt_lead_v` measures the supplier's lead time from this column, so a wrong
+    #: one skews every safety stock computed from it. ISO `yyyy-mm-dd`.
+    order_date: Optional[str] = None
+    #: When the goods are expected. Read via `model_fields_set`: sent as `null` it CLEARS.
+    expected_date: Optional[str] = None
+    #: The supplier, by code. An unknown code is a 404 rather than a silent unlink.
+    supplier_code: Optional[str] = None
+    lines: Optional[List[PurchaseOrderLineInput]] = None
+
+
+class SupplierOption(BaseModel):
+    """One `suppliers` row, for the detail page's Supplier select.
+
+    Served under `scm.dashboard.view` rather than the procurement master's own permission,
+    for the same reason `SalesAgentOption` is: a purchasing/SCM operator role can hold the
+    former without the latter, and this route only ever reads.
+    """
+
+    supplier_code: str
+    supplier_name: str
 
 
 class PurchaseOrderPagination(BaseModel):

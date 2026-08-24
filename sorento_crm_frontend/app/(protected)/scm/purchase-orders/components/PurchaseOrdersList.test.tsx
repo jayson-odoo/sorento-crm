@@ -1,19 +1,22 @@
 /**
- * SCM M4 Slice B - PurchaseOrdersList (AC-M4.6).
- * - draft + active rows render (draft = "Not on order", active = "On order")
- * - PO number is a hyperlink to the detail page (human number, no UUID)
+ * SCM M4 Slice B - PurchaseOrdersList (AC-M4.6), brought to parity with the sales-order list.
+ * - rows render with ONE status pill worded the way the book is read: Outstanding /
+ *     Completed / Draft / Cancelled. The separate "On order" icon column is gone, and so is
+ *     the per-row "Create GR" button
+ * - PO number is a hyperlink to the detail page (human number, no UUID) and the whole ROW
+ *     opens it
  * - select-all selects ALL rows (drafts + active); the Actions dropdown shows
  *     "Confirm N drafts" scoped to the draft subset and is HIDDEN when the
  *     selection has no drafts
- * - Create GR is a per-row action on active POs only
- * - loading / empty / error states
+ * - loading / empty / error states, with an over-filtered book saying something different
+ *     from a book nobody has ever uploaded
  *
  * Data + action hooks are mocked; the dropdown-menu module is stubbed inline so
  * the bulk Actions item is assertable without a Radix portal.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 
 class ResizeObserverStub {
   observe() {}
@@ -28,9 +31,10 @@ if (!window.matchMedia) {
 }
 Element.prototype.scrollIntoView = vi.fn();
 
+const routerPush = vi.fn();
 vi.mock('next/navigation', () => ({
   usePathname: () => '/scm/purchase-orders',
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: routerPush }),
   useSearchParams: () => new URLSearchParams(),
 }));
 
@@ -134,10 +138,24 @@ beforeEach(() => {
 });
 
 describe('PurchaseOrdersList - states (AC-M4.6)', () => {
-  it('renders the empty state when there are no POs', () => {
+  it('renders the never-uploaded empty state when nothing is filtered', () => {
     mockList([], { data: { data: [], pagination: { page: 1, total: 0 } } });
     render(<PurchaseOrdersList />);
+    // The screen opens on Outstanding, which IS a filter - so the honest empty state only
+    // appears once the reader has widened it to All.
+    fireEvent.click(screen.getByRole('radio', { name: 'All' }));
     expect(screen.getByText(/No purchase orders yet/i)).toBeInTheDocument();
+  });
+
+  it('says an over-filtered book is filtered, not empty', () => {
+    // An empty book and an over-filtered one look identical in the grid. A buyer whose
+    // Outstanding view is empty has not lost his purchase orders; they are all completed.
+    mockList([], { data: { data: [], pagination: { page: 1, total: 0 } } });
+    render(<PurchaseOrdersList />);
+    expect(
+      screen.getByText(/No purchase order matches this search and filter/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/No purchase orders yet/i)).toBeNull();
   });
 
   it('renders the loading skeleton state', () => {
@@ -147,8 +165,13 @@ describe('PurchaseOrdersList - states (AC-M4.6)', () => {
   });
 });
 
+/** The grid's own rows. The All / Outstanding / Completed toggle carries the SAME two
+ *  words on purpose, so an unscoped `getByText('Outstanding')` would find the control
+ *  rather than the pill it is meant to be reading. */
+const rows = () => within(document.querySelector('tbody') as HTMLElement);
+
 describe('PurchaseOrdersList - draft + active rows (AC-M4.6)', () => {
-  it('renders a draft ("Not on order") and an active ("On order") row', () => {
+  it('words a draft as Draft and an on-order PO as Outstanding, in ONE column', () => {
     mockList([
       po({ id: 'po-draft', po_number: 'PO-DRAFT-0001', status: 'draft_recommendation' }),
       po({ id: 'po-active', po_number: 'PO-2026/07-0009', status: 'active', is_on_order: true }),
@@ -156,8 +179,36 @@ describe('PurchaseOrdersList - draft + active rows (AC-M4.6)', () => {
     render(<PurchaseOrdersList />);
     expect(screen.getByText('PO-DRAFT-0001')).toBeInTheDocument();
     expect(screen.getByText('PO-2026/07-0009')).toBeInTheDocument();
-    expect(screen.getByText('Not on order')).toBeInTheDocument();
-    expect(screen.getAllByText('On order').length).toBeGreaterThanOrEqual(1);
+    expect(rows().getByText('Draft')).toBeInTheDocument();
+    expect(rows().getByText('Outstanding')).toBeInTheDocument();
+    // The old "On order" / "Not on order" column said the same thing again in different
+    // words, in a column whose only two values are the two the pill now carries.
+    expect(screen.queryByText('On order')).toBeNull();
+    expect(screen.queryByText('Not on order')).toBeNull();
+  });
+
+  it('words a live order with nothing left to come as Completed', () => {
+    mockList([
+      po({ id: 'po-done', po_number: 'PO-2020/03-0004', status: 'closed', is_on_order: false }),
+    ]);
+    render(<PurchaseOrdersList />);
+    // Not "Closed", and not "Received": a 2020 order that arrived six years ago is
+    // completed, and the captain asked for exactly these two words.
+    expect(rows().getByText('Completed')).toBeInTheDocument();
+    expect(screen.queryByText('Closed')).toBeNull();
+  });
+
+  it('opens the order when the row is clicked, carrying the list query', () => {
+    mockList([po({ id: 'po-row-click', po_number: 'PO-2026/07-0011', status: 'active' })]);
+    render(<PurchaseOrdersList />);
+    routerPush.mockClear();
+
+    fireEvent.click(screen.getByText('Acme Sanitary'));
+
+    expect(routerPush).toHaveBeenCalledTimes(1);
+    const href = routerPush.mock.calls[0][0] as string;
+    expect(href.startsWith('/scm/purchase-orders/po-row-click')).toBe(true);
+    expect(href).toContain('page=1');
   });
 
   it('renders the PO number as a hyperlink to the detail page', () => {
@@ -171,14 +222,16 @@ describe('PurchaseOrdersList - draft + active rows (AC-M4.6)', () => {
     expect(href).toContain('page=1');
   });
 
-  it('shows Create GR only on active POs (not on drafts)', () => {
+  it('offers no per-row Create GR on any status', () => {
+    // Recording what arrived is a receiving decision made against the delivery in hand, not
+    // a button beside a row on a list of 13,000 orders - the same reason "Create DO" came
+    // off the sales-order list.
     mockList([
       po({ id: 'po-draft', status: 'draft_recommendation' }),
       po({ id: 'po-active', po_number: 'PO-2026/07-0009', status: 'active', is_on_order: true }),
     ]);
     render(<PurchaseOrdersList />);
-    // Exactly one Create GR button - for the single active PO.
-    expect(screen.getAllByRole('button', { name: /Create GR/i })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: /Create GR/i })).toBeNull();
   });
 });
 
@@ -266,12 +319,23 @@ describe('PurchaseOrdersList - bulk delete (captain, 20 Aug)', () => {
 // to the planner on the reorder screen. Nothing loads it unless this toolbar opens it.
 
 describe('PurchaseOrdersList - upload the order book', () => {
+  /**
+   * Refresh and the book upload are two secondary actions, so the shared toolbar collapses
+   * them into one "Actions" dropdown - the same shape as the sales-order list, and the
+   * reason this toolbar no longer wraps onto a second row. Radix's trigger opens on
+   * pointerdown rather than click, the same as `openFilters()` further down.
+   */
+  const openActions = () => {
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
+  };
+
   it('opens the outstanding PURCHASE-ORDER upload from the toolbar', () => {
     mockList([po({ id: 'po-draft-1' })]);
     render(<PurchaseOrdersList />);
     expect(screen.queryByText(/^outstanding-upload:/)).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: /Upload order book/i }));
+    openActions();
+    fireEvent.click(screen.getByRole('button', { name: /Upload purchase orders/i }));
     // The kind is the whole point: this screen must not open the sales-order book.
     expect(screen.getByText('outstanding-upload:purchase-orders')).toBeInTheDocument();
   });
@@ -282,7 +346,8 @@ describe('PurchaseOrdersList - upload the order book', () => {
     mockList([], { data: { data: [], pagination: { page: 1, total: 0 } } });
     render(<PurchaseOrdersList />);
 
-    fireEvent.click(screen.getByRole('button', { name: /Upload order book/i }));
+    openActions();
+    fireEvent.click(screen.getByRole('button', { name: /Upload purchase orders/i }));
     expect(screen.getByText('outstanding-upload:purchase-orders')).toBeInTheDocument();
   });
 
@@ -295,7 +360,8 @@ describe('PurchaseOrdersList - upload the order book', () => {
      */
     mockList([po({ id: 'po-draft-1' })]);
     render(<PurchaseOrdersList />);
-    fireEvent.click(screen.getByRole('button', { name: /Upload order book/i }));
+    openActions();
+    fireEvent.click(screen.getByRole('button', { name: /Upload purchase orders/i }));
     refetch.mockClear();
 
     const onQueued = uploadProps?.onQueued;
@@ -408,11 +474,11 @@ describe('PurchaseOrdersList - find a SKU and what we last paid for it', () => {
   });
 });
 
-// ── the Outstanding / All / Closed toggle (the captain, 20 Aug) ────────────
+// ── the Outstanding / All / Completed toggle (the captain, 20 Aug) ─────────
 // "how do i know the open PO / outstanding PO" - a glance-able control, defaulting to
 // Outstanding, mapping straight onto the list's `outstanding` query param.
 
-describe('PurchaseOrdersList - Outstanding / All / Closed toggle', () => {
+describe('PurchaseOrdersList - Outstanding / All / Completed toggle', () => {
   it('defaults to Outstanding and sends outstanding: true on the first call', () => {
     mockList([po()]);
     render(<PurchaseOrdersList />);
@@ -441,11 +507,11 @@ describe('PurchaseOrdersList - Outstanding / All / Closed toggle', () => {
     expect(screen.getByText('PO-CLOSED-1')).toBeInTheDocument();
   });
 
-  it('switching to Closed sends outstanding: false', () => {
+  it('switching to Completed sends outstanding: false', () => {
     mockList([po({ id: 'po-cancelled', status: 'cancelled' })]);
     render(<PurchaseOrdersList />);
 
-    fireEvent.click(screen.getByRole('radio', { name: 'Closed' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Completed' }));
 
     const last = usePurchaseOrders.mock.calls[usePurchaseOrders.mock.calls.length - 1][0];
     expect(last).toMatchObject({ outstanding: false });
