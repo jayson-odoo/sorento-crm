@@ -90,6 +90,18 @@ function filterMenuByModule(items: MenuConfig, enabledModuleKeys: Set<string> | 
     });
 }
 
+/** Drop heading items that have no non-heading items following them before the next heading or end of list. */
+export function filterOrphanHeadings(items: MenuConfig): MenuConfig {
+  return items.filter((item, index) => {
+    if (!item.heading) return true;
+    for (let i = index + 1; i < items.length; i++) {
+      if (items[i].heading) return false;
+      return true;
+    }
+    return false;
+  });
+}
+
 export function SidebarMenu() {
   const pathname = usePathname();
   const { data: session, status } = useSession();
@@ -112,10 +124,10 @@ export function SidebarMenu() {
 
   const effectiveMenu = useMemo(() => {
     const bySuper = filterMenuBySuperadmin(menuWithPublishedForms, isSuperadmin);
-    if (isLoading) return bySuper;
+    if (isLoading) return filterOrphanHeadings(bySuper);
     const byPerm = filterMenuByPermission(bySuper, permissionSet);
-    if (modulesLoading) return byPerm;
-    return filterMenuByModule(byPerm, enabledModuleKeys);
+    if (modulesLoading) return filterOrphanHeadings(byPerm);
+    return filterOrphanHeadings(filterMenuByModule(byPerm, enabledModuleKeys));
   }, [
     permissionSet,
     isLoading,
@@ -325,11 +337,11 @@ export function SidebarMenu() {
     return <AccordionMenuLabel key={index}>{item.heading}</AccordionMenuLabel>;
   };
 
-  const userManagementIndex = useMemo(
-    () => effectiveMenu.findIndex((item) => !item.heading && item.title === 'User Management'),
+  const adminHeadingIndex = useMemo(
+    () => effectiveMenu.findIndex((item) => item.heading === 'ADMINISTRATION'),
     [effectiveMenu]
   );
-  const indexToSplit = userManagementIndex >= 0 ? userManagementIndex : effectiveMenu.length;
+  const indexToSplit = adminHeadingIndex >= 0 ? adminHeadingIndex : effectiveMenu.length;
   const menuBefore = useMemo(() => effectiveMenu.slice(0, indexToSplit), [effectiveMenu, indexToSplit]);
   const menuAfter = useMemo(() => effectiveMenu.slice(indexToSplit), [effectiveMenu, indexToSplit]);
 
