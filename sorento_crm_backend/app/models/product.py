@@ -249,6 +249,12 @@ class ProductAttachment(Base, CompanyScopedMixin):
     synced_to_excel = Column(Boolean, default=False, nullable=True)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     updated_at = Column(DateTime(timezone=False), nullable=True)
+    # Which PRODUCT SET fanned this link out, if any. NULL means a person or an
+    # exact product code made it. Without this, a flyer linked by set code cannot
+    # be cleaned up when the set's membership changes.
+    linked_via_set_id = Column(
+        UUID(as_uuid=False), ForeignKey("product_sets.id", ondelete="SET NULL"), nullable=True
+    )
     
     product = relationship("Product", back_populates="product_attachments")
     attachment = relationship("Attachment", foreign_keys=[attachment_id])

@@ -385,6 +385,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             path: '/master-data-management/product-attachments',
             permission: 'master_data.product_attachments.view',
           },
+          {
+            title: 'Product Sets',
+            path: '/master-data-management/product-sets',
+            permission: 'master_data.product_sets.view',
+          },
         ],
       },
       {
@@ -1613,6 +1618,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
           title: 'Product Attachments',
           path: '/master-data-management/product-attachments',
           permission: 'master_data.product_attachments.view',
+        },
+        {
+          title: 'Product Sets',
+          path: '/master-data-management/product-sets',
+          permission: 'master_data.product_sets.view',
         },
       ],
     },

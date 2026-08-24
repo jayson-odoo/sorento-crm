@@ -49,10 +49,10 @@ rows gets zero owned rows (user decision 2026-08-11).
 | # | item | where |
 |---|------|-------|
 | 1 | `filter_specs()` - class-only membership clause, reusing `resolve_terms_to_specs` + `resolve_classes_for_term` | `app/services/product_spec_search.py` (beside the vocabulary) |
-| 2 | `product_set_service.py` - `REQUIRE_LEGS` registry (4 legs) + `resolve_product_set()` | `app/services/product_set_service.py` (new) |
+| 2 | `product_predicate_service.py` - `REQUIRE_LEGS` registry (4 legs) + `resolve_product_set()` | `app/services/product_predicate_service.py` (new) |
 | 3 | `search_specs(product_ids=...)` whitelist param | `app/services/product_spec_search.py` |
 | 4 | `require` on `ResolveReferenceRequest` + veneer in resolve POST + `predicate` response block | `app/api/v1/system/references.py` (veneer only, zero SQL) |
-| 5 | pytest: per-leg, two-company cross-bleed per leg, variant-family counting, unrecognized terms, byte-identical-without-require | `tests/test_product_set_service.py`, `tests/test_resolve_predicate.py` |
+| 5 | pytest: per-leg, two-company cross-bleed per leg, variant-family counting, unrecognized terms, byte-identical-without-require | `tests/test_product_predicate_service.py`, `tests/test_resolve_predicate.py` |
 
 ## Leg semantics (v1)
 
