@@ -356,10 +356,10 @@ class SalesOrderService:
         """
         customer = so.customer
         inquiries = self._line_inquiries(so) if line_planning else {}
+        # Which revision decided each line, what it decided, and what the engine had
+        # suggested (AC-D4). Off by default: the list prints none of it and would pay the
+        # read across a page of 50 orders.
         decided = self._decided_lines(so) if line_planning else {}
-        # What was decided and what had been suggested, per line (AC-D4). Same read as
-        # `_decided_lines` and off by default for the same reason: the list prints neither.
-        compositions = self._decided_compositions(so) if line_planning else {}
         total_qty = 0.0
         committed = 0.0
         lines = []
@@ -425,12 +425,12 @@ class SalesOrderService:
                 # caller asked for them (`line_planning`), and null on a line nobody has
                 # raised or decided anything on - which is most of the book.
                 "order_inquiry": inquiries.get(str(ln.id)),
-                "decision_revision": decided.get(str(ln.id)),
+                "decision_revision": (decided.get(str(ln.id)) or {}).get("revision_no"),
                 # The two compositions in the planning board's vocabulary. Both null on a
                 # line no active revision covers; `supply_proposed` also null on a revision
                 # frozen before the proposal was recorded (AC-D1).
-                "supply_decided": (compositions.get(str(ln.id)) or {}).get("decided"),
-                "supply_proposed": (compositions.get(str(ln.id)) or {}).get("proposed"),
+                "supply_decided": (decided.get(str(ln.id)) or {}).get("decided"),
+                "supply_proposed": (decided.get(str(ln.id)) or {}).get("proposed"),
             })
         order_dt = so.order_date or (so.created_at.date() if so.created_at else date.today())
         agent_code, agent_label = self._agent_fields(so.sales_agent_id, agent_map)
@@ -554,54 +554,23 @@ class SalesOrderService:
             for component in components or []
         ]
 
-    def _decided_compositions(self, so: SalesOrder) -> dict[str, dict]:
-        """Per core line, what the ACTIVE revision decided and what it had been offered.
-
-        Off the SAME `line_snapshots` `_decided_lines` reads - one query, one parse - so the
-        revision number and the composition beside it can never describe different rows.
-
-        `proposed` is `None` (not `[]`) when the snapshot carries no `proposed_components`:
-        the revision was written before the proposal was frozen (AC-D1), and "not recorded"
-        is a different statement from "the engine suggested nothing".
-        """
-        from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
-
-        decision = (
-            self.db.query(SOSupplyDecision.line_snapshots)
-            .join(
-                ProjectSalesOrder,
-                ProjectSalesOrder.id == SOSupplyDecision.project_sales_order_id,
-            )
-            .filter(
-                ProjectSalesOrder.so_id == so.id,
-                SOSupplyDecision.state == DECISION_ACTIVE,
-            )
-            .first()
-        )
-        if decision is None:
-            return {}
-        out: dict[str, dict] = {}
-        for snapshot in decision[0] or []:
-            core_line_id = (snapshot or {}).get("core_line_id")
-            if not core_line_id:
-                continue
-            proposed = (snapshot or {}).get("proposed_components")
-            out[str(core_line_id)] = {
-                "decided": self._supply_components((snapshot or {}).get("components")),
-                "proposed": (
-                    None if proposed is None else self._supply_components(proposed)
-                ),
-            }
-        return out
-
-    def _decided_lines(self, so: SalesOrder) -> dict[str, int]:
-        """Which of this order's lines the ACTIVE revision covers, and at what revision.
+    def _decided_lines(self, so: SalesOrder) -> dict[str, dict]:
+        """What the ACTIVE revision froze for each of this order's lines: the revision that
+        decided it, the composition it decided, and the one the engine had suggested (AC-D4).
 
         A line is covered iff `line_snapshots` holds an object naming it - the same rule
         `scm.committed_v` and the planning board's `_frozen_decisions` read, and the reason
         that JSONB is load-bearing rather than display evidence. A line INSIDE an order
         that has an active decision but absent from its snapshots is not decided (13.4),
         and reads exactly like a line on an order nobody has planned.
+
+        ONE query and ONE parse for all three facts. They came off two identical queries,
+        which is not only a wasted read: two parses of one JSONB column are two chances for
+        the revision number and the composition beside it to describe different rows.
+
+        `proposed` is `None` (not `[]`) when the snapshot carries no `proposed_components`:
+        the revision predates the frozen proposal (AC-D1), and "not recorded" is a different
+        statement from "the engine suggested nothing".
 
         At most one row can answer: `uq_projects_so_core_order` makes one planning record
         per core order and `uq_so_supply_decisions_active` one active revision per record.
@@ -623,11 +592,20 @@ class SalesOrderService:
         if decision is None:
             return {}
         revision_no, snapshots = decision
-        return {
-            str((snapshot or {}).get("core_line_id")): int(revision_no)
-            for snapshot in (snapshots or [])
-            if (snapshot or {}).get("core_line_id")
-        }
+        out: dict[str, dict] = {}
+        for snapshot in snapshots or []:
+            core_line_id = (snapshot or {}).get("core_line_id")
+            if not core_line_id:
+                continue
+            proposed = (snapshot or {}).get("proposed_components")
+            out[str(core_line_id)] = {
+                "revision_no": int(revision_no),
+                "decided": self._supply_components((snapshot or {}).get("components")),
+                "proposed": (
+                    None if proposed is None else self._supply_components(proposed)
+                ),
+            }
+        return out
 
     def with_links(self, rows: list[dict]) -> list[dict]:
         """Attach each order's purchase-order claims, in ONE query for the whole page.

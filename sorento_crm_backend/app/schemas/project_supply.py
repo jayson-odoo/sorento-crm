@@ -286,6 +286,14 @@ class ConfirmLine(BaseModel):
 
 class ConfirmSupplyBody(BaseModel):
     lines: List[ConfirmLine] = Field(default_factory=list)
+    #: The date the planner is deciding AS OF, which the board already has as a dial. It is
+    #: read for ONE purpose: the engine proposal frozen beside the decision (AC-D1) is walked
+    #: against the same day the planner saw, so a board opened on a Friday and confirmed on
+    #: the Monday does not record a suggestion nobody was ever shown. It does NOT move the
+    #: decision itself - live stock, the queue and every refusal are judged against now, and a
+    #: back-dated confirmation of stock that has since gone would be a promise nobody can keep.
+    #: Absent means today, which is what every caller sends today.
+    as_of: Optional[date] = None
 
 
 class ConfirmException(BaseModel):
