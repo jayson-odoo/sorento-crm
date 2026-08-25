@@ -188,12 +188,20 @@ WHERE_OTHER_GROUP = "other_group"
 #: one place, so five rungs cannot phrase the same fact five ways.
 _COVERED_BEFORE = "Fully covered before this rung."
 
-#: Said by both BORROW rungs on a line beyond its ATP reserve window
-#: (`front_planning_engine`): they are not walked for it, so the trail states the rule rather
-#: than reporting an empty search that never happened.
+#: Said by EVERY stock rung on a line beyond its ATP reserve window
+#: (`front_planning_engine`): ladder v3 buys such a line whole and walks none of them, so the
+#: trail states the rule rather than reporting an empty search that never happened.
 _RESERVE_WINDOW_RUNG_WHY = (
-    "The delivery date is beyond the lead time window, so this line takes no stock another "
-    "order holds: purchasing can still buy for it in time."
+    "The delivery date is beyond the lead time window, so this line takes no stock at all: "
+    "purchasing can still buy for it in time."
+)
+
+#: Said by the group-borrow rung on every line. Ruled 25 August 2026: taking another sales
+#: order's committed quantity is a person's decision in Amend, never the engine's, so the
+#: rung is stated and never drawn on automatically.
+_GROUP_BORROW_MANUAL_WHY = (
+    "Borrowing from another sales order is a person's decision: pick the donor in Amend, "
+    "where its position and the order-back are in front of you."
 )
 
 #: What each ranking factor MEANS when it is the reason another line stands in front of you.
@@ -1877,19 +1885,57 @@ class FulfilmentBoardService:
             why=lambda outcome: self._incoming_why(fact, outcome, incoming_taken),
         )
 
-        # 2. The shared pool(s) - own site pool first, then every other (section E rule
-        #    2), what hot-selling gates by demand class (PLAN 3.3a). Built from the SAME
+        # 2. The ownership group: positive Available at this line's own location and at
+        #    every sibling of its group, own location first (ladder v3, section 1b rung
+        #    2 - "consider the group location first (only available quantity)").
+        #
+        #    NOT WALKED beyond the ATP reserve window: v3 buys such a line whole, so
+        #    `compose_line` builds no candidate list for it and the trail must say the
+        #    same thing rather than printing locations that were never consulted.
+        outside_window = bool(row.outside_reserve_window)
+        group_take_candidates = (
+            [] if outside_window else self.supply.group_take_candidates_for(fact)
+        )
+        group_take_offered = sum(
+            (_dec(c.get("qty")) for c in group_take_candidates), _ZERO
+        )
+        group_take_taken = sum(
+            (c.qty for c in components if c.rung == "group_take"), _ZERO
+        )
+        add(
+            "group_take",
+            offered=group_take_offered,
+            taken=group_take_taken,
+            eligible=not outside_window,
+            note=None if outside_window else self._group_take_note(group_take_candidates, fact),
+            why=lambda outcome: (
+                _RESERVE_WINDOW_RUNG_WHY
+                if outside_window
+                else self._group_take_why(outcome, group_take_candidates, fact)
+            ),
+        )
+
+        # 3. The shared pool(s) - own site pool first, then every other (ladder v3,
+        #    section 1b rung 3), what hot-selling gates by demand class (PLAN 3.3a). It
+        #    runs only on what the ownership group above could not meet, and not at all
+        #    beyond the reserve window. Built from the SAME
         #    chain `compose_line` composed from, `pool_chain_for`, unconditionally: a
         #    location with no pool of its OWN still has every other active site pool to
         #    draw from - rule 2 says "own site pool first, THEN the others"; a location
         #    with none of its own simply starts the chain at the others (section 8).
-        pool_chain = self.supply.pool_chain_for(fact, pool_free_left=pool_open)
+        pool_chain = (
+            [] if outside_window else self.supply.pool_chain_for(fact, pool_free_left=pool_open)
+        )
         if not pool_chain:
             add(
                 "pool",
                 eligible=False,
-                note="no shared pool",
-                why=lambda _outcome: "No shared pool for this product.",
+                note=None if outside_window else "no shared pool",
+                why=lambda _outcome: (
+                    _RESERVE_WINDOW_RUNG_WHY
+                    if outside_window
+                    else "No shared pool for this product."
+                ),
             )
         else:
             # Same cap `pool_reserve_capacity` applies to every pool draw
@@ -1980,57 +2026,29 @@ class FulfilmentBoardService:
                     ),
                 )
 
-        # 3. Group take: positive Available at a sibling location, never this line's own
-        #    (section E rule 3).
-        group_take_candidates = self.supply.group_take_candidates_for(fact)
-        group_take_offered = sum(
-            (_dec(c.get("qty")) for c in group_take_candidates), _ZERO
-        )
-        group_take_taken = sum(
-            (c.qty for c in components if c.rung == "group_take"), _ZERO
-        )
-        add(
-            "group_take",
-            offered=group_take_offered,
-            taken=group_take_taken,
-            note=self._group_take_note(group_take_candidates, fact),
-            why=lambda outcome: self._group_take_why(
-                outcome, group_take_candidates, fact
-            ),
-        )
-
-        # 4. Group borrow: other sales orders' committed quantity at this line's
-        #    ownership-group locations, donors ranked below this line auto-composed
-        #    (section E rule 4). Every take here carries an order-back.
+        # 4. Group borrow: another sales order's committed quantity at this line's
+        #    ownership-group locations. NEVER auto-composed under ladder v3 (ruled 25
+        #    August 2026): it is a manual pick in Amend, made by a person with the donor's
+        #    position in front of them, and every take still carries an order-back.
         #
-        #    NOT WALKED beyond the ATP reserve window, and the trail has to say the same
-        #    thing the ladder did: `compose_line` never builds these candidate lists for such
-        #    a line, so building them here would print donors that were never considered and
-        #    let the note offer them. The rung is stated, with the window as its reason - a
-        #    rung skipped by a RULE says so under its own outcome (see this method's
-        #    docstring), which is the whole point of emitting every rung.
-        outside_window = bool(row.outside_reserve_window)
-        group_borrow_candidates = (
-            [] if outside_window else self.supply.group_borrow_auto_candidates_for(fact)
-        )
-        group_borrow_offered = sum(
-            (_dec(c.get("qty")) for c in group_borrow_candidates), _ZERO
-        )
+        #    Stated as a rung all the same, because the whole point of the trail is that a
+        #    source nobody drew on says WHY. Silence here reads as "there was nothing
+        #    there", which is a different and usually false statement - the donors are on
+        #    the contribution's own `borrow_candidates`, waiting for a person.
+        group_borrow_candidates: List[Dict[str, Any]] = []
         group_borrow_taken = sum(
             (c.qty for c in components if c.rung == "group_borrow"), _ZERO
         )
         add(
             "group_borrow",
-            offered=group_borrow_offered,
+            offered=_ZERO,
             taken=group_borrow_taken,
-            eligible=not outside_window,
-            note=None if outside_window else self._group_borrow_note(row, fact),
+            eligible=False,
+            note=None if outside_window else "a person's pick, never proposed",
             why=lambda outcome: (
                 _RESERVE_WINDOW_RUNG_WHY
                 if outside_window
-                else self._group_borrow_why(
-                    outcome, group_borrow_candidates, row, fact
-                )
+                else _GROUP_BORROW_MANUAL_WHY
             ),
         )
 
@@ -2053,7 +2071,6 @@ class FulfilmentBoardService:
                     fact,
                     pools=pool_chain,
                     group_take=group_take_candidates,
-                    group_borrow=group_borrow_candidates,
                 ),
             )
         )

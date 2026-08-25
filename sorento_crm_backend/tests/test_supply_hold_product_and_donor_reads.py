@@ -56,10 +56,11 @@ def test_a_remapped_lines_hold_nets_out_of_the_core_products_free_stock(api):
         f"{BASE}/sales-orders/{order.id}/confirm",
         json={
             "lines": [
+                # Wholly from stock (AC-L5): a line is met entirely from stock or entirely
+                # bought, never a mix.
                 _line_payload(
                     line.id,
-                    reserve=[{"warehouse_id": world.pool_wh.id, "qty": "20"}],
-                    buy_qty="30",
+                    reserve=[{"warehouse_id": world.pool_wh.id, "qty": "50"}],
                 )
             ]
         },
@@ -68,11 +69,11 @@ def test_a_remapped_lines_hold_nets_out_of_the_core_products_free_stock(api):
 
     supply = ProjectSupplyService(db)
     held = supply.held_stock_by_location([mirror_product.id, core_product.id])
-    assert held == {(str(core_product.id), str(world.pool_wh.id)): Decimal("20")}, (
+    assert held == {(str(core_product.id), str(world.pool_wh.id)): Decimal("50")}, (
         "the hold is keyed by the CORE line's product, the one the stock was judged against"
     )
     free = supply.free_stock_by_location([mirror_product.id, core_product.id])
-    assert free[(str(core_product.id), str(world.pool_wh.id))] == Decimal("80")
+    assert free[(str(core_product.id), str(world.pool_wh.id))] == Decimal("50")
     assert free[(str(mirror_product.id), str(world.pool_wh.id))] == Decimal("100"), (
         "the mirror's own product was never promised and stays whole"
     )
