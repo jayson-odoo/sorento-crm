@@ -35,6 +35,14 @@ async def get_warehouses(
         description="Filter by canonical warehouse UUIDs (repeated / csv / JSON array).",
     ),
     is_active: Optional[bool] = Query(None),
+    segment: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by who the location sells to: `dealer` (the bare site codes - "
+            "BRW, MWH, DC1) or `project` (their suffixed bins). Drives the stock "
+            "visibility card's \"Dealer pool\" preset."
+        ),
+    ),
     sort: Optional[str] = Query(None, description="Sort field: warehouse_code|warehouse_name|location|is_active|created_at|updated_at|zones_count|stock_count"),
     dir: Optional[str] = Query("asc", description="asc|desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -49,6 +57,7 @@ async def get_warehouses(
             query=query,
             warehouse_ids=parse_uuid_list(warehouse_ids, param_name="warehouse_ids"),
             is_active=is_active,
+            segment=segment,
             sort_field=sort,
             sort_dir=dir,
         )
