@@ -1488,9 +1488,6 @@ export function PlanLinesGrid({
                 mixed={mixed}
                 cover={coverFor?.(line) ?? NO_COVER}
                 poReceipts={poFor?.(line) ?? []}
-                trend={trendFor?.(line)}
-                economics={economicsFor?.(line)}
-                healthThresholds={healthThresholds}
                 onDecide={(next) => onDecide(line, next)}
                 onClear={() => onClear(line)}
               />
