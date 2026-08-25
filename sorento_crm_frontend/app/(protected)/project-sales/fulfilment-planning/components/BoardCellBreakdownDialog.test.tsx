@@ -321,9 +321,10 @@ describe('BoardCellBreakdownDialog: the table', () => {
     const key = cellOf(lines, freeStock).contributions[0].key;
     renderDialog(lines, freeStock);
 
-    // The RUNG's own word, because the fixture's reserve is a group take: the strip has
-    // named the rung rather than the balance-invariant `kind` since ladder v2.
-    expect(screen.getByText(/Group take 40/)).toBeInTheDocument();
+    // SECTION 2'S word for the rung, off `SHORT_LABELS` - the same word the bar, the
+    // legend and the Suggestion card use for this quantity. The strip used to speak
+    // ladder v2's own names (Group take) beside a card saying "Own" about the same 40.
+    expect(screen.getByText(/Own 40/)).toBeInTheDocument();
     expect(screen.getByText(/Buy 60/)).toBeInTheDocument();
     // The rule's own sentence is behind the info icon now, not a plain `title` - so the
     // numbers above stay directly readable and only the prose needs a hover.
@@ -847,7 +848,9 @@ describe('BoardCellBreakdownDialog: approve, amend, reject', () => {
       },
     });
 
-    expect(screen.getByText('Reserve 20 BRW-BB · Borrow 10 · Buy 13')).toBeInTheDocument();
+    expect(
+      screen.getByText('Buy 13 · Own 20 BRW-BB · Borrow (other) 10 BRW-IB'),
+    ).toBeInTheDocument();
   });
 
   it('still states a decision taken before the editor existed', () => {
@@ -1118,7 +1121,8 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
     });
     renderCell(cell);
 
-    expect(screen.getByText(/Reserve 9 at BRW/)).toBeInTheDocument();
+    // A bare site code is the shared pool, whatever the line's own location is.
+    expect(screen.getByText(/Shared 9 at BRW/)).toBeInTheDocument();
     const note = await shareNoteOf(cell);
     expect(note).toContain('12 lines ahead wanting 1015 · 0 left for this line at BRW-BB');
     // Never a verdict on the reserve: the pool is a second source, so "0 left" does not mean
@@ -1723,7 +1727,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     const cell = cellOf(lines, freeStock);
     renderDialog(lines, freeStock);
 
-    expect(screen.getByText(/Group take 100/)).toBeInTheDocument();
+    expect(screen.getByText(/Own 100/)).toBeInTheDocument();
     expect(screen.getByText('Contested')).toBeInTheDocument();
     // Both rows still carry a share sentence, now behind the icon rather than always visible.
     expect(await sourceNoteOf(cell.contributions[0].key)).toContain('left for this line');
@@ -2004,7 +2008,9 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
   it('states the revision and the composition that was frozen, not a verdict', () => {
     renderDialog([covered()]);
 
-    expect(screen.getByText('Confirmed rev 1 · Borrow 10 · Buy 33')).toBeInTheDocument();
+    expect(
+      screen.getByText('Confirmed rev 1 · Buy 33 · Borrow (other) 10 MWH-IB'),
+    ).toBeInTheDocument();
   });
 
   it('offers Amend and nothing else: there is no approving what is already decided', () => {
@@ -2020,7 +2026,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
   it('shows the frozen composition in the source strip, naming where a borrow came from', () => {
     renderDialog([covered()]);
 
-    expect(screen.getByText('Borrow 10 from MWH-IB · Buy 33')).toBeInTheDocument();
+    expect(screen.getByText('Borrow (other) 10 from MWH-IB · Buy 33')).toBeInTheDocument();
   });
 
   it('says nothing about a queue it is not in', async () => {

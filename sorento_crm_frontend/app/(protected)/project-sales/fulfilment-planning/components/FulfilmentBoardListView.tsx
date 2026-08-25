@@ -166,7 +166,7 @@ export function FulfilmentBoardListView({
           const decision = draft[contribution.key] ?? null;
           const text =
             contribution.covered && contribution.decision
-              ? confirmedSummary(contribution.decision)
+              ? confirmedSummary(contribution.decision, contribution.fulfilment_location)
               : proposalSummaryFor(contribution);
           // The SAME bar the grid draws, off the same draft, so the two views cannot
           // disagree about what this line is going to be supplied from.
@@ -246,7 +246,7 @@ export function FulfilmentBoardListView({
                   {decision.verdict === 'approved'
                     ? 'Approved'
                     : decision.verdict === 'amended'
-                      ? amendSummary(decision)
+                      ? amendSummary(decision, contribution.fulfilment_location)
                       : 'Rejected'}
                 </span>
                 <Button

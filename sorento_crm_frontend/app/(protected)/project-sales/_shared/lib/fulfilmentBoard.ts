@@ -31,6 +31,7 @@ import type {
   ConfirmReserveComponent,
 } from '../types/fulfilmentPlanning.types';
 import { fromMinor, toMinor } from './supplyComposition';
+import { SHORT_LABELS, rowOf } from './supplyVocabulary';
 
 /**
  * A column header with the week-commencing abbreviation taken off.
@@ -759,27 +760,32 @@ export function proposalSummaryFor(contribution: BoardContribution): string {
   if (contribution.unplannable) return 'Needs a location';
   const parts = contribution.sources
     .filter((source) => toMinor(source.qty) > 0)
-    .map((source) => `${sourceLabel(source)} ${source.qty}${sourceSuffix(source)}`);
+    .map(
+      (source) =>
+        `${sourceLabel(source, contribution.fulfilment_location)} ${source.qty}${sourceSuffix(
+          source,
+        )}`,
+    );
   return parts.length > 0 ? parts.join(' · ') : 'Nothing proposed';
 }
 
 /**
- * The word a source reads as, ladder v2's own rung vocabulary
- * (`PLAN-demo-followups-19aug-ladder-v2.md` section E) where it names one: Pool / Group
- * take / Group borrow / Cross-group borrow, rather than the bare "Reserve" / "Borrow" the
- * balance-invariant `kind` carries. A source with no rung (incoming, buy, a pre-v2 row)
- * reads by its kind, unchanged.
+ * The word a source reads as: SECTION 2'S, off `SHORT_LABELS`.
+ *
+ * It used to speak ladder v2's rung names here (Pool / Group take / Group borrow /
+ * Cross-group borrow) while the bar drawn directly under this text said Shared / Own /
+ * Borrow - one composition, two vocabularies, in one table cell. PLAN section 2 is one
+ * table and this reads it, so the words, the colours and the legend cannot drift.
+ *
+ * `ownLocation` is the line's own warehouse code: what tells the agent's own group from the
+ * shared pool for a source that carries no rung.
  */
-function sourceLabel(source: BoardContribution['sources'][number]): string {
-  if (source.rung === 'pool') return 'Pool';
-  if (source.rung === 'group_take') return 'Group take';
-  if (source.rung === 'group_borrow') return 'Group borrow';
-  if (source.rung === 'cross_group_borrow') return 'Cross-group borrow';
-  if (source.kind === 'reserve') return 'Reserve';
-  if (source.kind === 'timely_spo') return 'Incoming';
-  if (source.kind === 'buy') return 'Buy';
-  if (source.kind === 'borrow') return 'Borrow';
-  return 'Cannot be sourced';
+function sourceLabel(
+  source: BoardContribution['sources'][number],
+  ownLocation?: string | null,
+): string {
+  const kind = rowOf(source, ownLocation);
+  return kind ? SHORT_LABELS[kind] : 'Cannot be sourced';
 }
 
 /** "at MWH-BB", or "from SO371334 line 2" for a group borrow, which names a donor SO. */

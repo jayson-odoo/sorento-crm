@@ -196,7 +196,9 @@ describe('PlanningChangeBatchClient - every order section renders', () => {
     renderClient();
     await screen.findByRole('heading', { name: 'JAN - DEC 2026 ORDER.xlsx' });
 
-    expect(screen.getByText('Reserve 40 at BRW-BB · Buy 20')).toBeInTheDocument();
+    // Section 2's words, the same ones the board's own cell and bar use for this
+    // composition: a reserve at the line's own group location is "Own".
+    expect(screen.getByText('Own 40 at BRW-BB · Buy 20')).toBeInTheDocument();
     expect(screen.getByTestId('trail-info-pcb-1-so400875-l2-advance')).toBeInTheDocument();
   });
 
