@@ -2281,3 +2281,82 @@ def test_a_line_the_engine_cannot_plan_freezes_an_empty_proposal_not_a_missing_o
     snapshot = _active_snapshots(db, order.id)[0]
     assert "proposed_components" in snapshot
     assert _shape(snapshot["proposed_components"]) == [("buy", "9", None, "buy")]
+
+
+def test_the_frozen_proposal_does_not_depend_on_the_order_the_lines_were_posted_in(api):
+    """The pool ledger is drawn down as the proposal walk goes, so a walk in PAYLOAD order
+    would freeze a different suggestion for the same board depending on which line the client
+    happened to send first. It walks LINE order, which is the order `proposal_for` walks and
+    therefore the order the planner was actually shown."""
+    client, world = api
+    db = world.db
+    # 30 in the pool against two lines wanting 20 each: whoever is walked first takes the
+    # bigger share, so the order of the walk is visible in the frozen numbers.
+    _stock(db, world.product, world.pool_wh, on_hand=30)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    first = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    second = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line_a = _project_line(db, order, line_no=10, product=world.product, core_line=first)
+    line_b = _project_line(db, order, line_no=20, product=world.product, core_line=second)
+    db.commit()
+
+    def confirm(payload_lines) -> dict:
+        response = client.post(
+            f"{BASE}/sales-orders/{order.id}/confirm", json={"lines": payload_lines}
+        )
+        assert response.status_code == 200, response.text
+        return {
+            snapshot["line_no"]: _shape(snapshot["proposed_components"])
+            for snapshot in _active_snapshots(db, order.id)
+        }
+
+    a_then_b = confirm(
+        [_line_payload(line_a.id, buy_qty="20"), _line_payload(line_b.id, buy_qty="20")]
+    )
+    b_then_a = confirm(
+        [_line_payload(line_b.id, buy_qty="20"), _line_payload(line_a.id, buy_qty="20")]
+    )
+
+    assert a_then_b == b_then_a
+    # And the walk really was order-sensitive, or the assertion above proves nothing: line 10
+    # is reached first and takes what the pool has.
+    assert a_then_b[10] != a_then_b[20]
+
+
+def test_the_frozen_proposal_is_walked_as_of_the_day_the_planner_was_deciding(api):
+    """A board opened on a Friday and confirmed on the Monday must not record a suggestion
+    nobody was ever shown. `as_of` moves the reserve window the ladder judges the line
+    against; it moves nothing about the decision, which is always judged against now."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=20)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    # As of today the line is inside its window, so the ladder offers the stock it stands on.
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, buy_qty="20")]},
+    )
+    assert response.status_code == 200, response.text
+    assert _shape(_active_snapshots(db, order.id)[0]["proposed_components"]) == [
+        ("reserve", "20", world.own_wh.warehouse_code, "group_take")
+    ]
+
+    # Backdated far enough that the required date is beyond the lead-time window, the ladder
+    # walks no stock rung at all and the whole line is a Buy (section 1b rung 0).
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [_line_payload(line.id, buy_qty="20")],
+            "as_of": (date.today() - timedelta(days=900)).isoformat(),
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert _shape(_active_snapshots(db, order.id)[0]["proposed_components"]) == [
+        ("buy", "20", None, "buy")
+    ]

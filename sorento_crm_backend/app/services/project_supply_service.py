@@ -2023,7 +2023,13 @@ class ProjectSupplyService:
             uncover=set(uncover_line_ids),
         )
         return self._write_decision(
-            order, checked, carried=carried, actor_user_id=actor_user_id
+            order,
+            checked,
+            carried=carried,
+            actor_user_id=actor_user_id,
+            # The day the planner was deciding on (the board's own dial), so the proposal
+            # frozen beside the decision is the one they were shown. Absent means today.
+            as_of=getattr(payload, "as_of", None),
         )
 
     def _carried_lines(
@@ -2637,7 +2643,10 @@ class ProjectSupplyService:
     # ------------------------------------------------------------------- writing
 
     def _proposals_for(
-        self, checked: Sequence[Tuple[ProjectSalesOrderLine, Any, _LineFacts]]
+        self,
+        checked: Sequence[Tuple[ProjectSalesOrderLine, Any, _LineFacts]],
+        *,
+        as_of: Optional[date] = None,
     ) -> Dict[str, Tuple[Component, ...]]:
         """The engine's composition for each line being confirmed, keyed by mirror line id.
 
@@ -2646,10 +2655,22 @@ class ProjectSupplyService:
         proposal would claim a pool position that never existed. A line the ladder cannot
         walk at all (no core line, no open quantity, no location) proposes an empty tuple,
         which is a different answer from an absent key.
+
+        IN LINE ORDER, not payload order, and that is load-bearing: the pool ledger above is
+        drawn down in the order this loop walks, so the same lines posted in two orders would
+        otherwise freeze two different proposals for the same board. `proposal_for` walks
+        `lines_of`, which is line order, so this is also what makes the frozen proposal equal
+        to the one the planner was actually shown.
+
+        `as_of` is the day the planner was deciding on, so the frozen suggestion is the one
+        they saw rather than one recomputed against a later calendar. Defaults to today, in
+        `compose_line`, which is what every caller sends.
         """
         pool_left: Dict[str, Decimal] = {}
         out: Dict[str, Tuple[Component, ...]] = {}
-        for line, _entry, fact in checked:
+        for line, _entry, fact in sorted(
+            checked, key=lambda entry: (entry[0].line_no or 0, str(entry[0].id))
+        ):
             if fact.unplannable_reason:
                 out[str(line.id)] = ()
                 continue
@@ -2657,7 +2678,7 @@ class ProjectSupplyService:
             if pool_key and pool_key not in pool_left:
                 pool_left[pool_key] = fact.pool_free
             components = self.compose_line(
-                fact, pool_free_left=pool_left.get(pool_key, _ZERO)
+                fact, pool_free_left=pool_left.get(pool_key, _ZERO), as_of=as_of
             )
             if pool_key and fact.pool_code:
                 drawn = sum(
@@ -2679,6 +2700,7 @@ class ProjectSupplyService:
         *,
         carried: Sequence[_CarriedLine] = (),
         actor_user_id: str,
+        as_of: Optional[date] = None,
     ) -> Dict[str, Any]:
         previous = self.active_decision(str(order.id))
         if previous is not None:
@@ -2695,7 +2717,7 @@ class ProjectSupplyService:
         # What the ENGINE would have said about each named line, read once, here (AC-D1).
         # Beside the decision rather than instead of it: a line the planner amended is the
         # whole reason the board can ask "suggested what, decided what".
-        proposals = self._proposals_for(checked)
+        proposals = self._proposals_for(checked, as_of=as_of)
         # The named lines as decided now, then the carried ones exactly as they were
         # frozen (`confirm`): the same dicts, not a re-serialisation of them.
         snapshots = [
