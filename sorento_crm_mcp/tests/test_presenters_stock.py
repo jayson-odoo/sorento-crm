@@ -10,7 +10,7 @@ the split matters:
 * `detailed` - the envelope every contact gets today. It must stay byte-identical
   (AC-D2 / AC-F5): a deploy that changes one field label changes the outbound
   WhatsApp text for everyone.
-* `compact` - one item per product, `Total` first, then the allowed locations.
+* `compact` - one item per product, `Product Code`, `Total`, then the allowed locations.
 * `availability` - the dealer answer. `fields` is EMPTY on purpose: a dealer may
   be told yes or no and nothing else, so there is no field for a number to hide
   in, and the whole reply lives in `intro` + `flags`.
@@ -214,15 +214,18 @@ def _compact_payload():
 
 
 def test_render_compact():
-    """D3. One item per product, `Total` first, then the locations in the order
-    the backend put them (it already sorted by code, and re-sorting here would
-    make the two answers disagree). No product id anywhere - it is a UUID."""
+    """D3. One item per product: `Product Code` first (n8n prints `fields`, not
+    `title`, so a code living only in the title never reaches the reader), then
+    `Total`, then the locations in the order the backend put them (it already
+    sorted by code, and re-sorting here would make the two answers disagree).
+    No product id anywhere - it is a UUID."""
     out = env(_compact_payload())
 
     assert out["result_type"] == "stock_compact"
     assert out["intro"] == "Stock summary for the requested products."
     assert [i["title"] for i in out["items"]] == ["SRTBF11201-NEW", "SRTWB7109"]
     assert out["items"][0]["fields"] == [
+        {"key": "product_code", "label": "Product Code", "value": "SRTBF11201-NEW"},
         {"label": "Total", "value": 700},
         {"label": "BRW", "value": 500},
         {"label": "BRW-BB", "value": 200},
@@ -240,8 +243,8 @@ def test_render_compact_values_are_plain_integers():
 
     fields = env(payload)["items"][0]["fields"]
 
-    assert fields[0]["value"] == 700
-    assert fields[1]["value"] == 500
+    assert fields[1]["value"] == 700
+    assert fields[2]["value"] == 500
 
 
 def test_render_compact_zero_stock_still_an_item():
@@ -249,7 +252,10 @@ def test_render_compact_zero_stock_still_an_item():
     Dropping it answers an out-of-stock question with silence."""
     out = env(_compact_payload())
 
-    assert out["items"][1]["fields"] == [{"label": "Total", "value": 0}]
+    assert out["items"][1]["fields"] == [
+        {"key": "product_code", "label": "Product Code", "value": "SRTWB7109"},
+        {"label": "Total", "value": 0},
+    ]
 
 
 def test_render_compact_reads_a_relabelled_location_key():
@@ -263,7 +269,7 @@ def test_render_compact_reads_a_relabelled_location_key():
 
     fields = env(payload)["items"][0]["fields"]
 
-    assert fields[1] == {"label": "BRW", "value": 500}
+    assert fields[2] == {"label": "BRW", "value": 500}
 
 
 def test_render_compact_passes_the_backend_flags_through():
@@ -487,6 +493,7 @@ def test_sanitized_compact_renders_end_to_end():
 
     assert out["result_type"] == "stock_compact"
     assert out["items"][0]["fields"] == [
+        {"key": "product_code", "label": "Product Code", "value": "SRTBF11201-NEW"},
         {"label": "Total", "value": 700},
         {"label": "BRW", "value": 500},
         {"label": "BRW-BB", "value": 200},
