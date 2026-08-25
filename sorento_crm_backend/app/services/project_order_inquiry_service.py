@@ -92,7 +92,7 @@ from app.models.projects import (
     ProjectTask,
 )
 from app.services.error_handler import AppException
-from app.services.scm import order_link_service, priority
+from app.services.scm import order_link_service, priority, spo_supply
 from app.services.project_order_inquiry_engine import (
     CHANGE_DATE_EARLIER,
     CHANGE_DATE_LATER,
@@ -807,6 +807,9 @@ class ProjectOrderInquiryService:
         anybody books a container for it, and an inner join here counted only the ones that
         had one. A row with no shipment offers its own `expected_date` as the arrival, and a
         CLOSED line offers nothing - history is written closed for exactly that reason.
+
+        `spo_supply.open_incoming_clauses` is the shared rule, staleness included: an
+        unshipped promise whose date has passed is not a pool anything can be covered from.
         """
         rows = (
             self.db.query(
@@ -824,18 +827,11 @@ class ProjectOrderInquiryService:
             .filter(
                 SPOAllocation.product_id.in_(list(product_ids)),
                 SPOAllocation.spo_number.isnot(None),
-                or_(
-                    InboundShipment.id.is_(None),
-                    InboundShipment.actual_arrival_date.is_(None),
-                ),
-                or_(
-                    SPOAllocation.line_status.is_(None),
-                    SPOAllocation.line_status == "open",
-                ),
-                or_(
-                    SPOAllocation.receipt_status.is_(None),
-                    SPOAllocation.receipt_status != "received",
-                ),
+                # Supply we cannot place is cover for nobody: the pool this fills is read
+                # per location, so a row naming a location we do not hold counts nowhere,
+                # exactly as `on_order_v` treats it.
+                SPOAllocation.warehouse_id.isnot(None),
+                *spo_supply.open_incoming_clauses(date.today()),
             )
             .all()
         )

@@ -92,7 +92,7 @@ from app.models.projects import Project
 from app.models.scm import ItemClassification, ReorderLevel, SupplierPerformance
 from app.models.user import User
 from app.services.error_handler import AppException
-from app.services.scm import priority
+from app.services.scm import priority, spo_supply
 from app.services.scm import sales_agent_service
 from app.services.scm.demand import demand_qty, is_open_demand
 from app.services.scm.front_planning_engine import (
@@ -4340,20 +4340,11 @@ class ProjectSupplyService:
             .filter(
                 SPOAllocation.product_id.in_(pids),
                 SPOAllocation.warehouse_id.in_(wids),
-                or_(
-                    InboundShipment.id.is_(None),
-                    InboundShipment.actual_arrival_date.is_(None),
-                ),
-                # A closed SPO line has left the book, the same way a closed purchase line
-                # has. History is written closed, so it can never read as supply here.
-                or_(
-                    SPOAllocation.line_status.is_(None),
-                    SPOAllocation.line_status == "open",
-                ),
-                or_(
-                    SPOAllocation.receipt_status.is_(None),
-                    SPOAllocation.receipt_status != "received",
-                ),
+                # Closed lines, landed shipments, received rows and STALE promises, in one
+                # rule shared with `on_order_v`, the order inquiry's inbound pool and the
+                # coverage screen. The board's cell popover reads this same method, so what
+                # the planner is shown and what the engine decides on cannot differ.
+                *spo_supply.open_incoming_clauses(date.today()),
             )
             .all()
         )

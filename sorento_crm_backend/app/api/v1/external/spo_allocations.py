@@ -9,7 +9,10 @@ from app.dependencies import get_external_api_user
 from app.schemas.external.procurement import SPOAllocationRequest
 from app.models.procurement import SPOAllocation, InboundShipment, InboundShipmentLine
 from app.services.grn_spo_matching import forward_match_grn_lines_for_spo_best_effort
-from app.services.procurement_service import InboundShipmentService
+from app.services.procurement_service import (
+    InboundShipmentService,
+    next_spo_line_number,
+)
 from app.models.inventory import Warehouse
 from app.api.v1.external.utils import (
     get_products_by_code,
@@ -245,6 +248,8 @@ def create_spo_allocations(
 
     # The integration's principal is a real users row, so attribution is recorded.
     created_by = current_user["id"]
+    #: Line numbers this batch has handed out, per document.
+    line_numbers: dict[str, int] = {}
     code_by_product_id = {}
     allocations = []
     for (spo_number, product_id, warehouse_id), items in groups_to_create.items():
@@ -265,7 +270,15 @@ def create_spo_allocations(
         allocations.append(
             SPOAllocation(
                 spo_number=spo_number,
-                spo_line_number=None,
+                # Numbered through the one helper every writer of this table uses. NULL was
+                # what this path used to write, and since migration 420 the line number IS
+                # the row's identity: a NULL slips past the unique index (Postgres treats
+                # NULLs as distinct) and then matches nothing on the next upload of the
+                # same document. `line_numbers` carries the batch's own count, because
+                # nothing here is flushed until the end.
+                spo_line_number=next_spo_line_number(
+                    db, spo_number, taken=line_numbers
+                ),
                 inbound_shipment_id=inbound_shipment_id,
                 warehouse_id=warehouse_id,
                 storage_zone_id=first.storage_zone_id,

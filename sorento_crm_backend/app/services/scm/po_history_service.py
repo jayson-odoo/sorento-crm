@@ -203,23 +203,29 @@ def _warehouses_by_code(db: Session, codes: set[str]) -> dict[str, str]:
     return out
 
 
-def _allocations_by_line(db: Session, spo_numbers: set[str]) -> dict[str, dict[int, SPOAllocation]]:
-    """The SPO rows already held, keyed the way this feed writes them: document, then line.
+def _allocations_for(
+    db: Session, cache: dict[str, dict], spo_number: str
+) -> dict[int, SPOAllocation]:
+    """The SPO rows already held for ONE document, keyed by line number.
 
     The same shape as `existing_lines` on the purchase-order side, and for the same reason: a
     re-upload of a book somebody re-exported over a wider date range must refresh what it
     already holds instead of doubling every historical quantity.
+
+    Per DOCUMENT, exactly as the purchase-order half reads its lines. A whole-file preload
+    would send 13,550 document numbers in one `IN` list and hold every row they match in the
+    session - some 74,000 ORM objects on a re-upload of the captain's own book - to answer a
+    question that is only ever asked one document at a time. Cached, so a number that appears
+    twice in one file is read once.
     """
-    if not spo_numbers:
-        return {}
-    out: dict[str, dict[int, SPOAllocation]] = {}
-    for row in (
-        db.query(SPOAllocation)
-        .filter(SPOAllocation.spo_number.in_(sorted(spo_numbers)))
-        .all()
-    ):
-        out.setdefault(str(row.spo_number), {})[row.spo_line_number] = row
-    return out
+    if spo_number not in cache:
+        cache[spo_number] = {
+            row.spo_line_number: row
+            for row in db.query(SPOAllocation)
+            .filter(SPOAllocation.spo_number == spo_number)
+            .all()
+        }
+    return cache[spo_number]
 
 
 def _write_shipping_order(
@@ -229,7 +235,7 @@ def _write_shipping_order(
     product_by_code: dict[str, str],
     warehouse_by_code: dict[str, str],
     supplier: Optional[Supplier],
-    existing: dict[str, dict[int, SPOAllocation]],
+    existing: dict[int, SPOAllocation],
     outcome: ImportOutcome,
     company_id: Optional[str],
     claimed: set,
@@ -247,7 +253,7 @@ def _write_shipping_order(
     construction rather than by a filter somebody has to remember.
     """
     lines_created = 0
-    held = existing.setdefault(parsed_order.po_number, {})
+    held = existing
     for index, parsed_line in enumerate(parsed_order.lines, start=1):
         identity = {"doc_no": parsed_order.po_number,
                     "item_code": parsed_line.item_code,
@@ -561,9 +567,8 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
         .filter(PurchaseOrder.po_number.in_([o.po_number for o in parsed.orders]))
         .all()
     }
-    existing_allocations = _allocations_by_line(
-        db, {o.po_number for o in parsed.orders if o.doc_family == FAMILY_SPO}
-    )
+    #: SPO document number -> its rows by line number, filled one document at a time.
+    existing_allocations: dict[str, dict] = {}
 
     orders_created = 0
     lines_created = 0
@@ -606,13 +611,14 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
         # order in the banded report is filed the same way as one in the structured export.
         is_shipping_order = parsed_order.doc_family == FAMILY_SPO
         if is_shipping_order:
-            document_is_new = parsed_order.po_number not in existing_allocations
+            held = _allocations_for(db, existing_allocations, parsed_order.po_number)
+            document_is_new = not held
             lines_created += _write_shipping_order(
                 db, parsed_order,
                 product_by_code=product_by_code,
                 warehouse_by_code=warehouse_by_code,
                 supplier=supplier,
-                existing=existing_allocations,
+                existing=held,
                 outcome=outcome,
                 company_id=claim_company_id,
                 claimed=claimed,
