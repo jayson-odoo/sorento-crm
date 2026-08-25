@@ -79,7 +79,7 @@ listeners record the policy row change like any other master-data edit.
 |---|---|---|
 | D1 | `crm_inventory_stock_balance_list` catalog lists `requested_qty` and forwards it | `test_catalog_requested_qty` |
 | D2 | Raw response with `stock_visibility.mode=detailed` -> `result_type=stock`, envelope identical to before this change (golden fixture) | `test_render_detailed_unchanged` |
-| D3 | `compact` -> `result_type=stock_compact`; item per product, `title=product_code`, fields `Total` first then locations in backend order, values plain ints | `test_render_compact` |
+| D3 | `compact` -> `result_type=stock_compact`; item per product, `title=product_code`, fields `Product Code` first (keyed `product_code`, as on the detailed row - n8n prints `fields`, never `title`), then `Total`, then locations in backend order, values plain ints | `test_render_compact` |
 | D4 | `availability` needs_quantity -> `result_type=stock_availability`, intro "How many units do you need?", item `flags.needs_quantity=true`, no field with a numeric value | `test_render_availability_ask` |
 | D5 | `availability` available true/false -> intro "Yes, we have stock." / "Sorry, we do not have enough stock for that quantity." | `test_render_availability_answer` |
 | D6 | `stock_visibility` block passes through on every envelope | `test_envelope_passthrough` |
