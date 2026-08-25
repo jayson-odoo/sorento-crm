@@ -129,16 +129,25 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
          "products": [{"product_code": "SRTWC8605",
                        "delivered_quantity": 48, "pending_quantity": 12}]}
 
-    ``products`` is present only when ``product_ids`` (the product narrower the
-    caller actually applied) is given - a quantity summed across unrelated
-    products is not a number anyone asked for. ``delivered_from/to`` are present
-    only when something was delivered. Delivered = the canonical predicate
-    (``_delivered_clause``), pending = its negation.
+    Computed ONLY when ``product_ids`` (the product narrower the caller actually
+    applied) is given. A customer-only or date-only list ("any delivery to
+    Hanlim") wants the DOs, not a headline, and pays no extra query; a quantity
+    summed across unrelated products is not a number anyone asked for anyway.
+    ``delivered_from/to`` are present only when something was delivered.
+    Delivered = the canonical predicate (``_delivered_clause``), pending = its
+    negation.
+
+    Cost on the product-scoped path: one aggregate over the filtered order ids
+    (same class as the ``COUNT(*)`` the list already runs for ``pagination``),
+    one grouped SUM over their lines, one distinct-name pass.
 
     Best-effort: any failure warns and leaves the payload untouched, so a list
     answer never dies because its headline could not be computed. An empty
     result gets no summary at all.
     """
+    pids = [str(p) for p in (product_ids or []) if p]
+    if not pids:
+        return
     try:
         ids_sq = (
             filtered_q.order_by(None)
@@ -186,7 +195,6 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
             summary["delivered_from"] = d_from.isoformat()
             summary["delivered_to"] = d_to.isoformat()
 
-        pids = [str(p) for p in (product_ids or []) if p]
         if pids:
             prod_rows = (
                 db.query(

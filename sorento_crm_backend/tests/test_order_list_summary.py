@@ -5,8 +5,9 @@
 The contract under test (sorento_crm_n8n `plans/order-quantity-summary-plan.md` §3):
 measures are computed over the WHOLE filter, never the page; delivered is the
 canonical predicate (status delivered/completed AND actual_delivery_date set);
-`products` is present only when a product narrower was applied; absent-not-null
-everywhere; an empty result carries no summary.
+the summary exists only when a product narrower was applied (customer-only lists
+carry none and pay no extra query); absent-not-null everywhere; an empty result
+carries no summary.
 
 Postgres only, blank scratch schema (tests/_pg_fixture.blank_session) — so the
 delivered statuses are seeded here, exactly as `_delivered_status_ids` reads them.
@@ -122,13 +123,14 @@ def test_qs_c2_summary_ignores_the_page(db, scenario):
     assert paged["summary"]["products"][0]["delivered_quantity"] == 48  # not the 2-row sum
 
 
-def test_qs_c3_no_product_narrower_means_no_products_key(db, scenario):
+def test_qs_c3_no_product_narrower_means_no_summary_at_all(db, scenario):
+    """"Any delivery to Hanlim" wants the DOs, not a headline - and pays no extra
+    query. The summary exists only on product-scoped calls (captain, 2026-08-25)."""
     cust, _, _ = scenario
     result = OrderService(db).list_orders(customer_ids=[cust.id])
 
-    s = result["summary"]
-    assert "products" not in s
-    assert s["order_count"] == 5 and s["delivered_count"] == 3 and s["pending_count"] == 2
+    assert result["pagination"]["total"] == 5
+    assert "summary" not in result
 
 
 def test_qs_c4_two_customers_are_counted_and_named(db, scenario):
