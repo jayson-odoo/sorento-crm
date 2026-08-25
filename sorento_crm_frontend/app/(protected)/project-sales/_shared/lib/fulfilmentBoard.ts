@@ -31,7 +31,6 @@ import type {
   ConfirmReserveComponent,
 } from '../types/fulfilmentPlanning.types';
 import { fromMinor, toMinor } from './supplyComposition';
-import { SHORT_LABELS, rowOf } from './supplyVocabulary';
 
 /**
  * A column header with the week-commencing abbreviation taken off.
@@ -746,57 +745,6 @@ export function boardAxis(
 /** Sales-order numbers, customer names and project labels all read best in their own order. */
 function byLabel(left: BoardAxisRow, right: BoardAxisRow): number {
   return left.label.localeCompare(right.label);
-}
-
-/**
- * The proposal, as one line of text - the same summary a cell's own composition strip shows,
- * read off a single contribution rather than a cell (D2, the board's List view).
- *
- * A line with no proposal reads what it IS rather than a blank cell: unplannable states the
- * reason, and a line that is neither unplannable nor holds a source is "Nothing proposed",
- * never an empty string a table would render as a gap nobody can explain.
- */
-export function proposalSummaryFor(contribution: BoardContribution): string {
-  if (contribution.unplannable) return 'Needs a location';
-  const parts = contribution.sources
-    .filter((source) => toMinor(source.qty) > 0)
-    .map(
-      (source) =>
-        `${sourceLabel(source, contribution.fulfilment_location)} ${source.qty}${sourceSuffix(
-          source,
-        )}`,
-    );
-  return parts.length > 0 ? parts.join(' · ') : 'Nothing proposed';
-}
-
-/**
- * The word a source reads as: SECTION 2'S, off `SHORT_LABELS`.
- *
- * It used to speak ladder v2's rung names here (Pool / Group take / Group borrow /
- * Cross-group borrow) while the bar drawn directly under this text said Shared / Own /
- * Borrow - one composition, two vocabularies, in one table cell. PLAN section 2 is one
- * table and this reads it, so the words, the colours and the legend cannot drift.
- *
- * `ownLocation` is the line's own warehouse code: what tells the agent's own group from the
- * shared pool for a source that carries no rung.
- */
-function sourceLabel(
-  source: BoardContribution['sources'][number],
-  ownLocation?: string | null,
-): string {
-  const kind = rowOf(source, ownLocation);
-  return kind ? SHORT_LABELS[kind] : 'Cannot be sourced';
-}
-
-/** "at MWH-BB", or "from SO371334 line 2" for a group borrow, which names a donor SO. */
-function sourceSuffix(source: BoardContribution['sources'][number]): string {
-  if (source.rung === 'group_borrow' && source.donor_so_number) {
-    const line = source.donor_line_no !== null && source.donor_line_no !== undefined
-      ? ` line ${source.donor_line_no}`
-      : '';
-    return ` from ${source.donor_so_number}${line}`;
-  }
-  return source.location ? ` at ${source.location}` : '';
 }
 
 /**

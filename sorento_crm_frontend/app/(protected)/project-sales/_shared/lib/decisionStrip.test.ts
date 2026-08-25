@@ -10,7 +10,11 @@
  * to make visible.
  */
 import { describe, expect, it } from 'vitest';
-import { cellCarriesKind, decisionStripTotals } from './decisionStrip';
+import {
+  cellCarriesKind,
+  contributionCarriesKind,
+  decisionStripTotals,
+} from './decisionStrip';
 import type {
   BoardCell,
   BoardContribution,
@@ -225,6 +229,46 @@ describe('cellCarriesKind', () => {
     expect(cellCarriesKind(cell([bought]), {}, 'own')).toBe(false);
     expect(
       cellCarriesKind(cell([bought]), { bought: { verdict: 'rejected', reason: 'no' } }, 'buy'),
+    ).toBe(true);
+  });
+});
+
+/**
+ * The filter and the figures are asked of the SAME population, or a card reads a number the
+ * view cannot produce and empties itself when pressed.
+ */
+describe('contributionCarriesKind', () => {
+  it('is what cellCarriesKind is built from, so the two cannot disagree', () => {
+    expect(contributionCarriesKind(amended, null, 'shared')).toBe(true);
+    expect(contributionCarriesKind(amended, null, 'buy')).toBe(true);
+    expect(contributionCarriesKind(amended, null, 'incoming')).toBe(false);
+    expect(cellCarriesKind(cell([amended]), {}, 'shared')).toBe(
+      contributionCarriesKind(amended, null, 'shared'),
+    );
+  });
+
+  it('every kind the totals count for a line is a kind that line survives the filter on', () => {
+    // The invariant that keeps a press from emptying the view: if the strip added this line
+    // to a card, pressing that card has to keep the line.
+    const population = [amended, untouched, undecided];
+    for (const total of decisionStripTotals(population, {})) {
+      const counted = total.suggested !== '0' || total.decided !== '0';
+      const survivors = population.filter((entry) =>
+        contributionCarriesKind(entry, null, total.kind),
+      );
+      expect(survivors.length > 0).toBe(counted);
+    }
+  });
+
+  it('follows the draft on both sides, so an amendment moves the filter with it', () => {
+    expect(contributionCarriesKind(undecided, { verdict: 'rejected', reason: 'no' }, 'shared'))
+      .toBe(true);
+    expect(
+      contributionCarriesKind(
+        undecided,
+        { verdict: 'amended', reserve: [], borrow: [], buy_qty: '12', reason: 'buy it' },
+        'buy',
+      ),
     ).toBe(true);
   });
 });

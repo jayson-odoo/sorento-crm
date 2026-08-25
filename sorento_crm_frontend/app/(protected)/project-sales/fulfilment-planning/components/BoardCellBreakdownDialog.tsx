@@ -899,11 +899,12 @@ function shareNote(contribution: BoardContribution): string | null {
  * renderings of one composition is how they come to disagree.
  */
 /**
- * Exported so the planning-changes batch page (`PLAN-so-book-diff-replanning.md`) can print a
- * replan/qty_up row's proposal in the same words the board's own breakdown does, rather than a
- * second sentence-builder that drifts from this one.
+ * PRIVATE since AC-D4. It was exported for the board's list view, whose single Proposal
+ * column became Suggested and Decided - and the Decided column states the composition alone
+ * (`describe`), because the revision is already on the Verdict column and on the row's tick.
+ * The one remaining caller is the row strip below.
  */
-export function confirmedSummary(
+function confirmedSummary(
   decision: NonNullable<BoardContribution['decision']>,
   ownLocation?: string | null,
 ): string {
@@ -930,7 +931,9 @@ export function confirmedSummary(
 }
 
 /**
- * Exported for the same reason `confirmedSummary` is - see its comment.
+ * Exported so the planning-changes batch page (`PLAN-so-book-diff-replanning.md`) can print a
+ * replan/qty_up row's proposal in the same words the board's own breakdown does, rather than a
+ * second sentence-builder that drifts from this one.
  *
  * SECTION 2'S WORDS, off `SHORT_LABELS`. This strip used to print ladder v2's rung names
  * (Pool / Group take / Group borrow / Cross-group borrow) inside a popover whose Suggestion
@@ -959,7 +962,7 @@ export function sourceLabel(
  * borrow names its donor SO line instead, when one was stated - "from SO371334 line 2" is
  * the identity that matters, the location is secondary.
  */
-/** Exported for the same reason `confirmedSummary` is - see its comment. */
+/** Exported for the same reason `sourceLabel` is - see its comment. */
 export function sourceAt(source: BoardContribution['sources'][number]): string {
   if (source.kind === 'borrow' && source.rung === 'group_borrow' && source.donor_so_number) {
     const line =

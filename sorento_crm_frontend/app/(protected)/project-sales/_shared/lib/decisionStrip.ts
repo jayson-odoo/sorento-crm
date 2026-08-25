@@ -55,11 +55,19 @@ function byKind(
 }
 
 /**
- * The whole strip, over every contributing line of the loaded board.
+ * The whole strip, over the contributing lines it is handed.
  *
- * The CONTRIBUTIONS rather than the cells: a cell only exists for a bucket that made it onto
- * screen, and at day granularity that is a 30-day window rather than the whole selection - so
- * a strip summed off the cells would silently undercount exactly the lines furthest out.
+ * THE RULE, and the caller owes it: the strip sums exactly the contributions THE CURRENT VIEW
+ * CAN SHOW, and `contributionCarriesKind` filters that same population. The two must not come
+ * apart. They did: the totals were summed over the whole selection while the grid was filtered
+ * over its cells, which at day granularity are a 30-day window - so a card could read
+ * "Shared 71" off lines three months out and pressing it emptied the board. A figure the view
+ * in front of you cannot produce is worse than no figure, because it is acted on.
+ *
+ * So the grid passes the contributions of the cells it renders, and the list passes its own
+ * rows (the whole selection, which is what a list view is for). The window is still a window;
+ * what changes is that the strip now describes the board being looked at rather than a
+ * different, larger one.
  *
  * Resolved PER LINE, because two lines of one board need not share an ownership group:
  * `DC1-BB` is the agent's own group on a `BRW-BB` line and somebody else's on a `BRW-IB` one.
@@ -96,28 +104,41 @@ export function decisionStripTotals(
 }
 
 /**
- * Does this cell carry that kind of supply on EITHER side?
+ * Does this LINE carry that kind of supply on EITHER side?
  *
- * Either, deliberately: filtering by Buy has to keep the cell the planner has just amended
+ * Either, deliberately: filtering by Buy has to keep the line the planner has just amended
  * OFF Buy, or the card they pressed empties itself under them as they work.
+ *
+ * The unit is the CONTRIBUTION, not the cell, because that is the unit `decisionStripTotals`
+ * counts - and the grid and the list disagree about what a row is while agreeing exactly
+ * about what a line is. `cellCarriesKind` is this, asked of a cell's lines.
  */
+export function contributionCarriesKind(
+  contribution: BoardContribution,
+  drafted: BoardDecision | null,
+  kind: SupplyKind,
+): boolean {
+  const where = contribution.fulfilment_location;
+  const sides = [
+    contributionSuggestion(contribution),
+    contributionDecision(contribution, drafted),
+  ];
+  for (const parts of sides) {
+    for (const part of parts ?? []) {
+      if (rowOf(part, where) !== kind) continue;
+      if (toMinor(part.qty) !== 0) return true;
+    }
+  }
+  return false;
+}
+
+/** A cell stays when ANY of its lines carries the kind. */
 export function cellCarriesKind(
   cell: Pick<BoardCell, 'contributions'>,
   draft: Record<string, BoardDecision>,
   kind: SupplyKind,
 ): boolean {
-  for (const contribution of cell.contributions) {
-    const where = contribution.fulfilment_location;
-    const sides = [
-      contributionSuggestion(contribution),
-      contributionDecision(contribution, draft[contribution.key] ?? null),
-    ];
-    for (const parts of sides) {
-      for (const part of parts ?? []) {
-        if (rowOf(part, where) !== kind) continue;
-        if (toMinor(part.qty) !== 0) return true;
-      }
-    }
-  }
-  return false;
+  return cell.contributions.some((contribution) =>
+    contributionCarriesKind(contribution, draft[contribution.key] ?? null, kind),
+  );
 }

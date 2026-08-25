@@ -22,7 +22,7 @@ Plan: `PLAN-scm-cs-planning-uat.md`. Verified in a real browser on :3060 via the
 
 ## D. Suggested vs decided (board page)
 - AC-D1 Confirming writes `proposed_components` per line snapshot; decided `components` unchanged.
-- AC-D2 The board page shows a decision strip of cards (Buy / Own / Shared / Borrow / Incoming), each with Suggested and Decided totals for the selection; a differing pair is marked; clicking a card filters the grid.
+- AC-D2 The board page shows a decision strip of six cards (Buy / Use shared stock / Use own location / Borrow from another order / Borrow other location / Incoming supply), each with Suggested and Decided totals for the lines the current view can show; a differing pair is marked; a 0 / 0 card is disabled; clicking a card filters both the grid and the list view.
 - AC-D3 The cell popover shows a Decision card beside the Suggestion card once any line is decided.
 - AC-D4 List view and SO detail Lines tab show Suggested and Decided columns in section 2's words.
 

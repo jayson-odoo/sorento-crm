@@ -8,7 +8,6 @@ import { ColumnDef } from '@tanstack/react-table';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
-
 import { amendSummary } from '../../_shared/lib/boardAmend';
 import { BoardAmendDialog } from './BoardAmendDialog';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
@@ -17,7 +16,9 @@ import {
   contributionDecision,
   contributionSuggestion,
   contributionSupply,
-  describe,
+  // Aliased the way `SalesOrderDetail` aliases it: bare `describe` is vitest's, and a file
+  // that imports both reads as though the test runner were writing the column.
+  describe as describeSupply,
   segmentsOf,
 } from '../../_shared/lib/supplyVocabulary';
 import type { BoardContribution, BoardDecision, BoardDraft } from '../../_shared/types/fulfilmentPlanning.types';
@@ -182,7 +183,7 @@ export function FulfilmentBoardListView({
             // A decision frozen before the proposal was recorded. Not "nothing suggested".
             return <span className="text-muted-foreground">Not recorded</span>;
           }
-          const text = describe(parts, contribution.fulfilment_location);
+          const text = describeSupply(parts, contribution.fulfilment_location);
           return (
             <div className="min-w-0 space-y-1">
               <span className="block truncate" title={text}>
@@ -216,7 +217,7 @@ export function FulfilmentBoardListView({
           // The composition alone, in section 2's words. NOT "Confirmed rev 1 · Buy 43":
           // the revision is already on the Verdict column and on the row's tick, and
           // repeating it here would cost the width the composition needs.
-          const text = describe(parts, contribution.fulfilment_location);
+          const text = describeSupply(parts, contribution.fulfilment_location);
           return (
             <div className="min-w-0 space-y-1">
               <span className="block truncate" title={text}>
