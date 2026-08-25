@@ -535,3 +535,68 @@ describe('BorrowAddDialog: authorising a same-agent borrow', () => {
     expect(screen.getByLabelText(/^Authorised by the sales agent/)).toBeInTheDocument();
   });
 });
+
+describe('BorrowAddDialog: the authorisation belongs to the donor it was typed for', () => {
+  it('clears it when the donor changes, so it cannot be carried onto another agent’s order', () => {
+    const otherAgent: BorrowCandidate = {
+      ...GROUP_BORROW,
+      warehouse_code: 'DC1-BB',
+      warehouse_id: 'wh-dc1-bb',
+      donor_core_line_id: 'core-line-9',
+      donor_so_number: 'SO500999',
+      donor_agent_code: 'TERA',
+      same_agent: false,
+    };
+    renderDialog([GROUP_BORROW, otherAgent]);
+
+    fireEvent.change(screen.getByLabelText(/^Authorised by agent JEREMY/), {
+      target: { value: 'Agreed on the phone, 25 Aug' },
+    });
+
+    // Pick the other agent's line: the authorisation is not theirs, so it goes.
+    fireEvent.click(
+      within(screen.getByTestId('borrow-donor-DC1-BB')).getByRole('radio'),
+    );
+    expect(screen.queryByLabelText(/^Authorised by agent/)).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '5' } });
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Nothing else is free before the date.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
+
+    expect(onAdd).toHaveBeenCalledWith(
+      otherAgent,
+      '5',
+      'Nothing else is free before the date.',
+    );
+  });
+
+  it('asks again from empty when the planner comes back to the same-agent donor', () => {
+    const otherAgent: BorrowCandidate = {
+      ...GROUP_BORROW,
+      warehouse_code: 'DC1-BB',
+      warehouse_id: 'wh-dc1-bb',
+      donor_core_line_id: 'core-line-9',
+      donor_so_number: 'SO500999',
+      same_agent: false,
+    };
+    renderDialog([GROUP_BORROW, otherAgent]);
+
+    fireEvent.change(screen.getByLabelText(/^Authorised by agent JEREMY/), {
+      target: { value: 'Agreed on the phone, 25 Aug' },
+    });
+    fireEvent.click(
+      within(screen.getByTestId('borrow-donor-DC1-BB')).getByRole('radio'),
+    );
+    fireEvent.click(
+      within(screen.getByTestId('borrow-donor-MWH-BB')).getByRole('radio'),
+    );
+
+    expect(screen.getByLabelText(/^Authorised by agent JEREMY/)).toHaveValue('');
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'The site is waiting.' },
+    });
+    expect(screen.getByRole('button', { name: 'Add the borrow' })).toBeDisabled();
+  });
+});

@@ -72,11 +72,11 @@ export function amendDraftFrom(contribution: BoardContribution): DraftLine {
   }
   seedOwnLocation(rows, contribution);
 
-  // Ladder v2's group borrow / cross-group borrow rungs (section E rules 4/5) are now
-  // AUTO-PROPOSED, unlike the old ladder's Borrow: a source of kind `borrow` on the
-  // proposal is something the engine already composed and named a donor for, and
-  // dropping it here (as the old "the board proposes no Borrow" comment did) silently
-  // lost it the instant Amend was opened.
+  // A `borrow` source on the proposal is the CROSS-GROUP rung (ladder v3 rung 4), the one
+  // borrow the engine still composes on its own: free stock outside the ownership group,
+  // within the cap. Group borrow left the engine entirely (AC-L3) and reaches this editor
+  // only when a person picks a donor. Either way, a borrow the proposal DID name has to be
+  // carried in - dropping it here would lose it the instant Amend was opened.
   const borrowSources = contribution.sources.filter(
     (source) => source.kind === 'borrow' && source.warehouse_id,
   );
@@ -173,7 +173,7 @@ function frozenDraft(
           free_after_full_borrow: '0',
           committed_qty: '0',
         },
-      // Ladder v2 group borrow (section E.4): the frozen row already names its donor
+      // Group borrow (section 1c): the frozen row already names its donor
       // line, carried through so re-approving it still checks the live commitment.
       donor_core_line_id: row.donor_core_line_id ?? null,
       donor_so_number: row.donor_so_number ?? null,
@@ -246,7 +246,7 @@ export function borrowCandidatesOf(contribution: BoardContribution): BorrowCandi
         free_after_full_borrow: '0',
         committed_qty: '0',
       },
-      // Ladder v2 (section E): the group-aware donor facts - which rung this row is,
+      // Section 1b/1c: the group-aware donor facts - which rung this row is,
       // the donor SO line it names, whether it is ranked below this line or shares this
       // line's agent, and whether it sits outside the cross-group cap.
       rung: candidate.rung ?? null,

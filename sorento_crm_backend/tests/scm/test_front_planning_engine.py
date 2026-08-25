@@ -457,8 +457,9 @@ GROUP_CODE = "BB"
 # ------------------------------------------------- rung 0: beyond the window, buy it all
 
 
-def test_a_line_required_after_the_coverage_date_is_bought_in_full_and_nothing_else_runs():
-    """Section 1b rung 0: "a far-future line ... is Buy all. No partial decision"."""
+def test_a_line_required_after_the_coverage_date_is_bought_in_full_and_no_stock_is_taken():
+    """Section 1b rung 0: "a far-future line ... is Buy all. No partial decision" - with a
+    pool holding three times what it needs and nothing on the water."""
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
@@ -470,7 +471,7 @@ def test_a_line_required_after_the_coverage_date_is_bought_in_full_and_nothing_e
             pools=[
                 {"location": POOL_LOCATION, "free": Decimal("999"), "available": Decimal("999")}
             ],
-            timely_spo_qty=Decimal("999"),
+            timely_spo_qty=Decimal("0"),
         )
     )
 
@@ -522,14 +523,15 @@ def test_no_coverage_date_set_never_gates_a_line():
     assert proposed[0].kind == "reserve"
 
 
-def test_a_line_beyond_the_lead_time_window_buys_the_whole_line_and_tries_nothing_else():
-    """AC-L1, the captain's own words: "if delivery date exceed lead time, directly buy".
+def test_a_line_beyond_the_lead_time_window_takes_no_stock_but_still_takes_incoming():
+    """AC-L1, the captain's own words: "if delivery date exceed lead time, directly buy" -
+    and section 1b's rung 1 is UNCHANGED, so the one thing a far line still takes is supply
+    already on its way.
 
-    v2 still walked the two surplus rungs for such a line and only refused it the borrow
-    rungs. v3 does not: beyond `as_of + lead time + 14` the line is a Buy, full stop, and
-    the pool, the group and every donor beside it are never consulted. So a far line sitting
-    next to a pool holding ten times what it needs still reads Buy - the stock is kept for
-    the orders that cannot wait for a purchase order.
+    v2 walked the two surplus rungs for such a line and refused it only the borrow rungs.
+    v3 walks no STOCK rung at all: the pool, the group and every donor beside it are never
+    consulted, however much they hold. But incoming supply is already bought, and buying it
+    a second time is a double purchase, not a conservative one.
     """
     from app.services.scm.front_planning_engine import propose_line
 
@@ -549,12 +551,106 @@ def test_a_line_beyond_the_lead_time_window_buys_the_whole_line_and_tries_nothin
         )
     )
 
-    assert [c.kind for c in proposed] == ["buy"]
+    assert [c.kind for c in proposed] == ["timely_spo"]
+    assert [c.rung for c in proposed] == ["incoming"]
     assert proposed[0].qty == Decimal("40")
+    assert proposed[0].source_location == OWN_LOCATION
+
+
+def test_a_line_beyond_the_window_is_bought_whole_when_the_incoming_falls_short():
+    """The whole-line rule stands beyond the window too: 40 arriving against 71 owed is not
+    "incoming 40, buy 31", it is a Buy of the whole 71 with the window named as the reason.
+
+    A partial incoming beside a Buy would be exactly the mix AC-L5 refuses at confirm, and
+    the reason has to name the window rather than the arithmetic - the window is why the
+    stock rungs were never walked.
+    """
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("71"),
+            required_date=date(2027, 6, 1),
+            fulfilment_location=OWN_LOCATION,
+            group_code=GROUP_CODE,
+            outside_reserve_window=True,
+            timely_spo_qty=Decimal("40"),
+            pools=[
+                {"location": POOL_LOCATION, "free": Decimal("400"), "available": Decimal("400")}
+            ],
+        )
+    )
+
+    assert [c.kind for c in proposed] == ["buy"]
+    assert proposed[0].qty == Decimal("71")
     assert proposed[0].rung == "buy"
     assert proposed[0].reason == (
         "Delivery date beyond the lead time window; stock kept for nearer orders"
     )
+
+
+def test_incoming_beyond_the_window_names_the_spo_it_comes_from():
+    """Named is the useful form on a far line too: "SPO 202703-S0011 arrives on ..." is
+    something CS can look up, and the reason is the one rung 1 always writes."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("40"),
+            required_date=date(2027, 6, 1),
+            fulfilment_location=OWN_LOCATION,
+            outside_reserve_window=True,
+            timely_spo_qty=Decimal("40"),
+            timely_spo_refs=[
+                {
+                    "spo_number": "202703-S0011",
+                    "spo_line_no": 1,
+                    "arrival_date": date(2027, 5, 1),
+                    "qty": Decimal("40"),
+                }
+            ],
+        )
+    )
+
+    assert [c.kind for c in proposed] == ["timely_spo"]
+    assert proposed[0].reason == (
+        "SPO 202703-S0011 arrives on 2027-05-01, by the required date"
+    )
+
+
+def test_a_line_beyond_purchasings_coverage_date_takes_its_incoming_too():
+    """The two bounds share one rule: rung 1 runs for either, and only rung 1."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    covered = _components(
+        propose_line(
+            open_qty=Decimal("358"),
+            required_date=date(2029, 1, 1),
+            fulfilment_location=OWN_LOCATION,
+            reorder_coverage_until=date(2026, 10, 31),
+            timely_spo_qty=Decimal("358"),
+            pools=[
+                {"location": POOL_LOCATION, "free": Decimal("999"), "available": Decimal("999")}
+            ],
+        )
+    )
+
+    assert [c.rung for c in covered] == ["incoming"]
+    assert covered[0].qty == Decimal("358")
+
+    short = _components(
+        propose_line(
+            open_qty=Decimal("358"),
+            required_date=date(2029, 1, 1),
+            fulfilment_location=OWN_LOCATION,
+            reorder_coverage_until=date(2026, 10, 31),
+            timely_spo_qty=Decimal("100"),
+        )
+    )
+
+    assert [c.kind for c in short] == ["buy"]
+    assert short[0].qty == Decimal("358")
+    assert short[0].reason == "Beyond purchasing's coverage (31 Oct 2026) - buy now"
 
 
 def test_a_line_inside_its_window_is_untouched_by_the_rule():

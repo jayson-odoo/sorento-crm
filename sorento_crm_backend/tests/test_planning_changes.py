@@ -2543,3 +2543,90 @@ def test_build_batch_facts_read_buy_actioned_true_for_a_really_placed_row(api):
     assert row["suggested"] == "keep"
     assert "already a placed purchase order" in row["why"]
     assert po.po_number in row["why"]
+
+
+def test_a_wholly_bought_line_delayed_beyond_the_window_keeps_its_purchase(api):
+    """The other half of a release, and the ONLY half a v3 decision can reach.
+
+    `release` is gated on the held composition carrying a RESERVE
+    (`planning_change_service._suggestion`: `has_reserve = bool(held["reserve"])`), and
+    `_release_rows` then needs `buy_qty > 0` on that SAME composition. Under AC-L5 a line
+    is met wholly from stock or wholly bought, so those two conditions cannot both hold on
+    anything `confirm` will write - a RELEASE row with an inquiry row to move is reachable
+    only on a revision frozen before that rule.
+
+    What a wholly bought line does instead is pinned here, because it is what CS will
+    actually see: the Buy stands, its ORDER row survives the delay rather than being moved
+    to the pool, and a DELAY change row carries the old date.
+    """
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=150)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="150",
+                            required_date=date(2026, 8, 25))
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line.id, buy_qty="150", buy_reason="Nothing free elsewhere."),
+    ]})
+
+    order_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    assert order_row.stock_location == world.own_wh.warehouse_code
+
+    changed = _diff_change(
+        DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
+        location=world.own_wh.warehouse_code, old_date=date(2026, 8, 25),
+        new_date=date(2027, 3, 10), old_qty="150", new_qty="150",
+    )
+    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed])
+    batch = planning_change_service.build_batch(
+        db, diff, applied_line_ids={id(changed): str(core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    out = planning_change_service.get_batch(db, str(batch.id))
+    row = out["orders"][0]["rows"][0]
+    assert row["held"]["reserve"] == [], "wholly bought, so there is no reserve to release"
+    assert row["suggested"] == "keep"
+    assert row["why"].startswith("Only a Buy is held")
+
+    result = planning_change_service.apply(db, str(batch.id), world.actor)
+    db.commit()
+    assert result["failed_orders"] == []
+
+    from app.models.planning_change import PlanningChangeBatch as PlanningChangeBatchModel
+
+    batch_model = db.query(PlanningChangeBatchModel).filter(
+        PlanningChangeBatchModel.id == batch.id
+    ).one()
+    assert {"verb": "DELAY", "count": 1} in batch_model.result_json["inquiry_rows_changed"]
+    assert not any(
+        entry["verb"] == "RELEASE"
+        for entry in batch_model.result_json["inquiry_rows_changed"]
+    )
+
+    db.expire_all()
+    live = (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id == line.id,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+        .all()
+    )
+    # The purchase is not lost and not moved: an ORDER row for the whole 150, still at the
+    # line's own location, with a DELAY row beside it naming the date it moved from.
+    orders = [r for r in live if r.verb == IV_ORDER]
+    assert [str(r.qty) for r in orders] == ["150.0000"]
+    assert orders[0].stock_location == world.own_wh.warehouse_code
+    delays = [r for r in live if r.verb == "DELAY"]
+    assert len(delays) == 1
+    assert "2026-08-25" in (delays[0].note or "")

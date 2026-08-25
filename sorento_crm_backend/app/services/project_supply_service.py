@@ -53,6 +53,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from functools import cmp_to_key
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from sqlalchemy import func, nullslast, or_
@@ -564,6 +565,17 @@ class _CarriedLine:
         return _dec(self.snapshot.get("buy_qty"))
 
 
+#: The phrase a same-agent borrow's reason has to carry (AC-L6, section 1c). The frontend
+#: composes "Authorised by agent JEREMY: ..." in front of the planner's own words; this is
+#: the half of it a machine can check without pinning the agent's name or the punctuation.
+#: Matched case-insensitively, because the reason is free text a person typed.
+_AUTHORISATION_PHRASE = "authorised by"
+
+
+def _states_an_authorisation(reason: Optional[str]) -> bool:
+    return _AUTHORISATION_PHRASE in (reason or "").strip().lower()
+
+
 class ProjectSupplyService:
     """The supply sheet (`proposal_for`) and the atomic commit (`confirm`)."""
 
@@ -823,10 +835,16 @@ class ProjectSupplyService:
         is what a single line on its own may draw.
         """
         # The ATP reserve window (`front_planning_engine`): a line due beyond
-        # `as_of + lead time + buffer` is BOUGHT WHOLE under ladder v3, so no rung below it
-        # runs and none of the candidate lists, which cost queries, is built at all. The
-        # trail still states every rung with the window as its reason, so "not walked" is
-        # visible rather than silent.
+        # `as_of + lead time + buffer` takes NO STOCK under ladder v3, so none of the STOCK
+        # candidate lists - which cost queries - is built for it at all. The trail still
+        # states every rung with the window as its reason, so "not walked" is visible
+        # rather than silent.
+        #
+        # Rung 1 is NOT among them: `fact.timely_qty` / `fact.timely_refs` are read for
+        # every line by `_facts_for` / `demand_facts`, window or no window, and they are
+        # handed over below unconditionally. Incoming supply is already bought, so a far
+        # line whose SPO lands in time is covered by it rather than buying it twice
+        # (section 1b: "rung 1 unchanged").
         outside_window = self.outside_reserve_window(fact, as_of=as_of)
         pools = [] if outside_window else self._pool_chain(fact, own_pool_free_left=pool_free_left)
         group_take = [] if outside_window else self._group_take_candidates(fact)
@@ -866,24 +884,24 @@ class ProjectSupplyService:
             outside_reserve_window=outside_window,
         )
 
-    # ---------------------------------------- ladder v2 rung candidates, for the trail
+    # ---------------------------------------- ladder v3 rung candidates, for the trail
 
     def pool_chain_for(
         self, fact: _LineFacts, *, pool_free_left: Optional[Decimal] = None
     ) -> List[Dict[str, Any]]:
-        """`compose_line`'s pool candidate list (section E rule 2), public so the board's
+        """`compose_line`'s pool candidate list (section 1b rung 3), public so the board's
         trail can show every pool the ladder actually consulted, not only this line's own."""
         return self._pool_chain(fact, own_pool_free_left=pool_free_left)
 
     def group_take_candidates_for(self, fact: _LineFacts) -> List[Dict[str, Any]]:
-        """`compose_line`'s group-take candidate list (section E rule 3), public for the
+        """`compose_line`'s group candidate list (section 1b rung 2), public for the
         board's trail."""
         return self._group_take_candidates(fact)
 
     def cross_group_borrow_candidates_for(
         self, fact: _LineFacts, *, residual: Decimal
     ) -> List[Dict[str, Any]]:
-        """`compose_line`'s cross-group-borrow candidate list (section E rule 5, already
+        """`compose_line`'s cross-group-borrow candidate list (section 1b rung 4, already
         cap-filtered against `residual`), public for the board's trail."""
         return self._cross_group_borrow_candidates(fact, residual=residual)
 
@@ -898,7 +916,7 @@ class ProjectSupplyService:
         warehouse = self._warehouse_by_code(code)
         return str(warehouse.id) if warehouse else None
 
-    # -------------------------------------------------- ladder v2 group context (section E)
+    # ------------------------------------------------ ladder v3 group context (section 1b)
 
     def _fulfilment_settings(self) -> Dict[str, Any]:
         """`{reorder_coverage_until, cross_group_borrow_max_qty, cross_group_borrow_max_pct}`
@@ -929,7 +947,7 @@ class ProjectSupplyService:
 
     def _site_pool_warehouses(self) -> Dict[str, Warehouse]:
         """Every active warehouse that is SOME location's `pool_warehouse_id` - the pools
-        ladder v2's rung 2 can draw, read once per request.
+        ladder v3's rung 3 can draw, read once per request.
 
         The authoritative test is the FK, not the code's shape: on the live book every
         pool also happens to be a plain site code with no hyphen (`BRW`, `MWH`, ...), but
@@ -965,8 +983,8 @@ class ProjectSupplyService:
     def _pool_chain(
         self, fact: _LineFacts, *, own_pool_free_left: Optional[Decimal]
     ) -> List[Dict[str, Any]]:
-        """The ordered pool list for `propose_line`'s rung 2: this line's own site pool
-        first, then every OTHER active site pool (section E rule 2)."""
+        """The ordered pool list for `propose_line`'s rung 3: this line's own site pool
+        first, then every OTHER active site pool (section 1b)."""
         chain: List[Dict[str, Any]] = []
         if fact.pool_code and fact.pool:
             chain.append(
@@ -1164,7 +1182,7 @@ class ProjectSupplyService:
         self, fact: _LineFacts
     ) -> List[Dict[str, Any]]:
         """Every OTHER open line's committed quantity at this line's ownership group,
-        L first then the siblings (section E rule 4), each stating whether it is ranked
+        L first then the siblings (section 1c), each stating whether it is ranked
         below this line (auto-eligible) and whether it shares this line's agent (offered
         at any rank). Cached per line, since the sheet asks for both the auto list and the
         offer list off the same read.
@@ -1271,7 +1289,7 @@ class ProjectSupplyService:
         self, fact: _LineFacts, *, residual: Decimal
     ) -> List[Dict[str, Any]]:
         """Rung 5: free stock OUTSIDE this line's ownership group, offered only within the
-        small-quantity cap (section E rule 5). `residual` is what the ladder would still
+        small-quantity cap (section 1b rung 4). `residual` is what the ladder would still
         need by the time it reaches this rung - the "Q" the cap is measured against.
 
         A location with NO ownership group (`fact.group_code` is `None`) has no "outside
@@ -2150,10 +2168,11 @@ class ProjectSupplyService:
                 f"{qty_text(timely)}.",
             )
 
-        # Ladder v2 (section E rule 7): the own location is NEVER a Reserve source any
-        # more, only the pool chain (own site pool then every other) and this line's
-        # group-take siblings - the same candidates `compose_line` walked to propose this
-        # composition, so the recheck cannot refuse what the proposal itself offered.
+        # Ladder v3 (section 1b rungs 2 and 3): a Reserve may name any location of this
+        # line's ownership GROUP - its own included - or any active site pool. The same
+        # candidates `compose_line` walked to propose this composition, and drawn from the
+        # same builders, so the recheck cannot refuse what the proposal itself offered
+        # (the own location's cap in particular is `_group_take_candidates`' own).
         #
         # S7: every location here is drawn through `capacity_left`, the running ledger
         # shared across every line of this confirmation - not read live per line - so a
@@ -2198,25 +2217,25 @@ class ProjectSupplyService:
                 posted = self._warehouse_row(str(item.warehouse_id))
                 posted_code = posted.warehouse_code if posted else "another location"
                 if not reserve_locations:
-                    # No pool is configured for this line at all, so the ask can only be
-                    # its own location (rule 7 - the own location is never a Reserve
-                    # source). Say that plainly instead of naming "no location" as the
-                    # allowed set, which read like the line was broken rather than simply
-                    # unpooled.
+                    # This line belongs to no ownership group and has no pool configured,
+                    # so there is no location it may reserve from at all. Say that plainly
+                    # instead of naming "no location" as the allowed set, which read like
+                    # the line was broken rather than simply unpooled and ungrouped.
                     refuse(
                         invalid,
-                        f"Reserve was asked for from {posted_code}, this line's own "
-                        "location. A line never reserves its own location; with no pool "
-                        f"configured for {posted_code}, buy the quantity or borrow it on "
+                        f"Reserve was asked for from {posted_code}, and this line has no "
+                        "ownership group and no pool configured, so it can reserve from "
+                        "nowhere. Buy the quantity, or borrow it from that location on "
                         "the order's own sheet.",
                     )
                 else:
                     refuse(
                         invalid,
                         f"Reserve was asked for from {posted_code}, and this line "
-                        f"reserves only from its pool(s) {allowed}. Buy the quantity "
-                        "instead, or borrow it from that location on the order's own "
-                        "sheet, which records who it came from and why.",
+                        f"reserves only from {allowed} - its own ownership group and its "
+                        "pool(s). Buy the quantity instead, or borrow it from that "
+                        "location on the order's own sheet, which records who it came "
+                        "from and why.",
                     )
                 continue
             # What this order's own active revision already holds here, resubmitted:
@@ -2370,10 +2389,10 @@ class ProjectSupplyService:
 
         if item.source == ALLOC_SOURCE_OTHER_LOCATION:
             if fact.warehouse and str(item.warehouse_id) == str(fact.warehouse.id):
-                # Ladder v2 (section E rule 7): this line's own location is never a Borrow
-                # source (its demand IS this line) and never a Reserve source any more
-                # either - the only way to reach stock physically sitting here is a group
-                # borrow FROM ANOTHER SO's line, which names that line by id.
+                # Ladder v3: this line's own location is never a BORROW source - free
+                # stock there has no donor to ask, its demand IS this line, and rung 2
+                # reaches it as a Reserve already. The only thing left to borrow here is
+                # ANOTHER SO's committed quantity, which names that line by id.
                 refuse(
                     invalid,
                     f"{warehouse.warehouse_code} is this line's own location. Free stock "
@@ -2475,7 +2494,7 @@ class ProjectSupplyService:
         invalid: List[Dict[str, Any]],
         carried_holds: Dict[str, Dict[str, Any]],
     ) -> None:
-        """Ladder v2's group borrow (section E rule 4), re-read live (AC-C03).
+        """The group borrow a person picked in Amend (section 1c), re-read live (AC-C03).
 
         A group borrow takes another sales order's own COMMITTED quantity, not free
         stock - so it is checked against that donor line's live open quantity, never
@@ -2527,6 +2546,36 @@ class ProjectSupplyService:
                 invalid,
                 f"{warehouse.warehouse_code} is outside this line's ownership group, so "
                 "it cannot be borrowed as a group borrow.",
+            )
+            return
+        # AC-L6 (section 1c): a donor sharing this line's SALES AGENT is offered at any
+        # rank, and one ranked AHEAD of this line is offered only because that agent can
+        # authorise moving stock between her own orders. So taking it has to say she did.
+        #
+        # Judged on the SERVER's own donor list, never on the payload's `same_agent` flag:
+        # that flag is a client claim and the rule it gates is a permission. A donor ranked
+        # BELOW this line needs nothing extra - that is ordinary group borrow, which the v2
+        # ladder took automatically - so demanding a reason for it would make a mandatory
+        # field a rubber stamp.
+        donor = next(
+            (
+                d
+                for d in self._group_borrow_donors(fact)
+                if str(d.get("donor_core_line_id") or "") == str(donor_core_line_id)
+            ),
+            None,
+        )
+        if (
+            donor is not None
+            and donor.get("same_agent")
+            and not donor.get("lower_ranked")
+            and not _states_an_authorisation(item.reason)
+        ):
+            refuse(
+                invalid,
+                f"{order.so_number or 'That sales order'}{line_text} shares this line's "
+                "sales agent and is ranked ahead of it, so it can only be borrowed with "
+                "that agent's authorisation. Say who authorised it in the reason.",
             )
             return
         still_open = (
@@ -3056,8 +3105,8 @@ class ProjectSupplyService:
 
     def _reserve_reason(self, fact: _LineFacts, location: Optional[str]) -> str:
         """The rule's own sentence for a confirmed Reserve component, at whichever
-        location it named - ladder v2's pool chain first (own site pool then every
-        other), then a group-take sibling (section E rule 3)."""
+        location it named - ladder v3's GROUP first (this line's own location, then its
+        siblings), then the pool chain (own site pool, then every other)."""
         for candidate, _qty, reason in pool_reserve_capacity(
             is_dealer_hot_selling=fact.is_dealer_hot_selling,
             is_project_hot_selling=fact.is_project_hot_selling,
@@ -3125,9 +3174,8 @@ class ProjectSupplyService:
             elif fact.pool_code and location == fact.pool_code:
                 source = ALLOC_SOURCE_BRW
             elif location and location != fact.own_code:
-                # Any other active site pool, ladder v2's second pool rung (section E
-                # rule 2): the same Reserve kind as this line's own pool, just a
-                # different one.
+                # Any other active site pool, the second half of ladder v3's rung 3:
+                # the same Reserve kind as this line's own pool, just a different one.
                 source = ALLOC_SOURCE_BRW
             else:
                 source = ALLOC_SOURCE_OWN
@@ -4744,23 +4792,35 @@ class ProjectSupplyService:
         Without it the biggest donor won on `free_qty`, and the biggest donor is usually the
         one whose own delivery is nearest.
 
-        An `over_cap` row (ladder v2, section E rule 5) is still SHOWN in its earned rank
-        position, but never carries `recommended`: it cannot be taken automatically, so
-        recommending it would point CS at a donor the confirm path will refuse.
+        THAT tie-break applies only between two rows that BOTH carry a position. Free stock
+        at a location, and a hold another project carries, name no sales-order line and so
+        have no queue position at all - and a sentinel standing in for the absence sorted
+        them behind every group-borrow donor they tied with, which recommended somebody
+        else's committed quantity over stock nobody had claimed. A comparator rather than a
+        sort key, because "compare this only when both sides have it" is a statement about a
+        PAIR and a key function cannot make one.
+
+        An `over_cap` row (section 1b rung 4) is still SHOWN in its earned rank position,
+        but never carries `recommended`: it cannot be taken automatically, so recommending
+        it would point CS at a donor the confirm path will refuse.
         """
-        candidates.sort(
-            key=lambda candidate: (
-                -_dec(candidate["available_after_need"]),
-                -_dec(candidate["available_qty"]),
-                -int(
-                    candidate["rank_index"]
-                    if candidate.get("rank_index") is not None
-                    else -1
-                ),
-                -_dec(candidate["free_qty"]),
-                candidate["warehouse_code"],
-            )
-        )
+
+        def compare(left: Dict[str, Any], right: Dict[str, Any]) -> int:
+            for name in ("available_after_need", "available_qty"):
+                a, b = _dec(left[name]), _dec(right[name])
+                if a != b:
+                    return -1 if a > b else 1
+            left_rank, right_rank = left.get("rank_index"), right.get("rank_index")
+            if left_rank is not None and right_rank is not None and left_rank != right_rank:
+                return -1 if int(left_rank) > int(right_rank) else 1
+            a, b = _dec(left["free_qty"]), _dec(right["free_qty"])
+            if a != b:
+                return -1 if a > b else 1
+            if left["warehouse_code"] != right["warehouse_code"]:
+                return -1 if left["warehouse_code"] < right["warehouse_code"] else 1
+            return 0
+
+        candidates.sort(key=cmp_to_key(compare))
         recommended_set = False
         for candidate in candidates:
             eligible = not candidate.get("over_cap")

@@ -5266,3 +5266,243 @@ def test_a_donor_line_says_what_was_lent_off_it_and_to_which_order():
         assert on_the_wire and on_the_wire[0]["lent_to"] == [
             {"qty": "71", "so_number": "ZZT-SO-TAKER", "line_no": mirror.line_no}
         ]
+
+
+# --------------------------------------------------------------------------- #
+# rung 1 on a line beyond its reserve window (section 1b, AC-L1 / AC-K4)
+#
+# Ladder v3 walks no STOCK rung for a far line. Rung 1 is NOT a stock rung: incoming supply
+# is already bought, and a blanket "beyond the window means Buy" bought it a second time.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_line_beyond_its_window_is_covered_by_the_spo_already_on_its_way():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTIW{_uid()[:5]}-BB"[:20])
+        elsewhere = _warehouse(db, f"ZZTIE{_uid()[:5]}-IR"[:20])
+        # Plenty of stock next door, none of which a far line may take.
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, elsewhere, on_hand=900)
+        _lead_time(db, product, 90)
+        far = TODAY + timedelta(days=174)
+        _incoming(
+            db, product, own,
+            spo_number="ZZT-SPO-FAR1", allocated=441, received=0, arrives=far - timedelta(days=5),
+        )
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="441", required_date=far, warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, far.isoformat())["contributions"][0]
+        assert contribution["qty_proposed_incoming"] == "441"
+        assert contribution["qty_proposed_buy"] == "0"
+        assert [(s["kind"], s["qty"]) for s in contribution["sources"]] == [
+            ("timely_spo", "441")
+        ]
+        assert "ZZT-SPO-FAR1" in contribution["sources"][0]["reason"]
+
+        # And the trail says so: the incoming rung RAN and took, rather than being reported
+        # as skipped by a rule it is not subject to.
+        incoming = _step(contribution, "incoming")
+        assert incoming["offered"] == "441"
+        assert incoming["taken"] == "441"
+        assert incoming["outcome"] == "took"
+        assert "ZZT-SPO-FAR1" in incoming["why"]
+        # Every STOCK rung below it is still refused by the window.
+        for kind in ("group_take", "pool", "group_borrow", "cross_group_borrow"):
+            step = _step(contribution, kind)
+            assert step["taken"] == "0", kind
+            assert "lead time window" in step["why"], kind
+
+
+def test_a_far_line_whose_incoming_falls_short_is_bought_whole_and_the_trail_says_why():
+    """The whole-line rule holds beyond the window: 200 arriving against 441 owed is a Buy
+    of the whole 441, and the incoming rung reports what it offered and that it gave
+    nothing - never a partial "incoming 200, buy 241"."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTIS{_uid()[:5]}-BB"[:20])
+        _stock(db, product, own, on_hand=0)
+        _lead_time(db, product, 90)
+        far = TODAY + timedelta(days=174)
+        _incoming(
+            db, product, own,
+            spo_number="ZZT-SPO-FAR2", allocated=200, received=0, arrives=far - timedelta(days=5),
+        )
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="441", required_date=far, warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, far.isoformat())["contributions"][0]
+        assert contribution["qty_proposed_buy"] == "441"
+        assert contribution["qty_proposed_incoming"] == "0"
+
+        incoming = _step(contribution, "incoming")
+        assert incoming["offered"] == "200"
+        assert incoming["taken"] == "0"
+        assert incoming["outcome"] != "not_eligible", "rung 1 RUNS beyond the window"
+        assert incoming["why"] == (
+            "The supply on its way does not cover the whole line, and the delivery date is "
+            "beyond the lead time window, so the whole line is bought rather than "
+            "part-covered."
+        )
+
+
+def test_a_superseded_revisions_borrow_is_not_reported_as_lent():
+    """`lent_to` reads the ACTIVE revision only. A borrow that was superseded is a record
+    of what was once promised, not of stock that is gone - reporting it would tell the
+    donor's agent their stock had moved when the order that took it has since given it
+    back."""
+    with blank_session() as db:
+        actor = _user(db, f"{MARKER} planner")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTS{_uid()[:5]}-BB"[:20])
+        _stock(db, product, own, on_hand=200)
+
+        donor = _order(db, so_number="ZZT-SO-GAVE", order_date=date(2026, 1, 1))
+        donor_line = _line(
+            db, donor, product, qty="71", required_date=date(2026, 9, 4), warehouse=own
+        )
+        borrower = _order(db, so_number="ZZT-SO-TOOK", order_date=date(2026, 1, 1))
+        borrow_line = _line(
+            db, borrower, product, qty="71", required_date=date(2026, 9, 1), warehouse=own
+        )
+        pso_id = _adopt(db, str(borrower.id))
+        db.flush()
+
+        from app.models.project_so import ProjectSalesOrderLine
+
+        mirror = (
+            db.query(ProjectSalesOrderLine)
+            .filter(
+                ProjectSalesOrderLine.project_sales_order_id == pso_id,
+                ProjectSalesOrderLine.core_sales_order_line_id == borrow_line.id,
+            )
+            .first()
+        )
+        # Revision 1 borrows the whole line off the donor ...
+        _confirm(
+            db, pso_id, actor,
+            [
+                {
+                    "project_line_id": str(mirror.id),
+                    "timely_spo_qty": "0",
+                    "reserve": [],
+                    "borrow": [
+                        {
+                            "source": "other_location",
+                            "warehouse_id": str(own.id),
+                            "qty": "71",
+                            "reason": "The site is waiting.",
+                            "donor_core_line_id": str(donor_line.id),
+                            "donor_so_number": "ZZT-SO-GAVE",
+                            "donor_line_no": 1,
+                        }
+                    ],
+                    "buy_qty": "0",
+                }
+            ],
+        )
+        # ... and revision 2 gives it back, buying the line instead.
+        _confirm(
+            db, pso_id, actor,
+            [
+                {
+                    "project_line_id": str(mirror.id),
+                    "timely_spo_qty": "0",
+                    "reserve": [],
+                    "borrow": [],
+                    "buy_qty": "71",
+                    "amend_reason": "The other site needs its stock back.",
+                }
+            ],
+        )
+        db.commit()
+
+        board = _service(db).build(
+            ["ZZT-SO-GAVE", "ZZT-SO-TOOK"], granularity="week", as_of=TODAY
+        )
+
+        given = next(
+            contribution
+            for cell in board["cells"]
+            for contribution in cell["contributions"]
+            if contribution["so_number"] == "ZZT-SO-GAVE"
+        )
+        assert given["lent_to"] == []
+
+
+def test_two_orders_borrowing_off_one_donor_line_both_appear_on_its_cell():
+    """One donor line can lend to several orders, and the cell has to name each of them:
+    "40 lent to ZZT-SO-A · 20 lent to ZZT-SO-B" is the whole of what left."""
+    with blank_session() as db:
+        actor = _user(db, f"{MARKER} planner")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTT{_uid()[:5]}-BB"[:20])
+        _stock(db, product, own, on_hand=300)
+
+        donor = _order(db, so_number="ZZT-SO-LENDER", order_date=date(2026, 1, 1))
+        donor_line = _line(
+            db, donor, product, qty="100", required_date=date(2026, 9, 25), warehouse=own
+        )
+
+        from app.models.project_so import ProjectSalesOrderLine
+
+        def borrow(so_number: str, qty: str, required: date) -> None:
+            taker = _order(db, so_number=so_number, order_date=date(2026, 1, 1))
+            core = _line(db, taker, product, qty=qty, required_date=required, warehouse=own)
+            pso_id = _adopt(db, str(taker.id))
+            db.flush()
+            mirror = (
+                db.query(ProjectSalesOrderLine)
+                .filter(
+                    ProjectSalesOrderLine.project_sales_order_id == pso_id,
+                    ProjectSalesOrderLine.core_sales_order_line_id == core.id,
+                )
+                .first()
+            )
+            _confirm(
+                db, pso_id, actor,
+                [
+                    {
+                        "project_line_id": str(mirror.id),
+                        "timely_spo_qty": "0",
+                        "reserve": [],
+                        "borrow": [
+                            {
+                                "source": "other_location",
+                                "warehouse_id": str(own.id),
+                                "qty": qty,
+                                "reason": "The site is waiting.",
+                                "donor_core_line_id": str(donor_line.id),
+                                "donor_so_number": "ZZT-SO-LENDER",
+                                "donor_line_no": 1,
+                            }
+                        ],
+                        "buy_qty": "0",
+                    }
+                ],
+            )
+
+        borrow("ZZT-SO-TAKER-A", "40", date(2026, 9, 1))
+        borrow("ZZT-SO-TAKER-B", "20", date(2026, 9, 2))
+        db.commit()
+
+        board = _service(db).build(
+            ["ZZT-SO-LENDER", "ZZT-SO-TAKER-A", "ZZT-SO-TAKER-B"],
+            granularity="week", as_of=TODAY,
+        )
+
+        given = next(
+            contribution
+            for cell in board["cells"]
+            for contribution in cell["contributions"]
+            if contribution["so_number"] == "ZZT-SO-LENDER"
+        )
+        assert [(row["qty"], row["so_number"]) for row in given["lent_to"]] == [
+            ("40", "ZZT-SO-TAKER-A"),
+            ("20", "ZZT-SO-TAKER-B"),
+        ]
