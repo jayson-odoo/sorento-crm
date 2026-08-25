@@ -239,6 +239,23 @@ The order-inquiry side (purchasing's board, place-on-PO UX) is the next planning
   or RELEASE retires with the mixes that justified it.
 - **AC-A1 needs a ruling on PLAN 3.3a, not on the rung order** - see the trail reading in the
   status block at the top of this file.
+- **The confirm-time proposal ledger tracks the own-site POOL only, not group-take capacity.**
+  `_proposals_for` draws the pool down across the lines of one confirmation (as `proposal_for`
+  does), but nothing nets the ownership group's `available_to_this_line` between siblings - so
+  N lines of one order sharing a product AND a location can each freeze the full available
+  quantity, and the decision strip's **Suggested can exceed the stock that actually existed**.
+  This mirrors `proposal_for` exactly, so the sheet and the board still agree; what neither
+  does is bound the group rung the way the pool rung is bounded. It bites on orders shaped like
+  SO381895 (76 lines). Fixing it means a second running ledger keyed on (product, location)
+  through `_group_take_candidates`, which is the same shape as the pool one. Not done here: the
+  DECISION is still checked against live capacity by `_check_line`, so nothing over-promises;
+  only the frozen suggestion can read high.
+- **`components` and `proposed_components` are not byte-identical in shape, and readers key on
+  `kind`.** The decided side infers a reserve's rung from the location (a group sibling means
+  `group_take`, anything else `pool`) and writes no `rung` key at all on a buy or an incoming;
+  the proposed side carries the engine's own rung on every component. So the two agree about
+  what was drawn from where and may differ about the rung on a decided buy. Compare them on
+  `(kind, qty, source_location)` and treat a missing rung as "the kind already says it".
 
 All ruled. Go/no-go on the order in section 4.
 

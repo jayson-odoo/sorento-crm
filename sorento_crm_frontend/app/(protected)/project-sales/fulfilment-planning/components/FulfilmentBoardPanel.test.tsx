@@ -2110,3 +2110,77 @@ describe('FulfilmentBoardPanel: the decision strip', () => {
     });
   });
 });
+
+/**
+ * The card, the figures above it and BOTH views are one reading or they are none.
+ *
+ * Two ways they came apart, both found in review: the list view ignored the pressed card
+ * entirely (it kept receiving every contribution while the card sat aria-pressed), and the
+ * strip was summed over the whole selection while the grid was filtered over its cells - which
+ * at day granularity is a 30-day window, so a card could read a figure off lines the board
+ * could not show and then empty itself when pressed.
+ */
+describe('FulfilmentBoardPanel: the strip and the views agree', () => {
+  /** One bought line, one covered from its own location. */
+  const mixedBoard = () =>
+    boardOf(
+      [
+        demand({ line_no: 1, item_code: 'SRT382-6-DIY', qty: '71' }),
+        demand({ line_no: 2, item_code: 'WESERP10B', qty: '10' }),
+      ],
+      { 'WESERP10B|BRW-BB': '999' },
+    );
+
+  it('filters the LIST view by the pressed card, not only the grid', async () => {
+    getPlanningBoard.mockResolvedValue(mixedBoard());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    await screen.findByText('SRT382-6-DIY');
+    expect(screen.getByText('WESERP10B')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('decision-strip-own'));
+    await waitFor(() => {
+      expect(screen.queryByText('SRT382-6-DIY')).not.toBeInTheDocument();
+    });
+    expect(screen.getByText('WESERP10B')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('decision-strip-own'));
+    await waitFor(() => {
+      expect(screen.getByText('SRT382-6-DIY')).toBeInTheDocument();
+    });
+  });
+
+  it('never shows a figure the view cannot produce: pressing a card leaves something on screen', async () => {
+    getPlanningBoard.mockResolvedValue(mixedBoard());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    // Every card carrying a figure must leave at least one product row when pressed. A card
+    // that empties the board is the exact defect this rule exists to prevent.
+    for (const kind of ['buy', 'own']) {
+      fireEvent.click(screen.getByTestId(`decision-strip-${kind}`));
+      await waitFor(() => {
+        expect(screen.getByTestId('fulfilment-board-matrix')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('No products match')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId(`decision-strip-${kind}`));
+    }
+  });
+
+  it('disables a card nothing on the board is that kind of supply', async () => {
+    getPlanningBoard.mockResolvedValue(mixedBoard());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    // Nothing here is incoming or borrowed, so those cards read 0 / 0 and cannot be pressed -
+    // they keep their place, because a card that came and went would move every card beside it.
+    expect(screen.getByTestId('decision-strip-incoming')).toBeDisabled();
+    expect(screen.getByTestId('decision-strip-borrow_order')).toBeDisabled();
+    expect(screen.getByTestId('decision-strip-buy')).not.toBeDisabled();
+  });
+});
