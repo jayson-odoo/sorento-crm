@@ -37,11 +37,11 @@ import { ORDER, SHORT_LABELS, rowOf, type SupplyKind } from './supplyVocabulary'
  * for the same reason `confirmLinesFor` reads them: the board proposes what the sheet proposes,
  * pool and all, so re-deriving a composition here would be a second, worse allocator.
  *
- * Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E rule 7): the line's own
- * location is NEVER a Reserve source any more, so it is no longer forced into the editor
- * as a row - every Reserve row here is a pool or a group-take sibling the proposal itself
- * named. Group borrow and cross-group borrow (rules 4/5) are now AUTO-PROPOSED too, and
- * arrive as `kind: 'borrow'` sources the same way a Reserve does.
+ * Ladder v3 (`PLAN-scm-cs-planning-uat.md` section 1b rung 2) gives the own location back:
+ * it is a location of the line's ownership group, so it is forced into the editor as a row
+ * even when the proposal drew nothing there. That row is the amendment a planner most often
+ * wants to make - the Buy switch is turned off and the stock they can see is typed in - and
+ * without it a wholly-bought line offers nowhere at all to compose an alternative.
  *
  * ON A COVERED LINE THE FROZEN DECISION WINS, because there is no proposal to seed from: the
  * board proposes nothing for a line an active decision already covers. Amending it opens on
@@ -70,10 +70,7 @@ export function amendDraftFrom(contribution: BoardContribution): DraftLine {
       reason: source.reason,
     });
   }
-  // Nothing addressable came back but the server still proposed a Reserve. Ladder v2
-  // (section E rule 7) no longer offers the line's own location - the only Reserve
-  // sources left are the pool and a group-take sibling, both of which the loop above
-  // already carried over by warehouse_id - so there is nowhere left to invent a row at.
+  seedOwnLocation(rows, contribution);
 
   // Ladder v2's group borrow / cross-group borrow rungs (section E rules 4/5) are now
   // AUTO-PROPOSED, unlike the old ladder's Borrow: a source of kind `borrow` on the
@@ -151,20 +148,7 @@ function frozenDraft(
       qty: row.qty,
       reason: '',
     }));
-  const ownId = contribution.fulfilment_warehouse_id;
-  const ownCode = contribution.fulfilment_location;
-  const hasOwn = rows.some(
-    (row) => row.warehouse_id === ownId || (Boolean(ownCode) && row.location === ownCode),
-  );
-  if (!hasOwn && ownId) {
-    rows.unshift({
-      key: `reserve-${ownCode ?? ownId}`,
-      location: ownCode ?? null,
-      warehouse_id: ownId,
-      qty: '0',
-      reason: '',
-    });
-  }
+  seedOwnLocation(rows, contribution);
 
   return {
     project_line_id: contribution.project_line_id ?? '',
@@ -202,6 +186,30 @@ function frozenDraft(
     buy_reason: frozen.buy_reason ?? '',
     is_discontinued: Boolean(contribution.item_flags?.discontinued),
   };
+}
+
+/**
+ * The line's OWN location as a Reserve row, first, when nothing already names it.
+ *
+ * Ladder v3 rung 2: the own location is a location of the ownership group again, so it is
+ * always somewhere the planner may reserve from. At zero, because the proposal did not draw
+ * on it - what it CAN give is the server's answer at confirm, not a figure to guess here.
+ */
+function seedOwnLocation(rows: DraftReserve[], contribution: BoardContribution): void {
+  const ownId = contribution.fulfilment_warehouse_id;
+  if (!ownId) return;
+  const ownCode = contribution.fulfilment_location;
+  const named = rows.some(
+    (row) => row.warehouse_id === ownId || (Boolean(ownCode) && row.location === ownCode),
+  );
+  if (named) return;
+  rows.unshift({
+    key: `reserve-${ownCode ?? ownId}`,
+    location: ownCode ?? null,
+    warehouse_id: ownId,
+    qty: '0',
+    reason: '',
+  });
 }
 
 /**

@@ -18,7 +18,12 @@ export const VERB_LABEL: Record<string, string> = {
   CANCEL_BALANCE: 'CANCEL BALANCE',
   PRE_ORDERED_DO_NOT_ORDER: 'PRE-ORDERED, DO NOT ORDER',
   ALREADY_INBOUND: 'ALREADY INBOUND',
-  BORROW_SHORTFALL: 'BORROW SHORTFALL',
+  // Stored as `BORROW_SHORTFALL` and READ as "Order back" (PLAN-scm-cs-planning-uat.md
+  // section 1c, ruled 25 August 2026): it is the order the donor's own line now needs
+  // raising for it, and "shortfall" named the arithmetic rather than the instruction. The
+  // DB value waits for section I's migration, which is where the verb gains its link
+  // targets; renaming the column on its own would strand rows nothing reads.
+  BORROW_SHORTFALL: 'ORDER BACK',
   RELEASE: 'RELEASE',
 };
 

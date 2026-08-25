@@ -193,6 +193,20 @@ export function lineBlockers(draft: DraftLine): string[] {
     );
   }
 
+  // The whole-line rule, AC-L5 (the captain, 25 August 2026): "a line is either wholly
+  // covered from stock (own group, pools, borrow, incoming in any mix) or wholly Buy".
+  // Said only on a line that already ADDS UP: one refusal at a time, and a line short of
+  // its open quantity has not finished stating a composition to judge.
+  const fromStockMinor = balance.timelyMinor + balance.reserveMinor + balance.borrowMinor;
+  if (balance.balanced && fromStockMinor > 0 && balance.buyMinor > 0) {
+    blockers.push(
+      `${subject}: a line is either met wholly from stock or wholly bought. This one ` +
+        `mixes ${fromMinor(fromStockMinor)} from stock with a Buy of ${fromMinor(
+          balance.buyMinor,
+        )}.`,
+    );
+  }
+
   for (const row of draft.borrow) {
     if (toMinor(row.qty) > 0 && !row.reason.trim()) {
       const donor = row.donor_project_ref || row.warehouse_code || 'the donor';

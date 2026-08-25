@@ -999,6 +999,23 @@ export interface BoardContribution {
    * been told about this line" and "told, about nothing" are different answers.
    */
   order_inquiry?: BoardLineOrderInquiry | null;
+  /**
+   * What ANOTHER sales order borrowed OFF this line (AC-L6). The captain, 25 August 2026:
+   * the donor's cell reads "71 lent to SO415472".
+   *
+   * An empty list when nothing was lent, never absent, so the cell has one shape to read.
+   */
+  lent_to?: BoardLineLending[];
+}
+
+/** One borrow taken OFF a board row by another sales order (AC-L6). */
+export interface BoardLineLending {
+  /** How much was taken. */
+  qty: string;
+  /** The order that took it, by its document number - never a UUID. */
+  so_number?: string | null;
+  /** Its line on that order, so two lines of one order are told apart. */
+  line_no?: number | null;
 }
 
 /** The order inquiry a board row belongs to, in the two words a person reads it by. */

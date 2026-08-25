@@ -247,6 +247,11 @@ function BoardCellButton({
   // Confirmed in the DATABASE, not ticked in the draft: the `decided` badge below already
   // counts the draft, and a cell whose supply is settled is a different statement.
   const confirmedRevisions = decidedRevisions(cell.contributions);
+  // "71 lent to SO415472", one phrase per borrow, across every line in the cell.
+  const lent = cell.contributions
+    .flatMap((entry) => entry.lent_to ?? [])
+    .map((row) => `${row.qty} lent to ${row.so_number ?? 'another order'}`)
+    .join(' · ');
   const label = `${cell.item_code}, ${cell.total_qty} across ${orders} sales order${
     orders === 1 ? '' : 's'
   }`;
@@ -282,6 +287,19 @@ function BoardCellButton({
           className={cn('block truncate text-[11px] font-medium', COLOURS[lead.kind].text)}
         >
           {dominantText(supply.segments)}
+        </span>
+      ) : null}
+
+      {/* What another sales order borrowed OFF the lines in this cell (AC-L6). A borrow was
+          visible on the taking side and invisible on the giving side, so the agent whose
+          stock moved found out when the delivery did not. */}
+      {lent ? (
+        <span
+          data-testid="cell-lent-out"
+          className="block truncate text-[11px] font-medium text-amber-700"
+          title={lent}
+        >
+          {lent}
         </span>
       ) : null}
 

@@ -63,14 +63,21 @@ describe('amendDraftFrom: the proposal, as something a person can edit', () => {
     expect(draft.buy_qty).toBe('60');
   });
 
-  it('opens with no Reserve row when the proposal reserved nothing (ladder v2: own location is never a source)', () => {
-    // Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E rule 7): the line's
-    // own location is never a Reserve source any more, so there is nothing left to
-    // invent a row for - unlike the old ladder, whose own-location rung this used to
-    // fall back onto.
+  it('opens with the line’s own location at zero when the proposal reserved nothing', () => {
+    // Ladder v3 (`PLAN-scm-cs-planning-uat.md` section 1b rung 2): the own location is a
+    // location of the line's ownership group again, so it is always somewhere the planner
+    // may reserve from - and on a wholly-bought line it is the only row there would be.
     const draft = amendDraftFrom(contributionOf({}));
 
-    expect(draft.reserve).toEqual([]);
+    expect(draft.reserve).toEqual([
+      {
+        key: 'reserve-BRW-BB',
+        location: 'BRW-BB',
+        warehouse_id: 'wh-BRW-BB',
+        qty: '0',
+        reason: '',
+      },
+    ]);
     expect(draft.buy_qty).toBe('100');
   });
 

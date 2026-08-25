@@ -478,3 +478,60 @@ describe('BorrowAddDialog: ladder v2 group-aware donors', () => {
     expect(onAdd).toHaveBeenCalledWith(second, expect.any(String), 'Confirmed with CS.');
   });
 });
+
+/**
+ * AC-L6 (section 1c, the captain 25 August 2026): a donor sharing this line's own sales agent
+ * is offered at ANY rank, "because the agent can authorise CS to move stock between her own
+ * orders" - and taking it therefore requires saying WHO authorised it. Free text, required
+ * only on a same-agent borrow, stored beside the quantity it justifies.
+ */
+describe('BorrowAddDialog: authorising a same-agent borrow', () => {
+  it('asks who authorised it, naming the agent, and will not add without it', () => {
+    renderDialog([GROUP_BORROW]);
+
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '71' } });
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'The site is waiting on this delivery.' },
+    });
+
+    const add = screen.getByRole('button', { name: 'Add the borrow' });
+    expect(add).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/^Authorised by agent JEREMY/), {
+      target: { value: 'Agreed on the phone, 25 Aug' },
+    });
+    expect(add).toBeEnabled();
+    fireEvent.click(add);
+
+    expect(onAdd).toHaveBeenCalledWith(
+      GROUP_BORROW,
+      '71',
+      'Authorised by agent JEREMY: Agreed on the phone, 25 Aug. ' +
+        'The site is waiting on this delivery.',
+    );
+  });
+
+  it('asks nobody to authorise a donor that is not the same agent’s', () => {
+    renderDialog([OTHER_LOCATION]);
+
+    expect(screen.queryByLabelText(/^Authorised by agent/)).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '20' } });
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Nothing else is free before the date.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
+
+    expect(onAdd).toHaveBeenCalledWith(
+      OTHER_LOCATION,
+      '20',
+      'Nothing else is free before the date.',
+    );
+  });
+
+  it('names the authorisation without an agent code when the donor states none', () => {
+    renderDialog([{ ...GROUP_BORROW, donor_agent_code: null }]);
+
+    expect(screen.getByLabelText(/^Authorised by the sales agent/)).toBeInTheDocument();
+  });
+});
